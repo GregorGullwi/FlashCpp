@@ -699,20 +699,28 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 
 		const std::string_view resolved_name =
 			StringTable::getStringView(resolved_type->name());
+		std::string_view sibling_suffix = resolved_name;
 		if (size_t scope_pos = resolved_name.rfind("::");
-			scope_pos != std::string_view::npos &&
-			resolved_name.substr(0, scope_pos) != current_base_name) {
-			StringHandle concrete_nested_handle = StringTable::getOrInternStringHandle(
-				StringBuilder()
-					.append(current_base_name)
-					.append("::")
-					.append(resolved_name.substr(scope_pos + 2))
-					.commit());
-			auto concrete_nested_it = getTypesByNameMap().find(concrete_nested_handle);
-			if (concrete_nested_it != getTypesByNameMap().end() &&
-				concrete_nested_it->second != nullptr) {
-				resolved_type = concrete_nested_it->second;
+			scope_pos != std::string_view::npos) {
+			if (resolved_name.substr(0, scope_pos) == current_base_name) {
+				current_base_name = resolved_name;
+				continue;
 			}
+			sibling_suffix = resolved_name.substr(scope_pos + 2);
+		}
+
+		StringHandle concrete_sibling_handle = StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(current_base_name)
+				.append("::")
+				.append(sibling_suffix)
+				.commit());
+		auto concrete_sibling_it = getTypesByNameMap().find(concrete_sibling_handle);
+		if (concrete_sibling_it != getTypesByNameMap().end() &&
+			concrete_sibling_it->second != nullptr) {
+			resolved_type = concrete_sibling_it->second;
+			current_base_name = StringTable::getStringView(concrete_sibling_handle);
+			continue;
 		}
 
 		current_base_name = StringTable::getStringView(resolved_type->name());

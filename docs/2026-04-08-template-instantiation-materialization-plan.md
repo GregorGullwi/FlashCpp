@@ -7,21 +7,38 @@
 
 ### Do this next
 
-1. Audit other instantiated-owner alias consumers beyond
-   `ExpressionSubstitutor.cpp`, starting with
-   `src/Parser_Expr_QualLookup.cpp`, which still has several open-coded
-   `instantiate_and_register_base_template(...)` /
-   `get_instantiated_class_name(...)` recovery paths in qualified lookup and
-   `substitute_template_parameter(...)`.
-2. Route those qualified-lookup / constexpr-member lookup consumers through the
-   same parser-owned materialization rules used by
-   `materializeTemplateInstantiationForLookup(...)`, so late consumers do not
-   depend on manually rebuilding instantiated names.
-3. After qualified lookup is clean, audit lazy member materialization and any
-   IR-triggered lookup sites for the same placeholder alias/name recovery drift.
+1. Continue the remaining `src/Parser_Expr_QualLookup.cpp` audit beyond
+   base-class parsing, especially the `substitute_template_parameter(...)`
+   branches that still hand-roll placeholder instantiation / name recovery for
+   qualified member types and template-template placeholders.
+2. Route those remaining qualified-lookup / constexpr-member lookup consumers
+   through the same parser-owned materialization rules used by
+   `materializeTemplateInstantiationForLookup(...)`, so late consumers no
+   longer depend on manually rebuilding instantiated names.
+3. After the remaining qualified-lookup consumers are clean, audit lazy member
+   materialization and IR-triggered lookup sites for the same
+   instantiated-owner alias/name recovery drift.
 
 ### Latest completed slice
 
+  - taught base-class post-template parsing / deferral to keep the full
+    member-type chain after template arguments (for patterns like
+    `Base<T>::type::type`) instead of only remembering one trailing `::member`
+  - updated immediate and deferred base-class resolution to walk those chained
+    member-type suffixes through one parser-owned helper in
+    `src/Parser_Expr_QualLookup.cpp`, preserving instantiated-owner lookup
+    names while the chain is resolved
+  - refreshed exact/full-specialization alias publication so sibling aliases
+    like `type = selected;` can bind to the concrete
+    `InstantiatedOwner::selected` entry instead of keeping a stale
+    declaration-site alias target
+  - added:
+    - `tests/test_qualified_base_nested_member_alias_ret42.cpp`
+    - `tests/test_qualified_base_full_spec_alias_chain_ret42.cpp`
+  - Validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+    - 1996 pass, 125 expected-fail
   - extracted the deduction-time `materialize_placeholder_args` logic from
     `src/Parser_Templates_Inst_Deduction.cpp` into the reusable
     `Parser::materializePlaceholderTemplateArgs(...)` helper in `src/Parser.h`
