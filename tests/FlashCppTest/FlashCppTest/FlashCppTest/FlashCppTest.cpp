@@ -168,6 +168,26 @@ TEST_CASE("Dependent and non-dependent type args produce different hashes") {
 	CHECK(TemplateTypeArgHash{}(plain_arg) != TemplateTypeArgHash{}(dependent_arg));
 }
 
+TEST_CASE("Instantiated names distinguish dependent type args") {
+	TemplateTypeArg plain_arg = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int));
+	TemplateTypeArg dependent_arg = plain_arg;
+	dependent_arg.is_dependent = true;
+	dependent_arg.dependent_name = StringTable::getOrInternStringHandle("T");
+
+	auto plain_key = FlashCpp::makeInstantiationKey(
+		StringTable::getOrInternStringHandle("Wrapper"),
+		std::vector<TemplateTypeArg>{plain_arg});
+	auto dependent_key = FlashCpp::makeInstantiationKey(
+		StringTable::getOrInternStringHandle("Wrapper"),
+		std::vector<TemplateTypeArg>{dependent_arg});
+
+	CHECK_FALSE(plain_key == dependent_key);
+	CHECK(FlashCpp::TemplateInstantiationKeyHash{}(plain_key) !=
+		  FlashCpp::TemplateInstantiationKeyHash{}(dependent_key));
+	CHECK(FlashCpp::generateInstantiatedNameFromArgs("Wrapper", std::vector<TemplateTypeArg>{plain_arg}) !=
+		  FlashCpp::generateInstantiatedNameFromArgs("Wrapper", std::vector<TemplateTypeArg>{dependent_arg}));
+}
+
 TEST_CASE("ChunkedVector") {
 	ChunkedVector<int, 2> vec;
 	vec.push_back(1);
