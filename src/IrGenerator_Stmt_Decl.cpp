@@ -107,7 +107,7 @@ bool allowsLegacyOverloadArgFallbackInNormalizedBody(const ASTNode& arg) {
 	return std::visit([](const auto& inner) -> bool {
 		using T = std::decay_t<decltype(inner)>;
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
-			return inner.binding() != IdentifierBinding::EnumConstant;
+			return false;
 		} else if constexpr (std::is_same_v<T, StringLiteralNode> ||
 							 std::is_same_v<T, MemberAccessNode> ||
 							 std::is_same_v<T, TernaryOperatorNode> ||
