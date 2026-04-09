@@ -214,6 +214,47 @@ ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNo
 	return ASTNode(&new_expr);
 }
 
+std::vector<TemplateTypeArg> ExpressionSubstitutor::collectCurrentBoundTemplateArgs(std::string_view use_site) const {
+	std::vector<TemplateTypeArg> bound_args;
+	if (!template_param_order_.empty()) {
+		size_t scalar_bindings_consumed = 0;
+		size_t pack_bindings_consumed = 0;
+		bound_args.reserve(param_map_.size());
+		for (std::string_view param_name : template_param_order_) {
+			auto scalar_it = param_map_.find(param_name);
+			auto pack_it = pack_map_.find(StringTable::getOrInternStringHandle(param_name));
+			if (scalar_it != param_map_.end() && pack_it != pack_map_.end()) {
+				throw InternalError("ExpressionSubstitutor found both scalar and pack bindings for template parameter '" + std::string(param_name) + "'");
+			}
+			if (scalar_it != param_map_.end()) {
+				bound_args.push_back(scalar_it->second);
+				++scalar_bindings_consumed;
+				continue;
+			}
+			if (pack_it != pack_map_.end()) {
+				bound_args.insert(bound_args.end(), pack_it->second.begin(), pack_it->second.end());
+				++pack_bindings_consumed;
+			}
+		}
+		if (scalar_bindings_consumed != param_map_.size() || pack_bindings_consumed != pack_map_.size()) {
+			throw InternalError("ExpressionSubstitutor missing template parameter order entries while collecting bound args for " + std::string(use_site));
+		}
+		return bound_args;
+	}
+
+	const size_t binding_count = param_map_.size() + pack_map_.size();
+	if (binding_count <= 1) {
+		if (!param_map_.empty()) {
+			bound_args.push_back(param_map_.begin()->second);
+		} else if (!pack_map_.empty()) {
+			bound_args.insert(bound_args.end(), pack_map_.begin()->second.begin(), pack_map_.begin()->second.end());
+		}
+		return bound_args;
+	}
+
+	throw InternalError("ExpressionSubstitutor requires template parameter declaration order when collecting bound args for " + std::string(use_site));
+}
+
 ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& call) {
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing function call");
 	FLASH_LOG(Templates, Debug, "  has_mangled_name: ", call.has_mangled_name());
@@ -227,27 +268,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 	const std::string_view qualified_name = call.has_qualified_name()
 		? call.qualified_name()
 		: std::string_view{};
-	auto collectCurrentInstantiationArgs = [&]() {
-		std::vector<TemplateTypeArg> inst_args;
-		if (!template_param_order_.empty()) {
-			for (std::string_view param_name : template_param_order_) {
-				auto it = param_map_.find(param_name);
-				if (it != param_map_.end()) {
-					inst_args.push_back(it->second);
-				}
-			}
-		} else {
-			for (const auto& [param_name, param_arg] : param_map_) {
-				(void)param_name;
-				inst_args.push_back(param_arg);
-			}
-		}
-		for (const auto& [pack_name, pack_args] : pack_map_) {
-			(void)pack_name;
-			inst_args.insert(inst_args.end(), pack_args.begin(), pack_args.end());
-		}
-		return inst_args;
-	};
 	auto wrapOriginalCall = [&]() -> ASTNode {
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
 		return ASTNode(&new_expr);
@@ -491,7 +511,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				if (size_t scope_pos = qualified_name.rfind("::"); scope_pos != std::string_view::npos) {
 					std::string_view owner_name = qualified_name.substr(0, scope_pos);
 					std::string_view member_name = qualified_name.substr(scope_pos + 2);
-					std::vector<TemplateTypeArg> current_inst_args = collectCurrentInstantiationArgs();
+					std::vector<TemplateTypeArg> current_inst_args =
+						collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteFunctionCallImpl");
 					if (!current_inst_args.empty() && extractBaseTemplateName(owner_name).empty()) {
 						auto owner_template = gTemplateRegistry.lookupTemplate(owner_name);
 						if (owner_template.has_value()) {
@@ -732,7 +753,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		std::string_view member_name = func_name.substr(scope_pos + 2);
 
 		// Collect concrete template arguments from param_map_
-		std::vector<TemplateTypeArg> inst_args = collectCurrentInstantiationArgs();
+		std::vector<TemplateTypeArg> inst_args =
+			collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteFunctionCallImpl");
 
 		if (!inst_args.empty()) {
 			Parser::AliasTemplateMaterializationResult materialized_base =
@@ -971,27 +993,6 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 
 	// Get the namespace name (e.g., "R1_T")
 	std::string_view ns_name = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
-	auto collectCurrentTemplateArgs = [&]() {
-		std::vector<TemplateTypeArg> current_args;
-		if (!template_param_order_.empty()) {
-			for (std::string_view param_name : template_param_order_) {
-				auto it = param_map_.find(param_name);
-				if (it != param_map_.end()) {
-					current_args.push_back(it->second);
-				}
-			}
-		} else {
-			for (const auto& [param_name, param_arg] : param_map_) {
-				(void)param_name;
-				current_args.push_back(param_arg);
-			}
-		}
-		for (const auto& [pack_name, pack_args] : pack_map_) {
-			(void)pack_name;
-			current_args.insert(current_args.end(), pack_args.begin(), pack_args.end());
-		}
-		return current_args;
-	};
 
 	// Check if the entire namespace name is a template parameter (e.g., _R1::num where _R1 is typename _R1)
 	// This handles patterns like _R1::num where _R1 is substituted with a concrete struct type
@@ -1089,7 +1090,8 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 						materialization_target_name.substr(member_sep + 2);
 					std::string_view base_template_name = extractBaseTemplateName(dependent_base_name);
 					if (!base_template_name.empty()) {
-						std::vector<TemplateTypeArg> current_inst_args = collectCurrentTemplateArgs();
+						std::vector<TemplateTypeArg> current_inst_args =
+							collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteQualifiedIdentifier");
 						if (!current_inst_args.empty()) {
 							Parser::AliasTemplateMaterializationResult materialized_alias_base =
 								parser_.materializeTemplateInstantiationForLookup(
@@ -1246,7 +1248,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	// in getTypesByNameMap(), or it's a non-template namespace), fall back to using the full param_map_.
 	// This handles cases like pack expansion bases where no TypeInfo exists.
 	if (inst_args.empty()) {
-		inst_args = collectCurrentTemplateArgs();
+		inst_args = collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteQualifiedIdentifier");
 	}
 
 	if (!inst_args.empty()) {

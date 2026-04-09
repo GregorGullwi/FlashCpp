@@ -1433,17 +1433,19 @@ ParseResult Parser::parse_type_specifier() {
 							}
 						} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
 							std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+							std::vector<std::string_view> template_param_order;
 							for (size_t filled_idx = 0; filled_idx < i && filled_idx < filled_template_args.size(); ++filled_idx) {
 								if (!template_params[filled_idx].is<TemplateParameterNode>()) {
 									continue;
 								}
 								const TemplateParameterNode& earlier_param = template_params[filled_idx].as<TemplateParameterNode>();
 								param_map[earlier_param.name()] = filled_template_args[filled_idx];
+								template_param_order.push_back(earlier_param.name());
 							}
 
 							ASTNode substituted_default_node = default_node;
 							if (!param_map.empty()) {
-								ExpressionSubstitutor substitutor(param_map, *this);
+								ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
 								substituted_default_node = substitutor.substitute(default_node);
 							}
 
@@ -2092,17 +2094,19 @@ ParseResult Parser::parse_type_specifier() {
 						}
 					} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
 						std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+						std::vector<std::string_view> template_param_order;
 						for (size_t filled_idx = 0; filled_idx < i && filled_idx < filled_template_args.size(); ++filled_idx) {
 							if (!template_params[filled_idx].is<TemplateParameterNode>()) {
 								continue;
 							}
 							const TemplateParameterNode& earlier_param = template_params[filled_idx].as<TemplateParameterNode>();
 							param_map[earlier_param.name()] = filled_template_args[filled_idx];
+							template_param_order.push_back(earlier_param.name());
 						}
 
 						ASTNode substituted_default_node = default_node;
 						if (!param_map.empty()) {
-							ExpressionSubstitutor substitutor(param_map, *this);
+							ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
 							substituted_default_node = substitutor.substitute(default_node);
 						}
 

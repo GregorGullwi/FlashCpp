@@ -446,17 +446,19 @@ std::string_view Parser::instantiate_and_register_base_template(
 					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
 				} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
 					std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+					std::vector<std::string_view> template_param_order;
 					for (size_t filled_idx = 0; filled_idx < i && filled_idx < filled_args.size(); ++filled_idx) {
 						if (!primary_params[filled_idx].is<TemplateParameterNode>()) {
 							continue;
 						}
 						const TemplateParameterNode& earlier_param = primary_params[filled_idx].as<TemplateParameterNode>();
 						param_map[earlier_param.name()] = filled_args[filled_idx];
+						template_param_order.push_back(earlier_param.name());
 					}
 
 					ASTNode substituted_default_node = default_node;
 					if (!param_map.empty()) {
-						ExpressionSubstitutor substitutor(param_map, *this);
+						ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
 						substituted_default_node = substitutor.substitute(default_node);
 					}
 

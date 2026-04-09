@@ -116,6 +116,7 @@ private:
 	// Helper: expand pack parameters in template arguments
 	std::vector<TemplateTypeArg> expandPacksInArguments(
 		const std::vector<ASTNode>& template_arg_nodes);
+	std::vector<TemplateTypeArg> collectCurrentBoundTemplateArgs(std::string_view use_site) const;
 
 // Substitution context
 	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map_;
