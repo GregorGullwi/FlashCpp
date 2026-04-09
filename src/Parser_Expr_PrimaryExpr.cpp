@@ -578,6 +578,16 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 				}
 
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+				eval_ctx.parser = this;
+				eval_ctx.sema = getActiveSemanticAnalysis();
+				eval_ctx.template_args = completed_args;
+				eval_ctx.template_param_names.reserve(template_params.size());
+				for (const auto& tp : template_params) {
+					if (tp.is<TemplateParameterNode>()) {
+						eval_ctx.template_param_names.push_back(
+							tp.as<TemplateParameterNode>().name());
+					}
+				}
 				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
 				if (eval_result.success()) {
 					if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
