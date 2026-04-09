@@ -1533,12 +1533,6 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		// Address-of operator: &x
 		// Get the current pointer depth from operandIrOperands
 		unsigned long long operand_ptr_depth = static_cast<unsigned long long>(operandIrOperands.pointer_depth.value);
-		if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
-			operandIrOperands = materializeAddressResult(
-				unaryOperatorNode.get_operand().as<ExpressionNode>(),
-				std::move(operandIrOperands),
-				unaryOperatorNode.get_token());
-		}
 		if (operandIrOperands.storage == ValueStorage::ContainsAddress) {
 			return makeExprResult(
 				operandIrOperands.type_index.withCategory(operandType),

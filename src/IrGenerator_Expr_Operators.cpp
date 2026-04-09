@@ -451,10 +451,15 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 		} else if (tempAlreadyHoldsAddress()) {
 			ExprResult address_result = argument_result;
 			if (argument.is<ExpressionNode>()) {
-				address_result = materializeAddressResult(
-					argument.as<ExpressionNode>(),
-					address_result,
-					token);
+				const ExpressionNode& argument_expr = argument.as<ExpressionNode>();
+				const bool needs_explicit_address_materialization =
+					std::holds_alternative<TernaryOperatorNode>(argument_expr);
+				if (needs_explicit_address_materialization) {
+					address_result = materializeAddressResult(
+						argument_expr,
+						address_result,
+						token);
+				}
 			}
 			value = toTypedValue(address_result);
 		} else {
@@ -711,7 +716,7 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), ternaryNode.get_token()));
 
 	auto selectResultTypeIndex = [](TypeCategory merged_type, const ExprResult& preferred,
-									const ExprResult* fallback = nullptr) {
+									const ExprResult* fallback) {
 		if (!carriesSemanticTypeIndex(merged_type)) {
 			return nativeTypeIndex(merged_type);
 		}
