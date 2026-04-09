@@ -1101,6 +1101,42 @@ bool haveCommonLeadingEmptyType(const StructTypeInfo* lhs, const StructTypeInfo*
 	return false;
 }
 
+struct BasePlacementDecision {
+	size_t offset = 0;
+	size_t size_contribution = 0;
+};
+
+BasePlacementDecision decideBasePlacement(const BaseClassSpecifier& base,
+										  const StructTypeInfo& base_info,
+										  size_t current_offset,
+										  const std::vector<const BaseClassSpecifier*>& placed_bases) {
+	size_t base_alignment = base_info.alignment;
+	size_t candidate_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
+	bool may_use_ebo = base_info.isEmptyLayoutLike() && !base.is_virtual;
+	bool has_overlap_conflict = false;
+	if (may_use_ebo) {
+		for (const BaseClassSpecifier* placed_base : placed_bases) {
+			if (!placed_base || placed_base->offset != candidate_offset) {
+				continue;
+			}
+			if (haveCommonLeadingEmptyType(&base_info, getBaseStructInfo(*placed_base))) {
+				has_overlap_conflict = true;
+				may_use_ebo = false;
+				break;
+			}
+		}
+	}
+	if (has_overlap_conflict) {
+		candidate_offset = StructTypeInfo::alignLayoutSize(candidate_offset + 1, base_alignment);
+	}
+
+	size_t base_size = toSizeT(base_info.baseSubobjectSizeInBytes());
+	return BasePlacementDecision{
+		.offset = candidate_offset,
+		.size_contribution = may_use_ebo ? 0 : std::max<size_t>(base_size, 1),
+	};
+}
+
 struct LayoutBaseCollections {
 	std::vector<BaseClassSpecifier*> non_virtual_bases;
 	std::vector<BaseClassSpecifier> virtual_bases;
@@ -1223,30 +1259,10 @@ void placeBaseSubobjects(const std::vector<BaseClassSpecifier*>& bases,
 			continue;
 		}
 
-		size_t base_alignment = base_info->alignment;
-		size_t candidate_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
-		bool may_use_ebo = base_info->isEmptyLayoutLike() && !base->is_virtual;
-		bool has_overlap_conflict = false;
-		if (may_use_ebo) {
-			for (const BaseClassSpecifier* placed_base : placed_bases) {
-				if (!placed_base || placed_base->offset != candidate_offset) {
-					continue;
-				}
-				if (haveCommonLeadingEmptyType(base_info, getBaseStructInfo(*placed_base))) {
-					has_overlap_conflict = true;
-					may_use_ebo = false;
-					break;
-				}
-			}
-		}
-		if (has_overlap_conflict) {
-			candidate_offset = StructTypeInfo::alignLayoutSize(candidate_offset + 1, base_alignment);
-		}
-
-		base->offset = candidate_offset;
-		size_t base_size = toSizeT(base_info->baseSubobjectSizeInBytes());
-		current_offset = candidate_offset + (may_use_ebo ? 0 : std::max<size_t>(base_size, 1));
-		max_alignment = std::max(max_alignment, base_alignment);
+		BasePlacementDecision placement = decideBasePlacement(*base, *base_info, current_offset, placed_bases);
+		base->offset = placement.offset;
+		current_offset = placement.offset + placement.size_contribution;
+		max_alignment = std::max(max_alignment, base_info->alignment);
 		placed_bases.push_back(base);
 	}
 }
@@ -1261,30 +1277,10 @@ void placeBaseSubobjects(std::vector<BaseClassSpecifier>& bases,
 			continue;
 		}
 
-		size_t base_alignment = base_info->alignment;
-		size_t candidate_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
-		bool may_use_ebo = base_info->isEmptyLayoutLike() && !base.is_virtual;
-		bool has_overlap_conflict = false;
-		if (may_use_ebo) {
-			for (const BaseClassSpecifier* placed_base : placed_bases) {
-				if (!placed_base || placed_base->offset != candidate_offset) {
-					continue;
-				}
-				if (haveCommonLeadingEmptyType(base_info, getBaseStructInfo(*placed_base))) {
-					has_overlap_conflict = true;
-					may_use_ebo = false;
-					break;
-				}
-			}
-		}
-		if (has_overlap_conflict) {
-			candidate_offset = StructTypeInfo::alignLayoutSize(candidate_offset + 1, base_alignment);
-		}
-
-		base.offset = candidate_offset;
-		size_t base_size = toSizeT(base_info->baseSubobjectSizeInBytes());
-		current_offset = candidate_offset + (may_use_ebo ? 0 : std::max<size_t>(base_size, 1));
-		max_alignment = std::max(max_alignment, base_alignment);
+		BasePlacementDecision placement = decideBasePlacement(base, *base_info, current_offset, placed_bases);
+		base.offset = placement.offset;
+		current_offset = placement.offset + placement.size_contribution;
+		max_alignment = std::max(max_alignment, base_info->alignment);
 		placed_bases.push_back(&base);
 	}
 }
