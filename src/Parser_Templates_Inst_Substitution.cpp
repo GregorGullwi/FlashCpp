@@ -182,20 +182,32 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 	}
 }
 
+Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInstantiation(
+	std::string_view alias_template_name,
+	const std::vector<TemplateTypeArg>& template_args) {
+	AliasTemplateMaterializationResult result;
+	std::string_view resolved_name = alias_template_name;
+	result.instantiated_name = instantiate_and_register_base_template(resolved_name, template_args);
+	if (result.instantiated_name.empty()) {
+		return result;
+	}
+
+	result.resolved_type_info =
+		findTypeByName(StringTable::getOrInternStringHandle(result.instantiated_name));
+	return result;
+}
+
 bool Parser::resolveAliasTemplateInstantiation(
 	TypeSpecifierNode& type_spec,
 	std::string_view alias_template_name,
 	const std::vector<TemplateTypeArg>& template_args) {
-	std::string_view resolved_name = alias_template_name;
-	resolved_name = instantiate_and_register_base_template(resolved_name, template_args);
-	if (resolved_name.empty()) {
+	AliasTemplateMaterializationResult materialized_alias =
+		materializeAliasTemplateInstantiation(alias_template_name, template_args);
+	if (!materialized_alias.resolved_type_info) {
 		return false;
 	}
 
-	const TypeInfo* resolved_info = findTypeByName(StringTable::getOrInternStringHandle(resolved_name));
-	if (!resolved_info) {
-		return false;
-	}
+	const TypeInfo* resolved_info = materialized_alias.resolved_type_info;
 
 	type_spec.set_type_index(
 		resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum()));
