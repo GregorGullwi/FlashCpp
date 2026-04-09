@@ -664,8 +664,6 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 		FLASH_LOG(Codegen, Error, "Range expression must be an array or a type with begin()/end() methods");
 		return;
 	}
-
-	init_scope_guard.exit();
 }
 
 void AstToIr::visitRangedForArray(const RangedForStatementNode& node, std::string_view array_name,
