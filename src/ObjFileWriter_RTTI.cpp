@@ -270,6 +270,12 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 								  [[maybe_unused]] const RTTITypeInfo* rtti_info,
 								  [[maybe_unused]] TypeIndex subobject_type_index,
 								  [[maybe_unused]] int64_t offset_to_top) {
+	// Secondary vtables (non-zero offset_to_top) share RTTI with the primary vtable.
+	// On COFF/MSVC, secondary vtables are not used, so skip emission entirely.
+	if (offset_to_top != 0) {
+		return;
+	}
+
 	auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
 
 	if (g_enable_debug_output)
