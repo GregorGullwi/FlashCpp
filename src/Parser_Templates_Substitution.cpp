@@ -10,7 +10,6 @@ namespace {
 
 size_t getSubstitutedTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 	if (arg.pointer_depth > 0 ||
-		arg.ref_qualifier != ReferenceQualifier::None ||
 		arg.category() == TypeCategory::FunctionPointer ||
 		arg.category() == TypeCategory::MemberFunctionPointer ||
 		arg.category() == TypeCategory::MemberObjectPointer) {
