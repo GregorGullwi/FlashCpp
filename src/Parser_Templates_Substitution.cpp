@@ -8,6 +8,89 @@
 
 namespace {
 
+size_t getSubstitutedTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
+	if (arg.pointer_depth > 0 ||
+		arg.category() == TypeCategory::FunctionPointer ||
+		arg.category() == TypeCategory::MemberFunctionPointer ||
+		arg.category() == TypeCategory::MemberObjectPointer) {
+		return 8;
+	}
+
+	size_t size_in_bytes = get_type_size_bits(arg.category()) / 8;
+	if (size_in_bytes > 0) {
+		if (arg.is_array && arg.array_size.has_value()) {
+			return size_in_bytes * *arg.array_size;
+		}
+		return size_in_bytes;
+	}
+
+	if (arg.type_index.is_valid()) {
+		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(arg.type_index)) {
+			size_in_bytes = toSizeT(struct_info->sizeInBytes());
+		} else if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index); type_info && type_info->hasStoredSize()) {
+			size_in_bytes = toSizeT(type_info->sizeInBytes());
+		}
+	}
+
+	if (arg.is_array && arg.array_size.has_value() && size_in_bytes > 0) {
+		return size_in_bytes * *arg.array_size;
+	}
+	return size_in_bytes;
+}
+
+std::optional<ASTNode> tryFoldSubstitutedSizeofTypeNode(
+	const ASTNode& type_node,
+	const Token& sizeof_token) {
+	if (!type_node.is<TypeSpecifierNode>()) {
+		return std::nullopt;
+	}
+
+	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	size_t size_in_bytes = 0;
+
+	if (type_spec.is_array()) {
+		size_t element_size = static_cast<size_t>(type_spec.size_in_bits()) / 8;
+		if (type_spec.array_size().has_value()) {
+			size_in_bytes = element_size * *type_spec.array_size();
+		} else {
+			size_in_bytes = element_size;
+		}
+	} else if (type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+		size_in_bytes = static_cast<size_t>(type_spec.size_in_bits()) / 8;
+	} else if (type_spec.category() == TypeCategory::Struct && type_spec.type_index().is_valid()) {
+		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
+			size_in_bytes = toSizeT(struct_info->sizeInBytes());
+		}
+	} else {
+		size_in_bytes = static_cast<size_t>(type_spec.size_in_bits()) / 8;
+		if (size_in_bytes == 0 && type_spec.type_index().is_valid()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index()); type_info && type_info->hasStoredSize()) {
+				size_in_bytes = toSizeT(type_info->sizeInBytes());
+			}
+		}
+	}
+
+	if (size_in_bytes == 0) {
+		return std::nullopt;
+	}
+
+	StringBuilder size_builder;
+	std::string_view size_str = size_builder.append(size_in_bytes).commit();
+	Token literal_token(
+		Token::Type::Literal,
+		size_str,
+		sizeof_token.line(),
+		sizeof_token.column(),
+		sizeof_token.file_index());
+	return ASTNode::emplace_node<ExpressionNode>(
+		NumericLiteralNode(
+			literal_token,
+			static_cast<unsigned long long>(size_in_bytes),
+			TypeCategory::UnsignedLongLong,
+			TypeQualifier::None,
+			64));
+}
+
 ASTNode makeRebuiltConstructorCallNode(
 	const ConstructorCallNode& constructor_call,
 	ASTNode substituted_type,
@@ -889,7 +972,10 @@ ASTNode Parser::substituteTemplateParameters(
 									if (substituted_sizeof_type || tparam.name() != type_name || !arg.isTypeArgument())
 										return;
 
-									size_t type_size = get_type_size_bits(arg.category()) / 8;
+									size_t type_size = getSubstitutedTemplateArgumentSizeInBytes(arg);
+									if (type_size == 0) {
+										return;
+									}
 									StringBuilder size_builder;
 									std::string_view size_str = size_builder.append(type_size).commit();
 									Token literal_token(Token::Type::Literal, size_str,
@@ -907,6 +993,10 @@ ASTNode Parser::substituteTemplateParameters(
 
 					// Otherwise, recursively substitute the type node
 					ASTNode substituted_type = substituteTemplateParameters(type_or_expr, template_params, template_args);
+					if (auto folded_sizeof = tryFoldSubstitutedSizeofTypeNode(substituted_type, sizeof_expr.sizeof_token());
+						folded_sizeof.has_value()) {
+						return *folded_sizeof;
+					}
 					return emplace_node<ExpressionNode>(SizeofExprNode(substituted_type, sizeof_expr.sizeof_token()));
 				}
 			} else {
