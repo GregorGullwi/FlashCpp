@@ -118,6 +118,8 @@ struct TypeIndexArg {
 	bool is_array = false;
 	std::optional<size_t> array_size;  // nullopt for T[], value for T[N]
 	std::optional<FunctionSignature> function_signature; // Needed for function pointer identity
+	bool is_dependent = false;
+	StringHandle dependent_name{};
 
 	TypeIndexArg() = default;
 
@@ -133,7 +135,10 @@ struct TypeIndexArg {
 			   array_size == other.array_size &&
 			   function_signature.has_value() == other.function_signature.has_value() &&
 			   (!function_signature.has_value() ||
-				equalFunctionSignatureIdentity(*function_signature, *other.function_signature));
+				equalFunctionSignatureIdentity(*function_signature, *other.function_signature)) &&
+			   is_dependent == other.is_dependent &&
+			   // dependent_name only contributes when the arg is still dependent.
+			   (!is_dependent || dependent_name == other.dependent_name);
 	}
 
 	bool operator!=(const TypeIndexArg& other) const {
@@ -152,6 +157,10 @@ struct TypeIndexArg {
 		}
 		if (function_signature.has_value()) {
 			h ^= hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		h ^= std::hash<bool>{}(is_dependent) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (is_dependent && dependent_name.isValid()) {
+			h ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		return h;
 	}

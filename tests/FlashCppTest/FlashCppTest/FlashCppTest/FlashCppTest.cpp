@@ -168,6 +168,47 @@ TEST_CASE("Dependent and non-dependent type args produce different hashes") {
 	CHECK(TemplateTypeArgHash{}(plain_arg) != TemplateTypeArgHash{}(dependent_arg));
 }
 
+TEST_CASE("Non-dependent args with stale dependent_name compare equal") {
+	// Defensive test: if a TemplateTypeArg is resolved (is_dependent=false) but
+	// still carries a stale dependent_name from a prior dependent state, it must
+	// compare equal to a cleanly-constructed non-dependent arg with the same type.
+	// This matters for SpecializationKey lookup (TemplateRegistry_Pattern.h) and
+	// recordDeduction consistency checks, where two args representing the same
+	// concrete type must not be treated as different.
+	TemplateTypeArg arg1 = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int));
+	TemplateTypeArg arg2 = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int));
+	// Simulate stale dependent_name left over after resolution
+	arg2.dependent_name = StringTable::getOrInternStringHandle("T");
+
+	// operator== must ignore dependent_name when is_dependent is false
+	CHECK(arg1 == arg2);
+	// hash contract: a == b → hash(a) == hash(b)
+	CHECK(arg1.hash() == arg2.hash());
+	CHECK(TemplateTypeArgHash{}(arg1) == TemplateTypeArgHash{}(arg2));
+}
+
+TEST_CASE("Instantiated names distinguish dependent type args") {
+	TemplateTypeArg plain_arg = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int));
+	TemplateTypeArg dependent_arg = plain_arg;
+	dependent_arg.is_dependent = true;
+	dependent_arg.dependent_name = StringTable::getOrInternStringHandle("T");
+	std::vector<TemplateTypeArg> plain_args{plain_arg};
+	std::vector<TemplateTypeArg> dependent_args{dependent_arg};
+
+	auto plain_key = FlashCpp::makeInstantiationKey(
+		StringTable::getOrInternStringHandle("Wrapper"),
+		plain_args);
+	auto dependent_key = FlashCpp::makeInstantiationKey(
+		StringTable::getOrInternStringHandle("Wrapper"),
+		dependent_args);
+
+	CHECK_FALSE(plain_key == dependent_key);
+	CHECK(FlashCpp::TemplateInstantiationKeyHash{}(plain_key) !=
+		  FlashCpp::TemplateInstantiationKeyHash{}(dependent_key));
+	CHECK(FlashCpp::generateInstantiatedNameFromArgs("Wrapper", plain_args) !=
+		  FlashCpp::generateInstantiatedNameFromArgs("Wrapper", dependent_args));
+}
+
 TEST_CASE("ChunkedVector") {
 	ChunkedVector<int, 2> vec;
 	vec.push_back(1);

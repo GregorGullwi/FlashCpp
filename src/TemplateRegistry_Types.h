@@ -317,7 +317,8 @@ struct TemplateTypeArg {
 			  member_pointer_kind == other.member_pointer_kind &&
 			  is_value == other.is_value &&
 			  is_dependent == other.is_dependent &&
-			  dependent_name == other.dependent_name &&
+			  // dependent_name only contributes when the arg is still dependent.
+			  (!is_dependent || dependent_name == other.dependent_name) &&
 			  (!is_value || value == other.value) &&
 			  is_template_template_arg == other.is_template_template_arg &&
 			  (!is_template_template_arg || template_name_handle == other.template_name_handle)))
@@ -689,6 +690,8 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.is_array = arg.is_array;
 	result.array_size = arg.array_size;
 	result.function_signature = arg.function_signature;
+	result.is_dependent = arg.is_dependent;
+	result.dependent_name = arg.dependent_name;
 	return result;
 }
 
@@ -761,6 +764,7 @@ inline TemplateTypeArg materializeTemplateArg(
 	concrete_arg.is_array = arg_info.is_array;
 	concrete_arg.function_signature = arg_info.function_signature;
 	concrete_arg.dependent_name = arg_info.dependent_name;
+	concrete_arg.is_dependent = arg_info.dependent_name.isValid();
 
 	if (arg_info.dependent_name.isValid()) {
 		std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);

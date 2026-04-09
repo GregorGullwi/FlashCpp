@@ -849,6 +849,23 @@ TypeIndex Parser::substitute_template_parameter(
 	auto materializePlaceholderArgs = [&](const TypeInfo& placeholder_info) {
 		return materializeTemplateArgs(placeholder_info, template_params, template_args);
 	};
+	auto areTemplateArgsConcrete = [&](const std::vector<TemplateTypeArg>& args) {
+		for (const TemplateTypeArg& arg : args) {
+			if (arg.is_dependent) {
+				return false;
+			}
+			if (arg.is_value || !arg.type_index.is_valid()) {
+				continue;
+			}
+			const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index);
+			if (arg_type_info &&
+				(arg_type_info->is_incomplete_instantiation_ ||
+				 (arg_type_info->isTemplateInstantiation() && arg_type_info->getStructInfo() == nullptr))) {
+				return false;
+			}
+		}
+		return true;
+	};
 	auto instantiateAndNormalize =
 		[&](std::string_view template_name,
 			const std::vector<TemplateTypeArg>& concrete_args,
@@ -885,6 +902,9 @@ TypeIndex Parser::substitute_template_parameter(
 		}
 
 		std::vector<TemplateTypeArg> concrete_args = materializePlaceholderArgs(*placeholder_info);
+		if (!areTemplateArgsConcrete(concrete_args)) {
+			return false;
+		}
 		auto instantiated = instantiateAndNormalize(
 			base_template_name,
 			concrete_args,
@@ -988,14 +1008,16 @@ TypeIndex Parser::substitute_template_parameter(
 			auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 			if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 				std::vector<TemplateTypeArg> concrete_args = materializePlaceholderArgs(*placeholder_info);
-				instantiateAndNormalize(
-					base_template_name,
-					concrete_args,
-					/*force_eager=*/false);
-				const std::string_view instantiated_base = get_instantiated_class_name(base_template_name, concrete_args);
-				if (const TypeInfo* instantiated_member_type = lookupQualifiedMemberType(instantiated_base)) {
-					assignResolvedType(*instantiated_member_type);
-					substitution_applied = true;
+				if (areTemplateArgsConcrete(concrete_args)) {
+					instantiateAndNormalize(
+						base_template_name,
+						concrete_args,
+						/*force_eager=*/false);
+					const std::string_view instantiated_base = get_instantiated_class_name(base_template_name, concrete_args);
+					if (const TypeInfo* instantiated_member_type = lookupQualifiedMemberType(instantiated_base)) {
+						assignResolvedType(*instantiated_member_type);
+						substitution_applied = true;
+					}
 				}
 			}
 		}
