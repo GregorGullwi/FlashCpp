@@ -1855,9 +1855,10 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	}
 	generated_function_names_.insert(ctor_decl_op.mangled_name);
 
+	StringHandle base_ctor_mangled_name = ctor_decl_op.mangled_name;
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), node.name_token()));
 
-	enterConstructorScope(ctor_decl_op.mangled_name);
+	enterConstructorScope(base_ctor_mangled_name);
 
 		// C++11 Delegating constructor: if present, ONLY call the target constructor
 		// No base class or member initialization should happen
