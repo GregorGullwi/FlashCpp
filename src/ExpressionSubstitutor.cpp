@@ -518,12 +518,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						if (owner_template.has_value()) {
 							// Only class-template owners can be materialized here. Namespace-qualified
 							// calls like std::__atomic_impl::fn should skip this path entirely.
-							if (parser_.try_instantiate_class_template(owner_name, current_inst_args, true).has_value()) {
-								normalizePendingSemanticRoots();
-							}
-							std::string_view instantiated_owner = parser_.get_instantiated_class_name(owner_name, current_inst_args);
-							if (!instantiated_owner.empty()) {
-								owner_name = instantiated_owner;
+							Parser::AliasTemplateMaterializationResult materialized_owner =
+								parser_.materializeTemplateInstantiationForLookup(owner_name, current_inst_args);
+							if (!materialized_owner.instantiated_name.empty()) {
+								owner_name = materialized_owner.instantiated_name;
 							}
 						}
 					}
