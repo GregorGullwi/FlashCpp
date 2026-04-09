@@ -5607,33 +5607,34 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 			elements.push_back(std::move(elem));
 		}
 	} else {
+		size_t inner_size = 1;
+		for (size_t d : inner_dims)
+			inner_size *= d;
+
+		size_t cursor = 0;
 		for (size_t i = 0; i < outer_size; ++i) {
 			EvalResult elem;
-			if (i < init_list.size()) {
-				const ASTNode& initializer = init_list.initializers()[i];
+			if (cursor < init_list.size()) {
+				const ASTNode& initializer = init_list.initializers()[cursor];
 				if (initializer.is<InitializerListNode>()) {
 					// Nested brace-init list for inner array ({…} form).
 					elem = materialize_array_value_with_spec(
 						inner_type_spec,
 						initializer.as<InitializerListNode>(),
 						context, bindings);
+					cursor++;
 				} else {
-					// Single scalar in an otherwise mixed list: seed first element of inner array.
-					EvalResult scalar_result = bindings
-												   ? evaluate_expression_with_bindings_const(initializer, *bindings, context)
-												   : evaluate(initializer, context);
-					if (!scalar_result.success()) {
-						elem = std::move(scalar_result);
-					} else {
-						elem = make_zero_array_for_dims(inner_dims, type_spec.type());
-						EvalResult* target = &elem;
-						while (target->is_array && !target->array_elements.empty() && target->array_elements[0].is_array) {
-							target = &target->array_elements[0];
-						}
-						if (target->is_array && !target->array_elements.empty()) {
-							target->array_elements[0] = std::move(scalar_result);
-						}
+					// Mixed scalar/nested brace-init list: consume up to one inner array's worth of
+					// consecutive scalars, stopping before the next nested brace list.
+					InitializerListNode sub_init;
+					size_t consumed = 0;
+					while (consumed < inner_size && cursor < init_list.size() &&
+						   !init_list.initializers()[cursor].is<InitializerListNode>()) {
+						sub_init.add_initializer(init_list.initializers()[cursor]);
+						cursor++;
+						consumed++;
 					}
+					elem = materialize_array_value_with_spec(inner_type_spec, sub_init, context, bindings);
 				}
 			} else {
 				// Missing initializer: zero-initialise the entire inner array.
@@ -6461,6 +6462,21 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 	// The initializer should be an InitializerListNode for arrays
 	if (initializer->is<InitializerListNode>()) {
 		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
+
+		if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+			if (type_spec.array_dimension_count() > 1) {
+				EvalResult materialized = materialize_array_value_with_spec(type_spec, init_list, context, nullptr);
+				if (!materialized.success()) {
+					return materialized;
+				}
+				if (index >= materialized.array_elements.size()) {
+					return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(materialized.array_elements.size()) + ")");
+				}
+				return materialized.array_elements[index];
+			}
+		}
+
 		const auto& elements = init_list.initializers();
 
 		if (index >= elements.size()) {
