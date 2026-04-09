@@ -4884,8 +4884,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							*explicit_template_args);
 					std::string_view instantiated_class_name = materialized_owner.instantiated_name;
 					if (instantiated_class_name.empty()) {
-						instantiated_class_name =
-							get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
+						return ParseResult::error(
+							"Failed to materialize template owner for qualified lookup",
+							identifier_token);
 					}
 
 					// Create a token with the instantiated name to pass to parse_qualified_identifier_after_template
