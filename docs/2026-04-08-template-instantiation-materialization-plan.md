@@ -6,6 +6,27 @@
 ## Next agent starting point
 
 - Latest completed slice:
+  - added `Parser::materializeTemplateInstantiationForLookup` in
+    `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser.h` so parser-owned
+    materialization now covers alias templates, ordinary template instantiations,
+    registry fallback, and pending-sema normalization behind one helper
+  - switched the remaining `ExpressionSubstitutor.cpp` template-name recovery sites
+    to that helper instead of open-coded
+    `instantiate_and_register_base_template(...)` /
+    `get_instantiated_class_name(...)` fallback logic
+  - hardened instantiated class-template type-alias registration in
+    `src/Parser_Templates_Inst_ClassTemplate.cpp` so dependent
+    `Base$placeholder::member` alias targets are materialized against the current
+    concrete template arguments and pinned under qualified owner names
+  - extended the struct-local alias consumer path in `src/ExpressionSubstitutor.cpp`
+    so nested alias uses like `holder<B>::selected::value` rematerialize the
+    deferred alias target before constexpr/static-member normalization
+  - added `tests/test_alias_template_nested_member_value_ret42.cpp` to cover nested
+    deferred alias/member consumption inside an instantiated class template
+  - Validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+    - 1994 pass, 125 expected-fail
   - introduced `Parser::AliasTemplateMaterializationResult` in
     `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser.h` so deferred alias-template
     materialization keeps both the instantiated base name and any resolved concrete `TypeInfo`
@@ -20,15 +41,14 @@
 - Validation after this slice: `make main CXX=clang++` and `bash tests/run_all_tests.sh` —
   1949 pass, 0 fail.
 - Recommended next steps after this slice:
-  1. Reuse `AliasTemplateMaterializationResult` from `src/ExpressionSubstitutor.cpp` and delete the
-     remaining open-coded `instantiate_and_register_base_template(...)` /
-     `get_instantiated_class_name(...)` recovery there.
-  2. Investigate deferred nested member aliases inside instantiated class templates (for example a
-     `holder<B>::selected` alias that names `typename choose_value_alias<B>::type`): the return-type
-     path now materializes correctly, but nested alias consumers still look like they can retain the
-     dependent placeholder too long.
-  3. Continue Phase 1 extraction work by moving `materialize_placeholder_args`
+  1. Continue Phase 2 / Phase 3 extraction work by moving `materialize_placeholder_args`
      (`src/Parser_Templates_Inst_Deduction.cpp:2059-2178`) into a reusable `Parser` helper.
+  2. Collapse the remaining exact/full-specialization nested-alias publication paths onto one
+     shared helper so qualified member aliases do not depend on whether they were first reached
+     from eager class instantiation, exact-specialization caching, or a late consumer.
+  3. Audit other instantiated-owner alias consumers beyond `ExpressionSubstitutor.cpp`
+     (constexpr member lookup, lazy member materialization, IR-triggered lookups) and route them
+     through the same qualified nested-alias materialization rule.
 ### Earlier completed work on this branch
 
 - Completed in this slice:

@@ -735,24 +735,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		std::vector<TemplateTypeArg> inst_args = collectCurrentInstantiationArgs();
 
 		if (!inst_args.empty()) {
-			std::string_view template_name_to_instantiate = base_template_name;
-			std::string_view instantiated_name =
-				parser_.instantiate_and_register_base_template(template_name_to_instantiate, inst_args);
-			if (!instantiated_name.empty()) {
-				normalizePendingSemanticRoots();
-			} else {
-				auto registry_hit = gTemplateRegistry.getInstantiation(
-					StringTable::getOrInternStringHandle(base_template_name), inst_args);
-				if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
-					instantiated_name = StringTable::getStringView(
-						registry_hit->as<StructDeclarationNode>().name());
-				} else {
-					instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
-					if (instantiated_name.empty()) {
-						instantiated_name = template_name_to_instantiate;
-					}
-				}
-			}
+			Parser::AliasTemplateMaterializationResult materialized_base =
+				parser_.materializeTemplateInstantiationForLookup(base_template_name, inst_args);
+			std::string_view instantiated_name = materialized_base.instantiated_name;
 
 			// Build the corrected qualified function name
 			StringBuilder new_func_name_builder;
@@ -986,6 +971,27 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 
 	// Get the namespace name (e.g., "R1_T")
 	std::string_view ns_name = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
+	auto collectCurrentTemplateArgs = [&]() {
+		std::vector<TemplateTypeArg> current_args;
+		if (!template_param_order_.empty()) {
+			for (std::string_view param_name : template_param_order_) {
+				auto it = param_map_.find(param_name);
+				if (it != param_map_.end()) {
+					current_args.push_back(it->second);
+				}
+			}
+		} else {
+			for (const auto& [param_name, param_arg] : param_map_) {
+				(void)param_name;
+				current_args.push_back(param_arg);
+			}
+		}
+		for (const auto& [pack_name, pack_args] : pack_map_) {
+			(void)pack_name;
+			current_args.insert(current_args.end(), pack_args.begin(), pack_args.end());
+		}
+		return current_args;
+	};
 
 	// Check if the entire namespace name is a template parameter (e.g., _R1::num where _R1 is typename _R1)
 	// This handles patterns like _R1::num where _R1 is substituted with a concrete struct type
@@ -1009,11 +1015,11 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 						for (const auto& stored_arg : type_info->templateArgs()) {
 							concrete_inst_args.push_back(toTemplateTypeArg(stored_arg));
 						}
-						std::string_view template_name_to_instantiate = base_name;
-						std::string_view instantiated_name =
-							parser_.instantiate_and_register_base_template(template_name_to_instantiate, concrete_inst_args);
-						if (!instantiated_name.empty()) {
-							type_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+						Parser::AliasTemplateMaterializationResult materialized_type =
+							parser_.materializeTemplateInstantiationForLookup(base_name, concrete_inst_args);
+						if (!materialized_type.instantiated_name.empty()) {
+							type_name_handle = StringTable::getOrInternStringHandle(
+								materialized_type.instantiated_name);
 						}
 					}
 				}
@@ -1065,6 +1071,72 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			}
 			if (resolved_type_info != nullptr) {
 				StringHandle resolved_name_handle = resolved_type_info->name();
+				std::string_view materialization_target_name =
+					StringTable::getStringView(resolved_name_handle);
+				if (const TypeInfo* direct_alias_target_info =
+						tryGetTypeInfo(alias_info->type_index_)) {
+					std::string_view direct_alias_target_name =
+						StringTable::getStringView(direct_alias_target_info->name());
+					if (direct_alias_target_name.find("::") != std::string_view::npos) {
+						materialization_target_name = direct_alias_target_name;
+					}
+				}
+				size_t member_sep = materialization_target_name.rfind("::");
+				if (member_sep != std::string_view::npos) {
+					std::string_view dependent_base_name =
+						materialization_target_name.substr(0, member_sep);
+					std::string_view dependent_member_name =
+						materialization_target_name.substr(member_sep + 2);
+					std::string_view base_template_name = extractBaseTemplateName(dependent_base_name);
+					if (!base_template_name.empty()) {
+						std::vector<TemplateTypeArg> current_inst_args = collectCurrentTemplateArgs();
+						if (!current_inst_args.empty()) {
+							Parser::AliasTemplateMaterializationResult materialized_alias_base =
+								parser_.materializeTemplateInstantiationForLookup(
+									base_template_name,
+									current_inst_args);
+							if (!materialized_alias_base.instantiated_name.empty()) {
+								StringHandle concrete_member_handle = StringTable::getOrInternStringHandle(
+									StringBuilder()
+										.append(materialized_alias_base.instantiated_name)
+										.append("::")
+										.append(dependent_member_name)
+										.commit());
+								auto concrete_member_it = getTypesByNameMap().find(concrete_member_handle);
+								if (concrete_member_it != getTypesByNameMap().end() &&
+									concrete_member_it->second != nullptr) {
+									resolved_type_info = concrete_member_it->second;
+									resolved_name_handle = concrete_member_it->second->name();
+								} else if (StringTable::getStringView(resolved_name_handle) ==
+										   dependent_member_name) {
+									TypeIndex resolved_member_index =
+										resolved_type_info->registeredTypeIndex().withCategory(
+											resolved_type_info->typeEnum());
+									TypeSpecifierNode concrete_member_spec(
+										resolved_member_index,
+										resolved_type_info->sizeInBits(),
+										Token(),
+										CVQualifier::None,
+										ReferenceQualifier::None);
+									if (const TypeSpecifierNode* existing_alias_spec =
+											resolved_type_info->aliasTypeSpecifier()) {
+										concrete_member_spec = *existing_alias_spec;
+									}
+									TypeInfo& concrete_member_info = add_type_alias_copy(
+										concrete_member_handle,
+										resolved_member_index,
+										resolved_type_info->sizeInBits().value,
+										concrete_member_spec);
+									getTypesByNameMap().insert_or_assign(
+										concrete_member_handle,
+										&concrete_member_info);
+									resolved_type_info = &concrete_member_info;
+									resolved_name_handle = concrete_member_info.name();
+								}
+							}
+						}
+					}
+				}
 				NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
 					NamespaceRegistry::GLOBAL_NAMESPACE,
 					resolved_name_handle);
@@ -1174,46 +1246,15 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	// in getTypesByNameMap(), or it's a non-template namespace), fall back to using the full param_map_.
 	// This handles cases like pack expansion bases where no TypeInfo exists.
 	if (inst_args.empty()) {
-		if (!template_param_order_.empty()) {
-			for (std::string_view param_name : template_param_order_) {
-				auto it = param_map_.find(param_name);
-				if (it != param_map_.end()) {
-					inst_args.push_back(it->second);
-				}
-			}
-		} else {
-			for (const auto& [param_name, param_arg] : param_map_) {
-				inst_args.push_back(param_arg);
-			}
-		}
-
-		// Also check pack_map_ for variadic template arguments
-		for (const auto& [pack_name, pack_args] : pack_map_) {
-			inst_args.insert(inst_args.end(), pack_args.begin(), pack_args.end());
-		}
+		inst_args = collectCurrentTemplateArgs();
 	}
 
 	if (!inst_args.empty()) {
 		FLASH_LOG(Templates, Debug, "  Triggering instantiation of template '", base_template_name,
 				  "' with ", inst_args.size(), " arguments");
-		std::string_view template_name_to_instantiate = base_template_name;
-		std::string_view instantiated_name =
-			parser_.instantiate_and_register_base_template(template_name_to_instantiate, inst_args);
-		if (!instantiated_name.empty()) {
-			parser_.normalizePendingSemanticRootsIfAvailable();
-		} else {
-			auto registry_hit = gTemplateRegistry.getInstantiation(
-				StringTable::getOrInternStringHandle(base_template_name), inst_args);
-			if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
-				instantiated_name = StringTable::getStringView(
-					registry_hit->as<StructDeclarationNode>().name());
-			} else {
-				instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
-				if (instantiated_name.empty()) {
-					instantiated_name = template_name_to_instantiate;
-				}
-			}
-		}
+		Parser::AliasTemplateMaterializationResult materialized_namespace =
+			parser_.materializeTemplateInstantiationForLookup(base_template_name, inst_args);
+		std::string_view instantiated_name = materialized_namespace.instantiated_name;
 
 		FLASH_LOG(Templates, Debug, "  Substituted namespace: ", ns_name, " -> ", instantiated_name);
 

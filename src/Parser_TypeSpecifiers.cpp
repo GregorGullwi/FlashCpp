@@ -1103,15 +1103,7 @@ ParseResult Parser::parse_type_specifier() {
 						FLASH_LOG(Parser, Debug, "Using deferred instantiation for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
 
 						AliasTemplateMaterializationResult materialized_alias =
-							materializeAliasTemplateInstantiation(type_name, *template_args);
-						if (!materialized_alias.instantiated_name.empty()) {
-							normalizePendingSemanticRootsIfAvailable();
-							if (materialized_alias.resolved_type_info == nullptr) {
-								materialized_alias.resolved_type_info = findTypeByName(
-									StringTable::getOrInternStringHandle(
-										materialized_alias.instantiated_name));
-							}
-						}
+							materializeTemplateInstantiationForLookup(type_name, *template_args);
 						if (std::optional<ParseResult> finalized_alias =
 								finalizeInstantiatedAliasType(
 									materialized_alias.instantiated_name,

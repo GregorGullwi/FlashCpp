@@ -197,6 +197,50 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	return result;
 }
 
+Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiationForLookup(
+	std::string_view template_name,
+	const std::vector<TemplateTypeArg>& template_args) {
+	if (gTemplateRegistry.lookup_alias_template(template_name).has_value()) {
+		AliasTemplateMaterializationResult alias_result =
+			materializeAliasTemplateInstantiation(template_name, template_args);
+		if (!alias_result.instantiated_name.empty()) {
+			normalizePendingSemanticRootsIfAvailable();
+			if (alias_result.resolved_type_info == nullptr) {
+				alias_result.resolved_type_info =
+					findTypeByName(StringTable::getOrInternStringHandle(alias_result.instantiated_name));
+			}
+		}
+		return alias_result;
+	}
+
+	AliasTemplateMaterializationResult result;
+	std::string_view template_name_to_instantiate = template_name;
+	result.instantiated_name =
+		instantiate_and_register_base_template(template_name_to_instantiate, template_args);
+	if (!result.instantiated_name.empty()) {
+		normalizePendingSemanticRootsIfAvailable();
+	} else {
+		auto registry_hit = gTemplateRegistry.getInstantiation(
+			StringTable::getOrInternStringHandle(template_name), template_args);
+		if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
+			result.instantiated_name = StringTable::getStringView(
+				registry_hit->as<StructDeclarationNode>().name());
+		} else {
+			result.instantiated_name =
+				get_instantiated_class_name(template_name, template_args);
+			if (result.instantiated_name.empty()) {
+				result.instantiated_name = template_name_to_instantiate;
+			}
+		}
+	}
+
+	if (!result.instantiated_name.empty()) {
+		result.resolved_type_info =
+			findTypeByName(StringTable::getOrInternStringHandle(result.instantiated_name));
+	}
+	return result;
+}
+
 bool Parser::resolveAliasTemplateInstantiation(
 	TypeSpecifierNode& type_spec,
 	std::string_view alias_template_name,

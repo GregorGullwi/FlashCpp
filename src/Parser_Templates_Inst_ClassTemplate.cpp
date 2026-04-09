@@ -6020,6 +6020,77 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 
+		if (const TypeInfo* original_alias_target_info = tryGetTypeInfo(alias_type_spec.type_index())) {
+			std::string_view original_alias_target_name =
+				StringTable::getStringView(original_alias_target_info->name());
+			size_t member_sep = original_alias_target_name.rfind("::");
+			if (member_sep != std::string_view::npos) {
+				std::string_view dependent_base_name =
+					original_alias_target_name.substr(0, member_sep);
+				std::string_view dependent_member_name =
+					original_alias_target_name.substr(member_sep + 2);
+				if (const TypeInfo* dependent_base_info = findTypeByName(
+						StringTable::getOrInternStringHandle(dependent_base_name));
+					dependent_base_info && dependent_base_info->isTemplateInstantiation()) {
+					std::string_view base_template_name =
+						StringTable::getStringView(dependent_base_info->baseTemplateName());
+					AliasTemplateMaterializationResult materialized_alias_base =
+						materializeTemplateInstantiationForLookup(
+							base_template_name,
+							template_args_to_use);
+					if (!materialized_alias_base.instantiated_name.empty()) {
+						StringHandle concrete_member_handle =
+							StringTable::getOrInternStringHandle(
+								StringBuilder()
+									.append(materialized_alias_base.instantiated_name)
+									.append("::")
+									.append(dependent_member_name)
+									.commit());
+						TypeInfo* concrete_member_info = nullptr;
+						auto concrete_member_it = getTypesByNameMap().find(concrete_member_handle);
+						if (concrete_member_it != getTypesByNameMap().end() &&
+							concrete_member_it->second != nullptr) {
+							concrete_member_info = concrete_member_it->second;
+						} else if (const TypeInfo* resolved_member_source =
+								tryGetTypeInfo(substituted_type_index);
+								resolved_member_source != nullptr) {
+							TypeIndex resolved_member_index =
+								resolved_member_source->registeredTypeIndex().withCategory(
+									resolved_member_source->typeEnum());
+							TypeSpecifierNode concrete_member_spec(
+								resolved_member_index,
+								resolved_member_source->sizeInBits(),
+								Token(),
+								CVQualifier::None,
+								ReferenceQualifier::None);
+							if (const TypeSpecifierNode* existing_alias_spec =
+									resolved_member_source->aliasTypeSpecifier()) {
+								concrete_member_spec = *existing_alias_spec;
+							}
+							concrete_member_info = &add_type_alias_copy(
+								concrete_member_handle,
+								resolved_member_index,
+								resolved_member_source->sizeInBits().value,
+								concrete_member_spec);
+							getTypesByNameMap().insert_or_assign(
+								concrete_member_handle,
+								concrete_member_info);
+						}
+
+						if (concrete_member_info != nullptr) {
+							substituted_type =
+								concrete_member_info->typeEnum();
+							substituted_type_index =
+								concrete_member_info->registeredTypeIndex().withCategory(
+									concrete_member_info->typeEnum());
+							substituted_size =
+								concrete_member_info->sizeInBits().value;
+						}
+					}
+				}
+			}
+		}
+
 		// Ensure size is computed for primitive type aliases that were substituted from template parameters.
 		// When 'typedef T value_type' in a template is instantiated with T=long, the alias type category
 		// is correctly set to Long but size_in_bits may still be 0 from the unsubstituted pattern.
