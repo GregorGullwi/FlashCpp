@@ -5612,10 +5612,11 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 			inner_size *= d;
 
 		size_t cursor = 0;
+		const auto& initializers = init_list.initializers();
 		for (size_t i = 0; i < outer_size; ++i) {
 			EvalResult elem;
 			if (cursor < init_list.size()) {
-				const ASTNode& initializer = init_list.initializers()[cursor];
+				const ASTNode& initializer = initializers[cursor];
 				if (initializer.is<InitializerListNode>()) {
 					// Nested brace-init list for inner array ({…} form).
 					elem = materialize_array_value_with_spec(
@@ -5629,8 +5630,8 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 					InitializerListNode sub_init;
 					size_t consumed = 0;
 					while (consumed < inner_size && cursor < init_list.size() &&
-						   !init_list.initializers()[cursor].is<InitializerListNode>()) {
-						sub_init.add_initializer(init_list.initializers()[cursor]);
+						   !initializers[cursor].is<InitializerListNode>()) {
+						sub_init.add_initializer(initializers[cursor]);
 						cursor++;
 						consumed++;
 					}
@@ -6462,9 +6463,10 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 	// The initializer should be an InitializerListNode for arrays
 	if (initializer->is<InitializerListNode>()) {
 		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
+		const auto& type_node = var_decl.declaration().type_node();
 
-		if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+		if (type_node.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 			if (type_spec.array_dimension_count() > 1) {
 				EvalResult materialized = materialize_array_value_with_spec(type_spec, init_list, context, nullptr);
 				if (!materialized.success()) {
