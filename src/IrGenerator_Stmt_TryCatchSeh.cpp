@@ -83,6 +83,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 		StringBuilder catch_end_sb;
 		catch_end_sb.append("__catch_end_").append(current_try_id).append("_").append(catch_index);
 		std::string_view catch_end_label = catch_end_sb.commit();
+		TempVar exception_temp = TempVar(0);
 
 			// If this is a typed catch (not catch(...))
 		if (!catch_clause.is_catch_all()) {
@@ -94,7 +95,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			TypeIndex type_index = type_node.type_index();
 
 				// Allocate a temporary for the caught exception
-			TempVar exception_temp = var_counter.next();
+			exception_temp = var_counter.next();
 
 				// Emit CatchBegin marker with exception type and qualifiers
 			CatchBeginOp catch_op;
@@ -111,45 +112,6 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			}
 			ir_.addInstruction(IrInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token()));
 
-				// Add the exception variable to the symbol table for the catch block scope
-			symbol_table.enter_scope(ScopeType::Block);
-
-				// Register the exception parameter in the symbol table
-			std::string_view exception_var_name = decl.identifier_token().value();
-			if (!exception_var_name.empty()) {
-					// Create a variable declaration for the exception parameter
-				VariableDeclOp decl_op;
-				decl_op.type_index = type_node.type_index();
-				decl_op.size_in_bits = SizeInBits{type_node.size_in_bits()};
-				decl_op.var_name = StringTable::getOrInternStringHandle(exception_var_name);
-				decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
-
-					// Create a TypedValue for the initializer
-				TypedValue init_value;
-				init_value.setType(type_node.type());
-				init_value.size_in_bits = SizeInBits{type_node.size_in_bits()};
-				init_value.type_index = type_index;
-				init_value.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
-				init_value.value = exception_temp;
-				if (type_node.is_rvalue_reference()) {
-					init_value.ref_qualifier = ReferenceQualifier::RValueReference;
-				} else if (type_node.is_reference()) {
-					init_value.ref_qualifier = ReferenceQualifier::LValueReference;
-				}
-				decl_op.initializer = init_value;
-				decl_op.use_copy_constructor = !type_node.is_reference() &&
-											   type_node.category() == TypeCategory::Struct &&
-											   type_index.is_valid();
-
-				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-				decl_op.is_array = false;
-				decl_op.custom_alignment = 0;
-
-				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), decl.identifier_token()));
-
-					// Add to symbol table
-				symbol_table.insert(exception_var_name, exception_decl);
-			}
 		} else {
 				// catch(...) - catches all exceptions
 			CatchBeginOp catch_op;
@@ -165,30 +127,83 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				catch_op.cleanup_vars = try_cleanup_vars;
 			}
 			ir_.addInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token());
-			symbol_table.enter_scope(ScopeType::Block);
 		}
 
-			// Visit catch block body
-		catch_scope_stack_.push_back({scope_stack_.size(), active_try_statement_depth_});
-		visit(catch_clause.body());
+		{
+			IrScopeGuard catch_scope_guard{*this, catch_clause.catch_token()};
+			catch_scope_guard.enter();
 
-			// C++20 [except.handle]/15: in a constructor or destructor function-try-block,
-			// if control reaches the end of a catch handler without an explicit throw or
-			// return, the current exception is implicitly rethrown.  Emit Rethrow here while
-			// the catch scope is still on the stack so emitActiveCatchScopeDestructors works.
-			// When the body already ends with throw/return the Rethrow is dead code but harmless.
-		if (node.is_ctor_dtor_function_try()) {
-			emitActiveCatchScopeDestructors();
-			ir_.addInstruction(IrOpcode::Rethrow, {}, catch_clause.catch_token());
+			if (!catch_clause.is_catch_all()) {
+				const auto& exception_decl = *catch_clause.exception_declaration();
+				const auto& decl = exception_decl.as<DeclarationNode>();
+				const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+				TypeIndex type_index = type_node.type_index();
+				std::string_view exception_var_name = decl.identifier_token().value();
+
+				if (!exception_var_name.empty()) {
+						// Create a variable declaration for the exception parameter
+					VariableDeclOp decl_op;
+					decl_op.type_index = type_index;
+					decl_op.size_in_bits = SizeInBits{type_node.size_in_bits()};
+					decl_op.var_name = StringTable::getOrInternStringHandle(exception_var_name);
+					decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
+
+						// Create a TypedValue for the initializer
+					TypedValue init_value;
+					init_value.setType(type_node.type());
+					init_value.size_in_bits = SizeInBits{type_node.size_in_bits()};
+					init_value.type_index = type_index;
+					init_value.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
+					init_value.value = exception_temp;
+					if (type_node.is_rvalue_reference()) {
+						init_value.ref_qualifier = ReferenceQualifier::RValueReference;
+					} else if (type_node.is_reference()) {
+						init_value.ref_qualifier = ReferenceQualifier::LValueReference;
+					}
+					decl_op.initializer = init_value;
+					decl_op.use_copy_constructor = !type_node.is_reference() &&
+												   type_node.category() == TypeCategory::Struct &&
+												   type_index.is_valid();
+
+					decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+					decl_op.is_array = false;
+					decl_op.custom_alignment = 0;
+
+					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), decl.identifier_token()));
+					symbol_table.insert(exception_var_name, exception_decl);
+
+					if (!type_node.is_reference() && type_node.category() == TypeCategory::Struct && type_index.is_valid()) {
+						if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+							const StructTypeInfo* struct_info = type_info->getStructInfo();
+							if (struct_info && struct_info->hasDestructor()) {
+								registerVariableWithDestructor(
+									std::string(exception_var_name),
+									std::string(StringTable::getStringView(type_info->name())));
+							}
+						}
+					}
+				}
+			}
+
+				// Visit catch block body
+			catch_scope_stack_.push_back({scope_stack_.size() - 1, active_try_statement_depth_});
+			visit(catch_clause.body());
+
+				// C++20 [except.handle]/15: in a constructor or destructor function-try-block,
+				// if control reaches the end of a catch handler without an explicit throw or
+				// return, the current exception is implicitly rethrown.  Emit Rethrow here while
+				// the catch scope is still on the stack so emitActiveCatchScopeDestructors works.
+				// When the body already ends with throw/return the Rethrow is dead code but harmless.
+			if (node.is_ctor_dtor_function_try()) {
+				emitActiveCatchScopeDestructors();
+				ir_.addInstruction(IrOpcode::Rethrow, {}, catch_clause.catch_token());
+			}
+
+			catch_scope_stack_.pop_back();
 		}
-
-		catch_scope_stack_.pop_back();
 
 			// Emit CatchEnd marker
 		ir_.addInstruction(IrOpcode::CatchEnd, CatchEndOp{.continuation_label = end_label}, catch_clause.catch_token());
-
-			// Exit catch block scope
-		symbol_table.exit_scope();
 
 			// Jump to end after catch block
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, catch_clause.catch_token()));

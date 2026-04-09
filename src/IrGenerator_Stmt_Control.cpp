@@ -16,17 +16,15 @@ void AstToIr::visitBlockNode(const BlockNode& node) {
 		}
 	});
 
-		// For blocks that only contain two or more variable declarations, don't enter a new scope
-		// This handles comma-separated declarations like: int a = 1, b = 2;
-		// which the parser represents as a BlockNode containing multiple VariableDeclarationNodes
-		// Single variable declarations in blocks (e.g., { int x = 5; }) should create a scope
+	// For blocks that only contain two or more variable declarations, don't enter a new scope
+	// This handles comma-separated declarations like: int a = 1, b = 2;
+	// which the parser represents as a BlockNode containing multiple VariableDeclarationNodes
+	// Single variable declarations in blocks (e.g., { int x = 5; }) should create a scope
 	bool enter_scope = !(only_var_decls && var_decl_count > 1);
+	IrScopeGuard block_scope_guard{*this};
 
 	if (enter_scope) {
-			// Enter a new scope
-		symbol_table.enter_scope(ScopeType::Block);
-		enterScope();
-		ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
+		block_scope_guard.enter();
 	}
 
 		// Visit all statements in the block
@@ -34,12 +32,6 @@ void AstToIr::visitBlockNode(const BlockNode& node) {
 		visit(statement);
 	});
 
-	if (enter_scope) {
-			// Exit scope and call destructors
-		exitScope();
-		ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
-		symbol_table.exit_scope();
-	}
 }
 
 void AstToIr::visitIfStatementNode(const IfStatementNode& node) {
@@ -154,8 +146,8 @@ void AstToIr::visitIfStatementNode(const IfStatementNode& node) {
 
 void AstToIr::visitForStatementNode(const ForStatementNode& node) {
 		// Enter a new scope for the for loop (C++ standard: for-init-statement creates a scope)
-	symbol_table.enter_scope(ScopeType::Block);
-	enterScope();
+	IrScopeGuard for_scope_guard{*this};
+	for_scope_guard.enter();
 
 		// Generate unique labels for this for loop
 	static size_t for_counter = 0;
@@ -230,9 +222,6 @@ void AstToIr::visitForStatementNode(const ForStatementNode& node) {
 	ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
 	popLoopSehDepth();
 
-		// Exit the for loop scope
-	exitScope();
-	symbol_table.exit_scope();
 }
 
 void AstToIr::visitWhileStatementNode(const WhileStatementNode& node) {
@@ -502,7 +491,7 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 	// C++20 [stmt.ranged]: when an init-statement is present, wrap it in its
 	// own block scope so the init variable does not leak into the enclosing
 	// scope and repeated range-for loops can reuse the same name.
-	IrScopeGuard init_scope_guard{*this};
+	IrScopeGuard init_scope_guard{*this, node.for_token()};
 
 		// Desugar ranged for loop into traditional for loop
 		// For arrays: for (int x : arr) { body } becomes:
@@ -806,24 +795,19 @@ void AstToIr::visitRangedForArray(const RangedForStatementNode& node, std::strin
 	ASTNode init_expr = ASTNode::emplace_node<ExpressionNode>(
 		UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), begin_deref_expr, true));
 
-	symbol_table.enter_scope(ScopeType::Block);
-	enterScope();
-	ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
+	{
+		IrScopeGuard loop_var_scope_guard{*this, node.for_token()};
+		loop_var_scope_guard.enter();
 
-	auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
+		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
-		// Generate IR for loop variable declaration
-	visit(loop_var_with_init);
+			// Generate IR for loop variable declaration
+		visit(loop_var_with_init);
 
-		// Visit loop body - use visit() to properly handle block scopes
-	auto body_stmt = node.get_body_statement();
-	visit(body_stmt);
-
-		// Exit the loop variable scope so destructors fire each iteration,
-		// before the increment and branch-back.
-	exitScope();
-	ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
-	symbol_table.exit_scope();
+			// Visit loop body - use visit() to properly handle block scopes
+		auto body_stmt = node.get_body_statement();
+		visit(body_stmt);
+	}
 
 		// Loop increment label (for continue statements)
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
@@ -1061,24 +1045,19 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		init_expr = dereference_call;
 	}
 
-	symbol_table.enter_scope(ScopeType::Block);
-	enterScope();
-	ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
+	{
+		IrScopeGuard loop_var_scope_guard{*this, node.for_token()};
+		loop_var_scope_guard.enter();
 
-	auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
+		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
-		// Generate IR for loop variable declaration
-	visit(loop_var_with_init);
+			// Generate IR for loop variable declaration
+		visit(loop_var_with_init);
 
-		// Visit loop body - use visit() to properly handle block scopes
-	auto body_stmt = node.get_body_statement();
-	visit(body_stmt);
-
-		// Exit the loop variable scope so destructors fire each iteration,
-		// before the increment and branch-back.
-	exitScope();
-	ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
-	symbol_table.exit_scope();
+			// Visit loop body - use visit() to properly handle block scopes
+		auto body_stmt = node.get_body_statement();
+		visit(body_stmt);
+	}
 
 		// Loop increment label (for continue statements)
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
