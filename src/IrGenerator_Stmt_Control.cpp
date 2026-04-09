@@ -499,34 +499,10 @@ void AstToIr::visitSwitchStatementNode(const SwitchStatementNode& node) {
 }
 
 void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
-	struct RangedForInitScopeGuard {
-		AstToIr& ast_to_ir;
-		bool active = false;
-
-		void enter() {
-			if (active) {
-				return;
-			}
-			ast_to_ir.symbol_table.enter_scope(ScopeType::Block);
-			ast_to_ir.enterScope();
-			ast_to_ir.ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
-			active = true;
-		}
-
-		void exit() {
-			if (!active) {
-				return;
-			}
-			ast_to_ir.exitScope();
-			ast_to_ir.ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
-			ast_to_ir.symbol_table.exit_scope();
-			active = false;
-		}
-
-		~RangedForInitScopeGuard() {
-			exit();
-		}
-	} init_scope_guard{*this};
+	// C++20 [stmt.ranged]: when an init-statement is present, wrap it in its
+	// own block scope so the init variable does not leak into the enclosing
+	// scope and repeated range-for loops can reuse the same name.
+	IrScopeGuard init_scope_guard{*this};
 
 		// Desugar ranged for loop into traditional for loop
 		// For arrays: for (int x : arr) { body } becomes:
