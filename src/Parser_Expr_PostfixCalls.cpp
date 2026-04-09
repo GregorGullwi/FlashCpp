@@ -764,9 +764,6 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				// Build the qualified name for lookup
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 
-				// Try to instantiate the class template
-				try_instantiate_class_template(qualified_name, *template_args);
-
 				// Parse the brace initialization using the helper
 				ParseResult brace_init_result = parse_template_brace_initialization(*template_args, qualified_name, final_identifier);
 				if (brace_init_result.is_error()) {
