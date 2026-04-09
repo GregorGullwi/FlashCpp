@@ -581,6 +581,9 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 				}
 			}
 		}
+		if (!inferred_range_type.has_value() && node.resolved_range_type().has_value()) {
+			inferred_range_type = node.resolved_range_type();
+		}
 		if (!inferred_range_type.has_value()) {
 			if (!parser_) {
 				FLASH_LOG(Codegen, Error, "Parser is required to infer non-identifier range expression types");

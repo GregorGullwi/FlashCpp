@@ -269,7 +269,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					!candidate->is_function_pointer() &&
 					!candidate->has_function_signature());
 		};
-		if (sema_ && sema_normalized_current_function_) {
+		if (sema_) {
 			callee_type = sema_->getExpressionType(object_node);
 		}
 		const bool needs_parser_fallback = isInconclusiveCallableType(callee_type);
@@ -424,7 +424,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 	auto resolveStructTypeFromReceiverNode = [&](const ASTNode& receiver_node) -> std::optional<TypeSpecifierNode> {
 		if (receiver_node.is<ExpressionNode>()) {
-			if (sema_ && sema_normalized_current_function_) {
+			if (sema_) {
 				if (auto sema_type = sema_->getExpressionType(receiver_node); sema_type.has_value()) {
 					if (auto resolved_sema_type = normalizeResolvedStructType(*sema_type); resolved_sema_type.has_value()) {
 						return resolved_sema_type;

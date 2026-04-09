@@ -5,14 +5,66 @@
 
 ## Next agent starting point
 
-- Completed in the latest follow-up slice:
-  - extracted `Parser::normalizeDependentNonTypeTemplateArgs(...)` from `parse_type_specifier`
-  - extracted shared `Parser::resolveAliasTemplateInstantiation(...)` helpers and routed top-level plus struct-local `using` alias registration through them
-- Validation after that slice: `make main CXX=clang++` and `bash tests/run_all_tests.sh`
-- Recommended next steps:
-  1. Reuse `resolveAliasTemplateInstantiation(...)` from the general type-specifier alias-template path so alias materialization stops diverging between alias declarations and ordinary type parsing.
-  2. Collapse the remaining alias/class instantiation fallback logic in `ExpressionSubstitutor.cpp` onto the same structured helper result instead of open-coded name recovery.
-  3. Continue Phase 1 by moving more dependent non-type argument creation sites to one canonical helper/carrier rather than rebuilding `is_value` / `is_dependent` state ad hoc.
+- Latest completed slice:
+  - introduced `Parser::AliasTemplateMaterializationResult` in
+    `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser.h` so deferred alias-template
+    materialization keeps both the instantiated base name and any resolved concrete `TypeInfo`
+  - switched the deferred alias path in `src/Parser_TypeSpecifiers.cpp` to use that structured
+    helper for template-parsing and implicit/explicit member-alias cases instead of the older
+    open-coded alias-chain/class-instantiation fallback
+  - consolidated deferred alias member lookup / placeholder creation in
+    `src/Parser_TypeSpecifiers.cpp` onto one local finalization path and normalized pending
+    semantic roots before consuming the materialized result
+  - added `tests/test_alias_template_deferred_return_ret0.cpp` to cover deferred alias-template
+    materialization in a template return type (`choose_value_t<B>`)
+- Validation after this slice: `make main CXX=clang++` and `bash tests/run_all_tests.sh` —
+  1949 pass, 0 fail.
+- Recommended next steps after this slice:
+  1. Reuse `AliasTemplateMaterializationResult` from `src/ExpressionSubstitutor.cpp` and delete the
+     remaining open-coded `instantiate_and_register_base_template(...)` /
+     `get_instantiated_class_name(...)` recovery there.
+  2. Investigate deferred nested member aliases inside instantiated class templates (for example a
+     `holder<B>::selected` alias that names `typename choose_value_alias<B>::type`): the return-type
+     path now materializes correctly, but nested alias consumers still look like they can retain the
+     dependent placeholder too long.
+  3. Continue Phase 1 extraction work by moving `materialize_placeholder_args`
+     (`src/Parser_Templates_Inst_Deduction.cpp:2059-2178`) into a reusable `Parser` helper.
+### Earlier completed work on this branch
+
+- Completed in this slice:
+  - reused `resolveAliasTemplateInstantiation(...)` from `src/Parser_Templates_Inst_Substitution.cpp`
+    in `src/Parser_TypeSpecifiers.cpp` for ordinary deferred alias-template type parsing when we
+    are outside template instantiation and the alias target is not an implicit `::member` alias
+  - collapsed the duplicated ordinary alias-template member-resolution tail in
+    `src/Parser_TypeSpecifiers.cpp` onto one local finalization path
+  - kept the legacy deferred fallback for template-instantiation/member-alias cases so
+    `enable_if_t`/SFINAE placeholder behavior still matches the pre-refactor path
+  - added `tests/test_alias_template_chain_type_specifier_ret42.cpp`
+  - added `tests/test_alias_template_member_type_type_specifier_ret42.cpp`
+  - fixed the struct-local type alias static-initializer bug by teaching `ExpressionSubstitutor`
+    to resolve `QualifiedIdentifierNode` namespaces like `constant_type` through the current
+    instantiated owner type before falling back to template-name parsing
+  - threaded the current instantiated owner type name into the static-member substitution paths in
+    `Parser_Templates_Inst_ClassTemplate.cpp` and `Parser_Templates_Lazy.cpp`
+  - added `tests/test_struct_local_alias_static_init_ret0.cpp`
+  - Fixed hash drift in `ValueArgKey::hash()` (`src/TemplateTypes.h:200`): changed
+    `std::hash<uint32_t>{}(dependent_name.handle)` to `std::hash<StringHandle>{}(dependent_name)`
+    so both `TemplateTypeArg::hash()` and `ValueArgKey::hash()` use the same hash strategy for
+    dependent names (Phase 1 canonicalization).
+  - added `tests/test_toplevel_alias_chain_nontype_ret42.cpp` — covers top-level `using` alias
+    chain with bool/int non-type template arguments (`bool_constant<true/false>` accessed through
+    `true_type`/`false_type` aliases and `cond_val<B>`).
+  - removed the fixed struct-local alias static-init issue from `docs/KNOWN_ISSUES.md`
+- Validation: `make main CXX=clang++` and `bash tests/run_all_tests.sh` — 1948 pass, 0 fail.
+- Recommended next steps (priority order):
+  1. Extend the shared alias-template helper path to template-instantiation and implicit-member
+     deferred aliases (`enable_if_t`, `typename alias<...>::type`) without regressing the existing
+     placeholder/member lookup semantics.
+  2. Collapse the remaining alias/class instantiation fallback logic in `ExpressionSubstitutor.cpp`
+     onto the same structured helper result instead of open-coded name recovery.
+  3. Continue Phase 1: extract `materialize_placeholder_args` lambda
+     (`src/Parser_Templates_Inst_Deduction.cpp:2059-2178`) to a `Parser` member function (template
+     on `ParamContainer`/`ArgContainer` like the existing `resolveBaseInitializerNameForTemplateArgs`).
 
 ---
 

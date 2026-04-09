@@ -203,6 +203,10 @@ public:
 	auto get_body_statement() const { return body_statement_; }
 	auto get_init_statement() const { return init_statement_; }
 	bool has_init_statement() const { return init_statement_.has_value(); }
+	const std::optional<TypeSpecifierNode>& resolved_range_type() const { return resolved_range_type_; }
+	void set_resolved_range_type(std::optional<TypeSpecifierNode> type) {
+		resolved_range_type_ = std::move(type);
+	}
 	const FunctionDeclarationNode* resolved_dereference_function() const { return resolved_dereference_function_; }
 	void set_resolved_dereference_function(const FunctionDeclarationNode* func) {
 		resolved_dereference_function_ = func;
@@ -237,6 +241,7 @@ private:
 	ASTNode range_expression_;	   // the array or container to iterate over
 	ASTNode body_statement_;
 	std::optional<ASTNode> init_statement_;	// C++20: for (init; decl : range)
+	std::optional<TypeSpecifierNode> resolved_range_type_;
 	const FunctionDeclarationNode* resolved_dereference_function_ = nullptr;
 	const FunctionDeclarationNode* resolved_member_begin_function_ = nullptr;
 	const FunctionDeclarationNode* resolved_member_end_function_ = nullptr;
