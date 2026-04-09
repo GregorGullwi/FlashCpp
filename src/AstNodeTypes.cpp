@@ -1448,6 +1448,11 @@ bool StructTypeInfo::finalizeWithBases() {
 	members.reserve(old_members.size());
 	total_size = toSizeInBytes(current_offset);
 	alignment = max_alignment;
+	active_bitfield_unit_offset = 0;
+	active_bitfield_unit_size = 0;
+	active_bitfield_unit_alignment = 0;
+	active_bitfield_bits_used = 0;
+	active_bitfield_type = TypeCategory::Invalid;
 	for (auto& member : old_members) {
 		addMember(member.name, member.type_index, member.size, member.alignment, member.access,
 				  std::move(member.default_initializer), member.reference_qualifier,
