@@ -274,7 +274,7 @@ private:
 	GlobalStaticBindingInfo resolveGlobalOrStaticBinding(const IdentifierNode& identifier);
 	std::optional<AddressComponents> analyzeAddressExpression(
 		const ExpressionNode& expr,
-		int accumulated_offset = 0);
+		int accumulated_offset);
 	std::optional<AddressComponents> makeAddressComponentsFromEvaluatedResult(
 		const ExprResult& expr_result,
 		int accumulated_offset) const;

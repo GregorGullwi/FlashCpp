@@ -581,7 +581,9 @@ ExprResult AstToIr::materializeAddressResult(
 		return emitComputedAddress(std::move(*direct_components));
 	}
 
-	if (auto addr_components = analyzeAddressExpression(expr); addr_components.has_value()) {
+	// Fallback: re-analyze the AST to build address components (offset starts at 0
+	// because makeAddressComponentsFromEvaluatedResult already failed above).
+	if (auto addr_components = analyzeAddressExpression(expr, /*accumulated_offset=*/0); addr_components.has_value()) {
 		return emitComputedAddress(std::move(*addr_components));
 	}
 
@@ -808,8 +810,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				ValueStorage::ContainsData);
 		}
 
-			// Try new one-pass address analysis first
-		auto addr_components = analyzeAddressExpression(operandExpr);
+		// Try new one-pass address analysis first
+		auto addr_components = analyzeAddressExpression(operandExpr, /*accumulated_offset=*/0);
 		if (addr_components.has_value()) {
 				// Successfully analyzed - generate ComputeAddress IR
 			TempVar result_var = var_counter.next();
