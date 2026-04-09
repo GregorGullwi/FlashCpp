@@ -4144,18 +4144,33 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// Check for template class brace initialization: Template<T>{}
 						// This creates a temporary object using value-initialization or aggregate-initialization
 						if (!identifierType && peek() == "{"_tok) {
-							// This is template class brace initialization (e.g., type_identity<int>{})
-							// Check if any template arguments are dependent
-							bool has_dependent_args = false;
-							for (const auto& arg : *explicit_template_args) {
-								if (arg.is_dependent || arg.is_pack) {
-									has_dependent_args = true;
-									break;
+							bool is_template_brace_initialization =
+								gTemplateRegistry.lookupTemplate(identifier_token.value()).has_value() ||
+								gTemplateRegistry.lookup_alias_template(identifier_token.value()).has_value();
+							if (!is_template_brace_initialization) {
+								NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+								if (!current_namespace.isGlobal()) {
+									StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+										current_namespace,
+										identifier_token.handle());
+									std::string_view qualified_name =
+										StringTable::getStringView(qualified_handle);
+									is_template_brace_initialization =
+										gTemplateRegistry.lookupTemplate(qualified_name).has_value() ||
+										gTemplateRegistry.lookup_alias_template(qualified_name).has_value();
 								}
 							}
+							if (is_template_brace_initialization) {
+								// This is template class brace initialization (e.g., type_identity<int>{})
+								// Check if any template arguments are dependent
+								bool has_dependent_args = false;
+								for (const auto& arg : *explicit_template_args) {
+									if (arg.is_dependent || arg.is_pack) {
+										has_dependent_args = true;
+										break;
+									}
+								}
 
-							auto class_template_opt = gTemplateRegistry.lookupTemplate(identifier_token.value());
-							if (class_template_opt.has_value()) {
 								FLASH_LOG(Parser, Debug, "Template brace initialization detected for '", identifier_token.value(), "', has_dependent_args=", has_dependent_args);
 
 								if (has_dependent_args) {
@@ -4193,77 +4208,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									return ParseResult::success(*result);
 								}
 
-								// Non-dependent template arguments - instantiate the class template
-								// Add returned StructDeclarationNode to ast_nodes_ so visitStructDeclarationNode
-								// is called during codegen and member function bodies get generated.
-								{
-									auto instantiated_struct = try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
-									if (instantiated_struct.has_value() && instantiated_struct->is<StructDeclarationNode>()) {
-										registerLateMaterializedTopLevelNode(*instantiated_struct);
-									}
+								ParseResult brace_init_result = parse_template_brace_initialization(
+									*explicit_template_args,
+									identifier_token.value(),
+									identifier_token);
+								if (brace_init_result.is_error()) {
+									return brace_init_result;
 								}
-
-								// Build the instantiated type name to look up the type
-								std::string_view instantiated_name = get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
-
-								// Look up the instantiated type
-								auto type_handle = StringTable::getOrInternStringHandle(instantiated_name);
-								auto type_it = getTypesByNameMap().find(type_handle);
-
-								// If not found, the type may have been registered with filled-in default template args
-								// (e.g., basic_string_view<char> → basic_string_view<char, char_traits<char>>)
-								// Check the cache for the instantiated struct node to get the correct name
-								if (type_it == getTypesByNameMap().end()) {
-									auto cached = gTemplateRegistry.getInstantiation(
-										StringTable::getOrInternStringHandle(identifier_token.value()),
-										*explicit_template_args);
-									if (cached.has_value() && cached->is<StructDeclarationNode>()) {
-										StringHandle cached_name = cached->as<StructDeclarationNode>().name();
-										auto cached_it = getTypesByNameMap().find(cached_name);
-										if (cached_it != getTypesByNameMap().end()) {
-											type_handle = cached_name;
-											type_it = cached_it;
-										}
-									}
-								}
-
-								if (type_it != getTypesByNameMap().end()) {
-									// Found the instantiated type - now parse the brace initializer
-									advance(); // consume '{'
-
-									ChunkedVector<ASTNode> args;
-									while (!peek().is_eof() && peek() != "}"_tok) {
-										auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-										if (argResult.is_error()) {
-											return argResult;
-										}
-										if (auto node = argResult.node()) {
-											args.push_back(*node);
-										}
-
-										if (peek() == ","_tok) {
-											advance(); // consume ','
-										} else if (peek() != "}"_tok) {
-											return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
-										}
-									}
-
-									if (!consume("}"_tok)) {
-										return ParseResult::error("Expected '}' after brace initializer", current_token_);
-									}
-
-									// Create TypeSpecifierNode for the instantiated class
-									const TypeInfo& type_info = *type_it->second;
-									TypeIndex type_index = type_info.type_index_;
-									SizeInBits type_size{};
-									if (type_info.struct_info_) {
-										type_size = type_info.struct_info_->sizeInBits();
-									}
-									auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
-
-									// Create ConstructorCallNode
-									result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
-									return ParseResult::success(*result);
+								if (brace_init_result.node().has_value()) {
+									return ParseResult::success(*brace_init_result.node());
 								}
 							}
 						}

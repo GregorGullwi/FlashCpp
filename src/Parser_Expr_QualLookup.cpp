@@ -15,40 +15,10 @@ ParseResult Parser::parse_template_brace_initialization(
 	std::string_view template_name,
 	const Token& identifier_token) {
 
-	// Build the instantiated type name
-	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
-
-	// Look up the instantiated type
-	auto type_handle = StringTable::getOrInternStringHandle(instantiated_name);
-	auto type_it = getTypesByNameMap().find(type_handle);
-	if (type_it == getTypesByNameMap().end()) {
-		// Type not found with provided args - try filling in default template arguments
-		auto template_lookup = gTemplateRegistry.lookupTemplate(template_name);
-		if (template_lookup.has_value() && template_lookup->is<TemplateClassDeclarationNode>()) {
-			const auto& template_class = template_lookup->as<TemplateClassDeclarationNode>();
-			const auto& template_params = template_class.template_parameters();
-			if (template_args.size() < template_params.size()) {
-				std::vector<TemplateTypeArg> filled_args = template_args;
-				for (size_t i = filled_args.size(); i < template_params.size(); ++i) {
-					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-					if (param.has_default() && param.kind() == TemplateParameterKind::Type) {
-						const ASTNode& default_node = param.default_value();
-						if (default_node.is<TypeSpecifierNode>()) {
-							filled_args.push_back(TemplateTypeArg(default_node.as<TypeSpecifierNode>()));
-						}
-					}
-				}
-				if (filled_args.size() > template_args.size()) {
-					instantiated_name = get_instantiated_class_name(template_name, filled_args);
-					type_handle = StringTable::getOrInternStringHandle(instantiated_name);
-					type_it = getTypesByNameMap().find(type_handle);
-				}
-			}
-		}
-		if (type_it == getTypesByNameMap().end()) {
-			// Type not found - instantiation may have failed
-			return ParseResult::error("Template instantiation failed or type not found", identifier_token);
-		}
+	AliasTemplateMaterializationResult materialized_type =
+		materializeTemplateInstantiationForLookup(template_name, template_args);
+	if (materialized_type.instantiated_name.empty() || materialized_type.resolved_type_info == nullptr) {
+		return ParseResult::error("Template instantiation failed or type not found", identifier_token);
 	}
 
 	// Determine which token checking method to use based on what token is '{'
@@ -115,15 +85,16 @@ ParseResult Parser::parse_template_brace_initialization(
 	}
 
 	// Create TypeSpecifierNode for the instantiated class
-	const TypeInfo& type_info = *type_it->second;
+	const TypeInfo& type_info = *materialized_type.resolved_type_info;
 	TypeIndex type_index = type_info.type_index_;
 	SizeInBits type_size{};
 	if (type_info.struct_info_) {
 		type_size = type_info.struct_info_->sizeInBits();
 	}
-	Token type_token(Token::Type::Identifier, instantiated_name,
+	Token type_token(Token::Type::Identifier, materialized_type.instantiated_name,
 					 identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-	auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, type_token, CVQualifier::None, ReferenceQualifier::None);
+	auto type_spec_node = emplace_node<TypeSpecifierNode>(
+		type_index.withCategory(type_info.typeEnum()), type_size, type_token, CVQualifier::None, ReferenceQualifier::None);
 
 	// Create ConstructorCallNode
 	std::optional<ASTNode> result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), type_token));
