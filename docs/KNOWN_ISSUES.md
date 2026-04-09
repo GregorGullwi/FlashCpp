@@ -36,6 +36,15 @@ validated.
   location; the parser construction site in `parse_for_loop()` would need to pass
   the consumed `for` keyword token. (PR #1178)
 
+- `visitForStatementNode` (`src/IrGenerator_Stmt_Control.cpp:155-236`) calls
+  `enter_scope`/`enterScope` and `exitScope`/`exit_scope` but does **not** emit
+  `ScopeBegin`/`ScopeEnd` IR instructions, unlike every other scope site
+  (`visitBlockNode`, `visitRangedForArray`, `visitRangedForBeginEnd`). This is
+  pre-existing and has not caused a known failure yet, but any downstream IR pass
+  or destructor-emission logic that relies on `ScopeBegin`/`ScopeEnd` for scope
+  boundary detection would silently skip for-loop scopes. Should be investigated
+  and fixed, ideally by adopting `IrScopeGuard` there. (PR #1178)
+
 - Member access on a ternary object in address-of context can lose its struct
   `type_index` and fail with "struct type info not found for type_index=0".
   A minimal repro is:
