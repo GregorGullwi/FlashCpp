@@ -288,6 +288,37 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 		return result;
 	}
 
+	if (std::holds_alternative<StringLiteralNode>(expr)) {
+		ExprResult string_result = generateStringLiteralIr(std::get<StringLiteralNode>(expr));
+		if (const auto* temp_var = std::get_if<TempVar>(&string_result.value)) {
+			AddressComponents result;
+			result.base = *temp_var;
+			result.total_member_offset = accumulated_offset;
+			result.final_type_index = nativeTypeIndex(TypeCategory::Char);
+			result.final_size_bits = SizeInBits{8};
+			result.pointer_depth = PointerDepth{};
+			return result;
+		}
+		return std::nullopt;
+	}
+
+	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+		ExprResult ternary_result = visitExpressionNode(expr, ExpressionContext::LValueAddress);
+		if (!exprResultAlreadyHoldsRuntimeAddress(ternary_result)) {
+			return std::nullopt;
+		}
+		if (const auto* temp_var = std::get_if<TempVar>(&ternary_result.value)) {
+			AddressComponents result;
+			result.base = *temp_var;
+			result.total_member_offset = accumulated_offset;
+			result.final_type_index = ternary_result.type_index;
+			result.final_size_bits = ternary_result.size_in_bits;
+			result.pointer_depth = ternary_result.pointer_depth;
+			return result;
+		}
+		return std::nullopt;
+	}
+
 		// Handle MemberAccess (obj.member)
 	if (std::holds_alternative<MemberAccessNode>(expr)) {
 		const MemberAccessNode& memberAccess = std::get<MemberAccessNode>(expr);
@@ -436,6 +467,137 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 
 		// Unsupported expression type
 	return std::nullopt;
+}
+
+bool AstToIr::exprResultAlreadyHoldsRuntimeAddress(const ExprResult& expr_result) const {
+	if (expr_result.storage != ValueStorage::ContainsAddress) {
+		return false;
+	}
+
+	if (std::holds_alternative<unsigned long long>(expr_result.value)) {
+		return true;
+	}
+
+	const TempVar* temp_var = std::get_if<TempVar>(&expr_result.value);
+	if (!temp_var) {
+		return false;
+	}
+
+	const TempVarMetadata metadata = getTempVarMetadata(*temp_var);
+	if (metadata.is_address || metadata.holds_address_only) {
+		return true;
+	}
+
+	return metadata.lvalue_info.has_value() &&
+		   metadata.lvalue_info->kind == LValueInfo::Kind::Indirect;
+}
+
+ExprResult AstToIr::materializeAddressResult(
+	const ExpressionNode& expr,
+	ExprResult expr_result,
+	const Token& token) {
+	const auto makeAddressOnlyResult = [&](TempVar address_temp, TypeIndex type_index,
+										   SizeInBits pointee_size_bits,
+										   PointerDepth pointer_depth,
+										   ValueCategory value_category) {
+		setTempVarMetadata(address_temp, TempVarMetadata::makeAddressOnly(type_index, pointee_size_bits, value_category));
+		return makeExprResult(type_index, pointee_size_bits, IrOperand{address_temp}, pointer_depth, ValueStorage::ContainsAddress);
+	};
+
+	if (exprResultAlreadyHoldsRuntimeAddress(expr_result)) {
+		return expr_result;
+	}
+
+	if (std::holds_alternative<StringLiteralNode>(expr)) {
+		if (const auto* temp_var = std::get_if<TempVar>(&expr_result.value)) {
+			return makeAddressOnlyResult(
+				*temp_var,
+				nativeTypeIndex(TypeCategory::Char),
+				SizeInBits{8},
+				PointerDepth{},
+				ValueCategory::LValue);
+		}
+		throw InternalError("String literal address materialization requires TempVar storage");
+	}
+
+	if (auto addr_components = analyzeAddressExpression(expr); addr_components.has_value()) {
+		TempVar address_temp = var_counter.next();
+		ComputeAddressOp compute_addr_op;
+		compute_addr_op.result = address_temp;
+		compute_addr_op.base = addr_components->base;
+		compute_addr_op.array_indices = std::move(addr_components->array_indices);
+		compute_addr_op.total_member_offset = addr_components->total_member_offset;
+		compute_addr_op.result_type_index = addr_components->final_type_index;
+		compute_addr_op.result_size_bits = addr_components->final_size_bits;
+		ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), token));
+
+		ValueCategory value_category = ValueCategory::LValue;
+		if (const auto* temp_var = std::get_if<TempVar>(&expr_result.value)) {
+			const TempVarMetadata metadata = getTempVarMetadata(*temp_var);
+			if (metadata.category == ValueCategory::XValue) {
+				value_category = ValueCategory::XValue;
+			}
+		}
+
+		TypeIndex result_type_index = expr_result.type_index.is_valid()
+			? expr_result.type_index
+			: addr_components->final_type_index;
+		PointerDepth result_pointer_depth = expr_result.pointer_depth.value != 0
+			? expr_result.pointer_depth
+			: addr_components->pointer_depth;
+		SizeInBits pointee_size_bits = expr_result.size_in_bits.is_set()
+			? expr_result.size_in_bits
+			: addr_components->final_size_bits;
+
+		return makeAddressOnlyResult(
+			address_temp,
+			result_type_index,
+			pointee_size_bits,
+			result_pointer_depth,
+			value_category);
+	}
+
+	if (expr_result.storage == ValueStorage::ContainsAddress) {
+		if (const auto* temp_var = std::get_if<TempVar>(&expr_result.value)) {
+			const TempVarMetadata metadata = getTempVarMetadata(*temp_var);
+			if (metadata.lvalue_info.has_value() &&
+				metadata.lvalue_info->kind != LValueInfo::Kind::Indirect) {
+				throw InternalError("Lvalue-address result requires explicit address materialization");
+			}
+		}
+		return expr_result;
+	}
+
+	if (const auto* base_name = std::get_if<StringHandle>(&expr_result.value)) {
+		TempVar address_temp = emitAddressOf(
+			expr_result.category(),
+			expr_result.size_in_bits.value,
+			IrValue(*base_name),
+			token);
+		return makeAddressOnlyResult(
+			address_temp,
+			expr_result.type_index,
+			expr_result.size_in_bits,
+			expr_result.pointer_depth,
+			ValueCategory::LValue);
+	}
+
+	if (const auto* temp_var = std::get_if<TempVar>(&expr_result.value)) {
+		TempVar address_temp = emitAddressOf(
+			expr_result.category(),
+			expr_result.size_in_bits.value,
+			IrValue(*temp_var),
+			token);
+		ValueCategory value_category = getTempVarMetadata(*temp_var).category;
+		return makeAddressOnlyResult(
+			address_temp,
+			expr_result.type_index,
+			expr_result.size_in_bits,
+			expr_result.pointer_depth,
+			value_category);
+	}
+
+	throw InternalError("Unsupported operand for address materialization");
 }
 
 std::optional<ExprResult> AstToIr::decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token) {
@@ -604,6 +766,19 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		// Special handling for &arr[index] - generate address directly without loading value
 	if (unaryOperatorNode.op() == "&" && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 		const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+
+		if (std::holds_alternative<TernaryOperatorNode>(operandExpr)) {
+			ExprResult operand_address = materializeAddressResult(
+				operandExpr,
+				visitExpressionNode(operandExpr, ExpressionContext::LValueAddress),
+				unaryOperatorNode.get_token());
+			return makeExprResult(
+				operand_address.type_index.withCategory(operand_address.category()),
+				SizeInBits{POINTER_SIZE_BITS},
+				operand_address.value,
+				PointerDepth{operand_address.pointer_depth.value + 1},
+				ValueStorage::ContainsData);
+		}
 
 			// Try new one-pass address analysis first
 		auto addr_components = analyzeAddressExpression(operandExpr);
@@ -1358,6 +1533,12 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		// Address-of operator: &x
 		// Get the current pointer depth from operandIrOperands
 		unsigned long long operand_ptr_depth = static_cast<unsigned long long>(operandIrOperands.pointer_depth.value);
+		if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			operandIrOperands = materializeAddressResult(
+				unaryOperatorNode.get_operand().as<ExpressionNode>(),
+				std::move(operandIrOperands),
+				unaryOperatorNode.get_token());
+		}
 		if (operandIrOperands.storage == ValueStorage::ContainsAddress) {
 			return makeExprResult(
 				operandIrOperands.type_index.withCategory(operandType),

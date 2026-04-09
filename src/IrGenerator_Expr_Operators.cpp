@@ -449,7 +449,14 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 
 			makeReferenceAddressValue(address_temp);
 		} else if (tempAlreadyHoldsAddress()) {
-			value = toTypedValue(argument_result);
+			ExprResult address_result = argument_result;
+			if (argument.is<ExpressionNode>()) {
+				address_result = materializeAddressResult(
+					argument.as<ExpressionNode>(),
+					address_result,
+					token);
+			}
+			value = toTypedValue(address_result);
 		} else {
 			TempVar addr_var = emitAddressOf(
 				argument_result.category(),
@@ -717,33 +724,6 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		return nativeTypeIndex(merged_type);
 	};
 
-	auto materializeAddressResult = [&](ExprResult branch_result) {
-		if (branch_result.storage == ValueStorage::ContainsAddress) {
-			return branch_result;
-		}
-		if (const auto* base_name = std::get_if<StringHandle>(&branch_result.value)) {
-			TempVar addr_var = emitAddressOf(
-				branch_result.category(),
-				branch_result.size_in_bits.value,
-				IrValue(*base_name),
-				ternaryNode.get_token());
-			branch_result.value = IrOperand{addr_var};
-			branch_result.storage = ValueStorage::ContainsAddress;
-			return branch_result;
-		}
-		if (const auto* temp_var = std::get_if<TempVar>(&branch_result.value)) {
-			TempVar addr_var = emitAddressOf(
-				branch_result.category(),
-				branch_result.size_in_bits.value,
-				IrValue(*temp_var),
-				ternaryNode.get_token());
-			branch_result.value = IrOperand{addr_var};
-			branch_result.storage = ValueStorage::ContainsAddress;
-			return branch_result;
-		}
-		throw InternalError("Conditional expression in lvalue-address context produced unsupported operand");
-	};
-
 	// True branch label
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = true_label}, ternaryNode.get_token()));
 
@@ -782,7 +762,10 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// Evaluate true expression
 	ExprResult true_result = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>(), context);
 	if (context == ExpressionContext::LValueAddress) {
-		true_result = materializeAddressResult(std::move(true_result));
+		true_result = materializeAddressResult(
+			ternaryNode.true_expr().as<ExpressionNode>(),
+			std::move(true_result),
+			ternaryNode.get_token());
 	}
 
 	// Finalize common_cat: if both sema and parser inference failed, fall back to
@@ -839,7 +822,10 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// Evaluate false expression
 	ExprResult false_result = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>(), context);
 	if (context == ExpressionContext::LValueAddress) {
-		false_result = materializeAddressResult(std::move(false_result));
+		false_result = materializeAddressResult(
+			ternaryNode.false_expr().as<ExpressionNode>(),
+			std::move(false_result),
+			ternaryNode.get_token());
 	}
 
 	// Convert false result to common type if needed (same reasoning as true branch above).
@@ -860,6 +846,22 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 
 	// End label (merge point)
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, ternaryNode.get_token()));
+
+	if (context == ExpressionContext::LValueAddress) {
+		ValueCategory value_category = ValueCategory::LValue;
+		if (const auto* temp_var = std::get_if<TempVar>(&true_result.value)) {
+			const TempVarMetadata metadata = getTempVarMetadata(*temp_var);
+			if (metadata.category == ValueCategory::XValue) {
+				value_category = ValueCategory::XValue;
+			}
+		}
+		setTempVarMetadata(
+			result_var,
+			TempVarMetadata::makeAddressOnly(
+				selectResultTypeIndex(common_type, true_result, &false_result),
+				SizeInBits{result_size},
+				value_category));
+	}
 
 	// Return the result variable
 	return makeExprResult(

@@ -275,6 +275,11 @@ private:
 	std::optional<AddressComponents> analyzeAddressExpression(
 		const ExpressionNode& expr,
 		int accumulated_offset = 0);
+	bool exprResultAlreadyHoldsRuntimeAddress(const ExprResult& expr_result) const;
+	ExprResult materializeAddressResult(
+		const ExpressionNode& expr,
+		ExprResult expr_result,
+		const Token& token);
 	ExprResult generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,
 									   ExpressionContext context = ExpressionContext::Load);
 	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode,
