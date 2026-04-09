@@ -241,6 +241,84 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 	return result;
 }
 
+const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
+	const TypeSpecifierNode& alias_type_spec,
+	TypeIndex fallback_type_index,
+	const std::vector<TemplateTypeArg>& template_args) {
+	const TypeInfo* original_alias_target_info = tryGetTypeInfo(alias_type_spec.type_index());
+	if (!original_alias_target_info) {
+		return nullptr;
+	}
+
+	std::string_view original_alias_target_name =
+		StringTable::getStringView(original_alias_target_info->name());
+	size_t member_sep = original_alias_target_name.rfind("::");
+	if (member_sep == std::string_view::npos) {
+		return nullptr;
+	}
+
+	std::string_view dependent_base_name =
+		original_alias_target_name.substr(0, member_sep);
+	std::string_view dependent_member_name =
+		original_alias_target_name.substr(member_sep + 2);
+	const TypeInfo* dependent_base_info = findTypeByName(
+		StringTable::getOrInternStringHandle(dependent_base_name));
+	if (!dependent_base_info || !dependent_base_info->isTemplateInstantiation()) {
+		return nullptr;
+	}
+
+	std::string_view base_template_name =
+		StringTable::getStringView(dependent_base_info->baseTemplateName());
+	AliasTemplateMaterializationResult materialized_alias_base =
+		materializeTemplateInstantiationForLookup(
+			base_template_name,
+			template_args);
+	if (materialized_alias_base.instantiated_name.empty()) {
+		return nullptr;
+	}
+
+	StringHandle concrete_member_handle =
+		StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(materialized_alias_base.instantiated_name)
+				.append("::")
+				.append(dependent_member_name)
+				.commit());
+	auto concrete_member_it = getTypesByNameMap().find(concrete_member_handle);
+	if (concrete_member_it != getTypesByNameMap().end() &&
+		concrete_member_it->second != nullptr) {
+		return concrete_member_it->second;
+	}
+
+	const TypeInfo* resolved_member_source = tryGetTypeInfo(fallback_type_index);
+	if (!resolved_member_source) {
+		return nullptr;
+	}
+
+	TypeIndex resolved_member_index =
+		resolved_member_source->registeredTypeIndex().withCategory(
+			resolved_member_source->typeEnum());
+	TypeSpecifierNode concrete_member_spec(
+		resolved_member_index,
+		resolved_member_source->sizeInBits(),
+		Token(),
+		CVQualifier::None,
+		ReferenceQualifier::None);
+	if (const TypeSpecifierNode* existing_alias_spec =
+			resolved_member_source->aliasTypeSpecifier()) {
+		concrete_member_spec = *existing_alias_spec;
+	}
+	TypeInfo& concrete_member_info = add_type_alias_copy(
+		concrete_member_handle,
+		resolved_member_index,
+		resolved_member_source->sizeInBits().value,
+		concrete_member_spec);
+	getTypesByNameMap().insert_or_assign(
+		concrete_member_handle,
+		&concrete_member_info);
+	return &concrete_member_info;
+}
+
 bool Parser::resolveAliasTemplateInstantiation(
 	TypeSpecifierNode& type_spec,
 	std::string_view alias_template_name,
@@ -1077,31 +1155,64 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 																						 .append("::")
 																						 .append(type_alias.alias_name));
 
-			// Check if already registered
-			if (getTypesByNameMap().find(qualified_alias_name) != getTypesByNameMap().end()) {
-				continue;  // Already registered
-			}
-
 			// Get the type information from the alias
 			const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
+			TypeIndex alias_target_index = alias_type_spec.type_index();
+			int alias_size_bits = alias_type_spec.size_in_bits();
+			TypeSpecifierNode alias_registration_type_spec = alias_type_spec;
+			if (const TypeInfo* concrete_member_info =
+					materializeInstantiatedMemberAliasTarget(
+						alias_type_spec,
+						alias_target_index,
+						template_args);
+				concrete_member_info != nullptr) {
+				alias_target_index =
+					concrete_member_info->registeredTypeIndex().withCategory(
+						concrete_member_info->typeEnum());
+				alias_size_bits = concrete_member_info->sizeInBits().value;
+				if (const TypeSpecifierNode* concrete_alias_spec =
+						concrete_member_info->aliasTypeSpecifier()) {
+					alias_registration_type_spec = *concrete_alias_spec;
+				} else {
+					alias_registration_type_spec.set_type_index(alias_target_index);
+					alias_registration_type_spec.set_category(concrete_member_info->typeEnum());
+					alias_registration_type_spec.set_size_in_bits(
+						concrete_member_info->sizeInBits());
+				}
+			}
 
 			// Register the type alias globally with its qualified name
-			auto& alias_type_info = add_type_alias_copy(
-				qualified_alias_name,
-				alias_type_spec.type_index(),
-				alias_type_spec.size_in_bits(),
-				alias_type_spec);
-			if (alias_type_spec.category() == TypeCategory::Enum) {
-				if (const TypeInfo* source_alias_type_info = tryGetTypeInfo(alias_type_spec.type_index());
+			TypeInfo* alias_info = nullptr;
+			auto existing_it = getTypesByNameMap().find(qualified_alias_name);
+			if (existing_it != getTypesByNameMap().end() && existing_it->second != nullptr) {
+				alias_info = existing_it->second;
+				const uint32_t alias_slot = alias_info->registeredTypeIndex().index();
+				alias_info->type_index_ = alias_target_index;
+				alias_info->registered_type_index_ = TypeIndex{alias_slot, TypeCategory::TypeAlias};
+				alias_info->fallback_size_bits_ = alias_size_bits;
+				alias_info->is_type_alias_ = true;
+				alias_info->clearAliasTypeSpecifier();
+				alias_info->setAliasTypeSpecifier(alias_registration_type_spec);
+			} else {
+				alias_info = &add_type_alias_copy(
+					qualified_alias_name,
+					alias_target_index,
+					alias_size_bits,
+					alias_registration_type_spec);
+			}
+			TypeInfo& alias_type_info = *alias_info;
+			if (alias_registration_type_spec.category() == TypeCategory::Enum) {
+				if (const TypeInfo* source_alias_type_info = tryGetTypeInfo(alias_target_index);
 					source_alias_type_info && source_alias_type_info->getEnumInfo()) {
 					const EnumTypeInfo* enum_info = source_alias_type_info->getEnumInfo();
 					alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
 				}
 			}
+			getTypesByNameMap().insert_or_assign(qualified_alias_name, &alias_type_info);
 
 			FLASH_LOG(Templates, Debug, "Registered type alias: ", StringTable::getStringView(qualified_alias_name),
-					  " -> type=", static_cast<int>(alias_type_spec.type()),
-					  ", type_index=", alias_type_spec.type_index());
+					  " -> type=", static_cast<int>(alias_registration_type_spec.type()),
+					  ", type_index=", alias_target_index);
 		}
 	};
 

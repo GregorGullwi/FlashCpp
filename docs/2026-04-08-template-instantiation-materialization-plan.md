@@ -5,7 +5,39 @@
 
 ## Next agent starting point
 
-- Latest completed slice:
+### Do this next
+
+1. Audit other instantiated-owner alias consumers beyond
+   `ExpressionSubstitutor.cpp`, starting with
+   `src/Parser_Expr_QualLookup.cpp`, which still has several open-coded
+   `instantiate_and_register_base_template(...)` /
+   `get_instantiated_class_name(...)` recovery paths in qualified lookup and
+   `substitute_template_parameter(...)`.
+2. Route those qualified-lookup / constexpr-member lookup consumers through the
+   same parser-owned materialization rules used by
+   `materializeTemplateInstantiationForLookup(...)`, so late consumers do not
+   depend on manually rebuilding instantiated names.
+3. After qualified lookup is clean, audit lazy member materialization and any
+   IR-triggered lookup sites for the same placeholder alias/name recovery drift.
+
+### Latest completed slice
+
+  - extracted the deduction-time `materialize_placeholder_args` logic from
+    `src/Parser_Templates_Inst_Deduction.cpp` into the reusable
+    `Parser::materializePlaceholderTemplateArgs(...)` helper in `src/Parser.h`
+    so dependent non-type placeholder materialization now lives behind one
+    parser-owned utility instead of a 100+ line local lambda
+  - added `Parser::materializeInstantiatedMemberAliasTarget(...)` in
+    `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser.h` and reused it
+    from the primary, partial-specialization, and full-specialization alias
+    registration paths
+  - updated the full-specialization alias publication path to refresh existing
+    qualified alias entries in place instead of silently keeping stale
+    placeholder-backed registrations
+  - Validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+    - 1994 pass, 125 expected-fail
   - added `Parser::materializeTemplateInstantiationForLookup` in
     `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser.h` so parser-owned
     materialization now covers alias templates, ordinary template instantiations,
@@ -23,10 +55,6 @@
     deferred alias target before constexpr/static-member normalization
   - added `tests/test_alias_template_nested_member_value_ret42.cpp` to cover nested
     deferred alias/member consumption inside an instantiated class template
-  - Validation after this slice:
-    - `.\build_flashcpp.bat`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
-    - 1994 pass, 125 expected-fail
   - introduced `Parser::AliasTemplateMaterializationResult` in
     `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser.h` so deferred alias-template
     materialization keeps both the instantiated base name and any resolved concrete `TypeInfo`
@@ -40,15 +68,6 @@
     materialization in a template return type (`choose_value_t<B>`)
 - Validation after this slice: `make main CXX=clang++` and `bash tests/run_all_tests.sh` —
   1949 pass, 0 fail.
-- Recommended next steps after this slice:
-  1. Continue Phase 2 / Phase 3 extraction work by moving `materialize_placeholder_args`
-     (`src/Parser_Templates_Inst_Deduction.cpp:2059-2178`) into a reusable `Parser` helper.
-  2. Collapse the remaining exact/full-specialization nested-alias publication paths onto one
-     shared helper so qualified member aliases do not depend on whether they were first reached
-     from eager class instantiation, exact-specialization caching, or a late consumer.
-  3. Audit other instantiated-owner alias consumers beyond `ExpressionSubstitutor.cpp`
-     (constexpr member lookup, lazy member materialization, IR-triggered lookups) and route them
-     through the same qualified nested-alias materialization rule.
 ### Earlier completed work on this branch
 
 - Completed in this slice:

@@ -955,6 +955,139 @@ private:
 
 		return base_name;
 	}
+	template <typename TemplateParamsContainer, typename TemplateArgsContainer>
+	std::vector<TemplateTypeArg> materializePlaceholderTemplateArgs(
+		const TypeInfo& placeholder_info,
+		const TemplateParamsContainer& template_params,
+		const TemplateArgsContainer& template_args) {
+		std::vector<TemplateTypeArg> concrete_args =
+			materializeTemplateArgs(placeholder_info, template_params, template_args);
+
+		const auto resolveConcreteBaseHandle = [&](std::string_view base_name) -> StringHandle {
+			auto base_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_name));
+			if (base_it == getTypesByNameMap().end() || base_it->second == nullptr) {
+				return {};
+			}
+
+			const TypeInfo* base_info = base_it->second;
+			if (!base_info->isTemplateInstantiation()) {
+				return base_info->name();
+			}
+
+			std::string_view nested_template_name =
+				StringTable::getStringView(base_info->baseTemplateName());
+			if (nested_template_name.empty()) {
+				return base_info->name();
+			}
+
+			std::vector<TemplateTypeArg> nested_args =
+				materializeTemplateArgs(*base_info, template_params, template_args);
+			try_instantiate_class_template(nested_template_name, nested_args);
+			std::string_view instantiated_nested_name =
+				get_instantiated_class_name(nested_template_name, nested_args);
+			if (instantiated_nested_name.empty()) {
+				return base_info->name();
+			}
+
+			return StringTable::getOrInternStringHandle(instantiated_nested_name);
+		};
+
+		for (auto& concrete_arg : concrete_args) {
+			if (!concrete_arg.is_value || !concrete_arg.dependent_name.isValid()) {
+				continue;
+			}
+
+			std::string_view dep_name = StringTable::getStringView(concrete_arg.dependent_name);
+			size_t scope_pos = dep_name.rfind("::");
+			if (scope_pos == std::string_view::npos) {
+				continue;
+			}
+
+			StringHandle concrete_base_handle =
+				resolveConcreteBaseHandle(dep_name.substr(0, scope_pos));
+			if (!concrete_base_handle.isValid()) {
+				continue;
+			}
+
+			std::string_view member_name = dep_name.substr(scope_pos + 2);
+			Token member_token(Token::Type::Identifier, member_name, 0, 0, 0);
+			NamespaceHandle member_ns = gNamespaceRegistry.getOrCreateNamespace(
+				NamespaceRegistry::GLOBAL_NAMESPACE,
+				concrete_base_handle);
+			QualifiedIdentifierNode& member_qual_id =
+				gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(member_ns, member_token);
+			ExpressionNode& member_expr =
+				gChunkedAnyStorage.emplace_back<ExpressionNode>(member_qual_id);
+			if (auto value = try_evaluate_constant_expression(ASTNode(&member_expr))) {
+				concrete_arg.is_dependent = false;
+				concrete_arg.dependent_name = {};
+				concrete_arg.type_index = nativeTypeIndex(value->type);
+				concrete_arg.value = value->value;
+				continue;
+			}
+
+			auto concrete_type_it = getTypesByNameMap().find(concrete_base_handle);
+			if (concrete_type_it == getTypesByNameMap().end() || concrete_type_it->second == nullptr) {
+				continue;
+			}
+
+			const TypeInfo* concrete_type_info = concrete_type_it->second;
+			if (concrete_type_info->isTemplateInstantiation()) {
+				std::string_view base_template_name =
+					StringTable::getStringView(concrete_type_info->baseTemplateName());
+				if (!base_template_name.empty()) {
+					std::vector<TemplateTypeArg> exact_args =
+						materializeTemplateArgs(*concrete_type_info, template_params, template_args);
+					auto specialization_ast =
+						gTemplateRegistry.lookupExactSpecialization(base_template_name, exact_args);
+					if (!specialization_ast.has_value()) {
+						specialization_ast =
+							gTemplateRegistry.matchSpecializationPattern(base_template_name, exact_args);
+					}
+					if (specialization_ast.has_value() && specialization_ast->is<StructDeclarationNode>()) {
+						const auto& specialization_struct =
+							specialization_ast->as<StructDeclarationNode>();
+						for (const auto& static_member_decl : specialization_struct.static_members()) {
+							if (StringTable::getStringView(static_member_decl.name) != member_name ||
+								!static_member_decl.initializer.has_value()) {
+								continue;
+							}
+							if (auto value =
+									try_evaluate_constant_expression(*static_member_decl.initializer)) {
+								concrete_arg.is_dependent = false;
+								concrete_arg.dependent_name = {};
+								concrete_arg.type_index = nativeTypeIndex(value->type);
+								concrete_arg.value = value->value;
+								break;
+							}
+						}
+						if (!concrete_arg.is_dependent) {
+							continue;
+						}
+					}
+				}
+			}
+
+			const StructTypeInfo* concrete_struct = concrete_type_info->getStructInfo();
+			if (!concrete_struct) {
+				continue;
+			}
+			auto [static_member, owner_struct] = concrete_struct->findStaticMemberRecursive(
+				StringTable::getOrInternStringHandle(member_name));
+			(void)owner_struct;
+			if (!static_member || !static_member->initializer.has_value()) {
+				continue;
+			}
+			if (auto value = try_evaluate_constant_expression(*static_member->initializer)) {
+				concrete_arg.is_dependent = false;
+				concrete_arg.dependent_name = {};
+				concrete_arg.type_index = nativeTypeIndex(value->type);
+				concrete_arg.value = value->value;
+			}
+		}
+
+		return concrete_args;
+	}
 	bool isReachableVirtualBaseInitializer(const StructTypeInfo* struct_info, std::string_view candidate_name) const;
 	std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);	// NEW: Instantiate class template
 	std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
@@ -1123,6 +1256,10 @@ private:
 	std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, const std::vector<TemplateTypeArg>& template_args);  // Helper: Instantiate base class template and add to AST
 	AliasTemplateMaterializationResult materializeTemplateInstantiationForLookup(
 		std::string_view template_name,
+		const std::vector<TemplateTypeArg>& template_args);
+	const TypeInfo* materializeInstantiatedMemberAliasTarget(
+		const TypeSpecifierNode& alias_type_spec,
+		TypeIndex fallback_type_index,
 		const std::vector<TemplateTypeArg>& template_args);
 	AliasTemplateMaterializationResult materializeAliasTemplateInstantiation(
 		std::string_view alias_template_name,
