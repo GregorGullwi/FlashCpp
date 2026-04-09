@@ -3890,7 +3890,7 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 					ctor_args,
 					ctor_param_bindings,
 					context,
-					"Invalid parameter node while materializing struct member access",
+					"Failed to bind constructor parameter while materializing struct-valued member access",
 					true);
 				if (!bind_result.success()) {
 					return bind_result;
@@ -4337,7 +4337,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 									ctor_args,
 									ctor_param_bindings,
 									context,
-									"Invalid parameter while materializing struct in deep nested member access",
+									"Failed to bind constructor parameter for intermediate struct during deep nested member access",
 									true);
 								if (!bind_result.success()) {
 									return bind_result;
@@ -4446,7 +4446,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 							ctor_args,
 							ctor_param_bindings,
 							context,
-							"Invalid parameter node while materializing intermediate struct member for nested member access",
+							"Failed to bind constructor parameter while materializing intermediate struct member for nested member access",
 							true);
 						if (!bind_result.success()) {
 							return bind_result;
@@ -4560,7 +4560,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 						ctor_args,
 						ctor_param_bindings,
 						context,
-						"Invalid parameter node while materializing nested constexpr member access",
+						"Failed to bind constructor parameter while materializing nested constexpr member access",
 						true);
 					if (!bind_result.success()) {
 						return bind_result;
