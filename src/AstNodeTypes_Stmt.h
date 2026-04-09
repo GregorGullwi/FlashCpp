@@ -192,16 +192,28 @@ public:
 	explicit RangedForStatementNode(ASTNode loop_variable_decl,
 									ASTNode range_expression,
 									ASTNode body_statement,
-									std::optional<ASTNode> init_statement = std::nullopt)
+									Token for_token)
 		: loop_variable_decl_(loop_variable_decl),
 		  range_expression_(range_expression),
 		  body_statement_(body_statement),
-		  init_statement_(init_statement) {}
+		  for_token_(for_token) {}
+
+	explicit RangedForStatementNode(ASTNode loop_variable_decl,
+									ASTNode range_expression,
+									ASTNode body_statement,
+									std::optional<ASTNode> init_statement,
+									Token for_token)
+		: loop_variable_decl_(loop_variable_decl),
+		  range_expression_(range_expression),
+		  body_statement_(body_statement),
+		  init_statement_(init_statement),
+		  for_token_(for_token) {}
 
 	auto get_loop_variable_decl() const { return loop_variable_decl_; }
 	auto get_range_expression() const { return range_expression_; }
 	auto get_body_statement() const { return body_statement_; }
 	auto get_init_statement() const { return init_statement_; }
+	const Token& for_token() const { return for_token_; }
 	bool has_init_statement() const { return init_statement_.has_value(); }
 	const std::optional<TypeSpecifierNode>& resolved_range_type() const { return resolved_range_type_; }
 	void set_resolved_range_type(std::optional<TypeSpecifierNode> type) {
@@ -241,6 +253,7 @@ private:
 	ASTNode range_expression_;	   // the array or container to iterate over
 	ASTNode body_statement_;
 	std::optional<ASTNode> init_statement_;	// C++20: for (init; decl : range)
+	Token for_token_;
 	std::optional<TypeSpecifierNode> resolved_range_type_;
 	const FunctionDeclarationNode* resolved_dereference_function_ = nullptr;
 	const FunctionDeclarationNode* resolved_member_begin_function_ = nullptr;

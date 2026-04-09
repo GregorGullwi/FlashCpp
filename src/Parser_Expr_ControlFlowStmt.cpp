@@ -5,9 +5,12 @@
 #include "TypeTraitEvaluator.h"
 
 ParseResult Parser::parse_for_loop() {
-	if (!consume("for"_tok)) {
+	auto for_token_opt = peek_info();
+	if (for_token_opt.value() != "for"sv) {
 		return ParseResult::error("Expected 'for' keyword", current_token_);
 	}
+	Token for_token = for_token_opt;
+	advance();
 
 	if (!consume("("_tok)) {
 		return ParseResult::error("Expected '(' after 'for'", current_token_);
@@ -106,7 +109,7 @@ ParseResult Parser::parse_for_loop() {
 			}
 
 			return ParseResult::success(emplace_node<RangedForStatementNode>(
-				*init_statement, *range_expr, *body_node));
+				*init_statement, *range_expr, *body_node, for_token));
 		}
 
 		if (!consume(";"_tok)) {
@@ -176,7 +179,7 @@ ParseResult Parser::parse_for_loop() {
 
 		// Create ranged for statement with init-statement
 		return ParseResult::success(emplace_node<RangedForStatementNode>(
-			*range_decl, *range_expr, *body_node, init_statement));
+			*range_decl, *range_expr, *body_node, init_statement, for_token));
 	}
 
 	// Not a range-based for with init - restore position and continue with regular for loop

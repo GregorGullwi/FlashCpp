@@ -606,7 +606,7 @@ inline void generateItaniumMangledName(
 	std::string_view struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	bool is_const_method,
-	ConstructorVariant constructor_variant = ConstructorVariant::Complete) {
+	ConstructorVariant constructor_variant) {
 	// Start with _Z prefix
 	output += "_Z";
 
@@ -1128,7 +1128,7 @@ inline void generateItaniumMangledName(
 	std::string_view struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	bool is_const_method,
-	ConstructorVariant constructor_variant = ConstructorVariant::Complete) {
+	ConstructorVariant constructor_variant) {
 	// Extract parameter types from param_nodes
 	std::vector<TypeSpecifierNode> param_types;
 	param_types.reserve(param_nodes.size());
@@ -1162,7 +1162,7 @@ inline MangledName generateMangledName(
 	Linkage linkage,
 	bool is_const_method,
 	bool is_static_member,
-	ConstructorVariant constructor_variant = ConstructorVariant::Complete);
+	ConstructorVariant constructor_variant);
 
 inline MangledName generateMangledName(
 	std::string_view func_name,
@@ -1174,7 +1174,7 @@ inline MangledName generateMangledName(
 	Linkage linkage,
 	bool is_const_method,
 	bool is_static_member,
-	ConstructorVariant constructor_variant = ConstructorVariant::Complete);
+	ConstructorVariant constructor_variant);
 
 inline MangledName generateMangledName(
 	std::string_view func_name,
@@ -1194,7 +1194,8 @@ inline MangledName generateMangledName(
 		namespace_path,
 		linkage,
 		is_const_method,
-		false);
+		false,
+		ConstructorVariant::Complete);
 }
 
 inline MangledName generateMangledName(
@@ -1324,7 +1325,8 @@ inline MangledName generateMangledName(
 		namespace_path,
 		linkage,
 		is_const_method,
-		false);
+		false,
+		ConstructorVariant::Complete);
 }
 
 inline MangledName generateMangledName(
@@ -1468,7 +1470,8 @@ inline MangledName generateMangledNameWithTemplateArgs(
 
 	// Fall back to regular mangling with modified name
 	return generateMangledName(name_with_args.commit(), return_type, param_types,
-							   is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method);
+							   is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method,
+							   false, ConstructorVariant::Complete);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -1542,7 +1545,8 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 
 	// Fall back to regular mangling with modified name
 	return generateMangledName(name_with_args.commit(), return_type, param_types,
-							   is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method);
+							   is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method,
+							   false, ConstructorVariant::Complete);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -1560,7 +1564,17 @@ inline MangledName generateMangledName(
 	for (const auto& ns : namespace_path) {
 		ns_views.push_back(ns);
 	}
-	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, ns_views, linkage, is_const_method, false);
+	return generateMangledName(
+		func_name,
+		return_type,
+		param_types,
+		is_variadic,
+		struct_name,
+		ns_views,
+		linkage,
+		is_const_method,
+		false,
+		ConstructorVariant::Complete);
 }
 
 inline MangledName generateMangledName(
@@ -1578,7 +1592,17 @@ inline MangledName generateMangledName(
 	for (const auto& ns : namespace_path) {
 		ns_views.push_back(ns);
 	}
-	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, ns_views, linkage, is_const_method, is_static_member);
+	return generateMangledName(
+		func_name,
+		return_type,
+		param_types,
+		is_variadic,
+		struct_name,
+		ns_views,
+		linkage,
+		is_const_method,
+		is_static_member,
+		ConstructorVariant::Complete);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -1596,7 +1620,17 @@ inline MangledName generateMangledName(
 	for (const auto& ns : namespace_path) {
 		ns_views.push_back(ns);
 	}
-	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, ns_views, linkage, is_const_method, false);
+	return generateMangledName(
+		func_name,
+		return_type,
+		param_nodes,
+		is_variadic,
+		struct_name,
+		ns_views,
+		linkage,
+		is_const_method,
+		false,
+		ConstructorVariant::Complete);
 }
 
 inline MangledName generateMangledName(
@@ -1614,7 +1648,17 @@ inline MangledName generateMangledName(
 	for (const auto& ns : namespace_path) {
 		ns_views.push_back(ns);
 	}
-	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, ns_views, linkage, is_const_method, is_static_member);
+	return generateMangledName(
+		func_name,
+		return_type,
+		param_nodes,
+		is_variadic,
+		struct_name,
+		ns_views,
+		linkage,
+		is_const_method,
+		is_static_member,
+		ConstructorVariant::Complete);
 }
 // Generate mangled name from a FunctionDeclarationNode
 // This is the main entry point for generating mangled names during parsing
@@ -1633,7 +1677,8 @@ inline MangledName generateMangledNameFromNode(
 	// Pass linkage from the function node
 	return generateMangledName(func_name, return_type, func_node.parameter_nodes(),
 							   func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
-							   func_node.is_const_member_function(), func_node.is_static());
+							   func_node.is_const_member_function(), func_node.is_static(),
+							   ConstructorVariant::Complete);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -1662,8 +1707,8 @@ inline MangledName generateMangledNameFromNode(
 inline MangledName generateMangledNameForConstructor(
 	std::string_view struct_name,
 	const std::vector<TypeSpecifierNode>& param_types,
-	const std::vector<std::string_view>& namespace_path = {},
-	ConstructorVariant constructor_variant = ConstructorVariant::Complete) {
+	const std::vector<std::string_view>& namespace_path,
+	ConstructorVariant constructor_variant) {
 	StringBuilder builder;
 
 	builder.append("??0");  // Constructor marker in MSVC mangling
@@ -1704,8 +1749,8 @@ inline MangledName generateMangledNameForConstructor(
 inline MangledName generateMangledNameForConstructor(
 	std::string_view struct_name,
 	const std::vector<ASTNode>& param_nodes,
-	const std::vector<std::string_view>& namespace_path = {},
-	ConstructorVariant constructor_variant = ConstructorVariant::Complete) {
+	const std::vector<std::string_view>& namespace_path,
+	ConstructorVariant constructor_variant) {
 	StringBuilder builder;
 
 	builder.append("??0");  // Constructor marker in MSVC mangling
@@ -1781,8 +1826,8 @@ inline MangledName generateMangledNameForDestructor(
 // Generate mangled name from a ConstructorDeclarationNode
 inline MangledName generateMangledNameFromNode(
 	const ConstructorDeclarationNode& ctor_node,
-	const std::vector<std::string_view>& namespace_path = {},
-	ConstructorVariant constructor_variant = ConstructorVariant::Complete) {
+	const std::vector<std::string_view>& namespace_path,
+	ConstructorVariant constructor_variant) {
 	// Check mangling style and use appropriate mangler
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		// For Itanium mangling, constructors are regular functions with C1/C2 markers
