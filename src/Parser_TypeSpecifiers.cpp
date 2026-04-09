@@ -1063,12 +1063,14 @@ ParseResult Parser::parse_type_specifier() {
 						// Check for member type access after alias template resolution
 						// Pattern: typename alias_template<...>::type
 						if (peek() == "::"_tok) {
+							SaveHandle scope_pos = save_token_position();
 							advance(); // consume '::'
 
 							Token member_token = peek_info();
 							if (member_token.type() == Token::Type::Identifier) {
 								std::string_view member_name = member_token.value();
 								advance(); // consume member name
+								discard_saved_token(scope_pos);
 
 								// Build qualified type name
 								std::string_view qualified_type_name =
@@ -1081,6 +1083,9 @@ ParseResult Parser::parse_type_specifier() {
 								FLASH_LOG(Parser, Debug, "Found member type '", qualified_type_name, "' at index ", member_type_info.type_index_);
 								return buildTypeFromInfo(member_type_info, member_token, false);
 							}
+							// Next token after '::' is not an identifier — restore position
+							// so the '::' token is not silently consumed.
+							restore_token_position(scope_pos);
 						}
 
 						if (peek() == "::"_tok) {
