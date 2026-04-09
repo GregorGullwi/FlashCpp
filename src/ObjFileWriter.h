@@ -396,7 +396,9 @@ public:
 				// It is a constructor
 				return std::string(NameMangling::generateMangledNameForConstructor(
 					sig.class_name,
-					sig.parameter_types));
+					sig.parameter_types,
+					{},
+					sig.use_base_object_ctor_variant ? NameMangling::ConstructorVariant::BaseObject : NameMangling::ConstructorVariant::Complete));
 			}
 		}
 
@@ -543,7 +545,7 @@ public:
 	void finalize_debug_info();
 	std::string_view add_string_literal(std::string_view str_content);
 	void add_global_variable_data(std::string_view var_name, size_t size_in_bytes, bool is_initialized, std::span<const char> init_data, bool is_rodata = false);
-	void add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols, std::string_view class_name, std::span<const std::string_view> base_class_names, std::span<const BaseClassDescriptorInfo> base_class_info, const RTTITypeInfo* rtti_info = nullptr);
+	void add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols, std::string_view class_name, std::span<const std::string_view> base_class_names, std::span<const BaseClassDescriptorInfo> base_class_info, const RTTITypeInfo* rtti_info = nullptr, TypeIndex subobject_type_index = {}, int64_t offset_to_top = 0);
 	std::string get_or_create_builtin_throwinfo(TypeCategory type);
 	uint32_t get_or_create_symbol_index(const std::string& symbol_name);
 

@@ -338,7 +338,7 @@ public:
 	std::string get_or_create_builtin_typeinfo(TypeCategory cat);
 	std::string get_or_create_class_typeinfo(std::string_view class_name);
 	std::string get_or_create_class_typeinfo(const StructTypeInfo* struct_info);
-	void add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols, std::string_view class_name, std::span<const std::string_view> base_class_names, std::span<const BaseClassDescriptorInfo> base_class_info, const RTTITypeInfo* rtti_info = nullptr);
+	void add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols, std::string_view class_name, std::span<const std::string_view> base_class_names, std::span<const BaseClassDescriptorInfo> base_class_info, const RTTITypeInfo* rtti_info = nullptr, TypeIndex subobject_type_index = {}, int64_t offset_to_top = 0);
 	std::string_view generateMangledName(std::string_view name, const FunctionSignature& sig);
 	std::string_view addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage = Linkage::None, bool is_variadic = false);
 

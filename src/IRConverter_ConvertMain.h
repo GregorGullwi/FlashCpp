@@ -1023,6 +1023,8 @@ private:
 	struct VTableInfo {
 		StringHandle vtable_symbol;	// e.g., "??_7Base@@6B@" or "_ZTV4Base"
 		StringHandle class_name;
+		TypeIndex subobject_type_index{};
+		int64_t offset_to_top = 0;
 		std::vector<std::string> function_symbols;  // Mangled function names in vtable order
 		std::vector<std::string> base_class_names;  // Base class names for RTTI (legacy)
 		std::vector<ObjectFileWriter::BaseClassDescriptorInfo> base_class_info; // Detailed base class info for RTTI

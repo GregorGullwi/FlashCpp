@@ -267,7 +267,15 @@ void ObjectFileWriter::add_global_variable_data(std::string_view var_name, size_
 void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols,
 								  std::string_view class_name, std::span<const std::string_view> base_class_names,
 								  std::span<const BaseClassDescriptorInfo> base_class_info,
-								  [[maybe_unused]] const RTTITypeInfo* rtti_info) {
+								  [[maybe_unused]] const RTTITypeInfo* rtti_info,
+								  [[maybe_unused]] TypeIndex subobject_type_index,
+								  [[maybe_unused]] int64_t offset_to_top) {
+	// Secondary vtables (non-zero offset_to_top) share RTTI with the primary vtable.
+	// On COFF/MSVC, secondary vtables are not used, so skip emission entirely.
+	if (offset_to_top != 0) {
+		return;
+	}
+
 	auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
 
 	if (g_enable_debug_output)

@@ -1511,6 +1511,15 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	FunctionDeclOp ctor_decl_op;
 		// For nested classes, use current_struct_name_ which contains the fully qualified name
 	std::string_view struct_name_for_ctor = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : StringTable::getStringView(node.struct_name());
+	const TypeInfo* enclosing_type_info = nullptr;
+	if (auto enclosing_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
+		enclosing_type_it != getTypesByNameMap().end()) {
+		enclosing_type_info = enclosing_type_it->second;
+	}
+	const StructTypeInfo* enclosing_struct_info = enclosing_type_info ? enclosing_type_info->getStructInfo() : nullptr;
+	const bool emit_split_ctor_variants =
+		enclosing_struct_info != nullptr &&
+		!enclosing_struct_info->virtual_bases.empty();
 
 		// Extract just the last component of the class name for the constructor function name
 		// For "Outer::Inner", we want "Inner" as the function name
@@ -1545,13 +1554,18 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::MSVC) {
 				// MSVC uses dedicated constructor mangling (??0ClassName@@...)
 			ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(
-				NameMangling::generateMangledNameForConstructor(struct_name_for_ctor, node.parameter_nodes(), empty_namespace_path));
+				NameMangling::generateMangledNameForConstructor(
+					struct_name_for_ctor,
+					node.parameter_nodes(),
+					empty_namespace_path,
+					emit_split_ctor_variants ? NameMangling::ConstructorVariant::BaseObject : NameMangling::ConstructorVariant::Complete));
 		} else if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
 				// Itanium uses regular mangling with class name as function name (produces C1 marker)
 			TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 			ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
 				ctor_function_name, return_type, node.parameter_nodes(),
-				false, struct_name_for_ctor, empty_namespace_path, Linkage::CPlusPlus, false));
+				false, struct_name_for_ctor, empty_namespace_path, Linkage::CPlusPlus, false, false,
+				emit_split_ctor_variants ? NameMangling::ConstructorVariant::BaseObject : NameMangling::ConstructorVariant::Complete));
 		} else {
 			assert(false && "Unhandled name mangling type");
 		}
@@ -1563,6 +1577,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 
 		// Add parameter types to constructor declaration
 	size_t ctor_unnamed_param_counter = 0;
+	std::vector<StringHandle> ctor_param_names;
+	ctor_param_names.reserve(node.parameter_nodes().size());
 	for (const auto& param : node.parameter_nodes()) {
 		const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor decl operands");
 		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
@@ -1597,7 +1613,239 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 
 		func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 		func_param.cv_qualifier = param_type.cv_qualifier();
+		ctor_param_names.push_back(func_param.name);
 		ctor_decl_op.parameters.push_back(func_param);
+	}
+
+	auto enterConstructorScope = [&](StringHandle mangled_name) {
+		current_function_mangled_name_ = mangled_name;
+		symbol_table.enter_scope(ScopeType::Function);
+		if (enclosing_struct_info && enclosing_type_info) {
+			Token this_token = node.name_token();
+			auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
+				enclosing_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
+			this_type.as<TypeSpecifierNode>().add_pointer_level();
+			auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
+			symbol_table.insert("this"sv, this_decl);
+		}
+		for (size_t i = 0; i < node.parameter_nodes().size(); ++i) {
+			symbol_table.insert(StringTable::getStringView(ctor_param_names[i]), node.parameter_nodes()[i]);
+		}
+	};
+
+	auto findBaseInitializer = [&](const BaseClassSpecifier& base) -> const BaseInitializer* {
+		for (const auto& init : node.base_initializers()) {
+			StringHandle base_name_handle = StringTable::getOrInternStringHandle(base.name);
+			if (init.getBaseClassName() == base_name_handle) {
+				return &init;
+			}
+			if (const TypeInfo* base_ti = tryGetTypeInfo(base.type_index)) {
+				if (base_ti->isTemplateInstantiation() && init.getBaseClassName() == base_ti->baseTemplateName()) {
+					return &init;
+				}
+			}
+		}
+		return nullptr;
+	};
+
+	auto appendForwardedCtorArguments = [&](ConstructorCallOp& ctor_op) {
+		for (size_t i = 0; i < node.parameter_nodes().size(); ++i) {
+			const DeclarationNode& param_decl = requireDeclarationNode(node.parameter_nodes()[i], "ctor forward args");
+			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			TypedValue arg;
+			arg.type_index = param_type.type_index();
+			arg.setType(param_type.type());
+			arg.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
+			arg.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
+			arg.ref_qualifier = param_type.reference_qualifier();
+			arg.cv_qualifier = param_type.cv_qualifier();
+			arg.value = ctor_param_names[i];
+			ctor_op.arguments.push_back(std::move(arg));
+		}
+	};
+
+	auto shouldCallBaseObjectVariant = [](const StructTypeInfo* target_struct_info) {
+		return target_struct_info != nullptr &&
+			   !target_struct_info->virtual_bases.empty();
+	};
+
+	bool is_implicit_copy_constructor = false;
+	bool is_implicit_move_constructor = false;
+	if (node.is_implicit() && node.parameter_nodes().size() == 1) {
+		const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
+		const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		if (param_type.category() == TypeCategory::Struct) {
+			if (param_type.is_rvalue_reference()) {
+				is_implicit_move_constructor = true;
+			} else if (param_type.is_lvalue_reference()) {
+				is_implicit_copy_constructor = true;
+			}
+		}
+	}
+
+	auto emitVptrStores = [&](const StructTypeInfo* struct_info, const TypeInfo* struct_type_info, bool include_virtual_base_vptrs) {
+		if (!struct_info || !struct_info->has_vtable) {
+			return;
+		}
+
+		auto vtable_symbol = StringTable::getOrInternStringHandle(struct_info->vtable_symbol);
+
+		MemberStoreOp vptr_store;
+		vptr_store.object = StringTable::getOrInternStringHandle("this");
+		vptr_store.member_name = StringTable::getOrInternStringHandle("__vptr");
+		vptr_store.offset = 0;
+		vptr_store.struct_type_info = struct_type_info;
+		vptr_store.ref_qualifier = CVReferenceQualifier::None;
+		vptr_store.vtable_symbol = vtable_symbol;
+		vptr_store.value.setType(TypeCategory::Void);
+		vptr_store.value.ir_type = IrType::Void;
+		vptr_store.value.size_in_bits = SizeInBits{64};
+		vptr_store.value.value = static_cast<unsigned long long>(0);
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(vptr_store), node.name_token()));
+
+		// Secondary vtable vptr stores are only needed for the Itanium ABI (ELF).
+		// MSVC uses a different mechanism (vbtable pointers) for virtual base dispatch.
+		if (NameMangling::g_mangling_style != NameMangling::ManglingStyle::Itanium) {
+			return;
+		}
+
+		for (const auto& base : struct_info->base_classes) {
+			if (base.is_virtual || base.offset == 0) {
+				continue;
+			}
+			const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+			if (!base_struct_info || !base_struct_info->has_vtable) {
+				continue;
+			}
+
+			MemberStoreOp secondary_vptr_store;
+			secondary_vptr_store.object = StringTable::getOrInternStringHandle("this");
+			secondary_vptr_store.member_name = StringTable::getOrInternStringHandle("__vptr");
+			secondary_vptr_store.offset = static_cast<int>(base.offset);
+			secondary_vptr_store.struct_type_info = struct_type_info;
+			secondary_vptr_store.ref_qualifier = CVReferenceQualifier::None;
+			secondary_vptr_store.vtable_symbol = NameMangling::generateSecondaryVTableSymbol(
+				struct_name_for_ctor,
+				StringTable::getStringView(base_type_info->name()),
+				base.offset);
+			secondary_vptr_store.value.setType(TypeCategory::Void);
+			secondary_vptr_store.value.ir_type = IrType::Void;
+			secondary_vptr_store.value.size_in_bits = SizeInBits{64};
+			secondary_vptr_store.value.value = static_cast<unsigned long long>(0);
+			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(secondary_vptr_store), node.name_token()));
+		}
+
+		if (include_virtual_base_vptrs) {
+			for (const auto& virtual_base : struct_info->virtual_bases) {
+				if (virtual_base.offset == 0) {
+					continue;
+				}
+				const TypeInfo* base_type_info = tryGetTypeInfo(virtual_base.type_index);
+				const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+				if (!base_struct_info || !base_struct_info->has_vtable) {
+					continue;
+				}
+
+				MemberStoreOp secondary_vptr_store;
+				secondary_vptr_store.object = StringTable::getOrInternStringHandle("this");
+				secondary_vptr_store.member_name = StringTable::getOrInternStringHandle("__vptr");
+				secondary_vptr_store.offset = static_cast<int>(virtual_base.offset);
+				secondary_vptr_store.struct_type_info = struct_type_info;
+				secondary_vptr_store.ref_qualifier = CVReferenceQualifier::None;
+				secondary_vptr_store.vtable_symbol = NameMangling::generateSecondaryVTableSymbol(
+					struct_name_for_ctor,
+					StringTable::getStringView(base_type_info->name()),
+					virtual_base.offset);
+				secondary_vptr_store.value.setType(TypeCategory::Void);
+				secondary_vptr_store.value.ir_type = IrType::Void;
+				secondary_vptr_store.value.size_in_bits = SizeInBits{64};
+				secondary_vptr_store.value.value = static_cast<unsigned long long>(0);
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(secondary_vptr_store), node.name_token()));
+			}
+		}
+	};
+
+	if (emit_split_ctor_variants && enclosing_struct_info) {
+		FunctionDeclOp complete_ctor_decl_op = ctor_decl_op;
+		complete_ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(
+			NameMangling::generateMangledNameFromNode(node, {}, NameMangling::ConstructorVariant::Complete));
+		if (generated_function_names_.count(complete_ctor_decl_op.mangled_name) == 0) {
+			generated_function_names_.insert(complete_ctor_decl_op.mangled_name);
+			StringHandle complete_ctor_mangled_name = complete_ctor_decl_op.mangled_name;
+			ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(complete_ctor_decl_op), node.name_token()));
+			enterConstructorScope(complete_ctor_mangled_name);
+
+			if (node.delegating_initializer().has_value()) {
+				const auto& delegating_init = node.delegating_initializer().value();
+				ConstructorCallOp ctor_op;
+				ctor_op.object = StringTable::getOrInternStringHandle("this");
+				const ConstructorDeclarationNode* resolved_ctor =
+					resolveCodegenConstructorFromArgs(*enclosing_struct_info, delegating_init.arguments);
+				appendConstructorCallArguments(ctor_op, resolved_ctor, delegating_init.arguments, node.name_token());
+				finalizeConstructorCallOp(ctor_op, *enclosing_struct_info, node.name_token());
+				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+				emitVoidReturn(node.name_token());
+				symbol_table.exit_scope();
+			} else {
+				for (const auto& virtual_base : enclosing_struct_info->virtual_bases) {
+					const TypeInfo* base_type_info = tryGetTypeInfo(virtual_base.type_index);
+					if (!base_type_info) {
+						continue;
+					}
+					const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+					ConstructorCallOp ctor_op;
+					ctor_op.object = StringTable::getOrInternStringHandle("this");
+					assert(virtual_base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
+					ctor_op.base_class_offset = static_cast<int>(virtual_base.offset);
+					ctor_op.call_base_object_variant = shouldCallBaseObjectVariant(base_struct_info);
+					if ((is_implicit_copy_constructor || is_implicit_move_constructor) &&
+						base_struct_info && base_struct_info->hasAnyConstructor()) {
+						if (const StructMemberFunction* base_same_type_ctor =
+								base_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor, true);
+							base_same_type_ctor && base_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+							ctor_op.resolved_constructor =
+								&base_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+						}
+						ctor_op.source_base_class_offset = static_cast<int>(virtual_base.offset);
+						TypedValue other_arg;
+						other_arg.type_index = virtual_base.type_index;
+						other_arg.setType(TypeCategory::Struct);
+						other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info->struct_info_ ? base_type_info->struct_info_->sizeInBits().value : enclosing_struct_info->sizeInBits().value)};
+						other_arg.value = StringTable::getOrInternStringHandle("other");
+						other_arg.ref_qualifier = is_implicit_copy_constructor ? ReferenceQualifier::LValueReference : ReferenceQualifier::RValueReference;
+						other_arg.cv_qualifier = is_implicit_copy_constructor ? CVQualifier::Const : CVQualifier::None;
+						ctor_op.arguments.push_back(std::move(other_arg));
+						finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
+						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+					} else if (const BaseInitializer* base_init = findBaseInitializer(virtual_base)) {
+						if (!base_struct_info) {
+							throw InternalError("Internal error: struct info not found for virtual base class");
+						}
+						const ConstructorDeclarationNode* resolved_ctor =
+							resolveCodegenConstructorFromArgs(*base_struct_info, base_init->arguments);
+						appendConstructorCallArguments(ctor_op, resolved_ctor, base_init->arguments, node.name_token());
+						finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
+						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+					} else if (base_struct_info && base_struct_info->hasAnyConstructor()) {
+						fillInDefaultConstructorArguments(ctor_op, *base_struct_info);
+						finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
+						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+					}
+				}
+
+				ConstructorCallOp base_object_ctor_op;
+				base_object_ctor_op.object = StringTable::getOrInternStringHandle("this");
+				base_object_ctor_op.resolved_constructor = &node;
+				base_object_ctor_op.call_base_object_variant = true;
+				appendForwardedCtorArguments(base_object_ctor_op);
+				finalizeConstructorCallOp(base_object_ctor_op, *enclosing_struct_info, node.name_token());
+				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(base_object_ctor_op), node.name_token()));
+				emitVptrStores(enclosing_struct_info, enclosing_type_info, true);
+				emitVoidReturn(node.name_token());
+				symbol_table.exit_scope();
+			}
+		}
 	}
 
 		// Skip duplicate constructor definitions (e.g. when a static member call queues all struct members)
@@ -1607,48 +1855,15 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	}
 	generated_function_names_.insert(ctor_decl_op.mangled_name);
 
+	StringHandle base_ctor_mangled_name = ctor_decl_op.mangled_name;
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), node.name_token()));
 
-	symbol_table.enter_scope(ScopeType::Function);
-
-		// Add 'this' pointer to symbol table for member access
-		// Look up the struct type to get its type index and size
-		// Use struct_name_for_ctor (which is fully qualified) instead of node.struct_name()
-		// to handle nested classes correctly (node.struct_name() might be just "Inner" instead of "Outer::Inner")
-	auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
-	if (type_it != getTypesByNameMap().end()) {
-		const TypeInfo* struct_type_info = type_it->second;
-		const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
-
-		if (struct_info) {
-				// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
-			Token this_token = node.name_token();  // Use constructor token for location
-			auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-				struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
-				// Mark 'this' as a pointer to struct (not a struct value)
-			this_type.as<TypeSpecifierNode>().add_pointer_level();
-			auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
-
-				// Add 'this' to symbol table (it's the implicit first parameter)
-			symbol_table.insert("this"sv, this_decl);
-		}
-	}
-
-		// Add parameters to symbol table
-	for (const auto& param : node.parameter_nodes()) {
-		const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor symbol table");
-		symbol_table.insert(param_decl.identifier_token().value(), param);
-	}
+	enterConstructorScope(base_ctor_mangled_name);
 
 		// C++11 Delegating constructor: if present, ONLY call the target constructor
 		// No base class or member initialization should happen
 	if (node.delegating_initializer().has_value()) {
 		const auto& delegating_init = node.delegating_initializer().value();
-		const StructTypeInfo* enclosing_struct_info = nullptr;
-		if (auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
-			struct_type_it != getTypesByNameMap().end()) {
-			enclosing_struct_info = struct_type_it->second->getStructInfo();
-		}
 		if (!enclosing_struct_info) {
 			throw InternalError(std::string(StringBuilder()
 												.append("Internal error: struct info not found in type map for delegating constructor '")
@@ -1664,6 +1879,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		const ConstructorDeclarationNode* resolved_ctor =
 			resolveCodegenConstructorFromArgs(*enclosing_struct_info, delegating_init.arguments);
 		appendConstructorCallArguments(ctor_op, resolved_ctor, delegating_init.arguments, node.name_token());
+		ctor_op.call_base_object_variant = emit_split_ctor_variants;
 		finalizeConstructorCallOp(ctor_op, *enclosing_struct_info, node.name_token());
 
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
@@ -1689,24 +1905,10 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		if (struct_info) {
 				// Step 1: Call base class constructors (in declaration order)
 			for (const auto& base : struct_info->base_classes) {
-					// Check if there's an explicit base initializer
-				const BaseInitializer* base_init = nullptr;
-				for (const auto& init : node.base_initializers()) {
-					StringHandle base_name_handle = StringTable::getOrInternStringHandle(base.name);
-					if (init.getBaseClassName() == base_name_handle) {
-						base_init = &init;
-						break;
-					}
-						// For template instantiations, the base initializer stores the un-substituted
-						// name (e.g., "Base") but struct_info has the instantiated name (e.g., "Base$hash").
-						// Also match against the base template name.
-					if (const TypeInfo* base_ti = tryGetTypeInfo(base.type_index)) {
-						if (base_ti->isTemplateInstantiation() && init.getBaseClassName() == base_ti->baseTemplateName()) {
-							base_init = &init;
-							break;
-						}
-					}
+				if (emit_split_ctor_variants && base.is_virtual) {
+					continue;
 				}
+				const BaseInitializer* base_init = findBaseInitializer(base);
 
 					// Get base class type info
 				const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
@@ -1721,6 +1923,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 					// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
 				assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 				ctor_op.base_class_offset = static_cast<int>(base.offset);
+				ctor_op.call_base_object_variant = shouldCallBaseObjectVariant(base_struct_info);
 
 				if (base_init) {
 					if (!base_struct_info) {
@@ -1761,29 +1964,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				// Step 1.5: Initialize vptr if this class has virtual functions
 				// This must happen after base constructor calls (which set up base vptr)
 				// but before member initialization
-			if (struct_info->has_vtable) {
-					// Use the pre-generated vtable symbol from struct_info
-					// The vtable symbol is generated once during buildVTable()
-				auto vtable_symbol = StringTable::getOrInternStringHandle(struct_info->vtable_symbol);
-
-					// Create a MemberStore instruction to store vtable address to offset 0 (vptr)
-				MemberStoreOp vptr_store;
-				vptr_store.object = StringTable::getOrInternStringHandle("this");
-				vptr_store.member_name = StringTable::getOrInternStringHandle("__vptr");	 // Virtual pointer (synthetic member)
-				vptr_store.offset = 0;  // vptr is always at offset 0
-				vptr_store.struct_type_info = struct_type_info;	// Use TypeInfo pointer
-				vptr_store.ref_qualifier = CVReferenceQualifier::None;
-				vptr_store.vtable_symbol = vtable_symbol;  // Store vtable symbol as string_view
-
-					// The value is a vtable symbol reference
-					// Type is pointer (Type::Void with pointer semantics), size is 64 bits (8 bytes)
-					// The actual symbol will be loaded using the vtable_symbol field
-				vptr_store.value.setType(TypeCategory::Void);
-				vptr_store.value.ir_type = IrType::Void;
-				vptr_store.value.size_in_bits = SizeInBits{64};
-				vptr_store.value.value = static_cast<unsigned long long>(0);	 // Placeholder
-
-				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(vptr_store), node.name_token()));
+			if (!(node.is_implicit() && (is_implicit_copy_constructor || is_implicit_move_constructor))) {
+				emitVptrStores(struct_info, struct_type_info, !emit_split_ctor_variants);
 			}
 		}
 	}
@@ -1800,27 +1982,14 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				// If this is an implicit constructor, generate appropriate initialization
 			if (node.is_implicit()) {
 					// Check if this is a copy or move constructor (has one parameter that is a reference)
-				bool is_copy_constructor = false;
-				bool is_move_constructor = false;
-					// Implicit constructors always have exactly 1 parameter, but use
-					// is_lvalue_reference()/is_rvalue_reference() for correct distinction.
-				if (node.parameter_nodes().size() == 1) {
-					const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
-					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-					if (param_type.category() == TypeCategory::Struct) {
-						if (param_type.is_rvalue_reference()) {
-							is_move_constructor = true;
-						} else if (param_type.is_lvalue_reference()) {
-							is_copy_constructor = true;
-						}
-					}
-				}
-
-				if (is_copy_constructor || is_move_constructor) {
+				if (is_implicit_copy_constructor || is_implicit_move_constructor) {
 						// Implicit copy/move constructor: call base class copy/move constructors first, then memberwise copy/move from 'other' to 'this'
 
 						// Step 1: Call base class copy/move constructors (in declaration order)
 					for (const auto& base : struct_info->base_classes) {
+						if (emit_split_ctor_variants && base.is_virtual) {
+							continue;
+						}
 							// Get base class type info
 						const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 						if (!base_type_info) {
@@ -1840,7 +2009,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						ConstructorCallOp ctor_op;
 						ctor_op.object = StringTable::getOrInternStringHandle("this");
 						if (const StructMemberFunction* base_same_type_ctor =
-								base_struct_info->findPreferredSameTypeConstructor(is_move_constructor, true);
+								base_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor, true);
 							base_same_type_ctor && base_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 							ctor_op.resolved_constructor =
 								&base_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
@@ -1849,6 +2018,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 						ctor_op.base_class_offset = static_cast<int>(base.offset);
 						ctor_op.source_base_class_offset = static_cast<int>(base.offset);
+						ctor_op.call_base_object_variant = shouldCallBaseObjectVariant(base_struct_info);
 							// Add 'other' parameter for copy/move constructor
 							// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling
 						TypedValue other_arg;
@@ -1857,10 +2027,10 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info->struct_info_ ? base_type_info->struct_info_->sizeInBits().value : struct_info->sizeInBits().value)};
 						other_arg.value = StringTable::getOrInternStringHandle("other");	 // Parameter value ('other' object)
 						other_arg.type_index = base.type_index;	// Use BASE class type index for proper mangling
-						if (is_copy_constructor) {
+						if (is_implicit_copy_constructor) {
 							other_arg.ref_qualifier = ReferenceQualifier::LValueReference;  // Copy ctor takes lvalue reference
 							other_arg.cv_qualifier = CVQualifier::Const;	 // Copy ctor takes const reference
-						} else if (is_move_constructor) {
+						} else if (is_implicit_move_constructor) {
 							other_arg.ref_qualifier = ReferenceQualifier::RValueReference;  // Move ctor takes rvalue reference
 						}
 						ctor_op.arguments.push_back(std::move(other_arg));
@@ -1874,7 +2044,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						if (member.type_index.category() == TypeCategory::Struct) {
 							const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
 							const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
-							if (member_struct_info && member_struct_info->findPreferredSameTypeConstructor(is_move_constructor)) {
+							if (member_struct_info && member_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor)) {
 								TempVar member_source_addr = var_counter.next();
 								AddressOfMemberOp addr_member_op;
 								addr_member_op.result = member_source_addr;
@@ -1887,7 +2057,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								ConstructorCallOp ctor_op;
 								ctor_op.object = StringTable::getOrInternStringHandle("this");
 								if (const StructMemberFunction* member_same_type_ctor =
-										member_struct_info->findPreferredSameTypeConstructor(is_move_constructor, true);
+										member_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor, true);
 									member_same_type_ctor && member_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 									ctor_op.resolved_constructor =
 										&member_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
@@ -1901,7 +2071,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								other_arg.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 								other_arg.value = member_source_addr;
 								other_arg.type_index = member.type_index;
-								if (is_copy_constructor) {
+								if (is_implicit_copy_constructor) {
 									other_arg.ref_qualifier = ReferenceQualifier::LValueReference;
 									other_arg.cv_qualifier = CVQualifier::Const;
 								} else {
@@ -1943,6 +2113,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 					}
+					emitVptrStores(struct_info, struct_type_info, !emit_split_ctor_variants);
 				} else {
 						// Implicit default constructor: use default member initializers or zero-initialize
 

@@ -229,6 +229,10 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 				} else {
 					// Check if it's a base class initializer
 					if (delayed.struct_node) {
+						const StructTypeInfo* delayed_struct_info = nullptr;
+						if (const TypeInfo* delayed_type_info = tryGetTypeInfo(delayed.struct_type_index)) {
+							delayed_struct_info = delayed_type_info->getStructInfo();
+						}
 						for (const auto& base : delayed.struct_node->base_classes()) {
 							if (base.name == init_name) {
 								is_base_init = true;
@@ -248,6 +252,11 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 									break;
 								}
 							}
+						}
+						if (!is_base_init && isReachableVirtualBaseInitializer(delayed_struct_info, init_name)) {
+							is_base_init = true;
+							StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
+							delayed.ctor_node->add_base_initializer(init_name_handle, std::move(init_args));
 						}
 					}
 

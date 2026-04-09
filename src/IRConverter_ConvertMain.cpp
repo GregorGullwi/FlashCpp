@@ -5180,6 +5180,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 	TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 	ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
 	sig.class_name = std::string(class_name);
+	sig.use_base_object_ctor_variant = ctor_op.call_base_object_variant;
 
 		// Generate the correct mangled name for this specific constructor overload
 	auto mangled_name = writer.generateMangledName(function_name, sig);
@@ -7178,10 +7179,41 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				}
 
 				if (!vtable_exists) {
+					const std::string_view pure_virtual_symbol = []() {
+						if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+							return "__cxa_pure_virtual"sv;
+						}
+						return "_purecall"sv;
+					}();
+					auto getVirtualFunctionSymbol = [&](const StructMemberFunction* vfunc) -> std::string {
+						if (!vfunc) {
+							return {};
+						}
+						if (vfunc->is_pure_virtual) {
+							return std::string(pure_virtual_symbol);
+						}
+						if (vfunc->is_destructor) {
+							const auto& dtor_node = vfunc->function_decl.as<DestructorDeclarationNode>();
+							return std::string(NameMangling::generateMangledNameFromNode(dtor_node).view());
+						}
+
+						const auto& func_node = vfunc->function_decl.as<FunctionDeclarationNode>();
+						std::vector<std::string_view> empty_ns_path;
+						return std::string(NameMangling::generateMangledName(
+							StringTable::getStringView(vfunc->getName()),
+							func_node.decl_node().type_node().as<TypeSpecifierNode>(),
+							func_node.parameter_nodes(),
+							false,
+							func_node.parent_struct_name(),
+							empty_ns_path,
+							Linkage::CPlusPlus,
+							func_node.is_const_member_function()).view());
+					};
+
 						// Register this vtable - we'll populate function symbols as we encounter them
-					VTableInfo vtable_info;
-					vtable_info.vtable_symbol = StringTable::getOrInternStringHandle(vtable_symbol);
-					vtable_info.class_name = StringTable::getOrInternStringHandle(struct_name);
+						VTableInfo vtable_info;
+						vtable_info.vtable_symbol = StringTable::getOrInternStringHandle(vtable_symbol);
+						vtable_info.class_name = StringTable::getOrInternStringHandle(struct_name);
 
 						// Reserve space for vtable entries
 					vtable_info.function_symbols.resize(struct_info->vtable.size());
@@ -7190,47 +7222,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						// - Pure virtual functions: __cxa_pure_virtual / _purecall
 						// - Inherited functions (from base classes): base class's mangled function name
 						// - Overridden functions: will be updated when we process the derived class's function definition
-					const std::string_view pure_virtual_symbol = []() {
-						if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-							return "__cxa_pure_virtual"sv;
-						}
-						return "_purecall"sv;
-					}();
 					for (size_t i = 0; const auto* vfunc : struct_info->vtable) {
 						if (vfunc) {
-							if (vfunc->is_pure_virtual) {
-								vtable_info.function_symbols[i] = pure_virtual_symbol;
-							} else {
-									// Generate mangled name for this function
-									// The function_decl contains information about which class owns this function
-								std::string_view owning_struct_name;
-								[[maybe_unused]] std::string_view vtable_func_name;
-
-								if (vfunc->is_destructor) {
-										// Destructor - get struct name from DestructorDeclarationNode
-									const auto& dtor_node = vfunc->function_decl.as<DestructorDeclarationNode>();
-									owning_struct_name = StringTable::getStringView(dtor_node.struct_name());
-
-										// Generate mangled destructor name
-									auto dtor_mangled = NameMangling::generateMangledNameFromNode(dtor_node);
-									vtable_info.function_symbols[i] = dtor_mangled.view();
-								} else if (!vfunc->is_constructor) {
-										// Regular virtual function - get struct name from FunctionDeclarationNode
-									const auto& func_node = vfunc->function_decl.as<FunctionDeclarationNode>();
-									owning_struct_name = func_node.parent_struct_name();
-									vtable_func_name = StringTable::getStringView(vfunc->getName());
-
-										// Generate mangled function name using the function's owning struct
-									auto vfunc_return_type = func_node.decl_node().type_node().as<TypeSpecifierNode>();
-									const auto& vfunc_params = func_node.parameter_nodes();
-									std::vector<std::string_view> empty_ns_path;
-									auto vfunc_mangled = NameMangling::generateMangledName(
-										vtable_func_name, vfunc_return_type, vfunc_params, false,
-										owning_struct_name, empty_ns_path, Linkage::CPlusPlus,
-										func_node.is_const_member_function());
-									vtable_info.function_symbols[i] = vfunc_mangled.view();
-								}
-							}
+							vtable_info.function_symbols[i] = getVirtualFunctionSymbol(vfunc);
 						}
 						++i;
 					}
@@ -7258,6 +7252,67 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 						// Add RTTI information for this class
 					vtable_info.rtti_info = struct_info->rtti_info;
+
+					auto registerSecondaryVTable = [&](const BaseClassSpecifier& base) {
+						if (base.offset == 0) {
+							return;
+						}
+						const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+						const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+						if (!base_struct_info || !base_struct_info->has_vtable) {
+							return;
+						}
+
+						StringHandle secondary_vtable_symbol = NameMangling::generateSecondaryVTableSymbol(
+							struct_name,
+							StringTable::getStringView(base_type_info->name()),
+							base.offset);
+						for (const auto& vt : vtables_) {
+							if (vt.vtable_symbol == secondary_vtable_symbol) {
+								return;
+							}
+						}
+
+						VTableInfo secondary_vtable_info;
+						secondary_vtable_info.vtable_symbol = secondary_vtable_symbol;
+						secondary_vtable_info.class_name = StringTable::getOrInternStringHandle(struct_name);
+						secondary_vtable_info.subobject_type_index = base.type_index;
+						secondary_vtable_info.offset_to_top = -static_cast<int64_t>(base.offset);
+						secondary_vtable_info.function_symbols.resize(base_struct_info->vtable.size());
+						for (size_t i = 0; i < base_struct_info->vtable.size(); ++i) {
+							const StructMemberFunction* vfunc = base_struct_info->vtable[i];
+							const StructMemberFunction* selected_vfunc = vfunc;
+							// TODO: Destructor entries in secondary vtables need a virtual thunk
+							// that adjusts 'this' by -offset_to_top before calling the most-derived
+							// destructor. Without thunks, polymorphic deletion through a non-primary
+							// base pointer will invoke the wrong destructor. This requires the same
+							// thunk generation infrastructure needed for covariant return types
+							// (see docs/REMAINING_ISSUES_PLAN.md, Issue 3a).
+							if (vfunc && !vfunc->is_destructor) {
+								for (const auto& candidate : struct_info->member_functions) {
+									if ((candidate.is_virtual || candidate.is_override) &&
+										candidate.getName() == vfunc->getName()) {
+										selected_vfunc = &candidate;
+										break;
+									}
+								}
+							}
+							secondary_vtable_info.function_symbols[i] = getVirtualFunctionSymbol(selected_vfunc);
+						}
+						secondary_vtable_info.base_class_names = vtable_info.base_class_names;
+						secondary_vtable_info.base_class_info = vtable_info.base_class_info;
+						secondary_vtable_info.rtti_info = struct_info->rtti_info;
+						vtables_.push_back(std::move(secondary_vtable_info));
+					};
+
+					for (const auto& base : struct_info->base_classes) {
+						if (!base.is_virtual) {
+							registerSecondaryVTable(base);
+						}
+					}
+					for (const auto& virtual_base : struct_info->virtual_bases) {
+						registerSecondaryVTable(virtual_base);
+					}
 
 					vtables_.push_back(std::move(vtable_info));
 				}
@@ -12813,12 +12868,12 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 			// Add a relocation for the vtable symbol
 		writer.add_relocation(relocation_offset, StringTable::getStringView(op.vtable_symbol));
 
-			// Store vtable pointer to [RCX + 0] (this pointer is in RCX, vptr is at offset 0)
+			// Store vtable pointer to [RCX + op.offset] (this pointer is in RCX)
 			// First load 'this' pointer into RCX
 		emitMovFromFrame(X64Register::RCX, object_base_offset);
 
-			// Store RAX (vtable address) to [RCX + 0]
-		emitStoreToMemory(textSectionData, X64Register::RAX, X64Register::RCX, 0, 8);
+			// Store RAX (vtable address) to [RCX + op.offset]
+		emitStoreToMemory(textSectionData, X64Register::RAX, X64Register::RCX, op.offset, 8);
 
 		return;	// Done with vptr initialization
 	}
@@ -14659,6 +14714,12 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 		if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
 			int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
 			setReferenceInfo(stack_offset, TypeIndex{0, catch_op.exceptionType()}, 64, false, catch_op.exception_temp);
+		} else if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0) {
+			int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+			indirect_stack_info_.erase(stack_offset);
+			tempvar_indirect_stack_info_.erase(stack_offset);
+			current_function_tempvar_indirect_info_.erase(catch_op.exception_temp.var_number);
+			GlobalTempVarMetadataStorage::instance().clearEntry(catch_op.exception_temp.var_number);
 		}
 
 		if (current_catch_handler_) {
@@ -15904,7 +15965,7 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 		}
 
 		writer.add_vtable(StringTable::getStringView(vtable.vtable_symbol), func_symbols_sv, StringTable::getStringView(vtable.class_name),
-						  base_class_names_sv, vtable.base_class_info, vtable.rtti_info);
+						  base_class_names_sv, vtable.base_class_info, vtable.rtti_info, vtable.subobject_type_index, vtable.offset_to_top);
 	}
 
 		// Now add pending global variable relocations (after symbols are created)
