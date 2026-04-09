@@ -7253,8 +7253,6 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						// Add RTTI information for this class
 					vtable_info.rtti_info = struct_info->rtti_info;
 
-					vtables_.push_back(std::move(vtable_info));
-
 					auto registerSecondaryVTable = [&](const BaseClassSpecifier& base) {
 						if (base.offset == 0) {
 							return;
@@ -7309,6 +7307,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 					for (const auto& virtual_base : struct_info->virtual_bases) {
 						registerSecondaryVTable(virtual_base);
 					}
+
+					vtables_.push_back(std::move(vtable_info));
 				}
 
 					// Check if this function is virtual and add it to the vtable
