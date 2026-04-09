@@ -275,6 +275,9 @@ private:
 	std::optional<AddressComponents> analyzeAddressExpression(
 		const ExpressionNode& expr,
 		int accumulated_offset = 0);
+	std::optional<AddressComponents> makeAddressComponentsFromEvaluatedResult(
+		const ExprResult& expr_result,
+		int accumulated_offset) const;
 	bool exprResultAlreadyHoldsRuntimeAddress(const ExprResult& expr_result) const;
 	ExprResult materializeAddressResult(
 		const ExpressionNode& expr,

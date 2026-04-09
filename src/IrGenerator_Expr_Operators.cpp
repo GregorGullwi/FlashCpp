@@ -854,11 +854,14 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 
 	if (context == ExpressionContext::LValueAddress) {
 		ValueCategory value_category = ValueCategory::LValue;
-		if (const auto* temp_var = std::get_if<TempVar>(&true_result.value)) {
-			const TempVarMetadata metadata = getTempVarMetadata(*temp_var);
-			if (metadata.category == ValueCategory::XValue) {
-				value_category = ValueCategory::XValue;
+		auto branchIsXValue = [&](const ExprResult& branch_result) {
+			if (const auto* temp_var = std::get_if<TempVar>(&branch_result.value)) {
+				return getTempVarMetadata(*temp_var).category == ValueCategory::XValue;
 			}
+			return false;
+		};
+		if (branchIsXValue(true_result) || branchIsXValue(false_result)) {
+			value_category = ValueCategory::XValue;
 		}
 		setTempVarMetadata(
 			result_var,

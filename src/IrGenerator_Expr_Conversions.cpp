@@ -288,38 +288,7 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 		return result;
 	}
 
-	if (std::holds_alternative<StringLiteralNode>(expr)) {
-		ExprResult string_result = generateStringLiteralIr(std::get<StringLiteralNode>(expr));
-		if (const auto* temp_var = std::get_if<TempVar>(&string_result.value)) {
-			AddressComponents result;
-			result.base = *temp_var;
-			result.total_member_offset = accumulated_offset;
-			result.final_type_index = nativeTypeIndex(TypeCategory::Char);
-			result.final_size_bits = SizeInBits{8};
-			result.pointer_depth = PointerDepth{};
-			return result;
-		}
-		return std::nullopt;
-	}
-
-	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
-		ExprResult ternary_result = visitExpressionNode(expr, ExpressionContext::LValueAddress);
-		if (!exprResultAlreadyHoldsRuntimeAddress(ternary_result)) {
-			return std::nullopt;
-		}
-		if (const auto* temp_var = std::get_if<TempVar>(&ternary_result.value)) {
-			AddressComponents result;
-			result.base = *temp_var;
-			result.total_member_offset = accumulated_offset;
-			result.final_type_index = ternary_result.type_index;
-			result.final_size_bits = ternary_result.size_in_bits;
-			result.pointer_depth = ternary_result.pointer_depth;
-			return result;
-		}
-		return std::nullopt;
-	}
-
-		// Handle MemberAccess (obj.member)
+	// Handle MemberAccess (obj.member)
 	if (std::holds_alternative<MemberAccessNode>(expr)) {
 		const MemberAccessNode& memberAccess = std::get<MemberAccessNode>(expr);
 		const ASTNode& object_node = memberAccess.object();
@@ -330,7 +299,7 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 
 		const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
 
-			// Get object type to lookup member
+		// Get object type to lookup member
 		ExprResult object_operands = visitExpressionNode(obj_expr, ExpressionContext::LValueAddress);
 
 		const TypeCategory object_category = object_operands.category();
@@ -352,9 +321,16 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 			return std::nullopt;
 		}
 
-			// Recurse with accumulated offset
+		// Recurse with accumulated offset
 		int new_offset = accumulated_offset + static_cast<int>(result.adjusted_offset);
-		auto base_components = analyzeAddressExpression(obj_expr, new_offset);
+		std::optional<AddressComponents> base_components;
+		if (std::holds_alternative<TernaryOperatorNode>(obj_expr) ||
+			std::holds_alternative<MemberAccessNode>(obj_expr)) {
+			base_components = makeAddressComponentsFromEvaluatedResult(object_operands, new_offset);
+		}
+		if (!base_components.has_value()) {
+			base_components = analyzeAddressExpression(obj_expr, new_offset);
+		}
 
 		if (!base_components.has_value()) {
 			return std::nullopt;
@@ -492,6 +468,49 @@ bool AstToIr::exprResultAlreadyHoldsRuntimeAddress(const ExprResult& expr_result
 		   metadata.lvalue_info->kind == LValueInfo::Kind::Indirect;
 }
 
+std::optional<AstToIr::AddressComponents> AstToIr::makeAddressComponentsFromEvaluatedResult(
+	const ExprResult& expr_result,
+	int accumulated_offset) const {
+	if (const auto* temp_var = std::get_if<TempVar>(&expr_result.value)) {
+		const TempVarMetadata metadata = getTempVarMetadata(*temp_var);
+		if (metadata.lvalue_info.has_value()) {
+			const LValueInfo& lvalue_info = *metadata.lvalue_info;
+			if (lvalue_info.kind == LValueInfo::Kind::Member) {
+				AddressComponents result;
+				result.base = lvalue_info.base;
+				result.total_member_offset = lvalue_info.offset + accumulated_offset;
+				result.final_type_index = expr_result.type_index;
+				result.final_size_bits = expr_result.size_in_bits;
+				result.pointer_depth = expr_result.pointer_depth;
+				return result;
+			}
+		}
+	}
+
+	if (!exprResultAlreadyHoldsRuntimeAddress(expr_result)) {
+		return std::nullopt;
+	}
+
+	AddressComponents result;
+	result.final_type_index = expr_result.type_index;
+	result.final_size_bits = expr_result.size_in_bits;
+	result.pointer_depth = expr_result.pointer_depth;
+
+	if (const auto* temp_var = std::get_if<TempVar>(&expr_result.value)) {
+		result.base = *temp_var;
+		result.total_member_offset = accumulated_offset;
+		return result;
+	}
+
+	if (const auto* base_name = std::get_if<StringHandle>(&expr_result.value)) {
+		result.base = *base_name;
+		result.total_member_offset = accumulated_offset;
+		return result;
+	}
+
+	return std::nullopt;
+}
+
 ExprResult AstToIr::materializeAddressResult(
 	const ExpressionNode& expr,
 	ExprResult expr_result,
@@ -520,15 +539,15 @@ ExprResult AstToIr::materializeAddressResult(
 		throw InternalError("String literal address materialization requires TempVar storage");
 	}
 
-	if (auto addr_components = analyzeAddressExpression(expr); addr_components.has_value()) {
+	auto emitComputedAddress = [&](AddressComponents addr_components) {
 		TempVar address_temp = var_counter.next();
 		ComputeAddressOp compute_addr_op;
 		compute_addr_op.result = address_temp;
-		compute_addr_op.base = addr_components->base;
-		compute_addr_op.array_indices = std::move(addr_components->array_indices);
-		compute_addr_op.total_member_offset = addr_components->total_member_offset;
-		compute_addr_op.result_type_index = addr_components->final_type_index;
-		compute_addr_op.result_size_bits = addr_components->final_size_bits;
+		compute_addr_op.base = addr_components.base;
+		compute_addr_op.array_indices = std::move(addr_components.array_indices);
+		compute_addr_op.total_member_offset = addr_components.total_member_offset;
+		compute_addr_op.result_type_index = addr_components.final_type_index;
+		compute_addr_op.result_size_bits = addr_components.final_size_bits;
 		ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), token));
 
 		ValueCategory value_category = ValueCategory::LValue;
@@ -541,13 +560,13 @@ ExprResult AstToIr::materializeAddressResult(
 
 		TypeIndex result_type_index = expr_result.type_index.is_valid()
 			? expr_result.type_index
-			: addr_components->final_type_index;
+			: addr_components.final_type_index;
 		PointerDepth result_pointer_depth = expr_result.pointer_depth.value != 0
 			? expr_result.pointer_depth
-			: addr_components->pointer_depth;
+			: addr_components.pointer_depth;
 		SizeInBits pointee_size_bits = expr_result.size_in_bits.is_set()
 			? expr_result.size_in_bits
-			: addr_components->final_size_bits;
+			: addr_components.final_size_bits;
 
 		return makeAddressOnlyResult(
 			address_temp,
@@ -555,6 +574,15 @@ ExprResult AstToIr::materializeAddressResult(
 			pointee_size_bits,
 			result_pointer_depth,
 			value_category);
+	};
+
+	if (auto direct_components = makeAddressComponentsFromEvaluatedResult(expr_result, 0);
+		direct_components.has_value()) {
+		return emitComputedAddress(std::move(*direct_components));
+	}
+
+	if (auto addr_components = analyzeAddressExpression(expr); addr_components.has_value()) {
+		return emitComputedAddress(std::move(*addr_components));
 	}
 
 	if (expr_result.storage == ValueStorage::ContainsAddress) {
@@ -1533,6 +1561,10 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		// Address-of operator: &x
 		// Get the current pointer depth from operandIrOperands
 		unsigned long long operand_ptr_depth = static_cast<unsigned long long>(operandIrOperands.pointer_depth.value);
+		if (operandType == TypeCategory::FunctionPointer &&
+			operandIrOperands.storage == ValueStorage::ContainsAddress) {
+			return operandIrOperands;
+		}
 		if (operandIrOperands.storage == ValueStorage::ContainsAddress) {
 			return makeExprResult(
 				operandIrOperands.type_index.withCategory(operandType),
