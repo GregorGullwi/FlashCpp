@@ -4146,16 +4146,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							if (class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", identifier_token.value());
 
-								// Build the instantiated type name using hash-based naming
-								std::string_view instantiated_type_name = get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
-
-								// Try to instantiate the class template (may fail for dependent args, which is OK)
-								// Add returned StructDeclarationNode to ast_nodes_ so member function bodies get generated.
-								{
-									auto instantiated_struct = try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
+								AliasTemplateMaterializationResult materialized_owner =
+									materializePrimaryTemplateOwnerForLookup(
+										identifier_token.value(),
+										{},
+										*explicit_template_args);
+								std::string_view instantiated_type_name = materialized_owner.instantiated_name;
+								const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
+								if (instantiated_type_name.empty()) {
+									instantiated_type_name =
+										get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
+									auto instantiated_struct =
+										try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
 									if (instantiated_struct.has_value() && instantiated_struct->is<StructDeclarationNode>()) {
 										registerLateMaterializedTopLevelNode(*instantiated_struct);
 									}
+									instantiated_type_info = findTypeByName(
+										StringTable::getOrInternStringHandle(instantiated_type_name));
 								}
 
 								// Consume '(' and parse constructor arguments
@@ -4188,11 +4195,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								// Look up the type to get the proper TypeIndex and size for mangling
 								Token inst_type_token(Token::Type::Identifier, instantiated_type_name,
 													  identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-								auto inst_type_handle = StringTable::getOrInternStringHandle(instantiated_type_name);
-								auto inst_type_it = getTypesByNameMap().find(inst_type_handle);
 								ASTNode type_spec_node;
-								if (inst_type_it != getTypesByNameMap().end() && inst_type_it->second->isStruct()) {
-									const TypeInfo& inst_type_info = *inst_type_it->second;
+								if (instantiated_type_info != nullptr && instantiated_type_info->isStruct()) {
+									const TypeInfo& inst_type_info = *instantiated_type_info;
 									TypeIndex inst_type_index = inst_type_info.type_index_;
 									SizeInBits inst_type_size{};
 									if (inst_type_info.struct_info_) {
@@ -4901,11 +4906,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", identifier_token.value());
 
-					// Build the instantiated type name using hash-based naming
-					std::string_view instantiated_type_name = get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
-
-					// Try to instantiate the class template
-					try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
+					AliasTemplateMaterializationResult materialized_owner =
+						materializePrimaryTemplateOwnerForLookup(
+							identifier_token.value(),
+							{},
+							*explicit_template_args);
+					std::string_view instantiated_type_name = materialized_owner.instantiated_name;
+					const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
+					if (instantiated_type_name.empty()) {
+						instantiated_type_name =
+							get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
+						try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
+						instantiated_type_info =
+							findTypeByName(StringTable::getOrInternStringHandle(instantiated_type_name));
+					}
 
 					// Consume '(' and parse constructor arguments
 					advance(); // consume '('
@@ -4936,7 +4950,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					// Create TypeSpecifierNode for the instantiated template type
 					Token inst_type_token(Token::Type::Identifier, instantiated_type_name,
 										  identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-					auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, inst_type_token, CVQualifier::None);
+					ASTNode type_spec_node;
+					if (instantiated_type_info != nullptr && instantiated_type_info->isStruct()) {
+						TypeIndex inst_type_index = instantiated_type_info->type_index_;
+						SizeInBits inst_type_size{};
+						if (instantiated_type_info->struct_info_) {
+							inst_type_size = instantiated_type_info->struct_info_->sizeInBits();
+						}
+						type_spec_node = emplace_node<TypeSpecifierNode>(
+							inst_type_index.withCategory(TypeCategory::Struct),
+							inst_type_size,
+							inst_type_token,
+							CVQualifier::None,
+							ReferenceQualifier::None);
+					} else {
+						type_spec_node = emplace_node<TypeSpecifierNode>(
+							TypeCategory::UserDefined,
+							TypeQualifier::None,
+							0,
+							inst_type_token,
+							CVQualifier::None);
+					}
 
 					// Create ConstructorCallNode for functional-style cast
 					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), inst_type_token));
