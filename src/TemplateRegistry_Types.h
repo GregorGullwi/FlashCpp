@@ -689,6 +689,8 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.is_array = arg.is_array;
 	result.array_size = arg.array_size;
 	result.function_signature = arg.function_signature;
+	result.is_dependent = arg.is_dependent;
+	result.dependent_name = arg.dependent_name;
 	return result;
 }
 
