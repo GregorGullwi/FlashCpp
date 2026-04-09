@@ -3372,7 +3372,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (has_dependent_call_args ||
 					argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token, CVQualifier::None);
+					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 					result = emplace_node<ExpressionNode>(
 						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
@@ -3790,7 +3790,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				auto make_dependent_call_result = [&]() -> ParseResult {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token, CVQualifier::None);
+					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 					result = emplace_node<ExpressionNode>(
 						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args_ref), identifier_token));
@@ -5842,7 +5842,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										FLASH_LOG(Templates, Debug, "Creating dependent call expression for call to '", identifier_token.value(), "'");
 
 										// Create a placeholder declaration for the dependent function call
-										TypeSpecifierNode placeholder_type(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token, CVQualifier::None);
+										TypeSpecifierNode placeholder_type(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
 										if (const std::vector<ASTNode>* template_overloads = gTemplateRegistry.lookupAllTemplates(identifier_token.value())) {
 											for (const ASTNode& template_overload : *template_overloads) {
 												const FunctionDeclarationNode* function_decl = get_function_decl_node(template_overload);
@@ -5934,7 +5934,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										if (has_dependent_call_args ||
 											argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
 											FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-											auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token, CVQualifier::None);
+											auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
 											auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 											result = emplace_node<ExpressionNode>(
 												makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
@@ -5997,7 +5997,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											if (has_dependent_call_args ||
 												argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
 												FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-												auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token, CVQualifier::None);
+												auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
 												auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 												result = emplace_node<ExpressionNode>(
 													makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
