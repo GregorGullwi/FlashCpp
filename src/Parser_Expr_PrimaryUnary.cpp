@@ -4,6 +4,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
+#include <atomic>
 
 ParseResult Parser::parse_return_statement() {
 	auto current_token_opt = peek_info();
@@ -741,11 +742,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 					return ParseResult::error("Expected ')' after noexcept expression", current_token_);
 				}
 
-				static size_t dependent_noexcept_counter = 0;
-				std::string placeholder_name = std::string(
+				static std::atomic_size_t dependent_noexcept_counter{0};
+				std::string placeholder_name(
 					StringBuilder()
 						.append("__dependent_noexcept_expr_")
-						.append(++dependent_noexcept_counter)
+						.append(dependent_noexcept_counter.fetch_add(1, std::memory_order_relaxed))
 						.commit());
 				StringHandle placeholder_handle = StringTable::getOrInternStringHandle(placeholder_name);
 				Token placeholder_token(

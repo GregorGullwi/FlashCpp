@@ -126,6 +126,41 @@ std::vector<ASTNode> materializeTemplateArgumentNodes(
 
 bool astNodeHasDeferredTemplateDependency(const ASTNode& node);
 
+bool typeRefersToCurrentTemplateParam(
+	const TypeSpecifierNode& type_spec,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	if (type_spec.category() == TypeCategory::Template) {
+		return true;
+	}
+	if (type_spec.category() != TypeCategory::UserDefined &&
+		type_spec.category() != TypeCategory::TypeAlias) {
+		return false;
+	}
+	if (!type_spec.type_index().is_valid()) {
+		return true;
+	}
+	StringHandle token_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
+	if (token_handle.isValid() &&
+		std::find(current_template_param_names.begin(), current_template_param_names.end(), token_handle) != current_template_param_names.end()) {
+		return true;
+	}
+	if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+		return std::find(current_template_param_names.begin(), current_template_param_names.end(), type_info->name()) != current_template_param_names.end();
+	}
+	return false;
+}
+
+bool argTypesAreDeferredTemplateDependent(
+	const std::vector<TypeSpecifierNode>& arg_types,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return std::any_of(
+		arg_types.begin(),
+		arg_types.end(),
+		[&](const TypeSpecifierNode& arg_type) {
+			return typeRefersToCurrentTemplateParam(arg_type, current_template_param_names);
+		});
+}
+
 bool callTemplateArgumentsAreDependent(const std::vector<ASTNode>& template_args) {
 	for (const ASTNode& template_arg : template_args) {
 		if (astNodeHasDeferredTemplateDependency(template_arg)) {
@@ -183,6 +218,16 @@ bool astNodeHasDeferredTemplateDependency(const ASTNode& node) {
 		return expressionHasDeferredTemplateDependency(node.as<ExpressionNode>());
 	}
 	return false;
+}
+
+bool argsHaveDeferredTemplateDependency(const ChunkedVector<ASTNode>& args) {
+	bool has_dependent_arg = false;
+	args.visit([&](ASTNode arg) {
+		if (!has_dependent_arg && astNodeHasDeferredTemplateDependency(arg)) {
+			has_dependent_arg = true;
+		}
+	});
+	return has_dependent_arg;
 }
 
 void syncTemplateArgumentNodeMetadata(
@@ -3323,38 +3368,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				result = function_call_node;
 				return ParseResult::success(*result);
 			} else {
-				auto arg_types_are_dependent = [&]() {
-					for (const TypeSpecifierNode& arg_type : arg_types) {
-						if (arg_type.category() == TypeCategory::Template) {
-							return true;
-						}
-						if (arg_type.category() != TypeCategory::UserDefined &&
-							arg_type.category() != TypeCategory::TypeAlias) {
-							continue;
-						}
-						if (!arg_type.type_index().is_valid()) {
-							return true;
-						}
-						StringHandle token_handle = StringTable::getOrInternStringHandle(arg_type.token().value());
-						if (token_handle.isValid() &&
-							std::find(current_template_param_names_.begin(), current_template_param_names_.end(), token_handle) != current_template_param_names_.end()) {
-							return true;
-						}
-						if (const TypeInfo* type_info = tryGetTypeInfo(arg_type.type_index())) {
-							if (std::find(current_template_param_names_.begin(), current_template_param_names_.end(), type_info->name()) != current_template_param_names_.end()) {
-								return true;
-							}
-						}
-					}
-					return false;
-				};
-				bool has_dependent_call_args = false;
-				args.visit([&](ASTNode arg) {
-					if (!has_dependent_call_args && astNodeHasDeferredTemplateDependency(arg)) {
-						has_dependent_call_args = true;
-					}
-				});
-				if (has_dependent_call_args || arg_types_are_dependent()) {
+				bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args);
+				if (has_dependent_call_args ||
+					argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token, CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
@@ -3772,32 +3788,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return ParseResult::success(*result);
 				};
 
-				auto arg_types_are_dependent = [&]() {
-					for (const TypeSpecifierNode& arg_type : arg_types) {
-						if (arg_type.category() == TypeCategory::Template) {
-							return true;
-						}
-						if (arg_type.category() != TypeCategory::UserDefined &&
-							arg_type.category() != TypeCategory::TypeAlias) {
-							continue;
-						}
-						if (!arg_type.type_index().is_valid()) {
-							return true;
-						}
-						StringHandle token_handle = StringTable::getOrInternStringHandle(arg_type.token().value());
-						if (token_handle.isValid() &&
-							std::find(current_template_param_names_.begin(), current_template_param_names_.end(), token_handle) != current_template_param_names_.end()) {
-							return true;
-						}
-						if (const TypeInfo* type_info = tryGetTypeInfo(arg_type.type_index())) {
-							if (std::find(current_template_param_names_.begin(), current_template_param_names_.end(), type_info->name()) != current_template_param_names_.end()) {
-								return true;
-							}
-						}
-					}
-					return false;
-				};
-
 				auto make_dependent_call_result = [&]() -> ParseResult {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token, CVQualifier::None);
@@ -3834,7 +3824,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						return ParseResult::success(*result);
 					}
-					if (arg_types_are_dependent()) {
+					if (argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
 						return make_dependent_call_result();
 					}
 					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
@@ -3897,7 +3887,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						return ParseResult::success(*result);
 					}
-					if (arg_types_are_dependent()) {
+					if (argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
 						return make_dependent_call_result();
 					}
 					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
@@ -5933,45 +5923,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											result = emplace_node<ExpressionNode>(makeCallExprFromNode(*instantiated_func, std::move(args), identifier_token));
 
 											// Copy mangled name if available
-										if (instantiated_func->is<FunctionDeclarationNode>()) {
-											const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
-											if (func_decl.has_mangled_name()) {
-												setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
+											if (instantiated_func->is<FunctionDeclarationNode>()) {
+												const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
+												if (func_decl.has_mangled_name()) {
+													setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
+												}
 											}
-										}
 									} else {
-										auto arg_types_are_dependent = [&]() {
-											for (const TypeSpecifierNode& arg_type : arg_types) {
-												if (arg_type.category() == TypeCategory::Template) {
-													return true;
-												}
-												if (arg_type.category() != TypeCategory::UserDefined &&
-													arg_type.category() != TypeCategory::TypeAlias) {
-													continue;
-												}
-												if (!arg_type.type_index().is_valid()) {
-													return true;
-												}
-												StringHandle token_handle = StringTable::getOrInternStringHandle(arg_type.token().value());
-												if (token_handle.isValid() &&
-													std::find(current_template_param_names_.begin(), current_template_param_names_.end(), token_handle) != current_template_param_names_.end()) {
-													return true;
-												}
-												if (const TypeInfo* type_info = tryGetTypeInfo(arg_type.type_index())) {
-													if (std::find(current_template_param_names_.begin(), current_template_param_names_.end(), type_info->name()) != current_template_param_names_.end()) {
-														return true;
-													}
-												}
-											}
-											return false;
-										};
-										bool has_dependent_call_args = false;
-										args.visit([&](ASTNode arg) {
-											if (!has_dependent_call_args && astNodeHasDeferredTemplateDependency(arg)) {
-												has_dependent_call_args = true;
-											}
-										});
-										if (has_dependent_call_args || arg_types_are_dependent()) {
+										bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args);
+										if (has_dependent_call_args ||
+											argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
 											FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 											auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token, CVQualifier::None);
 											auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
@@ -6027,43 +5988,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												// Copy mangled name if available
 												if (instantiated_func->is<FunctionDeclarationNode>()) {
 													const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
-												if (func_decl.has_mangled_name()) {
-													setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
+													if (func_decl.has_mangled_name()) {
+														setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
+													}
 												}
-											}
 										} else {
-											auto arg_types_are_dependent = [&]() {
-												for (const TypeSpecifierNode& arg_type : arg_types) {
-													if (arg_type.category() == TypeCategory::Template) {
-														return true;
-													}
-													if (arg_type.category() != TypeCategory::UserDefined &&
-														arg_type.category() != TypeCategory::TypeAlias) {
-														continue;
-													}
-													if (!arg_type.type_index().is_valid()) {
-														return true;
-													}
-													StringHandle token_handle = StringTable::getOrInternStringHandle(arg_type.token().value());
-													if (token_handle.isValid() &&
-														std::find(current_template_param_names_.begin(), current_template_param_names_.end(), token_handle) != current_template_param_names_.end()) {
-														return true;
-													}
-													if (const TypeInfo* type_info = tryGetTypeInfo(arg_type.type_index())) {
-														if (std::find(current_template_param_names_.begin(), current_template_param_names_.end(), type_info->name()) != current_template_param_names_.end()) {
-															return true;
-														}
-													}
-												}
-												return false;
-											};
-											bool has_dependent_call_args = false;
-											args.visit([&](ASTNode arg) {
-												if (!has_dependent_call_args && astNodeHasDeferredTemplateDependency(arg)) {
-													has_dependent_call_args = true;
-												}
-											});
-											if (has_dependent_call_args || arg_types_are_dependent()) {
+											bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args);
+											if (has_dependent_call_args ||
+												argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
 												FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 												auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token, CVQualifier::None);
 												auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
