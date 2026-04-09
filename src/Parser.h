@@ -1257,6 +1257,10 @@ private:
 	AliasTemplateMaterializationResult materializeTemplateInstantiationForLookup(
 		std::string_view template_name,
 		const std::vector<TemplateTypeArg>& template_args);
+	AliasTemplateMaterializationResult materializePrimaryTemplateOwnerForLookup(
+		std::string_view primary_template_name,
+		std::string_view fallback_template_name,
+		const std::vector<TemplateTypeArg>& template_args);
 	const TypeInfo* materializeInstantiatedMemberAliasTarget(
 		const TypeSpecifierNode& alias_type_spec,
 		TypeIndex fallback_type_index,

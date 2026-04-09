@@ -503,6 +503,34 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token, co
 	return ParseResult::success(result);
 }
 
+Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwnerForLookup(
+	std::string_view primary_template_name,
+	std::string_view fallback_template_name,
+	const std::vector<TemplateTypeArg>& template_args) {
+	const auto try_materialize_candidate =
+		[&](std::string_view candidate_name) -> AliasTemplateMaterializationResult {
+		if (candidate_name.empty()) {
+			return {};
+		}
+		if (!gTemplateRegistry.lookupTemplate(candidate_name).has_value() &&
+			!gTemplateRegistry.lookup_alias_template(candidate_name).has_value()) {
+			return {};
+		}
+		return materializeTemplateInstantiationForLookup(candidate_name, template_args);
+	};
+
+	AliasTemplateMaterializationResult materialized_owner =
+		try_materialize_candidate(primary_template_name);
+	if (!materialized_owner.instantiated_name.empty() ||
+		materialized_owner.resolved_type_info != nullptr) {
+		return materialized_owner;
+	}
+	if (fallback_template_name.empty() || fallback_template_name == primary_template_name) {
+		return materialized_owner;
+	}
+	return try_materialize_candidate(fallback_template_name);
+}
+
 ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 	std::optional<ASTNode> result;
 
@@ -1766,72 +1794,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// Check if followed by :: for member access (Template<T>::member)
 					if (current_token_.value() == "::") {
-					// Fill in default template arguments to get the actual instantiated name
-						std::vector<TemplateTypeArg> filled_template_args = *template_args;
-						auto template_lookup_result = gTemplateRegistry.lookupTemplate(qual_id.name());
-						if (template_lookup_result.has_value() && template_lookup_result->is<TemplateClassDeclarationNode>()) {
-							const auto& template_class = template_lookup_result->as<TemplateClassDeclarationNode>();
-							const auto& template_params = template_class.template_parameters();
-
-						// Helper lambda to build instantiated template name suffix
-						// Fill in defaults for missing parameters
-							for (size_t param_idx = filled_template_args.size(); param_idx < template_params.size(); ++param_idx) {
-								const TemplateParameterNode& param = template_params[param_idx].as<TemplateParameterNode>();
-								if (!param.has_default()) {
-									continue;
-								}
-
-								const ASTNode& default_node = param.default_value();
-								InlineVector<TemplateTypeArg, 4> inline_filled_args = toInlineTemplateArgs(filled_template_args);
-
-								if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
-									ASTNode substituted_default_node = default_node;
-									if (!inline_filled_args.empty()) {
-										substituted_default_node = substituteTemplateParameters(default_node, template_params, inline_filled_args);
-									}
-									if (substituted_default_node.is<TypeSpecifierNode>()) {
-										filled_template_args.push_back(TemplateTypeArg(substituted_default_node.as<TypeSpecifierNode>()));
-									}
-								} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
-									std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-									std::vector<std::string_view> template_param_order;
-									for (size_t filled_idx = 0; filled_idx < param_idx && filled_idx < filled_template_args.size(); ++filled_idx) {
-										if (!template_params[filled_idx].is<TemplateParameterNode>()) {
-											continue;
-										}
-										const TemplateParameterNode& earlier_param = template_params[filled_idx].as<TemplateParameterNode>();
-										param_map[earlier_param.name()] = filled_template_args[filled_idx];
-										template_param_order.push_back(earlier_param.name());
-									}
-
-									ASTNode substituted_default_node = default_node;
-									if (!param_map.empty()) {
-										ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
-										substituted_default_node = substitutor.substitute(default_node);
-									}
-
-									ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-									auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
-									if (eval_result.success()) {
-										if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
-											filled_template_args.push_back(TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool));
-										} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
-											TypeCategory value_category = eval_result.exact_type.has_value()
-												? eval_result.exact_type->category()
-												: TypeCategory::UnsignedLongLong;
-											filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category));
-										} else if (eval_result.exact_type.has_value()) {
-											filled_template_args.push_back(TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category()));
-										} else {
-											filled_template_args.push_back(TemplateTypeArg(eval_result.as_int()));
-										}
-									}
-								}
-							}
+						Parser::AliasTemplateMaterializationResult materialized_owner =
+							materializePrimaryTemplateOwnerForLookup(
+								qualified_name,
+								qual_id.name(),
+								*template_args);
+						std::string_view instantiated_name = materialized_owner.instantiated_name;
+						if (instantiated_name.empty()) {
+							instantiated_name = get_instantiated_class_name(qual_id.name(), *template_args);
 						}
-
-					// Get the instantiated class name to use in qualified identifier (with defaults filled in)
-						std::string_view instantiated_name = get_instantiated_class_name(qual_id.name(), filled_template_args);
 
 					// Build the full namespace path including the instantiated template name
 					// For "my_ns::Wrapper<int>::value", we want namespace path "my_ns::Wrapper_int" and name="value"
@@ -4875,19 +4846,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// After template arguments, check for :: to handle Template<T>::member syntax
 				if (explicit_template_args.has_value() && peek() == "::"_tok) {
-					// Instantiate the template to ensure defaults are filled in
-					// This returns the instantiated struct node
-					auto instantiation_result = try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
-
-					// Get the instantiated class name with defaults filled in
-					std::string_view instantiated_class_name;
-					if (instantiation_result.has_value() && instantiation_result->is<StructDeclarationNode>()) {
-						// Get the name from the instantiated struct
-						const StructDeclarationNode& inst_struct = instantiation_result->as<StructDeclarationNode>();
-						instantiated_class_name = StringTable::getStringView(inst_struct.name());
-					} else {
-						// Fallback: build name from explicit args (may be missing defaults)
-						instantiated_class_name = get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
+					Parser::AliasTemplateMaterializationResult materialized_owner =
+						materializePrimaryTemplateOwnerForLookup(
+							identifier_token.value(),
+							{},
+							*explicit_template_args);
+					std::string_view instantiated_class_name = materialized_owner.instantiated_name;
+					if (instantiated_class_name.empty()) {
+						instantiated_class_name =
+							get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
 					}
 
 					// Create a token with the instantiated name to pass to parse_qualified_identifier_after_template
