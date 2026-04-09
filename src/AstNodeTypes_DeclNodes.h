@@ -188,7 +188,8 @@ struct StructTypeInfo {
 			bool has_same_type_overlap = is_empty_layout_member && hasEmptySubobjectTypeAtOffset(type_index, offset);
 			if (has_same_type_overlap) {
 				offset = alignLayoutSize(offset + 1, effective_alignment);
-			} else if (is_no_unique_address && is_empty_layout_member) {
+			}
+			if (is_no_unique_address && is_empty_layout_member) {
 				layout_member_size = 0;
 			}
 		}
