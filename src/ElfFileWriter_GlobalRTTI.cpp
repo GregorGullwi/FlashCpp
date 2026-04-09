@@ -17,13 +17,10 @@ void collectReachableVBases(const StructTypeInfo* si,
 		if (seen_vb.insert(vb.type_index).second) {
 			out.push_back(vb.type_index);
 		}
-		if (const TypeInfo* vbti = tryGetTypeInfo(vb.type_index)) {
-			collectReachableVBases(vbti->getStructInfo(), out, seen_vb, visited);
-		}
 	}
 	for (const auto& b : si->base_classes) {
-		if (b.is_virtual && seen_vb.insert(b.type_index).second) {
-			out.push_back(b.type_index);
+		if (b.is_virtual) {
+			continue;
 		}
 		if (const TypeInfo* bti = tryGetTypeInfo(b.type_index)) {
 			collectReachableVBases(bti->getStructInfo(), out, seen_vb, visited);
