@@ -763,6 +763,7 @@ inline TemplateTypeArg materializeTemplateArg(
 	concrete_arg.is_array = arg_info.is_array;
 	concrete_arg.function_signature = arg_info.function_signature;
 	concrete_arg.dependent_name = arg_info.dependent_name;
+	concrete_arg.is_dependent = arg_info.dependent_name.isValid();
 
 	if (arg_info.dependent_name.isValid()) {
 		std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);

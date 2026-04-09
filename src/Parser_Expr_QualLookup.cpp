@@ -854,6 +854,15 @@ TypeIndex Parser::substitute_template_parameter(
 			if (arg.is_dependent) {
 				return false;
 			}
+			if (arg.is_value || !arg.type_index.is_valid()) {
+				continue;
+			}
+			const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index);
+			if (arg_type_info &&
+				(arg_type_info->is_incomplete_instantiation_ ||
+				 (arg_type_info->isTemplateInstantiation() && arg_type_info->getStructInfo() == nullptr))) {
+				return false;
+			}
 		}
 		return true;
 	};
