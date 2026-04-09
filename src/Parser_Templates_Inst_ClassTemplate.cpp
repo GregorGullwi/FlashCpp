@@ -822,7 +822,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				: 64;
 			Token literal_token(
 				Token::Type::Literal,
-				StringBuilder().append(*unsigned_value).commit(),
+				StringBuilder().append(static_cast<uint64_t>(*unsigned_value)).commit(),
 				0,
 				0,
 				0);
@@ -844,7 +844,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				: 64;
 			Token literal_token(
 				Token::Type::Literal,
-				StringBuilder().append(*signed_value).commit(),
+				StringBuilder().append(static_cast<int64_t>(*signed_value)).commit(),
 				0,
 				0,
 				0);
