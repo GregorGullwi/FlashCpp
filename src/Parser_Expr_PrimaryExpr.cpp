@@ -1770,40 +1770,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						FLASH_LOG(Templates, Debug, "Alias template target is not a direct parameter, continuing with class template instantiation");
 					}
 
-				// Try to instantiate the template with these arguments
-				// Note: try_instantiate_class_template returns nullopt on success (type registered in getTypesByNameMap())
-				// Try class template instantiation first (for struct/class templates)
-					auto instantiation_result = try_instantiate_class_template(qual_id.name(), *template_args);
-					if (instantiation_result.has_value()) {
-					// Simple name failed, try with qualified name
-						instantiation_result = try_instantiate_class_template(qualified_name, *template_args);
+					Parser::AliasTemplateMaterializationResult materialized_owner =
+						materializePrimaryTemplateOwnerForLookup(
+							qualified_name,
+							qual_id.name(),
+							*template_args);
+					std::string_view instantiated_name = materialized_owner.instantiated_name;
+					if (instantiated_name.empty()) {
+						auto instantiation_result = try_instantiate_template_explicit(qual_id.name(), *template_args);
 						if (instantiation_result.has_value()) {
-						// Class instantiation didn't work, try function template
-							instantiation_result = try_instantiate_template_explicit(qual_id.name(), *template_args);
+							instantiation_result = try_instantiate_template_explicit(qualified_name, *template_args);
 							if (instantiation_result.has_value()) {
-								instantiation_result = try_instantiate_template_explicit(qualified_name, *template_args);
-								if (instantiation_result.has_value()) {
 								// Template instantiation failed - this might not be a template after all
 								// But we successfully parsed template arguments, so continue with the parsed args
-									FLASH_LOG_FORMAT(Parser, Warning, "Parsed template arguments but instantiation failed for '{}'", qualified_name);
-								}
+								FLASH_LOG_FORMAT(Parser, Warning, "Parsed template arguments but instantiation failed for '{}'", qualified_name);
 							}
 						}
 					}
-				// If we reach here, instantiation succeeded (returned nullopt)
 
 				// Check if followed by :: for member access (Template<T>::member)
-					if (current_token_.value() == "::") {
-						Parser::AliasTemplateMaterializationResult materialized_owner =
-							materializePrimaryTemplateOwnerForLookup(
-								qualified_name,
-								qual_id.name(),
-								*template_args);
-						std::string_view instantiated_name = materialized_owner.instantiated_name;
-						if (instantiated_name.empty()) {
-							instantiated_name = get_instantiated_class_name(qual_id.name(), *template_args);
-						}
-
+					if (!instantiated_name.empty() && current_token_.value() == "::") {
 					// Build the full namespace path including the instantiated template name
 					// For "my_ns::Wrapper<int>::value", we want namespace path "my_ns::Wrapper_int" and name="value"
 					// Build namespace path from the original namespace handle plus the instantiated template name
