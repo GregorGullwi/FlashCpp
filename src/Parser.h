@@ -785,6 +785,7 @@ private:
 	std::vector<TypeSpecifierNode> apply_lvalue_reference_deduction(const ChunkedVector<ASTNode>& args, const std::vector<TypeSpecifierNode>& arg_types);  // For template deduction: marks lvalue args with lvalue_reference for T&& forwarding
 	FlashCpp::MemberLeadingSpecifiers parse_member_leading_specifiers();	 // Consume constexpr/consteval/inline/explicit/virtual before a member
 	bool starts_with_no_unique_address_attribute();
+	bool scan_cpp_attribute_for_no_unique_address();	 // Shared helper: scan [[...]] blocks for no_unique_address (consumes tokens)
 	ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);	// Phase 2: Unified trailing specifiers
 	ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);	// Phase 4: Unified function header parsing
 	ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);	// Phase 4: Create FunctionDeclarationNode from header
