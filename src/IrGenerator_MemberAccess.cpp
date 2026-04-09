@@ -1315,9 +1315,12 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			// Materialize direct object expressions (constructor calls, braced construction,
 			// casts, conditional expressions, etc.) so member access can operate on the
 			// resulting temporary instead of special-casing each AST variant.
-			auto object_result = visitExpressionNode(*expr);
+			auto object_result = visitExpressionNode(*expr, context);
 			if (!extractBaseFromOperands(object_result, base_object, base_type_index, "object expression")) {
 				throw InternalError(std::string("Failed to extract base from object expression result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
+			}
+			if (object_result.storage == ValueStorage::ContainsAddress) {
+				is_pointer_dereference = true;
 			}
 			if (is_arrow) {
 				is_pointer_dereference = true;

@@ -150,6 +150,39 @@ private:
 	}
 
 	void exitScope();
+
+	// RAII guard for lazily entering and automatically exiting an IR block scope.
+	// Calls enter() to open the scope (idempotent); the destructor closes it.
+	// Use this when a scope is conditionally needed (e.g., range-for init-statement).
+	struct IrScopeGuard {
+		AstToIr& ir;
+		Token token;
+		bool active = false;
+
+		explicit IrScopeGuard(AstToIr& ir, Token token = Token())
+			: ir(ir), token(token) {}
+
+		void enter() {
+			if (active) {
+				return;
+			}
+			ir.symbol_table.enter_scope(ScopeType::Block);
+			ir.enterScope();
+			ir.ir_.addInstruction(IrOpcode::ScopeBegin, {}, token);
+			active = true;
+		}
+
+		~IrScopeGuard() {
+			if (active) {
+				ir.exitScope();
+				ir.ir_.addInstruction(IrOpcode::ScopeEnd, {}, token);
+				ir.symbol_table.exit_scope();
+			}
+		}
+
+		IrScopeGuard(const IrScopeGuard&) = delete;
+		IrScopeGuard& operator=(const IrScopeGuard&) = delete;
+	};
 	void emitActiveCatchScopeDestructors();
 
 	// Captures function-body-scope vars (for cleanup LP), then calls exitScope().
@@ -274,10 +307,19 @@ private:
 	GlobalStaticBindingInfo resolveGlobalOrStaticBinding(const IdentifierNode& identifier);
 	std::optional<AddressComponents> analyzeAddressExpression(
 		const ExpressionNode& expr,
-		int accumulated_offset = 0);
+		int accumulated_offset);
+	std::optional<AddressComponents> makeAddressComponentsFromEvaluatedResult(
+		const ExprResult& expr_result,
+		int accumulated_offset) const;
+	bool exprResultAlreadyHoldsRuntimeAddress(const ExprResult& expr_result) const;
+	ExprResult materializeAddressResult(
+		const ExpressionNode& expr,
+		ExprResult expr_result,
+		const Token& token);
 	ExprResult generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,
 									   ExpressionContext context = ExpressionContext::Load);
-	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode);
+	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode,
+										ExpressionContext context);
 	ExprResult generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method);
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method);
