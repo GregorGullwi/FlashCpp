@@ -499,6 +499,35 @@ void AstToIr::visitSwitchStatementNode(const SwitchStatementNode& node) {
 }
 
 void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
+	struct RangedForInitScopeGuard {
+		AstToIr& ast_to_ir;
+		bool active = false;
+
+		void enter() {
+			if (active) {
+				return;
+			}
+			ast_to_ir.symbol_table.enter_scope(ScopeType::Block);
+			ast_to_ir.enterScope();
+			ast_to_ir.ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
+			active = true;
+		}
+
+		void exit() {
+			if (!active) {
+				return;
+			}
+			ast_to_ir.exitScope();
+			ast_to_ir.ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
+			ast_to_ir.symbol_table.exit_scope();
+			active = false;
+		}
+
+		~RangedForInitScopeGuard() {
+			exit();
+		}
+	} init_scope_guard{*this};
+
 		// Desugar ranged for loop into traditional for loop
 		// For arrays: for (int x : arr) { body } becomes:
 		//   for (int __i = 0; __i < array_size; ++__i) { int x = arr[__i]; body }
@@ -508,6 +537,7 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 
 		// C++20: Handle optional init-statement if present
 	if (node.has_init_statement()) {
+		init_scope_guard.enter();
 		visit(*node.get_init_statement());
 	}
 
@@ -634,6 +664,8 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 		FLASH_LOG(Codegen, Error, "Range expression must be an array or a type with begin()/end() methods");
 		return;
 	}
+
+	init_scope_guard.exit();
 }
 
 void AstToIr::visitRangedForArray(const RangedForStatementNode& node, std::string_view array_name,
