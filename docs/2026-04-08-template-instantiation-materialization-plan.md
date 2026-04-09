@@ -7,56 +7,68 @@
 
 ### Do this next
 
-1. Audit the remaining lazy-member materialization and IR-triggered lookup
-   consumers now that the main `src/Parser_Expr_QualLookup.cpp`
-   placeholder/name-recovery branches are shared. The next obvious targets are
-   the last manual `get_instantiated_class_name(...)` /
-   `try_instantiate_class_template(...)` recovery sites in
-   `src/Parser_Expr_PrimaryExpr.cpp` (the remaining unqualified fallback paths
-   still clustered around the `4008`, `4159`, `4805`, and `4919` call sites),
-   then the remaining lazy/IR-triggered consumers that still synthesize
-   concrete owner/member names after substitution.
+1. Audit the remaining parser-side and lazy/IR-triggered consumers that still
+   synthesize concrete owner/member names after substitution now that the
+   manual unqualified `Template<Args>::member` recovery branches in
+   `src/Parser_Expr_PrimaryExpr.cpp` are gone. The next obvious parser target is
+   the namespace-scoped out-of-line `ClassName<Args>::member` specialization
+   path in `src/Parser_Decl_FunctionOrVar.cpp`, then the remaining lazy/IR
+   consumers that still rebuild owner names late.
 2. Keep routing those late consumers through the same parser-owned
-   materialization rules used by `materializeTemplateInstantiationForLookup(...)`,
-   including the exact qualified alias/member lookup preference before falling
-   back to member-chain walking.
+   materialization rules used by
+   `materializePrimaryTemplateOwnerForLookup(...)` and
+   `materializeTemplateInstantiationForLookup(...)`, including the exact
+   qualified alias/member lookup preference before falling back to member-chain
+   walking.
 3. Once the late consumers stop rebuilding instantiated names manually, return
    to the remaining deduction / placeholder sites only if they still encode the
    same owner-materialization policy independently.
 4. Keep the docs and follow-up plan focused on the still-open late consumers;
-   the nearby template-object default-member-initializer regression is now fixed
-   and covered, so the next PR cutoff can stay centered on the remaining
-   primary-expression and lazy/IR materialization cleanup.
+   the nearby template-object default-member-initializer regression is fixed,
+   the primary-expression cleanup is now through the shared helper, and the next
+   PR cutoff can stay centered on the remaining out-of-line and lazy/IR
+   materialization cleanup.
 
 ### Latest completed slice
 
+  - removed the last two unqualified `Template<Args>::member` fallback branches
+    in `src/Parser_Expr_PrimaryExpr.cpp`, so the primary-expression parser no
+    longer rebuilds instantiated owners by hand after the shared helper runs
+  - switched out-of-line `ClassName<Args>::member` owner recovery in
+    `src/Parser_Decl_FunctionOrVar.cpp` to
+    `materializePrimaryTemplateOwnerForLookup(...)` instead of open-coding
+    `get_instantiated_class_name(...)` plus namespace/type-map fallback
+  - added `tests/test_template_spec_outofline_default_arg_ret42.cpp` to cover
+    an out-of-line specialization that only binds when owner recovery completes
+    the defaulted class-template argument
   - fixed the previously tracked template-object construction regression by
     constexpr-folding substituted non-static default member initializers during
     top-level class-template instantiation, so `sizeof(U)`-driven initializers
     survive both named-object and temporary construction
   - replaced the two remaining namespace-qualified
-    `src/Parser_Expr_PrimaryExpr.cpp` replay branches with the shared parser-owned
-    `materializePrimaryTemplateOwnerForLookup(...)` helper so both the direct
-    `ns::Template<Args>::member` path and the older explicit qualified-id flow
-    stop rebuilding instantiated owners by hand
+    `src/Parser_Expr_PrimaryExpr.cpp` replay branches with the shared
+    parser-owned `materializePrimaryTemplateOwnerForLookup(...)` helper so both
+    the direct `ns::Template<Args>::member` path and the older explicit
+    qualified-id flow stop rebuilding instantiated owners by hand
   - added:
     - `tests/test_template_object_default_member_init_sizeof_ret84.cpp`
     - `tests/test_namespace_template_default_member_ret42.cpp`
     - `tests/test_nested_namespace_template_default_member_ret42.cpp`
+    - `tests/test_template_spec_outofline_default_arg_ret42.cpp`
   - Validation after this slice:
     - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_spec_outofline_default_arg_ret42.cpp test_template_spec_outofline_ret42.cpp test_identifier_binding_template_member_outofline_implicit_member_ret42.cpp test_template_member_outofline_mixed_order_bindings_ret42.cpp`
     - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_object_default_member_init_sizeof_ret84.cpp test_template_nested_default_member_init_sizeof_ret42.cpp test_template_nested_default_member_init_nttp_ret42.cpp`
     - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_namespace_template_default_member_ret42.cpp test_namespace_alias_template_default_member_ret42.cpp test_template_alias_member_qualifier_compose_ret0.cpp`
     - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_namespace_template_default_member_ret42.cpp test_nested_namespace_template_default_member_ret42.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+    - 2008 pass, 125 expected-fail
   - replaced three remaining `src/Parser_Expr_PrimaryExpr.cpp` owner/name
     recovery branches with the shared parser-owned
     `materializePrimaryTemplateOwnerForLookup(...)` helper so explicit
     `Template<Args>::member` parsing (qualified and unqualified) and
     template functional-style casts no longer hand-fill default arguments and
     rebuild instantiated owner names independently
-  - kept the primary-expression fallback behavior intact by only falling back to
-    `get_instantiated_class_name(...)` / `try_instantiate_class_template(...)`
-    when the shared materialization helper cannot produce a concrete owner
   - added:
     - `tests/test_namespace_alias_template_default_member_ret42.cpp`
     - `tests/test_template_default_member_lookup_ret42.cpp`
