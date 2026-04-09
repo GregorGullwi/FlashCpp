@@ -12,11 +12,10 @@
    placeholder/name-recovery branches are shared. The next obvious targets are
    the last manual `get_instantiated_class_name(...)` /
    `try_instantiate_class_template(...)` recovery sites in
-   `src/Parser_Expr_PrimaryExpr.cpp` (notably the qualified-template path near
-   the remaining `Template<Args>::member` replay block and the older explicit
-   `parse_qualified_identifier_after_template(...)` flow around the
-   `2642/2647` call sites), then the remaining lazy/IR-triggered consumers
-   that still synthesize concrete owner/member names after substitution.
+   `src/Parser_Expr_PrimaryExpr.cpp` (the remaining unqualified fallback paths
+   still clustered around the `4008`, `4159`, `4805`, and `4919` call sites),
+   then the remaining lazy/IR-triggered consumers that still synthesize
+   concrete owner/member names after substitution.
 2. Keep routing those late consumers through the same parser-owned
    materialization rules used by `materializeTemplateInstantiationForLookup(...)`,
    including the exact qualified alias/member lookup preference before falling
@@ -24,13 +23,31 @@
 3. Once the late consumers stop rebuilding instantiated names manually, return
    to the remaining deduction / placeholder sites only if they still encode the
    same owner-materialization policy independently.
-4. Follow up on the newly exposed template-object initialization bug captured in
-   `docs/KNOWN_ISSUES.md`: the correct specialization is now materialized for
-   lookup and functional-cast parsing, but instantiated non-static default
-   member initializers are still being dropped for constructed template objects.
+4. Keep the docs and follow-up plan focused on the still-open late consumers;
+   the nearby template-object default-member-initializer regression is now fixed
+   and covered, so the next PR cutoff can stay centered on the remaining
+   primary-expression and lazy/IR materialization cleanup.
 
 ### Latest completed slice
 
+  - fixed the previously tracked template-object construction regression by
+    constexpr-folding substituted non-static default member initializers during
+    top-level class-template instantiation, so `sizeof(U)`-driven initializers
+    survive both named-object and temporary construction
+  - replaced the two remaining namespace-qualified
+    `src/Parser_Expr_PrimaryExpr.cpp` replay branches with the shared parser-owned
+    `materializePrimaryTemplateOwnerForLookup(...)` helper so both the direct
+    `ns::Template<Args>::member` path and the older explicit qualified-id flow
+    stop rebuilding instantiated owners by hand
+  - added:
+    - `tests/test_template_object_default_member_init_sizeof_ret84.cpp`
+    - `tests/test_namespace_template_default_member_ret42.cpp`
+    - `tests/test_nested_namespace_template_default_member_ret42.cpp`
+  - Validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_object_default_member_init_sizeof_ret84.cpp test_template_nested_default_member_init_sizeof_ret42.cpp test_template_nested_default_member_init_nttp_ret42.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_namespace_template_default_member_ret42.cpp test_namespace_alias_template_default_member_ret42.cpp test_template_alias_member_qualifier_compose_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_namespace_template_default_member_ret42.cpp test_nested_namespace_template_default_member_ret42.cpp`
   - replaced three remaining `src/Parser_Expr_PrimaryExpr.cpp` owner/name
     recovery branches with the shared parser-owned
     `materializePrimaryTemplateOwnerForLookup(...)` helper so explicit
@@ -51,11 +68,6 @@
     - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_default_functional_cast_ret42.cpp test_template_default_member_lookup_ret42.cpp test_namespace_alias_template_default_member_ret42.cpp`
     - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
     - 2002 pass, 125 expected-fail
-  - probe work around the new functional-cast regression uncovered a separate
-    existing bug: template object construction still drops instantiated
-    non-static default member initializers for cases like `box<char> tmp;`
-    and `box<char>().value`; that follow-up is recorded in
-    `docs/KNOWN_ISSUES.md`
   - reran the previously reported alias/array crash cluster and confirmed it is
     no longer live on the branch; the current materialization baseline already
     compiles and runs those regressions cleanly
