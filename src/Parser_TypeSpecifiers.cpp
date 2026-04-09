@@ -1195,13 +1195,24 @@ ParseResult Parser::parse_type_specifier() {
 						}
 					}
 
-					if (const TypeInfo* instantiated_type_info = tryGetTypeInfo(instantiated_type.type_index())) {
-						if (std::optional<ParseResult> finalized_alias =
-								finalizeInstantiatedAliasType(
-									StringTable::getStringView(instantiated_type_info->name()),
-									instantiated_type_info);
-							finalized_alias.has_value()) {
-							return *finalized_alias;
+					// When the substituted type carries pointer/reference modifiers from the
+					// alias target (e.g., `using Storage = U*` → int*), those modifiers live
+					// on the TypeSpecifierNode but NOT on the underlying TypeInfo.
+					// finalizeInstantiatedAliasType/buildTypeFromInfo would reconstruct the
+					// type from TypeInfo alone, losing the pointer depth and causing a
+					// runtime crash (the member is treated as int instead of int*).
+					// Only route through finalizeInstantiatedAliasType when the instantiated
+					// type has no such modifiers that would be dropped.
+					if (instantiated_type.pointer_depth() == 0 &&
+						instantiated_type.reference_qualifier() == ReferenceQualifier::None) {
+						if (const TypeInfo* instantiated_type_info = tryGetTypeInfo(instantiated_type.type_index())) {
+							if (std::optional<ParseResult> finalized_alias =
+									finalizeInstantiatedAliasType(
+										StringTable::getStringView(instantiated_type_info->name()),
+										instantiated_type_info);
+								finalized_alias.has_value()) {
+								return *finalized_alias;
+							}
 						}
 					}
 
