@@ -405,8 +405,14 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							return ParseResult::error("Expected member name after ::", current_token_);
 						}
 						auto post_info = *post_info_opt;
-						if (post_info.member_type_name.has_value()) {
-							FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}::{}", full_name, StringTable::getStringView(*post_info.member_type_name));
+						if (!post_info.member_type_chain.empty()) {
+							StringBuilder member_chain_builder;
+							for (StringHandle member_name : post_info.member_type_chain) {
+								member_chain_builder.append("::");
+								member_chain_builder.append(StringTable::getStringView(member_name));
+							}
+							std::string_view member_chain = member_chain_builder.commit();
+							FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}{}", full_name, member_chain);
 						}
 
 						// Check if any template arguments are dependent
@@ -466,7 +472,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							}
 
 							StringHandle template_name_handle = StringTable::getOrInternStringHandle(full_name);
-							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), post_info.member_type_name, base_access, is_virtual_base, post_info.is_pack_expansion);
+							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::move(post_info.member_type_chain), base_access, is_virtual_base, post_info.is_pack_expansion);
 
 							continue; // Skip to next base class or exit loop
 						}
@@ -513,8 +519,14 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					return ParseResult::error("Expected member name after ::", current_token_);
 				}
 				auto post_info = *post_info_opt;
-				if (post_info.member_type_name.has_value()) {
-					FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}::{}", base_class_name, StringTable::getStringView(*post_info.member_type_name));
+				if (!post_info.member_type_chain.empty()) {
+					StringBuilder member_chain_builder;
+					for (StringHandle member_name : post_info.member_type_chain) {
+						member_chain_builder.append("::");
+						member_chain_builder.append(StringTable::getStringView(member_name));
+					}
+					std::string_view member_chain = member_chain_builder.commit();
+					FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}{}", base_class_name, member_chain);
 				}
 
 				// Check if any template arguments are dependent
@@ -648,7 +660,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					auto arg_infos = build_template_arg_infos(template_args, template_arg_nodes);
 
 					StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
-					struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), post_info.member_type_name, base_access, is_virtual_base, post_info.is_pack_expansion);
+					struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::move(post_info.member_type_chain), base_access, is_virtual_base, post_info.is_pack_expansion);
 
 					continue; // Skip to next base class or exit loop
 				}
@@ -659,54 +671,23 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				instantiated_base_name = instantiate_and_register_base_template(base_class_name, template_args);
 
 				// Resolve member type alias if present (e.g., Base<T>::type)
-				if (post_info.member_type_name.has_value()) {
-					std::string_view member_name = StringTable::getStringView(*post_info.member_type_name);
-
-					// First try direct lookup
-					StringBuilder qualified_builder;
-					qualified_builder.append(base_class_name);
-					qualified_builder.append("::"sv);
-					qualified_builder.append(member_name);
-					std::string_view alias_name = qualified_builder.commit();
-
-					const TypeInfo* alias_type_info = nullptr;
-					auto alias_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(alias_name));
-					if (alias_it == getTypesByNameMap().end()) {
-						// Try looking up through inheritance (e.g., wrapper<true_type>::type where type is inherited)
-						alias_type_info = lookup_inherited_type_alias(base_class_name, member_name);
-						if (alias_type_info == nullptr) {
-							return ParseResult::error("Base class '" + std::string(alias_name) + "' not found", *post_info.member_name_token);
+				if (!post_info.member_type_chain.empty()) {
+					const TypeInfo* resolved_type =
+						resolveBaseClassMemberTypeChain(base_class_name, post_info.member_type_chain);
+					if (resolved_type == nullptr) {
+						std::string_view unresolved_base_name = base_class_name;
+						for (StringHandle member_name : post_info.member_type_chain) {
+							unresolved_base_name = StringBuilder()
+								.append(unresolved_base_name)
+								.append("::")
+								.append(StringTable::getStringView(member_name))
+								.commit();
 						}
-						FLASH_LOG_FORMAT(Templates, Debug, "Found inherited member alias: {}", StringTable::getStringView(alias_type_info->name()));
-					} else {
-						alias_type_info = alias_it->second;
-						FLASH_LOG_FORMAT(Templates, Debug, "Found direct member alias: {}", alias_name);
+						return ParseResult::error(
+							"Base class '" + std::string(unresolved_base_name) + "' not found",
+							post_info.member_name_token.value_or(base_name_token));
 					}
 
-					// Resolve the type alias to its underlying type
-					// Type aliases have a type_index that points to the actual struct/class
-					const TypeInfo* resolved_type = alias_type_info;
-					size_t max_alias_depth = 10; // Prevent infinite loops
-					while (max_alias_depth-- > 0) {
-						const TypeInfo* underlying = tryGetTypeInfo(resolved_type->type_index_);
-						if (!underlying)
-							break;
-						// Stop if we're pointing to ourselves (not a valid alias)
-						if (underlying == resolved_type)
-							break;
-
-						FLASH_LOG_FORMAT(Templates, Debug, "Resolving type alias '{}' -> underlying type_index={}, type={}",
-										 StringTable::getStringView(resolved_type->name()),
-										 resolved_type->type_index_,
-										 static_cast<int>(underlying->category()));
-
-						resolved_type = underlying;
-						// If we've reached a concrete struct type, we're done
-						if (underlying->isStruct())
-							break;
-					}
-
-					// Use the resolved underlying type name as the base class
 					base_class_name = StringTable::getStringView(resolved_type->name());
 					FLASH_LOG_FORMAT(Templates, Debug, "Resolved member alias base to underlying type: {}", base_class_name);
 

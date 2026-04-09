@@ -455,13 +455,9 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						const FunctionDeclarationNode* func_decl_ptr = nullptr;
 
 						if (!base_name.empty() && template_args.has_value()) {
-							std::string_view instantiated_class_name;
-							auto instantiation_result = try_instantiate_class_template(base_name, *template_args);
-							if (instantiation_result.has_value() && instantiation_result->is<StructDeclarationNode>()) {
-								instantiated_class_name = StringTable::getStringView(instantiation_result->as<StructDeclarationNode>().name());
-							} else {
-								instantiated_class_name = get_instantiated_class_name(base_name, *template_args);
-							}
+							AliasTemplateMaterializationResult materialized_owner =
+								materializeTemplateInstantiationForLookup(base_name, *template_args);
+							std::string_view instantiated_class_name = materialized_owner.instantiated_name;
 
 							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_class_name));
 							if (type_it != getTypesByNameMap().end() && type_it->second) {

@@ -931,20 +931,20 @@ struct TemplateArgumentNodeInfo {
 struct DeferredTemplateBaseClassSpecifier {
 	StringHandle base_template_name;
 	std::vector<TemplateArgumentNodeInfo> template_arguments;
-	std::optional<StringHandle> member_type; // e.g., ::type
+	std::vector<StringHandle> member_type_chain; // e.g., ::type::type
 	AccessSpecifier access;
 	bool is_virtual;
 	bool is_pack_expansion = false; // e.g., Base<Args>...
 
 	DeferredTemplateBaseClassSpecifier(StringHandle name,
 									   std::vector<TemplateArgumentNodeInfo> args,
-									   std::optional<StringHandle> member,
+									   std::vector<StringHandle> member_chain,
 									   AccessSpecifier acc,
 									   bool virt,
 									   bool pack_expansion = false)
 		: base_template_name(name),
 		  template_arguments(std::move(args)),
-		  member_type(member),
+		  member_type_chain(std::move(member_chain)),
 		  access(acc),
 		  is_virtual(virt),
 		  is_pack_expansion(pack_expansion) {}

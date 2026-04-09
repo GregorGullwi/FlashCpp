@@ -5,7 +5,146 @@
 
 ## Next agent starting point
 
-- Latest completed slice:
+### Do this next
+
+1. Audit the remaining lazy-member materialization and IR-triggered lookup
+   consumers now that the main `src/Parser_Expr_QualLookup.cpp`
+   placeholder/name-recovery branches are shared. The next obvious targets are
+   the explicit template-recovery paths in `src/Parser_Expr_PrimaryExpr.cpp`
+   and the remaining lazy/IR-triggered consumers that still synthesize
+   concrete owner/member names after substitution.
+2. Keep routing those late consumers through the same parser-owned
+   materialization rules used by `materializeTemplateInstantiationForLookup(...)`,
+   including the exact qualified alias/member lookup preference before falling
+   back to member-chain walking.
+3. Once the late consumers stop rebuilding instantiated names manually, return
+   to the remaining deduction / placeholder sites only if they still encode the
+   same owner-materialization policy independently.
+
+### Latest completed slice
+
+  - reran the previously reported alias/array crash cluster and confirmed it is
+    no longer live on the branch; the current materialization baseline already
+    compiles and runs those regressions cleanly
+  - extracted shared late `TypeInfo::templateArgs()` rebinding in
+    `src/ExpressionSubstitutor.cpp` so qualified-identifier replay and late
+    type substitution now use the same dependent-name / surviving-type-name
+    substitution path instead of maintaining two copies
+  - switched `Template<Args>::member(...)` owner resolution in
+    `src/Parser_Expr_BinaryPrecedence.cpp` to
+    `materializeTemplateInstantiationForLookup(...)` instead of the old
+    `try_instantiate_class_template(...)` + `get_instantiated_class_name(...)`
+    pair
+  - removed the redundant eager class-template instantiation in
+    `src/Parser_Expr_PostfixCalls.cpp` before
+    `parse_template_brace_initialization(...)`, leaving the shared brace-init
+    helper as the only owner-materialization path there
+  - Validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_alias_funcptr_ret0.cpp test_template_alias_member_qualifier_compose_ret0.cpp test_template_type_alias_array_member_brace_init_ret0.cpp test_template_type_alias_array_member_extra_outer_args_ret0.cpp test_template_type_alias_array_member_substring_name_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_struct_local_alias_static_init_ret0.cpp test_alias_template_nested_member_value_ret42.cpp test_nested_template_instantiation_ret42.cpp test_member_template_default_value_substitution_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 member_func_template_call_ret3.cpp template_member_access_ret42.cpp test_phase3_decltype_context_ret42.cpp test_explicit_condition_ret42.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_alias_template_brace_init_ret42.cpp test_template_brace_init_ret42.cpp test_template_brace_init_userdefined_ret3.cpp template_template_brace_init_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+    - 2000 pass, 125 expected-fail
+  - fixed the alias-metadata regression in the shared concrete-owner/member
+    resolver by preferring an exact published `InstantiatedOwner::member` entry
+    before walking a chained member lookup, which preserves array extents,
+    function signatures, and qualifier-composition aliases
+  - collapsed the ordinary placeholder and template-template placeholder paths
+    in `substitute_template_parameter(...)` onto the same
+    parser-owned concrete-owner/member-chain materialization helper instead of
+    open-coding instantiation, registry fallback, instantiated-name recovery,
+    and chain replay twice
+  - centralized the remaining placeholder-arg fallback for cases that still
+    encode a dependent template parameter as a struct-typed placeholder whose
+    type name matches the parameter name, so that rebinding logic now lives in
+    one local helper instead of a one-off loop in the template-template branch
+  - switched `src/ExpressionSubstitutor.cpp` explicit member-template owner
+    recovery to `materializeTemplateInstantiationForLookup(...)` instead of
+    calling `try_instantiate_class_template(...)` plus
+    `get_instantiated_class_name(...)` directly
+  - Validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_template_alias_chain_ret42.cpp test_template_template_full_spec_alias_chain_ret42.cpp test_alias_template_brace_init_ret42.cpp test_template_alias_funcptr_ret0.cpp test_template_alias_member_qualifier_compose_ret0.cpp test_template_type_alias_array_member_brace_init_ret0.cpp test_template_type_alias_array_member_extra_outer_args_ret0.cpp test_template_type_alias_array_member_substring_name_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 member_func_template_call_ret3.cpp test_nested_template_instantiation_ret42.cpp test_identifier_binding_template_member_outofline_implicit_member_ret42.cpp test_member_function_template_in_partial_spec_ret0.cpp test_member_template_func_in_specialization_ret0.cpp test_member_template_default_value_substitution_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+    - 2000 pass, 125 expected-fail
+  - taught unqualified template brace initialization to recognize alias
+    templates as first-class materialization candidates instead of falling
+    through with `Missing semicolon` at `Alias<T>{...}`
+  - switched `parse_template_brace_initialization(...)` onto
+    `materializeTemplateInstantiationForLookup(...)` so alias templates,
+    registry fallback, and resolved `TypeInfo` lookup use the same parser-owned
+    path as the other materialization hardening work
+  - extended dependent template-parameter placeholders in
+    `src/Parser_TypeSpecifiers.cpp` to preserve chained member access like
+    `TT<T>::type::type` instead of truncating after the first `::type`
+  - taught `substitute_template_parameter(...)` to replay those preserved
+    member chains against the concrete instantiation, including
+    template-template parameters
+  - replaced the remaining incomplete-base fallback in
+    `validate_and_add_base_class(...)` with
+    `materializeTemplateInstantiationForLookup(...)` so base lookup no longer
+    hand-rolls another instantiation / lookup path
+  - added:
+    - `tests/test_alias_template_brace_init_ret42.cpp`
+    - `tests/test_template_template_alias_chain_ret42.cpp`
+    - `tests/test_template_template_full_spec_alias_chain_ret42.cpp`
+  - Validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_alias_template_brace_init_ret42.cpp test_template_template_alias_chain_ret42.cpp test_template_template_full_spec_alias_chain_ret42.cpp test_qualified_base_nested_member_alias_ret42.cpp test_qualified_base_full_spec_alias_chain_ret42.cpp`
+  - taught base-class post-template parsing / deferral to keep the full
+    member-type chain after template arguments (for patterns like
+    `Base<T>::type::type`) instead of only remembering one trailing `::member`
+  - updated immediate and deferred base-class resolution to walk those chained
+    member-type suffixes through one parser-owned helper in
+    `src/Parser_Expr_QualLookup.cpp`, preserving instantiated-owner lookup
+    names while the chain is resolved
+  - refreshed exact/full-specialization alias publication so sibling aliases
+    like `type = selected;` can bind to the concrete
+    `InstantiatedOwner::selected` entry instead of keeping a stale
+    declaration-site alias target
+  - added:
+    - `tests/test_qualified_base_nested_member_alias_ret42.cpp`
+    - `tests/test_qualified_base_full_spec_alias_chain_ret42.cpp`
+  - Validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+    - 1996 pass, 125 expected-fail
+  - extracted the deduction-time `materialize_placeholder_args` logic from
+    `src/Parser_Templates_Inst_Deduction.cpp` into the reusable
+    `Parser::materializePlaceholderTemplateArgs(...)` helper in `src/Parser.h`
+    so dependent non-type placeholder materialization now lives behind one
+    parser-owned utility instead of a 100+ line local lambda
+  - added `Parser::materializeInstantiatedMemberAliasTarget(...)` in
+    `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser.h` and reused it
+    from the primary, partial-specialization, and full-specialization alias
+    registration paths
+  - updated the full-specialization alias publication path to refresh existing
+    qualified alias entries in place instead of silently keeping stale
+    placeholder-backed registrations
+  - Validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+    - 1994 pass, 125 expected-fail
+  - added `Parser::materializeTemplateInstantiationForLookup` in
+    `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser.h` so parser-owned
+    materialization now covers alias templates, ordinary template instantiations,
+    registry fallback, and pending-sema normalization behind one helper
+  - switched the remaining `ExpressionSubstitutor.cpp` template-name recovery sites
+    to that helper instead of open-coded
+    `instantiate_and_register_base_template(...)` /
+    `get_instantiated_class_name(...)` fallback logic
+  - hardened instantiated class-template type-alias registration in
+    `src/Parser_Templates_Inst_ClassTemplate.cpp` so dependent
+    `Base$placeholder::member` alias targets are materialized against the current
+    concrete template arguments and pinned under qualified owner names
+  - extended the struct-local alias consumer path in `src/ExpressionSubstitutor.cpp`
+    so nested alias uses like `holder<B>::selected::value` rematerialize the
+    deferred alias target before constexpr/static-member normalization
+  - added `tests/test_alias_template_nested_member_value_ret42.cpp` to cover nested
+    deferred alias/member consumption inside an instantiated class template
   - introduced `Parser::AliasTemplateMaterializationResult` in
     `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser.h` so deferred alias-template
     materialization keeps both the instantiated base name and any resolved concrete `TypeInfo`
@@ -19,16 +158,6 @@
     materialization in a template return type (`choose_value_t<B>`)
 - Validation after this slice: `make main CXX=clang++` and `bash tests/run_all_tests.sh` —
   1949 pass, 0 fail.
-- Recommended next steps after this slice:
-  1. Reuse `AliasTemplateMaterializationResult` from `src/ExpressionSubstitutor.cpp` and delete the
-     remaining open-coded `instantiate_and_register_base_template(...)` /
-     `get_instantiated_class_name(...)` recovery there.
-  2. Investigate deferred nested member aliases inside instantiated class templates (for example a
-     `holder<B>::selected` alias that names `typename choose_value_alias<B>::type`): the return-type
-     path now materializes correctly, but nested alias consumers still look like they can retain the
-     dependent placeholder too long.
-  3. Continue Phase 1 extraction work by moving `materialize_placeholder_args`
-     (`src/Parser_Templates_Inst_Deduction.cpp:2059-2178`) into a reusable `Parser` helper.
 ### Earlier completed work on this branch
 
 - Completed in this slice:

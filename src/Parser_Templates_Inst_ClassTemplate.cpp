@@ -440,15 +440,17 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 
 	if (initializer->is<ExpressionNode>()) {
 		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+		std::vector<std::string_view> template_param_order;
 		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 			if (!template_params[i].is<TemplateParameterNode>()) {
 				continue;
 			}
 			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
 			param_map[param.name()] = template_args[i];
+			template_param_order.push_back(param.name());
 		}
 		if (!param_map.empty()) {
-			ExpressionSubstitutor substitutor(param_map, *parser);
+			ExpressionSubstitutor substitutor(param_map, *parser, template_param_order);
 			substitutor.setCurrentOwnerTypeName(struct_info->getName());
 			initializer = substitutor.substitute(initializer.value());
 		}
@@ -1128,19 +1130,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 
 		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+		std::vector<std::string_view> template_param_order;
 		for (size_t i = 0; i < params.size() && i < current_args.size(); ++i) {
 			if (!params[i].is<TemplateParameterNode>()) {
 				continue;
 			}
 			const TemplateParameterNode& template_param = params[i].as<TemplateParameterNode>();
 			param_map[template_param.name()] = current_args[i];
+			template_param_order.push_back(template_param.name());
 		}
 
 		if (param_map.empty()) {
 			return default_node;
 		}
 
-		ExpressionSubstitutor substitutor(param_map, *this);
+		ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
 		return substitutor.substitute(default_node);
 	};
 
@@ -2902,6 +2906,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substitution_done:;
 				}
 
+				if (const TypeInfo* concrete_member_info =
+						materializeInstantiatedMemberAliasTarget(
+							alias_type_spec,
+							substituted_type_index,
+							template_params,
+							template_args);
+					concrete_member_info != nullptr) {
+					substituted_type = concrete_member_info->typeEnum();
+					substituted_type_index =
+						concrete_member_info->registeredTypeIndex().withCategory(
+							concrete_member_info->typeEnum());
+					substituted_size = concrete_member_info->sizeInBits().value;
+				}
+
 				// Register the type alias globally with its qualified name
 				std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
 					type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args);
@@ -3427,10 +3445,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Build parameter substitution map for already-filled template arguments
 			// This allows the default expression to reference earlier template parameters
 			std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+			std::vector<std::string_view> template_param_order;
 			for (size_t j = 0; j < i && j < template_params.size() && j < filled_template_args.size(); ++j) {
 				if (template_params[j].is<TemplateParameterNode>()) {
 					const TemplateParameterNode& earlier_param = template_params[j].as<TemplateParameterNode>();
 					param_map[earlier_param.name()] = filled_template_args[j];
+					template_param_order.push_back(earlier_param.name());
 					FLASH_LOG(Templates, Debug, "Added param '", earlier_param.name(), "' to substitution map for default evaluation");
 				}
 			}
@@ -3438,7 +3458,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Substitute template parameters in the default expression
 			ASTNode substituted_default_node = default_node;
 			if (!param_map.empty() && default_node.is<ExpressionNode>()) {
-				ExpressionSubstitutor substitutor(param_map, *this);
+				ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
 				substituted_default_node = substitutor.substitute(default_node);
 				FLASH_LOG(Templates, Debug, "Substituted template parameters in non-type default expression");
 			}
@@ -4355,7 +4375,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						FLASH_LOG(Templates, Debug, "Processing UnaryOperatorNode in deferred base argument");
 
 						// Use ExpressionSubstitutor to substitute template parameters
-						ExpressionSubstitutor substitutor(name_substitution_map, *this);
+						ExpressionSubstitutor substitutor(name_substitution_map, *this, template_param_order);
 						ASTNode substituted_node = substitutor.substitute(arg_info.node);
 
 						// Now try to evaluate the substituted expression
@@ -4416,43 +4436,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			std::string_view final_base_name = base_template_name;
-			if (deferred_base.member_type.has_value()) {
-				std::string_view member_name = StringTable::getStringView(*deferred_base.member_type);
-
-				StringBuilder alias_builder;
-				alias_builder.append(base_template_name);
-				static constexpr std::string_view kScopeSeparator = "::"sv;
-				alias_builder.append(kScopeSeparator);
-				alias_builder.append(member_name);
-				std::string_view alias_name = alias_builder.commit();
-
-				auto alias_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(alias_name));
-				if (alias_it == getTypesByNameMap().end()) {
-					// Try looking up through inheritance (e.g., __or_<...>::type where type is inherited)
-					const TypeInfo* inherited_alias = lookup_inherited_type_alias(base_template_name, member_name);
-					if (inherited_alias == nullptr) {
-						// This can happen when templates are instantiated with void/dependent arguments
-						// during template metaprogramming (e.g., SFINAE). The code may still compile
-						// and run correctly, so log at Debug level rather than Error.
-						FLASH_LOG(Templates, Debug, "Deferred template base alias not found: ", alias_name,
-								  " (this may be expected for SFINAE/dependent template arguments)");
-						continue;
+			if (!deferred_base.member_type_chain.empty()) {
+				const TypeInfo* resolved_type =
+					resolveBaseClassMemberTypeChain(base_template_name, deferred_base.member_type_chain);
+				if (resolved_type == nullptr) {
+					StringBuilder unresolved_base_builder;
+					unresolved_base_builder.append(base_template_name);
+					for (StringHandle member_name : deferred_base.member_type_chain) {
+						unresolved_base_builder.append("::");
+						unresolved_base_builder.append(StringTable::getStringView(member_name));
 					}
-					// The inherited_alias is a type alias - resolve it to the underlying type
-					// If type_index_ is valid, use it to get the actual type name
-					if (const TypeInfo* underlying_type = tryGetTypeInfo(inherited_alias->type_index_)) {
-						final_base_name = StringTable::getStringView(underlying_type->name());
-					} else {
-						// Fallback: use the alias name if type_index is invalid
-						final_base_name = StringTable::getStringView(inherited_alias->name());
-					}
-					struct_info->addBaseClass(final_base_name, inherited_alias->type_index_, deferred_base.access, deferred_base.is_virtual);
-					FLASH_LOG_FORMAT(Templates, Debug, "Resolved deferred inherited member alias base to {}", final_base_name);
+					std::string_view unresolved_base_name = unresolved_base_builder.commit();
+					FLASH_LOG(Templates, Debug, "Deferred template base alias not found: ",
+							  unresolved_base_name,
+							  " (this may be expected for SFINAE/dependent template arguments)");
 					continue;
 				}
 
-				final_base_name = alias_name;
-				struct_info->addBaseClass(final_base_name, alias_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
+				final_base_name = StringTable::getStringView(resolved_type->name());
+				struct_info->addBaseClass(
+					final_base_name,
+					resolved_type->type_index_,
+					deferred_base.access,
+					deferred_base.is_virtual);
 				continue;
 			}
 
@@ -5343,20 +5349,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_initializer.value(), template_params, template_args_to_use);
 					FLASH_LOG(Templates, Debug, "Substituted template parameters in InitializerListNode static member initializer");
 				} else {
-				std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-				for (size_t pi = 0; pi < template_params.size() && pi < template_args_to_use.size(); ++pi) {
-					if (template_params[pi].is<TemplateParameterNode>()) {
-						const TemplateParameterNode& param = template_params[pi].as<TemplateParameterNode>();
-						param_map[param.name()] = template_args_to_use[pi];
+					ensure_substitution_maps();
+					if (!name_substitution_map.empty() || !pack_substitution_map.empty()) {
+						ExpressionSubstitutor substitutor(
+							name_substitution_map,
+							pack_substitution_map,
+							*this,
+							template_param_order);
+						substituted_initializer = substitutor.substitute(substituted_initializer.value());
+						FLASH_LOG(Templates, Debug, "Applied general ExpressionSubstitutor to static member initializer");
 					}
 				}
-				if (!param_map.empty()) {
-					ExpressionSubstitutor substitutor(param_map, *this);
-					substituted_initializer = substitutor.substitute(substituted_initializer.value());
-					FLASH_LOG(Templates, Debug, "Applied general ExpressionSubstitutor to static member initializer");
-					}
-				}
-
 			}
 
 			auto [substituted_type_index, substituted_size, substituted_alignment, is_array_member, resolved_array_dimensions] =
@@ -6020,6 +6023,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 
+		if (const TypeInfo* concrete_member_info =
+				materializeInstantiatedMemberAliasTarget(
+					alias_type_spec,
+					substituted_type_index,
+					template_params,
+					template_args_to_use);
+			concrete_member_info != nullptr) {
+			substituted_type = concrete_member_info->typeEnum();
+			substituted_type_index =
+				concrete_member_info->registeredTypeIndex().withCategory(
+					concrete_member_info->typeEnum());
+			substituted_size = concrete_member_info->sizeInBits().value;
+		}
+
 		// Ensure size is computed for primitive type aliases that were substituted from template parameters.
 		// When 'typedef T value_type' in a template is instantiated with T=long, the alias type category
 		// is correctly set to Long but size_in_bits may still be 0 from the unsubstituted pattern.
@@ -6449,14 +6466,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Copy default value if present
 						if (param_decl.has_default_value()) {
 							// Substitute template parameters in the default value expression
-							std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-							for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
-								if (template_params[i].is<TemplateParameterNode>()) {
-									const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
-									param_map[template_param.name()] = template_args_to_use[i];
-								}
-							}
-							ExpressionSubstitutor substitutor(param_map, *this);
+							ensure_substitution_maps();
+							ExpressionSubstitutor substitutor(
+								name_substitution_map,
+								pack_substitution_map,
+								*this,
+								template_param_order);
 							std::optional<ASTNode> substituted_default = substitutor.substitute(param_decl.default_value());
 							if (substituted_default.has_value()) {
 								substituted_param_decl.as<DeclarationNode>().set_default_value(*substituted_default);
@@ -6634,14 +6649,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Copy default value if present
 						if (param_decl.has_default_value()) {
 							// Substitute template parameters in the default value expression
-							std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-							for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
-								if (template_params[i].is<TemplateParameterNode>()) {
-									const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
-									param_map[template_param.name()] = template_args_to_use[i];
-								}
-							}
-							ExpressionSubstitutor substitutor(param_map, *this);
+							ensure_substitution_maps();
+							ExpressionSubstitutor substitutor(
+								name_substitution_map,
+								pack_substitution_map,
+								*this,
+								template_param_order);
 							std::optional<ASTNode> substituted_default = substitutor.substitute(param_decl.default_value());
 							if (substituted_default.has_value()) {
 								substituted_param_decl.as<DeclarationNode>().set_default_value(*substituted_default);
@@ -8032,14 +8045,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		FLASH_LOG(Templates, Debug, "Re-evaluating deferred static_assert during template instantiation");
 
 		// Build template parameter name to type mapping for substitution
-		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-		for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
-			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-			param_map[param.name()] = template_args_to_use[i];
-		}
+		ensure_substitution_maps();
 
 		// Create substitution context with template parameter mappings
-		ExpressionSubstitutor substitutor(param_map, *this);
+		ExpressionSubstitutor substitutor(
+			name_substitution_map,
+			pack_substitution_map,
+			*this,
+			template_param_order);
 
 		// Substitute template parameters in the condition expression
 		ASTNode substituted_expr = substitutor.substitute(deferred_assert.condition_expr);

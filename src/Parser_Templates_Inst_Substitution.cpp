@@ -197,6 +197,131 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	return result;
 }
 
+Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiationForLookup(
+	std::string_view template_name,
+	const std::vector<TemplateTypeArg>& template_args) {
+	if (gTemplateRegistry.lookup_alias_template(template_name).has_value()) {
+		AliasTemplateMaterializationResult alias_result =
+			materializeAliasTemplateInstantiation(template_name, template_args);
+		if (!alias_result.instantiated_name.empty()) {
+			normalizePendingSemanticRootsIfAvailable();
+			if (alias_result.resolved_type_info == nullptr) {
+				alias_result.resolved_type_info =
+					findTypeByName(StringTable::getOrInternStringHandle(alias_result.instantiated_name));
+			}
+		}
+		return alias_result;
+	}
+
+	AliasTemplateMaterializationResult result;
+	std::string_view template_name_to_instantiate = template_name;
+	result.instantiated_name =
+		instantiate_and_register_base_template(template_name_to_instantiate, template_args);
+	if (!result.instantiated_name.empty()) {
+		normalizePendingSemanticRootsIfAvailable();
+	} else {
+		auto registry_hit = gTemplateRegistry.getInstantiation(
+			StringTable::getOrInternStringHandle(template_name), template_args);
+		if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
+			result.instantiated_name = StringTable::getStringView(
+				registry_hit->as<StructDeclarationNode>().name());
+		} else {
+			result.instantiated_name =
+				get_instantiated_class_name(template_name, template_args);
+			if (result.instantiated_name.empty()) {
+				result.instantiated_name = template_name_to_instantiate;
+			}
+		}
+	}
+
+	if (!result.instantiated_name.empty()) {
+		result.resolved_type_info =
+			findTypeByName(StringTable::getOrInternStringHandle(result.instantiated_name));
+	}
+	return result;
+}
+
+const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
+	const TypeSpecifierNode& alias_type_spec,
+	TypeIndex fallback_type_index,
+	const InlineVector<ASTNode, 4>& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	const TypeInfo* original_alias_target_info = tryGetTypeInfo(alias_type_spec.type_index());
+	if (!original_alias_target_info) {
+		return nullptr;
+	}
+
+	std::string_view original_alias_target_name =
+		StringTable::getStringView(original_alias_target_info->name());
+	size_t member_sep = original_alias_target_name.rfind("::");
+	if (member_sep == std::string_view::npos) {
+		return nullptr;
+	}
+
+	std::string_view dependent_base_name =
+		original_alias_target_name.substr(0, member_sep);
+	std::string_view dependent_member_name =
+		original_alias_target_name.substr(member_sep + 2);
+	const TypeInfo* dependent_base_info = findTypeByName(
+		StringTable::getOrInternStringHandle(dependent_base_name));
+	if (!dependent_base_info || !dependent_base_info->isTemplateInstantiation()) {
+		return nullptr;
+	}
+
+	std::string_view base_template_name =
+		StringTable::getStringView(dependent_base_info->baseTemplateName());
+	std::vector<TemplateTypeArg> concrete_base_args =
+		materializeTemplateArgs(*dependent_base_info, template_params, template_args);
+	AliasTemplateMaterializationResult materialized_alias_base =
+		materializeTemplateInstantiationForLookup(
+			base_template_name,
+			concrete_base_args);
+	if (materialized_alias_base.instantiated_name.empty()) {
+		return nullptr;
+	}
+
+	StringHandle concrete_member_handle =
+		StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(materialized_alias_base.instantiated_name)
+				.append("::")
+				.append(dependent_member_name)
+				.commit());
+	auto concrete_member_it = getTypesByNameMap().find(concrete_member_handle);
+	if (concrete_member_it != getTypesByNameMap().end() &&
+		concrete_member_it->second != nullptr) {
+		return concrete_member_it->second;
+	}
+
+	const TypeInfo* resolved_member_source = tryGetTypeInfo(fallback_type_index);
+	if (!resolved_member_source) {
+		return nullptr;
+	}
+
+	TypeIndex resolved_member_index =
+		resolved_member_source->registeredTypeIndex().withCategory(
+			resolved_member_source->typeEnum());
+	TypeSpecifierNode concrete_member_spec(
+		resolved_member_index,
+		resolved_member_source->sizeInBits(),
+		Token(),
+		CVQualifier::None,
+		ReferenceQualifier::None);
+	if (const TypeSpecifierNode* existing_alias_spec =
+			resolved_member_source->aliasTypeSpecifier()) {
+		concrete_member_spec = *existing_alias_spec;
+	}
+	TypeInfo& concrete_member_info = add_type_alias_copy(
+		concrete_member_handle,
+		resolved_member_index,
+		resolved_member_source->sizeInBits().value,
+		concrete_member_spec);
+	getTypesByNameMap().insert_or_assign(
+		concrete_member_handle,
+		&concrete_member_info);
+	return &concrete_member_info;
+}
+
 bool Parser::resolveAliasTemplateInstantiation(
 	TypeSpecifierNode& type_spec,
 	std::string_view alias_template_name,
@@ -324,17 +449,19 @@ std::string_view Parser::instantiate_and_register_base_template(
 					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
 				} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
 					std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+					std::vector<std::string_view> template_param_order;
 					for (size_t filled_idx = 0; filled_idx < i && filled_idx < filled_args.size(); ++filled_idx) {
 						if (!primary_params[filled_idx].is<TemplateParameterNode>()) {
 							continue;
 						}
 						const TemplateParameterNode& earlier_param = primary_params[filled_idx].as<TemplateParameterNode>();
 						param_map[earlier_param.name()] = filled_args[filled_idx];
+						template_param_order.push_back(earlier_param.name());
 					}
 
 					ASTNode substituted_default_node = default_node;
 					if (!param_map.empty()) {
-						ExpressionSubstitutor substitutor(param_map, *this);
+						ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
 						substituted_default_node = substitutor.substitute(default_node);
 					}
 
@@ -1023,9 +1150,51 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	}
 
 	StructDeclarationNode& spec_struct = spec_node.as<StructDeclarationNode>();
+	InlineVector<ASTNode, 4> no_template_params;
 
 	// Helper lambda to register type aliases with qualified names
 	auto register_type_aliases = [&]() {
+		auto resolveConcreteSiblingAlias = [&](const TypeSpecifierNode& alias_type_spec) -> const TypeInfo* {
+			if (alias_type_spec.token().type() == Token::Type::Identifier &&
+				!alias_type_spec.token().value().empty()) {
+				StringHandle direct_sibling_handle = StringTable::getOrInternStringHandle(
+					StringBuilder()
+						.append(instantiated_name)
+						.append("::")
+						.append(alias_type_spec.token().value())
+						.commit());
+				auto direct_sibling_it = getTypesByNameMap().find(direct_sibling_handle);
+				if (direct_sibling_it != getTypesByNameMap().end() &&
+					direct_sibling_it->second != nullptr) {
+					return direct_sibling_it->second;
+				}
+			}
+
+			const TypeInfo* alias_target_info = tryGetTypeInfo(alias_type_spec.type_index());
+			if (alias_target_info == nullptr) {
+				return nullptr;
+			}
+
+			std::string_view alias_target_name =
+				StringTable::getStringView(alias_target_info->name());
+			size_t scope_pos = alias_target_name.rfind("::");
+			if (scope_pos == std::string_view::npos) {
+				return nullptr;
+			}
+
+			StringHandle sibling_handle = StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(instantiated_name)
+					.append("::")
+					.append(alias_target_name.substr(scope_pos + 2))
+					.commit());
+			auto sibling_it = getTypesByNameMap().find(sibling_handle);
+			if (sibling_it == getTypesByNameMap().end()) {
+				return nullptr;
+			}
+			return sibling_it->second;
+		};
+
 		for (const auto& type_alias : spec_struct.type_aliases()) {
 			// Build the qualified name using StringBuilder
 			StringHandle qualified_alias_name = StringTable::getOrInternStringHandle(StringBuilder()
@@ -1033,31 +1202,167 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 																						 .append("::")
 																						 .append(type_alias.alias_name));
 
-			// Check if already registered
-			if (getTypesByNameMap().find(qualified_alias_name) != getTypesByNameMap().end()) {
-				continue;  // Already registered
-			}
-
 			// Get the type information from the alias
 			const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
+			TypeIndex alias_target_index = alias_type_spec.type_index();
+			int alias_size_bits = alias_type_spec.size_in_bits();
+			TypeSpecifierNode alias_registration_type_spec = alias_type_spec;
+			if (const TypeInfo* concrete_sibling_alias =
+					resolveConcreteSiblingAlias(alias_type_spec);
+				concrete_sibling_alias != nullptr) {
+				alias_target_index =
+					concrete_sibling_alias->registeredTypeIndex().withCategory(
+						concrete_sibling_alias->typeEnum());
+				alias_size_bits = concrete_sibling_alias->sizeInBits().value;
+				if (const TypeSpecifierNode* concrete_alias_spec =
+						concrete_sibling_alias->aliasTypeSpecifier()) {
+					alias_registration_type_spec = *concrete_alias_spec;
+				} else {
+					alias_registration_type_spec.set_type_index(alias_target_index);
+					alias_registration_type_spec.set_category(
+						concrete_sibling_alias->typeEnum());
+					alias_registration_type_spec.set_size_in_bits(
+						concrete_sibling_alias->sizeInBits());
+				}
+			}
+			if (const TypeInfo* concrete_member_info =
+					materializeInstantiatedMemberAliasTarget(
+						alias_type_spec,
+						alias_target_index,
+						no_template_params,
+						template_args);
+				concrete_member_info != nullptr) {
+				alias_target_index =
+					concrete_member_info->registeredTypeIndex().withCategory(
+						concrete_member_info->typeEnum());
+				alias_size_bits = concrete_member_info->sizeInBits().value;
+				if (const TypeSpecifierNode* concrete_alias_spec =
+						concrete_member_info->aliasTypeSpecifier()) {
+					alias_registration_type_spec = *concrete_alias_spec;
+				} else {
+					alias_registration_type_spec.set_type_index(alias_target_index);
+					alias_registration_type_spec.set_category(concrete_member_info->typeEnum());
+					alias_registration_type_spec.set_size_in_bits(
+						concrete_member_info->sizeInBits());
+				}
+			}
 
 			// Register the type alias globally with its qualified name
-			auto& alias_type_info = add_type_alias_copy(
-				qualified_alias_name,
-				alias_type_spec.type_index(),
-				alias_type_spec.size_in_bits(),
-				alias_type_spec);
-			if (alias_type_spec.category() == TypeCategory::Enum) {
-				if (const TypeInfo* source_alias_type_info = tryGetTypeInfo(alias_type_spec.type_index());
+			TypeInfo* alias_info = nullptr;
+			auto existing_it = getTypesByNameMap().find(qualified_alias_name);
+			if (existing_it != getTypesByNameMap().end() && existing_it->second != nullptr) {
+				alias_info = existing_it->second;
+				const uint32_t alias_slot = alias_info->registeredTypeIndex().index();
+				alias_info->type_index_ = alias_target_index;
+				alias_info->registered_type_index_ = TypeIndex{alias_slot, TypeCategory::TypeAlias};
+				alias_info->fallback_size_bits_ = alias_size_bits;
+				alias_info->is_type_alias_ = true;
+				alias_info->clearAliasTypeSpecifier();
+				alias_info->setAliasTypeSpecifier(alias_registration_type_spec);
+			} else {
+				alias_info = &add_type_alias_copy(
+					qualified_alias_name,
+					alias_target_index,
+					alias_size_bits,
+					alias_registration_type_spec);
+			}
+			TypeInfo& alias_type_info = *alias_info;
+			if (alias_registration_type_spec.category() == TypeCategory::Enum) {
+				if (const TypeInfo* source_alias_type_info = tryGetTypeInfo(alias_target_index);
 					source_alias_type_info && source_alias_type_info->getEnumInfo()) {
 					const EnumTypeInfo* enum_info = source_alias_type_info->getEnumInfo();
 					alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
 				}
 			}
+			getTypesByNameMap().insert_or_assign(qualified_alias_name, &alias_type_info);
 
 			FLASH_LOG(Templates, Debug, "Registered type alias: ", StringTable::getStringView(qualified_alias_name),
-					  " -> type=", static_cast<int>(alias_type_spec.type()),
-					  ", type_index=", alias_type_spec.type_index());
+					  " -> type=", static_cast<int>(alias_registration_type_spec.type()),
+					  ", type_index=", alias_target_index);
+		}
+	};
+	auto register_nested_class_aliases = [&]() {
+		for (const auto& nested_class : spec_struct.nested_classes()) {
+			if (!nested_class.is<StructDeclarationNode>()) {
+				continue;
+			}
+
+			const StructDeclarationNode& nested_struct =
+				nested_class.as<StructDeclarationNode>();
+			std::string_view original_nested_name = StringBuilder()
+				.append(StringTable::getStringView(spec_struct.name()))
+				.append("::")
+				.append(nested_struct.name())
+				.commit();
+			auto original_nested_it = getTypesByNameMap().find(
+				StringTable::getOrInternStringHandle(original_nested_name));
+			if (original_nested_it == getTypesByNameMap().end() ||
+				original_nested_it->second == nullptr) {
+				continue;
+			}
+
+			const TypeInfo* original_nested_info = original_nested_it->second;
+			StringHandle qualified_nested_name = StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(instantiated_name)
+					.append("::")
+					.append(nested_struct.name())
+					.commit());
+			if (getTypesByNameMap().find(qualified_nested_name) ==
+				getTypesByNameMap().end()) {
+				TypeIndex nested_target_index =
+					original_nested_info->registeredTypeIndex().withCategory(
+						original_nested_info->typeEnum());
+				TypeSpecifierNode nested_alias_spec(
+					nested_target_index,
+					original_nested_info->sizeInBits(),
+					Token(),
+					CVQualifier::None,
+					ReferenceQualifier::None);
+				TypeInfo& nested_alias_info = add_type_alias_copy(
+					qualified_nested_name,
+					nested_target_index,
+					original_nested_info->sizeInBits().value,
+					nested_alias_spec);
+				getTypesByNameMap().insert_or_assign(
+					qualified_nested_name,
+					&nested_alias_info);
+			}
+
+			for (const auto& type_alias : nested_struct.type_aliases()) {
+				StringHandle qualified_alias_name = StringTable::getOrInternStringHandle(
+					StringBuilder()
+						.append(StringTable::getStringView(qualified_nested_name))
+						.append("::")
+						.append(type_alias.alias_name)
+						.commit());
+				const TypeSpecifierNode& alias_type_spec =
+					type_alias.type_node.as<TypeSpecifierNode>();
+				TypeIndex alias_target_index = alias_type_spec.type_index();
+				TypeSpecifierNode alias_registration_type_spec = alias_type_spec;
+				if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_index);
+					alias_target_info != nullptr &&
+					StringTable::getStringView(alias_target_info->name()) ==
+						original_nested_name) {
+					alias_target_index =
+						original_nested_info->registeredTypeIndex().withCategory(
+							original_nested_info->typeEnum());
+					alias_registration_type_spec.set_type_index(alias_target_index);
+					alias_registration_type_spec.set_category(
+						original_nested_info->typeEnum());
+					alias_registration_type_spec.set_size_in_bits(
+						original_nested_info->sizeInBits());
+				}
+
+				TypeInfo& alias_type_info = add_type_alias_copy(
+					qualified_alias_name,
+					alias_target_index,
+					alias_registration_type_spec.size_in_bits(),
+					alias_registration_type_spec);
+				getTypesByNameMap().insert_or_assign(
+					qualified_alias_name,
+					&alias_type_info);
+			}
 		}
 	};
 
@@ -1069,6 +1374,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		// Even if the struct is already instantiated, we need to register type aliases
 		// with qualified names if they haven't been registered yet
 		register_type_aliases();
+		register_nested_class_aliases();
 
 		return std::nullopt;	 // Already instantiated
 	}
@@ -1181,6 +1487,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// Copy type aliases from the specialization
 	// Type aliases need to be registered with qualified names (e.g., "MyType_bool::type")
 	register_type_aliases();
+	register_nested_class_aliases();
 
 	// Check if there's an explicit constructor - if not, we need to generate a default one
 	bool has_constructor = false;

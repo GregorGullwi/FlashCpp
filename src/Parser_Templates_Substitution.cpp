@@ -90,12 +90,14 @@ ASTNode Parser::substituteTemplateParameters(
 	auto substituteWithExpressionSubstitutor = [&](const ASTNode& substituted_call_node) -> ASTNode {
 		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 		std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_map;
+		std::vector<std::string_view> template_param_order;
 		size_t arg_index = 0;
 		for (size_t i = 0; i < template_params.size(); ++i) {
 			if (!template_params[i].is<TemplateParameterNode>()) {
 				continue;
 			}
 			const auto& tparam = template_params[i].as<TemplateParameterNode>();
+			template_param_order.push_back(tparam.name());
 			if (tparam.is_variadic()) {
 				size_t remaining_args = arg_index < template_args.size()
 											? template_args.size() - arg_index
@@ -121,7 +123,7 @@ ASTNode Parser::substituteTemplateParameters(
 			++arg_index;
 		}
 
-		ExpressionSubstitutor substitutor(param_map, pack_map, *this);
+		ExpressionSubstitutor substitutor(param_map, pack_map, *this, template_param_order);
 		return substitutor.substitute(substituted_call_node);
 	};
 	auto substituteCallExprWithExpressionSubstitutor = [&](const CallExprNode& call) -> ASTNode {

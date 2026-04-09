@@ -413,9 +413,12 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	std::unordered_map<TypeIndex, TemplateTypeArg> default_type_sub_map;
 	std::unordered_map<std::string_view, int64_t> default_nontype_sub_map;
 	std::unordered_map<std::string_view, TemplateTypeArg> default_param_map;
+	std::vector<std::string_view> default_param_order;
 	if (outer_binding) {
 		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
-			default_param_map[StringTable::getStringView(outer_binding->param_names[i])] = outer_binding->param_args[i];
+			std::string_view param_name = StringTable::getStringView(outer_binding->param_names[i]);
+			default_param_order.push_back(param_name);
+			default_param_map[param_name] = outer_binding->param_args[i];
 			auto type_it = getTypesByNameMap().find(outer_binding->param_names[i]);
 			if (type_it != getTypesByNameMap().end()) {
 				default_type_sub_map[type_it->second->type_index_] = outer_binding->param_args[i];
@@ -428,6 +431,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		if (!template_params[i].is<TemplateParameterNode>())
 			continue;
 		const auto& template_param = template_params[i].as<TemplateParameterNode>();
+		default_param_order.push_back(template_param.name());
 		default_param_map[template_param.name()] = template_args[i];
 		if (template_param.kind() == TemplateParameterKind::Type && !template_args[i].is_value) {
 			auto type_it = getTypesByNameMap().find(template_param.nameHandle());
@@ -470,7 +474,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			// Create the new parameter declaration
 			auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());
 			if (param_decl.has_default_value()) {
-				ExpressionSubstitutor substitutor(default_param_map, *this);
+				ExpressionSubstitutor substitutor(default_param_map, *this, default_param_order);
 				ASTNode substituted_default = substitutor.substitute(param_decl.default_value());
 				if (substituted_default.is<ExpressionNode>() &&
 					std::holds_alternative<ConstructorCallNode>(substituted_default.as<ExpressionNode>())) {

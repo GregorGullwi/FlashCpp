@@ -86,6 +86,11 @@ public:
 	}
 
 private:
+	struct MaterializedStoredTemplateArgs {
+		std::vector<TemplateTypeArg> args;
+		bool had_substitution = false;
+	};
+
 	// Handlers for different expression types
 	ASTNode substituteConstructorCall(const ConstructorCallNode& ctor);
 
@@ -116,6 +121,10 @@ private:
 	// Helper: expand pack parameters in template arguments
 	std::vector<TemplateTypeArg> expandPacksInArguments(
 		const std::vector<ASTNode>& template_arg_nodes);
+	std::vector<TemplateTypeArg> collectCurrentBoundTemplateArgs(std::string_view use_site) const;
+	MaterializedStoredTemplateArgs materializeStoredTemplateArgs(
+		const TypeInfo& template_instantiation_info,
+		bool evaluate_dependent_member_values);
 
 // Substitution context
 	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map_;
