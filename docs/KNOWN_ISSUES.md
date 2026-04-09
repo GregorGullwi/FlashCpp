@@ -24,12 +24,6 @@ validated.
   at link time. The defaults should be removed and every call site should pass
   the variant explicitly. (PR #1176)
   
-- C++20 range-for with an init-statement over a prvalue function-return container is
-  still miscompiled. A minimal repro is
-  `for (int factor = 2; auto value : makeContainer()) { sum += value * factor; }`,
-  which currently produces the wrong runtime result even though plain
-  `for (auto value : makeContainer())` works.
-
 - Member access on a ternary object in address-of context can lose its struct
   `type_index` and fail with "struct type info not found for type_index=0".
   A minimal repro is:
