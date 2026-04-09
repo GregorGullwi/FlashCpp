@@ -10,9 +10,13 @@
 1. Audit the remaining lazy-member materialization and IR-triggered lookup
    consumers now that the main `src/Parser_Expr_QualLookup.cpp`
    placeholder/name-recovery branches are shared. The next obvious targets are
-   the explicit template-recovery paths in `src/Parser_Expr_PrimaryExpr.cpp`
-   and the remaining lazy/IR-triggered consumers that still synthesize
-   concrete owner/member names after substitution.
+   the last manual `get_instantiated_class_name(...)` /
+   `try_instantiate_class_template(...)` recovery sites in
+   `src/Parser_Expr_PrimaryExpr.cpp` (notably the qualified-template path near
+   the remaining `Template<Args>::member` replay block and the older explicit
+   `parse_qualified_identifier_after_template(...)` flow around the
+   `2642/2647` call sites), then the remaining lazy/IR-triggered consumers
+   that still synthesize concrete owner/member names after substitution.
 2. Keep routing those late consumers through the same parser-owned
    materialization rules used by `materializeTemplateInstantiationForLookup(...)`,
    including the exact qualified alias/member lookup preference before falling
@@ -20,9 +24,38 @@
 3. Once the late consumers stop rebuilding instantiated names manually, return
    to the remaining deduction / placeholder sites only if they still encode the
    same owner-materialization policy independently.
+4. Follow up on the newly exposed template-object initialization bug captured in
+   `docs/KNOWN_ISSUES.md`: the correct specialization is now materialized for
+   lookup and functional-cast parsing, but instantiated non-static default
+   member initializers are still being dropped for constructed template objects.
 
 ### Latest completed slice
 
+  - replaced three remaining `src/Parser_Expr_PrimaryExpr.cpp` owner/name
+    recovery branches with the shared parser-owned
+    `materializePrimaryTemplateOwnerForLookup(...)` helper so explicit
+    `Template<Args>::member` parsing (qualified and unqualified) and
+    template functional-style casts no longer hand-fill default arguments and
+    rebuild instantiated owner names independently
+  - kept the primary-expression fallback behavior intact by only falling back to
+    `get_instantiated_class_name(...)` / `try_instantiate_class_template(...)`
+    when the shared materialization helper cannot produce a concrete owner
+  - added:
+    - `tests/test_namespace_alias_template_default_member_ret42.cpp`
+    - `tests/test_template_default_member_lookup_ret42.cpp`
+    - `tests/test_template_default_functional_cast_ret42.cpp`
+  - Validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_namespace_alias_template_default_member_ret42.cpp test_template_alias_member_qualifier_compose_ret0.cpp test_template_default_qualified_arg_order_ret42.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_default_member_lookup_ret42.cpp test_namespace_alias_template_default_member_ret42.cpp test_template_alias_member_qualifier_compose_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_default_functional_cast_ret42.cpp test_template_default_member_lookup_ret42.cpp test_namespace_alias_template_default_member_ret42.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+    - 2002 pass, 125 expected-fail
+  - probe work around the new functional-cast regression uncovered a separate
+    existing bug: template object construction still drops instantiated
+    non-static default member initializers for cases like `box<char> tmp;`
+    and `box<char>().value`; that follow-up is recorded in
+    `docs/KNOWN_ISSUES.md`
   - reran the previously reported alias/array crash cluster and confirmed it is
     no longer live on the branch; the current materialization baseline already
     compiles and runs those regressions cleanly
