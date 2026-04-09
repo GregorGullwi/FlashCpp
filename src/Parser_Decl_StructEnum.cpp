@@ -1746,7 +1746,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							// Create an empty block for the constructor body
 							auto [block_node, block_ref] = create_node_ref(BlockNode());
 							// Generate mangled name for the constructor
-							NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(ctor_ref);
+							NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(
+								ctor_ref,
+								{},
+								NameMangling::ConstructorVariant::Complete);
 							ctor_ref.set_mangled_name(mangled.view());
 							ctor_ref.set_definition(block_node);
 

@@ -3,16 +3,6 @@
 This file tracks currently open issues only. Fixed items are removed once they are
 validated.
 
-- `ConstructorVariant` default parameter values on name-mangling functions.
-  Seven overloads in `src/NameMangling.h` (`generateItaniumMangledName`,
-  `generateMangledName`, `generateMangledNameForConstructor`,
-  `generateMangledNameFromNode`) use
-  `ConstructorVariant constructor_variant = ConstructorVariant::Complete`.
-  This lets callers silently omit the variant and get C1 (complete) mangling
-  even when C2 (base-object) was intended, which would produce a wrong symbol
-  at link time. The defaults should be removed and every call site should pass
-  the variant explicitly. (PR #1176)
-  
 - The new `AstToIr::IrScopeGuard` RAII helper (introduced for range-for init-statement
   scoping) should be adopted in the other places that manually pair
   `enter_scope`/`enterScope`/`ScopeBegin` with `exitScope`/`ScopeEnd`/`exit_scope`:
