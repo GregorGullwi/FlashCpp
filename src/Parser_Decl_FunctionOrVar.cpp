@@ -194,34 +194,46 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		SaveHandle spec_pos = save_token_position();
 		auto template_args_opt = parse_explicit_template_arguments();
 		if (template_args_opt.has_value() && peek() == "::"_tok) {
-			// Build the instantiated class name: ClassName<Args> and verify it exists
-			auto inst_name_sv = get_instantiated_class_name(base_name, *template_args_opt);
-			auto inst_name = StringTable::getOrInternStringHandle(inst_name_sv);
-			FLASH_LOG(Parser, Debug, "Out-of-line template spec: base=", base_name, " instantiated=", inst_name_sv);
-			auto inst_type_it = getTypesByNameMap().find(inst_name);
-			if (inst_type_it == getTypesByNameMap().end()) {
-				// Try namespace-qualified instantiated name
-				NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
-				if (!current_namespace_handle.isGlobal()) {
-					auto qual_inst_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, inst_name);
-					FLASH_LOG(Parser, Debug, "Out-of-line template spec: trying qualified name=", qual_inst_name.view());
-					inst_type_it = getTypesByNameMap().find(qual_inst_name);
-					if (inst_type_it != getTypesByNameMap().end()) {
-						inst_name = qual_inst_name;
-					}
-				}
+			StringHandle fallback_name_handle{};
+			std::string_view fallback_name;
+			NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
+			if (!current_namespace_handle.isGlobal()) {
+				fallback_name_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+					current_namespace_handle,
+					StringTable::getOrInternStringHandle(base_name));
+				fallback_name = StringTable::getStringView(fallback_name_handle);
 			}
-			if (inst_type_it != getTypesByNameMap().end() && inst_type_it->second->isStruct()) {
-				FLASH_LOG(Parser, Debug, "Out-of-line template spec: found type for ", inst_name.view());
+
+			AliasTemplateMaterializationResult materialized_owner =
+				materializePrimaryTemplateOwnerForLookup(
+					base_name,
+					fallback_name,
+					*template_args_opt);
+			FLASH_LOG(Parser,
+					  Debug,
+					  "Out-of-line template spec: base=",
+					  base_name,
+					  " instantiated=",
+					  materialized_owner.instantiated_name);
+			if (materialized_owner.resolved_type_info != nullptr &&
+				materialized_owner.resolved_type_info->isStruct()) {
+				FLASH_LOG(Parser,
+						  Debug,
+						  "Out-of-line template spec: found type for ",
+						  materialized_owner.instantiated_name);
 				// Update decl_node's identifier to be the instantiated name
-				Token inst_token(Token::Type::Identifier, StringTable::getStringView(inst_name),
+				Token inst_token(Token::Type::Identifier,
+								 materialized_owner.instantiated_name,
 								 decl_node.identifier_token().line(), decl_node.identifier_token().column(),
 								 decl_node.identifier_token().file_index());
 				decl_node.set_identifier_token(inst_token);
 				discard_saved_token(spec_pos);
 				// Fall through to the normal :: handling below
 			} else {
-				FLASH_LOG(Parser, Debug, "Out-of-line template spec: type NOT found for ", inst_name.view());
+				FLASH_LOG(Parser,
+						  Debug,
+						  "Out-of-line template spec: type NOT found for ",
+						  materialized_owner.instantiated_name);
 				// Instantiated type not found, restore
 				restore_token_position(spec_pos);
 			}
