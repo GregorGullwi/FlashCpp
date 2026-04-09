@@ -390,7 +390,6 @@ struct StructTypeInfo {
 	void recalculateLayout();
 
 	bool isEmptyLayoutLike() const;
-	bool hasLeadingEmptySubobjectType(TypeIndex type_index) const;
 	bool hasEmptySubobjectTypeAtOffset(TypeIndex type_index, size_t offset) const;
 
 	// Build vtable for virtual functions (called during finalization)
