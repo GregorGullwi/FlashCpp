@@ -512,11 +512,108 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 		if (candidate_name.empty()) {
 			return {};
 		}
-		if (!gTemplateRegistry.lookupTemplate(candidate_name).has_value() &&
-			!gTemplateRegistry.lookup_alias_template(candidate_name).has_value()) {
+
+		if (gTemplateRegistry.lookup_alias_template(candidate_name).has_value()) {
+			return materializeTemplateInstantiationForLookup(candidate_name, template_args);
+		}
+
+		auto template_entry = gTemplateRegistry.lookupTemplate(candidate_name);
+		if (!template_entry.has_value() || !template_entry->is<TemplateClassDeclarationNode>()) {
 			return {};
 		}
-		return materializeTemplateInstantiationForLookup(candidate_name, template_args);
+
+		AliasTemplateMaterializationResult result;
+		std::vector<TemplateTypeArg> completed_args = template_args;
+		const auto& template_params =
+			template_entry->as<TemplateClassDeclarationNode>().template_parameters();
+		for (size_t param_idx = completed_args.size(); param_idx < template_params.size(); ++param_idx) {
+			if (!template_params[param_idx].is<TemplateParameterNode>()) {
+				continue;
+			}
+			const TemplateParameterNode& param =
+				template_params[param_idx].as<TemplateParameterNode>();
+			if (param.is_variadic()) {
+				continue;
+			}
+			if (!param.has_default()) {
+				break;
+			}
+
+			const ASTNode& default_node = param.default_value();
+			InlineVector<TemplateTypeArg, 4> inline_completed_args =
+				toInlineTemplateArgs(completed_args);
+			if (param.kind() == TemplateParameterKind::Type &&
+				default_node.is<TypeSpecifierNode>()) {
+				ASTNode substituted_default_node = default_node;
+				if (!inline_completed_args.empty()) {
+					substituted_default_node = substituteTemplateParameters(
+						default_node,
+						template_params,
+						inline_completed_args);
+				}
+				if (substituted_default_node.is<TypeSpecifierNode>()) {
+					completed_args.push_back(
+						TemplateTypeArg(substituted_default_node.as<TypeSpecifierNode>()));
+				}
+			} else if (param.kind() == TemplateParameterKind::NonType &&
+					   default_node.is<ExpressionNode>()) {
+				std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+				std::vector<std::string_view> template_param_order;
+				for (size_t filled_idx = 0;
+					 filled_idx < param_idx && filled_idx < completed_args.size();
+					 ++filled_idx) {
+					if (!template_params[filled_idx].is<TemplateParameterNode>()) {
+						continue;
+					}
+					const TemplateParameterNode& earlier_param =
+						template_params[filled_idx].as<TemplateParameterNode>();
+					param_map[earlier_param.name()] = completed_args[filled_idx];
+					template_param_order.push_back(earlier_param.name());
+				}
+
+				ASTNode substituted_default_node = default_node;
+				if (!param_map.empty()) {
+					ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
+					substituted_default_node = substitutor.substitute(default_node);
+				}
+
+				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
+				if (eval_result.success()) {
+					if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
+						completed_args.push_back(
+							TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool));
+					} else if (const auto* uint_value =
+								   std::get_if<unsigned long long>(&eval_result.value)) {
+						TypeCategory value_category = eval_result.exact_type.has_value()
+							? eval_result.exact_type->category()
+							: TypeCategory::UnsignedLongLong;
+						completed_args.push_back(
+							TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category));
+					} else if (eval_result.exact_type.has_value()) {
+						completed_args.push_back(
+							TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category()));
+					} else {
+						completed_args.push_back(TemplateTypeArg(eval_result.as_int()));
+					}
+				}
+			}
+		}
+
+		auto instantiated = try_instantiate_class_template(candidate_name, completed_args);
+		if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
+			result.instantiated_name = StringTable::getStringView(
+				instantiated->as<StructDeclarationNode>().name());
+		} else {
+			result.instantiated_name =
+				get_instantiated_class_name(candidate_name, completed_args);
+		}
+
+		if (!result.instantiated_name.empty()) {
+			result.resolved_type_info = findTypeByName(
+				StringTable::getOrInternStringHandle(result.instantiated_name));
+		}
+		return result;
 	};
 
 	AliasTemplateMaterializationResult materialized_owner =
@@ -4141,13 +4238,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								std::string_view instantiated_type_name = materialized_owner.instantiated_name;
 								const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
 								if (instantiated_type_name.empty()) {
-									instantiated_type_name =
-										get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
-									auto instantiated_struct =
-										try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
-									if (instantiated_struct.has_value() && instantiated_struct->is<StructDeclarationNode>()) {
-										registerLateMaterializedTopLevelNode(*instantiated_struct);
-									}
+									return ParseResult::error(
+										"Failed to materialize class template for functional-style cast",
+										identifier_token);
+								}
+								if (instantiated_type_info == nullptr) {
 									instantiated_type_info = findTypeByName(
 										StringTable::getOrInternStringHandle(instantiated_type_name));
 								}
@@ -4901,9 +4996,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					std::string_view instantiated_type_name = materialized_owner.instantiated_name;
 					const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
 					if (instantiated_type_name.empty()) {
-						instantiated_type_name =
-							get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
-						try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
+						return ParseResult::error(
+							"Failed to materialize class template for functional-style cast",
+							identifier_token);
+					}
+					if (instantiated_type_info == nullptr) {
 						instantiated_type_info =
 							findTypeByName(StringTable::getOrInternStringHandle(instantiated_type_name));
 					}
