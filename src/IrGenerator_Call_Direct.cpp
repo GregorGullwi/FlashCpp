@@ -395,6 +395,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	std::string_view lookup_name_view = callExprNode.has_qualified_name()
 											? callExprNode.qualified_name()
 											: func_name_view;
+	const bool has_synthesized_template_suffix =
+		func_name_view.find('$') != std::string_view::npos;
 
 	FLASH_LOG_FORMAT(Codegen, Debug, "=== generateFunctionCallIr: func_name={} ===", func_name_view);
 
@@ -963,26 +965,16 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (!resolved_target || matched_func_decl) {
 			return;
 		}
+		if (callExprNode.has_template_arguments() || has_synthesized_template_suffix) {
+			return;
+		}
 		std::string_view parent = resolved_target->parent_struct_name();
-		// Decl-only member-like calls still need the legacy lookup/remap path; sema only
-		// becomes authoritative here once the call node already carries a concrete callee.
-		if (!callExprNode.callee().has_function_declaration() && !parent.empty()) {
-			return;
-		}
-		// Precomputed-mangled member calls still rely on the legacy remapping path for
-		// template-instantiation-sensitive owner recovery.
-		if (!parent.empty() && has_precomputed_mangled) {
-			return;
-		}
+		// Sema now owns the direct-call target even for decl-only and precomputed-mangled
+		// member-like calls; codegen should only keep legacy lookup recovery for bodies
+		// sema never normalized or explicit sema-recorded gaps.
 		if (!parent.empty() && callExprNode.has_qualified_name()) {
 			const StringHandle parent_handle = StringTable::getOrInternStringHandle(parent);
 			if (gTemplateRegistry.isPatternStructName(parent_handle)) {
-				return;
-			}
-			auto parent_it = getTypesByNameMap().find(parent_handle);
-			if (parent_it != getTypesByNameMap().end() &&
-				parent_it->second &&
-				parent_it->second->isTemplateInstantiation()) {
 				return;
 			}
 		}
@@ -996,6 +988,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			if (current_struct_matches_parent) {
 				if (const FunctionDeclarationNode* instantiated_member = findCurrentStructMemberInHierarchy()) {
 					matched_func_decl = instantiated_member;
+					has_precomputed_mangled = false;
 					resolveMangledName(matched_func_decl, current_struct_name_view);
 					FLASH_LOG_FORMAT(Codegen, Debug, "Remapped {} direct call target to current struct for: {}", source_label, func_name_view);
 					return;
@@ -1006,6 +999,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			(current_struct_name_.isValid() && StringTable::getStringView(current_struct_name_) == parent);
 		if (is_current_struct_or_unowned) {
 			matched_func_decl = resolved_target;
+			has_precomputed_mangled = false;
 			resolveMangledName(matched_func_decl, parent);
 			FLASH_LOG_FORMAT(Codegen, Debug, "Using {} direct call target for: {}", source_label, func_name_view);
 			return;
@@ -1035,6 +1029,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		}
 
 		matched_func_decl = resolved_target;
+		has_precomputed_mangled = false;
 		std::string_view owner_for_mangling = parent;
 		if (gTemplateRegistry.isPatternStructName(StringTable::getOrInternStringHandle(owner_for_mangling))) {
 			owner_for_mangling = resolved_owner_name;
@@ -1062,7 +1057,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	// Check if the call expression has a pre-computed mangled name (for namespace-scoped functions)
 	// If so, use it directly and skip the lookup logic
-	if (has_precomputed_mangled) {
+	if (has_precomputed_mangled && !matched_func_decl) {
 		function_name = callExprNode.mangled_name();
 		FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name from call expression: {}", function_name);
 		// We don't need to find matched_func_decl since we already have the mangled name
@@ -1075,15 +1070,15 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// calls should no longer rely on a precomputed-mangled escape hatch.
 	const bool sema_recorded_unresolved_call =
 		sema_ && sema_->hasUnresolvedCallArgs(sema_call_key);
-	const bool is_static_direct_call =
-		callExprNode.callee().is_static_member() ||
-		(callExprNode.callee().has_function_declaration() &&
-		 callExprNode.callee().function_declaration_or_null()->is_static());
+	const bool has_synthetic_call_key =
+		sema_call_key != static_cast<const void*>(&callExprNode);
 	const bool allow_lookup_recovery =
 		!sema_ || // no semantic data wired into codegen
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
-		is_static_direct_call || // direct static-member path is still partly synthetic
-		callExprNode.has_qualified_name() || // broader qualified-call fallback path still exists beyond sema-owned ordinary calls
+		has_precomputed_mangled || // precomputed-mangled calls still include legacy parser-owned resolution shapes such as ADL and delayed static-member paths
+		callExprNode.has_template_arguments() || // explicit-template-argument calls still rely on older codegen lookup/mangling paths
+		has_synthesized_template_suffix || // hashed instantiated callee names (notably member-template instantiations) still rely on legacy direct-call lowering
+		has_synthetic_call_key || // synthesized call wrappers (for example receiver/member-access static direct-call lowering) still rely on legacy direct-call recovery here
 		sema_recorded_unresolved_call; // sema recorded a known resolution gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
