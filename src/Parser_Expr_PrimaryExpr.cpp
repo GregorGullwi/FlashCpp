@@ -2638,28 +2638,31 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 				}
 
-				// Try to instantiate as class template with qualified name first
-				auto instantiated = try_instantiate_class_template(qualified_template_name, *template_args);
-
-				// If that didn't work, try with simple name (for backward compatibility)
-				if (!instantiated.has_value()) {
-					FLASH_LOG_FORMAT(Parser, Debug, "Qualified name lookup failed, trying simple name '{}'", final_identifier.value());
-					instantiated = try_instantiate_class_template(final_identifier.value(), *template_args);
-				}
-
-				if (instantiated.has_value()) {
-					const auto& inst_struct = instantiated->as<StructDeclarationNode>();
+				AliasTemplateMaterializationResult materialized_owner =
+					materializePrimaryTemplateOwnerForLookup(
+						qualified_template_name,
+						final_identifier.value(),
+						*template_args);
+				if (!materialized_owner.instantiated_name.empty()) {
+					std::string_view instantiated_name = materialized_owner.instantiated_name;
+					const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
 
 					// Look up the instantiated template
-					identifierType = gSymbolTable.lookup(StringTable::getStringView(inst_struct.name()));
+					identifierType = gSymbolTable.lookup(instantiated_name);
 
 					// Check for :: after template arguments (Template<T>::member)
 					if (peek() == "::"_tok) {
-						auto qualified_result = parse_qualified_identifier_after_template(final_identifier);
+						Token instantiated_token(
+							Token::Type::Identifier,
+							instantiated_name,
+							final_identifier.line(),
+							final_identifier.column(),
+							final_identifier.file_index());
+						auto qualified_result = parse_qualified_identifier_after_template(instantiated_token);
 						if (!qualified_result.is_error() && qualified_result.node().has_value()) {
 							const auto& qualified_node2 = asQualifiedIdentifier(*qualified_result.node());
 							auto member_call_result = try_parse_member_template_function_call(
-								StringTable::getStringView(inst_struct.name()),
+								instantiated_name,
 								qualified_node2.name(),
 								qualified_node2.identifier_token());
 							if (member_call_result.has_value()) {
@@ -2698,11 +2701,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 
 						// Look up the instantiated type
-						auto type_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(inst_struct.name()));
-						auto type_it = getTypesByNameMap().find(type_handle);
-						if (type_it != getTypesByNameMap().end()) {
+						if (instantiated_type_info != nullptr) {
 							// Create TypeSpecifierNode for the instantiated class
-							const TypeInfo& type_info = *type_it->second;
+							const TypeInfo& type_info = *instantiated_type_info;
 							TypeIndex type_index = type_info.type_index_;
 							SizeInBits type_size{};
 							if (type_info.struct_info_) {
@@ -2719,7 +2720,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 
 					// Return identifier reference to the instantiated template
-					Token inst_token(Token::Type::Identifier, StringTable::getStringView(inst_struct.name()),
+					Token inst_token(Token::Type::Identifier, instantiated_name,
 									 final_identifier.line(), final_identifier.column(), final_identifier.file_index());
 					result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
 					return ParseResult::success(*result);
