@@ -1484,7 +1484,11 @@ void AstToIr::generateTrivialDefaultConstructors() {
 			if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::MSVC) {
 				// MSVC uses dedicated constructor mangling (??0ClassName@@...)
 				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(
-					NameMangling::generateMangledNameForConstructor(class_name, empty_params, empty_namespace_path));
+					NameMangling::generateMangledNameForConstructor(
+						class_name,
+						empty_params,
+						empty_namespace_path,
+						NameMangling::ConstructorVariant::Complete));
 			} else if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
 				// Itanium uses regular mangling with class name as function name (produces C1 marker)
 				// Extract the last component for func_name (handles nested classes like "Outer::Inner")
@@ -1502,8 +1506,9 @@ void AstToIr::generateTrivialDefaultConstructors() {
 					class_name, // struct_name
 					empty_namespace_path,
 					Linkage::CPlusPlus,
-					false // constructors are never const
-					));
+					false, // constructors are never const
+					false,
+					NameMangling::ConstructorVariant::Complete));
 			} else {
 				assert(false && "Unhandled name mangling type");
 			}

@@ -257,7 +257,8 @@ std::optional<ASTNode> tryRebindNonExpressionNode(
 			recurse(ranged_for.get_loop_variable_decl()),
 			recurse(ranged_for.get_range_expression()),
 			recurse(ranged_for.get_body_statement()),
-			std::move(rebound_init));
+			std::move(rebound_init),
+			ranged_for.for_token());
 		rebound_ranged_for.as<RangedForStatementNode>().set_resolved_range_type(
 			ranged_for.resolved_range_type());
 		rebound_ranged_for.as<RangedForStatementNode>().set_resolved_member_begin_function(

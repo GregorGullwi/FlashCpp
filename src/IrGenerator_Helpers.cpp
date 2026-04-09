@@ -194,8 +194,11 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 	} else if (node.is<DoWhileStatementNode>()) {
 		prescanLabels(node.as<DoWhileStatementNode>().get_body_statement(), depth);
 	} else if (node.is<RangedForStatementNode>()) {
-		// Ranged-for does NOT call enterScope() — the body BlockNode handles scope.
-		prescanLabels(node.as<RangedForStatementNode>().get_body_statement(), depth);
+		const auto& ranged_for = node.as<RangedForStatementNode>();
+		// Range-for lowering enters one scope for the loop variable and, when present,
+		// another outer scope for the C++20 init-statement before visiting the body.
+		size_t body_depth = depth + 1 + (ranged_for.has_init_statement() ? 1 : 0);
+		prescanLabels(ranged_for.get_body_statement(), body_depth);
 	} else if (node.is<SwitchStatementNode>()) {
 		// The switch visitor iterates the body block's children inline without calling
 		// enterScope(), so we must NOT let the body go through the BlockNode handler
@@ -234,10 +237,11 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 		}
 	} else if (node.is<TryStatementNode>()) {
 		const auto& try_stmt = node.as<TryStatementNode>();
-		// Both the try block and each catch body are BlockNodes that manage their own scopes.
+		// The try block manages its own scope, while catch lowering opens an
+		// additional handler scope before visiting the catch body BlockNode.
 		prescanLabels(try_stmt.try_block(), depth);
 		for (const auto& catch_node : try_stmt.catch_clauses()) {
-			prescanLabels(catch_node.as<CatchClauseNode>().body(), depth);
+			prescanLabels(catch_node.as<CatchClauseNode>().body(), depth + 1);
 		}
 	}
 	// All other node types (expressions, plain declarations, break, continue, return,
