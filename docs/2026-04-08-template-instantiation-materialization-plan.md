@@ -7,21 +7,44 @@
 
 ### Do this next
 
-1. Continue the remaining `src/Parser_Expr_QualLookup.cpp` audit beyond
-   the now-fixed brace-init / base fallback / template-template alias-chain
-   slices, especially the `substitute_template_parameter(...)` branches that
-   still hand-roll placeholder instantiation / name recovery for qualified
-   member types and underscore-dependent placeholders.
-2. Route those remaining qualified-lookup / constexpr-member lookup consumers
-   through the same parser-owned materialization rules used by
-   `materializeTemplateInstantiationForLookup(...)`, so late consumers no
-   longer depend on manually rebuilding instantiated names.
-3. After the remaining qualified-lookup consumers are clean, audit lazy member
-   materialization and IR-triggered lookup sites for the same
-   instantiated-owner alias/name recovery drift.
+1. Audit the remaining lazy-member materialization and IR-triggered lookup
+   consumers now that the main `src/Parser_Expr_QualLookup.cpp`
+   placeholder/name-recovery branches are shared. The next obvious targets are
+   the late qualified-call and qualified-identifier recovery sites that still
+   synthesize concrete owner/member names after substitution.
+2. Keep routing those late consumers through the same parser-owned
+   materialization rules used by `materializeTemplateInstantiationForLookup(...)`,
+   including the exact qualified alias/member lookup preference before falling
+   back to member-chain walking.
+3. Once the late consumers stop rebuilding instantiated names manually, return
+   to the remaining deduction / placeholder sites only if they still encode the
+   same owner-materialization policy independently.
 
 ### Latest completed slice
 
+  - fixed the alias-metadata regression in the shared concrete-owner/member
+    resolver by preferring an exact published `InstantiatedOwner::member` entry
+    before walking a chained member lookup, which preserves array extents,
+    function signatures, and qualifier-composition aliases
+  - collapsed the ordinary placeholder and template-template placeholder paths
+    in `substitute_template_parameter(...)` onto the same
+    parser-owned concrete-owner/member-chain materialization helper instead of
+    open-coding instantiation, registry fallback, instantiated-name recovery,
+    and chain replay twice
+  - centralized the remaining placeholder-arg fallback for cases that still
+    encode a dependent template parameter as a struct-typed placeholder whose
+    type name matches the parameter name, so that rebinding logic now lives in
+    one local helper instead of a one-off loop in the template-template branch
+  - switched `src/ExpressionSubstitutor.cpp` explicit member-template owner
+    recovery to `materializeTemplateInstantiationForLookup(...)` instead of
+    calling `try_instantiate_class_template(...)` plus
+    `get_instantiated_class_name(...)` directly
+  - Validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_template_alias_chain_ret42.cpp test_template_template_full_spec_alias_chain_ret42.cpp test_alias_template_brace_init_ret42.cpp test_template_alias_funcptr_ret0.cpp test_template_alias_member_qualifier_compose_ret0.cpp test_template_type_alias_array_member_brace_init_ret0.cpp test_template_type_alias_array_member_extra_outer_args_ret0.cpp test_template_type_alias_array_member_substring_name_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 member_func_template_call_ret3.cpp test_nested_template_instantiation_ret42.cpp test_identifier_binding_template_member_outofline_implicit_member_ret42.cpp test_member_function_template_in_partial_spec_ret0.cpp test_member_template_func_in_specialization_ret0.cpp test_member_template_default_value_substitution_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+    - 2000 pass, 125 expected-fail
   - taught unqualified template brace initialization to recognize alias
     templates as first-class materialization candidates instead of falling
     through with `Missing semicolon` at `Alias<T>{...}`
