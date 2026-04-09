@@ -1228,27 +1228,39 @@ ParseResult Parser::parse_type_specifier() {
 					// This is a template parameter being used with template arguments (e.g., Op<Args...>)
 					// Check for nested type access (e.g., Op<Args...>::type) before returning early
 					if (peek() == "::"_tok) {
-						// Parse the nested type/member access
-						advance(); // consume '::'
-
-						// Handle optional 'template' keyword for dependent contexts
-						if (peek() == "template"_tok) {
-							advance(); // consume 'template'
-						}
-
-						// Get the nested identifier
-						if (!peek().is_identifier()) {
-							return ParseResult::error("Expected identifier after '::'", peek_info());
-						}
-						Token nested_token = peek_info();
-						advance(); // consume the identifier
-
-						// Build a dependent type name: Op<Args...>::type
+						// Build a dependent type name: Op<Args...>::type::other
 						// For dependent types, we create a placeholder type that will be resolved during instantiation
 						StringBuilder dependent_type_builder;
 						dependent_type_builder.append(type_name);
-						dependent_type_builder.append("<...>::");
-						dependent_type_builder.append(nested_token.value());
+						dependent_type_builder.append("<...>");
+						Token nested_token = peek_info();
+
+						while (peek() == "::"_tok) {
+							advance(); // consume '::'
+
+							// Handle optional 'template' keyword for dependent contexts
+							if (peek() == "template"_tok) {
+								advance(); // consume 'template'
+							}
+
+							if (!peek().is_identifier()) {
+								return ParseResult::error("Expected identifier after '::'", peek_info());
+							}
+
+							nested_token = peek_info();
+							advance(); // consume the identifier
+							dependent_type_builder.append("::").append(nested_token.value());
+
+							if (peek() == "<"_tok) {
+								auto nested_template_args = parse_explicit_template_arguments();
+								if (!nested_template_args.has_value()) {
+									return ParseResult::error("Failed to parse template arguments for dependent nested type", nested_token);
+								}
+								dependent_type_builder.append("<")
+													.append(nested_template_args->size())
+													.append(" args>");
+							}
+						}
 						std::string_view dependent_type_name = dependent_type_builder.commit();
 
 						// Create or look up a placeholder type for this dependent type
@@ -1261,6 +1273,9 @@ ParseResult Parser::parse_type_specifier() {
 							placeholder_type.fallback_size_bits_ = 0;
 							placeholder_type.name_ = type_handle;
 							placeholder_type.is_incomplete_instantiation_ = true;
+							placeholder_type.setTemplateInstantiationInfo(
+								QualifiedIdentifier::fromQualifiedName(type_name, gSymbolTable.get_current_namespace_handle()),
+								convertToTemplateArgInfo(*template_args));
 							getTypesByNameMap()[type_handle] = &placeholder_type;
 							type_idx = placeholder_type.type_index_;
 							FLASH_LOG(Templates, Debug, "Created placeholder for dependent nested type: ", dependent_type_name);
@@ -1541,6 +1556,88 @@ ParseResult Parser::parse_type_specifier() {
 					// before creating a placeholder
 					std::string_view member_name = qualified_node.identifier_token().value();
 					bool has_template_args = (peek() == "<"_tok);
+					auto append_nested_qualified_type_chain = [&]() {
+						while (peek() == "::"_tok) {
+							SaveHandle nested_pos = save_token_position();
+							advance(); // consume '::'
+
+							if (peek() == "template"_tok) {
+								advance(); // consume 'template'
+							}
+
+							if (!peek().is_identifier()) {
+								restore_token_position(nested_pos);
+								break;
+							}
+
+							std::string_view nested_member = peek_info().value();
+							advance(); // consume identifier
+
+							StringBuilder nested_builder;
+							qualified_type_name = nested_builder
+													  .append(qualified_type_name)
+													  .append("::")
+													  .append(nested_member)
+													  .commit();
+							discard_saved_token(nested_pos);
+
+							if (peek() == "<"_tok) {
+								auto nested_tmpl_args = parse_explicit_template_arguments();
+								if (nested_tmpl_args.has_value()) {
+									StringBuilder tmpl_builder;
+									qualified_type_name = tmpl_builder
+															  .append(qualified_type_name)
+															  .append("<")
+															  .append(nested_tmpl_args->size())
+															  .append(" args>")
+															  .commit();
+								}
+							}
+						}
+					};
+					auto create_dependent_qualified_type_placeholder =
+						[&](std::optional<StringHandle> dependent_member_template_base,
+							std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> dependent_member_template_args) -> ParseResult {
+						FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
+						auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
+						TypeInfo& type_info = add_empty_type_entry();
+						type_info.fallback_size_bits_ = 0; // Unknown size for dependent type
+						type_info.name_ = type_idx;
+						type_info.is_incomplete_instantiation_ = true;
+						if (dependent_member_template_base.has_value() && dependent_member_template_args.has_value()) {
+							type_info.setTemplateInstantiationInfo(
+								QualifiedIdentifier::fromQualifiedName(
+									StringTable::getStringView(*dependent_member_template_base),
+									gSymbolTable.get_current_namespace_handle()),
+								*dependent_member_template_args);
+						}
+						size_t sep_pos = qualified_type_name.rfind("::");
+						if (sep_pos != std::string_view::npos) {
+							StringHandle base_handle = StringTable::getOrInternStringHandle(qualified_type_name.substr(0, sep_pos));
+							auto base_type_it = getTypesByNameMap().find(base_handle);
+							// Keep the member-template metadata above when present; only fall back
+							// to the owner placeholder's metadata for non-template member placeholders
+							// such as `Owner<T>::value_type`.
+							if (!type_info.isTemplateInstantiation() &&
+								base_type_it != getTypesByNameMap().end() &&
+								base_type_it->second->isTemplateInstantiation()) {
+								type_info.setTemplateInstantiationInfo(
+									base_type_it->second->base_template_,
+									base_type_it->second->templateArgs());
+							}
+							if (base_type_it != getTypesByNameMap().end() && base_type_it->second->hasInstantiationContext()) {
+								const auto* base_ctx = base_type_it->second->instantiationContext();
+								type_info.setInstantiationContext(
+									base_ctx->param_names,
+									base_ctx->param_args,
+									base_ctx->parent);
+							}
+						}
+						getTypesByNameMap()[type_idx] = &type_info;
+
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+					};
 
 					if (has_dependent_args) {
 						// Phase 4: Check for lazy nested type instantiation before lookup
@@ -1635,88 +1732,16 @@ ParseResult Parser::parse_type_specifier() {
 
 							// Handle further nested type access after member template arguments
 							// e.g., ::template rebind<_Tp>::other
-							while (peek() == "::"_tok) {
-								SaveHandle nested_pos = save_token_position();
-								advance(); // consume '::'
-
-								// Handle optional 'template' keyword
-								if (peek() == "template"_tok) {
-									advance(); // consume 'template'
-								}
-
-								if (peek().is_identifier()) {
-									std::string_view nested_member = peek_info().value();
-									advance(); // consume identifier
-
-									StringBuilder nested_builder;
-									qualified_type_name = nested_builder
-															  .append(qualified_type_name)
-															  .append("::")
-															  .append(nested_member)
-															  .commit();
-									discard_saved_token(nested_pos);
-
-									// Check for more template arguments on this nested member
-									if (peek() == "<"_tok) {
-										auto nested_tmpl_args = parse_explicit_template_arguments();
-										if (nested_tmpl_args.has_value()) {
-											StringBuilder tmpl_builder;
-											qualified_type_name = tmpl_builder
-																	  .append(qualified_type_name)
-																	  .append("<")
-																	  .append(nested_tmpl_args->size())
-																	  .append(" args>")
-																	  .commit();
-										}
-									}
-								} else {
-									restore_token_position(nested_pos);
-									break;
-								}
-							}
-
-							// Create a placeholder for the dependent qualified type
-							FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
-							auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
-							TypeInfo& type_info = add_empty_type_entry();
-							type_info.fallback_size_bits_ = 0; // Unknown size for dependent type
-							type_info.name_ = type_idx;
-							type_info.is_incomplete_instantiation_ = true;
-							if (dependent_member_template_base.has_value() && dependent_member_template_args.has_value()) {
-								type_info.setTemplateInstantiationInfo(
-									QualifiedIdentifier::fromQualifiedName(
-										StringTable::getStringView(*dependent_member_template_base),
-										gSymbolTable.get_current_namespace_handle()),
-									*dependent_member_template_args);
-							}
-							size_t sep_pos = qualified_type_name.rfind("::");
-							if (sep_pos != std::string_view::npos) {
-								StringHandle base_handle = StringTable::getOrInternStringHandle(qualified_type_name.substr(0, sep_pos));
-								auto base_type_it = getTypesByNameMap().find(base_handle);
-								// Keep the member-template metadata above when present; only fall back
-								// to the owner placeholder's metadata for non-template member placeholders
-								// such as `Owner<T>::value_type`.
-								if (!type_info.isTemplateInstantiation() &&
-									base_type_it != getTypesByNameMap().end() &&
-									base_type_it->second->isTemplateInstantiation()) {
-									type_info.setTemplateInstantiationInfo(
-										base_type_it->second->base_template_,
-										base_type_it->second->templateArgs());
-								}
-								if (base_type_it != getTypesByNameMap().end() && base_type_it->second->hasInstantiationContext()) {
-									const auto* base_ctx = base_type_it->second->instantiationContext();
-									type_info.setInstantiationContext(
-										base_ctx->param_names,
-										base_ctx->param_args,
-										base_ctx->parent);
-								}
-							}
-							getTypesByNameMap()[type_idx] = &type_info;
-
-							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+							append_nested_qualified_type_chain();
+							return create_dependent_qualified_type_placeholder(
+								dependent_member_template_base,
+								dependent_member_template_args);
 						}
-						// If type IS found, continue with normal lookup below
+						append_nested_qualified_type_chain();
+						qual_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
+						if (qual_type_it == getTypesByNameMap().end()) {
+							return create_dependent_qualified_type_placeholder(std::nullopt, std::nullopt);
+						}
 					}
 
 					// Look up the fully qualified type (e.g., "Traits_int::nested")
