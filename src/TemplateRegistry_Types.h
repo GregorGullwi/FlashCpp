@@ -751,9 +751,9 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 		static_cast<uint8_t>(dependent_pattern.cv_qualifier));
 	rebound_arg.pointer_depth = static_cast<uint8_t>(
 		rebound_arg.pointer_depth + dependent_pattern.pointer_depth);
-	rebound_arg.pointer_cv_qualifiers.insert(rebound_arg.pointer_cv_qualifiers.end(),
-		dependent_pattern.pointer_cv_qualifiers.begin(),
-		dependent_pattern.pointer_cv_qualifiers.end());
+	for (const auto& pointer_cv : dependent_pattern.pointer_cv_qualifiers) {
+		rebound_arg.pointer_cv_qualifiers.push_back(pointer_cv);
+	}
 	// Rebinding `T&` / `T&&` must follow ordinary reference-collapsing rules:
 	// an outer lvalue reference always wins, while an outer rvalue reference only
 	// applies when the substituted argument was not already a reference.
