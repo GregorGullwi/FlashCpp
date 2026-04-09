@@ -10,8 +10,9 @@
 1. Audit the remaining lazy-member materialization and IR-triggered lookup
    consumers now that the main `src/Parser_Expr_QualLookup.cpp`
    placeholder/name-recovery branches are shared. The next obvious targets are
-   the late qualified-call and qualified-identifier recovery sites that still
-   synthesize concrete owner/member names after substitution.
+   the explicit template-recovery paths in `src/Parser_Expr_PrimaryExpr.cpp`
+   and the remaining lazy/IR-triggered consumers that still synthesize
+   concrete owner/member names after substitution.
 2. Keep routing those late consumers through the same parser-owned
    materialization rules used by `materializeTemplateInstantiationForLookup(...)`,
    including the exact qualified alias/member lookup preference before falling
@@ -22,6 +23,30 @@
 
 ### Latest completed slice
 
+  - reran the previously reported alias/array crash cluster and confirmed it is
+    no longer live on the branch; the current materialization baseline already
+    compiles and runs those regressions cleanly
+  - extracted shared late `TypeInfo::templateArgs()` rebinding in
+    `src/ExpressionSubstitutor.cpp` so qualified-identifier replay and late
+    type substitution now use the same dependent-name / surviving-type-name
+    substitution path instead of maintaining two copies
+  - switched `Template<Args>::member(...)` owner resolution in
+    `src/Parser_Expr_BinaryPrecedence.cpp` to
+    `materializeTemplateInstantiationForLookup(...)` instead of the old
+    `try_instantiate_class_template(...)` + `get_instantiated_class_name(...)`
+    pair
+  - removed the redundant eager class-template instantiation in
+    `src/Parser_Expr_PostfixCalls.cpp` before
+    `parse_template_brace_initialization(...)`, leaving the shared brace-init
+    helper as the only owner-materialization path there
+  - Validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_alias_funcptr_ret0.cpp test_template_alias_member_qualifier_compose_ret0.cpp test_template_type_alias_array_member_brace_init_ret0.cpp test_template_type_alias_array_member_extra_outer_args_ret0.cpp test_template_type_alias_array_member_substring_name_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_struct_local_alias_static_init_ret0.cpp test_alias_template_nested_member_value_ret42.cpp test_nested_template_instantiation_ret42.cpp test_member_template_default_value_substitution_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 member_func_template_call_ret3.cpp template_member_access_ret42.cpp test_phase3_decltype_context_ret42.cpp test_explicit_condition_ret42.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_alias_template_brace_init_ret42.cpp test_template_brace_init_ret42.cpp test_template_brace_init_userdefined_ret3.cpp template_template_brace_init_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+    - 2000 pass, 125 expected-fail
   - fixed the alias-metadata regression in the shared concrete-owner/member
     resolver by preferring an exact published `InstantiatedOwner::member` entry
     before walking a chained member lookup, which preserves array extents,
