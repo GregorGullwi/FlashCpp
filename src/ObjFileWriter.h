@@ -396,7 +396,9 @@ public:
 				// It is a constructor
 				return std::string(NameMangling::generateMangledNameForConstructor(
 					sig.class_name,
-					sig.parameter_types));
+					sig.parameter_types,
+					{},
+					sig.use_base_object_ctor_variant ? NameMangling::ConstructorVariant::BaseObject : NameMangling::ConstructorVariant::Complete));
 			}
 		}
 

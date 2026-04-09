@@ -1518,7 +1518,6 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	}
 	const StructTypeInfo* enclosing_struct_info = enclosing_type_info ? enclosing_type_info->getStructInfo() : nullptr;
 	const bool emit_split_ctor_variants =
-		NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium &&
 		enclosing_struct_info != nullptr &&
 		!enclosing_struct_info->virtual_bases.empty();
 
@@ -1555,7 +1554,11 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::MSVC) {
 				// MSVC uses dedicated constructor mangling (??0ClassName@@...)
 			ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(
-				NameMangling::generateMangledNameForConstructor(struct_name_for_ctor, node.parameter_nodes(), empty_namespace_path));
+				NameMangling::generateMangledNameForConstructor(
+					struct_name_for_ctor,
+					node.parameter_nodes(),
+					empty_namespace_path,
+					emit_split_ctor_variants ? NameMangling::ConstructorVariant::BaseObject : NameMangling::ConstructorVariant::Complete));
 		} else if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
 				// Itanium uses regular mangling with class name as function name (produces C1 marker)
 			TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
@@ -1662,8 +1665,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	};
 
 	auto shouldCallBaseObjectVariant = [](const StructTypeInfo* target_struct_info) {
-		return NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium &&
-			   target_struct_info != nullptr &&
+		return target_struct_info != nullptr &&
 			   !target_struct_info->virtual_bases.empty();
 	};
 

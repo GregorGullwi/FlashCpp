@@ -458,6 +458,15 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 	add_catchable_type(type_name, thrown_properties, 0, -1, 0, throw_size);
 
 	if (thrown_struct_info && !is_simple_type) {
+		auto find_complete_object_virtual_base_offset = [&](TypeIndex base_type_index) -> std::optional<uint32_t> {
+			for (const auto& virtual_base : thrown_struct_info->virtual_bases) {
+				if (virtual_base.type_index == base_type_index) {
+					return static_cast<uint32_t>(virtual_base.offset);
+				}
+			}
+			return std::nullopt;
+		};
+
 		std::set<std::pair<const StructTypeInfo*, uint32_t>> visited_public_base_paths;
 		std::function<void(const StructTypeInfo*, uint32_t)> collect_public_bases = [&](const StructTypeInfo* current_struct_info, uint32_t current_offset) {
 			if (!current_struct_info) {
@@ -480,6 +489,11 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 				}
 
 				uint32_t base_offset = current_offset + static_cast<uint32_t>(base.offset);
+				if (base.is_virtual) {
+					if (auto complete_object_offset = find_complete_object_virtual_base_offset(base.type_index)) {
+						base_offset = *complete_object_offset;
+					}
+				}
 				uint32_t base_properties = base.is_virtual || !base_struct_info->virtual_bases.empty() ? CT_HasVirtualBase : 0u;
 				uint32_t base_size = static_cast<uint32_t>(base_struct_info->sizeInBytes().is_set() ? toSizeT(base_struct_info->sizeInBytes()) : throw_size);
 

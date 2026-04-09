@@ -1662,7 +1662,8 @@ inline MangledName generateMangledNameFromNode(
 inline MangledName generateMangledNameForConstructor(
 	std::string_view struct_name,
 	const std::vector<TypeSpecifierNode>& param_types,
-	const std::vector<std::string_view>& namespace_path = {}) {
+	const std::vector<std::string_view>& namespace_path = {},
+	ConstructorVariant constructor_variant = ConstructorVariant::Complete) {
 	StringBuilder builder;
 
 	builder.append("??0");  // Constructor marker in MSVC mangling
@@ -1681,6 +1682,10 @@ inline MangledName generateMangledNameForConstructor(
 	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
 		builder.append('@');
 		builder.append(*it);
+	}
+
+	if (constructor_variant == ConstructorVariant::BaseObject) {
+		builder.append("$base");
 	}
 
 	builder.append("@@QEAA");  // @@ + __cdecl x64 calling convention (non-const)
@@ -1699,7 +1704,8 @@ inline MangledName generateMangledNameForConstructor(
 inline MangledName generateMangledNameForConstructor(
 	std::string_view struct_name,
 	const std::vector<ASTNode>& param_nodes,
-	const std::vector<std::string_view>& namespace_path = {}) {
+	const std::vector<std::string_view>& namespace_path = {},
+	ConstructorVariant constructor_variant = ConstructorVariant::Complete) {
 	StringBuilder builder;
 
 	builder.append("??0");  // Constructor marker in MSVC mangling
@@ -1718,6 +1724,10 @@ inline MangledName generateMangledNameForConstructor(
 	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
 		builder.append('@');
 		builder.append(*it);
+	}
+
+	if (constructor_variant == ConstructorVariant::BaseObject) {
+		builder.append("$base");
 	}
 
 	builder.append("@@QEAA");  // @@ + __cdecl x64 calling convention (non-const)
@@ -1795,7 +1805,7 @@ inline MangledName generateMangledNameFromNode(
 								   false, struct_name_sv, namespace_path, Linkage::CPlusPlus, false, false, constructor_variant);
 	} else {
 		// Use MSVC-style constructor mangling
-		return generateMangledNameForConstructor(StringTable::getStringView(ctor_node.struct_name()), ctor_node.parameter_nodes(), namespace_path);
+		return generateMangledNameForConstructor(StringTable::getStringView(ctor_node.struct_name()), ctor_node.parameter_nodes(), namespace_path, constructor_variant);
 	}
 }
 

@@ -14708,6 +14708,12 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 		if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
 			int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
 			setReferenceInfo(stack_offset, TypeIndex{0, catch_op.exceptionType()}, 64, false, catch_op.exception_temp);
+		} else if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0) {
+			int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+			indirect_stack_info_.erase(stack_offset);
+			tempvar_indirect_stack_info_.erase(stack_offset);
+			current_function_tempvar_indirect_info_.erase(catch_op.exception_temp.var_number);
+			GlobalTempVarMetadataStorage::instance().clearEntry(catch_op.exception_temp.var_number);
 		}
 
 		if (current_catch_handler_) {
