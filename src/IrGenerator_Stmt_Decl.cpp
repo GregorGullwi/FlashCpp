@@ -107,6 +107,9 @@ bool allowsLegacyOverloadArgFallbackInNormalizedBody(const ASTNode& arg) {
 	return std::visit([](const auto& inner) -> bool {
 		using T = std::decay_t<decltype(inner)>;
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			// Sema-normalized bodies now cache overload-resolution types for
+			// identifiers directly (constructor paths) or while annotating unresolved
+			// calls, so codegen should not re-lookup declarations here anymore.
 			return false;
 		} else if constexpr (std::is_same_v<T, StringLiteralNode> ||
 							 std::is_same_v<T, MemberAccessNode> ||
