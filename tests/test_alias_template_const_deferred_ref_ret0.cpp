@@ -1,20 +1,20 @@
 template<typename T>
-struct RemoveReference {
+struct remove_reference {
 	using type = T;
 };
 
 template<typename T>
-struct RemoveReference<T&> {
+struct remove_reference<T&> {
 	using type = T;
 };
 
 template<typename T>
-using RemoveReferenceT = typename RemoveReference<T>::type;
+using remove_reference_t = typename remove_reference<T>::type;
 
 template<typename T>
-using ConstRef = const RemoveReferenceT<T>&;
+using const_ref = const remove_reference_t<T>&;
 
-int readValue(ConstRef<int&> value) {
+int readValue(const_ref<int&> value) {
 	return value;
 }
 
