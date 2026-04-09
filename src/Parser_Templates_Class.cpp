@@ -857,6 +857,13 @@ ParseResult Parser::parse_template_declaration() {
 				// Rewind and re-parse to extract template name and arguments as AST nodes
 				restore_token_position(target_type_start_pos);
 
+				// Re-consume leading cv-qualifiers on the alias target before extracting the
+				// dependent template-id. The original parse already recorded these qualifiers
+				// on type_spec, but this deferred-materialization pass still needs to advance
+				// past tokens such as `const remove_reference_t<T>&`.
+				parse_cv_qualifiers();
+				skip_noop_gnu_qualifiers();
+
 				if (peek() == "typename"_tok) {
 					advance();
 				}
