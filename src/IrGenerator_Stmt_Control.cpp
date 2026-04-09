@@ -499,6 +499,11 @@ void AstToIr::visitSwitchStatementNode(const SwitchStatementNode& node) {
 }
 
 void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
+	// C++20 [stmt.ranged]: when an init-statement is present, wrap it in its
+	// own block scope so the init variable does not leak into the enclosing
+	// scope and repeated range-for loops can reuse the same name.
+	IrScopeGuard init_scope_guard{*this};
+
 		// Desugar ranged for loop into traditional for loop
 		// For arrays: for (int x : arr) { body } becomes:
 		//   for (int __i = 0; __i < array_size; ++__i) { int x = arr[__i]; body }
@@ -508,6 +513,7 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 
 		// C++20: Handle optional init-statement if present
 	if (node.has_init_statement()) {
+		init_scope_guard.enter();
 		visit(*node.get_init_statement());
 	}
 

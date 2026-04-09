@@ -150,6 +150,39 @@ private:
 	}
 
 	void exitScope();
+
+	// RAII guard for lazily entering and automatically exiting an IR block scope.
+	// Calls enter() to open the scope (idempotent); the destructor closes it.
+	// Use this when a scope is conditionally needed (e.g., range-for init-statement).
+	struct IrScopeGuard {
+		AstToIr& ir;
+		Token token;
+		bool active = false;
+
+		explicit IrScopeGuard(AstToIr& ir, Token token = Token())
+			: ir(ir), token(token) {}
+
+		void enter() {
+			if (active) {
+				return;
+			}
+			ir.symbol_table.enter_scope(ScopeType::Block);
+			ir.enterScope();
+			ir.ir_.addInstruction(IrOpcode::ScopeBegin, {}, token);
+			active = true;
+		}
+
+		~IrScopeGuard() {
+			if (active) {
+				ir.exitScope();
+				ir.ir_.addInstruction(IrOpcode::ScopeEnd, {}, token);
+				ir.symbol_table.exit_scope();
+			}
+		}
+
+		IrScopeGuard(const IrScopeGuard&) = delete;
+		IrScopeGuard& operator=(const IrScopeGuard&) = delete;
+	};
 	void emitActiveCatchScopeDestructors();
 
 	// Captures function-body-scope vars (for cleanup LP), then calls exitScope().
