@@ -1113,22 +1113,23 @@ BasePlacementDecision decideBasePlacement(const BaseClassSpecifier& base,
 	size_t base_alignment = base_info.alignment;
 	size_t candidate_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
 	bool may_use_ebo = base_info.isEmptyLayoutLike() && !base.is_virtual;
-	while (may_use_ebo) {
-		bool has_overlap_conflict = false;
+	auto has_overlap_conflict_at = [&](size_t offset) {
 		for (const BaseClassSpecifier* placed_base : placed_bases) {
-			if (!placed_base || placed_base->offset != candidate_offset) {
+			if (!placed_base || placed_base->offset != offset) {
 				continue;
 			}
 			if (haveCommonLeadingEmptyType(&base_info, getBaseStructInfo(*placed_base))) {
-				has_overlap_conflict = true;
-				break;
+				return true;
 			}
 		}
-		if (!has_overlap_conflict) {
-			break;
-		}
+		return false;
+	};
+
+	if (may_use_ebo && has_overlap_conflict_at(candidate_offset)) {
 		may_use_ebo = false;
-		candidate_offset = StructTypeInfo::alignLayoutSize(candidate_offset + 1, base_alignment);
+		do {
+			candidate_offset += std::max<size_t>(base_alignment, 1);
+		} while (has_overlap_conflict_at(candidate_offset));
 	}
 
 	size_t base_size = toSizeT(base_info.baseSubobjectSizeInBytes());
