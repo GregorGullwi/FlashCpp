@@ -6,6 +6,8 @@
 
 class TypeSpecifierNode;
 class ConstructorDeclarationNode;
+struct StructTypeInfo;
+const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index);
 
 // Struct type information
 struct StructTypeInfo {
@@ -93,6 +95,22 @@ struct StructTypeInfo {
 				   int pointer_depth = 0,
 				   std::optional<size_t> bitfield_width = std::nullopt,
 				   std::optional<FunctionSignature> function_sig = std::nullopt) {
+		addMember(member_name, type_index, member_size, member_alignment, access, std::move(default_initializer),
+				  reference_qualifier, referenced_size_bits, is_array, std::move(array_dimensions),
+				  pointer_depth, bitfield_width, std::move(function_sig), false);
+	}
+
+	void addMember(StringHandle member_name, TypeIndex type_index,
+				   size_t member_size, size_t member_alignment, AccessSpecifier access,
+				   std::optional<ASTNode> default_initializer,
+				   ReferenceQualifier reference_qualifier,
+				   size_t referenced_size_bits,
+				   bool is_array,
+				   std::vector<size_t> array_dimensions,
+				   int pointer_depth,
+				   std::optional<size_t> bitfield_width,
+				   std::optional<FunctionSignature> function_sig,
+				   bool is_no_unique_address) {
 		// Apply pack alignment if specified
 		// Pack alignment limits the maximum alignment of members.
 		// Some dependent/template paths can transiently report 0 alignment; treat that as byte alignment.
@@ -107,6 +125,7 @@ struct StructTypeInfo {
 
 		bool placed_in_active_bitfield_unit = false;
 		size_t bitfield_bit_offset = 0;
+		size_t layout_member_size = member_size;
 		if (!is_union && bitfield_width.has_value()) {
 			size_t width = *bitfield_width;
 			size_t storage_bits = member_size * 8;
@@ -163,6 +182,17 @@ struct StructTypeInfo {
 			}
 		}
 
+		if (!is_union && !bitfield_width.has_value()) {
+			const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(type_index);
+			bool is_empty_layout_member = member_struct_info && member_struct_info->isEmptyLayoutLike();
+			bool has_same_type_overlap = is_empty_layout_member && hasEmptySubobjectTypeAtOffset(type_index, offset);
+			if (has_same_type_overlap) {
+				offset = alignLayoutSize(offset + 1, effective_alignment);
+			} else if (is_no_unique_address && is_empty_layout_member) {
+				layout_member_size = 0;
+			}
+		}
+
 		if (!referenced_size_bits) {
 			referenced_size_bits = member_size * 8;
 		}
@@ -173,6 +203,7 @@ struct StructTypeInfo {
 							 access, std::move(default_initializer), reference_qualifier,
 							 referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
 		members.back().bitfield_bit_offset = bitfield_bit_offset;
+		members.back().is_no_unique_address = is_no_unique_address;
 		if (function_sig.has_value()) {
 			members.back().function_signature = std::move(function_sig);
 		}
@@ -182,9 +213,9 @@ struct StructTypeInfo {
 			total_size = toSizeInBytes(std::max(toSizeT(total_size), member_size));
 		} else if (!bitfield_width.has_value()) {
 			if (placed_in_active_bitfield_unit) {
-				total_size = toSizeInBytes(std::max(toSizeT(total_size), offset + member_size));
+				total_size = toSizeInBytes(std::max(toSizeT(total_size), offset + layout_member_size));
 			} else {
-				total_size = toSizeInBytes(offset + member_size);
+				total_size = toSizeInBytes(offset + layout_member_size);
 			}
 		}
 		if (!isZeroWidthBitfield(bitfield_width)) {
@@ -357,6 +388,10 @@ struct StructTypeInfo {
 
 	// Recalculate member offsets, size, and alignment from the current members.
 	void recalculateLayout();
+
+	bool isEmptyLayoutLike() const;
+	bool hasLeadingEmptySubobjectType(TypeIndex type_index) const;
+	bool hasEmptySubobjectTypeAtOffset(TypeIndex type_index, size_t offset) const;
 
 	// Build vtable for virtual functions (called during finalization)
 	// Returns false if semantic errors were detected (e.g., overriding final function)

@@ -737,6 +737,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 	// Parse members
 	while (!peek().is_eof() && peek() != "}"_tok) {
+		last_skipped_no_unique_address_attribute_ = false;
 		// Skip empty declarations (bare ';' tokens) - valid in C++
 		if (peek() == ";"_tok) {
 			advance();
@@ -2457,7 +2458,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 
 			// Add the first member to struct with current access level and default initializer
-			struct_ref.add_member(*member_result.node(), current_access, default_initializer, bitfield_width, bitfield_width_expr);
+			bool has_no_unique_address = !!(member_specs & FlashCpp::MLS_NoUniqueAddress) ||
+										  last_skipped_no_unique_address_attribute_;
+			struct_ref.add_member(*member_result.node(), current_access, default_initializer, bitfield_width, bitfield_width_expr,
+								  has_no_unique_address);
 
 			// Check for comma-separated additional declarations (e.g., int x, y, z;)
 			while (peek() == ","_tok) {
@@ -2527,7 +2531,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				}
 
 				// Add this member to the struct
-				struct_ref.add_member(new_decl, current_access, additional_init, additional_bitfield_width, additional_bitfield_width_expr);
+				struct_ref.add_member(new_decl, current_access, additional_init, additional_bitfield_width, additional_bitfield_width_expr,
+									  has_no_unique_address);
 			}
 
 			// Expect semicolon after member declaration(s)
@@ -2794,7 +2799,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			array_dimensions,
 			static_cast<int>(type_spec.pointer_depth()),
 			member_decl.bitfield_width,
-			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt);
+			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt,
+			member_decl.is_no_unique_address);
 
 		member_index++;
 	}

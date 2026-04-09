@@ -2123,9 +2123,11 @@ ParseResult Parser::parse_template_declaration() {
 				// Skip specifiers (constexpr, explicit, inline) first, then check for 'operator'
 				ParseResult member_result;
 				FlashCpp::MemberLeadingSpecifiers conv_specs;
+				bool leading_no_unique_address = starts_with_no_unique_address_attribute();
 				{
 					SaveHandle conv_saved = save_token_position();
 					bool found_conversion_op = false;
+					last_skipped_no_unique_address_attribute_ = false;
 					conv_specs = parse_member_leading_specifiers();
 					if (peek() == "operator"_tok) {
 						// Check if this is a conversion operator (not operator() or operator<< etc.)
@@ -2327,7 +2329,11 @@ ParseResult Parser::parse_template_declaration() {
 						}
 					}
 
-					struct_ref.add_member(*member_result.node(), current_access, default_initializer, bitfield_width, bitfield_width_expr);
+					bool has_no_unique_address = leading_no_unique_address ||
+												  !!(conv_specs & FlashCpp::MLS_NoUniqueAddress) ||
+												  last_skipped_no_unique_address_attribute_;
+					struct_ref.add_member(*member_result.node(), current_access, default_initializer, bitfield_width, bitfield_width_expr,
+										  has_no_unique_address);
 
 					// Handle comma-separated declarations (e.g., int x, y, z;)
 					while (peek() == ","_tok) {
@@ -2363,7 +2369,8 @@ ParseResult Parser::parse_template_declaration() {
 						ASTNode next_member_decl = emplace_node<DeclarationNode>(
 							emplace_node<TypeSpecifierNode>(type_spec),
 							next_member_name);
-						struct_ref.add_member(next_member_decl, current_access, additional_init, additional_bitfield_width, additional_bitfield_width_expr);
+						struct_ref.add_member(next_member_decl, current_access, additional_init, additional_bitfield_width, additional_bitfield_width_expr,
+											  has_no_unique_address);
 					}
 
 					// Consume semicolon
@@ -3532,9 +3539,11 @@ ParseResult Parser::parse_template_declaration() {
 				// Skip specifiers (constexpr, explicit, inline) first, then check for 'operator'
 				ParseResult member_result;
 				FlashCpp::MemberLeadingSpecifiers conv_specs;
+				bool leading_no_unique_address = starts_with_no_unique_address_attribute();
 				{
 					SaveHandle conv_saved = save_token_position();
 					bool found_conversion_op = false;
+					last_skipped_no_unique_address_attribute_ = false;
 					conv_specs = parse_member_leading_specifiers();
 					if (peek() == "operator"_tok) {
 						// Check if this is a conversion operator (not operator() or operator<< etc.)
@@ -3752,7 +3761,11 @@ ParseResult Parser::parse_template_declaration() {
 								default_initializer = *init_result.node();
 							}
 						}
-						struct_ref.add_member(member_node, current_access, default_initializer, bitfield_width, bitfield_width_expr);
+						bool has_no_unique_address = leading_no_unique_address ||
+												  !!(conv_specs & FlashCpp::MLS_NoUniqueAddress) ||
+												  last_skipped_no_unique_address_attribute_;
+						struct_ref.add_member(member_node, current_access, default_initializer, bitfield_width, bitfield_width_expr,
+											  has_no_unique_address);
 
 						// Handle comma-separated declarations (e.g., int x, y, z;)
 						while (peek() == ","_tok) {
@@ -3788,7 +3801,8 @@ ParseResult Parser::parse_template_declaration() {
 							ASTNode next_member_decl = emplace_node<DeclarationNode>(
 								emplace_node<TypeSpecifierNode>(type_spec),
 								next_member_name);
-							struct_ref.add_member(next_member_decl, current_access, additional_init, additional_bitfield_width, additional_bitfield_width_expr);
+							struct_ref.add_member(next_member_decl, current_access, additional_init, additional_bitfield_width, additional_bitfield_width_expr,
+												  has_no_unique_address);
 						}
 					}
 					// Consume semicolon after data member
@@ -3843,7 +3857,8 @@ ParseResult Parser::parse_template_declaration() {
 					{},
 					static_cast<int>(type_spec.pointer_depth()),
 					member_decl.bitfield_width,
-					type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt);
+					type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt,
+					member_decl.is_no_unique_address);
 			}
 
 			// Add member functions to struct info

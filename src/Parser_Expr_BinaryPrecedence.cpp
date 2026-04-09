@@ -1040,6 +1040,9 @@ void Parser::skip_cpp_attributes() {
 			// Skip everything until ]]
 			int bracket_depth = 2;
 			while (!peek().is_eof() && bracket_depth > 0) {
+				if (peek().is_identifier() && peek_info().value() == "no_unique_address") {
+					last_skipped_no_unique_address_attribute_ = true;
+				}
 				if (peek() == "["_tok) {
 					bracket_depth++;
 				} else if (peek() == "]"_tok) {

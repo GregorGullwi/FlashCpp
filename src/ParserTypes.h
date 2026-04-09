@@ -124,6 +124,7 @@ enum MemberLeadingSpecifiers : uint8_t {
 	MLS_Inline = 1 << 2,
 	MLS_Explicit = 1 << 3,
 	MLS_Virtual = 1 << 4,
+	MLS_NoUniqueAddress = 1 << 5,
 };
 inline MemberLeadingSpecifiers operator|(MemberLeadingSpecifiers a, MemberLeadingSpecifiers b) {
 	return static_cast<MemberLeadingSpecifiers>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));

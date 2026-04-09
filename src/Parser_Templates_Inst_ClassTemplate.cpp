@@ -2141,7 +2141,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::move(resolved_array_dimensions),
 					static_cast<int>(ptr_depth),
 					resolve_bitfield_width(member_decl, template_params, template_args),
-					resolveTemplateFunctionPointerSignature(type_spec, member_type_index, template_params, template_args));
+					resolveTemplateFunctionPointerSignature(type_spec, member_type_index, template_params, template_args),
+					member_decl.is_no_unique_address);
 			}
 
 			// Copy member functions from pattern

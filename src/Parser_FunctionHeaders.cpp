@@ -538,11 +538,55 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 		} else if (k == "virtual"_tok) {
 			specs |= MLS_Virtual;
 			advance();
+		} else if (k == "["_tok && peek_info(1).value() == "[") {
+			advance();
+			advance();
+			int bracket_depth = 2;
+			while (!peek().is_eof() && bracket_depth > 0) {
+				if (peek().is_identifier() && peek_info().value() == "no_unique_address") {
+					specs |= MLS_NoUniqueAddress;
+					last_skipped_no_unique_address_attribute_ = true;
+				}
+				if (peek() == "["_tok) {
+					++bracket_depth;
+				} else if (peek() == "]"_tok) {
+					--bracket_depth;
+				}
+				advance();
+			}
+			skip_gcc_attributes();
 		} else {
 			break;
 		}
 	}
 	return specs;
+}
+
+bool Parser::starts_with_no_unique_address_attribute() {
+	if (!(peek() == "["_tok && peek_info(1).value() == "[")) {
+		return false;
+	}
+
+	SaveHandle saved_pos = save_token_position();
+	bool found_no_unique_address = false;
+	while (peek() == "["_tok && peek_info(1).value() == "[") {
+		advance();
+		advance();
+		int bracket_depth = 2;
+		while (!peek().is_eof() && bracket_depth > 0) {
+			if (peek().is_identifier() && peek_info().value() == "no_unique_address") {
+				found_no_unique_address = true;
+			}
+			if (peek() == "["_tok) {
+				++bracket_depth;
+			} else if (peek() == "]"_tok) {
+				--bracket_depth;
+			}
+			advance();
+		}
+	}
+	restore_token_position(saved_pos);
+	return found_no_unique_address;
 }
 
 // Phase 2: Unified trailing specifiers parsing

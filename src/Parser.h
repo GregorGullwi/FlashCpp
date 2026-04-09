@@ -467,9 +467,10 @@ private:
 		// Map from template function to its body info
 	std::unordered_map<FunctionDeclarationNode*, TemplateMemberFunctionBody> template_member_function_bodies_;
 
-		// Track if we're currently parsing a template class (to skip delayed body parsing)
+	// Track if we're currently parsing a template class (to skip delayed body parsing)
 	bool parsing_template_class_ = false;
-		// Track when an inline namespace declaration was prefixed with 'inline'
+	bool last_skipped_no_unique_address_attribute_ = false;
+	// Track when an inline namespace declaration was prefixed with 'inline'
 	bool pending_inline_namespace_ = false;
 	InlineVector<StringHandle, 4> current_template_param_names_;	 // Names of current template parameters - from Token storage
 
@@ -783,6 +784,7 @@ private:
 	FlashCpp::ParsedFunctionArguments parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx = {});  // Unified function call argument parsing
 	std::vector<TypeSpecifierNode> apply_lvalue_reference_deduction(const ChunkedVector<ASTNode>& args, const std::vector<TypeSpecifierNode>& arg_types);  // For template deduction: marks lvalue args with lvalue_reference for T&& forwarding
 	FlashCpp::MemberLeadingSpecifiers parse_member_leading_specifiers();	 // Consume constexpr/consteval/inline/explicit/virtual before a member
+	bool starts_with_no_unique_address_attribute();
 	ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);	// Phase 2: Unified trailing specifiers
 	ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);	// Phase 4: Unified function header parsing
 	ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);	// Phase 4: Create FunctionDeclarationNode from header
