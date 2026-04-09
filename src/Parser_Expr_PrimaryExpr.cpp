@@ -4088,8 +4088,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									*explicit_template_args);
 							std::string_view instantiated_name = materialized_owner.instantiated_name;
 							if (instantiated_name.empty()) {
-								instantiated_name = get_instantiated_class_name(template_name, *explicit_template_args);
-								try_instantiate_class_template(template_name, *explicit_template_args);
+								pending_explicit_template_args_.reset();
+								return ParseResult::error(
+									"Failed to materialize template owner for qualified lookup",
+									identifier_token);
 							}
 
 							// Parse qualified identifier after template, using the instantiated name
