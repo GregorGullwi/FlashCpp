@@ -185,11 +185,12 @@ struct StructTypeInfo {
 		if (!is_union && !bitfield_width.has_value()) {
 			const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(type_index);
 			bool is_empty_layout_member = member_struct_info && member_struct_info->isEmptyLayoutLike();
-			bool has_same_type_overlap = is_empty_layout_member && hasEmptySubobjectTypeAtOffset(type_index, offset);
+			bool has_same_type_overlap = member_struct_info &&
+										 is_empty_layout_member &&
+										 hasCommonLeadingEmptyTypeAtOffset(*member_struct_info, offset);
 			if (has_same_type_overlap) {
 				offset = alignLayoutSize(offset + 1, effective_alignment);
-			}
-			if (is_no_unique_address && is_empty_layout_member) {
+			} else if (is_no_unique_address && is_empty_layout_member) {
 				layout_member_size = 0;
 			}
 		}
@@ -391,7 +392,7 @@ struct StructTypeInfo {
 	void recalculateLayout();
 
 	bool isEmptyLayoutLike() const;
-	bool hasEmptySubobjectTypeAtOffset(TypeIndex type_index, size_t offset) const;
+	bool hasCommonLeadingEmptyTypeAtOffset(const StructTypeInfo& candidate_info, size_t offset) const;
 
 	// Build vtable for virtual functions (called during finalization)
 	// Returns false if semantic errors were detected (e.g., overriding final function)

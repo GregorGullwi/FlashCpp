@@ -2123,11 +2123,9 @@ ParseResult Parser::parse_template_declaration() {
 				// Skip specifiers (constexpr, explicit, inline) first, then check for 'operator'
 				ParseResult member_result;
 				FlashCpp::MemberLeadingSpecifiers conv_specs;
-				bool leading_no_unique_address = starts_with_no_unique_address_attribute();
 				{
 					SaveHandle conv_saved = save_token_position();
 					bool found_conversion_op = false;
-					last_skipped_no_unique_address_attribute_ = false;
 					conv_specs = parse_member_leading_specifiers();
 					if (peek() == "operator"_tok) {
 						// Check if this is a conversion operator (not operator() or operator<< etc.)
@@ -2329,9 +2327,7 @@ ParseResult Parser::parse_template_declaration() {
 						}
 					}
 
-					bool has_no_unique_address = leading_no_unique_address ||
-												  !!(conv_specs & FlashCpp::MLS_NoUniqueAddress) ||
-												  last_skipped_no_unique_address_attribute_;
+					bool has_no_unique_address = !!(conv_specs & FlashCpp::MLS_NoUniqueAddress);
 					struct_ref.add_member(*member_result.node(), current_access, default_initializer, bitfield_width, bitfield_width_expr,
 										  has_no_unique_address);
 
@@ -2461,7 +2457,8 @@ ParseResult Parser::parse_template_declaration() {
 					{},
 					static_cast<int>(type_spec.pointer_depth()),
 					member_decl.bitfield_width,
-					type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt);
+					type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt,
+					member_decl.is_no_unique_address);
 			}
 
 			// Add member functions to struct info
@@ -3000,6 +2997,8 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Parse class body (same as full specialization)
 			while (!peek().is_eof() && peek() != "}"_tok) {
+				CppAttributeInfo leading_cpp_attributes = skip_cpp_attributes_with_info();
+
 				// Skip empty declarations (bare ';' tokens) - valid in C++
 				if (peek() == ";"_tok) {
 					advance();
@@ -3539,11 +3538,9 @@ ParseResult Parser::parse_template_declaration() {
 				// Skip specifiers (constexpr, explicit, inline) first, then check for 'operator'
 				ParseResult member_result;
 				FlashCpp::MemberLeadingSpecifiers conv_specs;
-				bool leading_no_unique_address = starts_with_no_unique_address_attribute();
 				{
 					SaveHandle conv_saved = save_token_position();
 					bool found_conversion_op = false;
-					last_skipped_no_unique_address_attribute_ = false;
 					conv_specs = parse_member_leading_specifiers();
 					if (peek() == "operator"_tok) {
 						// Check if this is a conversion operator (not operator() or operator<< etc.)
@@ -3761,9 +3758,8 @@ ParseResult Parser::parse_template_declaration() {
 								default_initializer = *init_result.node();
 							}
 						}
-						bool has_no_unique_address = leading_no_unique_address ||
-												  !!(conv_specs & FlashCpp::MLS_NoUniqueAddress) ||
-												  last_skipped_no_unique_address_attribute_;
+						bool has_no_unique_address = leading_cpp_attributes.has_no_unique_address ||
+												  !!(conv_specs & FlashCpp::MLS_NoUniqueAddress);
 						struct_ref.add_member(member_node, current_access, default_initializer, bitfield_width, bitfield_width_expr,
 											  has_no_unique_address);
 

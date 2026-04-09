@@ -646,8 +646,8 @@ struct StructMemberDecl {
 	std::optional<ASTNode> bitfield_width_expr;	// Deferred bitfield width for template non-type params
 	bool is_no_unique_address = false;
 
-	StructMemberDecl(ASTNode decl, AccessSpecifier acc, std::optional<ASTNode> init = std::nullopt,
-					 std::optional<size_t> width = std::nullopt, bool no_unique_address = false)
+	StructMemberDecl(ASTNode decl, AccessSpecifier acc, std::optional<ASTNode> init,
+					 std::optional<size_t> width, bool no_unique_address)
 		: declaration(decl), access(acc), default_initializer(init), bitfield_width(width),
 		  bitfield_width_expr(std::nullopt), is_no_unique_address(no_unique_address) {}
 };

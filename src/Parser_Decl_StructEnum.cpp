@@ -737,7 +737,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 	// Parse members
 	while (!peek().is_eof() && peek() != "}"_tok) {
-		last_skipped_no_unique_address_attribute_ = false;
 		// Skip empty declarations (bare ';' tokens) - valid in C++
 		if (peek() == ";"_tok) {
 			advance();
@@ -746,7 +745,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Skip C++ attributes like [[nodiscard]], [[maybe_unused]], etc.
 		// These can appear on member declarations, conversion operators, etc.
-		skip_cpp_attributes();
+		CppAttributeInfo leading_cpp_attributes = skip_cpp_attributes_with_info();
 
 		// Check for access specifier
 		if (peek().is_keyword()) {
@@ -2458,8 +2457,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 
 			// Add the first member to struct with current access level and default initializer
-			bool has_no_unique_address = !!(member_specs & FlashCpp::MLS_NoUniqueAddress) ||
-										  last_skipped_no_unique_address_attribute_;
+			bool has_no_unique_address = leading_cpp_attributes.has_no_unique_address ||
+										  !!(member_specs & FlashCpp::MLS_NoUniqueAddress);
 			struct_ref.add_member(*member_result.node(), current_access, default_initializer, bitfield_width, bitfield_width_expr,
 								  has_no_unique_address);
 

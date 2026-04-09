@@ -539,9 +539,9 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 			specs |= MLS_Virtual;
 			advance();
 		} else if (k == "["_tok && peek_info(1).value() == "[") {
-			if (scan_cpp_attribute_for_no_unique_address()) {
+			CppAttributeInfo attribute_info = consume_cpp_attribute_blocks();
+			if (attribute_info.has_no_unique_address) {
 				specs |= MLS_NoUniqueAddress;
-				last_skipped_no_unique_address_attribute_ = true;
 			}
 			skip_gcc_attributes();
 		} else {
@@ -549,42 +549,6 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 		}
 	}
 	return specs;
-}
-
-bool Parser::starts_with_no_unique_address_attribute() {
-	if (!(peek() == "["_tok && peek_info(1).value() == "[")) {
-		return false;
-	}
-
-	SaveHandle saved_pos = save_token_position();
-	bool found = scan_cpp_attribute_for_no_unique_address();
-	restore_token_position(saved_pos);
-	return found;
-}
-
-// Shared helper: scan through one or more consecutive [[...]] attribute blocks,
-// consuming all tokens within them. Returns true if any block contained
-// the 'no_unique_address' identifier. Caller is responsible for save/restore
-// if non-consuming (lookahead) behavior is needed.
-bool Parser::scan_cpp_attribute_for_no_unique_address() {
-	bool found_no_unique_address = false;
-	while (peek() == "["_tok && peek_info(1).value() == "[") {
-		advance();
-		advance();
-		int bracket_depth = 2;
-		while (!peek().is_eof() && bracket_depth > 0) {
-			if (peek().is_identifier() && peek_info().value() == "no_unique_address") {
-				found_no_unique_address = true;
-			}
-			if (peek() == "["_tok) {
-				++bracket_depth;
-			} else if (peek() == "]"_tok) {
-				--bracket_depth;
-			}
-			advance();
-		}
-	}
-	return found_no_unique_address;
 }
 
 // Phase 2: Unified trailing specifiers parsing

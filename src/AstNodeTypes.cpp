@@ -1087,44 +1087,6 @@ std::unordered_set<TypeIndex> collectLeadingEmptySubobjectTypes(const StructType
 	return result;
 }
 
-// Targeted search: returns true as soon as the target type_index is found among
-// leading empty subobjects, without building the full set. Uses an iterative
-// worklist with a visited set for cycle protection.
-bool containsLeadingEmptySubobjectType(const StructTypeInfo* root, TypeIndex target) {
-	if (!root) {
-		return false;
-	}
-	std::set<const StructTypeInfo*> visited;
-	InlineVector<const StructTypeInfo*, 8> worklist;
-	worklist.push_back(root);
-	while (!worklist.empty()) {
-		const StructTypeInfo* info = worklist.back();
-		worklist.pop_back();
-		if (!info || !visited.insert(info).second || !info->isEmptyLayoutLike()) {
-			continue;
-		}
-		if (info->own_type_index_.has_value() && *info->own_type_index_ == target) {
-			return true;
-		}
-		for (const auto& base : info->base_classes) {
-			if (base.is_virtual || base.offset != 0) {
-				continue;
-			}
-			worklist.push_back(getBaseStructInfo(base));
-		}
-		for (const auto& member : info->members) {
-			if (member.offset != 0 || member.memberType() != TypeCategory::Struct) {
-				continue;
-			}
-			if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
-				member_struct_info && member_struct_info->isEmptyLayoutLike()) {
-				worklist.push_back(member_struct_info);
-			}
-		}
-	}
-	return false;
-}
-
 bool haveCommonLeadingEmptyType(const StructTypeInfo* lhs, const StructTypeInfo* rhs) {
 	if (!lhs || !rhs) {
 		return false;
@@ -1151,20 +1113,21 @@ BasePlacementDecision decideBasePlacement(const BaseClassSpecifier& base,
 	size_t base_alignment = base_info.alignment;
 	size_t candidate_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
 	bool may_use_ebo = base_info.isEmptyLayoutLike() && !base.is_virtual;
-	bool has_overlap_conflict = false;
-	if (may_use_ebo) {
+	while (may_use_ebo) {
+		bool has_overlap_conflict = false;
 		for (const BaseClassSpecifier* placed_base : placed_bases) {
 			if (!placed_base || placed_base->offset != candidate_offset) {
 				continue;
 			}
 			if (haveCommonLeadingEmptyType(&base_info, getBaseStructInfo(*placed_base))) {
 				has_overlap_conflict = true;
-				may_use_ebo = false;
 				break;
 			}
 		}
-	}
-	if (has_overlap_conflict) {
+		if (!has_overlap_conflict) {
+			break;
+		}
+		may_use_ebo = false;
 		candidate_offset = StructTypeInfo::alignLayoutSize(candidate_offset + 1, base_alignment);
 	}
 
@@ -1489,13 +1452,13 @@ bool StructTypeInfo::isEmptyLayoutLike() const {
 	return isEmptyLayoutLikeRecursive(this, visited);
 }
 
-bool StructTypeInfo::hasEmptySubobjectTypeAtOffset(TypeIndex type_index, size_t offset) const {
+bool StructTypeInfo::hasCommonLeadingEmptyTypeAtOffset(const StructTypeInfo& candidate_info, size_t offset) const {
 	for (const auto& base : base_classes) {
 		if (base.offset != offset) {
 			continue;
 		}
 		if (const StructTypeInfo* base_info = getBaseStructInfo(base);
-			base_info && containsLeadingEmptySubobjectType(base_info, type_index)) {
+			base_info && haveCommonLeadingEmptyType(&candidate_info, base_info)) {
 			return true;
 		}
 	}
@@ -1505,7 +1468,7 @@ bool StructTypeInfo::hasEmptySubobjectTypeAtOffset(TypeIndex type_index, size_t 
 			continue;
 		}
 		if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
-			member_struct_info && containsLeadingEmptySubobjectType(member_struct_info, type_index)) {
+			member_struct_info && haveCommonLeadingEmptyType(&candidate_info, member_struct_info)) {
 			return true;
 		}
 	}

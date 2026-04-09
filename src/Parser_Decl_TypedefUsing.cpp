@@ -1501,7 +1501,7 @@ ParseResult Parser::parse_typedef_declaration() {
 							ASTNode member_decl_node = emplace_node<DeclarationNode>(type_node_for_member, member_name_token);
 
 							// Add as member of enclosing struct
-							members.push_back({member_decl_node, current_access, std::nullopt});
+							members.push_back({member_decl_node, current_access, std::nullopt, std::nullopt, false});
 							struct_ref.add_member(member_decl_node, current_access, std::nullopt);
 
 						} while (peek() == ","_tok && (advance(), true));
@@ -1585,7 +1585,7 @@ ParseResult Parser::parse_typedef_declaration() {
 										nested_member_decl_node = emplace_node<DeclarationNode>(*nested_member_type_result.node(), nested_member_name_token);
 									}
 									// Flatten nested union members into outer union
-									anon_members.push_back({nested_member_decl_node, current_access, std::nullopt});
+									anon_members.push_back({nested_member_decl_node, current_access, std::nullopt, std::nullopt, false});
 
 									// Expect semicolon
 									if (!consume(";"_tok)) {
@@ -1663,7 +1663,7 @@ ParseResult Parser::parse_typedef_declaration() {
 						} else {
 							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), anon_member_name_token);
 						}
-						anon_members.push_back({anon_member_decl_node, current_access, std::nullopt});
+						anon_members.push_back({anon_member_decl_node, current_access, std::nullopt, std::nullopt, false});
 
 						// Expect semicolon
 						if (!consume(";"_tok)) {
@@ -1774,7 +1774,7 @@ ParseResult Parser::parse_typedef_declaration() {
 			} else {
 				member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), member_name_token);
 			}
-			members.push_back({member_decl_node, current_access, std::nullopt, bitfield_width});
+			members.push_back({member_decl_node, current_access, std::nullopt, bitfield_width, false});
 			members.back().bitfield_width_expr = bitfield_width_expr;
 			struct_ref.add_member(member_decl_node, current_access, std::nullopt, bitfield_width, bitfield_width_expr);
 
@@ -1812,7 +1812,7 @@ ParseResult Parser::parse_typedef_declaration() {
 				auto next_member_decl = emplace_node<DeclarationNode>(
 					emplace_node<TypeSpecifierNode>(member_type_spec),
 					next_member_name);
-				members.push_back({next_member_decl, current_access, std::nullopt, additional_bitfield_width});
+				members.push_back({next_member_decl, current_access, std::nullopt, additional_bitfield_width, false});
 				members.back().bitfield_width_expr = additional_bitfield_width_expr;
 				struct_ref.add_member(next_member_decl, current_access, std::nullopt, additional_bitfield_width, additional_bitfield_width_expr);
 			}
