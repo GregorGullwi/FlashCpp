@@ -784,13 +784,6 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		? true_result.category()
 		: common_cat;
 
-	auto makeMergedBranchValue = [&](const ExprResult& branch_result, IrValue value) {
-		if (context == ExpressionContext::LValueAddress) {
-			return makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, value);
-		}
-		return makeTypedValue(branch_result.type_index, branch_result.size_in_bits, value);
-	};
-
 	// Convert true result to common type if needed.
 	// NOTE: sema annotations were already consumed above when determining common_type
 	// via getSemaAnnotatedTargetType. The actual conversion uses common_type directly;
@@ -804,18 +797,39 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	if (context == ExpressionContext::LValueAddress || result_size == 0)
 		result_size = true_result.size_in_bits.value;
 
+	// Build the LHS (destination slot) TypedValue for a branch assignment.
+	// For LValueAddress context, the slot is always a pointer-sized unsigned integer.
+	// For normal context, it uses the common_type category and result_size.
+	auto makeBranchLhs = [&](IrValue dest_value) {
+		if (context == ExpressionContext::LValueAddress) {
+			return makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, dest_value);
+		}
+		TypedValue lhs;
+		lhs.setType(common_type);
+		lhs.size_in_bits = SizeInBits{result_size};
+		lhs.value = dest_value;
+		return lhs;
+	};
+
+	// Build the RHS (source value) TypedValue for a branch assignment.
+	// For LValueAddress context, the value is a pointer-sized address.
+	// For normal context, use toTypedValue to preserve all metadata (pointer_depth,
+	// ir_type, ref_qualifier, etc.) from the branch ExprResult.
+	auto makeBranchRhs = [&](const ExprResult& branch_result) {
+		if (context == ExpressionContext::LValueAddress) {
+			return makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, toIrValue(branch_result.value));
+		}
+		return toTypedValue(branch_result);
+	};
+
 	// Create result variable to hold the final value
 	TempVar result_var = var_counter.next();
 
 	// Assign true_expr result to result variable
 	AssignmentOp assign_true_op;
 	assign_true_op.result = result_var;
-	assign_true_op.lhs = makeMergedBranchValue(
-		true_result,
-		IrValue(result_var));
-	assign_true_op.rhs = makeMergedBranchValue(
-		true_result,
-		toIrValue(true_result.value));
+	assign_true_op.lhs = makeBranchLhs(IrValue(result_var));
+	assign_true_op.rhs = makeBranchRhs(true_result);
 	ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_true_op), ternaryNode.get_token()));
 
 	// Unconditional branch to end
@@ -841,12 +855,8 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// Assign false_expr result to result variable
 	AssignmentOp assign_false_op;
 	assign_false_op.result = result_var;
-	assign_false_op.lhs = makeMergedBranchValue(
-		false_result,
-		IrValue(result_var));
-	assign_false_op.rhs = makeMergedBranchValue(
-		false_result,
-		toIrValue(false_result.value));
+	assign_false_op.lhs = makeBranchLhs(IrValue(result_var));
+	assign_false_op.rhs = makeBranchRhs(false_result);
 	ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_false_op), ternaryNode.get_token()));
 
 	// End label (merge point)
