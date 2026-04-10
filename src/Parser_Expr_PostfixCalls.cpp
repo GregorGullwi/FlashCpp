@@ -24,6 +24,9 @@ std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	const TypeInfo* type_info = tryGetTypeInfo(type_idx);
 	if (!type_info)
 		return std::nullopt;
+	if (type_info->is_incomplete_instantiation_) {
+		return std::nullopt;
+	}
 	auto struct_name = StringTable::getStringView(type_info->name());
 	instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
 	if (explicit_template_args.has_value()) {
@@ -48,6 +51,9 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	const TypeInfo* type_info = tryGetTypeInfo(type_idx);
 	if (!type_info)
 		return nullptr;
+	if (type_info->is_incomplete_instantiation_) {
+		return nullptr;
+	}
 
 	StringHandle type_name = type_info->name();
 	instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Full);
@@ -206,13 +212,15 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is
 		if (auto type_opt = get_expression_type(*result); type_opt.has_value() &&
 													  is_struct_type(type_opt->category())) {
 			TypeIndex type_idx = type_opt->type_index();
-			if (type_idx.is_valid()) {
-				if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
+		if (type_idx.is_valid()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
+				if (!type_info->is_incomplete_instantiation_) {
 					object_struct_name = StringTable::getStringView(type_info->name());
 					instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
 				}
 			}
 		}
+	}
 
 		if (in_sfinae_context_ && object_struct_name.has_value() && !sfinae_type_map_.empty()) {
 			StringHandle obj_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
@@ -271,7 +279,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is
 				arg_types);
 		}
 
-		if (object_struct_name.has_value() && !instantiating_lazy_member_) {
+		if (object_struct_name.has_value() && !instantiating_lazy_member_ && !in_sfinae_context_) {
 			std::string_view func_name = member_name_token.value();
 			if (!func_name.empty()) {
 				StringHandle class_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
