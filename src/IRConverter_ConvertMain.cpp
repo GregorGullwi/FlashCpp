@@ -11805,15 +11805,15 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 	bool is_object_pointer = false;
 	bool is_global_array_access = false;
 	StringHandle global_array_name;
-	auto emitGlobalArrayBaseAddress = [&](bool dereference_global_pointer) {
+	auto emitGlobalArrayBaseAddress = [&](bool load_pointer_from_global) {
 		uint32_t reloc_offset = emitLeaRipRelative(base_reg);
 		pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
-		if (dereference_global_pointer) {
+		if (load_pointer_from_global) {
 			emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, sizeof(void*));
 		}
 	};
 
-	auto emitElementLoadFromAddress = [&]() {
+	auto emitElementLoadWhenNotLea = [&]() {
 		if (is_floating_point) {
 			emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
 		} else {
@@ -11874,7 +11874,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			}
 
 			if (!optimize_lea) {
-				emitElementLoadFromAddress();
+				emitElementLoadWhenNotLea();
 			}
 		} else if (is_array_pointer || is_object_pointer) {
 				// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
@@ -11895,7 +11895,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 				// For struct types or lvalues, keep the address in base_reg
 				// For primitive prvalues, load the value
 			if (!optimize_lea) {
-				emitElementLoadFromAddress();
+				emitElementLoadWhenNotLea();
 			}
 		} else {
 				// Array is a regular variable - use direct stack offset
@@ -11940,7 +11940,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			emitAddRegs(textSectionData, base_reg, index_reg);
 
 			if (!optimize_lea) {
-				emitElementLoadFromAddress();
+				emitElementLoadWhenNotLea();
 			}
 		} else if (is_array_pointer || is_object_pointer) {
 				// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
@@ -11965,7 +11965,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 				// For struct types or lvalues, keep the address in base_reg
 				// For primitive prvalues, load the value
 			if (!optimize_lea) {
-				emitElementLoadFromAddress();
+				emitElementLoadWhenNotLea();
 			}
 		} else {
 				// Array is a regular variable
