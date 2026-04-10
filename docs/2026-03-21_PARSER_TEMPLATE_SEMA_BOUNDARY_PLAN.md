@@ -278,6 +278,13 @@ ownership explicit:
   expressions, reducing one more codegen-time type query
 - `tests/test_range_for_function_return_explicit_ret0.cpp`: regression test for a
   function-return range expression lowered through the sema-owned range-type path
+- `inferExpressionType(UnaryOperatorNode)` now infers unary `*` expressions
+  sema-first, letting sema-normalized bodies feed dereference branch/constructor
+  argument/member-base typing back to codegen without depending on parser
+  fallback for those shapes
+- `tests/test_ctor_arg_deref_sema_ret0.cpp` and
+  `tests/test_ternary_deref_sema_ret0.cpp`: focused regressions for sema-owned
+  dereference typing flowing into constructor-argument and ternary branch codegen
 
 **Test result:** 1685 pass, 98 expected-fail (was 1683/98 before this phase).
 

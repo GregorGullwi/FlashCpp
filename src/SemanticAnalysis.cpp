@@ -2961,6 +2961,26 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (op == "++" || op == "--") {
 					return inferExpressionType(e.get_operand());
 				}
+				if (op == "*") {
+					const CanonicalTypeId operand_id = inferExpressionType(e.get_operand());
+					if (!operand_id)
+						return {};
+					CanonicalTypeDesc result_desc = type_context_.get(operand_id);
+					result_desc.ref_qualifier = ReferenceQualifier::None;
+					if (!result_desc.pointer_levels.empty()) {
+						result_desc.pointer_levels.pop_back();
+						return type_context_.intern(result_desc);
+					}
+					if (!result_desc.array_dimensions.empty()) {
+						InlineVector<size_t, 4> remaining_dimensions;
+						for (size_t i = 1; i < result_desc.array_dimensions.size(); ++i) {
+							remaining_dimensions.push_back(result_desc.array_dimensions[i]);
+						}
+						result_desc.array_dimensions = std::move(remaining_dimensions);
+						return type_context_.intern(result_desc);
+					}
+					return {};
+				}
 				return {};
 			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				const std::string_view op = e.op();
