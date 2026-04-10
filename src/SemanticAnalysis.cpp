@@ -1879,13 +1879,11 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			// matching constructor parameter type.
 			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& ts = vtype.as<TypeSpecifierNode>();
-				if (ts.category() == TypeCategory::Struct) {
-					const TypeInfo* type_info = tryGetTypeInfo(ts.type_index());
-					const StructTypeInfo* si = type_info ? type_info->getStructInfo() : nullptr;
-					if (si && si->hasAnyConstructor()) {
-						const InitializerListNode& il = init->as<InitializerListNode>();
-						tryAnnotateInitListConstructorArgs(il, *si);
-					}
+				const TypeInfo* type_info = tryGetTypeInfo(ts.type_index());
+				const StructTypeInfo* si = type_info ? type_info->getStructInfo() : nullptr;
+				if (si && si->hasAnyConstructor()) {
+					const InitializerListNode& il = init->as<InitializerListNode>();
+					tryAnnotateInitListConstructorArgs(il, *si);
 				}
 			}
 			// Annotate the initializer with any needed implicit conversion to the declared type.
@@ -4844,6 +4842,19 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	if (initializers.empty())
 		return;
 
+	auto buildConstructorDiagnostic = [&](std::string_view prefix, size_t arg_count) {
+		return std::string(
+			StringBuilder()
+				.append(prefix)
+				.append(" for '")
+				.append(StringTable::getStringView(struct_info.name()))
+				.append("' with ")
+				.append(arg_count)
+				.append(" argument(s)")
+				.commit());
+	};
+	const bool require_constructor_match = struct_info.hasUserDefinedConstructor();
+
 	// Build argument types for overload resolution.
 	// Mirror the codegen path: call adjust_argument_type_for_overload_resolution
 	// so that lvalue arguments prefer reference overloads, and use skip_implicit=true
@@ -4879,6 +4890,9 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
 	if (!resolution.selected_overload) {
 		resolution.selected_overload = resolveUniqueArityConstructor(struct_info, initializers.size());
+	}
+	if (resolution.is_ambiguous && require_constructor_match) {
+		throw CompileError(buildConstructorDiagnostic("Ambiguous constructor call", initializers.size()));
 	}
 	if (!resolution.selected_overload) {
 		// No constructor matched — restore the old scoped-enum diagnostic.
@@ -4920,6 +4934,9 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 								   std::string(StringTable::getStringView(ei->name)) +
 								   "' in constructor argument; use static_cast");
 			}
+		}
+		if (require_constructor_match) {
+			throw CompileError(buildConstructorDiagnostic("No matching constructor", initializers.size()));
 		}
 		return;
 	}
