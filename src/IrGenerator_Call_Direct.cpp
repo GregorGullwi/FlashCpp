@@ -1048,6 +1048,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		FLASH_LOG_FORMAT(Codegen, Debug, "Using {} cross-struct direct call target for: {}", source_label, func_name_view);
 	};
 
+	// Synthesized direct calls can already carry the exact callee on the call node
+	// itself even though semantic analysis never saw the temporary expression.
+	if (!matched_func_decl) {
+		consumeResolvedDirectCallTarget(callExprNode.callee().function_declaration_or_null(), "callee-resolved");
+	}
+
 	// Phase 1 (sema-owned ordinary call resolution): consume the pre-resolved
 	// direct-call target stored by semantic analysis before attempting any
 	// duplicate symbol-table recovery work in codegen.
