@@ -7995,9 +7995,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Implicit instantiations register signature-only stubs in the lazy registry above;
 	// reparsing every deferred body here would eagerly instantiate unused members and
 	// incorrectly diagnose dependent bodies such as std::pair::swap for const keys.
-	const bool skip_deferred_body_replay_for_namespaced_implicit_instantiation =
-		is_implicit_instantiation && instantiated_name.view().find("::") != std::string_view::npos;
-	if (!skip_deferred_body_replay_for_namespaced_implicit_instantiation && !template_class.deferred_bodies().empty()) {
+	const bool skip_deferred_body_replay_for_implicit_instantiation = is_implicit_instantiation;
+	if (!skip_deferred_body_replay_for_implicit_instantiation && !template_class.deferred_bodies().empty()) {
 		FLASH_LOG(Templates, Debug, "Parsing ", template_class.deferred_bodies().size(),
 				  " deferred template member function bodies for ", instantiated_name);
 
