@@ -6387,7 +6387,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
 			const DeclarationNode& decl = func_decl.decl_node();
 
-			// For lazy instantiation, register function for later instantiation instead of instantiating now
+			// For lazy instantiation, register function for later instantiation instead of instantiating now.
+			// Namespaced implicit instantiations intentionally use the same stub path; the
+			// PHASE 2 deferred-body replay block later in this function decides whether their
+			// deferred bodies should be materialized immediately.
 			if (is_implicit_instantiation &&
 				(func_decl.get_definition().has_value() || func_decl.has_template_body_position())) {
 				// Register this member function for lazy instantiation
