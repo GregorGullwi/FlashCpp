@@ -1,10 +1,10 @@
 template <typename T>
-constexpr T add(T a, T b = 2) {
-	return a + b;
+constexpr T addWithDefault(T a, T offset = 2) {
+	return a + offset;
 }
 
 constexpr int compute() {
-	return add<int>(40);
+	return addWithDefault<int>(40);
 }
 
 static_assert(compute() == 42);
