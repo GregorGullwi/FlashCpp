@@ -59,9 +59,7 @@ namespace std {
 	}
 }
 
-using swappable_int = decltype(std::__swappable_details::__do_is_swappable_impl::__test<int>(0));
-
 int main() {
-	static_assert(swappable_int::value);
+	static_assert(decltype(std::__swappable_details::__do_is_swappable_impl::__test<int>(0))::value);
 	return 0;
 }

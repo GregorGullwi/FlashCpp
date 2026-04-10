@@ -2153,20 +2153,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									  unresolved_base_builder.commit(), "'");
 							continue;
 						}
-						if (final_base_type->is_incomplete_instantiation_ &&
-							final_base_type->isTemplateInstantiation()) {
-							std::vector<TemplateTypeArg> concrete_base_args =
-								materializePlaceholderTemplateArgs(*final_base_type, template_params, template_args);
-							std::string_view concrete_base_name = instantiateAndResolveBaseName(
-								StringTable::getStringView(final_base_type->baseTemplateName()),
-								concrete_base_args,
-								true);
-							auto concrete_base_it = getTypesByNameMap().find(
-								StringTable::getOrInternStringHandle(concrete_base_name));
-							if (concrete_base_it != getTypesByNameMap().end()) {
-								final_base_type = concrete_base_it->second;
-							}
-						}
+						final_base_type = materializeDeferredBasePlaceholderIfNeeded(
+							final_base_type,
+							template_params,
+							template_args,
+							[&instantiateAndResolveBaseName](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+								return instantiateAndResolveBaseName(concrete_base_template_name, concrete_base_args, true);
+							});
 						final_base_name = StringTable::getStringView(final_base_type->name());
 					} else {
 						StringHandle base_inst_handle = StringTable::getOrInternStringHandle(base_inst_name);
@@ -4567,21 +4560,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					continue;
 				}
 
-				if (resolved_type->is_incomplete_instantiation_ &&
-					resolved_type->isTemplateInstantiation()) {
-					std::vector<TemplateTypeArg> concrete_base_args =
-						materializePlaceholderTemplateArgs(*resolved_type, template_params, template_args_to_use);
-					std::string_view concrete_base_template_name =
-						StringTable::getStringView(resolved_type->baseTemplateName());
-					std::string_view concrete_base_name = instantiate_and_register_base_template(
-						concrete_base_template_name,
-						concrete_base_args);
-					auto concrete_base_it = getTypesByNameMap().find(
-						StringTable::getOrInternStringHandle(concrete_base_name));
-					if (concrete_base_it != getTypesByNameMap().end()) {
-						resolved_type = concrete_base_it->second;
-					}
-				}
+				resolved_type = materializeDeferredBasePlaceholderIfNeeded(
+					resolved_type,
+					template_params,
+					template_args_to_use,
+					[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+						std::string_view mutable_template_name = concrete_base_template_name;
+						return instantiate_and_register_base_template(mutable_template_name, concrete_base_args);
+					});
 
 				final_base_name = StringTable::getStringView(resolved_type->name());
 				struct_info->addBaseClass(

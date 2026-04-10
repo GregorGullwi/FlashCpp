@@ -1092,6 +1092,32 @@ private:
 
 		return concrete_args;
 	}
+	template <typename TemplateParamsContainer, typename TemplateArgsContainer, typename InstantiateConcreteBase>
+	const TypeInfo* materializeDeferredBasePlaceholderIfNeeded(
+		const TypeInfo* base_type,
+		const TemplateParamsContainer& template_params,
+		const TemplateArgsContainer& template_args,
+		InstantiateConcreteBase&& instantiate_concrete_base) {
+		if (base_type == nullptr ||
+			!base_type->is_incomplete_instantiation_ ||
+			!base_type->isTemplateInstantiation()) {
+			return base_type;
+		}
+
+		std::vector<TemplateTypeArg> concrete_base_args =
+			materializePlaceholderTemplateArgs(*base_type, template_params, template_args);
+		std::string_view concrete_base_template_name =
+			StringTable::getStringView(base_type->baseTemplateName());
+		std::string_view concrete_base_name =
+			instantiate_concrete_base(concrete_base_template_name, concrete_base_args);
+		auto concrete_base_it = getTypesByNameMap().find(
+			StringTable::getOrInternStringHandle(concrete_base_name));
+		if (concrete_base_it != getTypesByNameMap().end()) {
+			return concrete_base_it->second;
+		}
+
+		return base_type;
+	}
 	bool isReachableVirtualBaseInitializer(const StructTypeInfo* struct_info, std::string_view candidate_name) const;
 	std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);	// NEW: Instantiate class template
 	std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization

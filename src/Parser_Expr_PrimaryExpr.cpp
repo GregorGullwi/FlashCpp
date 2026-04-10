@@ -903,6 +903,66 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		return ParseResult::success(*result);
 	}
 
+	// Check for decltype(expr)::member in expression context.
+	// C++ allows using a decltype-specifier as the nested-name-specifier of a qualified-id,
+	// e.g. static_assert(decltype(f())::value);
+	if ((current_token_.type() == Token::Type::Keyword && current_token_.value() == "decltype") ||
+		(current_token_.type() == Token::Type::Identifier &&
+		 (current_token_.value() == "__typeof__" || current_token_.value() == "__typeof"))) {
+		ParseResult decltype_result = parse_decltype_specifier();
+		if (decltype_result.is_error()) {
+			return decltype_result;
+		}
+		if (!decltype_result.node().has_value() || !decltype_result.node()->is<TypeSpecifierNode>()) {
+			return ParseResult::error("Expected type specifier after decltype expression", current_token_);
+		}
+		if (current_token_.value() != "::") {
+			return ParseResult::error("Expected '::' after decltype type expression", current_token_);
+		}
+
+		const TypeSpecifierNode& decltype_type = decltype_result.node()->as<TypeSpecifierNode>();
+		TypeIndex lookup_type_index = decltype_type.type_index();
+		if (lookup_type_index.is_valid()) {
+			const CanonicalTypeAlias canonical_alias = canonicalize_type_alias(lookup_type_index);
+			lookup_type_index = canonical_alias.resolvedTypeIndex();
+		}
+
+		std::string_view lookup_type_name;
+		if (lookup_type_index.is_valid()) {
+			if (const TypeInfo* lookup_type_info = tryGetTypeInfo(lookup_type_index)) {
+				lookup_type_name = StringTable::getStringView(lookup_type_info->name());
+			}
+		}
+		if (lookup_type_name.empty()) {
+			return ParseResult::error("Could not resolve decltype expression type for qualified lookup", current_token_);
+		}
+
+		std::vector<StringType<32>> namespaces;
+		Token final_identifier = current_token_;
+		while (current_token_.value() == "::") {
+			if (namespaces.empty()) {
+				namespaces.emplace_back(StringType<32>(lookup_type_name));
+			} else {
+				namespaces.emplace_back(StringType<32>(final_identifier.value()));
+			}
+			advance(); // consume ::
+
+			if (current_token_.value() == "template") {
+				advance(); // consume optional template keyword
+			}
+
+			if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after '::'", current_token_);
+			}
+			final_identifier = current_token_;
+			advance(); // consume identifier
+		}
+
+		NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+		result = emplace_node<ExpressionNode>(QualifiedIdentifierNode(ns_handle, final_identifier));
+		return ParseResult::success(*result);
+	}
+
 	// Check for functional-style cast with keyword type names: bool(x), int(x), etc.
 	// This must come early because these are keywords, not identifiers
 	if (current_token_.type() == Token::Type::Keyword) {
