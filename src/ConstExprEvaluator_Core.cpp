@@ -4241,13 +4241,15 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					for (const auto& arg : init_list.initializers()) {
 						ctor_args.push_back(arg);
 					}
+					const bool skip_implicit_constructors =
+						si->hasUserDefinedConstructor() && init_list.initializers().empty();
 
 					auto ctor_result = try_materialize_struct_from_ctor_args(
 						si,
 						return_type_index,
 						ctor_args,
 						context,
-						init_list.initializers().empty(),
+						skip_implicit_constructors,
 						&bindings);
 					if (ctor_result.has_value()) {
 						return *ctor_result;
@@ -4361,12 +4363,14 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 								for (const auto& arg : init_list.initializers()) {
 									ctor_args.push_back(arg);
 								}
+								const bool skip_implicit_constructors =
+									has_user_defined_ctor && init_list.initializers().empty();
 								auto ctor_result = try_materialize_struct_from_ctor_args(
 									struct_info,
 									type_spec.type_index(),
 									ctor_args,
 									context,
-									init_list.initializers().empty(),
+									skip_implicit_constructors,
 									&bindings);
 								if (ctor_result.has_value()) {
 									if (!ctor_result->success()) {
