@@ -591,7 +591,8 @@ public:
 		TypeIndex type_index,
 		const ChunkedVector<ASTNode>& args,
 		EvaluationContext& context,
-		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
+		bool skip_implicit_constructors,
+		const std::unordered_map<std::string_view, EvalResult>* outer_bindings);
 	static EvalResult evaluate_member_array_subscript(
 		const MemberAccessNode& member_access,
 		size_t index,
@@ -923,7 +924,8 @@ private:
 		const StructTypeInfo* struct_info,
 		const ChunkedVector<ASTNode>& arguments,
 		EvaluationContext& context,
-		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
+		bool skip_implicit_constructors,
+		const std::unordered_map<std::string_view, EvalResult>* outer_bindings);
 
 	// Type comparison helpers — shared across Core and Members TUs.
 	// Compares two TypeSpecifierNodes ignoring cv-qualifiers (and optionally
