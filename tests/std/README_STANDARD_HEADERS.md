@@ -113,8 +113,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 #### 2026-04-09 Retests
 
-- Added leading-cv recovery when re-parsing deferred alias-template targets plus regression test `tests/test_alias_template_const_deferred_ref_ret0.cpp`. This fixes alias templates such as `using __cref = const remove_reference_t<_Tp>&;`, so `<memory>`, `<functional>`, `<deque>`, and `<set>` all get past the old `<concepts>` parse stop. They now fail later in `bits/stl_pair.h` when `pair::swap` still resolves `swap(first, __p.first)` to a deleted candidate during template instantiation.
-- Earlier on 2026-04-09, focused recovery for dependent `decltype(swap(...))` / `noexcept(swap(...))` probes plus regression test `tests/test_dependent_swap_decltype_noexcept_ret0.cpp` moved `<memory>`, `<functional>`, `<deque>`, and `<set>` past the old `bits/move.h` / `type_traits` `__is_swappable` / `__is_nothrow_swappable` stop and exposed the later `<concepts>` alias-template failure that this follow-up fix now clears.
+- An earlier fix for dependent `decltype(swap(...))` probes (see `tests/test_dependent_swap_decltype_noexcept_ret0.cpp`) moved several headers past a `bits/move.h` blocker, exposing a new failure in `<concepts>`.
+- This PR resolves the `<concepts>` failure by adding leading-cv recovery for deferred alias templates (see `tests/test_alias_template_const_deferred_ref_ret0.cpp`). The affected headers (`<memory>`, `<functional>`, `<deque>`, `<set>`) now fail later in `bits/stl_pair.h`.
 
 #### 2026-04-07 Retests
 
