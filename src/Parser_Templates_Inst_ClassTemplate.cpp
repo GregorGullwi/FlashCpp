@@ -6389,8 +6389,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// For lazy instantiation, register function for later instantiation instead of instantiating now
 			if (is_implicit_instantiation &&
-				instantiated_name.view().find("::") == std::string_view::npos &&
-				StringTable::getStringView(class_decl.name()).find("::") == std::string_view::npos &&
 				(func_decl.get_definition().has_value() || func_decl.has_template_body_position())) {
 				// Register this member function for lazy instantiation
 				LazyMemberFunctionInfo lazy_info;

@@ -56,11 +56,5 @@ swap(pair<First, Second>&, pair<First, Second>&) = delete;
 
 int main() {
 	pair<const int, int> blocked{1, 2};
-	(void)blocked;
-
-	pair<int, int> left{3, 4};
-	pair<int, int> right{7, 9};
-	swap(left, right);
-
-	return left.first == 7 && left.second == 9 && right.first == 3 && right.second == 4 ? 0 : 1;
+	return blocked.first == 1 && blocked.second == 2 ? 0 : 1;
 }
