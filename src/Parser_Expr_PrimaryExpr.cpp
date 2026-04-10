@@ -903,7 +903,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		return ParseResult::success(*result);
 	}
 
-	// Check for decltype(expr)::member in expression context.
+	// Check for decltype(expr)::member in expression context, including complex
+	// library probes like decltype(std::__swappable_details::__do_is_swappable_impl::__test<int>(0))::value.
 	// C++ allows using a decltype-specifier as the nested-name-specifier of a qualified-id,
 	// e.g. static_assert(decltype(f())::value);
 	if ((current_token_.type() == Token::Type::Keyword && current_token_.value() == "decltype") ||
@@ -939,11 +940,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 		std::vector<StringType<32>> namespaces;
 		Token final_identifier{};
-		bool first_scope_resolution = true;
+		bool is_first_scope_resolution = true;
 		while (current_token_.value() == "::") {
-			if (first_scope_resolution) {
+			if (is_first_scope_resolution) {
 				namespaces.emplace_back(StringType<32>(lookup_type_name));
-				first_scope_resolution = false;
+				is_first_scope_resolution = false;
 			} else {
 				namespaces.emplace_back(StringType<32>(final_identifier.value()));
 			}

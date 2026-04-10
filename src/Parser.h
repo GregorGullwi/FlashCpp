@@ -1092,12 +1092,12 @@ private:
 
 		return concrete_args;
 	}
-	template <typename TemplateParamsContainer, typename TemplateArgsContainer, typename InstantiateConcreteBase>
+	template <typename TemplateParamsContainer, typename TemplateArgsContainer, typename ConcreteBaseInstantiator>
 	const TypeInfo* materializeDeferredBasePlaceholderIfNeeded(
 		const TypeInfo* base_type,
 		const TemplateParamsContainer& template_params,
 		const TemplateArgsContainer& template_args,
-		InstantiateConcreteBase&& instantiate_concrete_base) {
+		ConcreteBaseInstantiator&& instantiate_concrete_base) {
 		if (base_type == nullptr ||
 			!base_type->is_incomplete_instantiation_ ||
 			!base_type->isTemplateInstantiation()) {
