@@ -248,7 +248,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		new_ctor_ref.set_definition(substituted_body);
 		pack_param_info_.resize(saved_ctor_pack_info);
 
-		registerLateMaterializedTopLevelNode(new_ctor_node);
+		registerAndNormalizeLateMaterializedTopLevelNode(new_ctor_node);
 		return new_ctor_node;
 	}
 
@@ -296,7 +296,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			converted_template_args);
 		new_dtor_ref.set_definition(substituted_body);
 
-		registerLateMaterializedTopLevelNode(new_dtor_node);
+		registerAndNormalizeLateMaterializedTopLevelNode(new_dtor_node);
 		return new_dtor_node;
 	}
 
@@ -696,7 +696,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	// Add the instantiated function to the AST so it gets visited during codegen
 	// This is safe now that the StringBuilder bug is fixed
-	registerLateMaterializedTopLevelNode(new_func_node);
+	registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
 
 	// Also update the StructTypeInfo to replace the signature-only function with the full definition
 	// Find the struct in getTypesByNameMap()

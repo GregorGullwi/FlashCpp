@@ -78,6 +78,7 @@ bool isExprResultPRValue(const ExprResult& expr_result) {
 
 bool isSemaOwnedUnaryOverloadArgShape(std::string_view op) {
 	return op == "!" ||
+		   op == "&" ||
 		   op == "++" ||
 		   op == "--";
 }
@@ -227,8 +228,15 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		if (auto sema_type = sema_->getOverloadResolutionArgType(arg); sema_type.has_value()) {
 			return sema_type;
 		}
+		const bool has_exact_sema_type_slot = [&]() {
+			if (!arg.is<ExpressionNode>()) {
+				return false;
+			}
+			auto slot = sema_->getSlot(static_cast<const void*>(&arg.as<ExpressionNode>()));
+			return slot.has_value() && slot->has_type();
+		}();
 		if (sema_normalized_current_function_ &&
-			arg.is<ExpressionNode>() &&
+			has_exact_sema_type_slot &&
 			!allowsLegacyOverloadArgFallbackInNormalizedBody(arg)) {
 			throw InternalError(std::string(StringBuilder()
 				.append("Missing sema-owned overload-resolution argument type in sema-normalized body for ")

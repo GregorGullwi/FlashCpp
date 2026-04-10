@@ -7,28 +7,50 @@
 
 ### Do this next
 
-1. Shift the next slice to Phase 3’s explicit late-materialization contract now
-   that `ExpressionSubstitutor.cpp` no longer has any
-   `try_instantiate_class_template(...)` fallback sites. Add one helper that
-   pairs late AST-root registration with the pending-sema normalization policy
-   so new lazy/parser-triggered instantiation sites cannot forget half of the
-   contract.
-2. Start with the still-scattered late materialization consumers that obviously
-   split registration from normalization today:
-   `src/Parser_Templates_Lazy.cpp`,
-   `src/Parser_Templates_Inst_MemberFunc.cpp`,
-   `src/Parser_Templates_Inst_Deduction.cpp`, and the remaining
-   `registerLateMaterializedTopLevelNode(...)` call sites in
-   `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser_TypeSpecifiers.cpp`.
-3. Keep the migration narrow: preserve the existing parser-owned
-   `materializeTemplateInstantiationForLookup(...)` behavior, but make the
-   register/enqueue/normalize sequence one explicit helper or queue-drain path.
-4. After those late-materialization sites share one contract, return to the
-   remaining deduction / placeholder utilities only if they still encode owner
-   materialization or pending-sema policy independently.
+1. Continue the same late-materialization contract audit, but move to the
+   parser-triggered class-template instantiation sites that still register
+   `StructDeclarationNode`s without an immediate normalize step:
+   `src/Parser_Expr_PrimaryExpr.cpp`,
+   `src/Parser_Statements.cpp`,
+   `src/Parser_Templates_Class.cpp`,
+   `src/Parser_Templates_Inst_ClassTemplate.cpp`, and the helper path in
+   `src/Parser.h` that rematerializes incomplete template-instantiation bases.
+2. Keep the migration narrow: prefer the new
+   `registerAndNormalizeLateMaterializedTopLevelNode(...)` helpers for
+   single-node exits, and only use a shared trailing
+   `normalizePendingSemanticRootsIfAvailable()` when one parser path emits a
+   batch of late nodes intentionally.
+3. Recheck `materializePrimaryTemplateOwnerForLookup(...)` consumers after the
+   remaining parser sites move over; the functional-style cast path in
+   `src/Parser_Expr_PrimaryExpr.cpp` still does an extra manual registration
+   branch even though the helper already owns the instantiation step.
+4. Once those parser-owned class-template sites share the same contract, return
+   to the broader placeholder/deduction utilities only if they still encode
+   owner materialization or pending-sema policy independently.
 
 ### Latest completed slice
 
+  - added `Parser::registerAndNormalizeLateMaterializedTopLevelNode(...)` and
+    `Parser::registerAndNormalizeLateMaterializedTopLevelNodeFront(...)` in
+    `src/Parser.h` so late AST-root registration can explicitly drain pending
+    semantic roots in the same parser-owned step
+  - switched the targeted lazy/member-function/deduction/type-specifier exits
+    called out above to the new helper in:
+    - `src/Parser_Templates_Lazy.cpp`
+    - `src/Parser_Templates_Inst_MemberFunc.cpp`
+    - `src/Parser_Templates_Inst_Deduction.cpp`
+    - `src/Parser_Templates_Inst_Substitution.cpp`
+    - `src/Parser_TypeSpecifiers.cpp`
+  - kept the full-specialization member replay in
+    `src/Parser_Templates_Inst_Substitution.cpp` batched, but added one shared
+    `normalizePendingSemanticRootsIfAvailable()` drain after the constructor /
+    destructor / method registration loop so the queue is normalized once per
+    specialization replay instead of depending on outer callers
+  - validation after this slice:
+    - `make main CXX=clang++`
+    - `bash ./tests/run_all_tests.sh member_func_template_call_ret3.cpp template_member_access_ret42.cpp test_template_default_member_lookup_ret42.cpp test_identifier_binding_template_member_outofline_implicit_member_ret42.cpp test_template_spec_outofline_default_arg_ret42.cpp test_template_lazy_static_member_implicit_this_fail.cpp`
+    - `bash ./tests/run_all_tests.sh`
+    - 2006 pass, 128 expected-fail
   - replaced the last manual class-template constructor materialization branch
     in `src/ExpressionSubstitutor.cpp` with
     `materializeTemplateInstantiationForLookup(...)`, so the substitution layer
