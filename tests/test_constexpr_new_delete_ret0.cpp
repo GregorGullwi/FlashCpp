@@ -20,15 +20,6 @@ constexpr int new_int_zero() {
 }
 static_assert(new_int_zero() == 0);
 
-// new int — default-initialization (value-initialized to 0 in constexpr)
-constexpr int new_int_default() {
-	int* p = new int;
-	int v = *p;
-	delete p;
-	return v;
-}
-static_assert(new_int_default() == 0);
-
 // Modify through pointer before deleting
 constexpr int new_mutate() {
 	int* p = new int(10);

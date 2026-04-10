@@ -440,7 +440,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 
 			// Pass array initializers to code generator
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, /*is_array=*/true, size_result.node(), std::move(array_initializers), std::move(all_placement_args)));
+				NewExpressionNode(*type_node, /*is_array=*/true, size_result.node(), std::move(array_initializers), std::move(all_placement_args), /*has_value_init=*/true));
 			return ParseResult::success(new_expr);
 		}
 		// Check for constructor call: new Type(args)
@@ -486,13 +486,13 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			}
 
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, std::move(args), all_placement_args));
+				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, std::move(args), all_placement_args, /*has_value_init=*/true));
 			return ParseResult::success(new_expr);
 		}
 		// Simple new: new Type
 		else {
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, {}, std::move(all_placement_args)));
+				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, {}, std::move(all_placement_args), /*has_value_init=*/false));
 			return ParseResult::success(new_expr);
 		}
 	}

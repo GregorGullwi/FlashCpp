@@ -811,7 +811,7 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 			}
 			const EvalResult& heap_val = heap_it->second.value;
 			if (offset == 0 && !heap_val.is_array) {
-				return heap_val;
+				return read_heap_value_for_constexpr(heap_val);
 			}
 			if (heap_val.is_array) {
 				if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
@@ -993,7 +993,7 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 			}
 			const EvalResult& heap_val = heap_it->second.value;
 			if (offset == 0 && !heap_val.is_array) {
-				return heap_val;
+				return read_heap_value_for_constexpr(heap_val);
 			}
 			if (heap_val.is_array) {
 				if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
@@ -2038,6 +2038,15 @@ static EvalResult make_default_init(const TypeSpecifierNode& type_spec) {
 	return r;
 }
 
+static EvalResult read_heap_value_for_constexpr(const EvalResult& heap_val) {
+	if (heap_val.is_indeterminate) {
+		return EvalResult::error(
+			"Read of indeterminate value in constant expression "
+			"(object was default-initialized without an initializer)");
+	}
+	return heap_val;
+}
+
 EvalResult Evaluator::evaluate_with_optional_bindings(
 	const ASTNode& expr_node,
 	EvaluationContext& context,
@@ -2217,7 +2226,12 @@ EvalResult Evaluator::evaluate_new_expression(
 	// Fundamental-type new: new T or new T(single_arg)
 	EvalResult init_val;
 	if (ctor_args.empty()) {
-		init_val = make_default_init(type_spec);
+		if (new_expr.has_value_init()) {
+			init_val = make_default_init(type_spec);
+		} else {
+			init_val = EvalResult::indeterminate();
+			init_val.set_exact_type(type_spec);
+		}
 	} else if (ctor_args.size() == 1) {
 		auto arg_result = eval_arg(ctor_args[0]);
 		if (!arg_result.success())

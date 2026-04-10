@@ -127,6 +127,7 @@ struct EvalResult {
 	// the target ABI's sentinel representation.
 	StringHandle member_pointer_member;
 	bool is_null_member_pointer = false;
+	bool is_indeterminate = false;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -135,48 +136,54 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
 	}
 
 	static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
 	}
 
 	static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
 	}
 
 	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
+	}
+
+	static EvalResult indeterminate() {
+		EvalResult result = from_int(0LL);
+		result.is_indeterminate = true;
+		return result;
 	}
 
 	// Create a pointer-to-variable result (for address-of operator on constexpr variables).
 	// offset is the element offset for pointer arithmetic (e.g. &arr[2] → offset=2).
 	static EvalResult from_pointer(std::string_view var_name, int64_t offset = 0) {
-		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset, {}, {}, {}, false};
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset, {}, {}, {}, false, false};
 		return r;
 	}
 
 	// Overload that accepts an already-interned StringHandle directly (avoids double interning).
 	static EvalResult from_pointer(StringHandle sh, int64_t offset = 0) {
-		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, sh, offset, {}, {}, {}, false};
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, sh, offset, {}, {}, {}, false, false};
 		return r;
 	}
 
 	static EvalResult from_member_pointer(StringHandle member_name, int64_t offset) {
-		EvalResult r{offset, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		EvalResult r{offset, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
 		r.member_pointer_member = member_name;
 		return r;
 	}
