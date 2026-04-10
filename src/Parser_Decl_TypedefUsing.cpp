@@ -644,7 +644,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					false,
 					{},
 					static_cast<int>(member_type_spec.pointer_depth()),
-					member_decl.bitfield_width);
+					member_decl.bitfield_width,
+					member_type_spec.has_function_signature() ? std::optional(member_type_spec.function_signature()) : std::nullopt,
+					false);
 			}
 
 			// Finalize struct layout
@@ -1868,7 +1870,9 @@ ParseResult Parser::parse_typedef_declaration() {
 				false,
 				{},
 				static_cast<int>(member_type_spec.pointer_depth()),
-				member_decl.bitfield_width);
+				member_decl.bitfield_width,
+				member_type_spec.has_function_signature() ? std::optional(member_type_spec.function_signature()) : std::nullopt,
+				false);
 		}
 
 		// Finalize struct layout (add padding)

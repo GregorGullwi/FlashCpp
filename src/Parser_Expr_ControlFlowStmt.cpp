@@ -1189,7 +1189,13 @@ ParseResult Parser::parse_lambda_expression() {
 					AccessSpecifier::Public,
 					std::nullopt,		  // No initializer
 					ReferenceQualifier::None,  // Not a reference
-					64				   // Size in bits
+					64,				   // Size in bits
+					false,
+					{},
+					0,
+					std::nullopt,
+					std::nullopt,
+					false
 				);
 				continue;  // Skip the rest of processing for this capture
 			}
@@ -1215,7 +1221,13 @@ ParseResult Parser::parse_lambda_expression() {
 								AccessSpecifier::Public,
 								std::nullopt,						  // No initializer
 								ReferenceQualifier::None,			  // Not a reference
-								enclosing_struct->sizeInBits().value	 // Size in bits
+								enclosing_struct->sizeInBits().value,	 // Size in bits
+								false,
+								{},
+								0,
+								std::nullopt,
+								std::nullopt,
+								false
 							);
 						}
 					}
@@ -1324,7 +1336,13 @@ ParseResult Parser::parse_lambda_expression() {
 				AccessSpecifier::Public,
 				std::nullopt,
 				is_ref_capture ? ReferenceQualifier::LValueReference : ReferenceQualifier::None,
-				referenced_size_bits);
+				referenced_size_bits,
+				var_type.is_array(),
+				{},
+				static_cast<int>(var_type.pointer_depth()),
+				std::nullopt,
+				var_type.has_function_signature() ? std::optional(var_type.function_signature()) : std::nullopt,
+				false);
 		}
 
 		// addMember() already updates total_size and alignment, but ensure minimum size of 1
