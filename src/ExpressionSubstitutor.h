@@ -110,11 +110,6 @@ private:
 	// Helper: substitute in a type specifier with template args
 	TypeSpecifierNode substituteInType(const TypeSpecifierNode& type);
 
-	// Helper: trigger template instantiation for a type
-	void ensureTemplateInstantiated(
-		std::string_view template_name,
-		const std::vector<TemplateTypeArg>& args);
-
 	// Helper: check if a template argument node is a pack expansion
 	bool isPackExpansion(const ASTNode& arg_node, std::string_view& pack_name);
 

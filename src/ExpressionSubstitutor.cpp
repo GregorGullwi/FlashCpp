@@ -678,50 +678,46 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				return *var_template_node;
 			}
 
-			auto instantiated_node = !qualified_name.empty()
-				? parser_.try_instantiate_class_template(qualified_name, substituted_template_args, true)
-				: parser_.try_instantiate_class_template(func_name, substituted_template_args, true);
-			if (instantiated_node.has_value()) {
-				normalizePendingSemanticRoots();
+			Parser::AliasTemplateMaterializationResult materialized_type =
+				parser_.materializeTemplateInstantiationForLookup(
+					!qualified_name.empty() ? qualified_name : func_name,
+					substituted_template_args);
+			if (materialized_type.resolved_type_info == nullptr && !qualified_name.empty()) {
+				materialized_type =
+					parser_.materializeTemplateInstantiationForLookup(
+						func_name,
+						substituted_template_args);
 			}
-			if (!instantiated_node.has_value() && !qualified_name.empty()) {
-				instantiated_node = parser_.try_instantiate_class_template(func_name, substituted_template_args, true);
-				if (instantiated_node.has_value()) {
-					normalizePendingSemanticRoots();
+			if (const TypeInfo* resolved_type_info = materialized_type.resolved_type_info) {
+				TypeIndex new_type_index = resolved_type_info->registeredTypeIndex();
+				int type_size_bits =
+					resolved_type_info->hasStoredSize()
+						? static_cast<int>(resolved_type_info->sizeInBits().value)
+						: 64;
+
+				FLASH_LOG(Templates, Debug, "  Successfully instantiated template with type_index=", new_type_index);
+
+				// Create a TypeSpecifierNode for the instantiated type
+				TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+					new_type_index.withCategory(resolved_type_info->typeEnum()),
+					type_size_bits,
+					Token{},
+					CVQualifier::None,
+					ReferenceQualifier::None);
+
+				// Create a ConstructorCallNode instead of an ordinary CallExprNode
+				substituted_args_nodes.clear();
+				for (size_t i = 0; i < call.arguments().size(); ++i) {
+					substituted_args_nodes.push_back(substitute(call.arguments()[i]));
 				}
-			}
-			if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
-				const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
-				StringHandle instantiated_name = class_decl.name();
+				ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
+					ASTNode(&new_type),
+					std::move(substituted_args_nodes),
+					call.called_from());
 
-				// Look up the type index for the instantiated template
-				const auto& types_by_name = getTypesByNameMap();
-				auto type_it = types_by_name.find(instantiated_name);
-				if (type_it != types_by_name.end()) {
-					TypeIndex new_type_index = type_it->second->type_index_;
-
-					FLASH_LOG(Templates, Debug, "  Successfully instantiated template with type_index=", new_type_index);
-
-					// Create a TypeSpecifierNode for the instantiated type
-					TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-						new_type_index.withCategory(TypeCategory::Struct), 64, Token{}, CVQualifier::None, ReferenceQualifier::None);
-
-					// Create a ConstructorCallNode instead of an ordinary CallExprNode
-					substituted_args_nodes.clear();
-					for (size_t i = 0; i < call.arguments().size(); ++i) {
-						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
-					}
-					ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
-						ASTNode(&new_type),
-						std::move(substituted_args_nodes),
-						call.called_from());
-
-					// Wrap in ExpressionNode
+				// Wrap in ExpressionNode
 				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ctor);
 				return ASTNode(&new_expr);
-				} else {
-					FLASH_LOG(Templates, Warning, "  Instantiated template not found in getTypesByNameMap(): ", instantiated_name.view());
-				}
 			} else {
 				FLASH_LOG(Templates, Warning, "  Failed to instantiate template: ", func_name);
 			}
@@ -1501,22 +1497,6 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 	// If no substitution needed or failed, return a copy of the original type
 	return type;
-}
-
-void ExpressionSubstitutor::ensureTemplateInstantiated(
-	std::string_view template_name,
-	const std::vector<TemplateTypeArg>& args) {
-
-	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Ensuring template instantiated: ", template_name);
-
-	// Attempt to instantiate the template through the parser
-	auto result = parser_.try_instantiate_class_template(template_name, args, true);
-	if (result.has_value()) {
-		parser_.normalizePendingSemanticRootsIfAvailable();
-		FLASH_LOG(Templates, Debug, "  Successfully ensured instantiation of: ", template_name);
-	} else {
-		FLASH_LOG(Templates, Debug, "  Could not instantiate (may already exist or not be a class template): ", template_name);
-	}
 }
 
 // Helper: Check if a template argument node is a pack expansion
