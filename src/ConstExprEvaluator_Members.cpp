@@ -12,6 +12,18 @@ constexpr size_t kSyntheticTokenLine = 0;
 constexpr size_t kSyntheticTokenColumn = 0;
 constexpr size_t kSyntheticTokenFileIndex = 0;
 
+TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, const std::vector<size_t>& array_dimensions);
+EvalResult materializeArrayInitializer(
+	TypeIndex type_index,
+	const std::vector<size_t>& array_dimensions,
+	const InitializerListNode& init_list,
+	ConstExpr::EvaluationContext& context);
+std::optional<EvalResult> tryMaterializeMultidimArrayRow(
+	const TypeSpecifierNode* type_spec,
+	const InitializerListNode& init_list,
+	size_t index,
+	ConstExpr::EvaluationContext& context);
+
 struct ShiftEvaluationInfo {
 	int width_bits = kDefaultShiftWidthBits;
 	std::optional<TypeSpecifierNode> promoted_type;
@@ -3587,6 +3599,16 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		if (!initializer.has_value()) {
 			return EvalResult::error("Constexpr variable has no initializer: " + qualified_id.full_name());
 		}
+		if (initializer->is<InitializerListNode>() && var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+			if (type_spec.array_dimension_count() > 0) {
+				return materializeArrayInitializer(
+					type_spec.type_index(),
+					type_spec.array_dimensions(),
+					initializer->as<InitializerListNode>(),
+					context);
+			}
+		}
 
 		return evaluate(initializer.value(), context);
 	}
@@ -4937,7 +4959,13 @@ EvalResult Evaluator::evaluate_static_member_initializer_or_default(
 			return EvalResult::error("Constexpr recursion depth limit exceeded");
 		}
 		context.current_depth++;
-		EvalResult result = evaluate(static_member.initializer.value(), context);
+		EvalResult result = static_member.is_array && static_member.initializer->is<InitializerListNode>()
+								? materializeArrayInitializer(
+									static_member.type_index,
+									static_member.array_dimensions,
+									static_member.initializer->as<InitializerListNode>(),
+									context)
+								: evaluate(static_member.initializer.value(), context);
 		context.current_depth--;
 		return result;
 	}
@@ -4967,7 +4995,13 @@ EvalResult Evaluator::evaluate_static_member_from_struct(
 
 	if (static_member->initializer.has_value()) {
 		context.current_depth++;
-		EvalResult result = evaluate(*static_member->initializer, context);
+		EvalResult result = static_member->is_array && static_member->initializer->is<InitializerListNode>()
+								? materializeArrayInitializer(
+									static_member->type_index,
+									static_member->array_dimensions,
+									static_member->initializer->as<InitializerListNode>(),
+									context)
+								: evaluate(*static_member->initializer, context);
 		context.current_depth--;
 		return result;
 	}
@@ -4985,7 +5019,15 @@ EvalResult Evaluator::evaluate_static_member_from_struct(
 			const VariableDeclarationNode& var_decl = member_node.as<VariableDeclarationNode>();
 			if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
 				context.current_depth++;
-				EvalResult result = evaluate(*var_decl.initializer(), context);
+				EvalResult result =
+					var_decl.initializer()->is<InitializerListNode>() && var_decl.declaration().type_node().is<TypeSpecifierNode>() &&
+							var_decl.declaration().type_node().as<TypeSpecifierNode>().array_dimension_count() > 0
+						? materializeArrayInitializer(
+							var_decl.declaration().type_node().as<TypeSpecifierNode>().type_index(),
+							var_decl.declaration().type_node().as<TypeSpecifierNode>().array_dimensions(),
+							var_decl.initializer()->as<InitializerListNode>(),
+							context)
+						: evaluate(*var_decl.initializer(), context);
 				context.current_depth--;
 				return result;
 			}
@@ -5568,9 +5610,10 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 	// Per C++20 dcl.init.aggr, a fully-flat list distributes scalars sequentially across inner
 	// dimensions (brace-elision): e.g. int[2][3] = {1,2,3,4,5,6} → {{1,2,3},{4,5,6}}.
 	bool is_fully_flat = false;
-	if (init_list.size() > 0) {
+	const size_t initializer_count = init_list.size();
+	if (initializer_count > 0) {
 		is_fully_flat = true;
-		for (size_t k = 0; k < init_list.size(); ++k) {
+		for (size_t k = 0; k < initializer_count; ++k) {
 			if (init_list.initializers()[k].is<InitializerListNode>()) {
 				is_fully_flat = false;
 				break;
@@ -5607,33 +5650,35 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 			elements.push_back(std::move(elem));
 		}
 	} else {
+		size_t inner_size = 1;
+		for (size_t d : inner_dims)
+			inner_size *= d;
+
+		size_t cursor = 0;
+		const auto& initializers = init_list.initializers();
 		for (size_t i = 0; i < outer_size; ++i) {
 			EvalResult elem;
-			if (i < init_list.size()) {
-				const ASTNode& initializer = init_list.initializers()[i];
+			if (cursor < initializer_count) {
+				const ASTNode& initializer = initializers[cursor];
 				if (initializer.is<InitializerListNode>()) {
 					// Nested brace-init list for inner array ({…} form).
 					elem = materialize_array_value_with_spec(
 						inner_type_spec,
 						initializer.as<InitializerListNode>(),
 						context, bindings);
+					cursor++;
 				} else {
-					// Single scalar in an otherwise mixed list: seed first element of inner array.
-					EvalResult scalar_result = bindings
-												   ? evaluate_expression_with_bindings_const(initializer, *bindings, context)
-												   : evaluate(initializer, context);
-					if (!scalar_result.success()) {
-						elem = std::move(scalar_result);
-					} else {
-						elem = make_zero_array_for_dims(inner_dims, type_spec.type());
-						EvalResult* target = &elem;
-						while (target->is_array && !target->array_elements.empty() && target->array_elements[0].is_array) {
-							target = &target->array_elements[0];
-						}
-						if (target->is_array && !target->array_elements.empty()) {
-							target->array_elements[0] = std::move(scalar_result);
-						}
+					// Mixed scalar/nested brace-init list: consume up to one inner array's worth of
+					// consecutive scalars, stopping before the next nested brace list.
+					InitializerListNode sub_init;
+					size_t consumed = 0;
+					while (consumed < inner_size && cursor < initializer_count &&
+						   !initializers[cursor].is<InitializerListNode>()) {
+						sub_init.add_initializer(initializers[cursor]);
+						cursor++;
+						consumed++;
 					}
+					elem = materialize_array_value_with_spec(inner_type_spec, sub_init, context, bindings);
 				}
 			} else {
 				// Missing initializer: zero-initialise the entire inner array.
@@ -5653,6 +5698,46 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 }
 
 namespace {
+TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, const std::vector<size_t>& array_dimensions) {
+	TypeSpecifierNode type_spec;
+	type_spec.set_type_index(type_index);
+	type_spec.set_array_dimensions(array_dimensions);
+	return type_spec;
+}
+
+EvalResult materializeArrayInitializer(
+	TypeIndex type_index,
+	const std::vector<size_t>& array_dimensions,
+	const InitializerListNode& init_list,
+	ConstExpr::EvaluationContext& context) {
+	if (array_dimensions.size() > 1) {
+		return ConstExpr::Evaluator::materialize_array_value_with_spec(
+			makeArrayTypeSpec(type_index, array_dimensions),
+			init_list,
+			context,
+			nullptr);
+	}
+	return ConstExpr::Evaluator::materialize_array_value(type_index, init_list, context, nullptr);
+}
+
+std::optional<EvalResult> tryMaterializeMultidimArrayRow(
+	const TypeSpecifierNode* type_spec,
+	const InitializerListNode& init_list,
+	size_t index,
+	ConstExpr::EvaluationContext& context) {
+	if (!type_spec || type_spec->array_dimension_count() <= 1) {
+		return std::nullopt;
+	}
+	EvalResult materialized = ConstExpr::Evaluator::materialize_array_value_with_spec(*type_spec, init_list, context, nullptr);
+	if (!materialized.success()) {
+		return materialized;
+	}
+	if (index >= materialized.array_elements.size()) {
+		return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(materialized.array_elements.size()) + ")");
+	}
+	return materialized.array_elements[index];
+}
+
 EvalResult materialize_member_initializer_value(
 	const StructMember& member_info,
 	const ASTNode& initializer,
@@ -6323,6 +6408,19 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 		}
 
 		const InitializerListNode& init_list = resolved_member.initializer->as<InitializerListNode>();
+		std::optional<TypeSpecifierNode> member_type_spec;
+		if (resolved_member.member_info && resolved_member.member_info->array_dimensions.size() > 1) {
+			member_type_spec = makeArrayTypeSpec(
+				resolved_member.member_info->type_index,
+				resolved_member.member_info->array_dimensions);
+		}
+		if (auto materialized_row = tryMaterializeMultidimArrayRow(
+				member_type_spec ? &*member_type_spec : nullptr,
+				init_list,
+				index,
+				context)) {
+			return *materialized_row;
+		}
 		const auto& elements = init_list.initializers();
 		if (index >= elements.size()) {
 			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
@@ -6337,6 +6435,30 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 
 		return evaluate(elements[index], context);
 	};
+
+	if (context.symbols) {
+		StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+			StringBuilder().append(var_name).append("::"sv).append(member_name).commit());
+		if (auto qualified_symbol = context.symbols->lookup(qualified_handle);
+			qualified_symbol.has_value() && qualified_symbol->is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& qualified_var = qualified_symbol->as<VariableDeclarationNode>();
+			if (!qualified_var.is_constexpr()) {
+				return EvalResult::error("Static member array in array subscript must be constexpr");
+			}
+			const auto& qualified_initializer = qualified_var.initializer();
+			if (!qualified_initializer.has_value() || !qualified_initializer->is<InitializerListNode>()) {
+				return EvalResult::error("Static member array in array subscript must have an initializer list");
+			}
+
+			const InitializerListNode& init_list = qualified_initializer->as<InitializerListNode>();
+			if (qualified_var.declaration().type_node().is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& type_spec = qualified_var.declaration().type_node().as<TypeSpecifierNode>();
+				if (auto materialized_row = tryMaterializeMultidimArrayRow(&type_spec, init_list, index, context)) {
+					return *materialized_row;
+				}
+			}
+		}
+	}
 
 	ResolvedConstexprObject resolved_object;
 	if (auto resolve_error = resolve_constexpr_object_source(
@@ -6365,12 +6487,16 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 	std::string_view var_name = identifier.name();
 	auto evaluate_array_initializer = [&](const std::optional<ASTNode>& initializer_opt,
 										 TypeIndex element_type_index,
-										 bool element_is_struct_object) -> std::optional<EvalResult> {
+										 bool element_is_struct_object,
+										 const TypeSpecifierNode* type_spec_opt) -> std::optional<EvalResult> {
 		if (!initializer_opt.has_value() || !initializer_opt->is<InitializerListNode>()) {
 			return std::nullopt;
 		}
 
 		const InitializerListNode& init_list = initializer_opt->as<InitializerListNode>();
+		if (auto materialized_row = tryMaterializeMultidimArrayRow(type_spec_opt, init_list, index, context)) {
+			return *materialized_row;
+		}
 		const auto& elements = init_list.initializers();
 		if (index >= elements.size()) {
 			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
@@ -6401,13 +6527,17 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 			context,
 			CurrentStructStaticLookupMode::PreferCurrentStruct);
 		static_member_result.static_member) {
+		TypeSpecifierNode static_member_type_spec = makeArrayTypeSpec(
+			static_member_result.static_member->type_index,
+			static_member_result.static_member->array_dimensions);
 		bool element_is_struct_object =
 			static_member_result.static_member->array_dimensions.size() == 1 &&
 			tryGetStructTypeInfo(static_member_result.static_member->type_index) != nullptr;
 		if (auto static_result = evaluate_array_initializer(
 				static_member_result.static_member->initializer,
 				static_member_result.static_member->type_index,
-				element_is_struct_object)) {
+				element_is_struct_object,
+				&static_member_type_spec)) {
 			return *static_result;
 		}
 
@@ -6421,8 +6551,10 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 			}
 			TypeIndex qualified_element_type{};
 			bool qualified_element_is_struct_object = false;
+			const TypeSpecifierNode* qualified_type_spec = nullptr;
 			if (qualified_var.declaration().type_node().is<TypeSpecifierNode>()) {
-				qualified_element_type = qualified_var.declaration().type_node().as<TypeSpecifierNode>().type_index();
+				qualified_type_spec = &qualified_var.declaration().type_node().as<TypeSpecifierNode>();
+				qualified_element_type = qualified_type_spec->type_index();
 				qualified_element_is_struct_object =
 					qualified_var.declaration().array_dimensions().size() == 1 &&
 					tryGetStructTypeInfo(qualified_element_type) != nullptr;
@@ -6430,7 +6562,8 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 			if (auto qualified_result = evaluate_array_initializer(
 					qualified_var.initializer(),
 					qualified_element_type,
-					qualified_element_is_struct_object)) {
+					qualified_element_is_struct_object,
+					qualified_type_spec)) {
 				return *qualified_result;
 			}
 		}
@@ -6461,6 +6594,22 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 	// The initializer should be an InitializerListNode for arrays
 	if (initializer->is<InitializerListNode>()) {
 		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
+		const auto& type_node = var_decl.declaration().type_node();
+
+		if (type_node.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+			if (type_spec.array_dimension_count() > 1) {
+				EvalResult materialized = materialize_array_value_with_spec(type_spec, init_list, context, nullptr);
+				if (!materialized.success()) {
+					return materialized;
+				}
+				if (index >= materialized.array_elements.size()) {
+					return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(materialized.array_elements.size()) + ")");
+				}
+				return materialized.array_elements[index];
+			}
+		}
+
 		const auto& elements = init_list.initializers();
 
 		if (index >= elements.size()) {
