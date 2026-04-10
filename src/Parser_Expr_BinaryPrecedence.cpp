@@ -1030,6 +1030,23 @@ bool Parser::consume_punctuator(const std::string_view& value) {
 
 // Skip C++ standard attributes like [[nodiscard]], [[maybe_unused]], etc.
 void Parser::skip_cpp_attributes() {
+	(void)skip_cpp_attributes_with_info();
+}
+
+Parser::CppAttributeInfo Parser::skip_cpp_attributes_with_info() {
+	CppAttributeInfo info{};
+	while (peek() == "["_tok && peek_info(1).value() == "[") {
+		CppAttributeInfo block_info = consume_cpp_attribute_blocks();
+		info.has_no_unique_address = info.has_no_unique_address || block_info.has_no_unique_address;
+	}
+
+	// Also skip GCC-style attributes - they often appear together
+	skip_gcc_attributes();
+	return info;
+}
+
+Parser::CppAttributeInfo Parser::consume_cpp_attribute_blocks() {
+	CppAttributeInfo info{};
 	while (peek() == "["_tok) {
 		auto next = peek_info(1);
 		if (next.value() == "[") {
@@ -1040,6 +1057,9 @@ void Parser::skip_cpp_attributes() {
 			// Skip everything until ]]
 			int bracket_depth = 2;
 			while (!peek().is_eof() && bracket_depth > 0) {
+				if (peek().is_identifier() && peek_info().value() == "no_unique_address") {
+					info.has_no_unique_address = true;
+				}
 				if (peek() == "["_tok) {
 					bracket_depth++;
 				} else if (peek() == "]"_tok) {
@@ -1051,9 +1071,7 @@ void Parser::skip_cpp_attributes() {
 			break; // Not [[, stop
 		}
 	}
-
-	// Also skip GCC-style attributes - they often appear together
-	skip_gcc_attributes();
+	return info;
 }
 
 // Skip GCC-style __attribute__((...)) specifications

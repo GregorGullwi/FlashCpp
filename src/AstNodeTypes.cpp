@@ -1036,6 +1036,109 @@ const StructTypeInfo* getBaseStructInfo(const BaseClassSpecifier& base) {
 	return nullptr;
 }
 
+bool isEmptyLayoutLikeRecursive(const StructTypeInfo* struct_info, std::set<const StructTypeInfo*>& visited) {
+	if (!struct_info) {
+		return false;
+	}
+	if (!visited.insert(struct_info).second) {
+		return true;
+	}
+	if (struct_info->is_union || struct_info->has_vtable || !struct_info->members.empty()) {
+		return false;
+	}
+	for (const auto& base : struct_info->base_classes) {
+		if (base.is_virtual || !isEmptyLayoutLikeRecursive(getBaseStructInfo(base), visited)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void collectLeadingEmptySubobjectTypesRecursive(const StructTypeInfo* struct_info,
+												std::unordered_set<TypeIndex>& types,
+												std::set<const StructTypeInfo*>& visited) {
+	if (!struct_info || !visited.insert(struct_info).second || !struct_info->isEmptyLayoutLike()) {
+		return;
+	}
+	if (struct_info->own_type_index_.has_value()) {
+		types.insert(*struct_info->own_type_index_);
+	}
+	for (const auto& base : struct_info->base_classes) {
+		if (base.is_virtual || base.offset != 0) {
+			continue;
+		}
+		collectLeadingEmptySubobjectTypesRecursive(getBaseStructInfo(base), types, visited);
+	}
+	for (const auto& member : struct_info->members) {
+		if (member.offset != 0 || member.memberType() != TypeCategory::Struct) {
+			continue;
+		}
+		if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
+			member_struct_info && member_struct_info->isEmptyLayoutLike()) {
+			collectLeadingEmptySubobjectTypesRecursive(member_struct_info, types, visited);
+		}
+	}
+}
+
+std::unordered_set<TypeIndex> collectLeadingEmptySubobjectTypes(const StructTypeInfo* struct_info) {
+	std::unordered_set<TypeIndex> result;
+	std::set<const StructTypeInfo*> visited;
+	collectLeadingEmptySubobjectTypesRecursive(struct_info, result, visited);
+	return result;
+}
+
+bool haveCommonLeadingEmptyType(const StructTypeInfo* lhs, const StructTypeInfo* rhs) {
+	if (!lhs || !rhs) {
+		return false;
+	}
+	const auto lhs_types = collectLeadingEmptySubobjectTypes(lhs);
+	const auto rhs_types = collectLeadingEmptySubobjectTypes(rhs);
+	for (TypeIndex type_index : lhs_types) {
+		if (rhs_types.contains(type_index)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+struct BasePlacementDecision {
+	size_t offset = 0;
+	size_t size_contribution = 0;
+};
+
+BasePlacementDecision decideBasePlacement(const BaseClassSpecifier& base,
+										  const StructTypeInfo& base_info,
+										  size_t current_offset,
+										  const std::vector<const BaseClassSpecifier*>& placed_bases) {
+	size_t base_alignment = base_info.alignment;
+	size_t candidate_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
+	bool may_use_ebo = base_info.isEmptyLayoutLike() && !base.is_virtual;
+	auto has_overlap_conflict_at = [&](size_t offset) {
+		for (const BaseClassSpecifier* placed_base : placed_bases) {
+			if (!placed_base || placed_base->offset != offset) {
+				continue;
+			}
+			if (haveCommonLeadingEmptyType(&base_info, getBaseStructInfo(*placed_base))) {
+				return true;
+			}
+		}
+		return false;
+	};
+
+	if (may_use_ebo && has_overlap_conflict_at(candidate_offset)) {
+		may_use_ebo = false;
+		do {
+			candidate_offset += std::max<size_t>(base_alignment, 1);
+		} while (has_overlap_conflict_at(candidate_offset));
+	}
+
+	size_t base_size = toSizeT(base_info.baseSubobjectSizeInBytes());
+	return BasePlacementDecision{
+		.offset = candidate_offset,
+		.size_contribution = may_use_ebo ? 0 : std::max<size_t>(base_size, 1),
+	};
+}
+
 struct LayoutBaseCollections {
 	std::vector<BaseClassSpecifier*> non_virtual_bases;
 	std::vector<BaseClassSpecifier> virtual_bases;
@@ -1147,6 +1250,7 @@ void initializeBaseAwareLayout(bool has_virtual_members,
 void placeBaseSubobjects(const std::vector<BaseClassSpecifier*>& bases,
 						 size_t& current_offset,
 						 size_t& max_alignment) {
+	std::vector<const BaseClassSpecifier*> placed_bases;
 	for (BaseClassSpecifier* base : bases) {
 		if (!base) {
 			continue;
@@ -1157,28 +1261,29 @@ void placeBaseSubobjects(const std::vector<BaseClassSpecifier*>& bases,
 			continue;
 		}
 
-		size_t base_alignment = base_info->alignment;
-		current_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
-		base->offset = current_offset;
-		current_offset += toSizeT(base_info->baseSubobjectSizeInBytes());
-		max_alignment = std::max(max_alignment, base_alignment);
+		BasePlacementDecision placement = decideBasePlacement(*base, *base_info, current_offset, placed_bases);
+		base->offset = placement.offset;
+		current_offset = placement.offset + placement.size_contribution;
+		max_alignment = std::max(max_alignment, base_info->alignment);
+		placed_bases.push_back(base);
 	}
 }
 
 void placeBaseSubobjects(std::vector<BaseClassSpecifier>& bases,
 						 size_t& current_offset,
 						 size_t& max_alignment) {
+	std::vector<const BaseClassSpecifier*> placed_bases;
 	for (BaseClassSpecifier& base : bases) {
 		const StructTypeInfo* base_info = getBaseStructInfo(base);
 		if (!base_info) {
 			continue;
 		}
 
-		size_t base_alignment = base_info->alignment;
-		current_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
-		base.offset = current_offset;
-		current_offset += toSizeT(base_info->baseSubobjectSizeInBytes());
-		max_alignment = std::max(max_alignment, base_alignment);
+		BasePlacementDecision placement = decideBasePlacement(base, *base_info, current_offset, placed_bases);
+		base.offset = placement.offset;
+		current_offset = placement.offset + placement.size_contribution;
+		max_alignment = std::max(max_alignment, base_info->alignment);
+		placed_bases.push_back(&base);
 	}
 }
 
@@ -1224,6 +1329,7 @@ void StructTypeInfo::recalculateLayout() {
 	members.reserve(old_members.size());
 
 	total_size = SizeInBytes{};
+	layout_data_size = SizeInBytes{};
 	non_virtual_size = SizeInBytes{};
 	layout_is_complete = false;
 	alignment = 1;
@@ -1242,20 +1348,22 @@ void StructTypeInfo::recalculateLayout() {
 	placeBaseSubobjects(base_collections.non_virtual_bases, current_offset, max_alignment);
 
 	total_size = toSizeInBytes(current_offset);
+	layout_data_size = toSizeInBytes(current_offset);
 	alignment = max_alignment;
 
 	auto addExistingMember = [this](StructMember& member) {
 		addMember(member.name, member.type_index, member.size, member.alignment, member.access,
 				  std::move(member.default_initializer), member.reference_qualifier,
 				  member.referenced_size_bits, member.is_array, std::move(member.array_dimensions),
-				  member.pointer_depth, member.bitfield_width, std::move(member.function_signature));
+				  member.pointer_depth, member.bitfield_width, std::move(member.function_signature),
+				  member.is_no_unique_address);
 	};
 
 	for (auto& member : old_members) {
 		addExistingMember(member);
 	}
 
-	current_offset = toSizeT(total_size);
+	current_offset = currentLayoutOffset();
 	max_alignment = alignment;
 	non_virtual_size = toSizeInBytes(alignLayoutSize(current_offset, max_alignment));
 
@@ -1276,6 +1384,15 @@ void StructTypeInfo::recalculateLayout() {
 // Finalize struct layout with base classes
 // Returns false if semantic errors were detected
 bool StructTypeInfo::finalizeWithBases() {
+	std::unordered_set<TypeIndex> seen_direct_bases;
+	for (const auto& base : base_classes) {
+		if (!seen_direct_bases.insert(base.type_index).second) {
+			finalization_error_ = "duplicate direct base class '" + std::string(base.name) +
+								  "' in class '" + std::string(StringTable::getStringView(getName())) + "'";
+			return false;
+		}
+	}
+
 	// Step 0: Build vtable first (before layout)
 	if (!buildVTable()) {
 		return false; // Semantic error during vtable building
@@ -1293,26 +1410,26 @@ bool StructTypeInfo::finalizeWithBases() {
 	placeBaseSubobjects(base_collections.non_virtual_bases, current_offset, max_alignment);
 
 	// Step 2: Layout derived class members
-	for (auto& member : members) {
-		// Apply pack alignment if specified
-		size_t effective_alignment = member.alignment;
-		if (pack_alignment > 0 && pack_alignment < member.alignment) {
-			effective_alignment = pack_alignment;
-		}
-
-		// Align to member alignment
-		current_offset = (current_offset + effective_alignment - 1) & ~(effective_alignment - 1);
-
-		// Update member offset
-		member.offset = current_offset;
-
-		// Advance offset by member size
-		current_offset += member.size;
-
-		// Track maximum alignment
-		max_alignment = std::max(max_alignment, effective_alignment);
+	std::vector<StructMember> old_members = std::move(members);
+	members.reserve(old_members.size());
+	total_size = toSizeInBytes(current_offset);
+	layout_data_size = toSizeInBytes(current_offset);
+	alignment = max_alignment;
+	active_bitfield_unit_offset = 0;
+	active_bitfield_unit_size = 0;
+	active_bitfield_unit_alignment = 0;
+	active_bitfield_bits_used = 0;
+	active_bitfield_type = TypeCategory::Invalid;
+	for (auto& member : old_members) {
+		addMember(member.name, member.type_index, member.size, member.alignment, member.access,
+				  std::move(member.default_initializer), member.reference_qualifier,
+				  member.referenced_size_bits, member.is_array, std::move(member.array_dimensions),
+				  member.pointer_depth, member.bitfield_width, std::move(member.function_signature),
+				  member.is_no_unique_address);
 	}
 
+	current_offset = currentLayoutOffset();
+	max_alignment = alignment;
 	non_virtual_size = toSizeInBytes(alignLayoutSize(current_offset, max_alignment));
 
 	// Step 3: Layout virtual base class subobjects (at the end, shared across inheritance paths)
@@ -1332,6 +1449,35 @@ bool StructTypeInfo::finalizeWithBases() {
 	}
 
 	return true;
+}
+
+bool StructTypeInfo::isEmptyLayoutLike() const {
+	std::set<const StructTypeInfo*> visited;
+	return isEmptyLayoutLikeRecursive(this, visited);
+}
+
+bool StructTypeInfo::hasCommonLeadingEmptyTypeAtOffset(const StructTypeInfo& candidate_info, size_t offset) const {
+	for (const auto& base : base_classes) {
+		if (base.offset != offset) {
+			continue;
+		}
+		if (const StructTypeInfo* base_info = getBaseStructInfo(base);
+			base_info && haveCommonLeadingEmptyType(&candidate_info, base_info)) {
+			return true;
+		}
+	}
+
+	for (const auto& member : members) {
+		if (member.offset != offset || member.memberType() != TypeCategory::Struct) {
+			continue;
+		}
+		if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
+			member_struct_info && haveCommonLeadingEmptyType(&candidate_info, member_struct_info)) {
+			return true;
+		}
+	}
+
+	return false;
 }
 
 // Build vtable for virtual functions

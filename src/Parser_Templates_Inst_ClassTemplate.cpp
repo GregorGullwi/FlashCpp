@@ -2216,7 +2216,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::move(resolved_array_dimensions),
 					static_cast<int>(ptr_depth),
 					resolve_bitfield_width(member_decl, template_params, template_args),
-					resolveTemplateFunctionPointerSignature(type_spec, member_type_index, template_params, template_args));
+					resolveTemplateFunctionPointerSignature(type_spec, member_type_index, template_params, template_args),
+					member_decl.is_no_unique_address);
 			}
 
 			// Copy member functions from pattern
@@ -3059,7 +3060,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_decl.access,
 					substituted_default_initializer,
 					member_decl.bitfield_width,
-					substituted_bitfield_width_expr);
+					substituted_bitfield_width_expr,
+					member_decl.is_no_unique_address);
 			}
 			for (const auto& static_member : pattern_struct.static_members()) {
 				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
@@ -4931,7 +4933,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::move(resolved_array_dimensions),
 			static_cast<int>(type_spec.pointer_depth()),
 			resolve_bitfield_width(member_decl, template_params, template_args_to_use),
-			resolveTemplateFunctionPointerSignature(type_spec, member_type_index, template_params, template_args_to_use));
+			resolveTemplateFunctionPointerSignature(type_spec, member_type_index, template_params, template_args_to_use),
+			member_decl.is_no_unique_address);
 	}
 
 	// Skip member function instantiation - we only need type information for nested classes
@@ -5730,7 +5733,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					resolved_array_dimensions,
 					static_cast<int>(substituted_type_spec.pointer_depth()),
 					resolve_bitfield_width(member_decl, template_params, template_args_to_use),
-					resolveTemplateFunctionPointerSignature(type_spec, substituted_type_spec.type_index(), template_params, template_args_to_use));
+					resolveTemplateFunctionPointerSignature(type_spec, substituted_type_spec.type_index(), template_params, template_args_to_use),
+					member_decl.is_no_unique_address);
 
 				ASTNode substituted_member_decl = substituteTemplateParameters(
 					member_decl.declaration, template_params, template_args_to_use);
@@ -5739,7 +5743,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_decl.access,
 					substituted_default_initializer,
 					resolve_bitfield_width(member_decl, template_params, template_args_to_use),
-					substituted_bitfield_width_expr);
+					substituted_bitfield_width_expr,
+					member_decl.is_no_unique_address);
 			}
 
 			auto copy_nested_static_members = [&](const StructTypeInfo& original_struct_info) {
@@ -6285,7 +6290,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			member_decl.access,
 			substituted_default_initializer,
 			member_decl.bitfield_width,
-			substituted_bitfield_width_expr);
+			substituted_bitfield_width_expr,
+			member_decl.is_no_unique_address);
 	}
 	for (const auto& static_member : struct_info_ptr->static_members) {
 		instantiated_struct_ref.add_static_member(

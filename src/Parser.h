@@ -467,9 +467,9 @@ private:
 		// Map from template function to its body info
 	std::unordered_map<FunctionDeclarationNode*, TemplateMemberFunctionBody> template_member_function_bodies_;
 
-		// Track if we're currently parsing a template class (to skip delayed body parsing)
+	// Track if we're currently parsing a template class (to skip delayed body parsing)
 	bool parsing_template_class_ = false;
-		// Track when an inline namespace declaration was prefixed with 'inline'
+	// Track when an inline namespace declaration was prefixed with 'inline'
 	bool pending_inline_namespace_ = false;
 	InlineVector<StringHandle, 4> current_template_param_names_;	 // Names of current template parameters - from Token storage
 
@@ -782,7 +782,11 @@ private:
 	ParseResult parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);	// Phase 1: Unified parameter list parsing
 	FlashCpp::ParsedFunctionArguments parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx = {});  // Unified function call argument parsing
 	std::vector<TypeSpecifierNode> apply_lvalue_reference_deduction(const ChunkedVector<ASTNode>& args, const std::vector<TypeSpecifierNode>& arg_types);  // For template deduction: marks lvalue args with lvalue_reference for T&& forwarding
+	struct CppAttributeInfo {
+		bool has_no_unique_address = false;
+	};
 	FlashCpp::MemberLeadingSpecifiers parse_member_leading_specifiers();	 // Consume constexpr/consteval/inline/explicit/virtual before a member
+	CppAttributeInfo consume_cpp_attribute_blocks();	 // Consume consecutive [[...]] blocks and return detected flags
 	ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);	// Phase 2: Unified trailing specifiers
 	ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);	// Phase 4: Unified function header parsing
 	ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);	// Phase 4: Create FunctionDeclarationNode from header
@@ -1501,6 +1505,7 @@ private:	 // Resume private methods
 
 		// Attribute handling
 	void skip_cpp_attributes();					// Skip C++ standard [[...]] attributes
+	CppAttributeInfo skip_cpp_attributes_with_info();	 // Skip C++ standard [[...]] attributes and return detected flags
 	void skip_gcc_attributes();					// Skip GCC __attribute__((...)) specifications
 	void skip_noop_gnu_qualifiers();				 // Skip GNU-style no-op qualifiers like __restrict
 	bool skip_asm_suffix(std::optional<std::string_view>* asm_symbol_name = nullptr); // Skip declaration-suffix __asm("...") / __asm__("...")

@@ -6,6 +6,8 @@
 
 class TypeSpecifierNode;
 class ConstructorDeclarationNode;
+struct StructTypeInfo;
+const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index);
 
 // Struct type information
 struct StructTypeInfo {
@@ -16,6 +18,7 @@ struct StructTypeInfo {
 	std::vector<StructMemberFunction> member_functions;
 	std::vector<BaseClassSpecifier> base_classes;  // Base classes for inheritance
 	SizeInBytes total_size{};  // Total size of struct in bytes
+	SizeInBytes layout_data_size{}; // Dsize-like placement cursor used for subsequent member layout
 	SizeInBytes non_virtual_size{}; // Size of the base subobject before reachable virtual bases
 	bool layout_is_complete = false;
 	size_t alignment = 1;		  // Alignment requirement of struct
@@ -93,6 +96,22 @@ struct StructTypeInfo {
 				   int pointer_depth = 0,
 				   std::optional<size_t> bitfield_width = std::nullopt,
 				   std::optional<FunctionSignature> function_sig = std::nullopt) {
+		addMember(member_name, type_index, member_size, member_alignment, access, std::move(default_initializer),
+				  reference_qualifier, referenced_size_bits, is_array, std::move(array_dimensions),
+				  pointer_depth, bitfield_width, std::move(function_sig), false);
+	}
+
+	void addMember(StringHandle member_name, TypeIndex type_index,
+				   size_t member_size, size_t member_alignment, AccessSpecifier access,
+				   std::optional<ASTNode> default_initializer,
+				   ReferenceQualifier reference_qualifier,
+				   size_t referenced_size_bits,
+				   bool is_array,
+				   std::vector<size_t> array_dimensions,
+				   int pointer_depth,
+				   std::optional<size_t> bitfield_width,
+				   std::optional<FunctionSignature> function_sig,
+				   bool is_no_unique_address) {
 		// Apply pack alignment if specified
 		// Pack alignment limits the maximum alignment of members.
 		// Some dependent/template paths can transiently report 0 alignment; treat that as byte alignment.
@@ -103,10 +122,11 @@ struct StructTypeInfo {
 
 		// Calculate offset with effective alignment
 		// For unions, all members are at offset 0
-		size_t offset = is_union ? 0 : ((toSizeT(total_size) + effective_alignment - 1) & ~(effective_alignment - 1));
+		size_t offset = is_union ? 0 : ((toSizeT(layout_data_size) + effective_alignment - 1) & ~(effective_alignment - 1));
 
 		bool placed_in_active_bitfield_unit = false;
 		size_t bitfield_bit_offset = 0;
+		size_t layout_member_size = member_size;
 		if (!is_union && bitfield_width.has_value()) {
 			size_t width = *bitfield_width;
 			size_t storage_bits = member_size * 8;
@@ -116,12 +136,13 @@ struct StructTypeInfo {
 
 			if (width == 0) {
 				// Zero-width bitfield forces alignment to next allocation unit boundary
-				total_size = toSizeInBytes((toSizeT(total_size) + effective_alignment - 1) & ~(effective_alignment - 1));
+				layout_data_size = toSizeInBytes((toSizeT(layout_data_size) + effective_alignment - 1) & ~(effective_alignment - 1));
+				total_size = toSizeInBytes(std::max(toSizeT(total_size), toSizeT(layout_data_size)));
 				active_bitfield_unit_size = 0;
 				active_bitfield_bits_used = 0;
 				active_bitfield_unit_alignment = 0;
 				active_bitfield_type = TypeCategory::Invalid;
-				offset = toSizeT(total_size);
+				offset = toSizeT(layout_data_size);
 			} else {
 				bool can_pack_into_active_unit =
 					active_bitfield_unit_size == member_size &&
@@ -130,13 +151,14 @@ struct StructTypeInfo {
 					(active_bitfield_bits_used + width) <= storage_bits;
 
 				if (!can_pack_into_active_unit) {
-					total_size = toSizeInBytes((toSizeT(total_size) + effective_alignment - 1) & ~(effective_alignment - 1));
-					active_bitfield_unit_offset = toSizeT(total_size);
+					layout_data_size = toSizeInBytes((toSizeT(layout_data_size) + effective_alignment - 1) & ~(effective_alignment - 1));
+					active_bitfield_unit_offset = toSizeT(layout_data_size);
 					active_bitfield_unit_size = member_size;
 					active_bitfield_unit_alignment = effective_alignment;
 					active_bitfield_bits_used = 0;
 					active_bitfield_type = type_index.category();
-					total_size = toSizeInBytes(toSizeT(total_size) + member_size);
+					layout_data_size = toSizeInBytes(toSizeT(layout_data_size) + member_size);
+					total_size = toSizeInBytes(std::max(toSizeT(total_size), toSizeT(layout_data_size)));
 				}
 
 				offset = active_bitfield_unit_offset;
@@ -159,7 +181,26 @@ struct StructTypeInfo {
 			active_bitfield_unit_alignment = 0;
 			active_bitfield_type = TypeCategory::Invalid;
 			if (!placed_in_active_bitfield_unit) {
-				offset = ((toSizeT(total_size) + effective_alignment - 1) & ~(effective_alignment - 1));
+				offset = ((toSizeT(layout_data_size) + effective_alignment - 1) & ~(effective_alignment - 1));
+			}
+		}
+
+		const StructTypeInfo* member_struct_info = nullptr;
+		bool is_empty_layout_member = false;
+		if (!is_union && !bitfield_width.has_value()) {
+			member_struct_info = tryGetStructTypeInfo(type_index);
+			is_empty_layout_member = member_struct_info && member_struct_info->isEmptyLayoutLike();
+			bool needs_distinct_empty_address = member_struct_info &&
+												is_empty_layout_member &&
+												hasCommonLeadingEmptyTypeAtOffset(*member_struct_info, offset);
+			if (needs_distinct_empty_address) {
+				offset = alignLayoutSize(offset + 1, effective_alignment);
+			}
+			bool is_zero_size_nua_empty_member = is_no_unique_address && is_empty_layout_member;
+			if (is_zero_size_nua_empty_member) {
+				// [[no_unique_address]] empty members remain zero-size even when their
+				// offset was bumped to keep same-type subobjects at distinct addresses.
+				layout_member_size = 0;
 			}
 		}
 
@@ -173,18 +214,33 @@ struct StructTypeInfo {
 							 access, std::move(default_initializer), reference_qualifier,
 							 referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
 		members.back().bitfield_bit_offset = bitfield_bit_offset;
+		members.back().is_no_unique_address = is_no_unique_address;
 		if (function_sig.has_value()) {
 			members.back().function_signature = std::move(function_sig);
 		}
 
 		// Update struct size and alignment
 		if (is_union) {
+			layout_data_size = toSizeInBytes(std::max(toSizeT(layout_data_size), member_size));
 			total_size = toSizeInBytes(std::max(toSizeT(total_size), member_size));
 		} else if (!bitfield_width.has_value()) {
+			size_t data_extent = offset + layout_member_size;
+			size_t object_extent = data_extent;
+			if (is_no_unique_address && is_empty_layout_member) {
+				// Zero-size [[no_unique_address]] members do not advance the placement cursor,
+				// but the complete object still needs to cover any distinct address we assigned,
+				// e.g. when avoiding same-type overlap.
+				data_extent = toSizeT(layout_data_size);
+				// `offset + 1` keeps the complete object large enough to contain the
+				// byte whose address we used to distinguish this empty subobject.
+				object_extent = std::max(object_extent, offset + 1);
+			}
 			if (placed_in_active_bitfield_unit) {
-				total_size = toSizeInBytes(std::max(toSizeT(total_size), offset + member_size));
+				layout_data_size = toSizeInBytes(std::max(toSizeT(layout_data_size), data_extent));
+				total_size = toSizeInBytes(std::max(toSizeT(total_size), object_extent));
 			} else {
-				total_size = toSizeInBytes(offset + member_size);
+				layout_data_size = toSizeInBytes(data_extent);
+				total_size = toSizeInBytes(std::max(toSizeT(total_size), object_extent));
 			}
 		}
 		if (!isZeroWidthBitfield(bitfield_width)) {
@@ -275,8 +331,15 @@ struct StructTypeInfo {
 	const std::string& getFinalizationError() const { return finalization_error_; }
 
 	SizeInBits sizeInBits() const { return toBits(sizeInBytes()); }
+	// Use this when later layout needs the furthest offset already reserved by either
+	// ordinary member placement (`layout_data_size`) or complete-object extent tracking
+	// (`total_size`) for zero-size [[no_unique_address]] empties at bumped offsets.
+	size_t currentLayoutOffset() const {
+		return std::max(toSizeT(total_size), toSizeT(layout_data_size));
+	}
+
 	SizeInBytes sizeInBytes() const {
-		SizeInBytes size = total_size;
+		SizeInBytes size = toSizeInBytes(currentLayoutOffset());
 		if (layout_is_complete && !hasDependentOrIncompleteLayout()) {
 			enforceMinimumCompleteObjectSize(size, alignment);
 		}
@@ -284,7 +347,11 @@ struct StructTypeInfo {
 	}
 
 	SizeInBytes baseSubobjectSizeInBytes() const {
-		return non_virtual_size.is_set() ? non_virtual_size : total_size;
+		// Base subobjects do NOT get the minimum-complete-object-size bump
+		// (empty bases have size 0 as base subobjects per the Itanium ABI).
+		// Use currentLayoutOffset() directly instead of sizeInBytes() which
+		// applies enforceMinimumCompleteObjectSize.
+		return non_virtual_size.is_set() ? non_virtual_size : toSizeInBytes(currentLayoutOffset());
 	}
 
 	static size_t alignLayoutSize(size_t size, size_t alignment_value) {
@@ -317,7 +384,8 @@ struct StructTypeInfo {
 
 	void finalizeLayoutSize(size_t raw_size, size_t final_alignment) {
 		alignment = final_alignment;
-		total_size = toSizeInBytes(alignLayoutSize(raw_size, alignment));
+		layout_data_size = toSizeInBytes(raw_size);
+		total_size = toSizeInBytes(alignLayoutSize(std::max(raw_size, toSizeT(total_size)), alignment));
 		layout_is_complete = true;
 	}
 
@@ -357,6 +425,9 @@ struct StructTypeInfo {
 
 	// Recalculate member offsets, size, and alignment from the current members.
 	void recalculateLayout();
+
+	bool isEmptyLayoutLike() const;
+	bool hasCommonLeadingEmptyTypeAtOffset(const StructTypeInfo& candidate_info, size_t offset) const;
 
 	// Build vtable for virtual functions (called during finalization)
 	// Returns false if semantic errors were detected (e.g., overriding final function)

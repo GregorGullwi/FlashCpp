@@ -538,6 +538,12 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 		} else if (k == "virtual"_tok) {
 			specs |= MLS_Virtual;
 			advance();
+		} else if (k == "["_tok && peek_info(1).value() == "[") {
+			CppAttributeInfo attribute_info = consume_cpp_attribute_blocks();
+			if (attribute_info.has_no_unique_address) {
+				specs |= MLS_NoUniqueAddress;
+			}
+			skip_gcc_attributes();
 		} else {
 			break;
 		}

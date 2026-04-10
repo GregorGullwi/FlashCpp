@@ -993,6 +993,7 @@ struct StructMember {
 	std::vector<size_t> array_dimensions;  // Dimensions for multidimensional arrays
 	int pointer_depth;	   // Pointer indirection level (e.g., int* = 1, int** = 2)
 	std::optional<FunctionSignature> function_signature;	 // For FunctionPointer members: stores return type and parameter types
+	bool is_no_unique_address = false;
 
 	// Convenience helpers for common checks
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
