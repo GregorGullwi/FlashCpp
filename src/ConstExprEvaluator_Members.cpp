@@ -1805,42 +1805,43 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							return result;
 						}
 					}
-					// Case 3: nested subscript assignment for multi-dimensional arrays
-					// Pattern: mat[i][j] = val where mat is a local 2D array binding.
-					// subscript.array_expr() is an ASTNode containing ArraySubscriptNode(mat, i).
+					// Case 3: nested subscript assignment for multi-dimensional local arrays.
+					// Pattern: arr[i][j]...[k] = value.
 					{
-						const ASTNode& inner_arr_expr = subscript.array_expr();
-						const ArraySubscriptNode* inner_sub = nullptr;
-						if (inner_arr_expr.is<ExpressionNode>()) {
-							const ExpressionNode& ie = inner_arr_expr.as<ExpressionNode>();
-							inner_sub = std::get_if<ArraySubscriptNode>(&ie);
+						std::vector<int64_t> nested_indices;
+						nested_indices.push_back(idx);
+
+						ASTNode base_expr = subscript.array_expr();
+						while (const ArraySubscriptNode* parent_subscript = tryGetNode<ArraySubscriptNode>(base_expr)) {
+							auto parent_idx_result = evaluate_expression_with_bindings(parent_subscript->index_expr(), bindings, context);
+							if (!parent_idx_result.success())
+								return parent_idx_result;
+							nested_indices.push_back(parent_idx_result.as_int());
+							base_expr = parent_subscript->array_expr();
 						}
-						if (inner_sub) {
-							// Evaluate outer index (i in mat[i][j])
-							auto outer_idx_result = evaluate_expression_with_bindings(inner_sub->index_expr(), bindings, context);
-							if (!outer_idx_result.success())
-								return outer_idx_result;
-							int64_t outer_idx = outer_idx_result.as_int();
 
-							// Extract base array name from the innermost identifier
-							std::string_view base_name = getIdentifierNameFromAstNode(inner_sub->array_expr());
-
+						if (nested_indices.size() > 1) {
+							std::string_view base_name = getIdentifierNameFromAstNode(base_expr);
 							if (!base_name.empty()) {
 								EvalResult* base_bound = findMutableBindingValue(base_name, bindings, context);
 								if (base_bound && base_bound->is_array) {
-									if (outer_idx < 0 || static_cast<size_t>(outer_idx) >= base_bound->array_elements.size()) {
-										return EvalResult::error("Outer array index out of bounds in constexpr 2D subscript assignment");
-									}
-									EvalResult& row = base_bound->array_elements[static_cast<size_t>(outer_idx)];
-									if (row.is_array) {
-										if (idx < 0 || static_cast<size_t>(idx) >= row.array_elements.size()) {
-											return EvalResult::error("Inner array index out of bounds in constexpr 2D subscript assignment");
+									EvalResult* current = base_bound;
+									for (auto it = nested_indices.rbegin(); it != nested_indices.rend(); ++it) {
+										int64_t current_idx = *it;
+										if (!current->is_array) {
+											return EvalResult::error("Subscript assignment target is not an array in constexpr multi-dimensional subscript assignment");
 										}
-										auto result = apply_op_to(row.array_elements[static_cast<size_t>(idx)], rhs_result);
-										if (result.success()) {
-											refreshPointerSnapshotsForBinding(base_name, *base_bound, bindings, context);
+										if (current_idx < 0 || static_cast<size_t>(current_idx) >= current->array_elements.size()) {
+											return EvalResult::error("Array index out of bounds in constexpr multi-dimensional subscript assignment");
 										}
-										return result;
+										if (it + 1 == nested_indices.rend()) {
+											auto result = apply_op_to(current->array_elements[static_cast<size_t>(current_idx)], rhs_result);
+											if (result.success()) {
+												refreshPointerSnapshotsForBinding(base_name, *base_bound, bindings, context);
+											}
+											return result;
+										}
+										current = &current->array_elements[static_cast<size_t>(current_idx)];
 									}
 								}
 							}
