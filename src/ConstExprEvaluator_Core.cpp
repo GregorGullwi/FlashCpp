@@ -3741,9 +3741,13 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 								const auto& arguments = call_expr.arguments();
 								const auto& parameters = func_decl.parameter_nodes();
 
-								// This parameter count check implicitly ensures we're calling static members:
-								// Non-static members would have a conceptual 'this' parameter that we're not providing
-								if (arguments.size() == parameters.size()) {
+								// Use range-based arity check to support trailing default arguments.
+								// Non-static members are filtered out: they have no implicit 'this' in
+								// parameter_nodes(), but the call has no receiver, so evaluate_function_call_with_bindings
+								// will fail naturally if a non-static member is incorrectly matched.
+								const size_t parameter_count = parameters.size();
+								const size_t min_required = countMinRequiredArgs(func_decl);
+								if (arguments.size() >= min_required && arguments.size() <= parameter_count) {
 									std::unordered_map<std::string_view, EvalResult> empty_bindings;
 									return evaluate_function_call_with_template_context(
 										func_decl,
@@ -3815,7 +3819,9 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		const auto& arguments = call_expr.arguments();
 		const auto& parameters = func_decl.parameter_nodes();
 
-		if (arguments.size() != parameters.size()) {
+		const size_t parameter_count = parameters.size();
+		const size_t min_required = countMinRequiredArgs(func_decl);
+		if (arguments.size() < min_required || arguments.size() > parameter_count) {
 			return EvalResult::error("Function argument count mismatch in constant expression");
 		}
 
@@ -3840,12 +3846,16 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			all_overloads = context.symbols->lookup_all(func_name);
 		}
 
-		// Look for a constexpr FunctionDeclarationNode that matches the argument count
+		// Look for a constexpr FunctionDeclarationNode whose callable arity covers the
+		// explicit argument count (default arguments may fill the rest).
 		for (const auto& overload : all_overloads) {
 			if (overload.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& candidate = overload.as<FunctionDeclarationNode>();
+				const size_t parameter_count = candidate.parameter_nodes().size();
+				const size_t min_required = countMinRequiredArgs(candidate);
 				if ((candidate.is_constexpr() || candidate.is_consteval()) &&
-					candidate.parameter_nodes().size() == arguments.size()) {
+					arguments.size() >= min_required &&
+					arguments.size() <= parameter_count) {
 					// Found a potential match - try to evaluate it
 					std::unordered_map<std::string_view, EvalResult> empty_bindings;
 					return evaluate_function_call_with_bindings(candidate, arguments, empty_bindings, context);
@@ -4008,7 +4018,9 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	// Evaluate arguments
 	const auto& parameters = func_decl.parameter_nodes();
 
-	if (arguments.size() != parameters.size()) {
+	const size_t parameter_count = parameters.size();
+	const size_t min_required = countMinRequiredArgs(func_decl);
+	if (arguments.size() < min_required || arguments.size() > parameter_count) {
 		return EvalResult::error("Function argument count mismatch in constant expression");
 	}
 
