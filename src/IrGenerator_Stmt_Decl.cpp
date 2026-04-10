@@ -76,6 +76,38 @@ bool isExprResultPRValue(const ExprResult& expr_result) {
 		.commit()));
 }
 
+bool isSemaOwnedUnaryOverloadArgShape(std::string_view op) {
+	return op == "!" ||
+		   op == "++" ||
+		   op == "--";
+}
+
+bool isSemaOwnedBinaryOverloadArgShape(std::string_view op) {
+	// These operators already have sema-owned result typing from child types and
+	// value-category rules alone, so normalized bodies should not rebuild their
+	// overload-resolution argument type in codegen.
+	return op == "==" ||
+		   op == "!=" ||
+		   op == "<" ||
+		   op == ">" ||
+		   op == "<=" ||
+		   op == ">=" ||
+		   op == "&&" ||
+		   op == "||" ||
+		   op == "," ||
+		   op == "=" ||
+		   op == "+=" ||
+		   op == "-=" ||
+		   op == "*=" ||
+		   op == "/=" ||
+		   op == "%=" ||
+		   op == "&=" ||
+		   op == "|=" ||
+		   op == "^=" ||
+		   op == "<<=" ||
+		   op == ">>=";
+}
+
 bool isDirectObjectPrvalueBase(const ASTNode& node) {
 	if (!node.is<ExpressionNode>()) {
 		return false;
@@ -125,32 +157,9 @@ bool allowsLegacyOverloadArgFallbackInNormalizedBody(const ASTNode& arg) {
 							 std::is_same_v<T, CallExprNode>) {
 			return false;
 		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-			const std::string_view op = inner.op();
-			return op != "!" &&
-				   op != "++" &&
-				   op != "--";
+			return !isSemaOwnedUnaryOverloadArgShape(inner.op());
 		} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
-			const std::string_view op = inner.op();
-			return op != "==" &&
-				   op != "!=" &&
-				   op != "<" &&
-				   op != ">" &&
-				   op != "<=" &&
-				   op != ">=" &&
-				   op != "&&" &&
-				   op != "||" &&
-				   op != "," &&
-				   op != "=" &&
-				   op != "+=" &&
-				   op != "-=" &&
-				   op != "*=" &&
-				   op != "/=" &&
-				   op != "%=" &&
-				   op != "&=" &&
-				   op != "|=" &&
-				   op != "^=" &&
-				   op != "<<=" &&
-				   op != ">>=";
+			return !isSemaOwnedBinaryOverloadArgShape(inner.op());
 		}
 		return true;
 	},
