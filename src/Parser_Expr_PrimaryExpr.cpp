@@ -910,6 +910,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 	if ((current_token_.type() == Token::Type::Keyword && current_token_.value() == "decltype") ||
 		(current_token_.type() == Token::Type::Identifier &&
 		 (current_token_.value() == "__typeof__" || current_token_.value() == "__typeof"))) {
+		Token decltype_token = current_token_;
 		ParseResult decltype_result = parse_decltype_specifier();
 		if (decltype_result.is_error()) {
 			return decltype_result;
@@ -917,11 +918,71 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		if (!decltype_result.node().has_value() || !decltype_result.node()->is<TypeSpecifierNode>()) {
 			return ParseResult::error("Expected type specifier after decltype expression", current_token_);
 		}
+
+		auto parse_decltype_functional_cast = [&](const ASTNode& type_node) -> ParseResult {
+			if (current_token_.kind().is_eof() ||
+				(current_token_.value() != "(" && current_token_.value() != "{")) {
+				return ParseResult::error("Expected '(' or '{' for decltype functional cast", decltype_token);
+			}
+
+			Token init_token = current_token_;
+			bool is_brace_init = (current_token_.value() == "{");
+			std::string_view closing_delimiter = is_brace_init ? "}"sv : ")"sv;
+			advance(); // consume '(' or '{'
+
+			if (current_token_.value() == closing_delimiter) {
+				advance(); // consume ')' or '}'
+				ChunkedVector<ASTNode> args;
+				auto ctor_result = emplace_node<ExpressionNode>(
+					ConstructorCallNode(type_node, std::move(args), is_brace_init ? init_token : decltype_token));
+				return ParseResult::success(ctor_result);
+			}
+
+			ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (expr_result.is_error()) {
+				return expr_result;
+			}
+
+			std::optional<ASTNode> final_expr = expr_result.node();
+			if (peek() == "..."_tok) {
+				Token ellipsis_token = peek_info();
+				advance(); // consume '...'
+				if (final_expr.has_value()) {
+					final_expr = emplace_node<ExpressionNode>(
+						PackExpansionExprNode(*final_expr, ellipsis_token));
+				}
+			}
+
+			if (is_brace_init) {
+				if (!consume("}"_tok)) {
+					return ParseResult::error("Expected '}' after decltype brace construction", current_token_);
+				}
+
+				ChunkedVector<ASTNode> args;
+				args.push_back(*final_expr);
+				auto ctor_result = emplace_node<ExpressionNode>(
+					ConstructorCallNode(type_node, std::move(args), init_token));
+				return ParseResult::success(ctor_result);
+			}
+
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after decltype functional cast expression", current_token_);
+			}
+
+			auto cast_result = emplace_node<ExpressionNode>(
+				StaticCastNode(type_node, *final_expr, decltype_token));
+			return ParseResult::success(cast_result);
+		};
+
+		ASTNode decltype_type_node = *decltype_result.node();
+		if (current_token_.value() == "(" || current_token_.value() == "{") {
+			return parse_decltype_functional_cast(decltype_type_node);
+		}
 		if (current_token_.value() != "::") {
-			return ParseResult::error("Expected '::' after decltype type expression", current_token_);
+			return ParseResult::error("Expected '::', '(' or '{' after decltype type expression", current_token_);
 		}
 
-		const TypeSpecifierNode& decltype_type = decltype_result.node()->as<TypeSpecifierNode>();
+		const TypeSpecifierNode& decltype_type = decltype_type_node.as<TypeSpecifierNode>();
 		TypeIndex lookup_type_index = decltype_type.type_index();
 		if (lookup_type_index.is_valid()) {
 			const CanonicalTypeAlias canonical_alias = canonicalize_type_alias(lookup_type_index);
