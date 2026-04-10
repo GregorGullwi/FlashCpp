@@ -422,9 +422,15 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		emit_scalar_new_initializer(result_var);
 	}
 
-		// Return pointer to allocated memory
-		// The result is a pointer, so we return it with pointer_depth + 1
-	return makeExprResult(nativeTypeIndex(allocated_type_enum), SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+		// Return the pointer value produced by operator new / placement new.
+		// Preserve the pointee type identity (including struct type_index) and add
+		// one level of indirection to the allocated type's existing pointer depth.
+	return makeExprResult(
+		type_spec.type_index().withCategory(allocated_type_enum),
+		SizeInBits{POINTER_SIZE_BITS},
+		IrOperand{result_var},
+		PointerDepth{pointer_depth + 1},
+		ValueStorage::ContainsData);
 }
 
 ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
