@@ -737,11 +737,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		normalized_template_name = template_name.substr(last_colon + 2);
 	}
 	StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
-	auto cache_key = FlashCpp::makeInstantiationKey(template_name_handle, template_args);
-	auto cached = gTemplateRegistry.getInstantiation(cache_key);
-	if (cached.has_value()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} args", template_name, template_args.size());
-		return std::nullopt; // Already instantiated - return nullopt to indicate success
+	bool can_use_raw_cache_key = true;
+	if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+		template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+		const auto& raw_params = template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+		if (template_args.size() < raw_params.size()) {
+			can_use_raw_cache_key = false;
+		}
+	}
+	if (can_use_raw_cache_key) {
+		auto cache_key = FlashCpp::makeInstantiationKey(template_name_handle, template_args);
+		auto cached = gTemplateRegistry.getInstantiation(cache_key);
+		if (cached.has_value()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} args", template_name, template_args.size());
+			return std::nullopt; // Already instantiated - return nullopt to indicate success
+		}
 	}
 
 	// Build InstantiationKey for cycle detection
@@ -3797,6 +3807,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Use the filled template args for the rest of the function
 	const std::vector<TemplateTypeArg>& template_args_to_use = filled_template_args;
+	auto normalized_cache_key = FlashCpp::makeInstantiationKey(template_name_handle, template_args_to_use);
+	if (auto normalized_cached = gTemplateRegistry.getInstantiation(normalized_cache_key); normalized_cached.has_value()) {
+		FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} normalized args", template_name, template_args_to_use.size());
+		return std::nullopt;
+	}
 
 	// Build substitution maps for dependent template entities (used by deferred bases and decltype bases)
 	std::unordered_map<std::string_view, TemplateTypeArg> name_substitution_map;
