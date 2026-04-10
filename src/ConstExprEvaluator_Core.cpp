@@ -3815,7 +3815,9 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		const auto& arguments = call_expr.arguments();
 		const auto& parameters = func_decl.parameter_nodes();
 
-		if (arguments.size() != parameters.size()) {
+		const size_t parameter_count = parameters.size();
+		const size_t min_required = countMinRequiredArgs(func_decl);
+		if (arguments.size() < min_required || arguments.size() > parameter_count) {
 			return EvalResult::error("Function argument count mismatch in constant expression");
 		}
 
@@ -4012,7 +4014,9 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	// Evaluate arguments
 	const auto& parameters = func_decl.parameter_nodes();
 
-	if (arguments.size() != parameters.size()) {
+	const size_t parameter_count = parameters.size();
+	const size_t min_required = countMinRequiredArgs(func_decl);
+	if (arguments.size() < min_required || arguments.size() > parameter_count) {
 		return EvalResult::error("Function argument count mismatch in constant expression");
 	}
 
