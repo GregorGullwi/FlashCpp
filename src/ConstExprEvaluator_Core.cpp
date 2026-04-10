@@ -1839,7 +1839,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		}
 		case TypeCategory::Struct:
 		case TypeCategory::UserDefined: {
-			return EvalResult::error("Struct default construction did not materialize an object");
+			return EvalResult::error("Failed to materialize default-constructed struct object");
 		}
 		case TypeCategory::TypeAlias: {
 			// Resolve the alias to determine the correct zero-init representation.
@@ -1849,7 +1849,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 			if (const TypeInfo* alias_info = tryGetTypeInfo(ti)) {
 				TypeCategory resolved = alias_info->category();
 				if (resolved == TypeCategory::Struct || resolved == TypeCategory::UserDefined) {
-					return EvalResult::error("Aliased struct default construction did not materialize an object");
+					return EvalResult::error("Failed to materialize default-constructed aliased struct object");
 				}
 				if (is_unsigned_integer_type(resolved)) {
 					EvalResult result = EvalResult::from_uint(0);
