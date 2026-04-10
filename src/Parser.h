@@ -1255,11 +1255,16 @@ private:
 	struct AliasTemplateMaterializationResult {
 		std::string_view instantiated_name{};
 		const TypeInfo* resolved_type_info = nullptr;
+		std::optional<ASTNode> instantiated_struct_node{};  // Set when try_instantiate_class_template returns a StructDeclarationNode
 	};
 	std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);	 // NEW: Get mangled name for instantiated class
 	std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, const std::vector<TemplateTypeArg>& template_args);  // Helper: Instantiate base class template and add to AST
 	AliasTemplateMaterializationResult materializeTemplateInstantiationForLookup(
 		std::string_view template_name,
+		const std::vector<TemplateTypeArg>& template_args);
+	AliasTemplateMaterializationResult materializePrimaryTemplateOwnerForLookup(
+		std::string_view primary_template_name,
+		std::string_view fallback_template_name,
 		const std::vector<TemplateTypeArg>& template_args);
 	const TypeInfo* materializeInstantiatedMemberAliasTarget(
 		const TypeSpecifierNode& alias_type_spec,

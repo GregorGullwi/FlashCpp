@@ -782,7 +782,82 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return std::nullopt;
 		}
 
-		return substituteTemplateParameters(default_init.value(), params, args);
+		ASTNode substituted_default = substituteTemplateParameters(default_init.value(), params, args);
+		if (!substituted_default.is<ExpressionNode>()) {
+			return substituted_default;
+		}
+
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		eval_ctx.parser = this;
+		eval_ctx.sema = getActiveSemanticAnalysis();
+		eval_ctx.template_args = args;
+		eval_ctx.template_param_names.reserve(params.size());
+		for (const auto& param : params) {
+			if (param.is<TemplateParameterNode>()) {
+				eval_ctx.template_param_names.push_back(param.as<TemplateParameterNode>().name());
+			}
+		}
+
+		auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default, eval_ctx);
+		if (!eval_result.success()) {
+			return substituted_default;
+		}
+
+		if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
+			Token bool_token(
+				Token::Type::Keyword,
+				*bool_value ? "true"sv : "false"sv,
+				0,
+				0,
+				0);
+			return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, *bool_value));
+		}
+
+		if (const auto* unsigned_value = std::get_if<unsigned long long>(&eval_result.value)) {
+			TypeCategory value_category = eval_result.exact_type.has_value()
+				? eval_result.exact_type->category()
+				: TypeCategory::UnsignedLongLong;
+			const int size_bits = eval_result.exact_type.has_value()
+				? get_type_size_bits(eval_result.exact_type->category())
+				: 64;
+			Token literal_token(
+				Token::Type::Literal,
+				StringBuilder().append(static_cast<uint64_t>(*unsigned_value)).commit(),
+				0,
+				0,
+				0);
+			return emplace_node<ExpressionNode>(
+				NumericLiteralNode(
+					literal_token,
+					*unsigned_value,
+					value_category,
+					TypeQualifier::None,
+					size_bits));
+		}
+
+		if (const auto* signed_value = std::get_if<long long>(&eval_result.value)) {
+			TypeCategory value_category = eval_result.exact_type.has_value()
+				? eval_result.exact_type->category()
+				: TypeCategory::LongLong;
+			const int size_bits = eval_result.exact_type.has_value()
+				? get_type_size_bits(eval_result.exact_type->category())
+				: 64;
+			Token literal_token(
+				Token::Type::Literal,
+				StringBuilder().append(static_cast<int64_t>(*signed_value)).commit(),
+				0,
+				0,
+				0);
+			return emplace_node<ExpressionNode>(
+				NumericLiteralNode(
+					literal_token,
+					static_cast<unsigned long long>(*signed_value),
+					value_category,
+					TypeQualifier::None,
+					size_bits));
+		}
+
+		return substituted_default;
 	};
 
 	auto get_substituted_type_size_bytes = [&](TypeIndex substituted_type_index) -> size_t {

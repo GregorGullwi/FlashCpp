@@ -4638,6 +4638,9 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const CallInfo& call_in
 														 const char* context_description) {
 	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
 	if (!func_decl) {
+		for (const ASTNode& arg : *call_info.arguments) {
+			buildOverloadResolutionArgType(arg, nullptr);
+		}
 		resolved_direct_call_table_.erase(call_key);
 		return;
 	}

@@ -3845,6 +3845,74 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 		return EvalResult::error("Internal error: unresolved member source in member access");
 	}
 
+	if (resolved_member.member_info &&
+		is_struct_type(resolved_member.member_info->type_index.category())) {
+		const TypeIndex member_type_index = resolved_member.member_info->type_index;
+		const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index);
+		const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
+		if (member_struct_info) {
+			const ASTNode& member_initializer = resolved_member.initializer.value();
+			const auto* member_bindings = resolved_member.evaluation_bindings.empty()
+											 ? nullptr
+											 : &resolved_member.evaluation_bindings;
+
+			if (member_initializer.is<InitializerListNode>()) {
+				return materialize_aggregate_object_value(
+					member_struct_info,
+					member_type_index,
+					member_initializer.as<InitializerListNode>(),
+					context,
+					member_bindings);
+			}
+
+			if (const ConstructorCallNode* ctor_call = extract_constructor_call(resolved_member.initializer)) {
+				return materialize_constructor_object_value(*ctor_call, context, member_bindings);
+			}
+
+			EvalResult init_arg_result = member_bindings
+											 ? evaluate_expression_with_bindings_const(member_initializer, *member_bindings, context)
+											 : evaluate(member_initializer, context);
+			if (!init_arg_result.success()) {
+				return init_arg_result;
+			}
+			if (init_arg_result.object_type_index.is_valid() || !init_arg_result.object_member_bindings.empty()) {
+				return init_arg_result;
+			}
+
+			auto ctor_resolution = resolve_constructor_overload_arity(*member_struct_info, 1, true);
+			const ConstructorDeclarationNode* matching_ctor = ctor_resolution.selected_overload;
+			if (matching_ctor) {
+				std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+				std::vector<EvalResult> ctor_args;
+				ctor_args.push_back(std::move(init_arg_result));
+				auto bind_result = bind_pre_evaluated_arguments(
+					matching_ctor->parameter_nodes(),
+					ctor_args,
+					ctor_param_bindings,
+					context,
+					"Failed to bind constructor parameter while materializing struct-valued member access",
+					true);
+				if (!bind_result.success()) {
+					return bind_result;
+				}
+
+				EvalResult object_result = EvalResult::from_int(0LL);
+				object_result.object_type_index = member_type_index;
+				auto materialize_result = materialize_members_from_constructor(
+					member_struct_info,
+					*matching_ctor,
+					ctor_param_bindings,
+					object_result.object_member_bindings,
+					context,
+					false);
+				if (!materialize_result.success()) {
+					return materialize_result;
+				}
+				return object_result;
+			}
+		}
+	}
+
 	if (!resolved_member.evaluation_bindings.empty()) {
 		return evaluate_expression_with_bindings(
 			resolved_member.initializer.value(),
@@ -4230,16 +4298,83 @@ EvalResult Evaluator::evaluate_nested_member_access(
 
 	// Get the base variable name
 	std::string_view base_var_name;
-
-	// Handle deeper nesting recursively
 	if (base_obj_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr_node = base_obj_expr.as<ExpressionNode>();
-		if (std::holds_alternative<MemberAccessNode>(expr_node)) {
-			// Even deeper nesting - this requires more complex logic
-			// For now, we support up to one level of nesting
-			return EvalResult::error("Deeply nested member access (more than 2 levels) not yet supported");
+		if (const auto* nested_access = std::get_if<MemberAccessNode>(&expr_node)) {
+			EvalResult intermediate_result = evaluate_nested_member_access(*nested_access, intermediate_member, context);
+			if (!intermediate_result.success()) {
+				return intermediate_result;
+			}
+
+			auto final_member_it = intermediate_result.object_member_bindings.find(final_member_name);
+			if (final_member_it != intermediate_result.object_member_bindings.end()) {
+				return final_member_it->second;
+			}
+			if (intermediate_result.object_member_bindings.empty() &&
+				!intermediate_result.object_type_index.is_valid() &&
+				context.parser) {
+				TypeIndex base_type_index;
+				if (auto parsed_type_opt = context.parser->get_expression_type(base_obj_expr); parsed_type_opt.has_value()) {
+					base_type_index = parsed_type_opt->type_index();
+				}
+				if (base_type_index.is_valid()) {
+					const TypeInfo* base_type_info = tryGetTypeInfo(base_type_index);
+					const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+					const StructMember* intermediate_member_info = base_struct_info ? base_struct_info->findMember(intermediate_member) : nullptr;
+					if (intermediate_member_info &&
+						is_struct_type(intermediate_member_info->type_index.category())) {
+						const TypeInfo* intermediate_type_info = tryGetTypeInfo(intermediate_member_info->type_index);
+						const StructTypeInfo* intermediate_struct_info = intermediate_type_info ? intermediate_type_info->getStructInfo() : nullptr;
+						if (intermediate_struct_info) {
+							auto ctor_resolution = resolve_constructor_overload_arity(*intermediate_struct_info, 1, true);
+							const ConstructorDeclarationNode* matching_ctor = ctor_resolution.selected_overload;
+							if (matching_ctor) {
+								std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+								std::vector<EvalResult> ctor_args;
+								ctor_args.push_back(std::move(intermediate_result));
+								auto bind_result = bind_pre_evaluated_arguments(
+									matching_ctor->parameter_nodes(),
+									ctor_args,
+									ctor_param_bindings,
+									context,
+									"Failed to bind constructor parameter for intermediate struct during deep nested member access",
+									true);
+								if (!bind_result.success()) {
+									return bind_result;
+								}
+
+								EvalResult materialized_result = EvalResult::from_int(0LL);
+								materialized_result.object_type_index = intermediate_member_info->type_index;
+								auto materialize_result = materialize_members_from_constructor(
+									intermediate_struct_info,
+									*matching_ctor,
+									ctor_param_bindings,
+									materialized_result.object_member_bindings,
+									context,
+									false);
+								if (!materialize_result.success()) {
+									return materialize_result;
+								}
+
+								final_member_it = materialized_result.object_member_bindings.find(final_member_name);
+								if (final_member_it != materialized_result.object_member_bindings.end()) {
+									return final_member_it->second;
+								}
+							}
+						}
+					}
+				}
+			}
+
+			return EvalResult::error(
+				std::string(StringBuilder()
+								.append("Final member '"sv)
+								.append(final_member_name)
+								.append("' not found in nested member access"sv)
+								.commit()));
 		}
 	}
+
 	const IdentifierNode* base_identifier = tryGetIdentifier(base_obj_expr);
 	if (!base_identifier) {
 		if (base_obj_expr.is<ExpressionNode>()) {
@@ -4248,7 +4383,19 @@ EvalResult Evaluator::evaluate_nested_member_access(
 				return base_result;
 			}
 
-			const TypeInfo* base_type_info = tryGetTypeInfo(base_result.object_type_index);
+			TypeIndex base_type_index = base_result.object_type_index;
+			if (!base_type_index.is_valid()) {
+				if (auto base_type_opt = try_get_type_from_eval_result(base_result); base_type_opt.has_value()) {
+					base_type_index = base_type_opt->type_index();
+				}
+			}
+			if (!base_type_index.is_valid() && context.parser) {
+				if (auto parsed_type_opt = context.parser->get_expression_type(base_obj_expr); parsed_type_opt.has_value()) {
+					base_type_index = parsed_type_opt->type_index();
+				}
+			}
+
+			const TypeInfo* base_type_info = tryGetTypeInfo(base_type_index);
 			if (!base_type_info) {
 				return EvalResult::error("Base expression has invalid or out-of-bounds type index in nested member access");
 			}
@@ -4299,7 +4446,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 							ctor_args,
 							ctor_param_bindings,
 							context,
-							"Invalid parameter node while materializing intermediate struct member for nested member access",
+							"Failed to bind constructor parameter while materializing intermediate struct member for nested member access",
 							true);
 						if (!bind_result.success()) {
 							return bind_result;
@@ -4389,10 +4536,55 @@ EvalResult Evaluator::evaluate_nested_member_access(
 											: &intermediate_member_source.evaluation_bindings;
 
 	if (intermediate_member_source.value.has_value()) {
-		const EvalResult& intermediate_value = intermediate_member_source.value.value();
+		EvalResult intermediate_value = intermediate_member_source.value.value();
 		auto final_member_it = intermediate_value.object_member_bindings.find(final_member_name);
 		if (final_member_it != intermediate_value.object_member_bindings.end()) {
 			return final_member_it->second;
+		}
+		if (intermediate_member_source.member_info &&
+			!intermediate_value.object_type_index.is_valid() &&
+			intermediate_value.object_member_bindings.empty() &&
+			is_struct_type(intermediate_member_source.member_info->type_index.category())) {
+			const TypeIndex intermediate_type_index = intermediate_member_source.member_info->type_index;
+			const TypeInfo* intermediate_type_info = tryGetTypeInfo(intermediate_type_index);
+			const StructTypeInfo* intermediate_struct_info = intermediate_type_info ? intermediate_type_info->getStructInfo() : nullptr;
+			if (intermediate_struct_info) {
+				auto ctor_resolution = resolve_constructor_overload_arity(*intermediate_struct_info, 1, true);
+				const ConstructorDeclarationNode* matching_ctor = ctor_resolution.selected_overload;
+				if (matching_ctor) {
+					std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+					std::vector<EvalResult> ctor_args;
+					ctor_args.push_back(intermediate_value);
+					auto bind_result = bind_pre_evaluated_arguments(
+						matching_ctor->parameter_nodes(),
+						ctor_args,
+						ctor_param_bindings,
+						context,
+						"Failed to bind constructor parameter while materializing nested constexpr member access",
+						true);
+					if (!bind_result.success()) {
+						return bind_result;
+					}
+
+					EvalResult materialized_value = EvalResult::from_int(0LL);
+					materialized_value.object_type_index = intermediate_type_index;
+					auto materialize_result = materialize_members_from_constructor(
+						intermediate_struct_info,
+						*matching_ctor,
+						ctor_param_bindings,
+						materialized_value.object_member_bindings,
+						context,
+						false);
+					if (!materialize_result.success()) {
+						return materialize_result;
+					}
+
+					final_member_it = materialized_value.object_member_bindings.find(final_member_name);
+					if (final_member_it != materialized_value.object_member_bindings.end()) {
+						return final_member_it->second;
+					}
+				}
+			}
 		}
 		if (!intermediate_member_source.initializer.has_value()) {
 			return EvalResult::error("Final member '" + std::string(final_member_name) + "' not found in inner struct");
