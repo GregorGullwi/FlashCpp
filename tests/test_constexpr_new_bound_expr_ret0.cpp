@@ -30,5 +30,7 @@ constexpr int new_side_effect_args() {
 static_assert(new_side_effect_args() == 8);
 
 int main() {
-	return (new_through_call_arg() == 5 && new_side_effect_args() == 8) ? 0 : 1;
+	if (new_through_call_arg() != 5) return 1;
+	if (new_side_effect_args() != 8) return 2;
+	return 0;
 }
