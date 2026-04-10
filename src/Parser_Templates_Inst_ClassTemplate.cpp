@@ -6387,10 +6387,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
 			const DeclarationNode& decl = func_decl.decl_node();
 
-			// For lazy instantiation, register function for later instantiation instead of instantiating now
+			// For lazy instantiation, register function for later instantiation instead of instantiating now.
+			// Namespaced implicit instantiations intentionally use the same stub path; the
+			// PHASE 2 deferred-body replay block later in this function decides whether their
+			// deferred bodies should be materialized immediately.
 			if (is_implicit_instantiation &&
-				instantiated_name.view().find("::") == std::string_view::npos &&
-				StringTable::getStringView(class_decl.name()).find("::") == std::string_view::npos &&
 				(func_decl.get_definition().has_value() || func_decl.has_template_body_position())) {
 				// Register this member function for lazy instantiation
 				LazyMemberFunctionInfo lazy_info;
@@ -7990,10 +7991,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// PHASE 2: Parse deferred template member function bodies (two-phase lookup)
-	// Now that TypeInfo is fully created and registered in getTypesByNameMap(),
-	// we can parse the member function bodies that were deferred during template definition
-	// This allows static member lookups to work correctly
-	if (!template_class.deferred_bodies().empty()) {
+	// Explicit instantiations still materialize deferred bodies immediately.
+	// Implicit instantiations register signature-only stubs in the lazy registry above;
+	// reparsing every deferred body here would eagerly instantiate unused members and
+	// incorrectly diagnose dependent bodies such as std::pair::swap for const keys.
+	const bool skip_deferred_body_replay_for_namespaced_implicit_instantiation =
+		is_implicit_instantiation && instantiated_name.view().find("::") != std::string_view::npos;
+	if (!skip_deferred_body_replay_for_namespaced_implicit_instantiation && !template_class.deferred_bodies().empty()) {
 		FLASH_LOG(Templates, Debug, "Parsing ", template_class.deferred_bodies().size(),
 				  " deferred template member function bodies for ", instantiated_name);
 

@@ -237,7 +237,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	}
 
 	// Trigger lazy member function instantiation if needed
-	if (!instantiated_func.has_value()) {
+	if (!instantiated_func.has_value() && !in_sfinae_context_) {
 		StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_class_name);
 		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 		FLASH_LOG(Templates, Debug, "Checking lazy instantiation for: ", instantiated_class_name, "::", member_name);
