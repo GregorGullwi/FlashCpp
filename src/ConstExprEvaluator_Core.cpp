@@ -1768,6 +1768,26 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 
 	// Handle empty constructor calls (default/value initialization): Type{}
 	if (args.size() == 0) {
+		if (is_struct_type(type_spec.category())) {
+			return materialize_constructor_object_value(ctor_call, context);
+		}
+		if (type_spec.category() == TypeCategory::TypeAlias) {
+			if (const TypeInfo* alias_info = tryGetTypeInfo(type_spec.type_index())) {
+				if (const StructTypeInfo* struct_info = alias_info->getStructInfo()) {
+					auto ctor_result = try_materialize_struct_from_ctor_args(
+						struct_info,
+						type_spec.type_index(),
+						ctor_call.arguments(),
+						context,
+						false,
+						nullptr);
+					if (ctor_result.has_value()) {
+						return *ctor_result;
+					}
+				}
+			}
+		}
+
 		// For struct types, this is valid - it's default initialization
 		// Return a success result with default value (0 for integers, false for bool, etc.)
 		// This allows the constructor call to be used for template argument deduction
@@ -1819,11 +1839,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		}
 		case TypeCategory::Struct:
 		case TypeCategory::UserDefined: {
-			// For struct types, return a success result with value 0
-			// This indicates successful default construction
-			EvalResult result = EvalResult::from_int(0);
-			result.set_exact_type(type_spec);
-			return result;
+			return EvalResult::error("Struct default construction did not materialize an object");
 		}
 		case TypeCategory::TypeAlias: {
 			// Resolve the alias to determine the correct zero-init representation.
@@ -1833,9 +1849,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 			if (const TypeInfo* alias_info = tryGetTypeInfo(ti)) {
 				TypeCategory resolved = alias_info->category();
 				if (resolved == TypeCategory::Struct || resolved == TypeCategory::UserDefined) {
-					EvalResult result = EvalResult::from_int(0);
-					result.set_exact_type(type_spec);
-					return result;
+					return EvalResult::error("Aliased struct default construction did not materialize an object");
 				}
 				if (is_unsigned_integer_type(resolved)) {
 					EvalResult result = EvalResult::from_uint(0);
