@@ -938,10 +938,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		}
 
 		std::vector<StringType<32>> namespaces;
-		Token final_identifier = current_token_;
+		Token final_identifier{};
+		bool first_scope_resolution = true;
 		while (current_token_.value() == "::") {
-			if (namespaces.empty()) {
+			if (first_scope_resolution) {
 				namespaces.emplace_back(StringType<32>(lookup_type_name));
+				first_scope_resolution = false;
 			} else {
 				namespaces.emplace_back(StringType<32>(final_identifier.value()));
 			}
