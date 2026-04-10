@@ -866,6 +866,10 @@ ParseResult Parser::parse_template_declaration() {
 
 				if (peek() == "typename"_tok) {
 					advance();
+					// Handle cv-qualifiers after typename (e.g., `typename const T::type`)
+					// parse_type_specifier() supports this order (line 455), so mirror it here.
+					parse_cv_qualifiers();
+					skip_noop_gnu_qualifiers();
 				}
 
 				// Parse the template name (possibly namespace-qualified like ns1::vec)
