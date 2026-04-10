@@ -887,7 +887,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
 		setOuterTemplateBindingsFromParams(var_decl_node.as<VariableDeclarationNode>(), spec_params, converted_args);
 		gSymbolTable.insertGlobal(persistent_name, var_decl_node);
-		registerLateMaterializedTopLevelNodeFront(var_decl_node);
+		registerAndNormalizeLateMaterializedTopLevelNodeFront(var_decl_node);
 		return var_decl_node;
 	}
 
@@ -1086,7 +1086,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 							auto instantiated = try_instantiate_class_template(template_name_to_lookup, resolved_args);
 							if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 								// Add to AST so it gets codegen
-								registerLateMaterializedTopLevelNode(*instantiated);
+								registerAndNormalizeLateMaterializedTopLevelNode(*instantiated);
 
 								// Now update the qualified identifier to use the correct instantiated name
 								// Get the instantiated class name (e.g., "is_pointer_impl_intP")
@@ -1130,7 +1130,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 
 	// Add to AST at the beginning so it gets code-generated before functions that use it
 	// Insert after other global declarations but before function definitions
-	registerLateMaterializedTopLevelNodeFront(instantiated_var_decl);
+	registerAndNormalizeLateMaterializedTopLevelNodeFront(instantiated_var_decl);
 
 	return instantiated_var_decl;
 }
@@ -1589,6 +1589,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			registerLateMaterializedTopLevelNode(new_func_node);
 		}
 	}
+	normalizePendingSemanticRootsIfAvailable();
 
 	// If no constructor was defined, we should synthesize a default one
 	// For now, mark that we need one and it will be generated in codegen

@@ -1263,6 +1263,14 @@ public:
 		ast_nodes_.insert(ast_nodes_.begin(), node);
 		enqueuePendingSemanticRoot(node);
 	}
+	void registerAndNormalizeLateMaterializedTopLevelNode(const ASTNode& node) {
+		registerLateMaterializedTopLevelNode(node);
+		normalizePendingSemanticRootsIfAvailable();
+	}
+	void registerAndNormalizeLateMaterializedTopLevelNodeFront(const ASTNode& node) {
+		registerLateMaterializedTopLevelNodeFront(node);
+		normalizePendingSemanticRootsIfAvailable();
+	}
 	void registerLateMaterializedOwningStructRoot(StringHandle struct_name) {
 		if (!struct_name.isValid()) {
 			return;
