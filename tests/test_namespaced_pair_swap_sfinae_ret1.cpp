@@ -1,3 +1,10 @@
+// TODO: This test currently returns 1 (is_swappable = true) instead of 0 (false).
+// The correct C++20 behavior is to return 0 because pair<const int, int> is NOT
+// swappable (the matching swap overload is = delete). However, FlashCpp does not
+// yet evaluate decltype(...) expressions in default template arguments during
+// SFINAE-based overload resolution. Once that feature is implemented, this test
+// should be renamed to _ret0.cpp to expect the correct return value of 0.
+
 namespace stdlike {
 	template<bool Condition, typename Type = void>
 	struct enable_if { };
@@ -24,6 +31,15 @@ namespace stdlike {
 	template<typename Type>
 	Type&& declval() noexcept;
 
+	// Forward-declare swap overloads so they are visible inside pair::swap
+	template<typename Type>
+	typename enable_if<!is_const<Type>::value, void>::type
+	swap(Type& left, Type& right);
+
+	template<typename Type>
+	typename enable_if<is_const<Type>::value, void>::type
+	swap(Type&, Type&) = delete;
+
 	template<typename First, typename Second>
 	struct pair {
 		First first;
@@ -36,6 +52,7 @@ namespace stdlike {
 		}
 	};
 
+	// Definitions for forward-declared swap overloads
 	template<typename Type>
 	typename enable_if<!is_const<Type>::value, void>::type
 	swap(Type& left, Type& right) {
@@ -43,10 +60,6 @@ namespace stdlike {
 		left = right;
 		right = temp;
 	}
-
-	template<typename Type>
-	typename enable_if<is_const<Type>::value, void>::type
-	swap(Type&, Type&) = delete;
 
 	template<typename First, typename Second>
 	typename enable_if<!is_const<First>::value && !is_const<Second>::value, void>::type
