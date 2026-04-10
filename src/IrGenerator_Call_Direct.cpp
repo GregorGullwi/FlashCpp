@@ -965,7 +965,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (!resolved_target || matched_func_decl) {
 			return;
 		}
-		if (callExprNode.has_template_arguments() || has_synthesized_template_suffix) {
+		if (has_synthesized_template_suffix) {
 			return;
 		}
 		std::string_view parent = resolved_target->parent_struct_name();
@@ -1076,7 +1076,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		!sema_ || // no semantic data wired into codegen
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
 		has_precomputed_mangled || // precomputed-mangled calls still include legacy parser-owned resolution shapes such as ADL and delayed static-member paths
-		callExprNode.has_template_arguments() || // explicit-template-argument calls still rely on older codegen lookup/mangling paths
+		callExprNode.has_template_arguments() || // explicit-template-argument calls that lack a sema-resolved target still rely on legacy recovery
 		has_synthesized_template_suffix || // hashed instantiated callee names (notably member-template instantiations) still rely on legacy direct-call lowering
 		has_synthetic_call_key || // synthesized call wrappers (for example receiver/member-access static direct-call lowering) still rely on legacy direct-call recovery here
 		sema_recorded_unresolved_call; // sema recorded a known resolution gap
