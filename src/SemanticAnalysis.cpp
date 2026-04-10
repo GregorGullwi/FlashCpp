@@ -2320,6 +2320,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				setSlot(key, slot);
 			}
 		}
+		buildOverloadResolutionArgType(node, nullptr);
 	}
 
 	return {};
@@ -2984,6 +2985,37 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return {};
 			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				const std::string_view op = e.op();
+				if (e.has_resolved_member_operator_overload()) {
+					const StructMemberFunction* member_overload = e.resolved_member_operator_overload();
+					if (!member_overload || !member_overload->function_decl.is<FunctionDeclarationNode>()) {
+						return {};
+					}
+					const ASTNode return_type_node =
+						member_overload->function_decl.as<FunctionDeclarationNode>().decl_node().type_node();
+					if (!return_type_node.has_value() || !return_type_node.is<TypeSpecifierNode>()) {
+						return {};
+					}
+
+					TypeSpecifierNode return_type = return_type_node.as<TypeSpecifierNode>();
+					if (const CanonicalTypeId lhs_id = inferExpressionType(e.get_lhs())) {
+						const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_id);
+						if (lhs_desc.type_index.is_valid()) {
+							return_type = resolveBinaryOperatorTypeForSelfReference(return_type, lhs_desc.type_index);
+						}
+					}
+					return canonicalizeType(return_type);
+				}
+				if (e.has_resolved_free_function_operator_overload()) {
+					const FunctionDeclarationNode* free_overload = e.resolved_free_function_operator_overload();
+					if (!free_overload) {
+						return {};
+					}
+					const ASTNode return_type_node = free_overload->decl_node().type_node();
+					if (return_type_node.has_value() && return_type_node.is<TypeSpecifierNode>()) {
+						return canonicalizeType(return_type_node.as<TypeSpecifierNode>());
+					}
+					return {};
+				}
 				// Three-way comparison (<=>) returns a comparison category type
 				if (op == "<=>") {
 					const CanonicalTypeId lhs_id = inferExpressionType(e.get_lhs());
@@ -4351,6 +4383,7 @@ void SemanticAnalysis::annotateResolvedCallArgConversions(const void* call_key,
 		}
 
 		tryAnnotateSingleArgConversion(arg, param_type, context_description);
+		buildOverloadResolutionArgType(arg, nullptr);
 	}
 }
 
