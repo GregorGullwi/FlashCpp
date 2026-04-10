@@ -397,6 +397,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 											: func_name_view;
 	const bool has_synthesized_template_suffix =
 		func_name_view.find('$') != std::string_view::npos;
+	const FunctionDeclarationNode* pre_resolved_direct_target =
+		callExprNode.callee().function_declaration_or_null();
+	if (!pre_resolved_direct_target && sema_) {
+		pre_resolved_direct_target = sema_->getResolvedDirectCall(sema_call_key);
+	}
 
 	FLASH_LOG_FORMAT(Codegen, Debug, "=== generateFunctionCallIr: func_name={} ===", func_name_view);
 
@@ -406,75 +411,77 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		return intrinsic_result.value();
 	}
 
-		// Check if this function is marked as inline_always (pure expression template instantiations)
-		// These functions should always be inlined and never generate calls
-		// Look up the function to check its inline_always flag
+	// Check if this function is marked as inline_always (pure expression template instantiations)
+	// These functions should always be inlined and never generate calls
+	// Prefer the sema/call-node resolved target before falling back to a lookup.
 	extern SymbolTable gSymbolTable;
-	auto all_overloads = gSymbolTable.lookup_all(func_name_view);
-
-	for (const auto& overload : all_overloads) {
-		if (overload.is<FunctionDeclarationNode>()) {
+	const FunctionDeclarationNode* inline_always_target = pre_resolved_direct_target;
+	if (!inline_always_target) {
+		auto all_overloads = gSymbolTable.lookup_all(func_name_view);
+		for (const auto& overload : all_overloads) {
+			if (!overload.is<FunctionDeclarationNode>()) {
+				continue;
+			}
 			const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
-			const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
+			if (&overload_func_decl->decl_node() == &decl_node) {
+				inline_always_target = overload_func_decl;
+				break;
+			}
+		}
+	}
 
-				// Check if this is the matching overload
-			if (overload_decl == &decl_node) {
-					// Found the matching function - check if it should be inlined
-				if (overload_func_decl->is_inline_always() && callExprNode.arguments().size() == 1) {
-						// Check if function returns a reference - if so, we need special handling
-					const TypeSpecifierNode& return_type_spec = overload_decl->type_node().as<TypeSpecifierNode>();
-					bool returns_reference = return_type_spec.is_reference() || return_type_spec.is_rvalue_reference();
+	if (inline_always_target &&
+		inline_always_target->is_inline_always() &&
+		callExprNode.arguments().size() == 1) {
+		const TypeSpecifierNode& return_type_spec = inline_always_target->decl_node().type_node().as<TypeSpecifierNode>();
+		bool returns_reference = return_type_spec.is_reference() || return_type_spec.is_rvalue_reference();
 
-					auto arg_node = callExprNode.arguments()[0];
-					if (arg_node.is<ExpressionNode>()) {
-						FLASH_LOG(Codegen, Debug, "Inlining pure expression function (inline_always): ", func_name_view);
+		auto arg_node = callExprNode.arguments()[0];
+		if (arg_node.is<ExpressionNode>()) {
+			FLASH_LOG(Codegen, Debug, "Inlining pure expression function (inline_always): ", func_name_view);
 
-						if (returns_reference) {
-								// For functions returning references (like std::move, std::forward),
-								// we need to generate an addressof the argument, not just return it
-							const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+			if (returns_reference) {
+					// For functions returning references (like std::move, std::forward),
+					// we need to generate an addressof the argument, not just return it
+				const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
 
-								// Check if the argument is an identifier (common case for move(x))
-							if (std::holds_alternative<IdentifierNode>(arg_expr)) {
-								const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
+					// Check if the argument is an identifier (common case for move(x))
+				if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+					const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
 
-									// Generate addressof for the identifier
-								TempVar result_var = var_counter.next();
-								AddressOfOp op;
-								op.result = result_var;
+						// Generate addressof for the identifier
+					TempVar result_var = var_counter.next();
+					AddressOfOp op;
+					op.result = result_var;
 
-									// Get type info from the identifier
-								StringHandle id_handle = StringTable::getOrInternStringHandle(ident.name());
-								TypeCategory operand_type = TypeCategory::Int;  // Default
-								int operand_size = 32;
-								if (const DeclarationNode* decl = lookupDeclaration(id_handle)) {
-									const TypeSpecifierNode& type = decl->type_node().as<TypeSpecifierNode>();
-									operand_type = type.type();
-									operand_size = static_cast<int>(type.size_in_bits());
-									if (operand_size == 0)
-										operand_size = get_type_size_bits(operand_type);
-								}
-
-								op.operand.setType(operand_type);
-								op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
-								op.operand.pointer_depth = PointerDepth{};
-								op.operand.value = id_handle;
-
-								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
-
-									// Return pointer type (64-bit address) with pointer depth 1
-								return makeExprResult(nativeTypeIndex(operand_type), SizeInBits{64}, IrOperand{result_var}, PointerDepth{1}, ValueStorage::ContainsData);
-							}
-								// For non-identifier expressions, fall through to generate a regular call
-								// (we can't inline complex expressions that need reference semantics)
-						} else {
-								// Non-reference return - can inline directly by returning argument
-							auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
-							return arg_ir;
-						}
+						// Get type info from the identifier
+					StringHandle id_handle = StringTable::getOrInternStringHandle(ident.name());
+					TypeCategory operand_type = TypeCategory::Int;  // Default
+					int operand_size = 32;
+					if (const DeclarationNode* decl = lookupDeclaration(id_handle)) {
+						const TypeSpecifierNode& type = decl->type_node().as<TypeSpecifierNode>();
+						operand_type = type.type();
+						operand_size = static_cast<int>(type.size_in_bits());
+						if (operand_size == 0)
+							operand_size = get_type_size_bits(operand_type);
 					}
+
+					op.operand.setType(operand_type);
+					op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
+					op.operand.pointer_depth = PointerDepth{};
+					op.operand.value = id_handle;
+
+					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
+
+						// Return pointer type (64-bit address) with pointer depth 1
+					return makeExprResult(nativeTypeIndex(operand_type), SizeInBits{64}, IrOperand{result_var}, PointerDepth{1}, ValueStorage::ContainsData);
 				}
-				break;  // Found the matching function, stop searching
+					// For non-identifier expressions, fall through to generate a regular call
+					// (we can't inline complex expressions that need reference semantics)
+			} else {
+					// Non-reference return - can inline directly by returning argument
+				auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
+				return arg_ir;
 			}
 		}
 	}
@@ -1076,13 +1083,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// provide a sema-owned target or mark the call as unresolved.
 	const bool sema_recorded_unresolved_call =
 		sema_ && sema_->hasUnresolvedCallArgs(sema_call_key);
-	const bool has_synthetic_call_key =
-		sema_call_key != static_cast<const void*>(&callExprNode);
 	const bool allow_lookup_recovery =
 		!sema_ || // no semantic data wired into codegen
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
 		has_synthesized_template_suffix || // hashed instantiated callee names (notably member-template instantiations) still rely on legacy direct-call lowering
-		has_synthetic_call_key || // synthesized call wrappers (for example receiver/member-access static direct-call lowering) still rely on legacy direct-call recovery here
 		sema_recorded_unresolved_call; // sema recorded a known resolution gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
