@@ -340,15 +340,18 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 	const StructTypeInfo* struct_info,
 	const ChunkedVector<ASTNode>& arguments,
 	EvaluationContext& context,
+	bool skip_implicit_constructors,
 	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
 	if (!struct_info) {
 		return nullptr;
 	}
 
-	auto ctor_candidates = struct_info->getConstructorsByParameterCount(arguments.size(), false);
+	auto ctor_candidates =
+		struct_info->getConstructorsByParameterCount(arguments.size(), skip_implicit_constructors);
 	if (ctor_candidates.empty()) {
 		// No exact-arity match: fall back to constructors callable with this many args via default params.
-		auto arity_result = resolve_constructor_overload_arity(*struct_info, arguments.size(), false);
+		auto arity_result =
+			resolve_constructor_overload_arity(*struct_info, arguments.size(), skip_implicit_constructors);
 		return arity_result.selected_overload;
 	}
 
@@ -391,7 +394,8 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 	}
 
 	if (has_all_arg_types && arg_types.size() == arguments.size()) {
-		auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
+		auto resolution =
+			resolve_constructor_overload(*struct_info, arg_types, skip_implicit_constructors);
 		if (resolution.has_match) {
 			return resolution.selected_overload;
 		}
@@ -4098,7 +4102,7 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	const auto& ctor_args = ctor_call.arguments();
 	const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
 	if (!matching_ctor) {
-		matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
+		matching_ctor = find_matching_constructor(struct_info, ctor_args, context, false, nullptr);
 	}
 	if (!matching_ctor) {
 		return EvalResult::error("No matching constructor found for constexpr " + std::string(usage_name));
@@ -4863,7 +4867,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 			}
 		}
 		if (!matching_ctor) {
-			matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
+			matching_ctor = find_matching_constructor(struct_info, ctor_args, context, false, nullptr);
 		}
 		if (!matching_ctor) {
 			return EvalResult::error("No matching constructor found for constexpr array element");
@@ -5451,7 +5455,7 @@ EvalResult Evaluator::materialize_constructor_object_value(
 
 	// Delegate to the shared helper for the find→bind→materialize sequence.
 	auto ctor_result = try_materialize_struct_from_ctor_args(
-		struct_info, type_index, ctor_call.arguments(), context, outer_bindings);
+		struct_info, type_index, ctor_call.arguments(), context, false, outer_bindings);
 	if (ctor_result.has_value()) {
 		if (!ctor_result->success()) {
 			return *ctor_result;
@@ -6021,6 +6025,7 @@ EvalResult Evaluator::materialize_members_from_constructor(
 					base_spec->type_index,
 					base_args,
 					context,
+					false,
 					&ctor_param_bindings)) {
 				base_result = std::move(*ctor_result);
 			} else {
@@ -6136,9 +6141,11 @@ std::optional<EvalResult> Evaluator::try_materialize_struct_from_ctor_args(
 	TypeIndex type_index,
 	const ChunkedVector<ASTNode>& args,
 	EvaluationContext& context,
+	bool skip_implicit_constructors,
 	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
 	const ConstructorDeclarationNode* matching_ctor =
-		find_matching_constructor(struct_info, args, context, outer_bindings);
+		find_matching_constructor(
+			struct_info, args, context, skip_implicit_constructors, outer_bindings);
 	if (!matching_ctor) {
 		return std::nullopt;
 	}
@@ -6263,7 +6270,7 @@ EvalResult Evaluator::extract_object_members(
 	// Find the matching constructor
 	const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
 	if (!matching_ctor) {
-		matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
+		matching_ctor = find_matching_constructor(struct_info, ctor_args, context, false, nullptr);
 	}
 
 	if (!matching_ctor) {

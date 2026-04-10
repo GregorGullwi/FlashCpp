@@ -2110,7 +2110,8 @@ EvalResult Evaluator::evaluate_new_expression(
 				const std::unordered_map<std::string_view, EvalResult>* const_bindings_for_match =
 					mutable_bindings;
 				const ConstructorDeclarationNode* matching_ctor =
-					find_matching_constructor(struct_info, args_copy, context, const_bindings_for_match);
+					find_matching_constructor(
+						struct_info, args_copy, context, false, const_bindings_for_match);
 				if (!matching_ctor) {
 					return EvalResult::error("new-expression: no matching constructor found for struct type");
 				}
@@ -2149,7 +2150,7 @@ EvalResult Evaluator::evaluate_new_expression(
 				}
 			} else {
 				auto ctor_result = try_materialize_struct_from_ctor_args(
-					struct_info, type_index, args_copy, context, bindings);
+					struct_info, type_index, args_copy, context, false, bindings);
 				if (!ctor_result.has_value()) {
 					return EvalResult::error("new-expression: no matching constructor found for struct type");
 				}
@@ -2167,7 +2168,7 @@ EvalResult Evaluator::evaluate_new_expression(
 			if (has_user_defined_ctor) {
 				ChunkedVector<ASTNode> empty_args;
 				auto ctor_result = try_materialize_struct_from_ctor_args(
-					struct_info, type_index, empty_args, context, bindings);
+					struct_info, type_index, empty_args, context, true, bindings);
 				if (ctor_result.has_value()) {
 					if (!ctor_result->success()) {
 						return *ctor_result;
@@ -2916,7 +2917,8 @@ EvalResult Evaluator::evaluate_callable_object(
 		const auto& ctor_args = ctor_call.arguments();
 		const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
 		if (!matching_ctor) {
-			matching_ctor = find_matching_constructor(struct_info, ctor_args, context, outer_bindings);
+			matching_ctor =
+				find_matching_constructor(struct_info, ctor_args, context, false, outer_bindings);
 		}
 		if (!matching_ctor) {
 			return EvalResult::error("No matching constructor found for callable object");
@@ -4241,7 +4243,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					}
 
 					auto ctor_result = try_materialize_struct_from_ctor_args(
-						si, return_type_index, ctor_args, context, &bindings);
+						si,
+						return_type_index,
+						ctor_args,
+						context,
+						init_list.initializers().empty(),
+						&bindings);
 					if (ctor_result.has_value()) {
 						return *ctor_result;
 					}
@@ -4355,7 +4362,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 									ctor_args.push_back(arg);
 								}
 								auto ctor_result = try_materialize_struct_from_ctor_args(
-									struct_info, type_spec.type_index(), ctor_args, context, &bindings);
+									struct_info,
+									type_spec.type_index(),
+									ctor_args,
+									context,
+									init_list.initializers().empty(),
+									&bindings);
 								if (ctor_result.has_value()) {
 									if (!ctor_result->success()) {
 										return *ctor_result;
@@ -4437,7 +4449,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 
 					ChunkedVector<ASTNode> empty_args;
 					const ConstructorDeclarationNode* default_ctor =
-						find_matching_constructor(struct_info, empty_args, context, nullptr);
+						find_matching_constructor(
+							struct_info,
+							empty_args,
+							context,
+							struct_info->hasUserDefinedConstructor(),
+							nullptr);
 
 					if (default_ctor) {
 						std::unordered_map<std::string_view, EvalResult> empty_bindings;
@@ -4449,6 +4466,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						}
 						declaration_bindings[var_name] = std::move(object_result);
 						return EvalResult::error("Statement executed (not a return)");
+					}
+					if (struct_info->hasUserDefinedConstructor()) {
+						return EvalResult::error(
+							"No matching default constructor for '" +
+							std::string(StringTable::getStringView(struct_info->getName())) +
+							"' in constexpr evaluation");
 					}
 
 					for (const auto& member : struct_info->members) {
