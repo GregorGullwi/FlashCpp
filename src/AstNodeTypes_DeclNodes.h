@@ -91,21 +91,6 @@ struct StructTypeInfo {
 				   std::optional<ASTNode> default_initializer,
 				   ReferenceQualifier reference_qualifier,
 				   size_t referenced_size_bits,
-				   bool is_array = false,
-				   std::vector<size_t> array_dimensions = {},
-				   int pointer_depth = 0,
-				   std::optional<size_t> bitfield_width = std::nullopt,
-				   std::optional<FunctionSignature> function_sig = std::nullopt) {
-		addMember(member_name, type_index, member_size, member_alignment, access, std::move(default_initializer),
-				  reference_qualifier, referenced_size_bits, is_array, std::move(array_dimensions),
-				  pointer_depth, bitfield_width, std::move(function_sig), false);
-	}
-
-	void addMember(StringHandle member_name, TypeIndex type_index,
-				   size_t member_size, size_t member_alignment, AccessSpecifier access,
-				   std::optional<ASTNode> default_initializer,
-				   ReferenceQualifier reference_qualifier,
-				   size_t referenced_size_bits,
 				   bool is_array,
 				   std::vector<size_t> array_dimensions,
 				   int pointer_depth,
