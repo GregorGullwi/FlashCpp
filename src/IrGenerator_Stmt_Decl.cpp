@@ -127,7 +127,6 @@ bool allowsLegacyOverloadArgFallbackInNormalizedBody(const ASTNode& arg) {
 		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 			const std::string_view op = inner.op();
 			return op != "!" &&
-				   op != "*" &&
 				   op != "++" &&
 				   op != "--";
 		} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
