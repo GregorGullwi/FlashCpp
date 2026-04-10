@@ -4,7 +4,7 @@ struct ValueHolder {
 	ValueHolder(int* p)
 		: value(*p) {}
 
-	ValueHolder(void*)
+	ValueHolder(void* unused)
 		: value(107) {}
 };
 
