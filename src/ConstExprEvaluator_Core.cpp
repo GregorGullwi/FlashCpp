@@ -33,6 +33,15 @@ bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
 	return !isPlaceholderAutoType(type_spec.category());
 }
 
+EvalResult read_heap_value_for_constexpr(const EvalResult& heap_val) {
+	if (heap_val.is_indeterminate) {
+		return EvalResult::error(
+			"Read of indeterminate value in constant expression "
+			"(object was default-initialized without an initializer)");
+	}
+	return heap_val;
+}
+
 std::optional<size_t> tryGetConstexprTypeSizeBytes(const TypeSpecifierNode& type_spec) {
 	if (type_spec.is_array()) {
 		const std::vector<size_t> dimensions = type_spec.array_dimensions();
@@ -2036,15 +2045,6 @@ static EvalResult make_default_init(const TypeSpecifierNode& type_spec) {
 	EvalResult r = EvalResult::from_int(0);
 	r.set_exact_type(type_spec);
 	return r;
-}
-
-static EvalResult read_heap_value_for_constexpr(const EvalResult& heap_val) {
-	if (heap_val.is_indeterminate) {
-		return EvalResult::error(
-			"Read of indeterminate value in constant expression "
-			"(object was default-initialized without an initializer)");
-	}
-	return heap_val;
 }
 
 EvalResult Evaluator::evaluate_with_optional_bindings(
