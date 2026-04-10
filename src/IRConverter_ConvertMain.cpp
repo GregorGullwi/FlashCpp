@@ -11805,6 +11805,21 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 	bool is_object_pointer = false;
 	bool is_global_array_access = false;
 	StringHandle global_array_name;
+	auto emitGlobalArrayBaseAddress = [&](bool dereference_global_pointer) {
+		uint32_t reloc_offset = emitLeaRipRelative(base_reg);
+		pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
+		if (dereference_global_pointer) {
+			emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, sizeof(void*));
+		}
+	};
+
+	auto emitElementLoadFromAddress = [&]() {
+		if (is_floating_point) {
+			emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
+		} else {
+			emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+		}
+	};
 
 	if (!array_name_view.empty()) {
 		is_member_array = array_name_view.find('.') != std::string::npos;
@@ -11850,7 +11865,18 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			// Constant index
 		uint64_t index_value = std::get<unsigned long long>(op.index.value);
 
-		if (is_array_pointer || is_object_pointer) {
+		if (is_global_array_access) {
+			emitGlobalArrayBaseAddress(is_array_pointer || is_object_pointer);
+
+			int64_t offset_bytes = member_offset + (index_value * element_size_bytes);
+			if (offset_bytes != 0) {
+				emitAddImmToReg(textSectionData, base_reg, offset_bytes);
+			}
+
+			if (!optimize_lea) {
+				emitElementLoadFromAddress();
+			}
+		} else if (is_array_pointer || is_object_pointer) {
 				// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
 				// Load pointer and compute address
 			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
@@ -11869,28 +11895,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 				// For struct types or lvalues, keep the address in base_reg
 				// For primitive prvalues, load the value
 			if (!optimize_lea) {
-					// Load value from [base_reg] with appropriate instruction
-				if (is_floating_point) {
-					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
-				} else {
-					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
-				}
-			}
-		} else if (is_global_array_access) {
-			uint32_t reloc_offset = emitLeaRipRelative(base_reg);
-			pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
-
-			int64_t offset_bytes = member_offset + (index_value * element_size_bytes);
-			if (offset_bytes != 0) {
-				emitAddImmToReg(textSectionData, base_reg, offset_bytes);
-			}
-
-			if (!optimize_lea) {
-				if (is_floating_point) {
-					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
-				} else {
-					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
-				}
+				emitElementLoadFromAddress();
 			}
 		} else {
 				// Array is a regular variable - use direct stack offset
@@ -11921,7 +11926,23 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		FLASH_LOG_FORMAT(Codegen, Debug, "ArrayAccess TempVar: base_reg={}, index_reg={}, array_base_offset={}, index_var_offset={}",
 						 static_cast<int>(base_reg), static_cast<int>(index_reg), array_base_offset, index_var_offset);
 
-		if (is_array_pointer || is_object_pointer) {
+		if (is_global_array_access) {
+			emitGlobalArrayBaseAddress(is_array_pointer || is_object_pointer);
+			if (member_offset != 0) {
+				emitAddImmToReg(textSectionData, base_reg, member_offset);
+			}
+
+			bool is_signed = isSignedType(op.index.typeEnum());
+			emitMovFromFrameSized(
+				SizedRegister{index_reg, 64, false},
+				SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits.value, is_signed});
+			emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
+			emitAddRegs(textSectionData, base_reg, index_reg);
+
+			if (!optimize_lea) {
+				emitElementLoadFromAddress();
+			}
+		} else if (is_array_pointer || is_object_pointer) {
 				// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
 			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
@@ -11944,32 +11965,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 				// For struct types or lvalues, keep the address in base_reg
 				// For primitive prvalues, load the value
 			if (!optimize_lea) {
-				if (is_floating_point) {
-					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
-				} else {
-					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
-				}
-			}
-		} else if (is_global_array_access) {
-			uint32_t reloc_offset = emitLeaRipRelative(base_reg);
-			pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
-			if (member_offset != 0) {
-				emitAddImmToReg(textSectionData, base_reg, member_offset);
-			}
-
-			bool is_signed = isSignedType(op.index.typeEnum());
-			emitMovFromFrameSized(
-				SizedRegister{index_reg, 64, false},
-				SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits.value, is_signed});
-			emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
-			emitAddRegs(textSectionData, base_reg, index_reg);
-
-			if (!optimize_lea) {
-				if (is_floating_point) {
-					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
-				} else {
-					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
-				}
+				emitElementLoadFromAddress();
 			}
 		} else {
 				// Array is a regular variable
@@ -12008,7 +12004,12 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			// Allocate a second register for the index
 		X64Register index_reg = allocateRegisterWithSpilling();
 
-		if (is_array_pointer || is_object_pointer) {
+		if (is_global_array_access) {
+			emitGlobalArrayBaseAddress(is_array_pointer || is_object_pointer);
+			if (member_offset != 0) {
+				emitAddImmToReg(textSectionData, base_reg, member_offset);
+			}
+		} else if (is_array_pointer || is_object_pointer) {
 				// Array is a pointer/temp var, or member array of a pointer object
 			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
@@ -12016,12 +12017,6 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 
 				// Add member offset for pointer objects (e.g., this->member)
 			if (is_object_pointer && member_offset != 0) {
-				emitAddImmToReg(textSectionData, base_reg, member_offset);
-			}
-		} else if (is_global_array_access) {
-			uint32_t reloc_offset = emitLeaRipRelative(base_reg);
-			pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
-			if (member_offset != 0) {
 				emitAddImmToReg(textSectionData, base_reg, member_offset);
 			}
 		} else {
