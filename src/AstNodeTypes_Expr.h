@@ -608,7 +608,7 @@ private:
 	std::optional<ASTNode> size_expr_;  // For new Type[size], the size expression
 	ChunkedVector<ASTNode, 128, 256> constructor_args_;	// For new Type(args)
 	InlineVector<ASTNode, 2> placement_args_;  // For new (addr [,extra...]) Type, all placement arguments
-	bool has_value_init_ = false;
+	bool has_value_init_;
 };
 
 // Delete expression node: delete ptr, delete[] ptr

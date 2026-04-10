@@ -33,7 +33,7 @@ bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
 	return !isPlaceholderAutoType(type_spec.category());
 }
 
-EvalResult read_heap_value_for_constexpr(const EvalResult& heap_val) {
+EvalResult validateConstexprRead(const EvalResult& heap_val) {
 	if (heap_val.is_indeterminate) {
 		return EvalResult::error(
 			"Read of indeterminate value in constant expression "
@@ -820,7 +820,7 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 			}
 			const EvalResult& heap_val = heap_it->second.value;
 			if (offset == 0 && !heap_val.is_array) {
-				return read_heap_value_for_constexpr(heap_val);
+				return validateConstexprRead(heap_val);
 			}
 			if (heap_val.is_array) {
 				if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
@@ -1002,7 +1002,7 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 			}
 			const EvalResult& heap_val = heap_it->second.value;
 			if (offset == 0 && !heap_val.is_array) {
-				return read_heap_value_for_constexpr(heap_val);
+				return validateConstexprRead(heap_val);
 			}
 			if (heap_val.is_array) {
 				if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
