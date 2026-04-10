@@ -1811,17 +1811,17 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						std::vector<int64_t> nested_indices;
 						nested_indices.push_back(idx);
 
-						const ASTNode* base_expr = &subscript.array_expr();
-						while (const ArraySubscriptNode* parent_subscript = tryGetNode<ArraySubscriptNode>(*base_expr)) {
+						ASTNode base_expr = subscript.array_expr();
+						while (const ArraySubscriptNode* parent_subscript = tryGetNode<ArraySubscriptNode>(base_expr)) {
 							auto parent_idx_result = evaluate_expression_with_bindings(parent_subscript->index_expr(), bindings, context);
 							if (!parent_idx_result.success())
 								return parent_idx_result;
 							nested_indices.push_back(parent_idx_result.as_int());
-							base_expr = &parent_subscript->array_expr();
+							base_expr = parent_subscript->array_expr();
 						}
 
 						if (nested_indices.size() > 1) {
-							std::string_view base_name = getIdentifierNameFromAstNode(*base_expr);
+							std::string_view base_name = getIdentifierNameFromAstNode(base_expr);
 							if (!base_name.empty()) {
 								EvalResult* base_bound = findMutableBindingValue(base_name, bindings, context);
 								if (base_bound && base_bound->is_array) {
