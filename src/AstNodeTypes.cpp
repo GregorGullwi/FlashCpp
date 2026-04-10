@@ -1636,6 +1636,29 @@ void StructTypeInfo::updateAbstractFlag() {
 	}
 }
 
+namespace {
+
+const StructTypeInfo* resolveBaseStructInfo(const BaseClassSpecifier& base) {
+	if (!base.type_index.is_valid() || base.type_index.index() >= gTypeInfo.size()) {
+		return nullptr;
+	}
+
+	const TypeInfo* base_type = &gTypeInfo[base.type_index.index()];
+	if (const StructTypeInfo* base_info = base_type->getStructInfo()) {
+		return base_info;
+	}
+
+	ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(base.type_index);
+	if (!resolved_alias.type_index.is_valid() || resolved_alias.type_index.index() >= gTypeInfo.size()) {
+		return nullptr;
+	}
+
+	const TypeInfo* resolved_type = &gTypeInfo[resolved_alias.type_index.index()];
+	return resolved_type->getStructInfo();
+}
+
+}
+
 // Find member recursively through base classes
 std::optional<StructMember> StructTypeInfo::findMemberRecursive(StringHandle member_name) const {
 	// Use RecursionGuard to prevent infinite recursion in variadic template patterns
@@ -1671,20 +1694,16 @@ std::optional<StructMember> StructTypeInfo::findMemberRecursive(StringHandle mem
 
 	// Then, check base class members
 	for (const auto& base : base_classes) {
-		if (base.type_index.index() >= gTypeInfo.size()) {
+		const StructTypeInfo* base_info = resolveBaseStructInfo(base);
+		if (!base_info) {
 			continue;
 		}
 
-		const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
-		const StructTypeInfo* base_info = base_type.getStructInfo();
-
-		if (base_info) {
-			auto base_member = base_info->findMemberRecursive(member_name);
-			if (base_member) {
-				// Found in base class - adjust offset by base class offset
-				base_member->offset += base.offset;
-				return base_member;
-			}
+		auto base_member = base_info->findMemberRecursive(member_name);
+		if (base_member) {
+			// Found in base class - adjust offset by base class offset
+			base_member->offset += base.offset;
+			return base_member;
 		}
 	}
 
@@ -1707,40 +1726,15 @@ std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::find
 
 	// Then, check base class static members
 	for (const auto& base : base_classes) {
-		if (base.type_index.index() >= gTypeInfo.size()) {
+		const StructTypeInfo* base_info = resolveBaseStructInfo(base);
+		if (!base_info) {
 			continue;
 		}
 
-		const TypeInfo* base_type = &gTypeInfo[base.type_index.index()];
-		const StructTypeInfo* base_info = base_type->getStructInfo();
-
-		// Follow typedef/alias chains to find the underlying struct info if needed
-		if (!base_info && base_type->isStruct()) {
-			constexpr size_t MAX_ALIAS_DEPTH = 64;
-			size_t depth = 0;
-			while (depth < MAX_ALIAS_DEPTH) {
-				if (!base_type->type_index_.is_valid() || base_type->type_index_.index() >= gTypeInfo.size()) {
-					break;
-				}
-				const TypeInfo* next = &gTypeInfo[base_type->type_index_.index()];
-				if (next == base_type) {
-					break;
-				}
-				base_type = next;
-				base_info = base_type->getStructInfo();
-				if (base_info) {
-					break;
-				}
-				++depth;
-			}
-		}
-
-		if (base_info) {
-			auto [base_static_member, owner_struct] = base_info->findStaticMemberRecursive(member_name);
-			if (base_static_member) {
-				// Found in base class - return it with its owner
-				return {base_static_member, owner_struct};
-			}
+		auto [base_static_member, owner_struct] = base_info->findStaticMemberRecursive(member_name);
+		if (base_static_member) {
+			// Found in base class - return it with its owner
+			return {base_static_member, owner_struct};
 		}
 	}
 

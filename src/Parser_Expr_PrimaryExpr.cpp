@@ -903,6 +903,164 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		return ParseResult::success(*result);
 	}
 
+	// Check for decltype(expr)::member in expression context, including complex
+	// library probes like decltype(std::__swappable_details::__do_is_swappable_impl::__test<int>(0))::value.
+	// C++ allows using a decltype-specifier as the nested-name-specifier of a qualified-id,
+	// e.g. static_assert(decltype(f())::value);
+	if ((current_token_.type() == Token::Type::Keyword && current_token_.value() == "decltype") ||
+		(current_token_.type() == Token::Type::Identifier &&
+		 (current_token_.value() == "__typeof__" || current_token_.value() == "__typeof"))) {
+		Token decltype_token = current_token_;
+		ParseResult decltype_result = parse_decltype_specifier();
+		if (decltype_result.is_error()) {
+			return decltype_result;
+		}
+		if (!decltype_result.node().has_value() || !decltype_result.node()->is<TypeSpecifierNode>()) {
+			return ParseResult::error("Expected type specifier after decltype expression", current_token_);
+		}
+
+		auto parse_decltype_functional_cast = [&](const ASTNode& type_node) -> ParseResult {
+			if (current_token_.kind().is_eof() ||
+				(current_token_.value() != "(" && current_token_.value() != "{")) {
+				return ParseResult::error("Expected '(' or '{' for decltype functional cast", decltype_token);
+			}
+
+			Token init_token = current_token_;
+			bool is_brace_init = (current_token_.value() == "{");
+			std::string_view closing_delimiter = is_brace_init ? "}" : ")";
+			advance(); // consume '(' or '{'
+
+			if (current_token_.value() == closing_delimiter) {
+				advance(); // consume ')' or '}'
+				ChunkedVector<ASTNode> args;
+				auto ctor_result = emplace_node<ExpressionNode>(
+					ConstructorCallNode(type_node, std::move(args), init_token));
+				return ParseResult::success(ctor_result);
+			}
+
+			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+			TypeCategory ctor_type = type_spec.category();
+			TypeIndex ctor_type_index = type_spec.type_index();
+			if (ctor_type_index.is_valid()) {
+				const CanonicalTypeAlias canonical_alias = canonicalize_type_alias(ctor_type_index);
+				ctor_type = canonical_alias.typeEnum();
+				ctor_type_index = canonical_alias.resolvedTypeIndex();
+			}
+			bool use_constructor_call =
+				is_struct_type(ctor_type) || ctor_type == TypeCategory::UserDefined;
+
+			if (is_brace_init) {
+				ChunkedVector<ASTNode> args;
+				while (!current_token_.kind().is_eof() && current_token_.value() != "}") {
+					ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (arg_result.is_error()) {
+						return arg_result;
+					}
+					args.push_back(*arg_result.node());
+					if (current_token_.value() == ",") {
+						advance(); // consume ','
+					} else if (current_token_.value() != "}") {
+						return ParseResult::error("Expected ',' or '}' in decltype brace initializer", current_token_);
+					}
+				}
+
+				if (!consume("}"_tok)) {
+					return ParseResult::error("Expected '}' after decltype brace construction", current_token_);
+				}
+
+				auto ctor_result = emplace_node<ExpressionNode>(
+					ConstructorCallNode(type_node, std::move(args), init_token));
+				return ParseResult::success(ctor_result);
+			}
+
+			if (use_constructor_call) {
+				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+					.handle_pack_expansion = true,
+					.collect_types = true,
+					.expand_simple_packs = true});
+				if (!args_result.success) {
+					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+				}
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after decltype constructor arguments", current_token_);
+				}
+				auto ctor_result = emplace_node<ExpressionNode>(
+					ConstructorCallNode(type_node, std::move(args_result.args), init_token));
+				return ParseResult::success(ctor_result);
+			}
+
+			ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (expr_result.is_error()) {
+				return expr_result;
+			}
+
+			std::optional<ASTNode> final_expr = expr_result.node();
+			if (peek() == "..."_tok) {
+				Token ellipsis_token = peek_info();
+				advance(); // consume '...'
+				final_expr = emplace_node<ExpressionNode>(
+					PackExpansionExprNode(*final_expr, ellipsis_token));
+			}
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after decltype functional cast expression", current_token_);
+			}
+			return ParseResult::success(emplace_node<ExpressionNode>(
+				StaticCastNode(type_node, *final_expr, decltype_token)));
+		};
+
+		ASTNode decltype_type_node = *decltype_result.node();
+		if (current_token_.value() == "(" || current_token_.value() == "{") {
+			return parse_decltype_functional_cast(decltype_type_node);
+		}
+		if (current_token_.value() != "::") {
+			return ParseResult::error("Expected '::', '(' or '{' after decltype type expression", current_token_);
+		}
+
+		const TypeSpecifierNode& decltype_type = decltype_type_node.as<TypeSpecifierNode>();
+		TypeIndex lookup_type_index = decltype_type.type_index();
+		if (lookup_type_index.is_valid()) {
+			const CanonicalTypeAlias canonical_alias = canonicalize_type_alias(lookup_type_index);
+			lookup_type_index = canonical_alias.resolvedTypeIndex();
+		}
+
+		std::string_view lookup_type_name;
+		if (lookup_type_index.is_valid()) {
+			if (const TypeInfo* lookup_type_info = tryGetTypeInfo(lookup_type_index)) {
+				lookup_type_name = StringTable::getStringView(lookup_type_info->name());
+			}
+		}
+		if (lookup_type_name.empty()) {
+			return ParseResult::error("Could not resolve decltype expression type for qualified lookup", current_token_);
+		}
+
+		std::vector<StringType<32>> namespaces;
+		Token final_identifier{};
+		bool is_first_scope_resolution = true;
+		while (current_token_.value() == "::") {
+			if (is_first_scope_resolution) {
+				namespaces.emplace_back(StringType<32>(lookup_type_name));
+				is_first_scope_resolution = false;
+			} else {
+				namespaces.emplace_back(StringType<32>(final_identifier.value()));
+			}
+			advance(); // consume ::
+
+			if (current_token_.value() == "template") {
+				advance(); // consume optional template keyword
+			}
+
+			if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after '::'", current_token_);
+			}
+			final_identifier = current_token_;
+			advance(); // consume identifier
+		}
+
+		NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+		result = emplace_node<ExpressionNode>(QualifiedIdentifierNode(ns_handle, final_identifier));
+		return ParseResult::success(*result);
+	}
+
 	// Check for functional-style cast with keyword type names: bool(x), int(x), etc.
 	// This must come early because these are keywords, not identifiers
 	if (current_token_.type() == Token::Type::Keyword) {

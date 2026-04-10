@@ -2137,11 +2137,41 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					std::string_view base_inst_name = instantiateAndResolveBaseName(base_tpl_name, resolved_args, true);
-					StringHandle base_inst_handle = StringTable::getOrInternStringHandle(base_inst_name);
-					auto base_it = getTypesByNameMap().find(base_inst_handle);
-					if (base_it != getTypesByNameMap().end()) {
-						struct_info->addBaseClass(base_inst_name, base_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
-						FLASH_LOG_FORMAT(Templates, Debug, "Added deferred template base '{}' -> '{}'", base_tpl_name, base_inst_name);
+					std::string_view final_base_name = base_inst_name;
+					const TypeInfo* final_base_type = nullptr;
+					if (!deferred_base.member_type_chain.empty()) {
+						final_base_type =
+							resolveBaseClassMemberTypeChain(base_inst_name, deferred_base.member_type_chain);
+						if (final_base_type == nullptr) {
+							StringBuilder unresolved_base_builder;
+							unresolved_base_builder.append(base_inst_name);
+							for (StringHandle member_name : deferred_base.member_type_chain) {
+								unresolved_base_builder.append("::");
+								unresolved_base_builder.append(StringTable::getStringView(member_name));
+							}
+							FLASH_LOG(Templates, Warning, "Deferred template base alias not found after instantiation: '",
+									  unresolved_base_builder.commit(), "'");
+							continue;
+						}
+						final_base_type = materializeDeferredBasePlaceholderIfNeeded(
+							final_base_type,
+							template_params,
+							template_args,
+							[&instantiateAndResolveBaseName](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+								return instantiateAndResolveBaseName(concrete_base_template_name, concrete_base_args, true);
+							});
+						final_base_name = StringTable::getStringView(final_base_type->name());
+					} else {
+						StringHandle base_inst_handle = StringTable::getOrInternStringHandle(base_inst_name);
+						auto base_it = getTypesByNameMap().find(base_inst_handle);
+						if (base_it != getTypesByNameMap().end()) {
+							final_base_type = base_it->second;
+						}
+					}
+
+					if (final_base_type != nullptr) {
+						struct_info->addBaseClass(final_base_name, final_base_type->type_index_, deferred_base.access, deferred_base.is_virtual);
+						FLASH_LOG_FORMAT(Templates, Debug, "Added deferred template base '{}' -> '{}'", base_tpl_name, final_base_name);
 					} else {
 						FLASH_LOG(Templates, Warning, "Deferred template base '", base_inst_name, "' not found after instantiation");
 					}
@@ -4529,6 +4559,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							  " (this may be expected for SFINAE/dependent template arguments)");
 					continue;
 				}
+
+				resolved_type = materializeDeferredBasePlaceholderIfNeeded(
+					resolved_type,
+					template_params,
+					template_args_to_use,
+					[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+						std::string_view mutable_template_name = concrete_base_template_name;
+						return instantiate_and_register_base_template(mutable_template_name, concrete_base_args);
+					});
 
 				final_base_name = StringTable::getStringView(resolved_type->name());
 				struct_info->addBaseClass(

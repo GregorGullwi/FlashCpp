@@ -1893,12 +1893,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		restore_lexer_position_only(current_pos);
 
 		if (type_and_name_result.is_error() || !type_and_name_result.node().has_value()) {
-			FLASH_LOG(Templates, Debug, "SFINAE: Function name parsing failed");
-			return std::nullopt;
-		}
-
-		// Extract the function name token from the parsed result
-		if (type_and_name_result.node()->is<DeclarationNode>()) {
+			FLASH_LOG(Templates, Debug, "SFINAE: Function name parsing failed, keeping original declaration token");
+		} else if (type_and_name_result.node()->is<DeclarationNode>()) {
+			// Extract the function name token from the parsed result
 			func_name_token = type_and_name_result.node()->as<DeclarationNode>().identifier_token();
 		}
 

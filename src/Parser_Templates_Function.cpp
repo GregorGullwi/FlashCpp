@@ -156,6 +156,12 @@ ParseResult Parser::parse_template_function_declaration_body(
 		*func_result_node,
 		final_requires_clause);
 
+	// Save the declaration position for every template function declaration, not
+	// only for out-of-line definitions with bodies. SFINAE return-type checking
+	// also needs to re-parse declaration-only templates such as
+	// `typename enable_if<...>::type swap(T&, T&);`.
+	func_decl.set_template_declaration_position(declaration_start);
+
 	// Handle function body: semicolon (declaration only), = delete, = default, or braces (definition)
 	if (peek() == ";"_tok) {
 		// Just a declaration, consume the semicolon
@@ -183,10 +189,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		// Has a body - save positions for re-parsing during instantiation
 		SaveHandle body_start = save_token_position();
 
-		// Store both declaration and body positions for SFINAE support
-		// Declaration position: for re-parsing return type with template parameters
-		// Body position: for re-parsing function body with template parameters
-		func_decl.set_template_declaration_position(declaration_start);
+		// Store body position for re-parsing function bodies with template parameters.
 		func_decl.set_template_body_position(body_start);
 
 		// Skip over the body (handles both '{...}' and function-try-blocks 'try{...}catch...')
