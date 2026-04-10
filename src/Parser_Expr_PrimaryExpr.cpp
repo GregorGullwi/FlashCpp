@@ -927,7 +927,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			Token init_token = current_token_;
 			bool is_brace_init = (current_token_.value() == "{");
-			std::string_view closing_delimiter = is_brace_init ? std::string_view("}") : std::string_view(")");
+			std::string_view closing_delimiter = is_brace_init ? "}" : ")";
 			advance(); // consume '(' or '{'
 
 			if (current_token_.value() == closing_delimiter) {
@@ -985,7 +985,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return ParseResult::error("Expected ')' after decltype constructor arguments", current_token_);
 				}
 				auto ctor_result = emplace_node<ExpressionNode>(
-					ConstructorCallNode(type_node, std::move(args_result.args), decltype_token));
+					ConstructorCallNode(type_node, std::move(args_result.args), init_token));
 				return ParseResult::success(ctor_result);
 			}
 
