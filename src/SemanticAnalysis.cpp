@@ -4650,6 +4650,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return func_decl;
 	}
 
+	if (!func_decl) {
+		unresolved_call_args_.insert(call_key);
+	}
+
 	return func_decl;
 }
 
