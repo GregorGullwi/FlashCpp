@@ -185,17 +185,21 @@ struct StructTypeInfo {
 			}
 		}
 
+		const StructTypeInfo* member_struct_info = nullptr;
 		bool is_empty_layout_member = false;
 		if (!is_union && !bitfield_width.has_value()) {
-			const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(type_index);
+			member_struct_info = tryGetStructTypeInfo(type_index);
 			is_empty_layout_member = member_struct_info && member_struct_info->isEmptyLayoutLike();
-			bool has_same_type_overlap = member_struct_info &&
-										 is_empty_layout_member &&
-										 hasCommonLeadingEmptyTypeAtOffset(*member_struct_info, offset);
-			if (has_same_type_overlap) {
+			bool needs_distinct_empty_address = member_struct_info &&
+												is_empty_layout_member &&
+												hasCommonLeadingEmptyTypeAtOffset(*member_struct_info, offset);
+			if (needs_distinct_empty_address) {
 				offset = alignLayoutSize(offset + 1, effective_alignment);
 			}
-			if (is_no_unique_address && is_empty_layout_member) {
+			bool is_zero_size_nua_empty_member = is_no_unique_address && is_empty_layout_member;
+			if (is_zero_size_nua_empty_member) {
+				// [[no_unique_address]] empty members remain zero-size even when their
+				// offset was bumped to keep same-type subobjects at distinct addresses.
 				layout_member_size = 0;
 			}
 		}
@@ -221,9 +225,14 @@ struct StructTypeInfo {
 			total_size = toSizeInBytes(std::max(toSizeT(total_size), member_size));
 		} else if (!bitfield_width.has_value()) {
 			size_t data_extent = offset + layout_member_size;
-			size_t object_extent = offset + layout_member_size;
+			size_t object_extent = data_extent;
 			if (is_no_unique_address && is_empty_layout_member) {
+				// Zero-size [[no_unique_address]] members do not advance the placement cursor,
+				// but the complete object still needs to cover any distinct address we assigned,
+				// e.g. when avoiding same-type overlap.
 				data_extent = toSizeT(layout_data_size);
+				// `offset + 1` keeps the complete object large enough to contain the
+				// byte whose address we used to distinguish this empty subobject.
 				object_extent = std::max(object_extent, offset + 1);
 			}
 			if (placed_in_active_bitfield_unit) {
@@ -322,8 +331,15 @@ struct StructTypeInfo {
 	const std::string& getFinalizationError() const { return finalization_error_; }
 
 	SizeInBits sizeInBits() const { return toBits(sizeInBytes()); }
+	// Use this when later layout needs the furthest offset already reserved by either
+	// ordinary member placement (`layout_data_size`) or complete-object extent tracking
+	// (`total_size`) for zero-size [[no_unique_address]] empties at bumped offsets.
+	size_t currentLayoutOffset() const {
+		return std::max(toSizeT(total_size), toSizeT(layout_data_size));
+	}
+
 	SizeInBytes sizeInBytes() const {
-		SizeInBytes size = toSizeInBytes(std::max(toSizeT(total_size), toSizeT(layout_data_size)));
+		SizeInBytes size = toSizeInBytes(currentLayoutOffset());
 		if (layout_is_complete && !hasDependentOrIncompleteLayout()) {
 			enforceMinimumCompleteObjectSize(size, alignment);
 		}

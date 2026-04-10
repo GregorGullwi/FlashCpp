@@ -1363,7 +1363,7 @@ void StructTypeInfo::recalculateLayout() {
 		addExistingMember(member);
 	}
 
-	current_offset = std::max(toSizeT(total_size), toSizeT(layout_data_size));
+	current_offset = currentLayoutOffset();
 	max_alignment = alignment;
 	non_virtual_size = toSizeInBytes(alignLayoutSize(current_offset, max_alignment));
 
@@ -1428,7 +1428,7 @@ bool StructTypeInfo::finalizeWithBases() {
 				  member.is_no_unique_address);
 	}
 
-	current_offset = std::max(toSizeT(total_size), toSizeT(layout_data_size));
+	current_offset = currentLayoutOffset();
 	max_alignment = alignment;
 	non_virtual_size = toSizeInBytes(alignLayoutSize(current_offset, max_alignment));
 
