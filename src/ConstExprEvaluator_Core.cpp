@@ -3741,9 +3741,13 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 								const auto& arguments = call_expr.arguments();
 								const auto& parameters = func_decl.parameter_nodes();
 
-								// This parameter count check implicitly ensures we're calling static members:
-								// Non-static members would have a conceptual 'this' parameter that we're not providing
-								if (arguments.size() == parameters.size()) {
+								// Use range-based arity check to support trailing default arguments.
+								// Non-static members are filtered out: they have no implicit 'this' in
+								// parameter_nodes(), but the call has no receiver, so evaluate_function_call_with_bindings
+								// will fail naturally if a non-static member is incorrectly matched.
+								const size_t parameter_count = parameters.size();
+								const size_t min_required = countMinRequiredArgs(func_decl);
+								if (arguments.size() >= min_required && arguments.size() <= parameter_count) {
 									std::unordered_map<std::string_view, EvalResult> empty_bindings;
 									return evaluate_function_call_with_template_context(
 										func_decl,
