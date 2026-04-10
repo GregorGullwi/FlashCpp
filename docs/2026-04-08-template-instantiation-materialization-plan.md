@@ -7,30 +7,43 @@
 
 ### Do this next
 
-1. Audit the remaining parser-side and lazy/IR-triggered consumers that still
-   synthesize concrete owner/member names after substitution now that the
-   manual unqualified `Template<Args>::member` recovery branches in
-   `src/Parser_Expr_PrimaryExpr.cpp` are gone. The next obvious parser target is
-   the namespace-scoped out-of-line `ClassName<Args>::member` specialization
-   path in `src/Parser_Decl_FunctionOrVar.cpp`, then the remaining lazy/IR
-   consumers that still rebuild owner names late.
-2. Keep routing those late consumers through the same parser-owned
-   materialization rules used by
-   `materializePrimaryTemplateOwnerForLookup(...)` and
-   `materializeTemplateInstantiationForLookup(...)`, including the exact
-   qualified alias/member lookup preference before falling back to member-chain
-   walking.
-3. Once the late consumers stop rebuilding instantiated names manually, return
-   to the remaining deduction / placeholder sites only if they still encode the
-   same owner-materialization policy independently.
-4. Keep the docs and follow-up plan focused on the still-open late consumers;
-   the nearby template-object default-member-initializer regression is fixed,
-   the primary-expression cleanup is now through the shared helper, and the next
-   PR cutoff can stay centered on the remaining out-of-line and lazy/IR
-   materialization cleanup.
+1. Shift the next slice to Phase 3’s explicit late-materialization contract now
+   that `ExpressionSubstitutor.cpp` no longer has any
+   `try_instantiate_class_template(...)` fallback sites. Add one helper that
+   pairs late AST-root registration with the pending-sema normalization policy
+   so new lazy/parser-triggered instantiation sites cannot forget half of the
+   contract.
+2. Start with the still-scattered late materialization consumers that obviously
+   split registration from normalization today:
+   `src/Parser_Templates_Lazy.cpp`,
+   `src/Parser_Templates_Inst_MemberFunc.cpp`,
+   `src/Parser_Templates_Inst_Deduction.cpp`, and the remaining
+   `registerLateMaterializedTopLevelNode(...)` call sites in
+   `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser_TypeSpecifiers.cpp`.
+3. Keep the migration narrow: preserve the existing parser-owned
+   `materializeTemplateInstantiationForLookup(...)` behavior, but make the
+   register/enqueue/normalize sequence one explicit helper or queue-drain path.
+4. After those late-materialization sites share one contract, return to the
+   remaining deduction / placeholder utilities only if they still encode owner
+   materialization or pending-sema policy independently.
 
 ### Latest completed slice
 
+  - replaced the last manual class-template constructor materialization branch
+    in `src/ExpressionSubstitutor.cpp` with
+    `materializeTemplateInstantiationForLookup(...)`, so the substitution layer
+    no longer keeps its own `try_instantiate_class_template(...)` +
+    type-map-recovery path for explicit template constructor calls
+  - switched that constructor path to use the resolved `TypeInfo`’s registered
+    type index/category instead of raw `type_index_` access
+  - removed the dead `ExpressionSubstitutor::ensureTemplateInstantiated(...)`
+    declaration/definition because it had no remaining call sites after the
+    shared helper migration
+  - Validation after this slice:
+    - `make main CXX=clang++`
+    - `bash ./tests/run_all_tests.sh test_template_ctor_ret0.cpp test_partial_spec_template_ctor_ret0.cpp test_ool_template_ctor_ret5.cpp test_ool_template_ctor_brace_init_ret10.cpp test_decltype_base_with_substitution_ret42.cpp`
+    - `bash ./tests/run_all_tests.sh`
+    - 2004 pass, 128 expected-fail
   - removed the last two unqualified `Template<Args>::member` fallback branches
     in `src/Parser_Expr_PrimaryExpr.cpp`, so the primary-expression parser no
     longer rebuilds instantiated owners by hand after the shared helper runs
