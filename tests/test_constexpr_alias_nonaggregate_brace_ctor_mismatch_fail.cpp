@@ -10,6 +10,7 @@ struct PairImpl {
 
 using Pair = PairImpl;
 
+// Expected diagnostic: no matching 2-arg constructor for PairImpl/Pair.
 constexpr Pair p{1, 2};	// ERROR: no matching 2-arg constructor
 
 int main() {
