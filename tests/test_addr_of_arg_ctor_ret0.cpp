@@ -4,8 +4,8 @@ struct ValueHolder {
 	ValueHolder(int* p)
 		: value(*p) {}
 
-	ValueHolder(int v)
-		: value(v + 100) {}
+	ValueHolder(void*)
+		: value(107) {}
 };
 
 int main() {

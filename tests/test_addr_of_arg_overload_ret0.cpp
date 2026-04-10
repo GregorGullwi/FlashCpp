@@ -2,8 +2,8 @@ int pick(int* p) {
 	return *p - 42;
 }
 
-int pick(int value) {
-	return value;
+int pick(void* p) {
+	return p ? 1 : 2;
 }
 
 int main() {
