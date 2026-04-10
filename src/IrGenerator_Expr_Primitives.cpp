@@ -16,7 +16,11 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
 			return generateStringLiteralIr(expr);
 		} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
-			return generateBinaryOperatorIr(expr);
+			ExprResult result = generateBinaryOperatorIr(expr);
+			if (context == ExpressionContext::LValueAddress) {
+				return materializeAddressResult(expr, std::move(result), expr.get_token());
+			}
+			return result;
 		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 			return generateUnaryOperatorIr(expr, context);
 		} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
