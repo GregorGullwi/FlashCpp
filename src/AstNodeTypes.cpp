@@ -1329,6 +1329,7 @@ void StructTypeInfo::recalculateLayout() {
 	members.reserve(old_members.size());
 
 	total_size = SizeInBytes{};
+	layout_data_size = SizeInBytes{};
 	non_virtual_size = SizeInBytes{};
 	layout_is_complete = false;
 	alignment = 1;
@@ -1347,6 +1348,7 @@ void StructTypeInfo::recalculateLayout() {
 	placeBaseSubobjects(base_collections.non_virtual_bases, current_offset, max_alignment);
 
 	total_size = toSizeInBytes(current_offset);
+	layout_data_size = toSizeInBytes(current_offset);
 	alignment = max_alignment;
 
 	auto addExistingMember = [this](StructMember& member) {
@@ -1361,7 +1363,7 @@ void StructTypeInfo::recalculateLayout() {
 		addExistingMember(member);
 	}
 
-	current_offset = toSizeT(total_size);
+	current_offset = std::max(toSizeT(total_size), toSizeT(layout_data_size));
 	max_alignment = alignment;
 	non_virtual_size = toSizeInBytes(alignLayoutSize(current_offset, max_alignment));
 
@@ -1411,6 +1413,7 @@ bool StructTypeInfo::finalizeWithBases() {
 	std::vector<StructMember> old_members = std::move(members);
 	members.reserve(old_members.size());
 	total_size = toSizeInBytes(current_offset);
+	layout_data_size = toSizeInBytes(current_offset);
 	alignment = max_alignment;
 	active_bitfield_unit_offset = 0;
 	active_bitfield_unit_size = 0;
@@ -1425,7 +1428,7 @@ bool StructTypeInfo::finalizeWithBases() {
 				  member.is_no_unique_address);
 	}
 
-	current_offset = toSizeT(total_size);
+	current_offset = std::max(toSizeT(total_size), toSizeT(layout_data_size));
 	max_alignment = alignment;
 	non_virtual_size = toSizeInBytes(alignLayoutSize(current_offset, max_alignment));
 
