@@ -397,11 +397,14 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 											: func_name_view;
 	const bool has_synthesized_template_suffix =
 		func_name_view.find('$') != std::string_view::npos;
-	const FunctionDeclarationNode* pre_resolved_direct_target =
-		callExprNode.callee().function_declaration_or_null();
-	if (!pre_resolved_direct_target && sema_) {
-		pre_resolved_direct_target = sema_->getResolvedDirectCall(sema_call_key);
-	}
+	const FunctionDeclarationNode* const pre_resolved_direct_target = [&]() -> const FunctionDeclarationNode* {
+		const FunctionDeclarationNode* target =
+			callExprNode.callee().function_declaration_or_null();
+		if (!target && sema_) {
+			target = sema_->getResolvedDirectCall(sema_call_key);
+		}
+		return target;
+	}();
 
 	FLASH_LOG_FORMAT(Codegen, Debug, "=== generateFunctionCallIr: func_name={} ===", func_name_view);
 
@@ -438,50 +441,81 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 		auto arg_node = callExprNode.arguments()[0];
 		if (arg_node.is<ExpressionNode>()) {
-			FLASH_LOG(Codegen, Debug, "Inlining pure expression function (inline_always): ", func_name_view);
-
-			if (returns_reference) {
-					// For functions returning references (like std::move, std::forward),
-					// we need to generate an addressof the argument, not just return it
-				const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
-
-					// Check if the argument is an identifier (common case for move(x))
-				if (std::holds_alternative<IdentifierNode>(arg_expr)) {
-					const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
-
-						// Generate addressof for the identifier
-					TempVar result_var = var_counter.next();
-					AddressOfOp op;
-					op.result = result_var;
-
-						// Get type info from the identifier
-					StringHandle id_handle = StringTable::getOrInternStringHandle(ident.name());
-					TypeCategory operand_type = TypeCategory::Int;  // Default
-					int operand_size = 32;
-					if (const DeclarationNode* decl = lookupDeclaration(id_handle)) {
-						const TypeSpecifierNode& type = decl->type_node().as<TypeSpecifierNode>();
-						operand_type = type.type();
-						operand_size = static_cast<int>(type.size_in_bits());
-						if (operand_size == 0)
-							operand_size = get_type_size_bits(operand_type);
+			auto getInlineAlwaysArgType = [&]() -> std::optional<TypeSpecifierNode> {
+				if (sema_) {
+					if (auto sema_type = sema_->getExpressionType(arg_node); sema_type.has_value()) {
+						return sema_type;
 					}
-
-					op.operand.setType(operand_type);
-					op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
-					op.operand.pointer_depth = PointerDepth{};
-					op.operand.value = id_handle;
-
-					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
-
-						// Return pointer type (64-bit address) with pointer depth 1
-					return makeExprResult(nativeTypeIndex(operand_type), SizeInBits{64}, IrOperand{result_var}, PointerDepth{1}, ValueStorage::ContainsData);
 				}
-					// For non-identifier expressions, fall through to generate a regular call
-					// (we can't inline complex expressions that need reference semantics)
+				if (parser_) {
+					return parser_->get_expression_type(arg_node);
+				}
+				return std::nullopt;
+			};
+			auto inlineAlwaysTypeMatches = [&](const TypeSpecifierNode& arg_type) {
+				if (!returns_reference) {
+					return return_type_spec.matches_signature(arg_type);
+				}
+
+				TypeSpecifierNode return_base = return_type_spec;
+				return_base.set_reference_qualifier(ReferenceQualifier::None);
+				TypeSpecifierNode arg_base = arg_type;
+				arg_base.set_reference_qualifier(ReferenceQualifier::None);
+				return return_base.matches_signature(arg_base);
+			};
+			bool can_inline = true;
+			if (auto arg_type = getInlineAlwaysArgType(); arg_type.has_value()) {
+				can_inline = inlineAlwaysTypeMatches(*arg_type);
 			} else {
-					// Non-reference return - can inline directly by returning argument
-				auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
-				return arg_ir;
+				can_inline = false;
+			}
+			if (can_inline) {
+				FLASH_LOG(Codegen, Debug, "Inlining pure expression function (inline_always): ", func_name_view);
+
+				if (returns_reference) {
+						// For functions returning references (like std::move, std::forward),
+						// we need to generate an addressof the argument, not just return it
+					const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+
+						// Check if the argument is an identifier (common case for move(x))
+					if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+						const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
+
+							// Generate addressof for the identifier
+						TempVar result_var = var_counter.next();
+						AddressOfOp op;
+						op.result = result_var;
+
+							// Get type info from the identifier
+						StringHandle id_handle = StringTable::getOrInternStringHandle(ident.name());
+						TypeCategory operand_type = TypeCategory::Int;  // Default
+						static constexpr int DefaultInlineAlwaysOperandSizeBits = 32;
+						int operand_size = DefaultInlineAlwaysOperandSizeBits;
+						if (const DeclarationNode* decl = lookupDeclaration(id_handle)) {
+							const TypeSpecifierNode& type = decl->type_node().as<TypeSpecifierNode>();
+							operand_type = type.type();
+							operand_size = static_cast<int>(type.size_in_bits());
+							if (operand_size == 0)
+								operand_size = get_type_size_bits(operand_type);
+						}
+
+						op.operand.setType(operand_type);
+						op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
+						op.operand.pointer_depth = PointerDepth{};
+						op.operand.value = id_handle;
+
+						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
+
+							// Return pointer type (64-bit address) with pointer depth 1
+						return makeExprResult(nativeTypeIndex(operand_type), SizeInBits{64}, IrOperand{result_var}, PointerDepth{1}, ValueStorage::ContainsData);
+					}
+						// For non-identifier expressions, fall through to generate a regular call
+						// (we can't inline complex expressions that need reference semantics)
+				} else {
+						// Non-reference return - can inline directly by returning argument
+					auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
+					return arg_ir;
+				}
 			}
 		}
 	}
