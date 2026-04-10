@@ -6522,7 +6522,7 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		return EvalResult::error("Cannot evaluate array subscript: no symbol table provided");
 	}
 
-		if (auto static_member_result = resolve_current_struct_static_member(
+	if (auto static_member_result = resolve_current_struct_static_member(
 			&identifier,
 			context,
 			CurrentStructStaticLookupMode::PreferCurrentStruct);
