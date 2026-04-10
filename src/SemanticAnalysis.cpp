@@ -2962,6 +2962,15 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (op == "++" || op == "--") {
 					return inferExpressionType(e.get_operand());
 				}
+				if (op == "&") {
+					const CanonicalTypeId operand_id = inferExpressionType(e.get_operand());
+					if (!operand_id)
+						return {};
+					CanonicalTypeDesc result_desc = type_context_.get(operand_id);
+					result_desc.ref_qualifier = ReferenceQualifier::None;
+					result_desc.pointer_levels.push_back(PointerLevel{});
+					return type_context_.intern(result_desc);
+				}
 				if (op == "*") {
 					const CanonicalTypeId operand_id = inferExpressionType(e.get_operand());
 					if (!operand_id)
