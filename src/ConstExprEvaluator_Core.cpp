@@ -2024,6 +2024,20 @@ static EvalResult make_default_init(const TypeSpecifierNode& type_spec) {
 	return r;
 }
 
+EvalResult Evaluator::evaluate_with_optional_bindings(
+	const ASTNode& expr_node,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* bindings,
+	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
+	if (mutable_bindings) {
+		return evaluate_expression_with_bindings(expr_node, *mutable_bindings, context);
+	}
+	if (bindings) {
+		return evaluate_expression_with_bindings_const(expr_node, *bindings, context);
+	}
+	return evaluate(expr_node, context);
+}
+
 // C++20 constexpr new: allocate an object on the constexpr heap and return a pointer to it.
 // `bindings` may be non-null when evaluating inside a constexpr function body (for
 // evaluating constructor arguments that reference local variables).
@@ -2039,12 +2053,7 @@ EvalResult Evaluator::evaluate_new_expression(
 	const TypeSpecifierNode& type_spec = new_expr.type_node().as<TypeSpecifierNode>();
 
 	auto eval_arg = [&](const ASTNode& arg_node) -> EvalResult {
-		if (mutable_bindings) {
-			return evaluate_expression_with_bindings(arg_node, *mutable_bindings, context);
-		}
-		if (bindings)
-			return evaluate_expression_with_bindings_const(arg_node, *bindings, context);
-		return evaluate(arg_node, context);
+		return evaluate_with_optional_bindings(arg_node, context, bindings, mutable_bindings);
 	};
 
 	if (new_expr.is_array()) {
@@ -2098,8 +2107,10 @@ EvalResult Evaluator::evaluate_new_expression(
 				args_copy.push_back(arg);
 			}
 			if (mutable_bindings) {
+				const std::unordered_map<std::string_view, EvalResult>* const_bindings_for_match =
+					mutable_bindings;
 				const ConstructorDeclarationNode* matching_ctor =
-					find_matching_constructor(struct_info, args_copy, context, bindings);
+					find_matching_constructor(struct_info, args_copy, context, const_bindings_for_match);
 				if (!matching_ctor) {
 					return EvalResult::error("new-expression: no matching constructor found for struct type");
 				}
@@ -2251,14 +2262,8 @@ EvalResult Evaluator::evaluate_delete_expression(
 	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
 
 	// Evaluate the pointer expression.
-	EvalResult ptr_result;
-	if (mutable_bindings) {
-		ptr_result = evaluate_expression_with_bindings(del_expr.expr(), *mutable_bindings, context);
-	} else if (bindings) {
-		ptr_result = evaluate_expression_with_bindings_const(del_expr.expr(), *bindings, context);
-	} else {
-		ptr_result = evaluate(del_expr.expr(), context);
-	}
+	EvalResult ptr_result =
+		evaluate_with_optional_bindings(del_expr.expr(), context, bindings, mutable_bindings);
 	if (!ptr_result.success())
 		return ptr_result;
 
