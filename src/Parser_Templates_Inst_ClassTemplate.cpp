@@ -7990,10 +7990,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// PHASE 2: Parse deferred template member function bodies (two-phase lookup)
-	// Now that TypeInfo is fully created and registered in getTypesByNameMap(),
-	// we can parse the member function bodies that were deferred during template definition
-	// This allows static member lookups to work correctly
-	if (!template_class.deferred_bodies().empty()) {
+	// Explicit instantiations still materialize deferred bodies immediately.
+	// Implicit instantiations register signature-only stubs in the lazy registry above;
+	// reparsing every deferred body here would eagerly instantiate unused members and
+	// incorrectly diagnose dependent bodies such as std::pair::swap for const keys.
+	if (!is_implicit_instantiation && !template_class.deferred_bodies().empty()) {
 		FLASH_LOG(Templates, Debug, "Parsing ", template_class.deferred_bodies().size(),
 				  " deferred template member function bodies for ", instantiated_name);
 
