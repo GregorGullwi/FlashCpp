@@ -927,7 +927,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			Token init_token = current_token_;
 			bool is_brace_init = (current_token_.value() == "{");
-			std::string_view closing_delimiter = is_brace_init ? "}"sv : ")"sv;
+			std::string_view closing_delimiter = is_brace_init ? std::string_view("}") : std::string_view(")");
 			advance(); // consume '(' or '{'
 
 			if (current_token_.value() == closing_delimiter) {
@@ -935,6 +935,57 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				ChunkedVector<ASTNode> args;
 				auto ctor_result = emplace_node<ExpressionNode>(
 					ConstructorCallNode(type_node, std::move(args), init_token));
+				return ParseResult::success(ctor_result);
+			}
+
+			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+			TypeCategory ctor_type = type_spec.category();
+			TypeIndex ctor_type_index = type_spec.type_index();
+			if (ctor_type_index.is_valid()) {
+				const CanonicalTypeAlias canonical_alias = canonicalize_type_alias(ctor_type_index);
+				ctor_type = canonical_alias.typeEnum();
+				ctor_type_index = canonical_alias.resolvedTypeIndex();
+			}
+			bool use_constructor_call =
+				is_struct_type(ctor_type) || ctor_type == TypeCategory::UserDefined;
+
+			if (is_brace_init) {
+				ChunkedVector<ASTNode> args;
+				while (!current_token_.kind().is_eof() && current_token_.value() != "}") {
+					ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (arg_result.is_error()) {
+						return arg_result;
+					}
+					args.push_back(*arg_result.node());
+					if (current_token_.value() == ",") {
+						advance(); // consume ','
+					} else if (current_token_.value() != "}") {
+						return ParseResult::error("Expected ',' or '}' in decltype brace initializer", current_token_);
+					}
+				}
+
+				if (!consume("}"_tok)) {
+					return ParseResult::error("Expected '}' after decltype brace construction", current_token_);
+				}
+
+				auto ctor_result = emplace_node<ExpressionNode>(
+					ConstructorCallNode(type_node, std::move(args), init_token));
+				return ParseResult::success(ctor_result);
+			}
+
+			if (use_constructor_call) {
+				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+					.handle_pack_expansion = true,
+					.collect_types = true,
+					.expand_simple_packs = true});
+				if (!args_result.success) {
+					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+				}
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after decltype constructor arguments", current_token_);
+				}
+				auto ctor_result = emplace_node<ExpressionNode>(
+					ConstructorCallNode(type_node, std::move(args_result.args), decltype_token));
 				return ParseResult::success(ctor_result);
 			}
 
@@ -950,23 +1001,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				final_expr = emplace_node<ExpressionNode>(
 					PackExpansionExprNode(*final_expr, ellipsis_token));
 			}
-
-			if (is_brace_init) {
-				if (!consume("}"_tok)) {
-					return ParseResult::error("Expected '}' after decltype brace construction", current_token_);
-				}
-
-				ChunkedVector<ASTNode> args;
-				args.push_back(*final_expr);
-				auto ctor_result = emplace_node<ExpressionNode>(
-					ConstructorCallNode(type_node, std::move(args), init_token));
-				return ParseResult::success(ctor_result);
-			}
-
 			if (!consume(")"_tok)) {
 				return ParseResult::error("Expected ')' after decltype functional cast expression", current_token_);
 			}
-
 			return ParseResult::success(emplace_node<ExpressionNode>(
 				StaticCastNode(type_node, *final_expr, decltype_token)));
 		};
