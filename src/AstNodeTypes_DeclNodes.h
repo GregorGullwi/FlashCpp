@@ -347,7 +347,11 @@ struct StructTypeInfo {
 	}
 
 	SizeInBytes baseSubobjectSizeInBytes() const {
-		return non_virtual_size.is_set() ? non_virtual_size : sizeInBytes();
+		// Base subobjects do NOT get the minimum-complete-object-size bump
+		// (empty bases have size 0 as base subobjects per the Itanium ABI).
+		// Use currentLayoutOffset() directly instead of sizeInBytes() which
+		// applies enforceMinimumCompleteObjectSize.
+		return non_virtual_size.is_set() ? non_virtual_size : toSizeInBytes(currentLayoutOffset());
 	}
 
 	static size_t alignLayoutSize(size_t size, size_t alignment_value) {
