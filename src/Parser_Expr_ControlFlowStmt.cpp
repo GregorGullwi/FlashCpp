@@ -1190,12 +1190,12 @@ ParseResult Parser::parse_lambda_expression() {
 					std::nullopt,		  // No initializer
 					ReferenceQualifier::None,  // Not a reference
 					64,				   // Size in bits
-					false,
-					{},
-					0,
-					std::nullopt,
-					std::nullopt,
-					false
+					false,				   // is_array
+					{},				   // array_dimensions
+					0,				   // pointer_depth (stored as void*, depth encoded in type)
+					std::nullopt,		  // bitfield_width
+					std::nullopt,		  // function_sig
+					false				   // is_no_unique_address
 				);
 				continue;  // Skip the rest of processing for this capture
 			}
@@ -1222,12 +1222,12 @@ ParseResult Parser::parse_lambda_expression() {
 								std::nullopt,						  // No initializer
 								ReferenceQualifier::None,			  // Not a reference
 								enclosing_struct->sizeInBits().value,	 // Size in bits
-								false,
-								{},
-								0,
-								std::nullopt,
-								std::nullopt,
-								false
+								false,								  // is_array
+								{},									  // array_dimensions
+								0,									  // pointer_depth
+								std::nullopt,						  // bitfield_width
+								std::nullopt,						  // function_sig
+								false								  // is_no_unique_address
 							);
 						}
 					}
@@ -1338,7 +1338,7 @@ ParseResult Parser::parse_lambda_expression() {
 				is_ref_capture ? ReferenceQualifier::LValueReference : ReferenceQualifier::None,
 				referenced_size_bits,
 				var_type.is_array(),
-				{},
+				var_type.array_dimensions(),
 				static_cast<int>(var_type.pointer_depth()),
 				std::nullopt,
 				var_type.has_function_signature() ? std::optional(var_type.function_signature()) : std::nullopt,
