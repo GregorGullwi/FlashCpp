@@ -1400,7 +1400,7 @@ ParseResult Parser::parse_type_specifier() {
 
 				// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
 				if (instantiated_class.has_value() && instantiated_class->is<StructDeclarationNode>()) {
-					registerLateMaterializedTopLevelNode(*instantiated_class);
+					registerAndNormalizeLateMaterializedTopLevelNode(*instantiated_class);
 				}
 
 				// Fill in default template arguments to get the actual instantiated name
@@ -1812,7 +1812,7 @@ ParseResult Parser::parse_type_specifier() {
 
 							auto member_instantiated = try_instantiate_class_template(StringTable::getStringView(member_template_name_handle), *member_template_args);
 							if (member_instantiated.has_value() && member_instantiated->is<StructDeclarationNode>()) {
-								registerLateMaterializedTopLevelNode(*member_instantiated);
+								registerAndNormalizeLateMaterializedTopLevelNode(*member_instantiated);
 							}
 
 							std::string_view member_instantiated_name = get_instantiated_class_name(StringTable::getStringView(member_template_name_handle), *member_template_args);
