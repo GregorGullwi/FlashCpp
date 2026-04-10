@@ -2098,12 +2098,12 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 
 	// For new-expressions (C++20 constexpr dynamic allocation)
 	if (const auto* new_expr = std::get_if<NewExpressionNode>(&expr)) {
-		return evaluate_new_expression(*new_expr, context, &bindings);
+		return evaluate_new_expression(*new_expr, context, &bindings, &bindings);
 	}
 
 	// For delete-expressions (C++20 constexpr dynamic deallocation)
 	if (const auto* del_expr = std::get_if<DeleteExpressionNode>(&expr)) {
-		return evaluate_delete_expression(*del_expr, context, &bindings);
+		return evaluate_delete_expression(*del_expr, context, &bindings, &bindings);
 	}
 
 	// For other expression types, use the const version (cast bindings to const)
@@ -2381,6 +2381,14 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 
 	if (auto member_call_result = try_evaluate_bound_member_function_call(expr, bindings, context, mutable_bindings)) {
 		return *member_call_result;
+	}
+
+	if (const auto* new_expr = std::get_if<NewExpressionNode>(&expr)) {
+		return evaluate_new_expression(*new_expr, context, &bindings, mutable_bindings);
+	}
+
+	if (const auto* del_expr = std::get_if<DeleteExpressionNode>(&expr)) {
+		return evaluate_delete_expression(*del_expr, context, &bindings, mutable_bindings);
 	}
 
 	// For member access on 'this' (e.g., this->x in a member function)

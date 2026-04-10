@@ -687,10 +687,21 @@ private:
 	static EvalResult evaluate_offsetof(const OffsetofExprNode& offsetof_expr);
 	static EvalResult evaluate_noexcept_expr(const NoexceptExprNode& noexcept_expr, EvaluationContext& context);
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context);
-	static EvalResult evaluate_new_expression(const NewExpressionNode& new_expr, EvaluationContext& context,
-											  const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
-	static EvalResult evaluate_delete_expression(const DeleteExpressionNode& del_expr, EvaluationContext& context,
-												 const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
+	static EvalResult evaluate_new_expression(
+		const NewExpressionNode& new_expr,
+		EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* bindings,
+		std::unordered_map<std::string_view, EvalResult>* mutable_bindings);
+	static EvalResult evaluate_delete_expression(
+		const DeleteExpressionNode& del_expr,
+		EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* bindings,
+		std::unordered_map<std::string_view, EvalResult>* mutable_bindings);
+	static EvalResult evaluate_with_optional_bindings(
+		const ASTNode& expr_node,
+		EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* bindings,
+		std::unordered_map<std::string_view, EvalResult>* mutable_bindings);
 	static EvalResult evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context);
 	static EvalResult evaluate_const_cast(const ConstCastNode& cast_node, EvaluationContext& context);
 	static EvalResult evaluate_expr_node(const TypeSpecifierNode& target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr);

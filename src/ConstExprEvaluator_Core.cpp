@@ -677,12 +677,12 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 
 	// For NewExpressionNode (C++20 constexpr new)
 	if (const auto* new_expr = std::get_if<NewExpressionNode>(&expr)) {
-		return evaluate_new_expression(*new_expr, context);
+		return evaluate_new_expression(*new_expr, context, nullptr, nullptr);
 	}
 
 	// For DeleteExpressionNode (C++20 constexpr delete)
 	if (const auto* del_expr = std::get_if<DeleteExpressionNode>(&expr)) {
-		return evaluate_delete_expression(*del_expr, context);
+		return evaluate_delete_expression(*del_expr, context, nullptr, nullptr);
 	}
 
 	// Other expression types are not supported as constant expressions yet
@@ -2024,13 +2024,28 @@ static EvalResult make_default_init(const TypeSpecifierNode& type_spec) {
 	return r;
 }
 
+EvalResult Evaluator::evaluate_with_optional_bindings(
+	const ASTNode& expr_node,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* bindings,
+	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
+	if (mutable_bindings) {
+		return evaluate_expression_with_bindings(expr_node, *mutable_bindings, context);
+	}
+	if (bindings) {
+		return evaluate_expression_with_bindings_const(expr_node, *bindings, context);
+	}
+	return evaluate(expr_node, context);
+}
+
 // C++20 constexpr new: allocate an object on the constexpr heap and return a pointer to it.
 // `bindings` may be non-null when evaluating inside a constexpr function body (for
 // evaluating constructor arguments that reference local variables).
 EvalResult Evaluator::evaluate_new_expression(
 	const NewExpressionNode& new_expr,
 	EvaluationContext& context,
-	const std::unordered_map<std::string_view, EvalResult>* bindings) {
+	const std::unordered_map<std::string_view, EvalResult>* bindings,
+	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
 
 	if (!new_expr.type_node().is<TypeSpecifierNode>()) {
 		return EvalResult::error("new-expression: expected TypeSpecifierNode for allocated type");
@@ -2038,9 +2053,7 @@ EvalResult Evaluator::evaluate_new_expression(
 	const TypeSpecifierNode& type_spec = new_expr.type_node().as<TypeSpecifierNode>();
 
 	auto eval_arg = [&](const ASTNode& arg_node) -> EvalResult {
-		if (bindings)
-			return evaluate_expression_with_bindings_const(arg_node, *bindings, context);
-		return evaluate(arg_node, context);
+		return evaluate_with_optional_bindings(arg_node, context, bindings, mutable_bindings);
 	};
 
 	if (new_expr.is_array()) {
@@ -2093,15 +2106,58 @@ EvalResult Evaluator::evaluate_new_expression(
 			for (const auto& arg : ctor_args) {
 				args_copy.push_back(arg);
 			}
-			auto ctor_result = try_materialize_struct_from_ctor_args(
-				struct_info, type_index, args_copy, context, bindings);
-			if (!ctor_result.has_value()) {
-				return EvalResult::error("new-expression: no matching constructor found for struct type");
+			if (mutable_bindings) {
+				const std::unordered_map<std::string_view, EvalResult>* const_bindings_for_match =
+					mutable_bindings;
+				const ConstructorDeclarationNode* matching_ctor =
+					find_matching_constructor(struct_info, args_copy, context, const_bindings_for_match);
+				if (!matching_ctor) {
+					return EvalResult::error("new-expression: no matching constructor found for struct type");
+				}
+
+				std::vector<EvalResult> evaluated_ctor_args;
+				evaluated_ctor_args.reserve(ctor_args.size());
+				for (const auto& arg : ctor_args) {
+					auto arg_result = eval_arg(arg);
+					if (!arg_result.success()) {
+						return arg_result;
+					}
+					evaluated_ctor_args.push_back(std::move(arg_result));
+				}
+
+				std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+				auto bind_result = bind_pre_evaluated_arguments(
+					matching_ctor->parameter_nodes(),
+					evaluated_ctor_args,
+					ctor_param_bindings,
+					context,
+					"Invalid parameter in constexpr struct construction",
+					true);
+				if (!bind_result.success()) {
+					return bind_result;
+				}
+
+				auto materialize_result = materialize_members_from_constructor(
+					struct_info,
+					*matching_ctor,
+					ctor_param_bindings,
+					object_result.object_member_bindings,
+					context,
+					false);
+				if (!materialize_result.success()) {
+					return materialize_result;
+				}
+			} else {
+				auto ctor_result = try_materialize_struct_from_ctor_args(
+					struct_info, type_index, args_copy, context, bindings);
+				if (!ctor_result.has_value()) {
+					return EvalResult::error("new-expression: no matching constructor found for struct type");
+				}
+				if (!ctor_result->success()) {
+					return *ctor_result;
+				}
+				object_result = std::move(*ctor_result);
 			}
-			if (!ctor_result->success()) {
-				return *ctor_result;
-			}
-			object_result = std::move(*ctor_result);
 		} else {
 			// Default initialization with empty args: new T or new T().
 			// Per C++20, a type with user-defined constructors is not an aggregate,
@@ -2202,15 +2258,12 @@ EvalResult Evaluator::evaluate_new_expression(
 EvalResult Evaluator::evaluate_delete_expression(
 	const DeleteExpressionNode& del_expr,
 	EvaluationContext& context,
-	const std::unordered_map<std::string_view, EvalResult>* bindings) {
+	const std::unordered_map<std::string_view, EvalResult>* bindings,
+	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
 
 	// Evaluate the pointer expression.
-	EvalResult ptr_result;
-	if (bindings) {
-		ptr_result = evaluate_expression_with_bindings_const(del_expr.expr(), *bindings, context);
-	} else {
-		ptr_result = evaluate(del_expr.expr(), context);
-	}
+	EvalResult ptr_result =
+		evaluate_with_optional_bindings(del_expr.expr(), context, bindings, mutable_bindings);
 	if (!ptr_result.success())
 		return ptr_result;
 
