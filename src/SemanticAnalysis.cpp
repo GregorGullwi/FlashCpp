@@ -4351,6 +4351,7 @@ void SemanticAnalysis::annotateResolvedCallArgConversions(const void* call_key,
 		}
 
 		tryAnnotateSingleArgConversion(arg, param_type, context_description);
+		buildOverloadResolutionArgType(arg, nullptr);
 	}
 }
 

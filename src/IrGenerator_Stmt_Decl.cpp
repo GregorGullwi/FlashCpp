@@ -78,6 +78,9 @@ bool isExprResultPRValue(const ExprResult& expr_result) {
 
 bool isSemaOwnedUnaryOverloadArgShape(std::string_view op) {
 	return op == "!" ||
+		   op == "+" ||
+		   op == "-" ||
+		   op == "~" ||
 		   op == "++" ||
 		   op == "--";
 }
@@ -92,6 +95,16 @@ bool isSemaOwnedBinaryOverloadArgShape(std::string_view op) {
 		   op == ">" ||
 		   op == "<=" ||
 		   op == ">=" ||
+		   op == "+" ||
+		   op == "-" ||
+		   op == "*" ||
+		   op == "/" ||
+		   op == "%" ||
+		   op == "&" ||
+		   op == "|" ||
+		   op == "^" ||
+		   op == "<<" ||
+		   op == ">>" ||
 		   op == "&&" ||
 		   op == "||" ||
 		   op == "," ||
