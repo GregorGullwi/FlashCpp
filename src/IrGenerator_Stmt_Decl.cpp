@@ -76,6 +76,38 @@ bool isExprResultPRValue(const ExprResult& expr_result) {
 		.commit()));
 }
 
+bool isSemaOwnedUnaryOverloadArgShape(std::string_view op) {
+	return op == "!" ||
+		   op == "++" ||
+		   op == "--";
+}
+
+bool isSemaOwnedBinaryOverloadArgShape(std::string_view op) {
+	// These operators already have sema-owned result typing from child types and
+	// value-category rules alone, so normalized bodies should not rebuild their
+	// overload-resolution argument type in codegen.
+	return op == "==" ||
+		   op == "!=" ||
+		   op == "<" ||
+		   op == ">" ||
+		   op == "<=" ||
+		   op == ">=" ||
+		   op == "&&" ||
+		   op == "||" ||
+		   op == "," ||
+		   op == "=" ||
+		   op == "+=" ||
+		   op == "-=" ||
+		   op == "*=" ||
+		   op == "/=" ||
+		   op == "%=" ||
+		   op == "&=" ||
+		   op == "|=" ||
+		   op == "^=" ||
+		   op == "<<=" ||
+		   op == ">>=";
+}
+
 bool isDirectObjectPrvalueBase(const ASTNode& node) {
 	if (!node.is<ExpressionNode>()) {
 		return false;
@@ -111,7 +143,9 @@ bool allowsLegacyOverloadArgFallbackInNormalizedBody(const ASTNode& arg) {
 			// identifiers directly (constructor paths) or while annotating unresolved
 			// calls, so codegen should not re-lookup declarations here anymore.
 			return false;
-		} else if constexpr (std::is_same_v<T, StringLiteralNode> ||
+		} else if constexpr (std::is_same_v<T, NumericLiteralNode> ||
+							 std::is_same_v<T, BoolLiteralNode> ||
+							 std::is_same_v<T, StringLiteralNode> ||
 							 std::is_same_v<T, MemberAccessNode> ||
 							 std::is_same_v<T, TernaryOperatorNode> ||
 							 std::is_same_v<T, StaticCastNode> ||
@@ -122,6 +156,10 @@ bool allowsLegacyOverloadArgFallbackInNormalizedBody(const ASTNode& arg) {
 							 std::is_same_v<T, InitializerListConstructionNode> ||
 							 std::is_same_v<T, CallExprNode>) {
 			return false;
+		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			return !isSemaOwnedUnaryOverloadArgShape(inner.op());
+		} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+			return !isSemaOwnedBinaryOverloadArgShape(inner.op());
 		}
 		return true;
 	},
@@ -140,6 +178,10 @@ std::string_view describeOverloadArgExprShape(const ASTNode& arg) {
 			return "IdentifierNode";
 		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 			return "MemberAccessNode";
+		} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+			return "BinaryOperatorNode";
+		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			return "UnaryOperatorNode";
 		} else if constexpr (std::is_same_v<T, StaticCastNode>) {
 			return "StaticCastNode";
 		} else if constexpr (std::is_same_v<T, ConstCastNode>) {
@@ -154,6 +196,10 @@ std::string_view describeOverloadArgExprShape(const ASTNode& arg) {
 			return "InitializerListConstructionNode";
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
 			return "CallExprNode";
+		} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
+			return "NumericLiteralNode";
+		} else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
+			return "BoolLiteralNode";
 		} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
 			return "StringLiteralNode";
 		}
