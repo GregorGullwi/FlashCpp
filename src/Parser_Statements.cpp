@@ -1224,6 +1224,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// Parse brace initializer list: { expr1, expr2, ... }
 	// This is used for struct initialization like: Point p = {10, 20};
 	// or for array initialization like: int arr[5] = {1, 2, 3, 4, 5};
+	Token brace_token = peek_info();
 
 	if (!consume("{"_tok)) {
 		return ParseResult::error("Expected '{' for brace initializer", current_token_);
@@ -1448,8 +1449,6 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		// This struct has an initializer_list constructor
 		// Parse all the brace elements first
 		std::vector<ASTNode> elements;
-		Token brace_token = current_token_; // Save the '{' token location
-
 		while (true) {
 			// Check if we've reached the end of the initializer list
 			if (peek() == "}"_tok) {
@@ -1599,8 +1598,6 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		// Must use constructor initialization here.
 		// Parse all the brace elements first
 		std::vector<ASTNode> elements;
-		Token brace_token = current_token_; // Save location for error reporting
-
 		while (true) {
 			// Check if we've reached the end of the initializer list
 			if (peek() == "}"_tok) {

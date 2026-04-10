@@ -4847,7 +4847,7 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 			StringBuilder()
 				.append(prefix)
 				.append(" for '")
-				.append(StringTable::getStringView(struct_info.name()))
+				.append(StringTable::getStringView(struct_info.name))
 				.append("' with ")
 				.append(arg_count)
 				.append(" argument(s)")
