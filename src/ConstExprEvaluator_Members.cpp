@@ -142,7 +142,9 @@ bool Evaluator::isConstexprMemberLookupCandidate(
 	if (require_static && !func_decl.is_static()) {
 		return false;
 	}
-	if (func_decl.parameter_nodes().size() != argument_count) {
+	const size_t parameter_count = func_decl.parameter_nodes().size();
+	const size_t min_required = countMinRequiredArgs(func_decl);
+	if (argument_count < min_required || argument_count > parameter_count) {
 		return false;
 	}
 
@@ -1254,10 +1256,12 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_call_operator_candida
 			continue;
 		}
 
-		const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-		if (func_decl.parameter_nodes().size() != argument_count) {
-			continue;
-		}
+	const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+	const size_t parameter_count = func_decl.parameter_nodes().size();
+	const size_t min_required = countMinRequiredArgs(func_decl);
+	if (argument_count < min_required || argument_count > parameter_count) {
+		continue;
+	}
 
 		if (result.function && detect_ambiguity) {
 			result.ambiguous = true;

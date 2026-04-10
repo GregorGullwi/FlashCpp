@@ -3840,12 +3840,16 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			all_overloads = context.symbols->lookup_all(func_name);
 		}
 
-		// Look for a constexpr FunctionDeclarationNode that matches the argument count
+		// Look for a constexpr FunctionDeclarationNode whose callable arity covers the
+		// explicit argument count (default arguments may fill the rest).
 		for (const auto& overload : all_overloads) {
 			if (overload.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& candidate = overload.as<FunctionDeclarationNode>();
+				const size_t parameter_count = candidate.parameter_nodes().size();
+				const size_t min_required = countMinRequiredArgs(candidate);
 				if ((candidate.is_constexpr() || candidate.is_consteval()) &&
-					candidate.parameter_nodes().size() == arguments.size()) {
+					arguments.size() >= min_required &&
+					arguments.size() <= parameter_count) {
 					// Found a potential match - try to evaluate it
 					std::unordered_map<std::string_view, EvalResult> empty_bindings;
 					return evaluate_function_call_with_bindings(candidate, arguments, empty_bindings, context);
