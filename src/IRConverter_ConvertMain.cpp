@@ -11803,6 +11803,8 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 
 		// Check if the object (not the array) is a pointer (like 'this' or a reference)
 	bool is_object_pointer = false;
+	bool is_global_array_access = false;
+	StringHandle global_array_name;
 
 	if (!array_name_view.empty()) {
 		is_member_array = array_name_view.find('.') != std::string::npos;
@@ -11813,16 +11815,30 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			member_name = array_name_view.substr(dot_pos + 1);
 				// Update array_base_offset to point to the object
 			StringHandle object_name_handle = StringTable::getOrInternStringHandle(object_name);
-			array_base_offset = variable_scopes.back().variables[object_name_handle].offset;
+			if (auto object_offset = findIdentifierStackOffset(object_name_handle); object_offset.has_value()) {
+				array_base_offset = object_offset.value();
+			} else if (isGlobalVariable(object_name_handle)) {
+				is_global_array_access = true;
+				global_array_name = object_name_handle;
+			} else {
+				throw InternalError("Member array base object not found in scope or globals");
+			}
 
 				// Check if object is a pointer (reference parameter or 'this' - both need pointer dereferencing)
 				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
-			if (isPointerBaseStorage(array_base_offset)) {
+			if (!is_global_array_access && isPointerBaseStorage(array_base_offset)) {
 				is_object_pointer = true;
 			}
 		} else {
 				// Regular array/pointer - get offset directly
-			array_base_offset = variable_scopes.back().variables[array_name_handle].offset;
+			if (auto array_offset = findIdentifierStackOffset(array_name_handle); array_offset.has_value()) {
+				array_base_offset = array_offset.value();
+			} else if (isGlobalVariable(array_name_handle)) {
+				is_global_array_access = true;
+				global_array_name = array_name_handle;
+			} else {
+				throw InternalError("Array base not found in scope or globals");
+			}
 		}
 	}
 
@@ -11854,6 +11870,22 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 				// For primitive prvalues, load the value
 			if (!optimize_lea) {
 					// Load value from [base_reg] with appropriate instruction
+				if (is_floating_point) {
+					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
+				} else {
+					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+				}
+			}
+		} else if (is_global_array_access) {
+			uint32_t reloc_offset = emitLeaRipRelative(base_reg);
+			pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
+
+			int64_t offset_bytes = member_offset + (index_value * element_size_bytes);
+			if (offset_bytes != 0) {
+				emitAddImmToReg(textSectionData, base_reg, offset_bytes);
+			}
+
+			if (!optimize_lea) {
 				if (is_floating_point) {
 					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
 				} else {
@@ -11918,6 +11950,27 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
 				}
 			}
+		} else if (is_global_array_access) {
+			uint32_t reloc_offset = emitLeaRipRelative(base_reg);
+			pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
+			if (member_offset != 0) {
+				emitAddImmToReg(textSectionData, base_reg, member_offset);
+			}
+
+			bool is_signed = isSignedType(op.index.typeEnum());
+			emitMovFromFrameSized(
+				SizedRegister{index_reg, 64, false},
+				SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits.value, is_signed});
+			emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
+			emitAddRegs(textSectionData, base_reg, index_reg);
+
+			if (!optimize_lea) {
+				if (is_floating_point) {
+					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
+				} else {
+					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+				}
+			}
 		} else {
 				// Array is a regular variable
 				// Load index with proper sign extension based on index type
@@ -11963,6 +12016,12 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 
 				// Add member offset for pointer objects (e.g., this->member)
 			if (is_object_pointer && member_offset != 0) {
+				emitAddImmToReg(textSectionData, base_reg, member_offset);
+			}
+		} else if (is_global_array_access) {
+			uint32_t reloc_offset = emitLeaRipRelative(base_reg);
+			pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
+			if (member_offset != 0) {
 				emitAddImmToReg(textSectionData, base_reg, member_offset);
 			}
 		} else {
