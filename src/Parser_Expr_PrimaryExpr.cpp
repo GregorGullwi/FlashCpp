@@ -947,10 +947,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			if (peek() == "..."_tok) {
 				Token ellipsis_token = peek_info();
 				advance(); // consume '...'
-				if (final_expr.has_value()) {
-					final_expr = emplace_node<ExpressionNode>(
-						PackExpansionExprNode(*final_expr, ellipsis_token));
-				}
+				final_expr = emplace_node<ExpressionNode>(
+					PackExpansionExprNode(*final_expr, ellipsis_token));
 			}
 
 			if (is_brace_init) {
