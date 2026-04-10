@@ -1145,7 +1145,21 @@ Potential areas for enhancement (in order of complexity):
   - Some template-dependent or complex intermediate expressions may still fall back to the evaluator's 64-bit storage width when `exact_type` is unavailable.
 
 ### Medium-Hard
-- ⚠️ **Enforce C++20 aggregate-initialization rules** — In C++20, a type with any user-declared constructor is **not** an aggregate ([dcl.init.aggr]/1, [P1008R1](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p1008r1.pdf)). FlashCpp currently silently falls back to aggregate (direct member) initialization when no matching constructor is found, both in the constexpr evaluator (`materialize_aggregate_object_value` fallback in `src/ConstExprEvaluator_Core.cpp`) and in the IR code-generation path (`src/CodeGen.h`, `visitVariableDeclarationNode`). The `IsAggregate` type trait (`src/TypeTraitEvaluator.h:251-275`) already correctly detects non-aggregate types (checking `!ctor.is_implicit()`), but this detection is only used for the `__is_aggregate` intrinsic, not for validating initialization syntax. **TODO:** Add a semantic analysis check (ideally in the parser or a pre-codegen validation pass) that rejects aggregate initialization of non-aggregate types with a proper compile error diagnostic. This should be enforced consistently across all initialization paths: constexpr evaluation, IR code generation, and any future initialization handling. The `IsAggregate` logic in `TypeTraitEvaluator.h` can be reused or extracted into a shared helper.
+- ⚠️ **Enforce C++20 aggregate-initialization rules** — In C++20, a type with any
+  user-declared constructor is **not** an aggregate ([dcl.init.aggr]/1,
+  [P1008R1](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p1008r1.pdf)).
+  FlashCpp now correctly rejects direct brace-init variable declarations that sema
+  normalizes to `ConstructorCallNode` when no matching constructor exists
+  (including alias / user-defined spellings of struct types), instead of silently
+  falling back to aggregate member initialization. Remaining fallback risk still
+  exists in lower constexpr/codegen paths that materialize aggregate objects
+  directly. The `IsAggregate` type trait (`src/TypeTraitEvaluator.h:251-275`)
+  already correctly detects non-aggregate types (checking `!ctor.is_implicit()`),
+  but this detection is not yet enforced uniformly across every initialization
+  pipeline. **TODO:** Extend the same rejection consistently across the remaining
+  constexpr-evaluator, IR code-generation, and future initialization paths. The
+  `IsAggregate` logic in `TypeTraitEvaluator.h` can be reused or extracted into a
+  shared helper.
 - ⚠️ **Consolidate remaining find→bind→materialize call sites onto `try_materialize_struct_from_ctor_args`** — The shared helper `try_materialize_struct_from_ctor_args` (`src/ConstExprEvaluator_Members.cpp`) centralizes the `find_matching_constructor` → `bind_evaluated_arguments` → `materialize_members_from_constructor` sequence. Three call sites already use it (`evaluate_new_expression`, `evaluate_statement_with_bindings` InitializerListNode path, and `materialize_constructor_object_value`). Two remaining sites still inline the same pattern:
   1. **`evaluate_callable_object`** (`src/ConstExprEvaluator_Core.cpp:2023-2054`) — materializes a functor's constructor state before dispatching `operator()`. The constructor materialization is one step in a longer pipeline (find ctor → bind ctor args → materialize members → bind `operator()` args → evaluate body), so extracting only the first three steps would still leave most of the code in place.
   2. **`extract_object_members`** (`src/ConstExprEvaluator_Members.cpp:4948-5069`) — extracts member bindings from a `ConstructorCallNode` initializer for member function dispatch. It has extra type-resolution fallback logic (trying `declared_type_index` when the `ConstructorCallNode`'s own type index fails) that the helper doesn't handle.
