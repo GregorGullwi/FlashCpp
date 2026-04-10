@@ -934,7 +934,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				advance(); // consume ')' or '}'
 				ChunkedVector<ASTNode> args;
 				auto ctor_result = emplace_node<ExpressionNode>(
-					ConstructorCallNode(type_node, std::move(args), is_brace_init ? init_token : decltype_token));
+					ConstructorCallNode(type_node, std::move(args), init_token));
 				return ParseResult::success(ctor_result);
 			}
 
@@ -969,9 +969,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				return ParseResult::error("Expected ')' after decltype functional cast expression", current_token_);
 			}
 
-			auto cast_result = emplace_node<ExpressionNode>(
-				StaticCastNode(type_node, *final_expr, decltype_token));
-			return ParseResult::success(cast_result);
+			return ParseResult::success(emplace_node<ExpressionNode>(
+				StaticCastNode(type_node, *final_expr, decltype_token)));
 		};
 
 		ASTNode decltype_type_node = *decltype_result.node();
