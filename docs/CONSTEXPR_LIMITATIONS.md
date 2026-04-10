@@ -571,17 +571,16 @@ static_assert(mat_assign() == 15);  // ✅ Works
 ```
 
 **Supported forms:**
-- `int arr[M][N] = {{…},{…}}` nested brace-init at global scope and inside constexpr functions
-- `arr[i][j]` double-subscript reads in loops and direct expressions
-- `arr[i][j] = value` subscript assignment in constexpr function bodies
+- `int arr[M][N] = {{…},{…}}` and higher-dimensional nested brace-init at global scope and inside constexpr functions
+- `arr[i][j]` and higher-dimensional subscript reads in loops and direct expressions
+- `arr[i][j] = value` and higher-dimensional subscript assignment in constexpr function bodies
 - Scalar brace-elision (`{v}` places `v` at `[0][0]`, zero-fills remaining elements)
 - Zero-init (`{0}`) for entire multi-dimensional array
 - Fully-flattened brace-elision (`int arr[2][3] = {1, 2, 3, 4, 5, 6}` without inner braces) — scalars now distributed correctly across inner dimensions per C++20 rules
 - Multiple scalar partial brace-init (`int mat[2][3] = {1, 2}`) — now correctly fills the first row sequentially
 - Mixed scalar/nested brace-init (`int arr[2][3] = {1, 2, 3, {4, 5, 6}}` and `{{1, 2, 3}, 4, 5, 6}`) — now follows C++20 aggregate brace-elision rules
 
-**Current limitations:**
-- 3D or higher array forms are not yet supported
+This support now extends to 3D and higher-dimensional local arrays for constexpr subscript assignment and readback as long as each dimension is materialized as a constexpr array value.
 
 ### ✅ Aggregate Initialization Inside Constexpr Functions Uses Local Bindings (FIXED)
 
