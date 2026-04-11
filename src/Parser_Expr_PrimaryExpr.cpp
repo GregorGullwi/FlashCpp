@@ -1960,11 +1960,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// same explicit-template parsing as the regular qualified-identifier path.
 			if (current_linkage_ != Linkage::C) {
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
+				std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 
 				if (template_args.has_value() && !template_args->empty()) {
-					auto template_inst = try_instantiate_template_explicit(qualified_name, *template_args);
+					auto template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
 					if (!template_inst.has_value()) {
-						template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args);
+						template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args, arg_types);
 					}
 					if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
 						identifierType = *template_inst;
@@ -1974,9 +1975,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				if ((!identifierType || identifierType->is<TemplateFunctionDeclarationNode>()) &&
 					(!template_args.has_value() || template_args->empty())) {
-					// Apply lvalue reference for forwarding deduction on arg_types
-					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
-
 					// Try to instantiate the qualified template function
 					if (!arg_types.empty()) {
 						std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
@@ -2682,6 +2680,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					current_linkage_ != Linkage::C) {
 				// Build qualified template name
 					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
+					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 
 				// Phase 1 C++20: If we have explicit template arguments, use them instead of deducing
 					if (template_args.has_value() && !template_args->empty()) {
@@ -2696,10 +2695,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 
 					// Try to instantiate with explicit template arguments
-						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args);
+						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
 						if (!template_inst.has_value()) {
 						// Try with simple name
-							template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args);
+							template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args, arg_types);
 						}
 
 						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
@@ -2714,8 +2713,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// must be deferred to template instantiation time.
 					if ((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) &&
 						!has_dependent_explicit_template_args) {
-						std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
-
 					// Try to instantiate the qualified template function
 						if (!arg_types.empty()) {
 							std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
@@ -3432,20 +3429,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (!identifierType.has_value() && current_linkage_ != Linkage::C) {
 					// Build qualified template name
 					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
+					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 
 					// If explicit template arguments were provided, use them for instantiation
 					if (template_args.has_value() && !template_args->empty()) {
 						FLASH_LOG_FORMAT(Templates, Debug, "Instantiating function template '{}' with {} explicit template arguments",
 										 qualified_name, template_args->size());
-						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args);
+						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
 						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
 							identifierType = *template_inst;
 							FLASH_LOG(Templates, Debug, "Successfully instantiated function template with explicit arguments");
 						}
 					} else {
-						// Apply lvalue reference for forwarding deduction on arg_types
-						std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
-
 						// Try to instantiate the qualified template function using argument deduction
 						if (!arg_types.empty()) {
 							std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
