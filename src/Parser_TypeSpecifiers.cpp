@@ -1589,7 +1589,7 @@ ParseResult Parser::parse_type_specifier() {
 
 						ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
 							resolved_type_info->registeredTypeIndex().withCategory(resolved_type_info->typeEnum()));
-						int resolved_type_size = static_cast<unsigned char>(resolved_type_info->sizeInBits().value);
+						int resolved_type_size = static_cast<int>(resolved_type_info->sizeInBits().value);
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
 							resolved_alias.type_index,
 							resolved_type_size,
