@@ -9,6 +9,11 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	const InlineVector<StringHandle, 4>& template_param_names,
 	const InlineVector<ASTNode, 4>& inner_template_params,
 	const InlineVector<StringHandle, 4>& inner_template_param_names) {
+	auto makeQualifiedClassIdentifier = [&](std::string_view class_name) {
+		return QualifiedIdentifier::fromQualifiedName(
+			class_name,
+			gSymbolTable.get_current_namespace_handle());
+	};
 
 	// Save position in case this isn't an out-of-line definition
 	SaveHandle saved_pos = save_token_position();
@@ -242,7 +247,9 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 					out_of_line_ctor.is_defaulted = ctor_is_defaulted;
 					out_of_line_ctor.is_deleted = ctor_is_deleted;
 
-					gTemplateRegistry.registerOutOfLineMember(ctor_class_name, std::move(out_of_line_ctor));
+					gTemplateRegistry.registerOutOfLineMember(
+						makeQualifiedClassIdentifier(ctor_class_name),
+						out_of_line_ctor);
 
 					FLASH_LOG(Templates, Debug, "Registered out-of-line template ",
 							  (is_dtor ? "destructor" : "constructor"), ": ",
@@ -592,7 +599,9 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_var.initializer = *init_result.node();
 		out_of_line_var.template_param_names = template_param_names;
 
-		gTemplateRegistry.registerOutOfLineMemberVariable(class_name, std::move(out_of_line_var));
+		gTemplateRegistry.registerOutOfLineMemberVariable(
+			makeQualifiedClassIdentifier(class_name),
+			out_of_line_var);
 
 		FLASH_LOG(Templates, Debug, "Registered out-of-class static member variable definition: ",
 				  class_name, "::", function_name_token.value());
@@ -614,7 +623,9 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		// No initializer for this case
 		out_of_line_var.template_param_names = template_param_names;
 
-		gTemplateRegistry.registerOutOfLineMemberVariable(class_name, std::move(out_of_line_var));
+		gTemplateRegistry.registerOutOfLineMemberVariable(
+			makeQualifiedClassIdentifier(class_name),
+			out_of_line_var);
 
 		FLASH_LOG(Templates, Debug, "Registered out-of-class static member variable definition (no initializer): ",
 				  class_name, "::", function_name_token.value());
@@ -781,7 +792,9 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_member.is_defaulted = member_is_defaulted;
 		out_of_line_member.is_deleted = member_is_deleted;
 
-		gTemplateRegistry.registerOutOfLineMember(class_name, std::move(out_of_line_member));
+		gTemplateRegistry.registerOutOfLineMember(
+			makeQualifiedClassIdentifier(class_name),
+			out_of_line_member);
 
 		if (!inner_template_params.empty()) {
 			FLASH_LOG(Templates, Debug, "Registered nested template out-of-line member: ",

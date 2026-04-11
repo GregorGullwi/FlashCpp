@@ -1,13 +1,5 @@
 # Known Issues
 
-## Materialization follow-up
-
-- Namespace-scoped out-of-line explicit member specializations that rely on a
-  defaulted class-template argument still appear to miss the final owner/member
-  binding. A reduced namespaced variant of
-  `tests/test_template_spec_outofline_default_arg_ret42.cpp` linked with an
-  unresolved member symbol while the global form passed.
-  
 ## EBO / `[[no_unique_address]]` — PR #1184
 
 ### Investigations
@@ -43,3 +35,42 @@ the parser will fail to create a deferred placeholder and will hard-error
 instead of deferring.  Extending the visitor to handle more variants (at least
 `BinaryOperatorNode`, `UnaryOperatorNode`, `StaticCastNode`, and
 `ConstructorCallNode`) would close this gap.
+
+## Namespace-qualified out-of-line template member registration — PR #1219
+
+### Investigations
+
+#### `registerSpecialization` path not updated for namespace qualification
+
+`src/Parser_Templates_MemberOutOfLine.cpp:768-779` — When a member function
+has its own template arguments (the `is_specialization` branch), the
+`qualified_name` used for `registerSpecialization` is built from the bare
+`class_name + "::" + function_name` without incorporating the current
+namespace.  This means namespace-scoped member function *template*
+specializations (e.g., `template<> template<> void ns::Container<int>::convert<double>(...)`)
+would still be registered under an unqualified key.  A `QualifiedIdentifier`-based
+`registerSpecialization` overload already exists at
+`src/TemplateRegistry_Registry.h:656` and could be used here.
+
+#### `registerOutOfLineNestedClass` QualifiedIdentifier overload is dead code
+
+`src/TemplateRegistry_Registry.h:488-492` — The PR adds a `QualifiedIdentifier`
+overload for `registerOutOfLineNestedClass` for consistency, but there are
+currently **no callers** of any `registerOutOfLineNestedClass` overload in the
+codebase.  If namespace-scoped out-of-line nested class definitions are added
+in the future, the callers should use the `QualifiedIdentifier` overload to
+get dual-registration.
+
+#### Out-of-namespace definitions not covered by the fix
+
+`src/Parser_Templates_MemberOutOfLine.cpp:12-16` — The
+`makeQualifiedClassIdentifier` lambda uses `gSymbolTable.get_current_namespace_handle()`
+to determine the namespace context.  This correctly handles definitions
+*inside* the namespace block (e.g., `namespace ns { template<> int Box<int>::value() ... }`).
+However, for definitions *outside* the namespace block using a fully-qualified
+class name (e.g., `template<typename T> int ns::Box<T>::value() const { ... }`
+at global scope), the parser consumes the namespace components without
+capturing them, so `class_name` is the bare name `"Box"` and the current
+namespace is global — the qualified name `"ns::Box"` is never registered.
+This is the same limitation as the pre-PR code and not a regression, but the
+fix is incomplete for this pattern.

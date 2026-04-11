@@ -410,6 +410,13 @@ public:
 		registerOutOfLineMember(key, std::move(member_func));
 	}
 
+	// Register an out-of-line template member function definition using QualifiedIdentifier.
+	void registerOutOfLineMember(const QualifiedIdentifier& qi, const OutOfLineMemberFunction& member_func) {
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			registerOutOfLineMember(name, member_func);
+		});
+	}
+
 	// Get out-of-line member functions for a class (StringHandle overload)
 	std::vector<OutOfLineMemberFunction> getOutOfLineMemberFunctions(StringHandle class_name) const {
 		auto it = out_of_line_members_.find(class_name);
@@ -440,6 +447,13 @@ public:
 		registerOutOfLineMemberVariable(key, std::move(member_var));
 	}
 
+	// Register an out-of-line template static member variable definition using QualifiedIdentifier.
+	void registerOutOfLineMemberVariable(const QualifiedIdentifier& qi, const OutOfLineMemberVariable& member_var) {
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			registerOutOfLineMemberVariable(name, member_var);
+		});
+	}
+
 	// Get out-of-line member variables for a class (StringHandle overload)
 	std::vector<OutOfLineMemberVariable> getOutOfLineMemberVariables(StringHandle class_name) const {
 		auto it = out_of_line_variables_.find(class_name);
@@ -468,6 +482,13 @@ public:
 	void registerOutOfLineNestedClass(std::string_view class_name, OutOfLineNestedClass nested_class) {
 		StringHandle key = StringTable::getOrInternStringHandle(class_name);
 		registerOutOfLineNestedClass(key, std::move(nested_class));
+	}
+
+	// Register an out-of-line template nested class definition using QualifiedIdentifier.
+	void registerOutOfLineNestedClass(const QualifiedIdentifier& qi, const OutOfLineNestedClass& nested_class) {
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			registerOutOfLineNestedClass(name, nested_class);
+		});
 	}
 
 	// Get out-of-line nested classes for a class (StringHandle overload)
