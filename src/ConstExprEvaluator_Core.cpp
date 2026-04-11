@@ -92,33 +92,6 @@ std::optional<size_t> tryGetConstexprArrayElementCount(
 	return std::nullopt;
 }
 
-std::optional<size_t> tryGetConstexprMaterializedValueSizeBytes(const EvalResult& value) {
-	if (value.is_array) {
-		if (value.array_elements.empty()) {
-			return std::nullopt;
-		}
-
-		auto element_size = tryGetConstexprMaterializedValueSizeBytes(value.array_elements.front());
-		if (!element_size.has_value()) {
-			return std::nullopt;
-		}
-		return *element_size * value.array_elements.size();
-	}
-
-	if (value.object_type_index.is_valid()) {
-		if (const TypeInfo* type_info = tryGetTypeInfo(value.object_type_index)) {
-			return type_info->sizeInBytes();
-		}
-		return std::nullopt;
-	}
-
-	if (value.exact_type.has_value()) {
-		return tryGetConstexprTypeSizeBytes(*value.exact_type);
-	}
-
-	return std::nullopt;
-}
-
 std::optional<size_t> tryGetConstexprTypeAlignment(const TypeSpecifierNode& type_spec) {
 	TypeSpecifierNode aligned_type = type_spec;
 	if (type_spec.is_array()) {
@@ -1427,15 +1400,6 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 								unsigned long long size_in_bytes = get_typespec_size_bytes(type_spec);
 								return EvalResult::from_int(static_cast<long long>(size_in_bytes));
 							}
-						}
-					}
-				}
-
-				if (context.local_bindings) {
-					auto binding_it = context.local_bindings->find(id_node.name());
-					if (binding_it != context.local_bindings->end()) {
-						if (auto size_in_bytes = tryGetConstexprMaterializedValueSizeBytes(binding_it->second); size_in_bytes.has_value()) {
-							return EvalResult::from_int(static_cast<long long>(*size_in_bytes));
 						}
 					}
 				}

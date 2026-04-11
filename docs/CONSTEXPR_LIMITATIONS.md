@@ -660,7 +660,7 @@ Array support is still incomplete in more complex cases.
 
 **Known remaining limitations include:**
 
-1. **Inferred array size in richer contexts**: straightforward local inferred-size arrays now work, including simple local scalar arrays and simple local aggregate-array member reads, but `int arr[] = {1,2,3}` can still fail in more complex parser/evaluator contexts
+1. **Inferred array size in richer contexts**: straightforward local inferred-size arrays now work, simple global `sizeof(arr)` and `sizeof(arr) / sizeof(arr[0])` over inferred-size constexpr arrays now work too, but `int arr[] = {1,2,3}` can still fail in more complex parser/evaluator contexts
 2. **Range-based for over arrays**: range-based for loops over local arrays now work in constexpr, and over objects with `constexpr begin()`/`end()` methods returning a member array or pointer are now also supported (see dedicated section)
 
 **Guidance for array access:** Prefer explicit array sizes when practical, but straightforward inferred-size local array patterns are now supported too.
@@ -1138,7 +1138,7 @@ Potential areas for enhancement (in order of complexity):
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
-- ⚠️ Inferred array size parsing in richer contexts beyond straightforward local array cases (`int arr[] = {1,2,3}`)
+- ⚠️ Inferred array size parsing in richer contexts beyond the currently supported straightforward cases (`int arr[] = {1,2,3}`) — simple global `sizeof(arr)` and `sizeof(arr) / sizeof(arr[0])` on inferred-size constexpr arrays are now supported.
 - ⚠️ Fold expressions / pack expansions require template instantiation context
 - ✅ Range-based for loops over objects with `constexpr begin()`/`end()` member functions are now supported. The iterator methods must return a member array (which the evaluator iterates) or a pointer (`&data[0]` / `&data[N]` style). Template structs with `constexpr begin()`/`end()` are also supported. Nested range-for loops and `break`/`continue` work correctly inside these loops.
 - ✅ **Bitwise compound assignments (`&=`, `|=`, `^=`, `<<=`, `>>=`) in constexpr function bodies** *(Implemented)* — All five operators now work correctly in constexpr function bodies, including inside loops and XOR-swap idioms.
