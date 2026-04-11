@@ -4701,6 +4701,47 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									*explicit_template_args);
 							std::string_view instantiated_name = materialized_owner.instantiated_name;
 							if (instantiated_name.empty()) {
+								// In a template body, the template arguments may be dependent on
+								// enclosing template parameters (e.g., __tuple_compare<_Tp, _Up, __i + 1, __size>::__eq(...)).
+								// If any argument is dependent, skip the ::member(args) tail and treat
+								// the whole expression as a dependent call that will be resolved during instantiation.
+								bool any_dependent = false;
+								if (parsing_template_depth_ > 0) {
+									for (const auto& arg : *explicit_template_args) {
+										if (arg.is_dependent || arg.is_pack) {
+											any_dependent = true;
+											break;
+										}
+									}
+								}
+								if (any_dependent) {
+									pending_explicit_template_args_.reset();
+									// Skip ::member<T>(args) segments — template args and call
+									// parens must be consumed inside the loop so multi-level
+									// expressions like A<T>::B<U>::C(args) are fully skipped.
+									while (peek() == "::"_tok) {
+										advance(); // consume ::
+										if (peek() == "template"_tok) {
+											advance(); // consume 'template' keyword
+										}
+										if (peek().is_identifier()) {
+											advance(); // consume member name
+										}
+										// Skip template arguments on member if present (e.g., ::member<T>)
+										if (peek() == "<"_tok) {
+											skip_template_arguments();
+										}
+										// Skip function call arguments if present (e.g., ::member(a, b))
+										if (peek() == "("_tok) {
+											skip_balanced_parens();
+										}
+									}
+									FLASH_LOG_FORMAT(Parser, Debug,
+										"Deferred dependent qualified call: {}< dependent args >::...",
+										template_name);
+									result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+									return ParseResult::success(*result);
+								}
 								pending_explicit_template_args_.reset();
 								return ParseResult::error(
 									"Failed to materialize template owner for qualified lookup",
@@ -5441,6 +5482,44 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							*explicit_template_args);
 					std::string_view instantiated_class_name = materialized_owner.instantiated_name;
 					if (instantiated_class_name.empty()) {
+						// In a template body, the template arguments may be dependent on
+						// enclosing template parameters. Defer the entire qualified call.
+						bool any_dependent = false;
+						if (parsing_template_depth_ > 0) {
+							for (const auto& arg : *explicit_template_args) {
+								if (arg.is_dependent || arg.is_pack) {
+									any_dependent = true;
+									break;
+								}
+							}
+						}
+						if (any_dependent) {
+							// Skip ::member<T>(args) segments — template args and call
+							// parens must be consumed inside the loop so multi-level
+							// expressions like A<T>::B<U>::C(args) are fully skipped.
+							while (peek() == "::"_tok) {
+								advance(); // consume ::
+								if (peek() == "template"_tok) {
+									advance(); // consume 'template' keyword
+								}
+								if (peek().is_identifier()) {
+									advance(); // consume member name
+								}
+								// Skip template arguments on member if present
+								if (peek() == "<"_tok) {
+									skip_template_arguments();
+								}
+								// Skip function call arguments if present
+								if (peek() == "("_tok) {
+									skip_balanced_parens();
+								}
+							}
+							FLASH_LOG_FORMAT(Parser, Debug,
+								"Deferred dependent qualified call: {}< dependent args >::...",
+								identifier_token.value());
+							result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+							return ParseResult::success(*result);
+						}
 						return ParseResult::error(
 							"Failed to materialize template owner for qualified lookup",
 							identifier_token);

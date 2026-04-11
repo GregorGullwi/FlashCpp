@@ -1510,6 +1510,7 @@ void FileReader::addBuiltinDefines() {
 	defines_["__cpp_concepts"] = DefineDirective{"201907L", {}};	 // C++20 concepts
 	defines_["__cpp_conditional_explicit"] = DefineDirective{"201806L", {}};	 // explicit(bool)
 	defines_["__cpp_conditional_trivial"] = DefineDirective{"202002L", {}};	// Conditional trivial special members
+	defines_["__cpp_consteval"] = DefineDirective{"201811L", {}};  // C++20 consteval (immediate functions)
 	defines_["__cpp_constexpr"] = DefineDirective{"201603L", {}};  // C++17 relaxed constexpr
 	defines_["__cpp_constexpr_in_decltype"] = DefineDirective{"201711L", {}};  // decltype during constant eval
 	defines_["__cpp_constinit"] = DefineDirective{"201907L", {}};  // constinit
@@ -1567,12 +1568,22 @@ void FileReader::addBuiltinDefines() {
 	// C++ library feature test macros (SD-6)
 	// These indicate which C++ standard library features are supported
 	// Values are in format YYYYMML (year/month when feature was standardized)
-	defines_["__cpp_lib_type_trait_variable_templates"] = DefineDirective{"201510L", {}};  // C++17 (Oct 2015)
-	defines_["__cpp_lib_addressof_constexpr"] = DefineDirective{"201603L", {}};	// C++17 (Mar 2016)
-	defines_["__cpp_lib_integral_constant_callable"] = DefineDirective{"201304L", {}};  // C++14 (Apr 2013)
-	defines_["__cpp_lib_is_aggregate"] = DefineDirective{"201703L", {}};	 // C++17 (Mar 2017)
-	defines_["__cpp_lib_void_t"] = DefineDirective{"201411L", {}};  // C++17 (Nov 2014)
-	defines_["__cpp_lib_bool_constant"] = DefineDirective{"201505L", {}};  // C++17 (May 2015)
+	defines_["__cpp_lib_addressof_constexpr"] = DefineDirective{"201603L", {}};	// C++17 constexpr addressof
+	defines_["__cpp_lib_bool_constant"] = DefineDirective{"201505L", {}};  // C++17 bool_constant
+	defines_["__cpp_lib_concepts"] = DefineDirective{"202002L", {}};  // C++20 concepts library
+	defines_["__cpp_lib_integral_constant_callable"] = DefineDirective{"201304L", {}};  // C++14 integral_constant::operator()
+	defines_["__cpp_lib_is_aggregate"] = DefineDirective{"201703L", {}};	 // C++17 is_aggregate
+	defines_["__cpp_lib_is_constant_evaluated"] = DefineDirective{"201811L", {}};  // C++20 is_constant_evaluated
+	defines_["__cpp_lib_is_invocable"] = DefineDirective{"201703L", {}};  // C++17 is_invocable
+	defines_["__cpp_lib_is_nothrow_convertible"] = DefineDirective{"201806L", {}};  // C++20 is_nothrow_convertible
+	defines_["__cpp_lib_is_swappable"] = DefineDirective{"201603L", {}};  // C++17 is_swappable
+	defines_["__cpp_lib_logical_traits"] = DefineDirective{"201510L", {}};  // C++17 conjunction/disjunction/negation
+	defines_["__cpp_lib_remove_cvref"] = DefineDirective{"201711L", {}};  // C++20 remove_cvref
+	defines_["__cpp_lib_three_way_comparison"] = DefineDirective{"201907L", {}};  // C++20 <=> library support
+	defines_["__cpp_lib_transformation_trait_aliases"] = DefineDirective{"201304L", {}};  // C++14 _t trait aliases
+	defines_["__cpp_lib_type_identity"] = DefineDirective{"201806L", {}};  // C++20 type_identity
+	defines_["__cpp_lib_type_trait_variable_templates"] = DefineDirective{"201510L", {}};  // C++17 _v trait variables
+	defines_["__cpp_lib_void_t"] = DefineDirective{"201411L", {}};  // C++17 void_t
 
 	// Compiler builtin type macros - values depend on compiler mode
 	// MSVC (default): Windows x64 types

@@ -25,5 +25,6 @@ int main() {
 	Derived d;
 	d.multiplier = 5;
 	int result = d.compute();
-	return result;  // Should return 50 (10 * 5)
+	if (result != 50) return 1;  // Expected 10 * 5 = 50
+	return 0;
 }
