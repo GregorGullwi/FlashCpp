@@ -488,7 +488,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			}
 
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, std::move(*args), all_placement_args, /*has_value_init=*/true));
+				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, std::move(*args), std::move(all_placement_args), /*has_value_init=*/true));
 			return ParseResult::success(new_expr);
 		}
 		// Simple new: new Type
