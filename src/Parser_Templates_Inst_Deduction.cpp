@@ -658,22 +658,15 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				if (explicit_idx < explicit_types.size()) {
 					template_args.push_back(explicit_types[explicit_idx]);
 					++explicit_idx;
-				} else if (param.has_default()) {
-					// Template parameter has a default value - use it instead of deducing
-					// from function call arg types. This is important for SFINAE patterns like:
-					//   template<typename T, typename = decltype(swap(declval<T&>(), declval<T&>()))>
-					// where the 2nd param has no corresponding function parameter.
-					if (!appendDefaultTemplateArg(param)) {
-						overload_mismatch = true;
-						break;
-					}
 				} else if (current_explicit_call_arg_types_ != nullptr &&
 						   deduced_call_arg_index != SIZE_MAX &&
 						   deduced_call_arg_index < current_explicit_call_arg_types_->size()) {
+					// C++20 [temp.deduct]: try deduction from call arguments before defaults.
 					template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
 						(*current_explicit_call_arg_types_)[deduced_call_arg_index]));
 					++deduced_call_arg_index;
-				} else {
+				} else if (!appendDefaultTemplateArg(param)) {
+					// No explicit arg, no call arg to deduce from, and no usable default.
 					FLASH_LOG_FORMAT(Templates, Debug, "Template overload mismatch: need argument at position {} but only {} types provided",
 									 explicit_idx, explicit_types.size());
 					overload_mismatch = true;
