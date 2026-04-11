@@ -262,6 +262,33 @@ void maybe_set_binding_result_exact_type(EvalResult& result, const DeclarationNo
 	}
 }
 
+// Apply the target unsigned type's modulo-2^N truncation when constexpr evaluation
+// stores or binds a scalar value into a known unsigned destination type. This keeps
+// compile-time results aligned with runtime initialization/codegen behavior.
+void apply_uint_init_narrowing(EvalResult& result) {
+	if (!result.exact_type.has_value() ||
+		result.is_array ||
+		result.object_type_index.is_valid() ||
+		result.pointer_to_var.isValid() ||
+		std::holds_alternative<double>(result.value)) {
+		return;
+	}
+
+	const TypeSpecifierNode type_spec = *result.exact_type;
+	if (!isUnsignedIntegralType(type_spec.category())) {
+		return;
+	}
+
+	const int size_bits = getTypeSpecSizeBits(type_spec);
+	if (size_bits <= 0 || size_bits >= 64) {
+		return;
+	}
+
+	const unsigned long long mask = (1ULL << size_bits) - 1ULL;
+	result = EvalResult::from_uint(result.as_uint_raw() & mask);
+	result.set_exact_type(type_spec);
+}
+
 const TemplateTypeArg* findTemplateValueParameterBinding(std::string_view param_name, const EvaluationContext& context) {
 	for (size_t i = 0; i < context.template_param_names.size() && i < context.template_args.size(); ++i) {
 		if (context.template_param_names[i] == param_name) {
@@ -975,6 +1002,7 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 	EvalResult result = evaluate(initializer.value(), context);
 	if (result.success()) {
 		maybe_set_binding_result_exact_type(result, var_decl.declaration(), &initializer.value(), context);
+		apply_uint_init_narrowing(result);
 	}
 	return result;
 }
@@ -2703,6 +2731,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	}
 
 	maybe_set_binding_result_exact_type(result, var_decl.declaration(), &initializer.value(), context);
+	apply_uint_init_narrowing(result);
 	return result;
 }
 
@@ -4159,6 +4188,7 @@ EvalResult Evaluator::bind_evaluated_arguments(
 
 		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
 		maybe_set_exact_type_from_declaration(arg_result, param_decl);
+		apply_uint_init_narrowing(arg_result);
 		bindings[param_decl.identifier_token().value()] = arg_result;
 	}
 
@@ -4181,6 +4211,7 @@ EvalResult Evaluator::bind_evaluated_arguments(
 			return default_result;
 		}
 		maybe_set_exact_type_from_declaration(default_result, param_decl);
+		apply_uint_init_narrowing(default_result);
 		bindings[param_decl.identifier_token().value()] = default_result;
 	}
 
@@ -4206,6 +4237,7 @@ EvalResult Evaluator::bind_pre_evaluated_arguments(
 		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
 		EvalResult arg_result = evaluated_arguments[i];
 		maybe_set_exact_type_from_declaration(arg_result, param_decl);
+		apply_uint_init_narrowing(arg_result);
 		bindings[param_decl.identifier_token().value()] = std::move(arg_result);
 	}
 
@@ -4232,6 +4264,7 @@ EvalResult Evaluator::bind_pre_evaluated_arguments(
 		}
 
 		maybe_set_exact_type_from_declaration(default_result, param_decl);
+		apply_uint_init_narrowing(default_result);
 		bindings[param_decl.identifier_token().value()] = std::move(default_result);
 	}
 
@@ -4446,6 +4479,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 										return *ctor_result;
 									}
 									maybe_set_binding_result_exact_type(*ctor_result, decl, &init_expr, context);
+									apply_uint_init_narrowing(*ctor_result);
 									declaration_bindings[var_name] = std::move(*ctor_result);
 									return EvalResult::error("Statement executed (not a return)");
 								}
@@ -4467,6 +4501,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 								return object_result;
 							}
 							maybe_set_binding_result_exact_type(object_result, decl, &init_expr, context);
+							apply_uint_init_narrowing(object_result);
 							declaration_bindings[var_name] = std::move(object_result);
 							return EvalResult::error("Statement executed (not a return)");
 						}
@@ -4492,6 +4527,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						return object_result;
 					}
 					maybe_set_binding_result_exact_type(object_result, decl, &init_expr, context);
+					apply_uint_init_narrowing(object_result);
 					declaration_bindings[var_name] = std::move(object_result);
 					return EvalResult::error("Statement executed (not a return)");
 				}
@@ -4504,6 +4540,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			}
 
 			maybe_set_binding_result_exact_type(init_result, decl, &init_expr, context);
+			apply_uint_init_narrowing(init_result);
 
 			// Add to bindings
 			declaration_bindings[var_name] = init_result;
@@ -4567,6 +4604,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		// Fallback: set to 0
 		EvalResult default_result = EvalResult::from_int(0);
 		maybe_set_binding_result_exact_type(default_result, decl, nullptr, context);
+		apply_uint_init_narrowing(default_result);
 		declaration_bindings[var_name] = std::move(default_result);
 		return EvalResult::error("Statement executed (not a return)");
 	}

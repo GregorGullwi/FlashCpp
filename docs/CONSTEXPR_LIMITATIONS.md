@@ -1110,7 +1110,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Range-based for loops over local arrays (primitive and struct element types) in constexpr functions
 - ✅ All primitive types (`bool`, `char`, signed/unsigned integer variants, `float`, `double`, `long double`) in constexpr variables, arithmetic, comparisons, function parameters/return values, and C-style/`static_cast` conversions inside constexpr function bodies
 - ✅ Mixed-type arithmetic following C++ usual arithmetic conversions: float/double vs any → double path; unsigned long long vs signed → unsigned path; bool/char/short/int/long/long long → signed path
-- ✅ Unsigned arithmetic wraps at the declared type's width (e.g. `unsigned int` wraps at 32 bits, `unsigned long long` wraps at 64 bits) when both operands have known exact types
+- ✅ Unsigned arithmetic and initialization/binding into unsigned targets wrap at the declared type's width (e.g. `unsigned int` wraps at 32 bits, `unsigned long long` wraps at 64 bits, `unsigned char x = 300` stores `44`, and binding `300` to an `unsigned char` constexpr constructor parameter also stores `44`) when the target type is known
 - ✅ Increment/decrement operators (`++` / `--`) correctly wrap at the declared unsigned type's width (e.g. `unsigned int x = UINT_MAX; x++;` wraps to `0`; `unsigned char x = 255; ++x;` wraps to `0`)
 - ✅ Shift-count validation for arithmetic-produced left operands: e.g. `(1u + 1u) << 40` is correctly rejected because the result of `1u + 1u` is `unsigned int` (32 bits) and 40 ≥ 32
 - ✅ Member array brace-init in constructor initializer lists (e.g., `arr{a, b, c}` for `int arr[3]`) is correctly materialized as an array value in constexpr evaluation
