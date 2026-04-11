@@ -1,14 +1,18 @@
 # Known Issues
 
-## EBO / `[[no_unique_address]]` — PR #1184
+## EBO / `[[no_unique_address]]` — PR #1232
 
-### Investigations
+### Chained `[[no_unique_address]]` tail-padding reuse
 
-#### `[[no_unique_address]]` only handles empty types, not tail-padding reuse
+`finalizeLayoutSize()` in `src/AstNodeTypes_DeclNodes.h` sets `layout_data_size`
+to `total_size` (pre-alignment), which erases the distinction between data extent
+and object extent after finalization. This means nested/chained NUA tail-padding
+reuse does not work:
 
-`src/AstNodeTypes_DeclNodes.h:185-194` — The current implementation only applies
-the zero-size optimization for `isEmptyLayoutLike()` types. Per C++20
-\[dcl.attr.nouniqueaddr\], the attribute also permits reusing tail padding of
-non-empty members. This is a standards-compliant simplification (the attribute is
-permissive, not mandatory) but means `struct S { [[no_unique_address]] NonEmpty a; char c; }`
-will not benefit from potential tail padding optimization.
+```cpp
+struct Padded { short value; char tag; };          // sizeof == 4, dsize == 3
+struct A { [[no_unique_address]] Padded p; char c; }; // sizeof == 4, but layout_data_size == 4 after finalize
+struct B { [[no_unique_address]] A a; char c; };      // will NOT reuse A's inherited tail padding
+```
+
+Single-level NUA tail-padding reuse (the common case) works correctly.
