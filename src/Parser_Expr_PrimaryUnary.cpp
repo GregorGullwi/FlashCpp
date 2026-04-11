@@ -381,6 +381,56 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			return ParseResult::error("Expected type after 'new'", current_token_);
 		}
 
+		std::optional<ParseResult> initializer_parse_error;
+		auto parse_new_initializer_args = [&](TokenKind closing_token_kind, std::string_view expected_closing_error, bool allow_trailing_comma) -> std::optional<ChunkedVector<ASTNode, 128, 256>> {
+			ChunkedVector<ASTNode, 128, 256> args;
+
+			if (peek() != closing_token_kind) {
+				while (true) {
+					ParseResult arg_result;
+					// Check for nested braces (aggregate initializers) when parsing brace-init
+					if (allow_trailing_comma && peek() == "{"_tok) {
+						arg_result = parse_brace_initializer(type_node->as<TypeSpecifierNode>());
+					} else {
+						arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					}
+					if (arg_result.is_error()) {
+						initializer_parse_error = std::move(arg_result);
+						return std::nullopt;
+					}
+
+					if (auto arg_node = arg_result.node()) {
+						if (peek() == "..."_tok) {
+							Token ellipsis_token = peek_info();
+							advance(); // consume '...'
+
+							auto pack_expr = emplace_node<ExpressionNode>(
+								PackExpansionExprNode(*arg_node, ellipsis_token));
+							args.push_back(pack_expr);
+						} else {
+							args.push_back(*arg_node);
+						}
+					}
+
+					if (peek() == ","_tok) {
+						advance(); // consume ','
+						if (allow_trailing_comma && peek() == closing_token_kind) {
+							break;
+						}
+					} else {
+						break;
+					}
+				}
+			}
+
+			if (!consume(closing_token_kind)) {
+				initializer_parse_error = ParseResult::error(std::string(expected_closing_error), current_token_);
+				return std::nullopt;
+			}
+
+			return args;
+		};
+
 		// Check for array allocation: new Type[size] or new Type[size]{initializers}
 		if (peek() == "["_tok) {
 			advance(); // consume '['
@@ -403,41 +453,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 				has_array_brace_init = true;
 				advance(); // consume '{'
 
-				// Parse initializer list (comma-separated expressions or nested braces)
-				if (peek() != "}"_tok) {
-					while (true) {
-						// Check for nested braces (aggregate initializers for each element)
-						if (peek() == "{"_tok) {
-							// Parse nested brace initializer
-							ParseResult init_result = parse_brace_initializer(type_node->as<TypeSpecifierNode>());
-							if (init_result.is_error()) {
-								return init_result;
-							}
-							if (auto init_node = init_result.node()) {
-								array_initializers.push_back(*init_node);
-							}
-						} else {
-							// Parse regular expression initializer
-							ParseResult init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-							if (init_result.is_error()) {
-								return init_result;
-							}
-							if (auto init_node = init_result.node()) {
-								array_initializers.push_back(*init_node);
-							}
-						}
-
-						if (peek() == ","_tok) {
-							advance(); // consume ','
-						} else {
-							break;
-						}
-					}
+				auto inits = parse_new_initializer_args("}"_tok, "Expected '}' after array initializer list", true);
+				if (!inits.has_value()) {
+					return std::move(*initializer_parse_error);
 				}
-
-				if (!consume("}"_tok)) {
-					return ParseResult::error("Expected '}' after array initializer list", current_token_);
-				}
+				array_initializers = std::move(*inits);
 			}
 
 			// Pass array initializers to code generator
@@ -449,46 +469,26 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		else if (peek() == "("_tok) {
 			advance(); // consume '('
 
-			ChunkedVector<ASTNode, 128, 256> args;
-
-			// Parse constructor arguments
-			if (peek() != ")"_tok) {
-				while (true) {
-					ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (arg_result.is_error()) {
-						return arg_result;
-					}
-
-					if (auto arg_node = arg_result.node()) {
-						// Check for pack expansion (...) after the argument
-						// This handles patterns like: new Type(__args...) in decltype contexts
-						if (peek() == "..."_tok) {
-							Token ellipsis_token = peek_info();
-							advance(); // consume '...'
-
-							// Wrap the argument in a PackExpansionExprNode
-							auto pack_expr = emplace_node<ExpressionNode>(
-								PackExpansionExprNode(*arg_node, ellipsis_token));
-							args.push_back(pack_expr);
-						} else {
-							args.push_back(*arg_node);
-						}
-					}
-
-					if (peek() == ","_tok) {
-						advance(); // consume ','
-					} else {
-						break;
-					}
-				}
-			}
-
-			if (!consume(")"_tok)) {
-				return ParseResult::error("Expected ')' after constructor arguments", current_token_);
+			auto args = parse_new_initializer_args(")"_tok, "Expected ')' after constructor arguments", false);
+			if (!args.has_value()) {
+				return std::move(*initializer_parse_error);
 			}
 
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, std::move(args), all_placement_args, /*has_value_init=*/true));
+				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, std::move(*args), all_placement_args, /*has_value_init=*/true));
+			return ParseResult::success(new_expr);
+		}
+		// Check for brace initialization: new Type{args}
+		else if (peek() == "{"_tok) {
+			advance(); // consume '{'
+
+			auto args = parse_new_initializer_args("}"_tok, "Expected '}' after brace initializer", true);
+			if (!args.has_value()) {
+				return std::move(*initializer_parse_error);
+			}
+
+			auto new_expr = emplace_node<ExpressionNode>(
+				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, std::move(*args), std::move(all_placement_args), /*has_value_init=*/true));
 			return ParseResult::success(new_expr);
 		}
 		// Simple new: new Type
