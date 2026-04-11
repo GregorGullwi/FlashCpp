@@ -786,6 +786,23 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 	return try_materialize_candidate(fallback_template_name);
 }
 
+Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwnerForConstructorLookup(
+	std::string_view primary_template_name,
+	std::string_view fallback_template_name,
+	const std::vector<TemplateTypeArg>& template_args) {
+	AliasTemplateMaterializationResult materialized_owner =
+		materializePrimaryTemplateOwnerForLookup(
+			primary_template_name,
+			fallback_template_name,
+			template_args);
+	if (materialized_owner.instantiated_struct_node.has_value() &&
+		materialized_owner.instantiated_struct_node->is<StructDeclarationNode>()) {
+		registerAndNormalizeLateMaterializedTopLevelNode(
+			*materialized_owner.instantiated_struct_node);
+	}
+	return materialized_owner;
+}
+
 ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 	std::optional<ASTNode> result;
 
@@ -3065,15 +3082,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 
 				AliasTemplateMaterializationResult materialized_owner =
-					materializePrimaryTemplateOwnerForLookup(
+					materializePrimaryTemplateOwnerForConstructorLookup(
 						qualified_template_name,
 						final_identifier.value(),
 						*template_args);
-				if (materialized_owner.instantiated_struct_node.has_value() &&
-					materialized_owner.instantiated_struct_node->is<StructDeclarationNode>()) {
-					registerAndNormalizeLateMaterializedTopLevelNode(
-						*materialized_owner.instantiated_struct_node);
-				}
 				if (!materialized_owner.instantiated_name.empty()) {
 					std::string_view instantiated_name = materialized_owner.instantiated_name;
 					const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
@@ -4611,15 +4623,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", identifier_token.value());
 
 								AliasTemplateMaterializationResult materialized_owner =
-									materializePrimaryTemplateOwnerForLookup(
+									materializePrimaryTemplateOwnerForConstructorLookup(
 										identifier_token.value(),
 										{},
 										*explicit_template_args);
-								if (materialized_owner.instantiated_struct_node.has_value() &&
-									materialized_owner.instantiated_struct_node->is<StructDeclarationNode>()) {
-									registerAndNormalizeLateMaterializedTopLevelNode(
-										*materialized_owner.instantiated_struct_node);
-								}
 								std::string_view instantiated_type_name = materialized_owner.instantiated_name;
 								const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
 								if (instantiated_type_name.empty()) {
@@ -5375,15 +5382,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", identifier_token.value());
 
 					AliasTemplateMaterializationResult materialized_owner =
-						materializePrimaryTemplateOwnerForLookup(
+						materializePrimaryTemplateOwnerForConstructorLookup(
 							identifier_token.value(),
 							{},
 							*explicit_template_args);
-					if (materialized_owner.instantiated_struct_node.has_value() &&
-						materialized_owner.instantiated_struct_node->is<StructDeclarationNode>()) {
-						registerAndNormalizeLateMaterializedTopLevelNode(
-							*materialized_owner.instantiated_struct_node);
-					}
 					std::string_view instantiated_type_name = materialized_owner.instantiated_name;
 					const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
 					if (instantiated_type_name.empty()) {
