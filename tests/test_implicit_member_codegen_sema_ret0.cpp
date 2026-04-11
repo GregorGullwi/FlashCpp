@@ -17,12 +17,12 @@ struct Derived : Pad, Base {
 		};
 		return read();
 	}
-
 };
 
 int main() {
 	Derived d;
-	return (d.direct() == 42 &&
+	return (d.padding == 7 &&
+			d.direct() == 42 &&
 			d.throughThisLambda() == 42)
 		? 0
 		: 1;

@@ -569,14 +569,14 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			// Has using override: fall through to cascade for correct qualified name resolution
 	}
 
-	auto resolveImplicitMember = [&](TypeIndex owner_type_index)
+	auto resolveImplicitMember = [&](TypeIndex owner_type_index, StringHandle member_name)
 		-> std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> {
 		if (sema_) {
 			if (auto resolved = sema_->getResolvedIdentifierMember(&identifierNode); resolved.has_value()) {
 				return resolved;
 			}
 		}
-		if (auto resolved = FlashCpp::gLazyMemberResolver.resolve(owner_type_index, var_name_str)) {
+		if (auto resolved = FlashCpp::gLazyMemberResolver.resolve(owner_type_index, member_name)) {
 			return SemanticAnalysis::ResolvedIdentifierMemberInfo{resolved.member, resolved.adjusted_offset};
 		}
 		return std::nullopt;
@@ -586,7 +586,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 	if (identifierNode.binding() == IdentifierBinding::NonStaticMember) {
 		if (current_lambda_context_.isActive() && current_lambda_context_.has_this_pointer &&
 			current_lambda_context_.enclosing_struct_type_index.is_valid()) {
-			if (auto result = resolveImplicitMember(current_lambda_context_.enclosing_struct_type_index)) {
+			if (auto result = resolveImplicitMember(current_lambda_context_.enclosing_struct_type_index, var_name_str)) {
 				const StructMember* member = result->member;
 				if (auto this_ptr = emitLoadThisPointer(Token())) {
 					TempVar result_temp = var_counter.next();
@@ -622,7 +622,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			auto type_it = getTypesByNameMap().find(current_struct_name_);
 			if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 				TypeIndex struct_type_index = type_it->second->type_index_;
-				if (auto result = resolveImplicitMember(struct_type_index)) {
+				if (auto result = resolveImplicitMember(struct_type_index, var_name_str)) {
 					const StructMember* member = result->member;
 					if (member->is_array) {
 						return emitArrayMemberDecay(
