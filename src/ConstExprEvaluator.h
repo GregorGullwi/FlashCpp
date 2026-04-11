@@ -804,6 +804,11 @@ private:
 		const ASTNode& expr_node,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
+	static EvalResult write_value_to_bound_lvalue(
+		const ASTNode& target_expr,
+		const EvalResult& value,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
 	static EvalResult evaluate_expression_with_bindings_const(
 		const ASTNode& expr_node,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,

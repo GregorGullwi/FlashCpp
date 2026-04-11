@@ -569,6 +569,11 @@ void refreshPointerSnapshotsForBinding(
 	refreshPointerSnapshotsForBindingInMap(bindings, target_name, target_value);
 }
 
+struct BoundWriteTarget {
+	EvalResult* slot = nullptr;
+	std::string_view root_name;
+};
+
 	// Extract the variable/member name for the address-of + array-subscript pattern.
 	// Handles:  &data[i]       → "data" (plain identifier)
 	//           &this->data[i] → "data" (member access via this)
@@ -587,6 +592,89 @@ std::string_view getArrayNameForAddressOf(const ASTNode& array_expr) {
 	return {};
 }
 } // namespace
+
+EvalResult Evaluator::write_value_to_bound_lvalue(
+	const ASTNode& target_expr,
+	const EvalResult& value,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	std::optional<EvalResult> resolve_error;
+	auto resolve_target = [&](const auto& self, const ASTNode& expr) -> std::optional<BoundWriteTarget> {
+		if (const IdentifierNode* identifier = tryGetIdentifier(expr)) {
+			if (EvalResult* binding = findMutableBindingValue(identifier->name(), bindings, context)) {
+				return BoundWriteTarget{binding, identifier->name()};
+			}
+			return std::nullopt;
+		}
+
+		if (const auto* member_access = tryGetNode<MemberAccessNode>(expr)) {
+			if (member_access->is_arrow()) {
+				return std::nullopt;
+			}
+
+			if (const IdentifierNode* object_id = tryGetIdentifier(member_access->object());
+				object_id && object_id->name() == "this") {
+				if (EvalResult* binding = findMutableBindingValue(member_access->member_name(), bindings, context)) {
+					return BoundWriteTarget{binding, member_access->member_name()};
+				}
+				return std::nullopt;
+			}
+
+			std::optional<BoundWriteTarget> base_target = self(self, member_access->object());
+			if (!base_target.has_value() || base_target->slot == nullptr) {
+				return std::nullopt;
+			}
+
+			auto member_it = base_target->slot->object_member_bindings.find(member_access->member_name());
+			if (member_it == base_target->slot->object_member_bindings.end()) {
+				return std::nullopt;
+			}
+			return BoundWriteTarget{&member_it->second, base_target->root_name};
+		}
+
+		if (const auto* subscript = tryGetNode<ArraySubscriptNode>(expr)) {
+			std::optional<BoundWriteTarget> base_target = self(self, subscript->array_expr());
+			if (!base_target.has_value() || base_target->slot == nullptr || !base_target->slot->is_array) {
+				return std::nullopt;
+			}
+
+			EvalResult index_result = evaluate_expression_with_bindings_const(subscript->index_expr(), bindings, context);
+			if (!index_result.success()) {
+				resolve_error = index_result;
+				return std::nullopt;
+			}
+
+			long long index = index_result.as_int();
+			if (index < 0 || static_cast<size_t>(index) >= base_target->slot->array_elements.size()) {
+				resolve_error = EvalResult::error("Array index out of bounds in by-reference init-capture writeback");
+				return std::nullopt;
+			}
+
+			return BoundWriteTarget{
+				&base_target->slot->array_elements[static_cast<size_t>(index)],
+				base_target->root_name};
+		}
+
+		return std::nullopt;
+	};
+
+	std::optional<BoundWriteTarget> target = resolve_target(resolve_target, target_expr);
+	if (!target.has_value() || target->slot == nullptr) {
+		if (resolve_error.has_value()) {
+			return *resolve_error;
+		}
+		return EvalResult::error("Unsupported by-reference init-capture alias target");
+	}
+
+	*target->slot = value;
+	if (!target->root_name.empty()) {
+		if (EvalResult* root_binding = findMutableBindingValue(target->root_name, bindings, context)) {
+			refreshPointerSnapshotsForBinding(target->root_name, *root_binding, bindings, context);
+		}
+	}
+
+	return value;
+}
 
 EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	const CallExprNode& call_expr,

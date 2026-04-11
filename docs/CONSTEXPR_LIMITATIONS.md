@@ -985,7 +985,7 @@ Basic constexpr lambdas work, including:
 - Multi-statement bodies
 - Simple member reads / constexpr member calls through `this` / `*this` capture
 - Straightforward mutable by-reference local updates
-- Straightforward identifier-based by-reference init-capture alias updates
+- Straightforward by-reference init-capture alias updates, including simple identifier, member, and array-element aliases
 - Straightforward mutable shared-object updates through `[this]`
 - Straightforward mutable copy-local updates through `[*this]`
 - Straightforward mutable closure-local state persistence for by-value/init captures across repeated calls to the same lambda object
@@ -997,7 +997,7 @@ Capture support is still incomplete beyond those supported shapes.
 
 **Still partial in constexpr lambda evaluation:**
 
-- complex interactions through captured locals / `this` / `*this` (for example, relying on richer aliasing/object-identity behavior, non-identifier init-capture aliasing semantics, richer nested closure aliasing/copying behavior, or more advanced member-function dispatch through the captured object)
+- complex interactions through captured locals / `this` / `*this` (for example, relying on richer aliasing/object-identity behavior, deeper nested aliasing/copying behavior, or more advanced member-function dispatch through the captured object)
 
 ```cpp
 constexpr int base = 10;
@@ -1093,7 +1093,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Literal expressions in initializers (e.g., `x(val * 2)`)
 - ✅ Unary `-` and `+` operators
 - ✅ Constexpr member function calls, including multi-statement bodies with `if`, `for`, `while`, and `switch`
-- ✅ Constexpr lambdas with explicit captures, default captures, and current supported `this` / `*this` shapes
+- ✅ Constexpr lambdas with explicit captures, default captures, current supported `this` / `*this` shapes, and straightforward by-reference init-capture subobject aliases
 - ✅ Multi-statement constexpr free functions (`return`, local vars, `if`, `for`, `while`, `switch`)
 - ✅ Multi-statement constexpr lambdas and callable/operator() bodies in supported shapes
 - ✅ Nested member access (e.g., `obj.inner.value`)
@@ -1229,7 +1229,7 @@ Potential areas for enhancement (in order of complexity):
 6. **Use straightforward lambda captures** - the following work best:
    - explicit captures
    - straightforward local `&` captures
-   - straightforward identifier-based `&name = other` init-captures
+   - straightforward `&name = other`, `&name = obj.member`, and `&name = arr[i]` init-captures
    - straightforward mutable by-value/init-capture local state
    - straightforward returned closure objects from constexpr helper functions
    - straightforward returned `[*this]` member closures from local aggregate objects
