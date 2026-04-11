@@ -19,10 +19,13 @@ static_assert(offsetof(Holder, tail) == 3);
 
 int main() {
 	Holder holder{{7, 9}, 11};
-	return sizeof(Padded) == 4 &&
-				   holder.padded.value == 7 &&
-				   holder.padded.tag == 9 &&
-				   holder.tail == 11
-			   ? 0
-			   : 1;
+	if (sizeof(Padded) != 4) {
+		return 1;
+	}
+
+	if (holder.padded.value != 7 || holder.padded.tag != 9 || holder.tail != 11) {
+		return 1;
+	}
+
+	return 0;
 }
