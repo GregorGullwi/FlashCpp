@@ -2954,6 +2954,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					// handles full overload resolution; here we only need the
 					// result type for expressions like &obj.method or simple
 					// non-call member-function references.
+					// TODO: walk base_classes for inherited member functions
+					// (no findMemberFunctionRecursive helper exists yet; other
+					// call sites in OverloadResolution.h manually walk bases).
 					for (const auto& mf : struct_info->member_functions) {
 						if (mf.name == member_name_handle && mf.function_decl.has_value() &&
 							mf.function_decl.is<FunctionDeclarationNode>()) {

@@ -319,6 +319,24 @@ entirely self-sufficient for expression type inference:
 
 **Test result:** 2018 pass, 130 expected-fail (was 2016/130 before this phase).
 
+### Phase 6 review follow-ups
+
+Post-review fixes applied to the MemberAccessNode fallback paths:
+
+- **Static member inheritance**: the static member loop originally only checked
+  `struct_info->static_members` (the immediate struct).  Fixed to use
+  `findStaticMemberRecursive()` which walks `base_classes`, matching
+  `CodeGen.h` and `ConstExprEvaluator.h` usage.
+- **Member function inheritance**: the member function loop still only checks
+  the immediate struct's `member_functions`.  No `findMemberFunctionRecursive`
+  helper exists; other call sites (e.g., `OverloadResolution.h`) manually walk
+  `base_classes`.  Documented as a TODO in the code for a future follow-up.
+- **Redundant type resolution**: `tryResolveMemberAccessInfo()` re-infers the
+  object type that `inferExpressionType` already resolved a few lines above.
+  Minor perf nit; left as-is since `inferExpressionType` is cached for
+  already-interned types.
+- `tests/test_inherited_static_member_sema_ret0.cpp`: regression test for
+  inherited static member access via dot notation on a derived-class object.
 
 ### Workstream 1: make post-parse AST legality explicit
 
