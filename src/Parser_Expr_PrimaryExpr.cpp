@@ -165,7 +165,22 @@ std::vector<ASTNode> materializeTemplateArgumentNodes(
 	return result;
 }
 
-bool astNodeHasDeferredTemplateDependency(const ASTNode& node);
+bool astNodeHasDeferredTemplateDependency(
+	const ASTNode& node,
+	const InlineVector<StringHandle, 4>& current_template_param_names);
+
+bool identifierRefersToCurrentTemplateParam(
+	StringHandle identifier,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return identifier.isValid() &&
+		   std::find(current_template_param_names.begin(), current_template_param_names.end(), identifier) != current_template_param_names.end();
+}
+
+bool identifierRefersToCurrentTemplateParam(
+	const Token& identifier,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return identifierRefersToCurrentTemplateParam(identifier.handle(), current_template_param_names);
+}
 
 bool typeRefersToCurrentTemplateParam(
 	const TypeSpecifierNode& type_spec,
@@ -202,48 +217,160 @@ bool argTypesAreDeferredTemplateDependent(
 		});
 }
 
-bool callTemplateArgumentsAreDependent(const std::vector<ASTNode>& template_args) {
+bool callTemplateArgumentsAreDependent(
+	const std::vector<ASTNode>& template_args,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
 	for (const ASTNode& template_arg : template_args) {
-		if (astNodeHasDeferredTemplateDependency(template_arg)) {
+		if (astNodeHasDeferredTemplateDependency(template_arg, current_template_param_names)) {
 			return true;
 		}
 	}
 	return false;
 }
 
-bool expressionHasDeferredTemplateDependency(const ExpressionNode& expr) {
+bool optionalAstNodeHasDeferredTemplateDependency(
+	const std::optional<ASTNode>& node,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return node.has_value() && astNodeHasDeferredTemplateDependency(*node, current_template_param_names);
+}
+
+bool astNodesHaveDeferredTemplateDependency(
+	const std::vector<ASTNode>& nodes,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return std::any_of(
+		nodes.begin(),
+		nodes.end(),
+		[&](const ASTNode& node) {
+			return astNodeHasDeferredTemplateDependency(node, current_template_param_names);
+		});
+}
+
+template <uint32_t ChunkSize, uint32_t InternalBufferSize>
+bool astNodesHaveDeferredTemplateDependency(
+	const ChunkedVector<ASTNode, ChunkSize, InternalBufferSize>& nodes,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	bool has_dependent_node = false;
+	nodes.visit([&](ASTNode node) {
+		if (!has_dependent_node && astNodeHasDeferredTemplateDependency(node, current_template_param_names)) {
+			has_dependent_node = true;
+		}
+	});
+	return has_dependent_node;
+}
+
+bool expressionHasDeferredTemplateDependency(
+	const ExpressionNode& expr,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
 	return std::visit(
-		[](const auto& inner) -> bool {
+		[&](const auto& inner) -> bool {
 			using T = std::decay_t<decltype(inner)>;
 			if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
 				return true;
+			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.get_lhs(), current_template_param_names) ||
+					   astNodeHasDeferredTemplateDependency(inner.get_rhs(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.get_operand(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.condition(), current_template_param_names) ||
+					   astNodeHasDeferredTemplateDependency(inner.true_expr(), current_template_param_names) ||
+					   astNodeHasDeferredTemplateDependency(inner.false_expr(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.type_node(), current_template_param_names) ||
+					   astNodesHaveDeferredTemplateDependency(inner.arguments(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.object(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.object(), current_template_param_names) ||
+					   astNodeHasDeferredTemplateDependency(inner.member_pointer(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.array_expr(), current_template_param_names) ||
+					   astNodeHasDeferredTemplateDependency(inner.index_expr(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, SizeofExprNode> ||
+								 std::is_same_v<T, AlignofExprNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.type_or_expr(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, TypeidNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.operand(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, SizeofPackNode>) {
+				return identifierRefersToCurrentTemplateParam(
+					StringTable::getOrInternStringHandle(inner.pack_name()),
+					current_template_param_names);
+			} else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.type_node(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, TypeTraitExprNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.type_node(), current_template_param_names) ||
+					   astNodeHasDeferredTemplateDependency(inner.second_type_node(), current_template_param_names) ||
+					   astNodesHaveDeferredTemplateDependency(inner.additional_type_nodes(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, NewExpressionNode>) {
+				if (astNodeHasDeferredTemplateDependency(inner.type_node(), current_template_param_names) ||
+					optionalAstNodeHasDeferredTemplateDependency(inner.size_expr(), current_template_param_names) ||
+					astNodesHaveDeferredTemplateDependency(inner.constructor_args(), current_template_param_names)) {
+					return true;
+				}
+				for (const ASTNode& placement_arg : inner.placement_args()) {
+					if (astNodeHasDeferredTemplateDependency(placement_arg, current_template_param_names)) {
+						return true;
+					}
+				}
+				return false;
+			} else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.expr(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, StaticCastNode> ||
+								 std::is_same_v<T, DynamicCastNode> ||
+								 std::is_same_v<T, ConstCastNode> ||
+								 std::is_same_v<T, ReinterpretCastNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.target_type(), current_template_param_names) ||
+					   astNodeHasDeferredTemplateDependency(inner.expr(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
+				for (const LambdaCaptureNode& capture : inner.captures()) {
+					if (capture.has_initializer() &&
+						optionalAstNodeHasDeferredTemplateDependency(capture.initializer(), current_template_param_names)) {
+						return true;
+					}
+				}
+				return optionalAstNodeHasDeferredTemplateDependency(inner.return_type(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
+				if (identifierRefersToCurrentTemplateParam(
+						StringTable::getOrInternStringHandle(inner.pack_name()),
+						current_template_param_names)) {
+					return true;
+				}
+				return (inner.init_expr().has_value() &&
+						astNodeHasDeferredTemplateDependency(*inner.init_expr(), current_template_param_names)) ||
+					   (inner.pack_expr().has_value() &&
+						astNodeHasDeferredTemplateDependency(*inner.pack_expr(), current_template_param_names));
+			} else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.pattern(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.object(), current_template_param_names) ||
+					   identifierRefersToCurrentTemplateParam(inner.type_name_token(), current_template_param_names) ||
+					   identifierRefersToCurrentTemplateParam(inner.qualified_type_name(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
-				return astNodeHasDeferredTemplateDependency(inner.expr());
+				return astNodeHasDeferredTemplateDependency(inner.expr(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.element_type(), current_template_param_names) ||
+					   astNodeHasDeferredTemplateDependency(inner.target_type(), current_template_param_names) ||
+					   astNodesHaveDeferredTemplateDependency(inner.elements(), current_template_param_names);
+			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
+				return optionalAstNodeHasDeferredTemplateDependency(inner.expression(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
 				if (inner.callee().declaration().type_node().template is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& callee_type = inner.callee().declaration().type_node().template as<TypeSpecifierNode>();
-					if (callee_type.category() == TypeCategory::Template) {
+					if (typeRefersToCurrentTemplateParam(callee_type, current_template_param_names) ||
+						(callee_type.category() == TypeCategory::Template) ||
+						((callee_type.category() == TypeCategory::UserDefined ||
+						  callee_type.category() == TypeCategory::TypeAlias) &&
+						 !callee_type.type_index().is_valid())) {
 						return true;
 					}
-					if ((callee_type.category() == TypeCategory::UserDefined ||
-						 callee_type.category() == TypeCategory::TypeAlias) &&
-						!callee_type.type_index().is_valid()) {
-						return true;
-					}
 				}
-				if (callTemplateArgumentsAreDependent(inner.template_arguments())) {
+				if (callTemplateArgumentsAreDependent(inner.template_arguments(), current_template_param_names)) {
 					return true;
 				}
-				if (inner.has_receiver() && astNodeHasDeferredTemplateDependency(inner.receiver())) {
+				if (inner.has_receiver() && astNodeHasDeferredTemplateDependency(inner.receiver(), current_template_param_names)) {
 					return true;
 				}
-				bool has_dependent_arg = false;
-				inner.arguments().visit([&](ASTNode arg) {
-					if (!has_dependent_arg && astNodeHasDeferredTemplateDependency(arg)) {
-						has_dependent_arg = true;
-					}
-				});
-				return has_dependent_arg;
+				return astNodesHaveDeferredTemplateDependency(inner.arguments(), current_template_param_names);
 			} else {
 				return false;
 			}
@@ -251,24 +378,26 @@ bool expressionHasDeferredTemplateDependency(const ExpressionNode& expr) {
 		expr);
 }
 
-bool astNodeHasDeferredTemplateDependency(const ASTNode& node) {
+bool astNodeHasDeferredTemplateDependency(
+	const ASTNode& node,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
 	if (!node.has_value()) {
 		return false;
 	}
 	if (node.is<ExpressionNode>()) {
-		return expressionHasDeferredTemplateDependency(node.as<ExpressionNode>());
+		return expressionHasDeferredTemplateDependency(node.as<ExpressionNode>(), current_template_param_names);
+	}
+	if (node.is<TypeSpecifierNode>()) {
+		return typeRefersToCurrentTemplateParam(node.as<TypeSpecifierNode>(), current_template_param_names);
 	}
 	return false;
 }
 
-bool argsHaveDeferredTemplateDependency(const ChunkedVector<ASTNode>& args) {
-	bool has_dependent_arg = false;
-	args.visit([&](ASTNode arg) {
-		if (!has_dependent_arg && astNodeHasDeferredTemplateDependency(arg)) {
-			has_dependent_arg = true;
-		}
-	});
-	return has_dependent_arg;
+template <uint32_t ChunkSize, uint32_t InternalBufferSize>
+bool argsHaveDeferredTemplateDependency(
+	const ChunkedVector<ASTNode, ChunkSize, InternalBufferSize>& args,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return astNodesHaveDeferredTemplateDependency(args, current_template_param_names);
 }
 
 void syncTemplateArgumentNodeMetadata(
@@ -3603,7 +3732,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				result = function_call_node;
 				return ParseResult::success(*result);
 			} else {
-				bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args);
+				bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, current_template_param_names_);
 				if (has_dependent_call_args ||
 					argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
@@ -6172,7 +6301,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												}
 											}
 									} else {
-										bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args);
+										bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, current_template_param_names_);
 										if (has_dependent_call_args ||
 											argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
 											FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
@@ -6235,7 +6364,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													}
 												}
 										} else {
-											bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args);
+											bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, current_template_param_names_);
 											if (has_dependent_call_args ||
 												argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
 												FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
