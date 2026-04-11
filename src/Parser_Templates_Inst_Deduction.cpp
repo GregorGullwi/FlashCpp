@@ -1369,20 +1369,87 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	{
 		// Build set of template parameter names for O(1) lookup
 		std::unordered_set<StringHandle, StringHash, StringEqual> tparam_name_set;
+		std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual> tparam_nodes_by_name;
 		for (const auto& tparam_node : template_params) {
 			if (tparam_node.is<TemplateParameterNode>()) {
-				tparam_name_set.insert(StringTable::getOrInternStringHandle(
-					tparam_node.as<TemplateParameterNode>().name()));
+				const auto& tparam = tparam_node.as<TemplateParameterNode>();
+				tparam_name_set.insert(StringTable::getOrInternStringHandle(tparam.name()));
+				tparam_nodes_by_name.emplace(tparam.nameHandle(), &tparam);
 			}
 		}
+
+		auto getNonTypeTemplateParamCategoryOrInt = [&](StringHandle param_name) -> TypeCategory {
+			auto it = tparam_nodes_by_name.find(param_name);
+			if (it == tparam_nodes_by_name.end() || it->second->kind() != TemplateParameterKind::NonType ||
+				!it->second->has_type() || !it->second->type_node().is<TypeSpecifierNode>()) {
+				return TypeCategory::Int;
+			}
+			return it->second->type_node().as<TypeSpecifierNode>().type();
+		};
+
+		auto recordPreDeducedArg = [&](StringHandle param_name, const TemplateTypeArg& new_arg,
+									  std::string_view kind_label, std::string_view value_label) -> bool {
+			auto [it, inserted] = param_name_to_arg.emplace(param_name, new_arg);
+			if (!inserted && !(it->second == new_arg)) {
+				FLASH_LOG_FORMAT(Templates, Error,
+								 "[depth={}]: Conflicting deduction for {} param '{}'",
+								 recursion_depth, kind_label, StringTable::getStringView(param_name));
+				return false;
+			}
+			if (inserted) {
+				FLASH_LOG_FORMAT(Templates, Debug,
+								 "[depth={}]: Pre-deduced {} param '{}' = {}",
+								 recursion_depth, kind_label, StringTable::getStringView(param_name), value_label);
+			}
+			return true;
+		};
+
+		auto tryMatchArrayBoundExpression =
+			[&](const ASTNode& bound_expr, size_t concrete_bound) -> bool {
+			std::unordered_map<TypeIndex, TemplateTypeArg> type_substitution_map;
+			std::unordered_map<std::string_view, int64_t> nontype_substitution_map;
+			for (const auto& [name, deduced_arg] : param_name_to_arg) {
+				if (deduced_arg.is_value) {
+					nontype_substitution_map[StringTable::getStringView(name)] = deduced_arg.value;
+				}
+			}
+
+			ASTNode substituted_expr = substitute_template_params_in_expression(
+				bound_expr, type_substitution_map, nontype_substitution_map);
+
+			if (substituted_expr.is<ExpressionNode>()) {
+				const ExpressionNode& substituted_node = substituted_expr.as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(substituted_node)) {
+					StringHandle dependent_name = StringTable::getOrInternStringHandle(
+						std::get<IdentifierNode>(substituted_node).name());
+					auto param_it = tparam_nodes_by_name.find(dependent_name);
+					if (param_it != tparam_nodes_by_name.end() &&
+						param_it->second->kind() == TemplateParameterKind::NonType) {
+						TemplateTypeArg new_arg = TemplateTypeArg::makeValue(
+							static_cast<int64_t>(concrete_bound),
+							getNonTypeTemplateParamCategoryOrInt(dependent_name));
+						return recordPreDeducedArg(
+							dependent_name,
+							new_arg,
+							"non-type",
+							std::to_string(static_cast<unsigned long long>(concrete_bound)));
+					}
+				}
+			}
+
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
+			return eval_result.success() &&
+				   eval_result.as_int() == static_cast<int64_t>(concrete_bound);
+		};
 
 		const auto& func_params = func_decl.parameter_nodes();
 		for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
 			if (!func_params[i].is<DeclarationNode>())
 				continue;
-			const TypeSpecifierNode& fp_type = func_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			const DeclarationNode& func_param_decl = func_params[i].as<DeclarationNode>();
+			const TypeSpecifierNode& fp_type = func_param_decl.type_node().as<TypeSpecifierNode>();
 			const TypeSpecifierNode& ca_type = arg_types[i];
-
 			// If both the function parameter and the call argument are struct template
 			// instantiations of the same base template, match their template args pairwise
 			// to deduce any template parameters that appear as dependent entries.
@@ -1465,6 +1532,56 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				if (slot_produced_deduction)
 					pre_deduced_arg_indices.insert(i);
 			}
+
+			if (func_param_decl.is_array() && ca_type.is_array()) {
+				const size_t pattern_dim_count = func_param_decl.array_dimension_count();
+				const size_t concrete_dim_count = ca_type.array_dimension_count();
+				if (pattern_dim_count <= concrete_dim_count) {
+					bool slot_produced_deduction = false;
+
+					TypeIndex array_fp_idx = fp_type.type_index();
+					if (const TypeInfo* fp_type_info = tryGetTypeInfo(array_fp_idx)) {
+						StringHandle fp_name = fp_type_info->name();
+						auto param_it = tparam_nodes_by_name.find(fp_name);
+						if (param_it != tparam_nodes_by_name.end() &&
+							param_it->second->kind() == TemplateParameterKind::Type &&
+							!param_name_to_arg.count(fp_name)) {
+							TypeSpecifierNode deduced_element_type = ca_type;
+							deduced_element_type.set_reference_qualifier(ReferenceQualifier::None);
+							const auto& concrete_dims = ca_type.array_dimensions();
+							if (pattern_dim_count <= concrete_dims.size()) {
+								std::vector<size_t> remaining_dims(
+									concrete_dims.begin() + pattern_dim_count,
+									concrete_dims.end());
+								deduced_element_type.set_array_dimensions(remaining_dims);
+								TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(deduced_element_type);
+								if (!recordPreDeducedArg(fp_name, new_arg, "type", new_arg.toString())) {
+									return std::nullopt;
+								}
+								slot_produced_deduction = true;
+							}
+						}
+					}
+
+					bool all_dims_matched = true;
+					const auto& pattern_dims = func_param_decl.array_dimensions();
+					const auto& concrete_dims = ca_type.array_dimensions();
+					for (size_t dim_index = 0; dim_index < pattern_dim_count; ++dim_index) {
+						if (!tryMatchArrayBoundExpression(pattern_dims[dim_index], concrete_dims[dim_index])) {
+							all_dims_matched = false;
+							break;
+						}
+						slot_produced_deduction = true;
+					}
+
+					if (!all_dims_matched) {
+						return std::nullopt;
+					}
+					if (slot_produced_deduction) {
+						pre_deduced_arg_indices.insert(i);
+					}
+				}
+			}
 		}
 
 		// Handle the case where a function parameter IS directly a non-variadic template type
@@ -1495,7 +1612,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 				// Only handle directly-typed params (pointer_depth 0 covers T, T&, const T&).
 				// Pointer-to-template (T*) cases are handled via substitution elsewhere.
-				if (fp_type.pointer_depth() != 0)
+				// Array declarators use a separate deduction path so T in T(&)[N] binds to the
+				// element type instead of the whole array type.
+				if (fp_type.pointer_depth() != 0 || fp_type.is_array() || func_params[i].as<DeclarationNode>().is_array())
 					continue;
 
 				TypeIndex fp_idx = fp_type.type_index();
@@ -2110,6 +2229,19 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			StringBuilder sb;
 			return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
 		};
+		auto instantiate_base_and_get_name = [&](std::string_view base_template_name,
+											   const std::vector<TemplateTypeArg>& args_to_use) -> std::string_view {
+			auto instantiation = try_instantiate_class_template(base_template_name, args_to_use);
+			if (instantiation.has_value() && instantiation->is<StructDeclarationNode>()) {
+				return StringTable::getStringView(instantiation->as<StructDeclarationNode>().name());
+			}
+			auto registry_hit = gTemplateRegistry.getInstantiation(
+				StringTable::getOrInternStringHandle(base_template_name), args_to_use);
+			if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
+				return StringTable::getStringView(registry_hit->as<StructDeclarationNode>().name());
+			}
+			return get_instantiated_class_name(base_template_name, args_to_use);
+		};
 		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: type_name=", type_name,
 				  " base_part=", base_part, " member_part=", member_part,
 				  " template_args=", template_args.size());
@@ -2143,8 +2275,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		if (type_it == getTypesByNameMap().end() && type_info->isTemplateInstantiation()) {
 			std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
 			if (!base_template_name.empty()) {
-				try_instantiate_class_template(base_template_name, concrete_instantiation_args);
-				std::string_view instantiated_base = get_instantiated_class_name(base_template_name, concrete_instantiation_args);
+				std::string_view instantiated_base =
+					instantiate_base_and_get_name(base_template_name, concrete_instantiation_args);
 				resolved_handle = build_resolved_handle(instantiated_base, member_part);
 				type_it = getTypesByNameMap().find(resolved_handle);
 				if (type_it != getTypesByNameMap().end() &&
@@ -2181,9 +2313,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					} else {
 						args_to_use = concrete_instantiation_args;
 					}
-					try_instantiate_class_template(base_template_name, args_to_use);
-
-					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, args_to_use);
+					std::string_view instantiated_base =
+						instantiate_base_and_get_name(base_template_name, args_to_use);
 					resolved_handle = build_resolved_handle(instantiated_base, member_part);
 					type_it = getTypesByNameMap().find(resolved_handle);
 					if (type_it != getTypesByNameMap().end() &&
