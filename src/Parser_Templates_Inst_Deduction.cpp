@@ -658,10 +658,14 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				if (explicit_idx < explicit_types.size()) {
 					template_args.push_back(explicit_types[explicit_idx]);
 					++explicit_idx;
-				} else if (current_explicit_call_arg_types_ != nullptr &&
+				} else if (!param.has_default() &&
+						   current_explicit_call_arg_types_ != nullptr &&
 						   deduced_call_arg_index != SIZE_MAX &&
 						   deduced_call_arg_index < current_explicit_call_arg_types_->size()) {
-					// C++20 [temp.deduct]: try deduction from call arguments before defaults.
+					// C++20 [temp.deduct]: deduce from call arguments for parameters that
+					// do NOT have a default.  Parameters with defaults (e.g. SFINAE guards
+					// like `typename = decltype(...)`) have no corresponding function
+					// parameter and must not consume a call argument positionally.
 					template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
 						(*current_explicit_call_arg_types_)[deduced_call_arg_index]));
 					++deduced_call_arg_index;
