@@ -1806,7 +1806,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			this_arg_value = IrValue(this_addr);
 		}
 		TypedValue this_arg = makeTypedValue(object_type.type(), SizeInBits{64}, this_arg_value);
-		if (!object_name.empty() && object_is_pointer_like) {
+		if (object_is_pointer_like) {
 			this_arg.pointer_depth = PointerDepth{1};
 		}
 		call_op.args.push_back(std::move(this_arg));
