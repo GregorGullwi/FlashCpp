@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "SemanticAnalysis.h"
 
 ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 										ExpressionContext context) {
@@ -568,12 +569,25 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			// Has using override: fall through to cascade for correct qualified name resolution
 	}
 
+	auto resolveImplicitMember = [&](TypeIndex owner_type_index, StringHandle member_name)
+		-> std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> {
+		if (sema_) {
+			if (auto resolved = sema_->getResolvedIdentifierMember(&identifierNode); resolved.has_value()) {
+				return resolved;
+			}
+		}
+		if (auto resolved = FlashCpp::gLazyMemberResolver.resolve(owner_type_index, member_name)) {
+			return SemanticAnalysis::ResolvedIdentifierMemberInfo{resolved.member, resolved.adjusted_offset};
+		}
+		return std::nullopt;
+	};
+
 		// If binding is NonStaticMember, handle member access directly
 	if (identifierNode.binding() == IdentifierBinding::NonStaticMember) {
 		if (current_lambda_context_.isActive() && current_lambda_context_.has_this_pointer &&
 			current_lambda_context_.enclosing_struct_type_index.is_valid()) {
-			if (auto result = FlashCpp::gLazyMemberResolver.resolve(current_lambda_context_.enclosing_struct_type_index, var_name_str)) {
-				const StructMember* member = result.member;
+			if (auto result = resolveImplicitMember(current_lambda_context_.enclosing_struct_type_index, var_name_str)) {
+				const StructMember* member = result->member;
 				if (auto this_ptr = emitLoadThisPointer(Token())) {
 					TempVar result_temp = var_counter.next();
 					MemberLoadOp member_load;
@@ -582,7 +596,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 					member_load.object = *this_ptr;
 					member_load.member_name = member->getName();
-					member_load.offset = static_cast<int>(result.adjusted_offset);
+					member_load.offset = static_cast<int>(result->adjusted_offset);
 					member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					member_load.struct_type_info = nullptr;
 					member_load.is_pointer_to_member = true;
@@ -590,7 +604,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					LValueInfo lvalue_info(
 						LValueInfo::Kind::Member,
 						*this_ptr,
-						static_cast<int>(result.adjusted_offset));
+						static_cast<int>(result->adjusted_offset));
 					lvalue_info.member_name = member->getName();
 					lvalue_info.is_pointer_to_member = true;
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
@@ -608,13 +622,13 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			auto type_it = getTypesByNameMap().find(current_struct_name_);
 			if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 				TypeIndex struct_type_index = type_it->second->type_index_;
-				if (auto result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, var_name_str)) {
-					const StructMember* member = result.member;
+				if (auto result = resolveImplicitMember(struct_type_index, var_name_str)) {
+					const StructMember* member = result->member;
 					if (member->is_array) {
 						return emitArrayMemberDecay(
 							member,
 							StringTable::getOrInternStringHandle("this"),
-							static_cast<int>(result.adjusted_offset));
+							static_cast<int>(result->adjusted_offset));
 					}
 					TempVar result_temp = var_counter.next();
 					MemberLoadOp member_load;
@@ -623,14 +637,14 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 					member_load.object = StringTable::getOrInternStringHandle("this");
 					member_load.member_name = member->getName();
-					member_load.offset = static_cast<int>(result.adjusted_offset);
+					member_load.offset = static_cast<int>(result->adjusted_offset);
 					member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					member_load.struct_type_info = nullptr;
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 					LValueInfo lvalue_info(
 						LValueInfo::Kind::Member,
 						StringTable::getOrInternStringHandle("this"),
-						static_cast<int>(result.adjusted_offset));
+						static_cast<int>(result->adjusted_offset));
 					lvalue_info.member_name = member->getName();
 					lvalue_info.is_pointer_to_member = true;
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));

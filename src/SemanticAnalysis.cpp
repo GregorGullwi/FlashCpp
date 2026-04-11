@@ -2292,6 +2292,12 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				// it will be properly handled when the function is instantiated with
 				// concrete template arguments.
 				(void)e;
+			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
+				if (auto member_result = tryResolveIdentifierMember(e); member_result.has_value()) {
+					resolved_identifier_member_table_[&e] = *member_result;
+				} else {
+					resolved_identifier_member_table_.erase(&e);
+				}
 			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				normalizeExpression(e.expr(), ctx);
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
@@ -2602,6 +2608,14 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedDirectCall(const Cal
 	return getResolvedDirectCall(static_cast<const void*>(key));
 }
 
+std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> SemanticAnalysis::getResolvedIdentifierMember(const IdentifierNode* key) const {
+	auto it = resolved_identifier_member_table_.find(key);
+	if (it == resolved_identifier_member_table_.end()) {
+		return std::nullopt;
+	}
+	return it->second;
+}
+
 bool SemanticAnalysis::resolveOrGetMemberAccess(const MemberAccessNode& key,
 												const StructTypeInfo*& out_struct_info,
 												const StructMember*& out_member) {
@@ -2627,6 +2641,24 @@ bool SemanticAnalysis::resolveOrGetMemberAccess(const MemberAccessNode& key,
 	out_struct_info = owner_struct_info;
 	out_member = &owner_struct_info->members[it->second.member_index];
 	return true;
+}
+
+std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> SemanticAnalysis::tryResolveIdentifierMember(const IdentifierNode& identifier) const {
+	if (identifier.binding() != IdentifierBinding::NonStaticMember ||
+		member_context_stack_.empty()) {
+		return std::nullopt;
+	}
+
+	const TypeIndex current_struct_type = member_context_stack_.back();
+	if (!current_struct_type.is_valid()) {
+		return std::nullopt;
+	}
+
+	if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_struct_type, identifier.getOrInternNameHandle())) {
+		return ResolvedIdentifierMemberInfo{member_result.member, member_result.adjusted_offset};
+	}
+
+	return std::nullopt;
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const ArraySubscriptNode* key) const {
@@ -2854,24 +2886,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// Phase 6: move NonStaticMember sema-owned resolution before parser
 				// fallback so sema resolves implicit this->member types without
 				// needing parser_.get_expression_type for that binding category.
-				if (e.binding() == IdentifierBinding::NonStaticMember &&
-					!member_context_stack_.empty()) {
-					const TypeIndex current_struct_type = member_context_stack_.back();
-					if (const TypeInfo* type_info = tryGetTypeInfo(current_struct_type)) {
-						const StructTypeInfo* struct_info = type_info->getStructInfo();
-						if (struct_info) {
-							if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_struct_type, e.nameHandle())) {
-								return type_context_.intern(canonicalTypeDescFromStructMember(
-									*member_result.member, CVQualifier::None));
-							}
-							for (const auto& member : struct_info->members) {
-								if (member.getName() == e.nameHandle()) {
-									return type_context_.intern(canonicalTypeDescFromStructMember(
-										member, CVQualifier::None));
-								}
-							}
-						}
-					}
+				if (auto member_result = tryResolveIdentifierMember(e); member_result.has_value()) {
+					return type_context_.intern(canonicalTypeDescFromStructMember(
+						*member_result->member, CVQualifier::None));
 				}
 
 				// Phase 6: the parser_.get_expression_type fallback is now removed.
