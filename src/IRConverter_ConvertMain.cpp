@@ -4354,7 +4354,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				//   - All other structs: pass by pointer
 			bool should_pass_address = false;
 			bool is_two_register_struct = false;
-			if (call_op.is_member_function && i == 0) {
+			if (call_op.is_member_function && i == 0 && !arg.pointer_depth.is_pointer()) {
 					// First argument of member function is always "this" pointer
 				should_pass_address = true;
 			} else if (arg.is_reference()) {

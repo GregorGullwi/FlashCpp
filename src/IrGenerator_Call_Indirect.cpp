@@ -1814,7 +1814,15 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 			this_arg_value = IrValue(this_addr);
 		}
-		call_op.args.push_back(makeTypedValue(object_type.type(), SizeInBits{64}, this_arg_value));
+		TypedValue this_arg = object_type.type_index().is_valid()
+			? makeTypedValue(
+				object_type.type_index().withCategory(object_type.type()),
+				SizeInBits{64},
+				this_arg_value,
+				PointerDepth{1})
+			: makeTypedValue(object_type.type(), SizeInBits{64}, this_arg_value);
+		this_arg.pointer_depth = PointerDepth{1};
+		call_op.args.push_back(std::move(this_arg));
 
 		// Generate IR for function arguments and add to CallOp
 		size_t arg_index = 0;
