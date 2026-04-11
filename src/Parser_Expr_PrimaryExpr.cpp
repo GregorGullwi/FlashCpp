@@ -10,6 +10,27 @@
 std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);
 
 namespace {
+void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec) {
+	if (!decl.is_array() || type_spec.is_array()) {
+		return;
+	}
+
+	std::vector<size_t> resolved_dimensions;
+	resolved_dimensions.reserve(decl.array_dimension_count());
+	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+	for (const auto& dim_expr : decl.array_dimensions()) {
+		auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
+		if (!eval_result.success() || eval_result.as_int() <= 0) {
+			return;
+		}
+		resolved_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
+	}
+
+	if (!resolved_dimensions.empty()) {
+		type_spec.set_array_dimensions(resolved_dimensions);
+	}
+}
+
 std::string_view getTemplateArgTokenText(const TemplateTypeArg& arg) {
 	switch (arg.typeEnum()) {
 	case TypeCategory::Void: return "void";
@@ -3415,16 +3436,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								if (id_type.has_value()) {
 									if (const FunctionDeclarationNode* func_decl = FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(*id_type)) {
 										arg_type_node_opt = FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
-									} else if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
-										if (decl->type_node().template is<TypeSpecifierNode>()) {
-											// Preserve the full TypeSpecifierNode to retain type_index for structs
-											const auto& type_spec = decl->type_node().template as<TypeSpecifierNode>();
-											arg_type_node_opt = type_spec;
-											arg_type = type_spec.type();
-											// Named variables are lvalues
-											is_lvalue = true;
-										}
+								} else if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
+									if (decl->type_node().template is<TypeSpecifierNode>()) {
+										// Preserve the full TypeSpecifierNode to retain type_index for structs
+										const auto& type_spec = decl->type_node().template as<TypeSpecifierNode>();
+										arg_type_node_opt = type_spec;
+										applyDeclarationArrayBoundsToTypeSpec(*decl, *arg_type_node_opt);
+										arg_type = type_spec.type();
+										// Named variables are lvalues
+										is_lvalue = true;
 									}
+								}
 								}
 							}
 						},
@@ -3489,11 +3511,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									args[pre_pack_size - 1] = id_node;
 									if (!arg_types.empty()) {
 										if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
-											if (decl->type_node().is<TypeSpecifierNode>()) {
-												arg_types.back() = decl->type_node().as<TypeSpecifierNode>();
-												arg_types.back().set_reference_qualifier(ReferenceQualifier::LValueReference);
-											}
+										if (decl->type_node().is<TypeSpecifierNode>()) {
+											arg_types.back() = decl->type_node().as<TypeSpecifierNode>();
+											applyDeclarationArrayBoundsToTypeSpec(*decl, arg_types.back());
+											arg_types.back().set_reference_qualifier(ReferenceQualifier::LValueReference);
 										}
+									}
 									}
 									first_element = false;
 								} else {
@@ -3501,6 +3524,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
 										if (decl->type_node().is<TypeSpecifierNode>()) {
 											TypeSpecifierNode arg_type_node_pack = decl->type_node().as<TypeSpecifierNode>();
+											applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node_pack);
 											arg_type_node_pack.set_reference_qualifier(ReferenceQualifier::LValueReference);
 											arg_types.push_back(arg_type_node_pack);
 										}
@@ -3920,6 +3944,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						break;
 					}
 					TypeSpecifierNode arg_type_node = *arg_type;
+					if (args_ref.size() > arg_types.size() && args_ref[arg_types.size()].is<ExpressionNode>()) {
+						const ExpressionNode& arg_expr = args_ref[arg_types.size()].as<ExpressionNode>();
+						if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+							auto sym = lookup_symbol(StringTable::getOrInternStringHandle(
+								std::get<IdentifierNode>(arg_expr).name()));
+							if (sym.has_value()) {
+								if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
+									applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node);
+								}
+							}
+						}
+					}
 					adjust_argument_type_for_overload_resolution(arg, arg_type_node);
 					arg_types.push_back(arg_type_node);
 				}
@@ -5861,6 +5897,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								}
 
 								TypeSpecifierNode arg_type_node = *arg_type;
+								if (args[i].is<ExpressionNode>()) {
+									const ExpressionNode& arg_expr = args[i].as<ExpressionNode>();
+									if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+										auto sym = lookup_symbol(StringTable::getOrInternStringHandle(
+											std::get<IdentifierNode>(arg_expr).name()));
+										if (sym.has_value()) {
+											if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
+												applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node);
+											}
+										}
+									}
+								}
 
 								FLASH_LOG(Parser, Debug, "  get_expression_type returned: type=", (int)arg_type_node.type(), ", is_ref=", arg_type_node.is_reference(), ", is_rvalue_ref=", arg_type_node.is_rvalue_reference());
 

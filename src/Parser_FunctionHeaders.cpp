@@ -70,7 +70,8 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 			// In C++, function parameters declared as T arr[N] are treated as T* arr
 			if (node->is<DeclarationNode>()) {
 				auto& decl = node->as<DeclarationNode>();
-				if (decl.array_size().has_value()) {
+				if (decl.array_size().has_value() &&
+					!decl.type_node().as<TypeSpecifierNode>().is_reference()) {
 					// This is an array parameter - convert to pointer
 					// Get the underlying type and add a pointer level
 					const TypeSpecifierNode& orig_type = decl.type_node().as<TypeSpecifierNode>();
