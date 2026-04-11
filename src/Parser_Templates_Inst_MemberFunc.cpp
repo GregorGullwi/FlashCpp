@@ -93,11 +93,25 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	StringBuilder qualified_name_sb;
 	qualified_name_sb.append(struct_name).append("::").append(member_name);
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(qualified_name_sb);
+	StringHandle specialization_lookup_name = qualified_name;
 
 	// FIRST: Check if we have an explicit specialization for these template arguments
-	auto specialization_opt = gTemplateRegistry.lookupSpecialization(qualified_name.view(), template_type_args);
+	auto specialization_opt = gTemplateRegistry.lookupSpecialization(
+		specialization_lookup_name.view(),
+		template_type_args);
+	if (!specialization_opt.has_value()) {
+		std::string_view base_class_name = extractBaseTemplateName(struct_name);
+		if (!base_class_name.empty()) {
+			StringBuilder base_qualified_name_sb;
+			base_qualified_name_sb.append(base_class_name).append("::").append(member_name);
+			specialization_lookup_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
+			specialization_opt = gTemplateRegistry.lookupSpecialization(
+				specialization_lookup_name.view(),
+				template_type_args);
+		}
+	}
 	if (specialization_opt.has_value()) {
-		FLASH_LOG(Templates, Debug, "Found explicit specialization for ", qualified_name.view());
+		FLASH_LOG(Templates, Debug, "Found explicit specialization for ", specialization_lookup_name.view());
 		// We have an explicit specialization - parse its body if needed
 		ASTNode& spec_node = *specialization_opt;
 		if (spec_node.is<FunctionDeclarationNode>()) {
@@ -105,7 +119,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 			// If the specialization has a body position and no definition yet, parse it now
 			if (spec_func.has_template_body_position() && !spec_func.get_definition().has_value()) {
-				FLASH_LOG(Templates, Debug, "Parsing specialization body for ", qualified_name.view());
+				FLASH_LOG(Templates, Debug, "Parsing specialization body for ", specialization_lookup_name.view());
 
 				// Look up the struct type index and node for the member function context
 				TypeIndex struct_type_index{};
