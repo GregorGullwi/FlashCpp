@@ -1546,6 +1546,12 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					target = rhs;
 					return rhs;
 				}
+				// Compound assignment reads the current value — reject indeterminate targets.
+				if (target.is_indeterminate) {
+					return EvalResult::error(
+						"Read of indeterminate value in constant expression "
+						"(object was default-initialized without an initializer)");
+				}
 				// Strip the trailing '=' to get the base operator (e.g., "+=" → "+")
 				std::string_view base_op = op.substr(0, op.size() - 1);
 				EvalResult new_val = apply_binary_op(target, rhs, base_op, &context, &bindings);
