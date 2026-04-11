@@ -851,6 +851,15 @@ private:
 	std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types, int& recursion_depth);	 // Helper: Try to instantiate a specific template node (for SFINAE)
 	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count = SIZE_MAX);	// NEW: Instantiate with explicit args
 	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, const std::vector<TypeSpecifierNode>& arg_types);
+	struct CallArgDeductionInfo {
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
+		std::unordered_set<size_t> pre_deduced_arg_indices;
+	};
+	std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
+		const std::vector<ASTNode>& template_params,
+		const FunctionDeclarationNode& func_decl,
+		const std::vector<TypeSpecifierNode>& arg_types,
+		int recursion_depth);
 		// Shared helper: re-parse a template function body with concrete argument substitution.
 		// Called from both try_instantiate_template_explicit (preserve_ref_qualifier=true) and
 		// try_instantiate_single_template (preserve_ref_qualifier=false, default) after cycle

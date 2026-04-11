@@ -443,6 +443,290 @@ void Parser::reparse_template_function_body(
 	// template_scope RAII guard removes TypeInfo entries automatically.
 }
 
+std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArgs(
+	const std::vector<ASTNode>& template_params,
+	const FunctionDeclarationNode& func_decl,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	int recursion_depth) {
+	CallArgDeductionInfo deduction_info;
+	auto& param_name_to_arg = deduction_info.param_name_to_arg;
+	auto& pre_deduced_arg_indices = deduction_info.pre_deduced_arg_indices;
+
+	// Build set of template parameter names for O(1) lookup
+	std::unordered_set<StringHandle, StringHash, StringEqual> tparam_name_set;
+	std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual> tparam_nodes_by_name;
+	for (const auto& tparam_node : template_params) {
+		if (tparam_node.is<TemplateParameterNode>()) {
+			const auto& tparam = tparam_node.as<TemplateParameterNode>();
+			tparam_name_set.insert(StringTable::getOrInternStringHandle(tparam.name()));
+			tparam_nodes_by_name.emplace(tparam.nameHandle(), &tparam);
+		}
+	}
+
+	auto getNonTypeTemplateParamCategoryOrInt = [&](StringHandle param_name) -> TypeCategory {
+		auto it = tparam_nodes_by_name.find(param_name);
+		if (it == tparam_nodes_by_name.end() || it->second->kind() != TemplateParameterKind::NonType ||
+			!it->second->has_type() || !it->second->type_node().is<TypeSpecifierNode>()) {
+			return TypeCategory::Int;
+		}
+		return it->second->type_node().as<TypeSpecifierNode>().type();
+	};
+
+	auto recordPreDeducedArg = [&](StringHandle param_name, const TemplateTypeArg& new_arg,
+								  std::string_view kind_label, std::string_view value_label) -> bool {
+		auto [it, inserted] = param_name_to_arg.emplace(param_name, new_arg);
+		if (!inserted && !(it->second == new_arg)) {
+			FLASH_LOG_FORMAT(Templates, Error,
+							 "[depth={}]: Conflicting deduction for {} param '{}'",
+							 recursion_depth, kind_label, StringTable::getStringView(param_name));
+			return false;
+		}
+		if (inserted) {
+			FLASH_LOG_FORMAT(Templates, Debug,
+							 "[depth={}]: Pre-deduced {} param '{}' = {}",
+							 recursion_depth, kind_label, StringTable::getStringView(param_name), value_label);
+		}
+		return true;
+	};
+
+	auto tryMatchArrayBoundExpression =
+		[&](const ASTNode& bound_expr, size_t concrete_bound) -> bool {
+		std::unordered_map<TypeIndex, TemplateTypeArg> type_substitution_map;
+		std::unordered_map<std::string_view, int64_t> nontype_substitution_map;
+		for (const auto& [name, deduced_arg] : param_name_to_arg) {
+			if (deduced_arg.is_value) {
+				nontype_substitution_map[StringTable::getStringView(name)] = deduced_arg.value;
+			}
+		}
+
+		ASTNode substituted_expr = substitute_template_params_in_expression(
+			bound_expr, type_substitution_map, nontype_substitution_map);
+
+		if (substituted_expr.is<ExpressionNode>()) {
+			const ExpressionNode& substituted_node = substituted_expr.as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(substituted_node)) {
+				StringHandle dependent_name = StringTable::getOrInternStringHandle(
+					std::get<IdentifierNode>(substituted_node).name());
+				auto param_it = tparam_nodes_by_name.find(dependent_name);
+				if (param_it != tparam_nodes_by_name.end() &&
+					param_it->second->kind() == TemplateParameterKind::NonType) {
+					TemplateTypeArg new_arg = TemplateTypeArg::makeValue(
+						static_cast<int64_t>(concrete_bound),
+						getNonTypeTemplateParamCategoryOrInt(dependent_name));
+					return recordPreDeducedArg(
+						dependent_name,
+						new_arg,
+						"non-type",
+						std::to_string(static_cast<unsigned long long>(concrete_bound)));
+				}
+			}
+		}
+
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
+		return eval_result.success() &&
+			   eval_result.as_int() == static_cast<int64_t>(concrete_bound);
+	};
+
+	const auto& func_params = func_decl.parameter_nodes();
+	for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
+		if (!func_params[i].is<DeclarationNode>())
+			continue;
+		const DeclarationNode& func_param_decl = func_params[i].as<DeclarationNode>();
+		const TypeSpecifierNode& fp_type = func_param_decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& ca_type = arg_types[i];
+		// If both the function parameter and the call argument are struct template
+		// instantiations of the same base template, match their template args pairwise
+		// to deduce any template parameters that appear as dependent entries.
+		TypeIndex fp_idx = fp_type.type_index();
+		TypeIndex ca_idx = ca_type.type_index();
+		const TypeInfo* fp_info = tryGetTypeInfo(fp_idx);
+		const TypeInfo* ca_info = tryGetTypeInfo(ca_idx);
+		if (fp_info && ca_info &&
+			fp_info->isTemplateInstantiation() && ca_info->isTemplateInstantiation() &&
+			fp_info->baseTemplateName() == ca_info->baseTemplateName()) {
+			const auto& fp_targs = fp_info->templateArgs();
+			const auto& ca_targs = ca_info->templateArgs();
+			bool slot_produced_deduction = false;
+			for (size_t j = 0; j < fp_targs.size() && j < ca_targs.size(); ++j) {
+				const auto& p = fp_targs[j];
+				const auto& c = ca_targs[j];
+				if (!p.dependent_name.isValid())
+					continue;
+				if (!tparam_name_set.count(p.dependent_name))
+					continue;
+				if (!c.is_value) {
+					// Type argument — build a TypeSpecifierNode from the
+					// TemplateArgInfo so that pointer depth, CV qualifiers,
+					// and reference qualifiers are preserved through the
+					// entire pipeline (TemplateTypeArg →
+					// substitute_template_parameter / registerTypeParamsInScope).
+					TypeSpecifierNode synth_ts(
+						c.type_index.withCategory(c.typeEnum()),
+						get_type_size_bits(c.typeEnum()),
+						Token(), c.cv_qualifier, ReferenceQualifier::None);
+					for (size_t pd = 0; pd < c.pointer_depth; ++pd) {
+						CVQualifier ptr_cv = (pd < c.pointer_cv_qualifiers.size())
+												 ? c.pointer_cv_qualifiers[pd]
+												 : CVQualifier::None;
+						synth_ts.add_pointer_level(ptr_cv);
+					}
+					synth_ts.set_reference_qualifier(c.ref_qualifier);
+					if (c.is_array) {
+						synth_ts.set_array(true, c.array_size);
+					}
+					if (c.function_signature.has_value()) {
+						synth_ts.set_function_signature(*c.function_signature);
+					}
+					TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(synth_ts);
+					auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
+					if (!inserted && !(it->second == new_arg)) {
+						FLASH_LOG_FORMAT(Templates, Error,
+										 "[depth={}]: Conflicting deduction for type param '{}'",
+										 recursion_depth, StringTable::getStringView(p.dependent_name));
+						return std::nullopt;
+					}
+					slot_produced_deduction = true;
+					FLASH_LOG_FORMAT(Templates, Debug,
+									 "[depth={}]: Pre-deduced type param '{}' = type {}",
+									 recursion_depth,
+									 StringTable::getStringView(p.dependent_name),
+									 static_cast<int>(c.typeEnum()));
+				} else {
+					// Concrete argument is a value (c.is_value==true); deduce a non-type param.
+					// We check c.is_value (the concrete arg) rather than p.is_value (the
+					// placeholder), because dependent non-type params are stored as
+					// is_value==false in the placeholder even though they carry an integer value
+					// at instantiation time.
+					TemplateTypeArg new_arg = TemplateTypeArg::makeValue(c.intValue(), c.typeEnum());
+					auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
+					if (!inserted && !(it->second == new_arg)) {
+						FLASH_LOG_FORMAT(Templates, Error,
+										 "[depth={}]: Conflicting deduction for non-type param '{}'",
+										 recursion_depth, StringTable::getStringView(p.dependent_name));
+						return std::nullopt;
+					}
+					slot_produced_deduction = true;
+					FLASH_LOG_FORMAT(Templates, Debug,
+									 "[depth={}]: Pre-deduced non-type param '{}' = {}",
+									 recursion_depth,
+									 StringTable::getStringView(p.dependent_name),
+									 c.intValue());
+				}
+			}
+			if (slot_produced_deduction)
+				pre_deduced_arg_indices.insert(i);
+		}
+
+		if (func_param_decl.is_array() && ca_type.is_array()) {
+			const size_t pattern_dim_count = func_param_decl.array_dimension_count();
+			const size_t concrete_dim_count = ca_type.array_dimension_count();
+			if (pattern_dim_count <= concrete_dim_count) {
+				bool slot_produced_deduction = false;
+
+				TypeIndex array_fp_idx = fp_type.type_index();
+				if (const TypeInfo* fp_type_info = tryGetTypeInfo(array_fp_idx)) {
+					StringHandle fp_name = fp_type_info->name();
+					auto param_it = tparam_nodes_by_name.find(fp_name);
+					if (param_it != tparam_nodes_by_name.end() &&
+						param_it->second->kind() == TemplateParameterKind::Type &&
+						!param_name_to_arg.count(fp_name)) {
+						TypeSpecifierNode deduced_element_type = ca_type;
+						deduced_element_type.set_reference_qualifier(ReferenceQualifier::None);
+						const auto& concrete_dims = ca_type.array_dimensions();
+						if (pattern_dim_count <= concrete_dims.size()) {
+							std::vector<size_t> remaining_dims(
+								concrete_dims.begin() + pattern_dim_count,
+								concrete_dims.end());
+							deduced_element_type.set_array_dimensions(remaining_dims);
+							TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(deduced_element_type);
+							if (!recordPreDeducedArg(fp_name, new_arg, "type", new_arg.toString())) {
+								return std::nullopt;
+							}
+							slot_produced_deduction = true;
+						}
+					}
+				}
+
+				bool all_dims_matched = true;
+				const auto& pattern_dims = func_param_decl.array_dimensions();
+				const auto& concrete_dims = ca_type.array_dimensions();
+				for (size_t dim_index = 0; dim_index < pattern_dim_count; ++dim_index) {
+					if (!tryMatchArrayBoundExpression(pattern_dims[dim_index], concrete_dims[dim_index])) {
+						all_dims_matched = false;
+						break;
+					}
+					slot_produced_deduction = true;
+				}
+
+				if (!all_dims_matched) {
+					return std::nullopt;
+				}
+				if (slot_produced_deduction) {
+					pre_deduced_arg_indices.insert(i);
+				}
+			}
+		}
+	}
+
+	// Handle the case where a function parameter IS directly a non-variadic template type
+	// parameter (e.g., template<typename T> T func(Widget& w, T b) — T is the 2nd param).
+	// Without this, the main loop would naively consume the 1st call argument for T.
+	// IMPORTANT: Skip variadic template parameters — pack deduction is handled by the main
+	// loop and must not be pre-consumed here.
+	std::unordered_set<StringHandle, StringHash, StringEqual> variadic_tparam_names;
+	for (const auto& tparam_node : template_params) {
+		if (tparam_node.is<TemplateParameterNode>()) {
+			const auto& tparam = tparam_node.as<TemplateParameterNode>();
+			if (tparam.is_variadic()) {
+				variadic_tparam_names.insert(
+					StringTable::getOrInternStringHandle(tparam.name()));
+			}
+		}
+	}
+	// Only apply when none of the template params are variadic (simplest safe guard:
+	// if the template has any pack parameter, skip this pass entirely to avoid
+	// interfering with pack deduction).
+	if (variadic_tparam_names.empty()) {
+		for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
+			if (!func_params[i].is<DeclarationNode>())
+				continue;
+			const TypeSpecifierNode& fp_type =
+				func_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			const TypeSpecifierNode& ca_type = arg_types[i];
+
+			// Only handle directly-typed params (pointer_depth 0 covers T, T&, const T&).
+			// Pointer-to-template (T*) cases are handled via substitution elsewhere.
+			// Array declarators use a separate deduction path so T in T(&)[N] binds to the
+			// element type instead of the whole array type.
+			if (fp_type.pointer_depth() != 0 || fp_type.is_array() || func_params[i].as<DeclarationNode>().is_array())
+				continue;
+
+			TypeIndex fp_idx = fp_type.type_index();
+			const TypeInfo* fp_type_info = tryGetTypeInfo(fp_idx);
+			if (!fp_type_info)
+				continue;
+
+			StringHandle fp_name = fp_type_info->name();
+			if (!tparam_name_set.count(fp_name))
+				continue;  // not a template parameter
+			if (param_name_to_arg.count(fp_name))
+				continue;  // already deduced
+
+			// Deduce: fp_name -> ca_type (call argument type for this parameter slot)
+			TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(ca_type);
+			param_name_to_arg.emplace(fp_name, new_arg);
+			pre_deduced_arg_indices.insert(i);
+			FLASH_LOG_FORMAT(Templates, Debug,
+							 "[depth={}]: Direct-param pre-deduced type param '{}' = type {} from func param {}",
+							 recursion_depth, StringTable::getStringView(fp_name),
+							 static_cast<int>(ca_type.type()), i);
+		}
+	}
+
+	return deduction_info;
+}
+
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count) {
 	for (const TemplateTypeArg& arg : explicit_types) {
 		if (arg.is_dependent || arg.dependent_name.isValid()) {
@@ -1358,287 +1642,16 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		function_pack_arg_start = std::min(arg_types.size(), params_before_pack);
 	}
 
-	// Pre-deduction pass: build a map from template parameter names to deduced arguments
-	// by matching function parameter types against call argument types.
-	// This handles cases like: template<typename T, int N> int f(Array<T, N>& a)
-	// where T and N should be deduced from the struct's template args.
-	std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
-	// Tracks which function-argument slot indices were consumed by the pre-deduction pass
-	// so the main loop can skip past them when doing direct arg consumption.
-	std::unordered_set<size_t> pre_deduced_arg_indices;
-	{
-		// Build set of template parameter names for O(1) lookup
-		std::unordered_set<StringHandle, StringHash, StringEqual> tparam_name_set;
-		std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual> tparam_nodes_by_name;
-		for (const auto& tparam_node : template_params) {
-			if (tparam_node.is<TemplateParameterNode>()) {
-				const auto& tparam = tparam_node.as<TemplateParameterNode>();
-				tparam_name_set.insert(StringTable::getOrInternStringHandle(tparam.name()));
-				tparam_nodes_by_name.emplace(tparam.nameHandle(), &tparam);
-			}
-		}
-
-		auto getNonTypeTemplateParamCategoryOrInt = [&](StringHandle param_name) -> TypeCategory {
-			auto it = tparam_nodes_by_name.find(param_name);
-			if (it == tparam_nodes_by_name.end() || it->second->kind() != TemplateParameterKind::NonType ||
-				!it->second->has_type() || !it->second->type_node().is<TypeSpecifierNode>()) {
-				return TypeCategory::Int;
-			}
-			return it->second->type_node().as<TypeSpecifierNode>().type();
-		};
-
-		auto recordPreDeducedArg = [&](StringHandle param_name, const TemplateTypeArg& new_arg,
-									  std::string_view kind_label, std::string_view value_label) -> bool {
-			auto [it, inserted] = param_name_to_arg.emplace(param_name, new_arg);
-			if (!inserted && !(it->second == new_arg)) {
-				FLASH_LOG_FORMAT(Templates, Error,
-								 "[depth={}]: Conflicting deduction for {} param '{}'",
-								 recursion_depth, kind_label, StringTable::getStringView(param_name));
-				return false;
-			}
-			if (inserted) {
-				FLASH_LOG_FORMAT(Templates, Debug,
-								 "[depth={}]: Pre-deduced {} param '{}' = {}",
-								 recursion_depth, kind_label, StringTable::getStringView(param_name), value_label);
-			}
-			return true;
-		};
-
-		auto tryMatchArrayBoundExpression =
-			[&](const ASTNode& bound_expr, size_t concrete_bound) -> bool {
-			std::unordered_map<TypeIndex, TemplateTypeArg> type_substitution_map;
-			std::unordered_map<std::string_view, int64_t> nontype_substitution_map;
-			for (const auto& [name, deduced_arg] : param_name_to_arg) {
-				if (deduced_arg.is_value) {
-					nontype_substitution_map[StringTable::getStringView(name)] = deduced_arg.value;
-				}
-			}
-
-			ASTNode substituted_expr = substitute_template_params_in_expression(
-				bound_expr, type_substitution_map, nontype_substitution_map);
-
-			if (substituted_expr.is<ExpressionNode>()) {
-				const ExpressionNode& substituted_node = substituted_expr.as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(substituted_node)) {
-					StringHandle dependent_name = StringTable::getOrInternStringHandle(
-						std::get<IdentifierNode>(substituted_node).name());
-					auto param_it = tparam_nodes_by_name.find(dependent_name);
-					if (param_it != tparam_nodes_by_name.end() &&
-						param_it->second->kind() == TemplateParameterKind::NonType) {
-						TemplateTypeArg new_arg = TemplateTypeArg::makeValue(
-							static_cast<int64_t>(concrete_bound),
-							getNonTypeTemplateParamCategoryOrInt(dependent_name));
-						return recordPreDeducedArg(
-							dependent_name,
-							new_arg,
-							"non-type",
-							std::to_string(static_cast<unsigned long long>(concrete_bound)));
-					}
-				}
-			}
-
-			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
-			return eval_result.success() &&
-				   eval_result.as_int() == static_cast<int64_t>(concrete_bound);
-		};
-
-		const auto& func_params = func_decl.parameter_nodes();
-		for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
-			if (!func_params[i].is<DeclarationNode>())
-				continue;
-			const DeclarationNode& func_param_decl = func_params[i].as<DeclarationNode>();
-			const TypeSpecifierNode& fp_type = func_param_decl.type_node().as<TypeSpecifierNode>();
-			const TypeSpecifierNode& ca_type = arg_types[i];
-			// If both the function parameter and the call argument are struct template
-			// instantiations of the same base template, match their template args pairwise
-			// to deduce any template parameters that appear as dependent entries.
-			TypeIndex fp_idx = fp_type.type_index();
-			TypeIndex ca_idx = ca_type.type_index();
-			const TypeInfo* fp_info = tryGetTypeInfo(fp_idx);
-			const TypeInfo* ca_info = tryGetTypeInfo(ca_idx);
-			if (fp_info && ca_info &&
-				fp_info->isTemplateInstantiation() && ca_info->isTemplateInstantiation() &&
-				fp_info->baseTemplateName() == ca_info->baseTemplateName()) {
-				const auto& fp_targs = fp_info->templateArgs();
-				const auto& ca_targs = ca_info->templateArgs();
-				bool slot_produced_deduction = false;
-				for (size_t j = 0; j < fp_targs.size() && j < ca_targs.size(); ++j) {
-					const auto& p = fp_targs[j];
-					const auto& c = ca_targs[j];
-					if (!p.dependent_name.isValid())
-						continue;
-					if (!tparam_name_set.count(p.dependent_name))
-						continue;
-					if (!c.is_value) {
-						// Type argument — build a TypeSpecifierNode from the
-						// TemplateArgInfo so that pointer depth, CV qualifiers,
-						// and reference qualifiers are preserved through the
-						// entire pipeline (TemplateTypeArg →
-						// substitute_template_parameter / registerTypeParamsInScope).
-						TypeSpecifierNode synth_ts(
-							c.type_index.withCategory(c.typeEnum()),
-							get_type_size_bits(c.typeEnum()),
-							Token(), c.cv_qualifier, ReferenceQualifier::None);
-						for (size_t pd = 0; pd < c.pointer_depth; ++pd) {
-							CVQualifier ptr_cv = (pd < c.pointer_cv_qualifiers.size())
-													 ? c.pointer_cv_qualifiers[pd]
-													 : CVQualifier::None;
-							synth_ts.add_pointer_level(ptr_cv);
-						}
-						synth_ts.set_reference_qualifier(c.ref_qualifier);
-						if (c.is_array) {
-							synth_ts.set_array(true, c.array_size);
-						}
-						if (c.function_signature.has_value()) {
-							synth_ts.set_function_signature(*c.function_signature);
-						}
-						TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(synth_ts);
-						auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
-						if (!inserted && !(it->second == new_arg)) {
-							FLASH_LOG_FORMAT(Templates, Error,
-											 "[depth={}]: Conflicting deduction for type param '{}'",
-											 recursion_depth, StringTable::getStringView(p.dependent_name));
-							return std::nullopt;
-						}
-						slot_produced_deduction = true;
-						FLASH_LOG_FORMAT(Templates, Debug,
-										 "[depth={}]: Pre-deduced type param '{}' = type {}",
-										 recursion_depth,
-										 StringTable::getStringView(p.dependent_name),
-										 static_cast<int>(c.typeEnum()));
-					} else {
-						// Concrete argument is a value (c.is_value==true); deduce a non-type param.
-						// We check c.is_value (the concrete arg) rather than p.is_value (the
-						// placeholder), because dependent non-type params are stored as
-						// is_value==false in the placeholder even though they carry an integer value
-						// at instantiation time.
-						TemplateTypeArg new_arg = TemplateTypeArg::makeValue(c.intValue(), c.typeEnum());
-						auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
-						if (!inserted && !(it->second == new_arg)) {
-							FLASH_LOG_FORMAT(Templates, Error,
-											 "[depth={}]: Conflicting deduction for non-type param '{}'",
-											 recursion_depth, StringTable::getStringView(p.dependent_name));
-							return std::nullopt;
-						}
-						slot_produced_deduction = true;
-						FLASH_LOG_FORMAT(Templates, Debug,
-										 "[depth={}]: Pre-deduced non-type param '{}' = {}",
-										 recursion_depth,
-										 StringTable::getStringView(p.dependent_name),
-										 c.intValue());
-					}
-				}
-				if (slot_produced_deduction)
-					pre_deduced_arg_indices.insert(i);
-			}
-
-			if (func_param_decl.is_array() && ca_type.is_array()) {
-				const size_t pattern_dim_count = func_param_decl.array_dimension_count();
-				const size_t concrete_dim_count = ca_type.array_dimension_count();
-				if (pattern_dim_count <= concrete_dim_count) {
-					bool slot_produced_deduction = false;
-
-					TypeIndex array_fp_idx = fp_type.type_index();
-					if (const TypeInfo* fp_type_info = tryGetTypeInfo(array_fp_idx)) {
-						StringHandle fp_name = fp_type_info->name();
-						auto param_it = tparam_nodes_by_name.find(fp_name);
-						if (param_it != tparam_nodes_by_name.end() &&
-							param_it->second->kind() == TemplateParameterKind::Type &&
-							!param_name_to_arg.count(fp_name)) {
-							TypeSpecifierNode deduced_element_type = ca_type;
-							deduced_element_type.set_reference_qualifier(ReferenceQualifier::None);
-							const auto& concrete_dims = ca_type.array_dimensions();
-							if (pattern_dim_count <= concrete_dims.size()) {
-								std::vector<size_t> remaining_dims(
-									concrete_dims.begin() + pattern_dim_count,
-									concrete_dims.end());
-								deduced_element_type.set_array_dimensions(remaining_dims);
-								TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(deduced_element_type);
-								if (!recordPreDeducedArg(fp_name, new_arg, "type", new_arg.toString())) {
-									return std::nullopt;
-								}
-								slot_produced_deduction = true;
-							}
-						}
-					}
-
-					bool all_dims_matched = true;
-					const auto& pattern_dims = func_param_decl.array_dimensions();
-					const auto& concrete_dims = ca_type.array_dimensions();
-					for (size_t dim_index = 0; dim_index < pattern_dim_count; ++dim_index) {
-						if (!tryMatchArrayBoundExpression(pattern_dims[dim_index], concrete_dims[dim_index])) {
-							all_dims_matched = false;
-							break;
-						}
-						slot_produced_deduction = true;
-					}
-
-					if (!all_dims_matched) {
-						return std::nullopt;
-					}
-					if (slot_produced_deduction) {
-						pre_deduced_arg_indices.insert(i);
-					}
-				}
-			}
-		}
-
-		// Handle the case where a function parameter IS directly a non-variadic template type
-		// parameter (e.g., template<typename T> T func(Widget& w, T b) — T is the 2nd param).
-		// Without this, the main loop would naively consume the 1st call argument for T.
-		// IMPORTANT: Skip variadic template parameters — pack deduction is handled by the main
-		// loop and must not be pre-consumed here.
-		std::unordered_set<StringHandle, StringHash, StringEqual> variadic_tparam_names;
-		for (const auto& tparam_node : template_params) {
-			if (tparam_node.is<TemplateParameterNode>()) {
-				const auto& tparam = tparam_node.as<TemplateParameterNode>();
-				if (tparam.is_variadic()) {
-					variadic_tparam_names.insert(
-						StringTable::getOrInternStringHandle(tparam.name()));
-				}
-			}
-		}
-		// Only apply when none of the template params are variadic (simplest safe guard:
-		// if the template has any pack parameter, skip this pass entirely to avoid
-		// interfering with pack deduction).
-		if (variadic_tparam_names.empty()) {
-			for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
-				if (!func_params[i].is<DeclarationNode>())
-					continue;
-				const TypeSpecifierNode& fp_type =
-					func_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-				const TypeSpecifierNode& ca_type = arg_types[i];
-
-				// Only handle directly-typed params (pointer_depth 0 covers T, T&, const T&).
-				// Pointer-to-template (T*) cases are handled via substitution elsewhere.
-				// Array declarators use a separate deduction path so T in T(&)[N] binds to the
-				// element type instead of the whole array type.
-				if (fp_type.pointer_depth() != 0 || fp_type.is_array() || func_params[i].as<DeclarationNode>().is_array())
-					continue;
-
-				TypeIndex fp_idx = fp_type.type_index();
-				const TypeInfo* fp_type_info = tryGetTypeInfo(fp_idx);
-				if (!fp_type_info)
-					continue;
-
-				StringHandle fp_name = fp_type_info->name();
-				if (!tparam_name_set.count(fp_name))
-					continue;  // not a template parameter
-				if (param_name_to_arg.count(fp_name))
-					continue;  // already deduced
-
-				// Deduce: fp_name -> ca_type (call argument type for this parameter slot)
-				TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(ca_type);
-				param_name_to_arg.emplace(fp_name, new_arg);
-				pre_deduced_arg_indices.insert(i);
-				FLASH_LOG_FORMAT(Templates, Debug,
-								 "[depth={}]: Direct-param pre-deduced type param '{}' = type {} from func param {}",
-								 recursion_depth, StringTable::getStringView(fp_name),
-								 static_cast<int>(ca_type.type()), i);
-			}
-		}
+	auto deduction_info = buildDeductionMapFromCallArgs(
+		template_params,
+		func_decl,
+		arg_types,
+		recursion_depth);
+	if (!deduction_info.has_value()) {
+		return std::nullopt;
 	}
+	const auto& param_name_to_arg = deduction_info->param_name_to_arg;
+	const auto& pre_deduced_arg_indices = deduction_info->pre_deduced_arg_indices;
 
 	// Deduce template parameters in order from function arguments
 	// For template<typename T, typename U> T func(T a, U b):
