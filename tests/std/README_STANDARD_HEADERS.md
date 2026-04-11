@@ -30,10 +30,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<list>` | `test_std_list.cpp` | ❌ Codegen Error | member '_M_impl' not found in struct 'std::__cxx11::list' |
 | `<queue>` | `test_std_queue.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
 | `<stack>` | `test_std_stack.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~1630ms (targeted retest 2026-04-10). The smaller std-style `pair::swap` unused-body repro now compiles again, but the real `<memory>` include stack still fails later in `bits/stl_pair.h:308` where `swap(first, __p.first)` resolves to a deleted candidate during template instantiation. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~1170ms (targeted retest 2026-04-10). Same deeper remaining state as `<memory>` / `<deque>` after the new pair-style lazy-body fix: the simple unused-body case is gone, but real libstdc++ still hits the deleted-`swap` resolution in `bits/stl_pair.h:308`. |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~2320ms (targeted retest 2026-04-11). New focused regressions now cover non-type array-bound deduction plus std-style `enable_if` array overload calls, but the real `<memory>` include stack still fails later in `bits/stl_pair.h:308` where `swap(first, __p.first)` resolves to a deleted candidate during template instantiation. |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~1770ms (targeted retest 2026-04-11). New focused regressions now cover non-type array-bound deduction plus std-style `enable_if` array overload calls, but the real libstdc++ include stack still fails later in `bits/stl_pair.h:308` where `swap(first, __p.first)` resolves to a deleted candidate during template instantiation. |
 | `<map>` | `test_std_map.cpp` | ❌ Codegen Error | member 'first' not found in struct 'std::iterator' |
-| `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~930ms (targeted retest 2026-04-10). The smaller std-style `pair::swap` unused-body repro now compiles, but `<set>` still reaches a deeper `bits/stl_pair.h:308` failure where `swap(first, __p.first)` resolves to a deleted candidate during template instantiation. |
+| `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~1480ms (targeted retest 2026-04-11). New focused regressions now cover non-type array-bound deduction plus std-style `enable_if` array overload calls, but `<set>` still reaches a deeper `bits/stl_pair.h:308` failure where `swap(first, __p.first)` resolves to a deleted candidate during template instantiation. |
 | `<ranges>` | `test_std_ranges.cpp` | 💥 Crash | ~12960ms (targeted retest 2026-04-06). The earlier `streamoff`, `size_t(-1)`, and alias-constructor fixes still hold, and qualified direct-init parsing now also gets past the inherited `std::__str_concat` / `__str` stop from `<string>`. The current Linux repro now crashes later after much deeper `basic_string` / iterator instantiation. |
 | `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~4760ms (targeted retest 2026-04-02). The earlier `wmemchr` ambiguity is fixed and it gets much further, but still hits later ranges/string-view issues (`Operator-`, `make_move_iterator`, unresolved `auto`) before crashing in `IROperandHelpers::toIrValue` |
 | `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
@@ -120,6 +120,11 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 - Namespaced implicit template instantiations now register lazy member-function stubs before replaying bodies, and member-call resolution no longer forces incomplete dependent placeholder types down the concrete-class path. The focused std-style regression `tests/std/test_std_pair_swap_deleted_member.cpp` now compiles in ~20ms.
 - Re-checking `<memory>` (~1.63s), `<functional>` (~1.17s), `<deque>` (~0.93s), and `<set>` (~0.93s) shows that the old simplest `pair::swap` unused-body case is gone, but real libstdc++ still reaches a deeper deleted-`swap` path at `bits/stl_pair.h:308`, so those headers stay in the compile-error bucket for now.
+
+#### 2026-04-11 Retests
+
+- Function parameter parsing now preserves reference-to-array declarators instead of decaying them to pointers, and function-template deduction can bind non-type array extents from real call arguments. The new focused regressions `tests/test_array_ref_nontype_deduction_ret0.cpp` and `tests/test_array_enable_if_deduction_ret0.cpp` both pass alongside the older swap-SFINAE coverage.
+- Re-checking `<set>` (~1.48s), `<functional>` (~1.77s), and `<memory>` (~2.32s) shows that the focused array-bound deduction gap is covered, but the real libstdc++ `pair::swap` instantiations still fail later in `bits/stl_pair.h:308`, so those headers remain in the compile-error bucket for now.
 
 #### 2026-04-07 Retests
 
