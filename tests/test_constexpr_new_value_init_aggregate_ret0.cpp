@@ -3,6 +3,11 @@ struct Pair {
 	int y;
 };
 
+struct DoublePair {
+	double x;
+	double y;
+};
+
 constexpr int read_value_initialized_heap_aggregate_paren() {
 	Pair* p = new Pair();
 	int value = p->x + p->y;
@@ -15,6 +20,13 @@ constexpr int read_value_initialized_heap_aggregate_brace() {
 	int value = p->x + p->y;
 	delete p;
 	return value;
+}
+
+constexpr int read_value_initialized_heap_double_aggregate_brace() {
+	DoublePair* p = new DoublePair{};
+	double value = p->x + p->y;
+	delete p;
+	return value == 0.0 ? 0 : 1;
 }
 
 struct WithDefault {
@@ -31,6 +43,7 @@ constexpr int read_default_member_initializer_from_heap_aggregate() {
 
 static_assert(read_value_initialized_heap_aggregate_paren() == 0);
 static_assert(read_value_initialized_heap_aggregate_brace() == 0);
+static_assert(read_value_initialized_heap_double_aggregate_brace() == 0);
 static_assert(read_default_member_initializer_from_heap_aggregate() == 42);
 
 int main() { return 0; }
