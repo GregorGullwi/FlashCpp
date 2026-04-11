@@ -65,6 +65,60 @@ std::optional<size_t> tryGetConstexprTypeSizeBytes(const TypeSpecifierNode& type
 	return static_cast<size_t>(size_bits) / 8;
 }
 
+std::optional<size_t> tryGetConstexprArrayElementCount(
+	const DeclarationNode& decl,
+	const ASTNode& symbol,
+	EvaluationContext& context) {
+	const auto& dims = decl.array_dimensions();
+	if (!dims.empty()) {
+		size_t total_count = 1;
+		for (const auto& dim_expr : dims) {
+			auto eval_result = Evaluator::evaluate(dim_expr, context);
+			if (!eval_result.success() || eval_result.as_int() <= 0) {
+				return std::nullopt;
+			}
+			total_count *= static_cast<size_t>(eval_result.as_int());
+		}
+		return total_count;
+	}
+
+	if (decl.is_unsized_array() &&
+		symbol.is<VariableDeclarationNode>() &&
+		symbol.as<VariableDeclarationNode>().initializer().has_value() &&
+		symbol.as<VariableDeclarationNode>().initializer()->is<InitializerListNode>()) {
+		return symbol.as<VariableDeclarationNode>().initializer()->as<InitializerListNode>().initializers().size();
+	}
+
+	return std::nullopt;
+}
+
+std::optional<size_t> tryGetConstexprMaterializedValueSizeBytes(const EvalResult& value) {
+	if (value.is_array) {
+		if (value.array_elements.empty()) {
+			return std::nullopt;
+		}
+
+		auto element_size = tryGetConstexprMaterializedValueSizeBytes(value.array_elements.front());
+		if (!element_size.has_value()) {
+			return std::nullopt;
+		}
+		return *element_size * value.array_elements.size();
+	}
+
+	if (value.object_type_index.is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(value.object_type_index)) {
+			return type_info->sizeInBytes();
+		}
+		return std::nullopt;
+	}
+
+	if (value.exact_type.has_value()) {
+		return tryGetConstexprTypeSizeBytes(*value.exact_type);
+	}
+
+	return std::nullopt;
+}
+
 std::optional<size_t> tryGetConstexprTypeAlignment(const TypeSpecifierNode& type_spec) {
 	TypeSpecifierNode aligned_type = type_spec;
 	if (type_spec.is_array()) {
@@ -1121,23 +1175,9 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 						if (decl->is_array()) {
 							const auto& array_type_spec = decl->type_node().as<TypeSpecifierNode>();
 							size_t element_size = get_typespec_size_bytes(array_type_spec);
-
-							// Get total array size from all dimensions
-							const auto& dims = decl->array_dimensions();
-							if (!dims.empty()) {
-								long long total_count = 1;
-								bool all_evaluated = true;
-								for (const auto& dim_expr : dims) {
-									auto eval_result = evaluate(dim_expr, context);
-									if (eval_result.success() && eval_result.as_int() > 0) {
-										total_count *= eval_result.as_int();
-									} else {
-										all_evaluated = false;
-										break;
-									}
-								}
-								if (all_evaluated && element_size > 0) {
-									return EvalResult::from_int(static_cast<long long>(element_size * total_count));
+							if (element_size > 0) {
+								if (auto total_count = tryGetConstexprArrayElementCount(*decl, *symbol, context); total_count.has_value()) {
+									return EvalResult::from_int(static_cast<long long>(element_size * *total_count));
 								}
 							}
 						}
@@ -1374,23 +1414,9 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 							if (decl->is_array()) {
 								const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
 								size_t element_size = get_typespec_size_bytes(type_spec);
-
-								// Get total array size from all dimensions
-								const auto& dims = decl->array_dimensions();
-								if (!dims.empty()) {
-									long long total_count = 1;
-									bool all_evaluated = true;
-									for (const auto& dim_expr : dims) {
-										auto eval_result = evaluate(dim_expr, context);
-										if (eval_result.success() && eval_result.as_int() > 0) {
-											total_count *= eval_result.as_int();
-										} else {
-											all_evaluated = false;
-											break;
-										}
-									}
-									if (all_evaluated && element_size > 0) {
-										return EvalResult::from_int(static_cast<long long>(element_size * total_count));
+								if (element_size > 0) {
+									if (auto total_count = tryGetConstexprArrayElementCount(*decl, *symbol, context); total_count.has_value()) {
+										return EvalResult::from_int(static_cast<long long>(element_size * *total_count));
 									}
 								}
 							}
@@ -1401,6 +1427,15 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 								unsigned long long size_in_bytes = get_typespec_size_bytes(type_spec);
 								return EvalResult::from_int(static_cast<long long>(size_in_bytes));
 							}
+						}
+					}
+				}
+
+				if (context.local_bindings) {
+					auto binding_it = context.local_bindings->find(id_node.name());
+					if (binding_it != context.local_bindings->end()) {
+						if (auto size_in_bytes = tryGetConstexprMaterializedValueSizeBytes(binding_it->second); size_in_bytes.has_value()) {
+							return EvalResult::from_int(static_cast<long long>(*size_in_bytes));
 						}
 					}
 				}
