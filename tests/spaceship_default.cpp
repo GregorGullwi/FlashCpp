@@ -34,5 +34,19 @@ int main() {
 
 	bool lt2 = m1 < m2;
 
-	return !eq && ne && !lt2 ? 0 : 1;
+	if (eq)
+		return 1;
+	if (!ne)
+		return 2;
+	if (!lt)
+		return 3;
+	if (gt)
+		return 4;
+	if (!le)
+		return 5;
+	if (ge)
+		return 6;
+	if (!lt2)
+		return 7;
+	return 0;
 }
