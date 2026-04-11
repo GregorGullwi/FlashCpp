@@ -2211,15 +2211,21 @@ EvalResult Evaluator::evaluate_new_expression(
 						"' (type has user-defined constructors and is not an aggregate)");
 				}
 			} else {
-				// True aggregate or implicit-only constructors: apply default member initializers.
+				// True aggregate or implicit-only constructors:
+				// - bare new T default-initializes members, leaving those without default
+				//   member initializers indeterminate
+				// - new T() / new T{} value-initializes, zeroing those members instead
+				const bool value_initializes_members = new_expr.has_value_init();
 				for (const auto& member : struct_info->members) {
 					std::string_view mname = StringTable::getStringView(member.getName());
 					if (member.default_initializer.has_value()) {
 						auto def_result = evaluate(*member.default_initializer, context);
 						object_result.object_member_bindings[mname] =
 							def_result.success() ? std::move(def_result) : EvalResult::from_int(0LL);
-					} else {
+					} else if (value_initializes_members) {
 						object_result.object_member_bindings[mname] = EvalResult::from_int(0LL);
+					} else {
+						object_result.object_member_bindings[mname] = EvalResult::indeterminate();
 					}
 				}
 			}
