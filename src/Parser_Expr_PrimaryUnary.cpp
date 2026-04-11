@@ -381,8 +381,8 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			return ParseResult::error("Expected type after 'new'", current_token_);
 		}
 
-		std::string_view new_initializer_error;
-		auto parse_new_initializer_args = [&](TokenKind closing_token_kind, std::string_view error_message) -> std::optional<ChunkedVector<ASTNode, 128, 256>> {
+		std::string_view initializer_parse_error;
+		auto parse_new_initializer_args = [&](TokenKind closing_token_kind, std::string_view expected_closing_error, bool allow_trailing_comma) -> std::optional<ChunkedVector<ASTNode, 128, 256>> {
 			ChunkedVector<ASTNode, 128, 256> args;
 
 			if (peek() != closing_token_kind) {
@@ -407,7 +407,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 
 					if (peek() == ","_tok) {
 						advance(); // consume ','
-						if (peek() == closing_token_kind) {
+						if (allow_trailing_comma && peek() == closing_token_kind) {
 							break;
 						}
 					} else {
@@ -417,7 +417,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			}
 
 			if (!consume(closing_token_kind)) {
-				new_initializer_error = error_message;
+				initializer_parse_error = expected_closing_error;
 				return std::nullopt;
 			}
 
@@ -492,9 +492,9 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		else if (peek() == "("_tok) {
 			advance(); // consume '('
 
-			auto args = parse_new_initializer_args(")"_tok, "Expected ')' after constructor arguments");
+			auto args = parse_new_initializer_args(")"_tok, "Expected ')' after constructor arguments", false);
 			if (!args.has_value()) {
-				return ParseResult::error(std::string(new_initializer_error), current_token_);
+				return ParseResult::error(std::string(initializer_parse_error), current_token_);
 			}
 
 			auto new_expr = emplace_node<ExpressionNode>(
@@ -505,9 +505,9 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		else if (peek() == "{"_tok) {
 			advance(); // consume '{'
 
-			auto args = parse_new_initializer_args("}"_tok, "Expected '}' after brace initializer");
+			auto args = parse_new_initializer_args("}"_tok, "Expected '}' after brace initializer", true);
 			if (!args.has_value()) {
-				return ParseResult::error(std::string(new_initializer_error), current_token_);
+				return ParseResult::error(std::string(initializer_parse_error), current_token_);
 			}
 
 			auto new_expr = emplace_node<ExpressionNode>(
