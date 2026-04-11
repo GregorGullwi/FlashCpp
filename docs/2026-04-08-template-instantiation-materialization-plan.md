@@ -8,26 +8,61 @@
 ### Do this next
 
 1. Keep `materializePrimaryTemplateOwnerForLookup(...)` itself
-   registration-free. The new safe parser-owned step in
-   `src/Parser_Expr_PrimaryExpr.cpp` is only the namespace-vector
-   `ns::Template<Args>{...}` brace-init branch; do not generalize that same
-   registration to the older qualified-id owner path yet.
-2. If you revisit the earlier `qual_id`-based owner-materialization exit in
-   `src/Parser_Expr_PrimaryExpr.cpp`, reproduce
-   `test_namespaced_pair_swap_sfinae_ret0.cpp` first. Registering its returned
-   `instantiated_struct_node` still regresses that test even when the helper
-   itself stays registration-free.
-3. Continue the late-materialization contract audit one parser exit at a time:
-   prefer `registerAndNormalizeLateMaterializedTopLevelNode(...)` only where a
-   single fresh node immediately feeds constructor-style lookup, and keep
-   broader `Template<T>::member` / SFINAE-sensitive owner recovery unchanged
-   until their replay contract is explicit.
-4. Once the remaining parser-owned class-template sites share a stable
-   registration contract, return to the broader placeholder/deduction utilities
-   only if they still encode owner materialization or pending-sema policy
-   independently.
+   registration-free. The new
+   `materializePrimaryTemplateOwnerForConstructorLookup(...)` wrapper in
+   `src/Parser_Expr_PrimaryExpr.cpp` is intentionally limited to the three
+   already-proven constructor-style exits that immediately build constructor
+   lookup/temporary expressions.
+2. Do **not** generalize that constructor-style wrapper to the older
+   `qual_id`-based path yet. A would-be regression like
+   `ns::box<char>().value` still routes through the older qualified-id call
+   path instead of the new constructor-style exits, and the safe fix there is
+   still unresolved.
+3. If you revisit the older qualified-id owner recovery, reproduce both
+   `test_namespaced_pair_swap_sfinae_ret0.cpp` and a focused namespaced
+   functional-style cast case first. The former still guards against
+   over-eager owner registration, while the latter exposes the remaining
+   `ns::Template<Args>()` hole.
+4. Continue Phase 6 from the new stable baseline: keep the name-based
+   `buildDeductionMapFromCallArgs(...)` path for explicit deduction only when
+   there is no template-parameter pack and no function-parameter pack. Any
+   broader remap for pack-bearing signatures needs an explicit pack-aware
+   mapping contract first.
 
 ### Latest completed slice
+
+  - extracted shared explicit/implicit pre-deduction into
+    `Parser::buildDeductionMapFromCallArgs(...)` in:
+    - `src/Parser.h`
+    - `src/Parser_Templates_Inst_Deduction.cpp`
+  - switched `try_instantiate_template_explicit(...)` to consult that
+    name-based map before defaults for the stable non-pack case, fixing the
+    `deduced_call_arg_index` bug where defaulted-but-deducible parameters could
+    incorrectly fall back to their defaults
+  - added:
+    - `tests/test_explicit_template_defaulted_param_deduction_ret42.cpp`
+  - narrowed the new explicit-deduction remap back to the stable cases only:
+    signatures with template/function parameter packs now stay on the older
+    positional fallback until a pack-aware mapping is designed, which restores:
+    - `tests/test_variadic_template_pack_before_tail_trailing_return_ret0.cpp`
+  - extracted the parser-owned constructor-style registration contract into
+    `materializePrimaryTemplateOwnerForConstructorLookup(...)` and switched only
+    the three already-safe constructor-style exits in
+    `src/Parser_Expr_PrimaryExpr.cpp` to use it
+  - important non-merged finding:
+    - `ns::Template<Args>()` still flows through the older qualified-id call
+      path rather than the newer constructor-style exits; a scratch regression
+      in that shape still bottoms out in codegen with
+      `struct type info not found for type_index=0`
+  - validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_explicit_template_defaulted_param_deduction_ret42.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_variadic_template_pack_before_tail_trailing_return_ret0.cpp test_explicit_template_defaulted_param_deduction_ret42.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_default_functional_cast_ret42.cpp test_namespace_template_default_member_ret42.cpp test_nested_namespace_template_default_member_ret42.cpp test_late_member_body_class_template_functional_style_ret42.cpp test_method_on_temporary_ret0.cpp test_namespaced_pair_swap_sfinae_ret0.cpp test_explicit_template_defaulted_param_deduction_ret42.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+    - 2058 pass, 131 expected-fail
+
+### Older completed slices
 
   - added an explicit parser-owned
     `registerAndNormalizeLateMaterializedTopLevelNode(...)` step to the
