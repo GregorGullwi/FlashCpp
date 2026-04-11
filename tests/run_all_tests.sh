@@ -260,16 +260,16 @@ test_one_file() {
                 return
             fi
 
-            # Check if the filename indicates an expected return value
+            # Check if the filename indicates an expected return value.
+            # Tests without a _retN suffix default to expecting 0.
+            local expected_value=0
             if [[ "$base" =~ _ret([0-9]+)\.cpp$ ]]; then
-                local expected_value="${BASH_REMATCH[1]}"
-                if [ "$return_value" -ne "$expected_value" ]; then
-                    echo "RETURN_MISMATCH|$base|expected $expected_value got $return_value" > "$result_file"
-                else
-                    echo "RETURN_OK|$base|$expected_value" > "$result_file"
-                fi
+                expected_value="${BASH_REMATCH[1]}"
+            fi
+            if [ "$return_value" -ne "$expected_value" ]; then
+                echo "RETURN_MISMATCH|$base|expected $expected_value got $return_value" > "$result_file"
             else
-                echo "RETURN_OK|$base|$return_value" > "$result_file"
+                echo "RETURN_OK|$base|$expected_value" > "$result_file"
             fi
             rm -f "$exe"
         else
