@@ -943,7 +943,7 @@ private:
 					materializeTemplateArgs(*base_type_info, template_params, template_args);
 				auto instantiated_base = try_instantiate_class_template(base_template_name, concrete_base_args);
 				if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
-					registerLateMaterializedTopLevelNode(*instantiated_base);
+					registerAndNormalizeLateMaterializedTopLevelNode(*instantiated_base);
 				}
 				std::string_view instantiated_base_name =
 					get_instantiated_class_name(base_template_name, concrete_base_args);
