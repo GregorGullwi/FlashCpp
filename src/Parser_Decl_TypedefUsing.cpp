@@ -1449,7 +1449,7 @@ ParseResult Parser::parse_typedef_declaration() {
 									max_alignment = member.alignment;
 								}
 							}
-							anon_struct_info->finalizeLayoutSize(max_size, max_alignment);
+							anon_struct_info->finalizeLayoutSize(max_size, max_size, max_alignment);
 						} else {
 							// Struct layout: sequential members with alignment
 							size_t current_offset = 0;
@@ -1469,7 +1469,7 @@ ParseResult Parser::parse_typedef_declaration() {
 							if (max_alignment > 0) {
 								current_offset = (current_offset + max_alignment - 1) & ~(max_alignment - 1);
 							}
-							anon_struct_info->finalizeLayoutSize(current_offset, max_alignment);
+							anon_struct_info->finalizeLayoutSize(current_offset, current_offset, max_alignment);
 						}
 
 						// Set the struct info on the type info

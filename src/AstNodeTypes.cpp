@@ -1375,7 +1375,7 @@ void StructTypeInfo::recalculateLayout() {
 		max_alignment = std::max(max_alignment, custom_alignment);
 	}
 
-	finalizeLayoutSize(current_offset, max_alignment);
+	finalizeLayoutSize(current_offset, current_offset, max_alignment);
 	if (own_type_index_.has_value()) {
 		FlashCpp::gLazyMemberResolver.invalidateEntriesOwnedBy(*own_type_index_);
 	}
@@ -1443,7 +1443,7 @@ bool StructTypeInfo::finalizeWithBases() {
 	}
 
 	// Step 5: Pad to alignment
-	finalizeLayoutSize(current_offset, max_alignment);
+	finalizeLayoutSize(current_offset, current_offset, max_alignment);
 	if (own_type_index_.has_value()) {
 		FlashCpp::gLazyMemberResolver.invalidateEntriesOwnedBy(*own_type_index_);
 	}
