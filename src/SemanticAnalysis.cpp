@@ -2944,11 +2944,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const StructTypeInfo* struct_info = object_type_info->getStructInfo();
 				if (struct_info) {
 					const StringHandle member_name_handle = e.member_token().handle();
-					// Try static members.
-					for (const auto& sm : struct_info->static_members) {
-						if (sm.name == member_name_handle) {
-							return type_context_.intern(canonicalTypeDescFromStaticMember(sm));
-						}
+					// Try static members (recursively through base classes).
+					auto [found_static, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
+					if (found_static) {
+						return type_context_.intern(canonicalTypeDescFromStaticMember(*found_static));
 					}
 					// Try member functions — return the return type of the first
 					// overload matching by name.  The call-site (CallExprNode)
