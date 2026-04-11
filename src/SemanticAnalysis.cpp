@@ -2851,10 +2851,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 				}
 
-				if (auto parser_type = parser_.get_expression_type(node); parser_type.has_value()) {
-					return canonicalizeType(*parser_type);
-				}
-
+				// Phase 6: move NonStaticMember sema-owned resolution before parser
+				// fallback so sema resolves implicit this->member types without
+				// needing parser_.get_expression_type for that binding category.
 				if (e.binding() == IdentifierBinding::NonStaticMember &&
 					!member_context_stack_.empty()) {
 					const TypeIndex current_struct_type = member_context_stack_.back();
@@ -2873,6 +2872,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 							}
 						}
 					}
+				}
+
+				// Phase 6: parser fallback only for binding categories that sema
+				// cannot yet resolve locally (e.g. Unresolved identifiers in
+				// non-template contexts where no symbol or member path applies).
+				if (auto parser_type = parser_.get_expression_type(node); parser_type.has_value()) {
+					return canonicalizeType(*parser_type);
 				}
 
 				return {};
@@ -2922,18 +2928,51 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (!object_type_info) {
 					object_type_info = tryGetTypeInfo(object_desc.type_index);
 				}
-				ResolvedMemberAccessInfo member_info;
-				if (!object_type_info || !tryResolveMemberAccessInfo(e, member_info)) {
+				if (!object_type_info) {
 					return try_parser_member_type();
 				}
 
-				const TypeInfo* owner_type_info = tryGetTypeInfo(member_info.owner_type_index);
-				const StructTypeInfo* owner_struct_info = owner_type_info ? owner_type_info->getStructInfo() : nullptr;
-				if (!owner_struct_info || member_info.member_index >= owner_struct_info->members.size()) {
-					return try_parser_member_type();
+				// Phase 6: try data member resolution first via the existing path.
+				ResolvedMemberAccessInfo member_info;
+				if (tryResolveMemberAccessInfo(e, member_info)) {
+					const TypeInfo* owner_type_info = tryGetTypeInfo(member_info.owner_type_index);
+					const StructTypeInfo* owner_struct_info = owner_type_info ? owner_type_info->getStructInfo() : nullptr;
+					if (owner_struct_info && member_info.member_index < owner_struct_info->members.size()) {
+						return type_context_.intern(canonicalTypeDescFromStructMember(
+							owner_struct_info->members[member_info.member_index], object_desc.base_cv));
+					}
 				}
-				return type_context_.intern(canonicalTypeDescFromStructMember(
-					owner_struct_info->members[member_info.member_index], object_desc.base_cv));
+
+				// Phase 6: when data member resolution fails, try static members
+				// and member functions so sema can type the access without parser
+				// fallback.
+				const StructTypeInfo* struct_info = object_type_info->getStructInfo();
+				if (struct_info) {
+					const StringHandle member_name_handle = e.member_token().handle();
+					// Try static members.
+					for (const auto& sm : struct_info->static_members) {
+						if (sm.name == member_name_handle) {
+							return type_context_.intern(canonicalTypeDescFromStaticMember(sm));
+						}
+					}
+					// Try member functions — return the return type of the first
+					// overload matching by name.  The call-site (CallExprNode)
+					// handles full overload resolution; here we only need the
+					// result type for expressions like &obj.method or simple
+					// non-call member-function references.
+					for (const auto& mf : struct_info->member_functions) {
+						if (mf.name == member_name_handle && mf.function_decl.has_value() &&
+							mf.function_decl.is<FunctionDeclarationNode>()) {
+							const auto& func = mf.function_decl.as<FunctionDeclarationNode>();
+							const ASTNode ret_type_node = func.decl_node().type_node();
+							if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
+								return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
+							}
+						}
+					}
+				}
+
+				return try_parser_member_type();
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				CanonicalTypeId member_pointer_type_id = inferExpressionType(e.member_pointer());
 				if (!member_pointer_type_id) {
