@@ -1789,7 +1789,9 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 						ctor_call.arguments(),
 						context,
 						false,
-						nullptr);
+						nullptr,
+						nullptr,
+						false);
 					if (ctor_result.has_value()) {
 						return *ctor_result;
 					}
@@ -2173,7 +2175,7 @@ EvalResult Evaluator::evaluate_new_expression(
 				}
 			} else {
 				auto ctor_result = try_materialize_struct_from_ctor_args(
-					struct_info, type_index, args_copy, context, false, bindings);
+					struct_info, type_index, args_copy, context, false, bindings, nullptr, false);
 				if (!ctor_result.has_value()) {
 					return EvalResult::error("new-expression: no matching constructor found for struct type");
 				}
@@ -2191,7 +2193,7 @@ EvalResult Evaluator::evaluate_new_expression(
 			if (has_user_defined_ctor) {
 				ChunkedVector<ASTNode> empty_args;
 				auto ctor_result = try_materialize_struct_from_ctor_args(
-					struct_info, type_index, empty_args, context, true, bindings);
+					struct_info, type_index, empty_args, context, true, bindings, nullptr, false);
 				if (ctor_result.has_value()) {
 					if (!ctor_result->success()) {
 						return *ctor_result;
@@ -4290,7 +4292,9 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						ctor_args,
 						context,
 						skip_implicit_constructors,
-						&bindings);
+						&bindings,
+						nullptr,
+						false);
 					if (ctor_result.has_value()) {
 						return *ctor_result;
 					}
@@ -4411,7 +4415,9 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 									ctor_args,
 									context,
 									skip_implicit_constructors,
-									&bindings);
+									&bindings,
+									nullptr,
+									false);
 								if (ctor_result.has_value()) {
 									if (!ctor_result->success()) {
 										return *ctor_result;

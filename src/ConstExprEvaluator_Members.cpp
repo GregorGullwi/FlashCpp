@@ -5466,7 +5466,14 @@ EvalResult Evaluator::materialize_constructor_object_value(
 
 	// Delegate to the shared helper for the find→bind→materialize sequence.
 	auto ctor_result = try_materialize_struct_from_ctor_args(
-		struct_info, type_index, ctor_call.arguments(), context, false, outer_bindings);
+		struct_info,
+		type_index,
+		ctor_call.arguments(),
+		context,
+		false,
+		outer_bindings,
+		nullptr,
+		false);
 	if (ctor_result.has_value()) {
 		if (!ctor_result->success()) {
 			return *ctor_result;
@@ -6037,7 +6044,9 @@ EvalResult Evaluator::materialize_members_from_constructor(
 					base_args,
 					context,
 					false,
-					&ctor_param_bindings)) {
+					&ctor_param_bindings,
+					nullptr,
+					false)) {
 				base_result = std::move(*ctor_result);
 			} else {
 				InitializerListNode init_list;
@@ -6153,10 +6162,15 @@ std::optional<EvalResult> Evaluator::try_materialize_struct_from_ctor_args(
 	const ChunkedVector<ASTNode>& args,
 	EvaluationContext& context,
 	bool skip_implicit_constructors,
-	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
-	const ConstructorDeclarationNode* matching_ctor =
-		find_matching_constructor(
-			struct_info, args, context, skip_implicit_constructors, outer_bindings);
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
+	const ConstructorDeclarationNode* resolved_ctor,
+	bool ignore_default_initializer_errors) {
+	const ConstructorDeclarationNode* matching_ctor = resolved_ctor;
+	if (!matching_ctor) {
+		matching_ctor =
+			find_matching_constructor(
+				struct_info, args, context, skip_implicit_constructors, outer_bindings);
+	}
 	if (!matching_ctor) {
 		return std::nullopt;
 	}
@@ -6179,7 +6193,7 @@ std::optional<EvalResult> Evaluator::try_materialize_struct_from_ctor_args(
 
 	auto materialize_result = materialize_members_from_constructor(
 		struct_info, *matching_ctor, ctor_param_bindings,
-		object_result.object_member_bindings, context, false);
+		object_result.object_member_bindings, context, ignore_default_initializer_errors);
 	if (!materialize_result.success()) {
 		return materialize_result;
 	}
@@ -6283,7 +6297,9 @@ EvalResult Evaluator::extract_object_members(
 		ctor_args,
 		context,
 		false,
-		nullptr);
+		nullptr,
+		ctor_call.resolved_constructor(),
+		true);
 	if (!ctor_result) {
 		return EvalResult::error("No matching constructor found for constexpr object");
 	}
