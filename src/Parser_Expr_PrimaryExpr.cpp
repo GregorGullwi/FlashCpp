@@ -258,6 +258,18 @@ bool astNodesHaveDeferredTemplateDependency(
 	return has_dependent_node;
 }
 
+template <size_t N>
+bool astNodesHaveDeferredTemplateDependency(
+	const InlineVector<ASTNode, N>& nodes,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return std::any_of(
+		nodes.begin(),
+		nodes.end(),
+		[&](const ASTNode& node) {
+			return astNodeHasDeferredTemplateDependency(node, current_template_param_names);
+		});
+}
+
 bool expressionHasDeferredTemplateDependency(
 	const ExpressionNode& expr,
 	const InlineVector<StringHandle, 4>& current_template_param_names) {
@@ -302,17 +314,10 @@ bool expressionHasDeferredTemplateDependency(
 					   astNodeHasDeferredTemplateDependency(inner.second_type_node(), current_template_param_names) ||
 					   astNodesHaveDeferredTemplateDependency(inner.additional_type_nodes(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, NewExpressionNode>) {
-				if (astNodeHasDeferredTemplateDependency(inner.type_node(), current_template_param_names) ||
-					optionalAstNodeHasDeferredTemplateDependency(inner.size_expr(), current_template_param_names) ||
-					astNodesHaveDeferredTemplateDependency(inner.constructor_args(), current_template_param_names)) {
-					return true;
-				}
-				for (const ASTNode& placement_arg : inner.placement_args()) {
-					if (astNodeHasDeferredTemplateDependency(placement_arg, current_template_param_names)) {
-						return true;
-					}
-				}
-				return false;
+				return astNodeHasDeferredTemplateDependency(inner.type_node(), current_template_param_names) ||
+					   optionalAstNodeHasDeferredTemplateDependency(inner.size_expr(), current_template_param_names) ||
+					   astNodesHaveDeferredTemplateDependency(inner.constructor_args(), current_template_param_names) ||
+					   astNodesHaveDeferredTemplateDependency(inner.placement_args(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
 				return astNodeHasDeferredTemplateDependency(inner.expr(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, StaticCastNode> ||
@@ -322,13 +327,14 @@ bool expressionHasDeferredTemplateDependency(
 				return astNodeHasDeferredTemplateDependency(inner.target_type(), current_template_param_names) ||
 					   astNodeHasDeferredTemplateDependency(inner.expr(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
-				for (const LambdaCaptureNode& capture : inner.captures()) {
-					if (capture.has_initializer() &&
-						optionalAstNodeHasDeferredTemplateDependency(capture.initializer(), current_template_param_names)) {
-						return true;
-					}
-				}
-				return optionalAstNodeHasDeferredTemplateDependency(inner.return_type(), current_template_param_names);
+				return std::any_of(
+						   inner.captures().begin(),
+						   inner.captures().end(),
+						   [&](const LambdaCaptureNode& capture) {
+							   return capture.has_initializer() &&
+									  optionalAstNodeHasDeferredTemplateDependency(capture.initializer(), current_template_param_names);
+						   }) ||
+					   optionalAstNodeHasDeferredTemplateDependency(inner.return_type(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
 				if (identifierRefersToCurrentTemplateParam(
 						StringTable::getOrInternStringHandle(inner.pack_name()),
