@@ -1501,7 +1501,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 // Helper: Check if a template argument node is a pack expansion
 bool ExpressionSubstitutor::isPackExpansion(const ASTNode& arg_node, std::string_view& pack_name) {
-	// Check if this is a TemplateParameterReferenceNode that refers to a pack
+	// Check if this is a TemplateParameterReferenceNode or IdentifierNode that refers to a pack
 	if (arg_node.is<ExpressionNode>()) {
 		const ExpressionNode& expr_variant = arg_node.as<ExpressionNode>();
 		bool is_template_param_ref = std::visit([](const auto& inner) -> bool {
@@ -1517,6 +1517,16 @@ bool ExpressionSubstitutor::isPackExpansion(const ASTNode& arg_node, std::string
 			// Check if this parameter is in our pack map
 			if (pack_map_.find(pack_name) != pack_map_.end()) {
 				FLASH_LOG(Templates, Debug, "Detected pack expansion: ", pack_name);
+				return true;
+			}
+		}
+
+		// Also check IdentifierNode - pack parameters may be stored as plain identifiers
+		// e.g., or_fn<Bn...>(0) where Bn is a variadic pack
+		if (const auto* id_node = std::get_if<IdentifierNode>(&expr_variant)) {
+			pack_name = id_node->name();
+			if (pack_map_.find(pack_name) != pack_map_.end()) {
+				FLASH_LOG(Templates, Debug, "Detected pack expansion (IdentifierNode): ", pack_name);
 				return true;
 			}
 		}

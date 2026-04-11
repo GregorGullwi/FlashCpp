@@ -535,8 +535,8 @@ int main_impl(int argc, char* argv[]) {
 				}
 				// Functions with unsubstituted dependent parameter types (e.g. template
 				// functions instantiated during decltype evaluation for SFINAE probes)
-				// may legitimately fail codegen.  Tolerate these silently so that
-				// compilation can succeed for the rest of the translation unit.
+				// may legitimately fail codegen.  Log diagnostically but still count
+				// as errors so that genuinely broken code is not silently accepted.
 				bool has_dependent_params = false;
 				if (node_handle.is<FunctionDeclarationNode>()) {
 					for (const auto& param : node_handle.as<FunctionDeclarationNode>().parameter_nodes()) {
@@ -550,12 +550,12 @@ int main_impl(int argc, char* argv[]) {
 					}
 				}
 				if (has_dependent_params) {
-					FLASH_LOG(Codegen, Debug, "Tolerating IR error for function '", node_desc,
-							  "' with unsubstituted dependent parameter types: ", e.what());
+					FLASH_LOG(Codegen, Warning, "IR error for function '", node_desc,
+							  "' with likely unsubstituted dependent parameter types: ", e.what());
 				} else {
 					FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
-					++ir_conversion_error_count;
 				}
+				++ir_conversion_error_count;
 			} catch (const std::runtime_error& e) {
 				std::string node_desc = node_handle.type_name();
 				if (node_handle.is<FunctionDeclarationNode>()) {

@@ -559,6 +559,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					FlashCpp::ScopedState guard_param_names(current_template_param_names_);
 					FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
 					in_sfinae_context_ = true;
+					ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
 					parsing_template_depth_ = 0;
 					current_template_param_names_.clear();
 					sfinae_type_map_.clear();
@@ -571,7 +572,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 					auto reparse_result = parse_type_specifier();
 					restore_lexer_position_only(sfinae_pos);
-					in_sfinae_context_ = prev_sfinae_context;
 
 					if (reparse_result.is_error() || !reparse_result.node().has_value() ||
 						!reparse_result.node()->is<TypeSpecifierNode>()) {
@@ -782,6 +782,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
 			in_sfinae_context_ = true;
+			ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
 			parsing_template_depth_ = 0;	 // suppress template body context during SFINAE
 			current_template_param_names_.clear();  // No dependent names during SFINAE
 			sfinae_type_map_.clear();
@@ -803,7 +804,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			gSymbolTable.exit_scope();
 			sfinae_param_scope.dismiss();  // prevent double exit in destructor
 			restore_lexer_position_only(sfinae_pos);
-			in_sfinae_context_ = prev_sfinae_context;
 		// guard_ptb, guard_param_names and guard_sfinae_map restore their fields automatically
 
 			if (return_type_result.is_error() || !return_type_result.node().has_value()) {
@@ -1256,13 +1256,11 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		// Enable SFINAE context for this instantiation attempt
 		bool prev_sfinae_context = in_sfinae_context_;
 		in_sfinae_context_ = true;
+		ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
 
 		// Try to instantiate this specific template
 		std::optional<ASTNode> result = try_instantiate_single_template(
 			template_node, template_name, arg_types, recursion_depth);
-
-		// Restore SFINAE context
-		in_sfinae_context_ = prev_sfinae_context;
 
 		if (result.has_value()) {
 			// Success! Return this instantiation
