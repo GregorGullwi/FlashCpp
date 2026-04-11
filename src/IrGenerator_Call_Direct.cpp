@@ -802,6 +802,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 		// Helper: resolve mangled name from a matched function declaration
 	auto resolveMangledName = [&](const FunctionDeclarationNode* func_decl, std::string_view struct_name = "") {
+		// Template-instantiation call nodes can carry the exact symbol name even when
+		// the resolved declaration still points at pattern-owned metadata.
 		if (has_precomputed_mangled) {
 			function_name = callExprNode.mangled_name();
 			return;
@@ -1088,8 +1090,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		FLASH_LOG_FORMAT(Codegen, Debug, "Using {} cross-struct direct call target for: {}", source_label, func_name_view);
 	};
 
-	// Synthesized direct calls can already carry the exact callee on the call node
-	// itself even though semantic analysis never saw the temporary expression.
+	// Only trust call-node-resolved synthesized callees after sema re-resolves them:
+	// template substitution can preserve a stale callee descriptor even when the
+	// mangled name is already concrete.
 	if (!matched_func_decl && !has_synthesized_template_suffix) {
 		consumeResolvedDirectCallTarget(callExprNode.callee().function_declaration_or_null(), "callee-resolved");
 	}
@@ -2014,6 +2017,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		matched_func_decl->is_member_function() &&
 		!callExprNode.callee().is_static_member() &&
 		!matched_func_decl->is_static()) {
+		// Static/template rebinding can leave member metadata conservative; only add
+		// an implicit this argument when the current lowering scope actually exposes one.
 		if (lookupDeclaration("this")) {
 			call_op.is_member_function = true;
 			TypeCategory this_type = TypeCategory::Struct;
