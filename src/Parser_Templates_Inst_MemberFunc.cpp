@@ -109,7 +109,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	auto build_member_lookup_name = [&](std::string_view class_name) {
 		StringBuilder lookup_name_sb;
 		lookup_name_sb.append(class_name).append("::").append(member_name);
-		return StringTable::getOrInternStringHandle(lookup_name_sb);
+		return StringTable::getOrInternStringHandle(lookup_name_sb.commit());
 	};
 
 	// FIRST: Check if we have an explicit specialization for these template arguments
