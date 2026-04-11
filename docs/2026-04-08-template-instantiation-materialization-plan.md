@@ -794,6 +794,108 @@ The `normalizeDependentNonTypeArgs` lambda at `src/Parser_TypeSpecifiers.cpp:961
 
 ---
 
+## Phase 6: unify template-parameter-to-function-parameter deduction mapping
+
+**Date added:** 2026-04-11
+**Context:** PR #1207 exposed that `try_instantiate_template_explicit` uses a positional counter (`deduced_call_arg_index`) to map template parameters to call arguments. This is architecturally incorrect — it assumes template parameter `i` corresponds to function parameter `i`, which breaks for SFINAE guards, non-deducible params, and reordered mappings.
+
+### Current state
+
+There are **two separate deduction paths** with different mapping strategies:
+
+1. **`try_instantiate_template_explicit`** (`src/Parser_Templates_Inst_Deduction.cpp:446-1159`)
+   — the "explicit template args + call args" path. Uses a blind positional counter
+   `deduced_call_arg_index` that walks `current_explicit_call_arg_types_` in order.
+   No mapping between template parameter names and function parameter types.
+
+2. **`try_instantiate_single_template`** (`src/Parser_Templates_Inst_Deduction.cpp:1282-1670`)
+   — the "deduce everything from call args" path. Has a **pre-deduction pass**
+   (lines 1361-1522) that builds a `param_name_to_arg` map by inspecting function
+   parameter types against template parameter names. This is architecturally correct.
+
+### The problem with `deduced_call_arg_index`
+
+For `template<typename T, typename = decltype(swap(...))> true_type test(int)` called as
+`test<pair<const int,int>>(0)`:
+
+- Template param 0 (`T`): consumed from explicit args ✓
+- Template param 1 (SFINAE guard): `deduced_call_arg_index=0` still points to the `int`
+  call arg → **incorrectly consumes it** instead of using the default
+
+The current workaround (PR #1207) gates call-arg deduction on `!param.has_default()`.
+This works for SFINAE guards (which always have defaults) but is not C++20-correct for
+`template<typename T, typename U = int> void foo(T, U)` called as `foo<double>(1.0, "hello")`
+— `U` should be deduced as `const char*` from the 2nd call arg, but the workaround uses
+the default `int` because `U` has a default.
+
+### Recommended architectural fix
+
+Add a **pre-deduction pass** to `try_instantiate_template_explicit`, analogous to the one
+in `try_instantiate_single_template`. Specifically:
+
+1. **Build a `param_name_to_arg` map** before the main template-arg-building loop.
+   Walk the function parameter list (`func_decl.parameter_nodes()`), check each
+   parameter's type against the template parameter name set, and match against
+   `current_explicit_call_arg_types_` by position in the *function* parameter list
+   (not the template parameter list).
+
+2. **In the main loop**, when a template parameter isn't covered by explicit args:
+   - Check `param_name_to_arg` first (name-based deduction from function params)
+   - Then fall back to `appendDefaultTemplateArg` (defaults)
+   - Then fail with overload mismatch
+
+3. **Remove `deduced_call_arg_index`** entirely — it is the root cause of the
+   positional mapping bug.
+
+### Why this is correct
+
+The pre-deduction approach works because it maps template parameters to function
+parameters **by name** rather than by position:
+
+- For `template<typename T, typename U> void foo(T a, U b)` called as `foo<double>(1.0, "hello")`:
+  function param 0 has type `T` → maps to template param `T` (already explicit)
+  function param 1 has type `U` → maps to call arg 1 (`"hello"`) → deduces `const char*`
+
+- For `template<typename T, typename = decltype(...)> true_type test(int)`:
+  function param 0 has type `int` (concrete) → no template param mapping
+  template param 1 (SFINAE guard) has no function param → falls through to default
+
+### Shared helper opportunity
+
+The pre-deduction logic in `try_instantiate_single_template` (lines 1361-1522) and the
+proposed new logic for `try_instantiate_template_explicit` are structurally identical.
+They should be extracted into a shared helper, e.g.:
+
+```cpp
+// Build a map from template parameter names to deduced TemplateTypeArgs
+// by matching function parameter types against call argument types.
+std::unordered_map<StringHandle, TemplateTypeArg>
+Parser::buildDeductionMapFromCallArgs(
+    const std::vector<ASTNode>& template_params,
+    const FunctionDeclarationNode& func_decl,
+    const std::vector<TypeSpecifierNode>& call_arg_types);
+```
+
+This would eliminate ~160 lines of duplication and ensure both paths use the same
+deduction logic.
+
+### Files to change
+
+- `src/Parser_Templates_Inst_Deduction.cpp` — add pre-deduction pass to
+  `try_instantiate_template_explicit`, extract shared helper from
+  `try_instantiate_single_template`
+- `src/Parser.h` — declare the shared helper
+
+### Validation
+
+- `test_namespaced_pair_swap_sfinae_ret0.cpp` — SFINAE guard with `decltype` default
+- `test_pack_decltype_simple_ret42.cpp` — pack expansion in `decltype` base class
+- New test needed: `template<typename T, typename U = int> void foo(T, U)` called as
+  `foo<double>(1.0, "hello")` to verify `U` is deduced as `const char*` (not `int`)
+- Full test suite regression check
+
+---
+
 ## Out of scope for this document
 
 - a full rewrite that moves all template instantiation out of the parser immediately
