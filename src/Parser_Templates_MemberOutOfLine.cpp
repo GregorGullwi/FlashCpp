@@ -578,6 +578,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		}
 	}
 
+	std::string_view qualified_class_name = qualified_class_name_builder.commit();
+
 	// Check if this is a static member variable definition (=) or a member function (()
 	if (peek() == "="_tok) {
 		// This is a static member variable definition: template<typename T> Type ClassName<T>::member = value;
@@ -659,8 +661,6 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		func_ref.add_parameter_node(param);
 	}
 	func_ref.set_is_variadic(params.is_variadic);
-
-	std::string_view qualified_class_name = qualified_class_name_builder.commit();
 
 	// Phase 7: Validate signature against the template class declaration (if it exists)
 	// Look up the template class to find the member function declaration
