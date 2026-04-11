@@ -578,7 +578,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		}
 	}
 
-	std::string_view qualified_class_name = qualified_class_name_storage;
+	std::string_view qualified_class_name = StringTable::getStringView(
+		StringTable::getOrInternStringHandle(qualified_class_name_storage));
 
 	// Check if this is a static member variable definition (=) or a member function (()
 	if (peek() == "="_tok) {
