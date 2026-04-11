@@ -533,7 +533,28 @@ int main_impl(int argc, char* argv[]) {
 				if (node_handle.is<FunctionDeclarationNode>()) {
 					node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
 				}
-				FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
+				// Functions with unsubstituted dependent parameter types (e.g. template
+				// functions instantiated during decltype evaluation for SFINAE probes)
+				// may legitimately fail codegen.  Log diagnostically but still count
+				// as errors so that genuinely broken code is not silently accepted.
+				bool has_dependent_params = false;
+				if (node_handle.is<FunctionDeclarationNode>()) {
+					for (const auto& param : node_handle.as<FunctionDeclarationNode>().parameter_nodes()) {
+						if (param.is<DeclarationNode>()) {
+							const auto& pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+							if (pt.category() == TypeCategory::UserDefined && pt.size_in_bits() == 0 && pt.pointer_depth() == 0) {
+								has_dependent_params = true;
+								break;
+							}
+						}
+					}
+				}
+				if (has_dependent_params) {
+					FLASH_LOG(Codegen, Warning, "IR error for function '", node_desc,
+							  "' with unsubstituted dependent parameter types: ", e.what());
+				} else {
+					FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
+				}
 				++ir_conversion_error_count;
 			} catch (const std::runtime_error& e) {
 				std::string node_desc = node_handle.type_name();

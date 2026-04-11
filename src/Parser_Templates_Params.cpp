@@ -127,17 +127,24 @@ ParseResult Parser::parse_template_parameter() {
 		if (peek() == "="_tok) {
 			advance(); // consume '='
 
+			// Save position for potential SFINAE re-parse of dependent defaults
+			SaveHandle default_pos = save_token_position();
+
 			// Parse the default type.
 			// parse_type_specifier() handles both simple names (MyContainer) and
 			// namespace-qualified names (my_ns::NsContainer, std::vector) via
 			// its qualified identifier resolution infrastructure.
 			auto default_type_result = parse_type_specifier();
 			if (default_type_result.is_error()) {
+				discard_saved_token(default_pos);
 				return ParseResult::error("Expected type after '=' in template template parameter default", current_token_);
 			}
 
 			if (default_type_result.node().has_value()) {
 				param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
+				param_node.as<TemplateParameterNode>().set_default_value_position(default_pos);
+			} else {
+				discard_saved_token(default_pos);
 			}
 		}
 
@@ -240,9 +247,13 @@ ParseResult Parser::parse_template_parameter() {
 			if (!is_variadic && peek() == "="_tok) {
 				advance(); // consume '='
 
+				// Save position for potential SFINAE re-parse of dependent defaults
+				SaveHandle default_pos = save_token_position();
+
 				// Parse the default type
 				auto default_type_result = parse_type_specifier();
 				if (default_type_result.is_error()) {
+					discard_saved_token(default_pos);
 					return ParseResult::error("Expected type after '=' in template parameter default", current_token_);
 				}
 
@@ -252,6 +263,9 @@ ParseResult Parser::parse_template_parameter() {
 					// Apply pointer/reference qualifiers (ptr-operator in C++20 grammar)
 					consume_pointer_ref_modifiers(type_spec);
 					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
+					param_node.as<TemplateParameterNode>().set_default_value_position(default_pos);
+				} else {
+					discard_saved_token(default_pos);
 				}
 			}
 
@@ -318,9 +332,13 @@ ParseResult Parser::parse_template_parameter() {
 			if (!is_variadic && peek() == "="_tok) {
 				advance(); // consume '='
 
+				// Save position for potential SFINAE re-parse of dependent defaults
+				SaveHandle default_pos = save_token_position();
+
 				// Parse the default type
 				auto default_type_result = parse_type_specifier();
 				if (default_type_result.is_error()) {
+					discard_saved_token(default_pos);
 					return ParseResult::error("Expected type after '=' in template parameter default", current_token_);
 				}
 
@@ -330,6 +348,9 @@ ParseResult Parser::parse_template_parameter() {
 					// Apply pointer/reference qualifiers (ptr-operator in C++20 grammar)
 					consume_pointer_ref_modifiers(type_spec);
 					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
+					param_node.as<TemplateParameterNode>().set_default_value_position(default_pos);
+				} else {
+					discard_saved_token(default_pos);
 				}
 			}
 
@@ -398,15 +419,22 @@ ParseResult Parser::parse_template_parameter() {
 	if (!is_variadic && peek() == "="_tok) {
 		advance(); // consume '='
 
+		// Save position for potential SFINAE re-parse of dependent defaults
+		SaveHandle default_pos = save_token_position();
+
 		// Parse the default value expression in template argument context
 		// This context tells parse_expression to stop at '>' and ',' which delimit template arguments
 		auto default_value_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::TemplateTypeArg);
 		if (default_value_result.is_error()) {
+			discard_saved_token(default_pos);
 			return ParseResult::error("Expected expression after '=' in template parameter default", current_token_);
 		}
 
 		if (default_value_result.node().has_value()) {
 			param_node.as<TemplateParameterNode>().set_default_value(*default_value_result.node());
+			param_node.as<TemplateParameterNode>().set_default_value_position(default_pos);
+		} else {
+			discard_saved_token(default_pos);
 		}
 	}
 

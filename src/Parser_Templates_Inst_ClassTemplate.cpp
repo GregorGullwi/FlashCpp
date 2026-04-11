@@ -7992,12 +7992,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// PHASE 2: Parse deferred template member function bodies (two-phase lookup)
 	// Explicit instantiations still materialize deferred bodies immediately.
-	// Implicit instantiations register signature-only stubs in the lazy registry above;
-	// reparsing every deferred body here would eagerly instantiate unused members and
-	// incorrectly diagnose dependent bodies such as std::pair::swap for const keys.
-	const bool skip_deferred_body_replay_for_namespaced_implicit_instantiation =
-		is_implicit_instantiation && instantiated_name.view().find("::") != std::string_view::npos;
-	if (!skip_deferred_body_replay_for_namespaced_implicit_instantiation && !template_class.deferred_bodies().empty()) {
+	// Implicit instantiations of namespaced templates register signature-only stubs
+	// in the lazy registry above; reparsing every deferred body here would eagerly
+	// instantiate unused members and incorrectly diagnose dependent bodies such as
+	// std::pair::swap for const keys.  We check `template_name` (which preserves
+	// the qualified prefix, e.g. "stdlike::pair") rather than `instantiated_name`
+	// (which is the mangled hash form "pair$…" and never contains "::").
+	const bool is_namespaced_template = template_name.find("::") != std::string_view::npos;
+	const bool skip_deferred_body_replay =
+		is_implicit_instantiation && is_namespaced_template;
+	if (!skip_deferred_body_replay && !template_class.deferred_bodies().empty()) {
 		FLASH_LOG(Templates, Debug, "Parsing ", template_class.deferred_bodies().size(),
 				  " deferred template member function bodies for ", instantiated_name);
 

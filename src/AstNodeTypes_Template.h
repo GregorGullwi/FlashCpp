@@ -37,10 +37,15 @@ public:
 	// For template template parameters
 	const std::vector<ASTNode>& nested_parameters() const { return nested_params_; }
 
-	// For default arguments (future enhancement)
+	// For default arguments
 	bool has_default() const { return default_value_.has_value(); }
 	ASTNode default_value() const { return default_value_.value(); }
 	void set_default_value(ASTNode value) { default_value_ = value; }
+
+	// Lexer position for re-parsing dependent default type arguments during SFINAE
+	bool has_default_value_position() const { return default_value_position_.has_value(); }
+	SaveHandle default_value_position() const { return *default_value_position_; }
+	void set_default_value_position(SaveHandle pos) { default_value_position_ = pos; }
 
 	// For variadic templates (parameter packs)
 	bool is_variadic() const { return is_variadic_; }
@@ -62,6 +67,7 @@ private:
 	std::optional<ASTNode> type_node_;  // For non-type parameters (e.g., int N)
 	std::vector<ASTNode> nested_params_;	 // For template template parameters (nested template parameters)
 	std::optional<ASTNode> default_value_;  // Default argument (e.g., typename T = int)
+	std::optional<SaveHandle> default_value_position_;  // Lexer position for SFINAE re-parse of dependent defaults
 	Token token_;  // For error reporting
 	bool is_variadic_ = false;  // True for parameter packs (typename... Args)
 	std::optional<std::string_view> concept_constraint_;	 // Concept name for constrained parameters (e.g., Addable T)

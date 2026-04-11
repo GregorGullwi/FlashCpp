@@ -2395,6 +2395,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			// If not found OR if it's a template (not an instantiated function), try template instantiation
 			// Also try if explicit template arguments were provided (to handle overload resolution)
+			bool has_dependent_explicit_template_args = false;
 				if (((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) ||
 					 (template_args.has_value() && !template_args->empty())) &&
 					current_linkage_ != Linkage::C) {
@@ -2404,6 +2405,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// Phase 1 C++20: If we have explicit template arguments, use them instead of deducing
 					if (template_args.has_value() && !template_args->empty()) {
 						FLASH_LOG_FORMAT(Parser, Debug, "Using explicit template arguments for function call to '{}'", qualified_name);
+
+						// Check if any template args are dependent
+						for (const auto& targ : *template_args) {
+							if (targ.is_dependent || targ.dependent_name.isValid()) {
+								has_dependent_explicit_template_args = true;
+								break;
+							}
+						}
+
 					// Try to instantiate with explicit template arguments
 						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args);
 						if (!template_inst.has_value()) {
@@ -2417,9 +2427,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 					}
 
-				// If still not found and no explicit template arguments, try deducing from function arguments
-				// Apply lvalue reference for forwarding deduction on arg_types
-					if (!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) {
+				// If still not found, try deducing from function arguments.
+				// But skip deduction when explicit template args are dependent -
+				// deduction cannot correctly handle this case and the expression
+				// must be deferred to template instantiation time.
+					if ((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) &&
+						!has_dependent_explicit_template_args) {
 						std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 
 					// Try to instantiate the qualified template function
@@ -2430,6 +2443,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 						}
 					}
+				}
+
+			// When explicit template arguments are dependent and instantiation failed,
+			// the call expression must use a dependent placeholder return type so that
+			// decltype(...) defers resolution to template instantiation time.
+				if (has_dependent_explicit_template_args &&
+					(!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>())) {
+					// Use Auto category to signal that the return type is dependent
+					TypeSpecifierNode placeholder_type(TypeCategory::Auto, TypeQualifier::None,
+						get_type_size_bits(TypeCategory::Auto), final_identifier, CVQualifier::None);
+					auto type_node = emplace_node<TypeSpecifierNode>(placeholder_type);
+					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, final_identifier);
+					identifierType = placeholder_decl;
 				}
 
 			// If still not found, create a forward declaration
