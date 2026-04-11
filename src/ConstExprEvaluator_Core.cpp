@@ -262,6 +262,9 @@ void maybe_set_binding_result_exact_type(EvalResult& result, const DeclarationNo
 	}
 }
 
+// Apply the target unsigned type's modulo-2^N truncation when constexpr evaluation
+// stores or binds a scalar value into a known unsigned destination type. This keeps
+// compile-time results aligned with runtime initialization/codegen behavior.
 void apply_uint_init_narrowing(EvalResult& result) {
 	if (!result.exact_type.has_value() ||
 		result.is_array ||
@@ -281,7 +284,8 @@ void apply_uint_init_narrowing(EvalResult& result) {
 		return;
 	}
 
-	result = EvalResult::from_uint(result.as_uint_raw() & ((1ULL << size_bits) - 1ULL));
+	const unsigned long long mask = (1ULL << size_bits) - 1ULL;
+	result = EvalResult::from_uint(result.as_uint_raw() & mask);
 	result.set_exact_type(type_spec);
 }
 
