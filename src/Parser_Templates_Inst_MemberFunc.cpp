@@ -93,11 +93,54 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	StringBuilder qualified_name_sb;
 	qualified_name_sb.append(struct_name).append("::").append(member_name);
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(qualified_name_sb);
+	StringHandle specialization_lookup_name = qualified_name;
+	StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
+	auto key = FlashCpp::makeInstantiationKey(qualified_name, template_type_args);
+	if (auto existing_inst = gTemplateRegistry.getInstantiation(key);
+		existing_inst.has_value()) {
+		return *existing_inst;
+	}
+	TypeInfo* struct_type_info = nullptr;
+	if (auto struct_type_it = getTypesByNameMap().find(struct_name_handle);
+		struct_type_it != getTypesByNameMap().end()) {
+		struct_type_info = struct_type_it->second;
+	}
+
+	auto build_member_lookup_name = [&](std::string_view class_name) {
+		StringBuilder lookup_name_sb;
+		lookup_name_sb.append(class_name).append("::").append(member_name);
+		return StringTable::getOrInternStringHandle(lookup_name_sb.commit());
+	};
 
 	// FIRST: Check if we have an explicit specialization for these template arguments
-	auto specialization_opt = gTemplateRegistry.lookupSpecialization(qualified_name.view(), template_type_args);
+	auto specialization_opt = gTemplateRegistry.lookupSpecialization(
+		specialization_lookup_name.view(),
+		template_type_args);
+	if (!specialization_opt.has_value()) {
+		std::string_view qualified_base_class_name;
+		if (struct_type_info && struct_type_info->isTemplateInstantiation()) {
+			qualified_base_class_name = buildQualifiedNameFromHandle(
+				struct_type_info->sourceNamespace(),
+				StringTable::getStringView(struct_type_info->baseTemplateName()));
+		}
+		if (!qualified_base_class_name.empty()) {
+			specialization_lookup_name = build_member_lookup_name(qualified_base_class_name);
+			specialization_opt = gTemplateRegistry.lookupSpecialization(
+				specialization_lookup_name.view(),
+				template_type_args);
+		}
+		if (!specialization_opt.has_value()) {
+			std::string_view base_class_name = extractBaseTemplateName(struct_name);
+			if (!base_class_name.empty() && base_class_name != qualified_base_class_name) {
+				specialization_lookup_name = build_member_lookup_name(base_class_name);
+				specialization_opt = gTemplateRegistry.lookupSpecialization(
+					specialization_lookup_name.view(),
+					template_type_args);
+			}
+		}
+	}
 	if (specialization_opt.has_value()) {
-		FLASH_LOG(Templates, Debug, "Found explicit specialization for ", qualified_name.view());
+		FLASH_LOG(Templates, Debug, "Found explicit specialization for ", specialization_lookup_name.view());
 		// We have an explicit specialization - parse its body if needed
 		ASTNode& spec_node = *specialization_opt;
 		if (spec_node.is<FunctionDeclarationNode>()) {
@@ -105,7 +148,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 			// If the specialization has a body position and no definition yet, parse it now
 			if (spec_func.has_template_body_position() && !spec_func.get_definition().has_value()) {
-				FLASH_LOG(Templates, Debug, "Parsing specialization body for ", qualified_name.view());
+				FLASH_LOG(Templates, Debug, "Parsing specialization body for ", specialization_lookup_name.view());
 
 				// Look up the struct type index and node for the member function context
 				TypeIndex struct_type_index{};
@@ -166,16 +209,36 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 					spec_func.set_definition(*body_result.node());
 					finalize_function_after_definition(spec_func, true);
 					FLASH_LOG(Templates, Debug, "Successfully parsed specialization body");
-
-					// Add the specialization to ast_nodes_ so it gets code generated
-					// We need to do this because the specialization was created during parsing
-					// but may not have been added to the top-level AST
-					registerAndNormalizeLateMaterializedTopLevelNode(spec_node);
-					FLASH_LOG(Templates, Debug, "Added specialization to AST for code generation");
 				}
 			}
 
-			return spec_node;
+			const DeclarationNode& spec_decl = spec_func.decl_node();
+			std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(member_name, template_type_args);
+			Token mangled_token(Token::Type::Identifier, mangled_name,
+								spec_decl.identifier_token().line(), spec_decl.identifier_token().column(),
+								spec_decl.identifier_token().file_index());
+			auto [inst_decl_node, inst_decl_ref] = emplace_node_ref<DeclarationNode>(
+				spec_decl.type_node(),
+				mangled_token);
+			auto [inst_func_node, inst_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+				inst_decl_ref,
+				struct_name);
+			copy_function_properties(inst_func_ref, spec_func);
+			for (const auto& param : spec_func.parameter_nodes()) {
+				inst_func_ref.add_parameter_node(param);
+			}
+			if (spec_func.has_non_type_template_args()) {
+				inst_func_ref.set_non_type_template_args(spec_func.non_type_template_args());
+			}
+			if (spec_func.get_definition().has_value()) {
+				inst_func_ref.set_definition(*spec_func.get_definition());
+				finalize_function_after_definition(inst_func_ref, true);
+			} else {
+				compute_and_set_mangled_name(inst_func_ref, true);
+			}
+			registerAndNormalizeLateMaterializedTopLevelNode(inst_func_node);
+			gTemplateRegistry.registerInstantiation(key, inst_func_node);
+			return inst_func_node;
 		}
 	}
 
@@ -185,13 +248,24 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	// If not found and struct_name looks like an instantiated template (e.g., has_foo$a1b2c3),
 	// try the base template class name (e.g., has_foo::method)
 	if (!all_templates || all_templates->empty()) {
-		std::string_view base_class_name = extractBaseTemplateName(struct_name);
-		if (!base_class_name.empty()) {
-			StringBuilder base_qualified_name_sb;
-			base_qualified_name_sb.append(base_class_name).append("::").append(member_name);
-			StringHandle base_qualified_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
+		std::string_view qualified_base_class_name;
+		if (struct_type_info && struct_type_info->isTemplateInstantiation()) {
+			qualified_base_class_name = buildQualifiedNameFromHandle(
+				struct_type_info->sourceNamespace(),
+				StringTable::getStringView(struct_type_info->baseTemplateName()));
+		}
+		if (!qualified_base_class_name.empty()) {
+			StringHandle base_qualified_name = build_member_lookup_name(qualified_base_class_name);
 			all_templates = gTemplateRegistry.lookupAllTemplates(base_qualified_name.view());
 			FLASH_LOG(Templates, Debug, "Trying base template class lookup: ", base_qualified_name.view());
+		}
+		if (!all_templates || all_templates->empty()) {
+			std::string_view base_class_name = extractBaseTemplateName(struct_name);
+			if (!base_class_name.empty() && base_class_name != qualified_base_class_name) {
+				StringHandle base_qualified_name = build_member_lookup_name(base_class_name);
+				all_templates = gTemplateRegistry.lookupAllTemplates(base_qualified_name.view());
+				FLASH_LOG(Templates, Debug, "Trying base template class lookup: ", base_qualified_name.view());
+			}
 		}
 	}
 
@@ -212,8 +286,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		const auto& template_args = template_type_args;
 
 		// Check if we already have this instantiation
-		auto key = FlashCpp::makeInstantiationKey(qualified_name, template_args);
-
 		auto existing_inst = gTemplateRegistry.getInstantiation(key);
 		if (existing_inst.has_value()) {
 			return *existing_inst;  // Return existing instantiation

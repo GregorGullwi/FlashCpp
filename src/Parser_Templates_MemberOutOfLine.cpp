@@ -293,23 +293,27 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// parse_type_specifier already consumed "ClassName" as a type, so next is '<'
 	Token class_name_token;
 	std::string_view class_name;
+	std::string qualified_class_name_storage;
 
 	if (peek().is_identifier()) {
 		// Normal case: return_type ClassName<Args>::FunctionName(...)
 		class_name_token = peek_info();
 		class_name = class_name_token.value();
+		qualified_class_name_storage.append(class_name);
 		advance();
 	} else if (peek() == "<"_tok && return_type_node.is<TypeSpecifierNode>()) {
 		// Constructor pattern: ClassName<Args>::ClassName(...)
 		// parse_type_specifier consumed "ClassName" as return type, but it's really the class name
 		class_name_token = return_type_node.as<TypeSpecifierNode>().token();
 		class_name = class_name_token.value();
+		qualified_class_name_storage.append(class_name);
 	} else if (peek() == "::"_tok && return_type_node.is<TypeSpecifierNode>()) {
 		// Namespace-qualified constructor pattern: ns::ClassName<Args>::ClassName(...)
 		// parse_type_specifier consumed the full "ns::ClassName<Args>" as a type
 		// The :: that follows leads to the member function/constructor name
 		class_name_token = return_type_node.as<TypeSpecifierNode>().token();
 		class_name = class_name_token.value();
+		qualified_class_name_storage.append(class_name);
 	} else {
 		restore_token_position(saved_pos);
 		return std::nullopt;
@@ -471,6 +475,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 		// The previous function_name_token was actually a nested class name,
 		// not a function name. Update class_name to track the innermost class.
+		qualified_class_name_storage.append("::").append(function_name_token.value());
 		class_name = function_name_token.value();
 
 		// Handle 'template' keyword disambiguator (e.g., ::template member<Args>)
@@ -573,6 +578,9 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		}
 	}
 
+	std::string_view qualified_class_name = StringTable::getStringView(
+		StringTable::getOrInternStringHandle(qualified_class_name_storage));
+
 	// Check if this is a static member variable definition (=) or a member function (()
 	if (peek() == "="_tok) {
 		// This is a static member variable definition: template<typename T> Type ClassName<T>::member = value;
@@ -600,7 +608,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_var.template_param_names = template_param_names;
 
 		gTemplateRegistry.registerOutOfLineMemberVariable(
-			makeQualifiedClassIdentifier(class_name),
+			makeQualifiedClassIdentifier(qualified_class_name),
 			out_of_line_var);
 
 		FLASH_LOG(Templates, Debug, "Registered out-of-class static member variable definition: ",
@@ -624,7 +632,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_var.template_param_names = template_param_names;
 
 		gTemplateRegistry.registerOutOfLineMemberVariable(
-			makeQualifiedClassIdentifier(class_name),
+			makeQualifiedClassIdentifier(qualified_class_name),
 			out_of_line_var);
 
 		FLASH_LOG(Templates, Debug, "Registered out-of-class static member variable definition (no initializer): ",
@@ -640,7 +648,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 	// Create a function declaration node
 	auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
-	auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, function_name_token.value());
+	auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, qualified_class_name);
 
 	// Parse parameters using unified parameter list parsing (Phase 1)
 	FlashCpp::ParsedParameterList params;
@@ -657,7 +665,10 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 	// Phase 7: Validate signature against the template class declaration (if it exists)
 	// Look up the template class to find the member function declaration
-	auto template_class_opt = gTemplateRegistry.lookupTemplate(class_name);
+	auto template_class_opt = gTemplateRegistry.lookupTemplate(
+		QualifiedIdentifier::fromQualifiedName(
+			qualified_class_name,
+			gSymbolTable.get_current_namespace_handle()));
 	if (template_class_opt.has_value() && template_class_opt->is<TemplateClassDeclarationNode>()) {
 		const TemplateClassDeclarationNode& template_class = template_class_opt->as<TemplateClassDeclarationNode>();
 		const StructDeclarationNode& struct_decl = template_class.class_declaration().as<StructDeclarationNode>();
@@ -768,7 +779,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	if (is_specialization) {
 		// Register as a template specialization
 		std::string_view qualified_name = StringBuilder()
-											  .append(class_name)
+											  .append(qualified_class_name)
 											  .append("::")
 											  .append(function_name_token.value())
 											  .commit();
@@ -776,7 +787,11 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		// Save the body position for delayed parsing
 		func_ref.set_template_body_position(body_start);
 
-		gTemplateRegistry.registerSpecialization(qualified_name, function_template_args, func_node);
+		gTemplateRegistry.registerSpecialization(
+			QualifiedIdentifier{
+				gSymbolTable.get_current_namespace_handle(),
+				StringTable::getOrInternStringHandle(qualified_name)},
+			function_template_args, func_node);
 
 		FLASH_LOG(Templates, Debug, "Registered template member function specialization: ",
 				  qualified_name, " with ", function_template_args.size(), " template args");
@@ -793,7 +808,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_member.is_deleted = member_is_deleted;
 
 		gTemplateRegistry.registerOutOfLineMember(
-			makeQualifiedClassIdentifier(class_name),
+			makeQualifiedClassIdentifier(qualified_class_name),
 			out_of_line_member);
 
 		if (!inner_template_params.empty()) {
