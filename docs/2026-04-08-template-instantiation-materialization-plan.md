@@ -43,6 +43,7 @@
     - `make main CXX=clang++`
     - `bash ./tests/run_all_tests.sh test_explicit_template_defaulted_param_deduction_ret42.cpp test_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp test_global_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp test_pack_decltype_simple_ret42.cpp test_variadic_template_pack_before_tail_trailing_return_ret0.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
     - `bash ./tests/run_all_tests.sh`
+    - 2045 pass, 132 expected-fail
 
 ### Previous completed slice
 
