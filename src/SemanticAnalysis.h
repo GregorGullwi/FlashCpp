@@ -13,6 +13,7 @@ class SymbolTable;
 class StructDeclarationNode;
 class FunctionDeclarationNode;
 class ConstructorDeclarationNode;
+class IdentifierNode;
 class DestructorDeclarationNode;
 class BlockNode;
 class NamespaceDeclarationNode;
@@ -109,6 +110,13 @@ public:
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
+	struct ResolvedIdentifierMemberInfo {
+		const StructMember* member = nullptr;
+		size_t adjusted_offset = 0;
+
+		explicit operator bool() const { return member != nullptr; }
+	};
+	std::optional<ResolvedIdentifierMemberInfo> getResolvedIdentifierMember(const IdentifierNode* key) const;
 	bool resolveOrGetMemberAccess(const MemberAccessNode& key,
 								  const StructTypeInfo*& out_struct_info,
 								  const StructMember*& out_member);
@@ -270,6 +278,7 @@ private:
 	};
 	bool tryResolveMemberAccessInfo(const MemberAccessNode& member_access,
 								   ResolvedMemberAccessInfo& out_info);
+	std::optional<ResolvedIdentifierMemberInfo> tryResolveIdentifierMember(const IdentifierNode& identifier) const;
 
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
@@ -338,6 +347,7 @@ private:
 	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
 	std::unordered_map<const void*, const FunctionDeclarationNode*> resolved_direct_call_table_;
 	std::unordered_map<const void*, ResolvedMemberAccessInfo> resolved_member_access_table_;
+	std::unordered_map<const IdentifierNode*, ResolvedIdentifierMemberInfo> resolved_identifier_member_table_;
 	std::unordered_map<const void*, TypeSpecifierNode> overload_resolution_arg_types_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
 
