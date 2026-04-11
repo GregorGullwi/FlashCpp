@@ -92,6 +92,80 @@ ParseResult Parser::parse_block() {
 	return ParseResult::success(block_node);
 }
 
+// Disambiguate elaborated type specifier variable declarations from struct/class/union definitions.
+// Called when peek() is 'struct', 'class', or 'union'.
+// Returns true if the pattern looks like a variable declaration using an elaborated type specifier:
+//   struct Foo f = { 1, 2 };    → true (variable declaration)
+//   struct Foo *ptr;             → true (variable declaration)
+//   struct Foo &ref = obj;       → true (variable declaration)
+//   struct Foo { ... };          → false (struct definition)
+//   struct Foo;                  → false (forward declaration)
+//   struct Foo : Base { ... };   → false (struct definition with base)
+//   struct { ... };              → false (anonymous struct)
+//   struct Foo f(args);          → true (variable with direct-init)
+bool Parser::looks_like_elaborated_type_variable_declaration() {
+	SaveHandle saved = save_token_position();
+	auto restore = [&]() { restore_token_position(saved); };
+
+	// Skip struct/class/union keyword
+	advance();
+
+	// Skip any C++11 attributes [[...]] or GCC __attribute__((...)) or __declspec(...)
+	// that can appear between keyword and name
+	skip_cpp_attributes();
+	skip_gcc_attributes();
+	parse_declspec_attributes();
+
+	// Must have an identifier (the type name)
+	if (!peek().is_identifier()) {
+		restore();
+		return false; // anonymous struct: struct { ... }
+	}
+	advance(); // consume the type name
+
+	// Skip template arguments and scope resolution: struct ns::Foo<T>::Bar
+	for (;;) {
+		if (peek() == "<"_tok) {
+			skip_template_arguments();
+		} else if (peek() == "::"_tok) {
+			advance(); // consume ::
+			if (peek().is_identifier()) {
+				advance(); // consume the next name component
+			} else {
+				break;
+			}
+		} else {
+			break;
+		}
+	}
+
+	// Now check what follows struct Name [<...>] [::Name]*
+	// If it's one of the tokens that indicate a struct definition/forward declaration, return false.
+	// Otherwise, it's an elaborated type specifier used in a variable declaration.
+	auto next = peek();
+	if (next == "{"_tok || next == ";"_tok || next == ":"_tok || next == "final"_tok) {
+		restore();
+		return false; // struct definition, forward declaration, or base class list
+	}
+	if (next == "["_tok) {
+		// Could be [[attribute]] before struct body
+		auto next2 = peek(1);
+		if (next2 == "["_tok) {
+			restore();
+			return false; // [[attribute]] before struct body
+		}
+	}
+	if (next.is_eof()) {
+		restore();
+		return false;
+	}
+
+	// Anything else (identifier, *, &, &&, const, volatile, etc.) means this is
+	// an elaborated type specifier used in a variable/parameter declaration
+	restore();
+	return true;
+}
+
 ParseResult Parser::parse_statement_or_declaration() {
 	// Clear any leaked pending template arguments from previous expression parsing.
 	// This prevents template args from one expression leaking into unrelated function calls.
@@ -127,6 +201,21 @@ ParseResult Parser::parse_statement_or_declaration() {
 	}
 
 	if (current_token.type() == Token::Type::Keyword) {
+		// Disambiguate elaborated type specifiers used as variable declarations
+		// from struct/class/union definitions/forward declarations.
+		// Examples of elaborated type specifier variable declarations:
+		//   struct Foo f = { 1, 2 };
+		//   struct Foo *ptr;
+		//   class Bar &ref = obj;
+		// These should go through parse_declaration_or_function_definition which calls
+		// parse_type_and_name() -> parse_type_specifier() for the elaborated type specifier,
+		// NOT through parse_struct_declaration which expects a definition or forward decl.
+		if (current_token.value() == "struct" || current_token.value() == "class" || current_token.value() == "union") {
+			if (looks_like_elaborated_type_variable_declaration()) {
+				return parse_declaration_or_function_definition();
+			}
+		}
+
 		// Keyword parsing function map - initialized once on first call
 		static const std::unordered_map<std::string_view, ParsingFunction> keyword_parsing_functions = {
 			{"if", &Parser::parse_if_statement},

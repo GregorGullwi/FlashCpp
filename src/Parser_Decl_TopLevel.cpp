@@ -165,7 +165,10 @@ ParseResult Parser::parse_top_level_node() {
 	// Check if it's a class or struct declaration
 	// Note: alignas can appear before struct, but we handle that in parse_struct_declaration
 	// If alignas appears before a variable declaration, it will be handled by parse_declaration_or_function_definition
-	if ((peek() == "class"_tok || peek() == "struct"_tok || peek() == "union"_tok)) {
+	// First, disambiguate elaborated type specifier variable declarations (e.g., struct Foo f;)
+	// from struct definitions (struct Foo { ... }) and forward declarations (struct Foo;)
+	if ((peek() == "class"_tok || peek() == "struct"_tok || peek() == "union"_tok) &&
+		!looks_like_elaborated_type_variable_declaration()) {
 		auto result = parse_struct_declaration();
 		if (!result.is_error()) {
 			if (auto node = result.node()) {
