@@ -94,20 +94,44 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	qualified_name_sb.append(struct_name).append("::").append(member_name);
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(qualified_name_sb);
 	StringHandle specialization_lookup_name = qualified_name;
+	StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
+	TypeInfo* struct_type_info = nullptr;
+	if (auto struct_type_it = getTypesByNameMap().find(struct_name_handle);
+		struct_type_it != getTypesByNameMap().end()) {
+		struct_type_info = struct_type_it->second;
+	}
+
+	auto build_member_lookup_name = [&](std::string_view class_name) {
+		StringBuilder lookup_name_sb;
+		lookup_name_sb.append(class_name).append("::").append(member_name);
+		return StringTable::getOrInternStringHandle(lookup_name_sb);
+	};
 
 	// FIRST: Check if we have an explicit specialization for these template arguments
 	auto specialization_opt = gTemplateRegistry.lookupSpecialization(
 		specialization_lookup_name.view(),
 		template_type_args);
 	if (!specialization_opt.has_value()) {
-		std::string_view base_class_name = extractBaseTemplateName(struct_name);
-		if (!base_class_name.empty()) {
-			StringBuilder base_qualified_name_sb;
-			base_qualified_name_sb.append(base_class_name).append("::").append(member_name);
-			specialization_lookup_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
+		std::string_view qualified_base_class_name;
+		if (struct_type_info && struct_type_info->isTemplateInstantiation()) {
+			qualified_base_class_name = buildQualifiedNameFromHandle(
+				struct_type_info->sourceNamespace(),
+				StringTable::getStringView(struct_type_info->baseTemplateName()));
+		}
+		if (!qualified_base_class_name.empty()) {
+			specialization_lookup_name = build_member_lookup_name(qualified_base_class_name);
 			specialization_opt = gTemplateRegistry.lookupSpecialization(
 				specialization_lookup_name.view(),
 				template_type_args);
+		}
+		if (!specialization_opt.has_value()) {
+			std::string_view base_class_name = extractBaseTemplateName(struct_name);
+			if (!base_class_name.empty() && base_class_name != qualified_base_class_name) {
+				specialization_lookup_name = build_member_lookup_name(base_class_name);
+				specialization_opt = gTemplateRegistry.lookupSpecialization(
+					specialization_lookup_name.view(),
+					template_type_args);
+			}
 		}
 	}
 	if (specialization_opt.has_value()) {
@@ -199,13 +223,24 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	// If not found and struct_name looks like an instantiated template (e.g., has_foo$a1b2c3),
 	// try the base template class name (e.g., has_foo::method)
 	if (!all_templates || all_templates->empty()) {
-		std::string_view base_class_name = extractBaseTemplateName(struct_name);
-		if (!base_class_name.empty()) {
-			StringBuilder base_qualified_name_sb;
-			base_qualified_name_sb.append(base_class_name).append("::").append(member_name);
-			StringHandle base_qualified_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
+		std::string_view qualified_base_class_name;
+		if (struct_type_info && struct_type_info->isTemplateInstantiation()) {
+			qualified_base_class_name = buildQualifiedNameFromHandle(
+				struct_type_info->sourceNamespace(),
+				StringTable::getStringView(struct_type_info->baseTemplateName()));
+		}
+		if (!qualified_base_class_name.empty()) {
+			StringHandle base_qualified_name = build_member_lookup_name(qualified_base_class_name);
 			all_templates = gTemplateRegistry.lookupAllTemplates(base_qualified_name.view());
 			FLASH_LOG(Templates, Debug, "Trying base template class lookup: ", base_qualified_name.view());
+		}
+		if (!all_templates || all_templates->empty()) {
+			std::string_view base_class_name = extractBaseTemplateName(struct_name);
+			if (!base_class_name.empty() && base_class_name != qualified_base_class_name) {
+				StringHandle base_qualified_name = build_member_lookup_name(base_class_name);
+				all_templates = gTemplateRegistry.lookupAllTemplates(base_qualified_name.view());
+				FLASH_LOG(Templates, Debug, "Trying base template class lookup: ", base_qualified_name.view());
+			}
 		}
 	}
 
