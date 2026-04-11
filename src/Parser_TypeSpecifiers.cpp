@@ -1470,6 +1470,18 @@ ParseResult Parser::parse_type_specifier() {
 				}
 
 				// Whether instantiation succeeded or returned nullopt (for specializations),
+				// If filling defaults changed the template-id, instantiate that completed spelling too
+				// so nested aliases like enable_if<true>::type can be looked up via the normalized
+				// specialization (enable_if<true, void>).
+				if (!var_template_check.has_value() && filled_template_args.size() != template_args->size()) {
+					auto normalized_instantiated_class = try_instantiate_class_template(type_name, filled_template_args);
+					if (normalized_instantiated_class.has_value() && normalized_instantiated_class->is<StructDeclarationNode>()) {
+						registerLateMaterializedTopLevelNode(*normalized_instantiated_class);
+						instantiated_class = normalized_instantiated_class;
+					}
+				}
+
+				// Whether instantiation succeeded or returned nullopt (for specializations),
 				// the type should now be registered. Look it up using filled args.
 				std::string_view instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
 				// If try_instantiate_class_template returned a struct, use its actual name (which includes
@@ -1540,19 +1552,62 @@ ParseResult Parser::parse_type_specifier() {
 					const auto& qualified_node = asQualifiedIdentifier(*qualified_result.node());
 					// Get the qualified namespace name and append the identifier
 					std::string_view ns_qualified = gNamespaceRegistry.getQualifiedName(qualified_node.namespace_handle());
-					StringBuilder qualified_type_name_builder;
-					qualified_type_name_builder.append(instantiated_name);
-					// If there are additional namespace parts beyond the template, append them
-					// The namespace handle might include parts beyond just the template name
-					if (!ns_qualified.empty() && ns_qualified != type_name) {
-						// Check if ns_qualified starts with type_name:: - if so, append the rest
-						if (ns_qualified.starts_with(type_name) && ns_qualified.size() > type_name.size() + 2 &&
-							ns_qualified.substr(type_name.size(), 2) == "::") {
-							qualified_type_name_builder.append(ns_qualified.substr(type_name.size()));
+					auto buildQualifiedTypeName = [&](std::string_view parent_name) {
+						StringBuilder qualified_type_name_builder;
+						qualified_type_name_builder.append(parent_name);
+						// If there are additional namespace parts beyond the template, append them
+						// The namespace handle might include parts beyond just the template name
+						if (!ns_qualified.empty() && ns_qualified != type_name) {
+							// Check if ns_qualified starts with type_name:: - if so, append the rest
+							if (ns_qualified.starts_with(type_name) && ns_qualified.size() > type_name.size() + 2 &&
+								ns_qualified.substr(type_name.size(), 2) == "::") {
+								qualified_type_name_builder.append(ns_qualified.substr(type_name.size()));
+							}
 						}
-					}
-					qualified_type_name_builder.append("::").append(qualified_node.identifier_token().value());
-					std::string_view qualified_type_name = qualified_type_name_builder.commit();
+						return qualified_type_name_builder.append("::").append(qualified_node.identifier_token().value()).commit();
+					};
+					auto tryResolveQualifiedType = [&](std::string_view candidate_qualified_type_name) -> std::optional<ASTNode> {
+						auto candidate_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(candidate_qualified_type_name));
+						if (candidate_type_it == getTypesByNameMap().end()) {
+							return std::nullopt;
+						}
+
+						const TypeInfo* resolved_type_info = candidate_type_it->second;
+						if (resolved_type_info->isStruct()) {
+							const StructTypeInfo* struct_info = resolved_type_info->getStructInfo();
+							int resolved_type_size = struct_info
+								? static_cast<int>(struct_info->sizeInBits().value)
+								: 0;
+							return emplace_node<TypeSpecifierNode>(
+								resolved_type_info->type_index_.withCategory(TypeCategory::Struct),
+								resolved_type_size,
+								type_name_token,
+								cv_qualifier,
+								ReferenceQualifier::None);
+						}
+
+						ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+							resolved_type_info->registeredTypeIndex().withCategory(resolved_type_info->typeEnum()));
+						int resolved_type_size = static_cast<unsigned char>(resolved_type_info->sizeInBits().value);
+						auto type_spec_node = emplace_node<TypeSpecifierNode>(
+							resolved_alias.type_index,
+							resolved_type_size,
+							type_name_token,
+							cv_qualifier,
+							ReferenceQualifier::None);
+						type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
+						if (resolved_alias.isArray()) {
+							type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(resolved_alias.array_dimensions);
+						}
+						if (resolved_alias.reference_qualifier != ReferenceQualifier::None) {
+							type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(resolved_alias.reference_qualifier);
+						}
+						if (resolved_alias.function_signature.has_value()) {
+							type_spec_node.as<TypeSpecifierNode>().set_function_signature(*resolved_alias.function_signature);
+						}
+						return type_spec_node;
+					};
+					std::string_view qualified_type_name = buildQualifiedTypeName(instantiated_name);
 
 					// For dependent templates, if the qualified type is not found, check for template arguments
 					// before creating a placeholder
@@ -1747,39 +1802,32 @@ ParseResult Parser::parse_type_specifier() {
 					}
 
 					// Look up the fully qualified type (e.g., "Traits_int::nested")
-					auto qual_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
-					if (qual_type_it != getTypesByNameMap().end()) {
-						const TypeInfo* type_info = qual_type_it->second;
+					if (auto resolved_type = tryResolveQualifiedType(qualified_type_name); resolved_type.has_value()) {
+						return ParseResult::success(*resolved_type);
+					}
 
-						// Handle both struct types and type aliases
-						if (type_info->isStruct()) {
-							const StructTypeInfo* struct_info = type_info->getStructInfo();
+					auto tryResolveQualifiedTypeFromParent = [&](std::string_view parent_name) -> std::optional<ASTNode> {
+						StringHandle parent_handle = StringTable::getOrInternStringHandle(parent_name);
+						StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+						if (LazyTypeAliasRegistry::getInstance().needsEvaluation(parent_handle, member_handle)) {
+							evaluateLazyTypeAlias(parent_handle, member_handle);
+						}
+						return tryResolveQualifiedType(buildQualifiedTypeName(parent_name));
+					};
 
-							if (struct_info) {
-								type_size = static_cast<int>(struct_info->sizeInBits().value);
-							} else {
-								type_size = 0;
-							}
-							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
-						} else {
-							// This is a type alias - return the aliased type
-							ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-								type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
-							type_size = static_cast<unsigned char>(type_info->sizeInBits().value);
-							auto type_spec_node = emplace_node<TypeSpecifierNode>(
-								resolved_alias.type_index, type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
-							type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
-							if (resolved_alias.isArray()) {
-								type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(resolved_alias.array_dimensions);
-							}
-							if (resolved_alias.reference_qualifier != ReferenceQualifier::None) {
-								type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(resolved_alias.reference_qualifier);
-							}
-							if (resolved_alias.function_signature.has_value()) {
-								type_spec_node.as<TypeSpecifierNode>().set_function_signature(*resolved_alias.function_signature);
-							}
-							return ParseResult::success(type_spec_node);
+					std::string_view raw_instantiated_name = get_instantiated_class_name(type_name, *template_args);
+					std::string_view normalized_instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
+					if (auto resolved_type = tryResolveQualifiedTypeFromParent(instantiated_name); resolved_type.has_value()) {
+						return ParseResult::success(*resolved_type);
+					}
+					if (normalized_instantiated_name != instantiated_name) {
+						if (auto resolved_type = tryResolveQualifiedTypeFromParent(normalized_instantiated_name); resolved_type.has_value()) {
+							return ParseResult::success(*resolved_type);
+						}
+					}
+					if (raw_instantiated_name != instantiated_name) {
+						if (auto resolved_type = tryResolveQualifiedTypeFromParent(raw_instantiated_name); resolved_type.has_value()) {
+							return ParseResult::success(*resolved_type);
 						}
 					}
 
