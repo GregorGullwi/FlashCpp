@@ -859,6 +859,9 @@ private:
 		const TemplateParameterNode& param,
 		const std::vector<ASTNode>& template_params,
 		InlineVector<TemplateTypeArg, 4>& template_args);
+	// Shared pre-deduction helper for matching function-parameter slots to call-argument
+	// types. The explicit-template-argument path must only rely on this map for non-pack
+	// signatures; pack-aware remapping needs an explicit contract first.
 	std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const std::vector<ASTNode>& template_params,
 		const FunctionDeclarationNode& func_decl,

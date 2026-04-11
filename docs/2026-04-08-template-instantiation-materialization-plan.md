@@ -7,6 +7,41 @@
 
 ### Do this next
 
+1. Keep Phase 6 narrow: `buildDeductionMapFromCallArgs(...)` is now the explicit
+   deduction path only for non-pack signatures, while pack-bearing signatures
+   still use the older positional fallback. Do not broaden the name-based remap
+   to template-parameter packs or function-parameter packs until there is an
+   explicit pack-aware mapping contract.
+2. If you touch `try_instantiate_template_explicit(...)` again, preserve the
+   current split:
+   - non-pack explicit deduction: name-based pre-deduction map first, then
+     defaults, then overload mismatch
+   - pack-bearing explicit deduction: existing positional fallback only
+3. Before widening Phase 6, reproduce both sides of the split:
+   - `test_explicit_template_defaulted_param_deduction_ret42.cpp`
+   - `test_pack_decltype_simple_ret42.cpp`
+   - `test_variadic_template_pack_before_tail_trailing_return_ret0.cpp`
+   - `test_namespaced_pair_swap_sfinae_ret0.cpp`
+
+### Latest completed slice
+
+  - tightened `try_instantiate_template_explicit(...)` so the shared
+    `buildDeductionMapFromCallArgs(...)` helper is the only explicit-deduction
+    path for signatures without template/function parameter packs
+  - kept the older positional explicit-deduction fallback only for pack-bearing
+    signatures, matching the Phase 6 guardrail that broader remapping needs an
+    explicit pack-aware contract first
+  - clarified the shared helper contract in `src/Parser.h` so future follow-up
+    work does not accidentally reuse the non-pack path for pack-bearing
+    signatures
+  - validation after this slice:
+    - `make main CXX=clang++`
+    - `bash ./tests/run_all_tests.sh test_explicit_template_defaulted_param_deduction_ret42.cpp test_pack_decltype_simple_ret42.cpp test_variadic_template_pack_before_tail_trailing_return_ret0.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
+    - `bash ./tests/run_all_tests.sh`
+    - 2038 pass, 132 expected-fail
+
+### Previous next-agent notes
+
 1. Keep `materializePrimaryTemplateOwnerForLookup(...)` itself
    registration-free. The new
    `materializePrimaryTemplateOwnerForConstructorLookup(...)` wrapper in
@@ -28,7 +63,7 @@
    broader remap for pack-bearing signatures needs an explicit pack-aware
    mapping contract first.
 
-### Latest completed slice
+### Previous completed slice
 
   - extracted the duplicated template functional-style cast parsing/building
     into `Parser::parseMaterializedTemplateFunctionalCast(...)` in:
