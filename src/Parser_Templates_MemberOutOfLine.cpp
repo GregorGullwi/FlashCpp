@@ -293,27 +293,27 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// parse_type_specifier already consumed "ClassName" as a type, so next is '<'
 	Token class_name_token;
 	std::string_view class_name;
-	StringBuilder qualified_class_name_builder;
+	std::string qualified_class_name_storage;
 
 	if (peek().is_identifier()) {
 		// Normal case: return_type ClassName<Args>::FunctionName(...)
 		class_name_token = peek_info();
 		class_name = class_name_token.value();
-		qualified_class_name_builder.append(class_name);
+		qualified_class_name_storage.append(class_name);
 		advance();
 	} else if (peek() == "<"_tok && return_type_node.is<TypeSpecifierNode>()) {
 		// Constructor pattern: ClassName<Args>::ClassName(...)
 		// parse_type_specifier consumed "ClassName" as return type, but it's really the class name
 		class_name_token = return_type_node.as<TypeSpecifierNode>().token();
 		class_name = class_name_token.value();
-		qualified_class_name_builder.append(class_name);
+		qualified_class_name_storage.append(class_name);
 	} else if (peek() == "::"_tok && return_type_node.is<TypeSpecifierNode>()) {
 		// Namespace-qualified constructor pattern: ns::ClassName<Args>::ClassName(...)
 		// parse_type_specifier consumed the full "ns::ClassName<Args>" as a type
 		// The :: that follows leads to the member function/constructor name
 		class_name_token = return_type_node.as<TypeSpecifierNode>().token();
 		class_name = class_name_token.value();
-		qualified_class_name_builder.append(class_name);
+		qualified_class_name_storage.append(class_name);
 	} else {
 		restore_token_position(saved_pos);
 		return std::nullopt;
@@ -475,7 +475,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 		// The previous function_name_token was actually a nested class name,
 		// not a function name. Update class_name to track the innermost class.
-		qualified_class_name_builder.append("::").append(function_name_token.value());
+		qualified_class_name_storage.append("::").append(function_name_token.value());
 		class_name = function_name_token.value();
 
 		// Handle 'template' keyword disambiguator (e.g., ::template member<Args>)
@@ -578,7 +578,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		}
 	}
 
-	std::string_view qualified_class_name = qualified_class_name_builder.commit();
+	std::string_view qualified_class_name = qualified_class_name_storage;
 
 	// Check if this is a static member variable definition (=) or a member function (()
 	if (peek() == "="_tok) {
