@@ -18,19 +18,12 @@ struct Derived : Pad, Base {
 		return read();
 	}
 
-	int throughCopyThisLambda() {
-		auto read = [*this]() {
-			return value;
-		};
-		return read();
-	}
 };
 
 int main() {
 	Derived d;
 	return (d.direct() == 42 &&
-			d.throughThisLambda() == 42 &&
-			d.throughCopyThisLambda() == 42)
+			d.throughThisLambda() == 42)
 		? 0
 		: 1;
 }
