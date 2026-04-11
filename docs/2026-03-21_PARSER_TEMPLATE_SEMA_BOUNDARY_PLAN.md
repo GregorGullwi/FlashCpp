@@ -288,6 +288,37 @@ ownership explicit:
 
 **Test result:** 1685 pass, 98 expected-fail (was 1683/98 before this phase).
 
+## Phase 6 progress
+
+Phase 6 eliminates the last two `parser_.get_expression_type(...)` calls from
+`SemanticAnalysis.cpp`, completing the plan's Workstream 3 goal of making sema
+entirely self-sufficient for expression type inference:
+
+- `inferExpressionType(IdentifierNode)`: the `NonStaticMember` binding category
+  resolution (implicit `this->member` via `member_context_stack_` and
+  `gLazyMemberResolver`) now runs **before** any parser fallback path, so
+  sema-owned member lookup takes priority
+- `inferExpressionType(MemberAccessNode)`: when data member resolution via
+  `tryResolveMemberAccessInfo()` fails, sema now also tries:
+  - static members (`struct_info->static_members`)
+  - member functions (`struct_info->member_functions`) — returning the return
+    type of the first overload matching by name
+- after scanning all 2064 test files with debug logging, **zero** files
+  exercised either parser fallback; both `parser_.get_expression_type` calls
+  were effectively dead code
+- both calls are now removed; `SemanticAnalysis.cpp` no longer captures
+  `node` in the `inferExpressionType` visitor lambda since the parser query
+  was its only consumer
+- the one remaining `parser_.get_expression_type` call in
+  `ExpressionSubstitutor.cpp` (line 553) is parser-owned template-substitution
+  context and is explicitly out of scope for this plan
+- `tests/test_member_access_sema_phase6_ret0.cpp`: regression test for
+  sema-owned data member, member function, and implicit-this resolution
+- `tests/test_implicit_this_template_sema_ret0.cpp`: regression test for
+  implicit-this member resolution in template struct bodies
+
+**Test result:** 2018 pass, 130 expected-fail (was 2016/130 before this phase).
+
 
 ### Workstream 1: make post-parse AST legality explicit
 
@@ -432,9 +463,12 @@ Implemented in this slice:
 Current narrow follow-up after the nested-class slice:
 
 - re-audit the remaining direct `inferExpressionType(...)` parser fallback sites
+  **(done in Phase 6: both IdentifierNode and MemberAccessNode fallbacks
+  confirmed dead and removed)**
 - confirm whether only the documented unresolved/implicit-member
   `IdentifierNode` bridge and the remaining `TemplateParameterReferenceNode`
-  bridge are still live in practice
+  bridge are still live in practice **(confirmed in Phase 6: neither is live;
+  zero tests exercised them)**
 
 ### Phase 4: tighten hard boundaries
 
@@ -455,6 +489,19 @@ Current narrow follow-up after the nested-class slice:
   begins Workstream 2 audit of surviving template-reference paths)**
 - investigate and document Phase 21 item 7 (dead `pointer_depth` ternary)
   **(investigated: ternary is correct, not dead; no change needed)**
+
+### Phase 6: eliminate remaining sema parser fallbacks
+
+- move `IdentifierBinding::NonStaticMember` resolution ahead of parser
+  fallback so implicit `this->member` typing is sema-first **(implemented)**
+- extend `inferExpressionType(MemberAccessNode)` to cover static members and
+  member functions when data member resolution fails **(implemented)**
+- confirm with full test-suite debug scan that both remaining
+  `parser_.get_expression_type` sites in `inferExpressionType` were dead code
+  **(confirmed: 0/2064 tests exercised either fallback)**
+- remove both calls and the associated `node` lambda capture
+  **(implemented: `SemanticAnalysis.cpp` is now free of
+  `parser_.get_expression_type` calls)**
 
 ## Exit criteria
 
