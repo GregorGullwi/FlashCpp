@@ -21,6 +21,19 @@ uint32_t codeViewTypeIndex(TypeCategory type_cat) {
 		return 0x74;					 // T_INT4 fallback
 	}
 }
+
+uint64_t encodeFloatingImmediateBits(double value, int value_size_bits) {
+	if (value_size_bits == 32) {
+		float float_value = static_cast<float>(value);
+		uint32_t float_bits = 0;
+		std::memcpy(&float_bits, &float_value, sizeof(float_bits));
+		return float_bits;
+	}
+
+	uint64_t bits = 0;
+	std::memcpy(&bits, &value, sizeof(bits));
+	return bits;
+}
 } // namespace
 
 template <class TWriterClass>
@@ -11058,8 +11071,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		} else if (const auto* d_val = std::get_if<double>(&op.rhs.value)) {
 				// Immediate double value
 			double double_value = *d_val;
-			uint64_t bits;
-			std::memcpy(&bits, &double_value, sizeof(bits));
+			uint64_t bits = encodeFloatingImmediateBits(double_value, op.rhs.size_in_bits.value);
 			emitMovImm64(value_reg, bits);
 		} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.rhs.value)) {
 				// Load from temp var
@@ -12982,8 +12994,7 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 
 			if (is_literal) {
 				if (is_double_literal) {
-					uint64_t bits;
-					std::memcpy(&bits, &literal_double_value, sizeof(bits));
+					uint64_t bits = encodeFloatingImmediateBits(literal_double_value, op.value.size_in_bits.value);
 					emitMovImm64(value_reg, bits);
 				} else {
 					uint64_t imm64 = static_cast<uint64_t>(literal_value);
@@ -13917,8 +13928,7 @@ void IrToObjConverter<TWriterClass>::handleDereferenceStore(const IrInstruction&
 		emitMovImm64(value_reg, imm_value);
 	} else if (const auto* d_val = std::get_if<double>(&op.value.value)) {
 		double double_value = *d_val;
-		uint64_t bits;
-		std::memcpy(&bits, &double_value, sizeof(double));
+		uint64_t bits = encodeFloatingImmediateBits(double_value, value_size);
 		emitMovImm64(value_reg, bits);
 	} else if (std::holds_alternative<TempVar>(op.value.value)) {
 		TempVar value_temp = std::get<TempVar>(op.value.value);
