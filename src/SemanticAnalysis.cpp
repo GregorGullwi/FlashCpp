@@ -2788,7 +2788,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 		}
 
 		const auto& expr = node.as<ExpressionNode>();
-		return std::visit([this, &node](const auto& e) -> CanonicalTypeId {
+		return std::visit([this](const auto& e) -> CanonicalTypeId {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				CanonicalTypeDesc desc;
@@ -2874,13 +2874,11 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 				}
 
-				// Phase 6: parser fallback only for binding categories that sema
-				// cannot yet resolve locally (e.g. Unresolved identifiers in
-				// non-template contexts where no symbol or member path applies).
-				if (auto parser_type = parser_.get_expression_type(node); parser_type.has_value()) {
-					return canonicalizeType(*parser_type);
-				}
-
+				// Phase 6: the parser_.get_expression_type fallback is now removed.
+				// After moving NonStaticMember resolution ahead and adding static
+				// member / member function inference for MemberAccessNode, no test
+				// exercises this path; returning empty is safe and matches the plan's
+				// Phase 3 goal of eliminating all parser type queries from sema.
 				return {};
 			} else if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
 				const CanonicalTypeId param_id = lookupLocalType(e.param_name());
@@ -2905,20 +2903,17 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// Return empty type; will be resolved when function is instantiated.
 				(void)e;
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-				auto try_parser_member_type = [&]() -> CanonicalTypeId {
-					if (auto parser_type = parser_.get_expression_type(node); parser_type.has_value()) {
-						return canonicalizeType(*parser_type);
-					}
-					return {};
-				};
+				// Phase 6: parser_.get_expression_type fallback removed.
+				// Sema now resolves data members, static members, and member
+				// functions entirely through its own type infrastructure.
 				const CanonicalTypeId object_type_id = inferExpressionType(e.object());
 				if (!object_type_id) {
-					return try_parser_member_type();
+					return {};
 				}
 				const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
 				if (object_desc.category() != TypeCategory::Struct &&
 					object_desc.category() != TypeCategory::UserDefined) {
-					return try_parser_member_type();
+					return {};
 				}
 				const TypeInfo* object_type_info = nullptr;
 				if (object_desc.category() == TypeCategory::UserDefined) {
@@ -2929,10 +2924,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					object_type_info = tryGetTypeInfo(object_desc.type_index);
 				}
 				if (!object_type_info) {
-					return try_parser_member_type();
+					return {};
 				}
 
-				// Phase 6: try data member resolution first via the existing path.
+				// Try data member resolution first via the existing path.
 				ResolvedMemberAccessInfo member_info;
 				if (tryResolveMemberAccessInfo(e, member_info)) {
 					const TypeInfo* owner_type_info = tryGetTypeInfo(member_info.owner_type_index);
@@ -2943,8 +2938,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 				}
 
-				// Phase 6: when data member resolution fails, try static members
-				// and member functions so sema can type the access without parser
+				// When data member resolution fails, try static members and
+				// member functions so sema can type the access without parser
 				// fallback.
 				const StructTypeInfo* struct_info = object_type_info->getStructInfo();
 				if (struct_info) {
@@ -2972,7 +2967,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 				}
 
-				return try_parser_member_type();
+				return {};
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				CanonicalTypeId member_pointer_type_id = inferExpressionType(e.member_pointer());
 				if (!member_pointer_type_id) {
