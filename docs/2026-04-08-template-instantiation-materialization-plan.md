@@ -7,29 +7,51 @@
 
 ### Do this next
 
-1. Continue the same late-materialization contract audit, but move to the
-   parser-triggered class-template instantiation sites that still register
-   `StructDeclarationNode`s without an immediate normalize step:
-   `src/Parser_Expr_PrimaryExpr.cpp`,
-   `src/Parser_Statements.cpp`,
-   `src/Parser_Templates_Class.cpp`,
-   `src/Parser_Templates_Inst_ClassTemplate.cpp`, and the helper path in
-   `src/Parser.h` that rematerializes incomplete template-instantiation bases.
-2. Keep the migration narrow: prefer the new
+1. Continue the late-materialization contract audit, but keep
+   `materializePrimaryTemplateOwnerForLookup(...)` itself registration-free for
+   now. A helper-owned registration/normalize step regressed
+   `test_namespaced_pair_swap_sfinae_ret0.cpp` and
+   `test_template_static_member_initializer_nested_constexpr_member_call_ret42.cpp`,
+   so parser-owned registration still needs to stay at the concrete use sites.
+2. Recheck the remaining `src/Parser_Expr_PrimaryExpr.cpp` owner-materialization
+   exits that still rely on `materializePrimaryTemplateOwnerForLookup(...)` and
+   decide whether they need the same explicit
+   `registerAndNormalizeLateMaterializedTopLevelNode(...)` step now used by the
+   two functional-style cast paths.
+3. Keep the migration narrow: prefer the new
    `registerAndNormalizeLateMaterializedTopLevelNode(...)` helpers for
    single-node exits, and only use a shared trailing
    `normalizePendingSemanticRootsIfAvailable()` when one parser path emits a
    batch of late nodes intentionally.
-3. Recheck `materializePrimaryTemplateOwnerForLookup(...)` consumers after the
-   remaining parser sites move over; the functional-style cast path in
-   `src/Parser_Expr_PrimaryExpr.cpp` still does an extra manual registration
-   branch even though the helper already owns the instantiation step.
-4. Once those parser-owned class-template sites share the same contract, return
-   to the broader placeholder/deduction utilities only if they still encode
-   owner materialization or pending-sema policy independently.
+4. Once the remaining parser-owned class-template sites share a stable
+   registration contract, return to the broader placeholder/deduction utilities
+   only if they still encode owner materialization or pending-sema policy
+   independently.
 
 ### Latest completed slice
 
+  - switched the remaining parser-owned single-node class-template
+    materialization exits that were still using bare
+    `registerLateMaterializedTopLevelNode(...)` in:
+    - `src/Parser_Statements.cpp`
+    - `src/Parser_Templates_Class.cpp`
+    - `src/Parser_Templates_Inst_ClassTemplate.cpp`
+    - `src/Parser_Templates_Inst_Substitution.cpp`
+    - `src/Parser.h`
+  - kept `materializePrimaryTemplateOwnerForLookup(...)` registration-free after
+    confirming that moving registration/normalization into the helper itself
+    regressed:
+    - `test_namespaced_pair_swap_sfinae_ret0.cpp`
+    - `test_template_static_member_initializer_nested_constexpr_member_call_ret42.cpp`
+  - moved the parser-owned late-materialization step in
+    `src/Parser_Expr_PrimaryExpr.cpp` to the two functional-style cast exits
+    instead, using `registerAndNormalizeLateMaterializedTopLevelNode(...)`
+    directly on the returned `instantiated_struct_node`
+  - validation after this slice:
+    - `make main CXX=clang++`
+    - `bash ./tests/run_all_tests.sh test_namespaced_pair_swap_sfinae_ret0.cpp test_template_static_member_initializer_nested_constexpr_member_call_ret42.cpp test_method_on_temporary_ret0.cpp test_late_member_body_class_template_functional_style_ret42.cpp test_template_default_functional_cast_ret42.cpp test_template_dependent_placeholder_base_ret0.cpp test_extern_template_ret0.cpp test_extern_template_ns_qualified_ret0.cpp test_explicit_template_nontype_ret5.cpp test_qualified_base_nested_member_alias_ret42.cpp test_qualified_base_full_spec_alias_chain_ret42.cpp test_identifier_binding_template_member_outofline_implicit_member_ret42.cpp`
+    - `bash ./tests/run_all_tests.sh`
+    - 2025 pass, 131 expected-fail
   - added `Parser::registerAndNormalizeLateMaterializedTopLevelNode(...)` and
     `Parser::registerAndNormalizeLateMaterializedTopLevelNodeFront(...)` in
     `src/Parser.h` so late AST-root registration can explicitly drain pending

@@ -402,7 +402,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 		// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
 		// and get the actual instantiated name from the struct (which includes default arguments)
 		if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
-			registerLateMaterializedTopLevelNode(*instantiated_base);
+			registerAndNormalizeLateMaterializedTopLevelNode(*instantiated_base);
 			// Get the actual instantiated name from the struct node (includes default args)
 			StringHandle name_handle = instantiated_base->as<StructDeclarationNode>().name();
 			std::string_view instantiated_name = StringTable::getStringView(name_handle);

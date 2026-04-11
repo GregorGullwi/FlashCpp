@@ -4610,10 +4610,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										identifier_token.value(),
 										{},
 										*explicit_template_args);
-								// Register instantiated struct for late materialization so member function bodies get generated
 								if (materialized_owner.instantiated_struct_node.has_value() &&
 									materialized_owner.instantiated_struct_node->is<StructDeclarationNode>()) {
-									registerLateMaterializedTopLevelNode(*materialized_owner.instantiated_struct_node);
+									registerAndNormalizeLateMaterializedTopLevelNode(
+										*materialized_owner.instantiated_struct_node);
 								}
 								std::string_view instantiated_type_name = materialized_owner.instantiated_name;
 								const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
@@ -5374,6 +5374,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							identifier_token.value(),
 							{},
 							*explicit_template_args);
+					if (materialized_owner.instantiated_struct_node.has_value() &&
+						materialized_owner.instantiated_struct_node->is<StructDeclarationNode>()) {
+						registerAndNormalizeLateMaterializedTopLevelNode(
+							*materialized_owner.instantiated_struct_node);
+					}
 					std::string_view instantiated_type_name = materialized_owner.instantiated_name;
 					const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
 					if (instantiated_type_name.empty()) {

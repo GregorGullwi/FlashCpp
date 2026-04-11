@@ -2315,7 +2315,7 @@ bool Parser::instantiate_deduced_template(std::string_view class_name,
 
 	auto instantiated_class = try_instantiate_class_template(class_name, template_args);
 	if (instantiated_class.has_value() && instantiated_class->is<StructDeclarationNode>()) {
-		registerLateMaterializedTopLevelNode(*instantiated_class);
+		registerAndNormalizeLateMaterializedTopLevelNode(*instantiated_class);
 	}
 
 	std::string_view instantiated_name = get_instantiated_class_name(class_name, template_args);
