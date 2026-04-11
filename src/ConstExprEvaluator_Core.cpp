@@ -2128,6 +2128,18 @@ EvalResult Evaluator::evaluate_new_expression(
 
 		EvalResult object_result = EvalResult::from_int(0LL);
 		object_result.object_type_index = type_index;
+		auto make_zero_member_value = [](TypeCategory member_type) -> EvalResult {
+			if (isFloatingPointType(member_type)) {
+				return EvalResult::from_double(0.0);
+			}
+			if (member_type == TypeCategory::Bool) {
+				return EvalResult::from_bool(false);
+			}
+			if (isUnsignedIntegralType(member_type)) {
+				return EvalResult::from_uint(0ULL);
+			}
+			return EvalResult::from_int(0LL);
+		};
 
 		if (!ctor_args.empty()) {
 			// Copy args into a ChunkedVector<ASTNode> to satisfy the existing API
@@ -2211,15 +2223,21 @@ EvalResult Evaluator::evaluate_new_expression(
 						"' (type has user-defined constructors and is not an aggregate)");
 				}
 			} else {
-				// True aggregate or implicit-only constructors: apply default member initializers.
+				// True aggregate or implicit-only constructors:
+				// - bare new T default-initializes members, leaving those without default
+				//   member initializers indeterminate
+				// - new T() / new T{} value-initializes, zeroing those members instead
+				const bool value_initializes_members = new_expr.has_value_init();
 				for (const auto& member : struct_info->members) {
 					std::string_view mname = StringTable::getStringView(member.getName());
 					if (member.default_initializer.has_value()) {
 						auto def_result = evaluate(*member.default_initializer, context);
 						object_result.object_member_bindings[mname] =
-							def_result.success() ? std::move(def_result) : EvalResult::from_int(0LL);
+							def_result.success() ? std::move(def_result) : make_zero_member_value(member.memberType());
+					} else if (value_initializes_members) {
+						object_result.object_member_bindings[mname] = make_zero_member_value(member.memberType());
 					} else {
-						object_result.object_member_bindings[mname] = EvalResult::from_int(0LL);
+						object_result.object_member_bindings[mname] = EvalResult::indeterminate();
 					}
 				}
 			}

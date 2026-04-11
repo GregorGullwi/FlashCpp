@@ -852,7 +852,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 			}
 			auto member_it = target_obj->object_member_bindings.find(member_access.member_name());
 			if (member_it != target_obj->object_member_bindings.end()) {
-				return member_it->second;
+				return validateConstexprRead(member_it->second);
 			}
 		}
 		return std::nullopt;
@@ -867,7 +867,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 		return std::nullopt;
 	}
 
-	return member_it->second;
+	return validateConstexprRead(member_it->second);
 }
 
 std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
