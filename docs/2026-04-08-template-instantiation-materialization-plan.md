@@ -40,7 +40,7 @@
     - `bash ./tests/run_all_tests.sh`
     - 2038 pass, 132 expected-fail
 
-### Do this next
+### Previous next-agent notes
 
 1. Keep `materializePrimaryTemplateOwnerForLookup(...)` itself
    registration-free. The new
@@ -63,7 +63,7 @@
    broader remap for pack-bearing signatures needs an explicit pack-aware
    mapping contract first.
 
-### Latest completed slice
+### Previous completed slice
 
   - extracted the duplicated template functional-style cast parsing/building
     into `Parser::parseMaterializedTemplateFunctionalCast(...)` in:

@@ -826,7 +826,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			param_name_to_arg = std::move(deduction_info->param_name_to_arg);
 		} else if (current_explicit_call_arg_types_ != nullptr) {
 			// Keep the older positional fallback only for pack-bearing signatures until
-			// there is an explicit pack-aware mapping contract.
+			// there is an explicit pack-aware mapping contract (for example, a helper
+			// that maps function-parameter-pack slots onto template-parameter-pack
+			// elements instead of walking call arguments blindly).
 			positional_deduced_call_arg_index = 0;
 			if (has_variadic_func_pack &&
 				current_explicit_call_arg_types_->size() >= required_function_args_after_pack) {
