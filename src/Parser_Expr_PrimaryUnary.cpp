@@ -387,7 +387,13 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 
 			if (peek() != closing_token_kind) {
 				while (true) {
-					ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					ParseResult arg_result;
+					// Check for nested braces (aggregate initializers) when parsing brace-init
+					if (allow_trailing_comma && peek() == "{"_tok) {
+						arg_result = parse_brace_initializer(type_node->as<TypeSpecifierNode>());
+					} else {
+						arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					}
 					if (arg_result.is_error()) {
 						initializer_parse_error = std::move(arg_result);
 						return std::nullopt;
