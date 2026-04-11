@@ -647,7 +647,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 	// Create a function declaration node
 	auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
-	auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, function_name_token.value());
+	auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, qualified_class_name);
 
 	// Parse parameters using unified parameter list parsing (Phase 1)
 	FlashCpp::ParsedParameterList params;
