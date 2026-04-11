@@ -814,8 +814,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// Build template argument list
 		InlineVector<TemplateTypeArg, 4> template_args;
 		size_t explicit_idx = 0;	 // Track position in explicit_types
+		size_t deduced_call_arg_index = SIZE_MAX;
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
-		if (current_explicit_call_arg_types_ != nullptr) {
+		const bool use_name_based_explicit_deduction =
+			current_explicit_call_arg_types_ != nullptr &&
+			!has_variadic_pack &&
+			!has_variadic_func_pack;
+		if (use_name_based_explicit_deduction) {
 			auto deduction_info = buildDeductionMapFromCallArgs(
 				template_params,
 				func_decl,
@@ -825,6 +830,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				continue;
 			}
 			param_name_to_arg = std::move(deduction_info->param_name_to_arg);
+		} else if (current_explicit_call_arg_types_ != nullptr) {
+			deduced_call_arg_index = 0;
+			if (has_variadic_func_pack &&
+				current_explicit_call_arg_types_->size() >= required_function_args_after_pack) {
+				deduced_call_arg_index =
+					current_explicit_call_arg_types_->size() - required_function_args_after_pack;
+			}
 		}
 		bool overload_mismatch = false;
 		auto appendDefaultTemplateArg = [&](const TemplateParameterNode& param) -> bool {
@@ -945,12 +957,22 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				if (explicit_idx < explicit_types.size()) {
 					template_args.push_back(explicit_types[explicit_idx]);
 					++explicit_idx;
+				} else if (!use_name_based_explicit_deduction &&
+						   !param.has_default() &&
+						   current_explicit_call_arg_types_ != nullptr &&
+						   deduced_call_arg_index != SIZE_MAX &&
+						   deduced_call_arg_index < current_explicit_call_arg_types_->size()) {
+					template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
+						(*current_explicit_call_arg_types_)[deduced_call_arg_index]));
+					++deduced_call_arg_index;
 				} else {
 					StringHandle param_handle = param.nameHandle();
-					auto map_it = param_name_to_arg.find(param_handle);
-					if (map_it != param_name_to_arg.end()) {
-						template_args.push_back(map_it->second);
-						continue;
+					if (use_name_based_explicit_deduction) {
+						auto map_it = param_name_to_arg.find(param_handle);
+						if (map_it != param_name_to_arg.end()) {
+							template_args.push_back(map_it->second);
+							continue;
+						}
 					}
 					if (appendDefaultTemplateArg(param)) {
 						continue;
