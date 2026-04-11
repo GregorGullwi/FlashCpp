@@ -6277,43 +6277,21 @@ EvalResult Evaluator::extract_object_members(
 	}
 
 	const auto& ctor_args = ctor_call.arguments();
-
-	// Find the matching constructor
-	const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
-	if (!matching_ctor) {
-		matching_ctor = find_matching_constructor(struct_info, ctor_args, context, false, nullptr);
-	}
-
-	if (!matching_ctor) {
+	auto ctor_result = try_materialize_struct_from_ctor_args(
+		struct_info,
+		type_index,
+		ctor_args,
+		context,
+		false,
+		nullptr);
+	if (!ctor_result) {
 		return EvalResult::error("No matching constructor found for constexpr object");
 	}
-
-	// Build parameter bindings for the constructor
-	std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
-	const auto& params = matching_ctor->parameter_nodes();
-	auto bind_result = bind_evaluated_arguments(
-		params,
-		ctor_args,
-		ctor_param_bindings,
-		context,
-		"Invalid parameter node in constexpr constructor member extraction",
-		nullptr,
-		true);
-	if (!bind_result.success()) {
-		return bind_result;
+	if (!ctor_result->success()) {
+		return *ctor_result;
 	}
 
-	auto member_bind_result = materialize_members_from_constructor(
-		struct_info,
-		*matching_ctor,
-		ctor_param_bindings,
-		member_bindings,
-		context,
-		true);
-	if (!member_bind_result.success()) {
-		return member_bind_result;
-	}
-
+	member_bindings = std::move(ctor_result->object_member_bindings);
 	return EvalResult::from_bool(true);	// Success
 }
 
