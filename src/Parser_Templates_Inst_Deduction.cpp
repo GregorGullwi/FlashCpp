@@ -452,14 +452,15 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	auto& param_name_to_arg = deduction_info.param_name_to_arg;
 	auto& pre_deduced_arg_indices = deduction_info.pre_deduced_arg_indices;
 
-	// Build set of template parameter names for O(1) lookup
-	std::unordered_set<StringHandle, StringHash, StringEqual> tparam_name_set;
+	// Build map of template parameter names for O(1) lookup; detect variadic params in same pass
 	std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual> tparam_nodes_by_name;
+	bool has_variadic_tparam = false;
 	for (const auto& tparam_node : template_params) {
 		if (tparam_node.is<TemplateParameterNode>()) {
 			const auto& tparam = tparam_node.as<TemplateParameterNode>();
-			tparam_name_set.insert(StringTable::getOrInternStringHandle(tparam.name()));
 			tparam_nodes_by_name.emplace(tparam.nameHandle(), &tparam);
+			if (tparam.is_variadic())
+				has_variadic_tparam = true;
 		}
 	}
 
@@ -553,7 +554,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 				const auto& c = ca_targs[j];
 				if (!p.dependent_name.isValid())
 					continue;
-				if (!tparam_name_set.count(p.dependent_name))
+				if (!tparam_nodes_by_name.count(p.dependent_name))
 					continue;
 				if (!c.is_value) {
 					// Type argument — build a TypeSpecifierNode from the
@@ -674,20 +675,10 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	// Without this, the main loop would naively consume the 1st call argument for T.
 	// IMPORTANT: Skip variadic template parameters — pack deduction is handled by the main
 	// loop and must not be pre-consumed here.
-	std::unordered_set<StringHandle, StringHash, StringEqual> variadic_tparam_names;
-	for (const auto& tparam_node : template_params) {
-		if (tparam_node.is<TemplateParameterNode>()) {
-			const auto& tparam = tparam_node.as<TemplateParameterNode>();
-			if (tparam.is_variadic()) {
-				variadic_tparam_names.insert(
-					StringTable::getOrInternStringHandle(tparam.name()));
-			}
-		}
-	}
 	// Only apply when none of the template params are variadic (simplest safe guard:
 	// if the template has any pack parameter, skip this pass entirely to avoid
 	// interfering with pack deduction).
-	if (variadic_tparam_names.empty()) {
+	if (!has_variadic_tparam) {
 		for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
 			if (!func_params[i].is<DeclarationNode>())
 				continue;
@@ -708,7 +699,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 				continue;
 
 			StringHandle fp_name = fp_type_info->name();
-			if (!tparam_name_set.count(fp_name))
+			if (!tparam_nodes_by_name.count(fp_name))
 				continue;  // not a template parameter
 			if (param_name_to_arg.count(fp_name))
 				continue;  // already deduced
@@ -728,6 +719,9 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 }
 
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count) {
+	static int recursion_depth = 0;
+	recursion_depth++;
+	struct DepthGuard { int& d; ~DepthGuard() { d--; } } depth_guard{recursion_depth};
 	for (const TemplateTypeArg& arg : explicit_types) {
 		if (arg.is_dependent || arg.dependent_name.isValid()) {
 			return std::nullopt;
@@ -825,7 +819,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				template_params,
 				func_decl,
 				*current_explicit_call_arg_types_,
-				0);
+				recursion_depth);
 			if (!deduction_info.has_value()) {
 				continue;
 			}

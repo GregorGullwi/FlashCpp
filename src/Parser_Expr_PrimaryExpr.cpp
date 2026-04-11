@@ -820,23 +820,14 @@ ParseResult Parser::parseMaterializedTemplateFunctionalCast(
 
 	advance(); // consume '('
 
-	ChunkedVector<ASTNode> args;
-	if (current_token_.value() != ")") {
-		while (true) {
-			auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-			if (arg_result.is_error()) {
-				return arg_result;
-			}
-			if (auto arg = arg_result.node()) {
-				args.push_back(*arg);
-			}
-
-			if (current_token_.kind().is_eof() || current_token_.value() != ",") {
-				break;
-			}
-			advance(); // consume ','
-		}
+	auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+		.handle_pack_expansion = true,
+		.collect_types = false,
+		.expand_simple_packs = true});
+	if (!args_result.success) {
+		return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 	}
+	ChunkedVector<ASTNode> args = std::move(args_result.args);
 
 	if (!consume(")"_tok)) {
 		return ParseResult::error("Expected ')' after constructor arguments", current_token_);
