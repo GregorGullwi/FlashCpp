@@ -43,11 +43,3 @@ the parser will fail to create a deferred placeholder and will hard-error
 instead of deferring.  Extending the visitor to handle more variants (at least
 `BinaryOperatorNode`, `UnaryOperatorNode`, `StaticCastNode`, and
 `ConstructorCallNode`) would close this gap.
-
-## Arrow access member function call produces incorrect results
-
-Calling a member function through a pointer (`pp->sum()` where `pp` is a
-`Point*`) produces incorrect runtime values. Simple arrow data member access
-(`pp->x`) works correctly. The issue appears to be in codegen's handling of
-the `this` pointer when a member function is called via arrow access. This is
-a pre-existing bug unrelated to the Phase 6 sema boundary changes.

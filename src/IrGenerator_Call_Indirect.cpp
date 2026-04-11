@@ -600,24 +600,26 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			const ASTNode& operand_node = unary_op.get_operand();
 			if (operand_node.is<ExpressionNode>()) {
 				const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
+				auto resolveDereferenceReceiver = [&](const IdentifierNode& ptr_ident) {
+					object_name = ptr_ident.name();
+					const std::optional<ASTNode> symbol = lookupSymbol(object_name);
+					if (!symbol.has_value()) {
+						return;
+					}
+					const DeclarationNode* ptr_decl = get_decl_from_symbol(*symbol);
+					if (!ptr_decl) {
+						return;
+					}
+					object_decl = ptr_decl;
+					TypeSpecifierNode ptr_type = ptr_decl->type_node().as<TypeSpecifierNode>();
+					if (ptr_type.pointer_levels().size() > 0) {
+						object_type = ptr_type;
+						object_type.remove_pointer_level();
+					}
+				};
 				if (std::holds_alternative<IdentifierNode>(operand_expr)) {
 					const IdentifierNode& ptr_ident = std::get<IdentifierNode>(operand_expr);
-					object_name = ptr_ident.name();
-
-					// Look up the pointer in both local and global symbol tables
-					const std::optional<ASTNode> symbol = lookupSymbol(object_name);
-					if (symbol.has_value()) {
-						const DeclarationNode* ptr_decl = get_decl_from_symbol(*symbol);
-						if (ptr_decl) {
-							object_decl = ptr_decl;
-							// Get the pointer type and remove one level of indirection
-							TypeSpecifierNode ptr_type = ptr_decl->type_node().as<TypeSpecifierNode>();
-							if (ptr_type.pointer_levels().size() > 0) {
-								object_type = ptr_type;
-								object_type.remove_pointer_level();
-							}
-						}
-					}
+					resolveDereferenceReceiver(ptr_ident);
 				}
 			}
 		}
@@ -1761,6 +1763,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// The 'this' pointer is always 64 bits (pointer size on x64), regardless of struct size
 		// This is critical for empty structs (size 0) which still need a valid address
 		IrValue this_arg_value;
+		bool this_arg_is_pointer_value = false;
+		ValueStorage this_arg_storage = ValueStorage::ContainsData;
 		bool object_is_pointer_like = object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference();
 		if (object_name.empty()) {
 			// Object is a temporary expression result (e.g., getContainer().method())
@@ -1774,6 +1778,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			if (object_is_pointer_like) {
 				// Temporary is already a pointer/reference - pass through directly
 				this_arg_value = IrValue(obj_temp);
+				this_arg_is_pointer_value = obj_result.pointer_depth.is_pointer() &&
+					obj_result.storage == ValueStorage::ContainsData;
+				if (this_arg_is_pointer_value) {
+					this_arg_storage = ValueStorage::ContainsAddress;
+				}
 			} else {
 				// Temporary is a value - take its address
 				TempVar this_addr = var_counter.next();
@@ -1790,6 +1799,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		} else if (object_is_pointer_like) {
 			// For pointer/reference objects, pass through directly
 			this_arg_value = IrValue(StringTable::getOrInternStringHandle(object_name));
+			this_arg_is_pointer_value = true;
 		} else {
 			// For object values, take the address so member functions receive a pointer to the object
 			TempVar this_addr = var_counter.next();
@@ -1803,7 +1813,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 			this_arg_value = IrValue(this_addr);
 		}
-		call_op.args.push_back(makeTypedValue(object_type.type(), SizeInBits{64}, this_arg_value));
+		TypedValue this_arg = makeTypedValue(object_type.type(), SizeInBits{64}, this_arg_value);
+		this_arg.storage = this_arg_storage;
+		if (this_arg_is_pointer_value) {
+			this_arg.pointer_depth = PointerDepth{1};
+		}
+		call_op.args.push_back(std::move(this_arg));
 
 		// Generate IR for function arguments and add to CallOp
 		size_t arg_index = 0;
