@@ -398,7 +398,9 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			// C++11: Check for initializer list after array size: new Type[n]{init...}
 			// This allows aggregate initialization of array elements
 			ChunkedVector<ASTNode, 128, 256> array_initializers;
+			bool has_array_brace_init = false;
 			if (peek() == "{"_tok) {
+				has_array_brace_init = true;
 				advance(); // consume '{'
 
 				// Parse initializer list (comma-separated expressions or nested braces)
@@ -440,7 +442,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 
 			// Pass array initializers to code generator
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, /*is_array=*/true, size_result.node(), std::move(array_initializers), std::move(all_placement_args)));
+				NewExpressionNode(*type_node, /*is_array=*/true, size_result.node(), std::move(array_initializers), std::move(all_placement_args), /*has_value_init=*/has_array_brace_init));
 			return ParseResult::success(new_expr);
 		}
 		// Check for constructor call: new Type(args)
@@ -486,13 +488,13 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			}
 
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, std::move(args), all_placement_args));
+				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, std::move(args), all_placement_args, /*has_value_init=*/true));
 			return ParseResult::success(new_expr);
 		}
 		// Simple new: new Type
 		else {
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, {}, std::move(all_placement_args)));
+				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, {}, std::move(all_placement_args), /*has_value_init=*/false));
 			return ParseResult::success(new_expr);
 		}
 	}
