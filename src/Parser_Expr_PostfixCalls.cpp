@@ -852,10 +852,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					// Build qualified template name (e.g., "std::move")
 					std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 
+					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
+
 					// Try explicit template instantiation first if template arguments were provided
 					// (e.g., ns::func<true>(args) should use try_instantiate_template_explicit)
 					if (template_args.has_value()) {
-						std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
 						if (!template_inst.has_value()) {
 							// Also try without namespace prefix
@@ -869,9 +870,6 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 
 					// Fall back to argument-type-based deduction
 					if (!decl_ptr) {
-						// Apply lvalue reference for forwarding deduction on arg_types
-						std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
-
 						// Try to instantiate the qualified template function
 						if (!arg_types.empty()) {
 							std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
