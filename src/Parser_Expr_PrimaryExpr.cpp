@@ -3069,6 +3069,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						qualified_template_name,
 						final_identifier.value(),
 						*template_args);
+				if (materialized_owner.instantiated_struct_node.has_value() &&
+					materialized_owner.instantiated_struct_node->is<StructDeclarationNode>()) {
+					registerAndNormalizeLateMaterializedTopLevelNode(
+						*materialized_owner.instantiated_struct_node);
+				}
 				if (!materialized_owner.instantiated_name.empty()) {
 					std::string_view instantiated_name = materialized_owner.instantiated_name;
 					const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
