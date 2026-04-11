@@ -802,30 +802,32 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 		// Helper: resolve mangled name from a matched function declaration
 	auto resolveMangledName = [&](const FunctionDeclarationNode* func_decl, std::string_view struct_name = "") {
-		if (!has_precomputed_mangled) {
-			if (func_decl->has_mangled_name()) {
-				function_name = func_decl->mangled_name();
-			} else if (func_decl->linkage() != Linkage::C) {
-				if (struct_name.empty()) {
-					function_name = generateMangledNameForCall(*func_decl, "", current_namespace_stack_);
-				} else {
-						// Build namespace path from the struct's NamespaceHandle
-						// so calls to member functions include the correct namespace.
-						// Always recover from NamespaceHandle (not current_namespace_stack_)
-						// to handle template instantiations from a different namespace context.
-					std::vector<std::string> ns_path;
-					if (struct_name.find("::") == std::string_view::npos) {
-						auto name_handle = StringTable::getOrInternStringHandle(struct_name);
-						auto type_it = getTypesByNameMap().find(name_handle);
-						if (type_it != getTypesByNameMap().end()) {
-							auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
-							ns_path.reserve(ns_views.size());
-							for (auto sv : ns_views)
-								ns_path.emplace_back(sv);
-						}
+		if (has_precomputed_mangled) {
+			function_name = callExprNode.mangled_name();
+			return;
+		}
+		if (func_decl->has_mangled_name()) {
+			function_name = func_decl->mangled_name();
+		} else if (func_decl->linkage() != Linkage::C) {
+			if (struct_name.empty()) {
+				function_name = generateMangledNameForCall(*func_decl, "", current_namespace_stack_);
+			} else {
+					// Build namespace path from the struct's NamespaceHandle
+					// so calls to member functions include the correct namespace.
+					// Always recover from NamespaceHandle (not current_namespace_stack_)
+					// to handle template instantiations from a different namespace context.
+				std::vector<std::string> ns_path;
+				if (struct_name.find("::") == std::string_view::npos) {
+					auto name_handle = StringTable::getOrInternStringHandle(struct_name);
+					auto type_it = getTypesByNameMap().find(name_handle);
+					if (type_it != getTypesByNameMap().end()) {
+						auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
+						ns_path.reserve(ns_views.size());
+						for (auto sv : ns_views)
+							ns_path.emplace_back(sv);
 					}
-					function_name = generateMangledNameForCall(*func_decl, struct_name, ns_path);
 				}
+				function_name = generateMangledNameForCall(*func_decl, struct_name, ns_path);
 			}
 		}
 	};
@@ -1004,9 +1006,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	auto consumeResolvedDirectCallTarget = [&](const FunctionDeclarationNode* resolved_target, std::string_view source_label) {
 		if (!resolved_target || matched_func_decl) {
-			return;
-		}
-		if (has_synthesized_template_suffix) {
 			return;
 		}
 		std::string_view parent = resolved_target->parent_struct_name();
