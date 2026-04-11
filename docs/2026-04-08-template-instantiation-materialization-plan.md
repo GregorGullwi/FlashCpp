@@ -7,22 +7,21 @@
 
 ### Do this next
 
-1. Continue the late-materialization contract audit, but keep
-   `materializePrimaryTemplateOwnerForLookup(...)` itself registration-free for
-   now. A helper-owned registration/normalize step regressed
-   `test_namespaced_pair_swap_sfinae_ret0.cpp` and
-   `test_template_static_member_initializer_nested_constexpr_member_call_ret42.cpp`,
-   so parser-owned registration still needs to stay at the concrete use sites.
-2. Recheck the remaining `src/Parser_Expr_PrimaryExpr.cpp` owner-materialization
-   exits that still rely on `materializePrimaryTemplateOwnerForLookup(...)` and
-   decide whether they need the same explicit
-   `registerAndNormalizeLateMaterializedTopLevelNode(...)` step now used by the
-   two functional-style cast paths.
-3. Keep the migration narrow: prefer the new
-   `registerAndNormalizeLateMaterializedTopLevelNode(...)` helpers for
-   single-node exits, and only use a shared trailing
-   `normalizePendingSemanticRootsIfAvailable()` when one parser path emits a
-   batch of late nodes intentionally.
+1. Keep `materializePrimaryTemplateOwnerForLookup(...)` itself
+   registration-free. The new safe parser-owned step in
+   `src/Parser_Expr_PrimaryExpr.cpp` is only the namespace-vector
+   `ns::Template<Args>{...}` brace-init branch; do not generalize that same
+   registration to the older qualified-id owner path yet.
+2. If you revisit the earlier `qual_id`-based owner-materialization exit in
+   `src/Parser_Expr_PrimaryExpr.cpp`, reproduce
+   `test_namespaced_pair_swap_sfinae_ret0.cpp` first. Registering its returned
+   `instantiated_struct_node` still regresses that test even when the helper
+   itself stays registration-free.
+3. Continue the late-materialization contract audit one parser exit at a time:
+   prefer `registerAndNormalizeLateMaterializedTopLevelNode(...)` only where a
+   single fresh node immediately feeds constructor-style lookup, and keep
+   broader `Template<T>::member` / SFINAE-sensitive owner recovery unchanged
+   until their replay contract is explicit.
 4. Once the remaining parser-owned class-template sites share a stable
    registration contract, return to the broader placeholder/deduction utilities
    only if they still encode owner materialization or pending-sema policy
@@ -30,6 +29,22 @@
 
 ### Latest completed slice
 
+  - added an explicit parser-owned
+    `registerAndNormalizeLateMaterializedTopLevelNode(...)` step to the
+    namespace-qualified brace-init path in
+    `src/Parser_Expr_PrimaryExpr.cpp` right after
+    `materializePrimaryTemplateOwnerForLookup(...)`, so the
+    `ns::Template<Args>{...}` branch normalizes freshly materialized class
+    templates before building its `ConstructorCallNode`
+  - deliberately left the older `qual_id`-based owner-materialization exit in
+    `src/Parser_Expr_PrimaryExpr.cpp` registration-free after confirming that
+    adding the same step there still regresses:
+    - `test_namespaced_pair_swap_sfinae_ret0.cpp`
+  - validation after this slice:
+    - `make main CXX=clang++`
+    - `bash ./tests/run_all_tests.sh test_namespaced_pair_swap_sfinae_ret0.cpp test_template_static_member_initializer_nested_constexpr_member_call_ret42.cpp test_method_on_temporary_ret0.cpp test_late_member_body_class_template_functional_style_ret42.cpp test_template_default_functional_cast_ret42.cpp test_namespace_template_default_member_ret42.cpp test_nested_namespace_template_default_member_ret42.cpp`
+    - `bash ./tests/run_all_tests.sh`
+    - 2027 pass, 131 expected-fail
   - switched the remaining parser-owned single-node class-template
     materialization exits that were still using bare
     `registerLateMaterializedTopLevelNode(...)` in:
