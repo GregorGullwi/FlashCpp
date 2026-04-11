@@ -453,41 +453,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 				has_array_brace_init = true;
 				advance(); // consume '{'
 
-				// Parse initializer list (comma-separated expressions or nested braces)
-				if (peek() != "}"_tok) {
-					while (true) {
-						// Check for nested braces (aggregate initializers for each element)
-						if (peek() == "{"_tok) {
-							// Parse nested brace initializer
-							ParseResult init_result = parse_brace_initializer(type_node->as<TypeSpecifierNode>());
-							if (init_result.is_error()) {
-								return init_result;
-							}
-							if (auto init_node = init_result.node()) {
-								array_initializers.push_back(*init_node);
-							}
-						} else {
-							// Parse regular expression initializer
-							ParseResult init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-							if (init_result.is_error()) {
-								return init_result;
-							}
-							if (auto init_node = init_result.node()) {
-								array_initializers.push_back(*init_node);
-							}
-						}
-
-						if (peek() == ","_tok) {
-							advance(); // consume ','
-						} else {
-							break;
-						}
-					}
+				auto inits = parse_new_initializer_args("}"_tok, "Expected '}' after array initializer list", true);
+				if (!inits.has_value()) {
+					return std::move(*initializer_parse_error);
 				}
-
-				if (!consume("}"_tok)) {
-					return ParseResult::error("Expected '}' after array initializer list", current_token_);
-				}
+				array_initializers = std::move(*inits);
 			}
 
 			// Pass array initializers to code generator
