@@ -411,7 +411,7 @@ public:
 	}
 
 	// Register an out-of-line template member function definition using QualifiedIdentifier.
-	void registerOutOfLineMember(QualifiedIdentifier qi, const OutOfLineMemberFunction& member_func) {
+	void registerOutOfLineMember(const QualifiedIdentifier& qi, const OutOfLineMemberFunction& member_func) {
 		forEachQualifiedName(qi, [&](std::string_view name) {
 			registerOutOfLineMember(name, member_func);
 		});
@@ -448,7 +448,7 @@ public:
 	}
 
 	// Register an out-of-line template static member variable definition using QualifiedIdentifier.
-	void registerOutOfLineMemberVariable(QualifiedIdentifier qi, const OutOfLineMemberVariable& member_var) {
+	void registerOutOfLineMemberVariable(const QualifiedIdentifier& qi, const OutOfLineMemberVariable& member_var) {
 		forEachQualifiedName(qi, [&](std::string_view name) {
 			registerOutOfLineMemberVariable(name, member_var);
 		});
@@ -485,7 +485,7 @@ public:
 	}
 
 	// Register an out-of-line template nested class definition using QualifiedIdentifier.
-	void registerOutOfLineNestedClass(QualifiedIdentifier qi, const OutOfLineNestedClass& nested_class) {
+	void registerOutOfLineNestedClass(const QualifiedIdentifier& qi, const OutOfLineNestedClass& nested_class) {
 		forEachQualifiedName(qi, [&](std::string_view name) {
 			registerOutOfLineNestedClass(name, nested_class);
 		});
