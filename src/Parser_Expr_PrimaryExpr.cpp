@@ -30,7 +30,27 @@ void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpec
 		type_spec.set_array_dimensions(resolved_dimensions);
 	}
 }
+}
 
+void Parser::applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpecifierNode& arg_type_node) const {
+	if (!arg_node.is<ExpressionNode>()) {
+		return;
+	}
+	const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+	if (!std::holds_alternative<IdentifierNode>(arg_expr)) {
+		return;
+	}
+	auto sym = lookup_symbol(StringTable::getOrInternStringHandle(
+		std::get<IdentifierNode>(arg_expr).name()));
+	if (!sym.has_value()) {
+		return;
+	}
+	if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
+		applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node);
+	}
+}
+
+namespace {
 std::string_view getTemplateArgTokenText(const TemplateTypeArg& arg) {
 	switch (arg.typeEnum()) {
 	case TypeCategory::Void: return "void";
@@ -3402,23 +3422,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			ChunkedVector<ASTNode> args;
 			std::vector<TypeSpecifierNode> arg_types;
-			auto applyIdentifierArgumentArrayBounds = [&](const ASTNode& arg_node, TypeSpecifierNode& arg_type_node) {
-				if (!arg_node.is<ExpressionNode>()) {
-					return;
-				}
-				const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
-				if (!std::holds_alternative<IdentifierNode>(arg_expr)) {
-					return;
-				}
-				auto sym = lookup_symbol(StringTable::getOrInternStringHandle(
-					std::get<IdentifierNode>(arg_expr).name()));
-				if (!sym.has_value()) {
-					return;
-				}
-				if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
-					applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node);
-				}
-			};
 
 			while (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
 				ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -3961,18 +3964,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						break;
 					}
 					TypeSpecifierNode arg_type_node = *arg_type;
-					if (arg.is<ExpressionNode>()) {
-						const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
-						if (std::holds_alternative<IdentifierNode>(arg_expr)) {
-							auto sym = lookup_symbol(StringTable::getOrInternStringHandle(
-								std::get<IdentifierNode>(arg_expr).name()));
-							if (sym.has_value()) {
-								if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
-									applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node);
-								}
-							}
-						}
-					}
+					applyIdentifierArgumentArrayBounds(arg, arg_type_node);
 					adjust_argument_type_for_overload_resolution(arg, arg_type_node);
 					arg_types.push_back(arg_type_node);
 				}
@@ -5914,18 +5906,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								}
 
 								TypeSpecifierNode arg_type_node = *arg_type;
-								if (args[i].is<ExpressionNode>()) {
-									const ExpressionNode& arg_expr = args[i].as<ExpressionNode>();
-									if (std::holds_alternative<IdentifierNode>(arg_expr)) {
-										auto sym = lookup_symbol(StringTable::getOrInternStringHandle(
-											std::get<IdentifierNode>(arg_expr).name()));
-										if (sym.has_value()) {
-											if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
-												applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node);
-											}
-										}
-									}
-								}
+								applyIdentifierArgumentArrayBounds(args[i], arg_type_node);
 
 								FLASH_LOG(Parser, Debug, "  get_expression_type returned: type=", (int)arg_type_node.type(), ", is_ref=", arg_type_node.is_reference(), ", is_rvalue_ref=", arg_type_node.is_rvalue_reference());
 

@@ -1681,10 +1681,10 @@ private:	 // Resume private methods
 		const InlineVector<ASTNode, 4>& template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args);
 
-		// Lookup symbol with template parameter checking
+	// Lookup symbol with template parameter checking
 	std::optional<ASTNode> lookup_symbol_with_template_check(StringHandle identifier);
 
-		// Unified symbol lookup that automatically provides template parameters when parsing templates
+	// Unified symbol lookup that automatically provides template parameters when parsing templates
 	std::optional<ASTNode> lookup_symbol(StringHandle identifier) const {
 		if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {
 			return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
@@ -1693,7 +1693,12 @@ private:	 // Resume private methods
 		}
 	}
 
-		// Overload for qualified lookups with vector of strings
+	// If an argument is a plain identifier naming an array declaration, propagate its
+	// declared array bounds into the provided type specifier so overload resolution and
+	// template deduction can observe the real extent information.
+	void applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpecifierNode& arg_type_node) const;
+
+	// Overload for qualified lookups with vector of strings
 	std::optional<ASTNode> lookup_symbol_qualified(const std::vector<StringType<>>& namespaces, std::string_view identifier) const {
 		if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {
 				// For qualified lookups, we still need template params for the base lookup
