@@ -1378,7 +1378,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 
-		auto getNonTypeTemplateParamCategory = [&](StringHandle param_name) -> TypeCategory {
+		auto getNonTypeTemplateParamCategoryOrInt = [&](StringHandle param_name) -> TypeCategory {
 			auto it = tparam_nodes_by_name.find(param_name);
 			if (it == tparam_nodes_by_name.end() || it->second->kind() != TemplateParameterKind::NonType ||
 				!it->second->has_type() || !it->second->type_node().is<TypeSpecifierNode>()) {
@@ -1427,7 +1427,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						param_it->second->kind() == TemplateParameterKind::NonType) {
 						TemplateTypeArg new_arg = TemplateTypeArg::makeValue(
 							static_cast<int64_t>(concrete_bound),
-							getNonTypeTemplateParamCategory(dependent_name));
+							getNonTypeTemplateParamCategoryOrInt(dependent_name));
 						return recordPreDeducedArg(
 							dependent_name,
 							new_arg,
@@ -1548,10 +1548,11 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							!param_name_to_arg.count(fp_name)) {
 							TypeSpecifierNode deduced_element_type = ca_type;
 							deduced_element_type.set_reference_qualifier(ReferenceQualifier::None);
-							std::vector<size_t> remaining_dims = ca_type.array_dimensions();
-							if (pattern_dim_count <= remaining_dims.size()) {
-								remaining_dims.erase(remaining_dims.begin(),
-													 remaining_dims.begin() + static_cast<ptrdiff_t>(pattern_dim_count));
+							const auto& concrete_dims = ca_type.array_dimensions();
+							if (pattern_dim_count <= concrete_dims.size()) {
+								std::vector<size_t> remaining_dims(
+									concrete_dims.begin() + pattern_dim_count,
+									concrete_dims.end());
 								deduced_element_type.set_array_dimensions(remaining_dims);
 								TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(deduced_element_type);
 								if (!recordPreDeducedArg(fp_name, new_arg, "type", new_arg.toString())) {

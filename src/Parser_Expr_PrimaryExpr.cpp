@@ -3402,6 +3402,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			ChunkedVector<ASTNode> args;
 			std::vector<TypeSpecifierNode> arg_types;
+			auto applyIdentifierArgumentArrayBounds = [&](const ASTNode& arg_node, TypeSpecifierNode& arg_type_node) {
+				if (!arg_node.is<ExpressionNode>()) {
+					return;
+				}
+				const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+				if (!std::holds_alternative<IdentifierNode>(arg_expr)) {
+					return;
+				}
+				auto sym = lookup_symbol(StringTable::getOrInternStringHandle(
+					std::get<IdentifierNode>(arg_expr).name()));
+				if (!sym.has_value()) {
+					return;
+				}
+				if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
+					applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node);
+				}
+			};
 
 			while (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
 				ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -3511,12 +3528,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									args[pre_pack_size - 1] = id_node;
 									if (!arg_types.empty()) {
 										if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
-										if (decl->type_node().is<TypeSpecifierNode>()) {
-											arg_types.back() = decl->type_node().as<TypeSpecifierNode>();
-											applyDeclarationArrayBoundsToTypeSpec(*decl, arg_types.back());
-											arg_types.back().set_reference_qualifier(ReferenceQualifier::LValueReference);
+											if (decl->type_node().is<TypeSpecifierNode>()) {
+												arg_types.back() = decl->type_node().as<TypeSpecifierNode>();
+												applyIdentifierArgumentArrayBounds(args[args.size() - 1], arg_types.back());
+												arg_types.back().set_reference_qualifier(ReferenceQualifier::LValueReference);
+											}
 										}
-									}
 									}
 									first_element = false;
 								} else {
@@ -3524,7 +3541,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
 										if (decl->type_node().is<TypeSpecifierNode>()) {
 											TypeSpecifierNode arg_type_node_pack = decl->type_node().as<TypeSpecifierNode>();
-											applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node_pack);
+											applyIdentifierArgumentArrayBounds(id_node, arg_type_node_pack);
 											arg_type_node_pack.set_reference_qualifier(ReferenceQualifier::LValueReference);
 											arg_types.push_back(arg_type_node_pack);
 										}
@@ -3944,8 +3961,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						break;
 					}
 					TypeSpecifierNode arg_type_node = *arg_type;
-					if (args_ref.size() > arg_types.size() && args_ref[arg_types.size()].is<ExpressionNode>()) {
-						const ExpressionNode& arg_expr = args_ref[arg_types.size()].as<ExpressionNode>();
+					if (arg.is<ExpressionNode>()) {
+						const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
 						if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 							auto sym = lookup_symbol(StringTable::getOrInternStringHandle(
 								std::get<IdentifierNode>(arg_expr).name()));
