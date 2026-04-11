@@ -1761,8 +1761,19 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// The 'this' pointer is always 64 bits (pointer size on x64), regardless of struct size
 		// This is critical for empty structs (size 0) which still need a valid address
 		IrValue this_arg_value;
+		const UnaryOperatorNode* dereference_receiver =
+			(object_expr && std::holds_alternative<UnaryOperatorNode>(*object_expr))
+				? &std::get<UnaryOperatorNode>(*object_expr)
+				: nullptr;
 		bool object_is_pointer_like = object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference();
-		if (object_name.empty()) {
+		if (dereference_receiver && dereference_receiver->op() == "*") {
+			const ASTNode& pointer_operand_node = dereference_receiver->get_operand();
+			if (!pointer_operand_node.is<ExpressionNode>()) {
+				throw InternalError("Dereference receiver operand must be an expression");
+			}
+			ExprResult pointer_result = visitExpressionNode(pointer_operand_node.as<ExpressionNode>());
+			this_arg_value = toIrValue(pointer_result.value);
+		} else if (object_name.empty()) {
 			// Object is a temporary expression result (e.g., getContainer().method())
 			// Evaluate the expression to get a TempVar, then take its address for the this pointer
 			ExprResult obj_result = visitExpressionNode(*object_expr);
