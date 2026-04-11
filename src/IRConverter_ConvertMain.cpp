@@ -4043,9 +4043,7 @@ bool IrToObjConverter<TWriterClass>::emitLoadAddressLikeArgument(X64Register tar
 				}
 			}
 		}
-		const bool should_load_from_frame =
-			(arg.pointer_depth.is_pointer() && !arg.is_reference()) || ref_info.has_value();
-		if (should_load_from_frame) {
+		if (ref_info.has_value()) {
 			emitMovFromFrame(target_reg, var_offset);
 			if (address_adjustment != 0) {
 				emitAddRegImm32(textSectionData, target_reg, address_adjustment);
@@ -4386,8 +4384,21 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				continue;
 			}
 
+			auto isTempPointerValuedThisArg = [&](const TypedValue& typed_arg) {
+				return call_op.is_member_function &&
+					i == 0 &&
+					typed_arg.pointer_depth.is_pointer() &&
+					!typed_arg.is_reference() &&
+					typed_arg.storage == ValueStorage::ContainsAddress;
+			};
+
 				// Handle TempVar arguments that should pass an address (e.g., constructor calls passed to rvalue reference params)
 			if (should_pass_address && std::holds_alternative<TempVar>(arg.value)) {
+				if (isTempPointerValuedThisArg(arg)) {
+					int var_offset = getStackOffsetFromTempVar(std::get<TempVar>(arg.value), POINTER_SIZE_BITS);
+					emitMovFromFrame(target_reg, var_offset);
+					continue;
+				}
 				if (!emitLoadAddressLikeArgument(target_reg, arg)) {
 					throw InternalError("Register call TempVar marked pass-by-address is not addressable");
 				}
