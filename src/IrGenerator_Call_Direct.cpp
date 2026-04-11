@@ -802,30 +802,34 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 		// Helper: resolve mangled name from a matched function declaration
 	auto resolveMangledName = [&](const FunctionDeclarationNode* func_decl, std::string_view struct_name = "") {
-		if (!has_precomputed_mangled) {
-			if (func_decl->has_mangled_name()) {
-				function_name = func_decl->mangled_name();
-			} else if (func_decl->linkage() != Linkage::C) {
-				if (struct_name.empty()) {
-					function_name = generateMangledNameForCall(*func_decl, "", current_namespace_stack_);
-				} else {
-						// Build namespace path from the struct's NamespaceHandle
-						// so calls to member functions include the correct namespace.
-						// Always recover from NamespaceHandle (not current_namespace_stack_)
-						// to handle template instantiations from a different namespace context.
-					std::vector<std::string> ns_path;
-					if (struct_name.find("::") == std::string_view::npos) {
-						auto name_handle = StringTable::getOrInternStringHandle(struct_name);
-						auto type_it = getTypesByNameMap().find(name_handle);
-						if (type_it != getTypesByNameMap().end()) {
-							auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
-							ns_path.reserve(ns_views.size());
-							for (auto sv : ns_views)
-								ns_path.emplace_back(sv);
-						}
+		// Template-instantiation call nodes can carry the exact symbol name even when
+		// the resolved declaration still points at pattern-owned metadata.
+		if (has_precomputed_mangled) {
+			function_name = callExprNode.mangled_name();
+			return;
+		}
+		if (func_decl->has_mangled_name()) {
+			function_name = func_decl->mangled_name();
+		} else if (func_decl->linkage() != Linkage::C) {
+			if (struct_name.empty()) {
+				function_name = generateMangledNameForCall(*func_decl, "", current_namespace_stack_);
+			} else {
+					// Build namespace path from the struct's NamespaceHandle
+					// so calls to member functions include the correct namespace.
+					// Always recover from NamespaceHandle (not current_namespace_stack_)
+					// to handle template instantiations from a different namespace context.
+				std::vector<std::string> ns_path;
+				if (struct_name.find("::") == std::string_view::npos) {
+					auto name_handle = StringTable::getOrInternStringHandle(struct_name);
+					auto type_it = getTypesByNameMap().find(name_handle);
+					if (type_it != getTypesByNameMap().end()) {
+						auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
+						ns_path.reserve(ns_views.size());
+						for (auto sv : ns_views)
+							ns_path.emplace_back(sv);
 					}
-					function_name = generateMangledNameForCall(*func_decl, struct_name, ns_path);
 				}
+				function_name = generateMangledNameForCall(*func_decl, struct_name, ns_path);
 			}
 		}
 	};
@@ -1006,9 +1010,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (!resolved_target || matched_func_decl) {
 			return;
 		}
-		if (has_synthesized_template_suffix) {
-			return;
-		}
 		std::string_view parent = resolved_target->parent_struct_name();
 		// Sema now owns the direct-call target even for decl-only and precomputed-mangled
 		// member-like calls; codegen should only keep legacy lookup recovery for bodies
@@ -1089,9 +1090,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		FLASH_LOG_FORMAT(Codegen, Debug, "Using {} cross-struct direct call target for: {}", source_label, func_name_view);
 	};
 
-	// Synthesized direct calls can already carry the exact callee on the call node
-	// itself even though semantic analysis never saw the temporary expression.
-	if (!matched_func_decl) {
+	// Only trust call-node-resolved synthesized callees after sema re-resolves them:
+	// template substitution can preserve a stale callee descriptor even when the
+	// mangled name is already concrete.
+	if (!matched_func_decl && !has_synthesized_template_suffix) {
 		consumeResolvedDirectCallTarget(callExprNode.callee().function_declaration_or_null(), "callee-resolved");
 	}
 
@@ -2011,20 +2013,27 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 		// Check if this is an indirect call (function pointer/reference)
 	call_op.is_indirect_call = callExprNode.callee().is_indirect();
-	if (matched_func_decl && matched_func_decl->is_member_function() && !matched_func_decl->is_static()) {
-		call_op.is_member_function = true;
-		TypeCategory this_type = TypeCategory::Struct;
-		TypeIndex this_type_index{};
-		std::string_view parent_struct = matched_func_decl->parent_struct_name();
-		if (!parent_struct.empty()) {
-			StringHandle parent_struct_handle = StringTable::getOrInternStringHandle(parent_struct);
-			auto parent_it = getTypesByNameMap().find(parent_struct_handle);
-			if (parent_it != getTypesByNameMap().end() && parent_it->second != nullptr) {
-				this_type = parent_it->second->typeEnum();
-				this_type_index = parent_it->second->type_index_;
+	if (matched_func_decl &&
+		matched_func_decl->is_member_function() &&
+		!callExprNode.callee().is_static_member() &&
+		!matched_func_decl->is_static()) {
+		// Static/template rebinding can leave member metadata conservative; only add
+		// an implicit this argument when the current lowering scope actually exposes one.
+		if (lookupDeclaration("this")) {
+			call_op.is_member_function = true;
+			TypeCategory this_type = TypeCategory::Struct;
+			TypeIndex this_type_index{};
+			std::string_view parent_struct = matched_func_decl->parent_struct_name();
+			if (!parent_struct.empty()) {
+				StringHandle parent_struct_handle = StringTable::getOrInternStringHandle(parent_struct);
+				auto parent_it = getTypesByNameMap().find(parent_struct_handle);
+				if (parent_it != getTypesByNameMap().end() && parent_it->second != nullptr) {
+					this_type = parent_it->second->typeEnum();
+					this_type_index = parent_it->second->type_index_;
+				}
 			}
+			call_op.args.push_back(makeTypedValue(this_type_index.withCategory(this_type), SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle("this"))));
 		}
-		call_op.args.push_back(makeTypedValue(this_type_index.withCategory(this_type), SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle("this"))));
 	}
 
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
