@@ -41,5 +41,5 @@ ReturnType pickIteratorValue(Iterator value) {
 }
 
 int main() {
-	return pickIteratorValue(7) == 7 ? 0 : 1;
+	return pickIteratorValue(7.5) == 7.5 ? 0 : 1;
 }

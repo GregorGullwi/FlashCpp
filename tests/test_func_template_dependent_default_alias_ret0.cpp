@@ -1,3 +1,7 @@
+struct Payload {
+	int value;
+};
+
 template<typename Type>
 struct IdentityAlias {
 	using type = Type;
@@ -9,5 +13,6 @@ ReturnType forwardValue(Type value) {
 }
 
 int main() {
-	return forwardValue(42) == 42 ? 0 : 1;
+	Payload payload{42};
+	return forwardValue(payload).value == 42 ? 0 : 1;
 }

@@ -1,8 +1,14 @@
+struct Pair {
+	int a;
+	double b;
+};
+
 template<typename Type, int Size = sizeof(Type)>
 int getSize(Type) {
 	return Size;
 }
 
 int main() {
-	return getSize(42) == static_cast<int>(sizeof(int)) ? 0 : 1;
+	Pair value{1, 2.0};
+	return getSize(value) == static_cast<int>(sizeof(Pair)) ? 0 : 1;
 }
