@@ -16,11 +16,21 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		// Create a temporary variable for the result (pointer to allocated memory)
 	TempVar result_var = var_counter.next();
 	auto emit_scalar_new_initializer = [&](TempVar pointer_var) {
-		if (type_cat == TypeCategory::Struct || newExpr.constructor_args().size() == 0) {
+		if (type_cat == TypeCategory::Struct) {
 			return;
 		}
 
 		const auto& ctor_args = newExpr.constructor_args();
+		if (ctor_args.empty()) {
+			if (!newExpr.has_value_init()) {
+				return;
+			}
+
+			TypedValue zero_init = makeTypedValue(allocated_type_enum, SizeInBits{size_in_bits}, 0ULL);
+			emitDereferenceStore(zero_init, allocated_type_enum, size_in_bits, pointer_var, Token());
+			return;
+		}
+
 		if (ctor_args.size() > 1) {
 			FLASH_LOG(Codegen, Warning, "Scalar new initializer has extra arguments; using first");
 		}
