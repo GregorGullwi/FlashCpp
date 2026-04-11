@@ -4016,7 +4016,9 @@ bool IrToObjConverter<TWriterClass>::emitLoadAddressLikeArgument(X64Register tar
 		}
 		int32_t var_offset = var_info->offset;
 		auto ref_info = getIndirectStackInfo(var_offset);
-		if ((arg.pointer_depth.is_pointer() && !arg.is_reference()) || ref_info.has_value()) {
+		const bool should_load_from_frame =
+			(arg.pointer_depth.is_pointer() && !arg.is_reference()) || ref_info.has_value();
+		if (should_load_from_frame) {
 			emitMovFromFrame(target_reg, var_offset);
 			if (address_adjustment != 0) {
 				emitAddRegImm32(textSectionData, target_reg, address_adjustment);

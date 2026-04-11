@@ -600,40 +600,26 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			const ASTNode& operand_node = unary_op.get_operand();
 			if (operand_node.is<ExpressionNode>()) {
 				const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
+				auto resolveDereferenceReceiver = [&](const IdentifierNode& ptr_ident) {
+					object_name = ptr_ident.name();
+					const std::optional<ASTNode> symbol = lookupSymbol(object_name);
+					if (!symbol.has_value()) {
+						return;
+					}
+					const DeclarationNode* ptr_decl = get_decl_from_symbol(*symbol);
+					if (!ptr_decl) {
+						return;
+					}
+					object_decl = ptr_decl;
+					TypeSpecifierNode ptr_type = ptr_decl->type_node().as<TypeSpecifierNode>();
+					if (ptr_type.pointer_levels().size() > 0) {
+						object_type = ptr_type;
+						object_type.remove_pointer_level();
+					}
+				};
 				if (std::holds_alternative<IdentifierNode>(operand_expr)) {
 					const IdentifierNode& ptr_ident = std::get<IdentifierNode>(operand_expr);
-					if (ptr_ident.name() == "this") {
-						object_name = ptr_ident.name();
-
-						// Look up the pointer in both local and global symbol tables
-						const std::optional<ASTNode> symbol = lookupSymbol(object_name);
-						if (symbol.has_value()) {
-							const DeclarationNode* ptr_decl = get_decl_from_symbol(*symbol);
-							if (ptr_decl) {
-								object_decl = ptr_decl;
-								// Get the pointer type and remove one level of indirection
-								TypeSpecifierNode ptr_type = ptr_decl->type_node().as<TypeSpecifierNode>();
-								if (ptr_type.pointer_levels().size() > 0) {
-									object_type = ptr_type;
-									object_type.remove_pointer_level();
-								}
-							}
-						}
-					} else {
-						object_name = ptr_ident.name();
-						const std::optional<ASTNode> symbol = lookupSymbol(object_name);
-						if (symbol.has_value()) {
-							const DeclarationNode* ptr_decl = get_decl_from_symbol(*symbol);
-							if (ptr_decl) {
-								object_decl = ptr_decl;
-								TypeSpecifierNode ptr_type = ptr_decl->type_node().as<TypeSpecifierNode>();
-								if (ptr_type.pointer_levels().size() > 0) {
-									object_type = ptr_type;
-									object_type.remove_pointer_level();
-								}
-							}
-						}
-					}
+					resolveDereferenceReceiver(ptr_ident);
 				}
 			}
 		}
