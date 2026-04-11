@@ -7,23 +7,56 @@
 
 ### Do this next
 
-1. Keep Phase 6 narrow: `buildDeductionMapFromCallArgs(...)` is now the explicit
-   deduction path only for non-pack signatures, while pack-bearing signatures
-   still use the older positional fallback. Do not broaden the name-based remap
-   to template-parameter packs or function-parameter packs until there is an
-   explicit pack-aware mapping contract.
+1. Keep Phase 6 narrow: the remaining gap is still pack-bearing explicit
+   deduction. `buildDeductionMapFromCallArgs(...)` now reaches the qualified
+   explicit-call sites for non-pack signatures too, but template-parameter packs
+   and function-parameter packs must stay on the older positional fallback until
+   there is an explicit pack-aware mapping contract.
 2. If you touch `try_instantiate_template_explicit(...)` again, preserve the
    current split:
    - non-pack explicit deduction: name-based pre-deduction map first, then
      defaults, then overload mismatch
    - pack-bearing explicit deduction: existing positional fallback only
 3. Before widening Phase 6, reproduce both sides of the split:
+   - `test_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp`
+   - `test_global_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp`
    - `test_explicit_template_defaulted_param_deduction_ret42.cpp`
    - `test_pack_decltype_simple_ret42.cpp`
    - `test_variadic_template_pack_before_tail_trailing_return_ret0.cpp`
    - `test_namespaced_pair_swap_sfinae_ret0.cpp`
+4. If you continue Phase 6 after that, the next worthwhile slice is designing a
+   pack-aware mapping helper rather than widening the current name-based remap
+   in place.
+5. **Known gap — early instantiation without arg_types**: In the regular
+   namespace-qualified identifier path in `src/Parser_Expr_PrimaryExpr.cpp`,
+   there is a pre-existing `try_instantiate_template_explicit(name, *template_args)`
+   call that fires **before** `(` is consumed and call arguments are parsed. This
+   call does not pass `arg_types`, so if it succeeds (e.g. all trailing params
+   have defaults), the subsequent arg_types-aware deduction added by PR #1231
+   may be short-circuited. The PR #1231 tests pass, suggesting this path does
+   not fire for function-call patterns, but it has not been verified. If you
+   work on this area, investigate whether that early site can succeed for
+   function templates and, if so, gate it on non-call contexts or defer it
+   until after argument parsing.
 
 ### Latest completed slice
+
+  - threaded explicit call-argument types through the remaining qualified
+    explicit-template call paths in:
+    - `src/Parser_Expr_PrimaryExpr.cpp`
+    - `src/Parser_Expr_PostfixCalls.cpp`
+  - kept the non-call qualified-id/template-reference paths unchanged because
+    they still do not have call-argument types available at that stage
+  - added:
+    - `tests/test_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp`
+    - `tests/test_global_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp`
+  - validation after this slice:
+    - `make main CXX=clang++`
+    - `bash ./tests/run_all_tests.sh test_explicit_template_defaulted_param_deduction_ret42.cpp test_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp test_global_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp test_pack_decltype_simple_ret42.cpp test_variadic_template_pack_before_tail_trailing_return_ret0.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
+    - `bash ./tests/run_all_tests.sh`
+    - 2045 pass, 132 expected-fail
+
+### Previous completed slice
 
   - tightened `try_instantiate_template_explicit(...)` so the shared
     `buildDeductionMapFromCallArgs(...)` helper is the only explicit-deduction
