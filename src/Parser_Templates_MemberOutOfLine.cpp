@@ -787,7 +787,11 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		// Save the body position for delayed parsing
 		func_ref.set_template_body_position(body_start);
 
-		gTemplateRegistry.registerSpecialization(qualified_name, function_template_args, func_node);
+		gTemplateRegistry.registerSpecialization(
+			QualifiedIdentifier{
+				gSymbolTable.get_current_namespace_handle(),
+				StringTable::getOrInternStringHandle(qualified_name)},
+			function_template_args, func_node);
 
 		FLASH_LOG(Templates, Debug, "Registered template member function specialization: ",
 				  qualified_name, " with ", function_template_args.size(), " template args");
