@@ -737,11 +737,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		normalized_template_name = template_name.substr(last_colon + 2);
 	}
 	StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
-	auto cache_key = FlashCpp::makeInstantiationKey(template_name_handle, template_args);
-	auto cached = gTemplateRegistry.getInstantiation(cache_key);
-	if (cached.has_value()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} args", template_name, template_args.size());
-		return std::nullopt; // Already instantiated - return nullopt to indicate success
+	FlashCpp::TemplateInstantiationKey cache_key =
+		FlashCpp::makeInstantiationKey(template_name_handle, template_args);
+	bool can_use_raw_cache_key = true;
+	if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+		template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+		const auto& raw_params = template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+		if (template_args.size() < raw_params.size()) {
+			can_use_raw_cache_key = false;
+		}
+	}
+	if (can_use_raw_cache_key) {
+		auto cached = gTemplateRegistry.getInstantiation(cache_key);
+		if (cached.has_value()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} args", template_name, template_args.size());
+			return std::nullopt; // Already instantiated - return nullopt to indicate success
+		}
 	}
 
 	// Build InstantiationKey for cycle detection
@@ -1684,12 +1695,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Regenerate instantiated name with filled-in defaults
 	// This is needed when defaults are dependent types that get resolved (e.g., typename wrapper<T>::type -> int)
 	if (filled_args_for_pattern_match.size() > template_args.size()) {
+		StringHandle original_instantiated_name = instantiated_name;
 		instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, filled_args_for_pattern_match));
 		FLASH_LOG(Templates, Debug, "Regenerated instantiated name with defaults: ", StringTable::getStringView(instantiated_name));
 
 		// Check again if we already have this instantiation (with filled-in defaults)
 		auto existing_type_with_defaults = getTypesByNameMap().find(instantiated_name);
 		if (existing_type_with_defaults != getTypesByNameMap().end()) {
+			if (original_instantiated_name != instantiated_name) {
+				getTypesByNameMap()[original_instantiated_name] = existing_type_with_defaults->second;
+			}
 			FLASH_LOG(Templates, Debug, "Found existing instantiation with filled-in defaults");
 			return std::nullopt;
 		}
@@ -3797,6 +3812,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Use the filled template args for the rest of the function
 	const std::vector<TemplateTypeArg>& template_args_to_use = filled_template_args;
+	auto normalized_cache_key = FlashCpp::makeInstantiationKey(template_name_handle, template_args_to_use);
+	cache_key = normalized_cache_key;
+	if (!can_use_raw_cache_key) {
+		if (auto normalized_cached = gTemplateRegistry.getInstantiation(normalized_cache_key); normalized_cached.has_value()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} normalized args", template_name, template_args_to_use.size());
+			return std::nullopt;
+		}
+	}
 
 	// Build substitution maps for dependent template entities (used by deferred bases and decltype bases)
 	std::unordered_map<std::string_view, TemplateTypeArg> name_substitution_map;

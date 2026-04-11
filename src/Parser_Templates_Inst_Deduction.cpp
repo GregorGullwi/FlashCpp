@@ -2272,6 +2272,15 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			concrete_instantiation_args =
 				materializePlaceholderTemplateArgs(*type_info, template_params, template_args);
 		}
+		if (concrete_instantiation_args.empty()) {
+			auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_part));
+			if (base_type_it != getTypesByNameMap().end() &&
+				base_type_it->second != nullptr &&
+				base_type_it->second->isTemplateInstantiation()) {
+				concrete_instantiation_args =
+					materializePlaceholderTemplateArgs(*base_type_it->second, template_params, template_args);
+			}
+		}
 		if (type_it == getTypesByNameMap().end() && type_info->isTemplateInstantiation()) {
 			std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
 			if (!base_template_name.empty()) {

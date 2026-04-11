@@ -997,7 +997,7 @@ private:
 		};
 
 		for (auto& concrete_arg : concrete_args) {
-			if (!concrete_arg.is_value || !concrete_arg.dependent_name.isValid()) {
+			if (!concrete_arg.dependent_name.isValid()) {
 				continue;
 			}
 
@@ -1023,6 +1023,7 @@ private:
 			ExpressionNode& member_expr =
 				gChunkedAnyStorage.emplace_back<ExpressionNode>(member_qual_id);
 			if (auto value = try_evaluate_constant_expression(ASTNode(&member_expr))) {
+				concrete_arg.is_value = true;
 				concrete_arg.is_dependent = false;
 				concrete_arg.dependent_name = {};
 				concrete_arg.type_index = nativeTypeIndex(value->type);
@@ -1058,6 +1059,7 @@ private:
 							}
 							if (auto value =
 									try_evaluate_constant_expression(*static_member_decl.initializer)) {
+								concrete_arg.is_value = true;
 								concrete_arg.is_dependent = false;
 								concrete_arg.dependent_name = {};
 								concrete_arg.type_index = nativeTypeIndex(value->type);
@@ -1083,6 +1085,7 @@ private:
 				continue;
 			}
 			if (auto value = try_evaluate_constant_expression(*static_member->initializer)) {
+				concrete_arg.is_value = true;
 				concrete_arg.is_dependent = false;
 				concrete_arg.dependent_name = {};
 				concrete_arg.type_index = nativeTypeIndex(value->type);
