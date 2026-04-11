@@ -3814,9 +3814,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	const std::vector<TemplateTypeArg>& template_args_to_use = filled_template_args;
 	auto normalized_cache_key = FlashCpp::makeInstantiationKey(template_name_handle, template_args_to_use);
 	cache_key = normalized_cache_key;
-	if (auto normalized_cached = gTemplateRegistry.getInstantiation(normalized_cache_key); normalized_cached.has_value()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} normalized args", template_name, template_args_to_use.size());
-		return std::nullopt;
+	if (!can_use_raw_cache_key) {
+		if (auto normalized_cached = gTemplateRegistry.getInstantiation(normalized_cache_key); normalized_cached.has_value()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} normalized args", template_name, template_args_to_use.size());
+			return std::nullopt;
+		}
 	}
 
 	// Build substitution maps for dependent template entities (used by deferred bases and decltype bases)
