@@ -3178,7 +3178,11 @@ EvalResult Evaluator::evaluate_lambda_call(
 	bool captures_this_by_reference = false;
 	bool captures_copy_this = false;
 	std::vector<std::string_view> by_reference_capture_names;
-	std::vector<std::pair<std::string_view, std::string_view>> by_reference_init_capture_aliases;
+	struct ByReferenceInitCaptureAlias {
+		std::string_view capture_name;
+		const ASTNode* alias_expr = nullptr;
+	};
+	std::vector<ByReferenceInitCaptureAlias> by_reference_init_capture_aliases;
 	std::vector<std::string_view> by_value_capture_names;
 	for (const auto& capture : captures) {
 		if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
@@ -3198,10 +3202,8 @@ EvalResult Evaluator::evaluate_lambda_call(
 				by_reference_capture_names.push_back(capture.identifier_name());
 				continue;
 			}
-			std::string_view aliased_name = getIdentifierNameFromAstNode(capture.initializer().value());
-			if (!aliased_name.empty()) {
-				by_reference_init_capture_aliases.emplace_back(capture.identifier_name(), aliased_name);
-			}
+			by_reference_init_capture_aliases.push_back(
+				ByReferenceInitCaptureAlias{capture.identifier_name(), &capture.initializer().value()});
 		}
 	}
 
@@ -3261,10 +3263,20 @@ EvalResult Evaluator::evaluate_lambda_call(
 				(*mutable_outer_bindings)[capture_name] = binding_it->second;
 			}
 		}
-		for (const auto& [capture_name, aliased_name] : by_reference_init_capture_aliases) {
-			auto binding_it = bindings.find(capture_name);
+		for (const auto& alias : by_reference_init_capture_aliases) {
+			if (alias.alias_expr == nullptr) {
+				continue;
+			}
+			auto binding_it = bindings.find(alias.capture_name);
 			if (binding_it != bindings.end()) {
-				(*mutable_outer_bindings)[aliased_name] = binding_it->second;
+				EvalResult writeback_result = write_value_to_bound_lvalue(
+					*alias.alias_expr,
+					binding_it->second,
+					*mutable_outer_bindings,
+					context);
+				if (!writeback_result.success()) {
+					return writeback_result;
+				}
 			}
 		}
 	}
