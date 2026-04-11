@@ -1392,8 +1392,9 @@ ParseResult Parser::parse_type_specifier() {
 					// The variable template instantiation should happen in expression context, not type context
 				}
 
+				const bool is_class_template = !var_template_check.has_value();
 				std::optional<ASTNode> instantiated_class;
-				if (!var_template_check.has_value()) {
+				if (is_class_template) {
 					// Only try class template instantiation if this is NOT a variable template
 					instantiated_class = try_instantiate_class_template(type_name, *template_args);
 				}
@@ -1473,7 +1474,7 @@ ParseResult Parser::parse_type_specifier() {
 				// If filling defaults changed the template-id, instantiate that completed spelling too
 				// so nested aliases like enable_if<true>::type can be looked up via the normalized
 				// specialization (enable_if<true, void>).
-				if (!var_template_check.has_value() && filled_template_args.size() != template_args->size()) {
+				if (is_class_template && filled_template_args.size() != template_args->size()) {
 					auto normalized_instantiated_class = try_instantiate_class_template(type_name, filled_template_args);
 					if (normalized_instantiated_class.has_value() && normalized_instantiated_class->is<StructDeclarationNode>()) {
 						registerLateMaterializedTopLevelNode(*normalized_instantiated_class);
@@ -1815,18 +1816,32 @@ ParseResult Parser::parse_type_specifier() {
 						return tryResolveQualifiedType(buildQualifiedTypeName(parent_name));
 					};
 
-					std::string_view raw_instantiated_name = get_instantiated_class_name(type_name, *template_args);
+					std::string_view original_instantiated_name = get_instantiated_class_name(type_name, *template_args);
 					std::string_view normalized_instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
-					if (auto resolved_type = tryResolveQualifiedTypeFromParent(instantiated_name); resolved_type.has_value()) {
-						return ParseResult::success(*resolved_type);
-					}
-					if (normalized_instantiated_name != instantiated_name) {
-						if (auto resolved_type = tryResolveQualifiedTypeFromParent(normalized_instantiated_name); resolved_type.has_value()) {
-							return ParseResult::success(*resolved_type);
+					std::array<std::string_view, 3> candidate_parent_names = {
+						instantiated_name,
+						normalized_instantiated_name,
+						original_instantiated_name
+					};
+					std::array<std::string_view, 3> checked_parent_names{};
+					size_t checked_parent_count = 0;
+					for (std::string_view candidate_parent_name : candidate_parent_names) {
+						if (candidate_parent_name.empty()) {
+							continue;
 						}
-					}
-					if (raw_instantiated_name != instantiated_name) {
-						if (auto resolved_type = tryResolveQualifiedTypeFromParent(raw_instantiated_name); resolved_type.has_value()) {
+						bool already_checked = false;
+						for (size_t checked_index = 0; checked_index < checked_parent_count; ++checked_index) {
+							std::string_view previous_parent_name = checked_parent_names[checked_index];
+							if (previous_parent_name == candidate_parent_name) {
+								already_checked = true;
+								break;
+							}
+						}
+						if (already_checked) {
+							continue;
+						}
+						checked_parent_names[checked_parent_count++] = candidate_parent_name;
+						if (auto resolved_type = tryResolveQualifiedTypeFromParent(candidate_parent_name); resolved_type.has_value()) {
 							return ParseResult::success(*resolved_type);
 						}
 					}
