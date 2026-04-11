@@ -4481,7 +4481,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								}
 								if (any_dependent) {
 									pending_explicit_template_args_.reset();
-									// Skip ::member part(s)
+									// Skip ::member<T>(args) segments — template args and call
+									// parens must be consumed inside the loop so multi-level
+									// expressions like A<T>::B<U>::C(args) are fully skipped.
 									while (peek() == "::"_tok) {
 										advance(); // consume ::
 										if (peek() == "template"_tok) {
@@ -4490,14 +4492,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										if (peek().is_identifier()) {
 											advance(); // consume member name
 										}
-									}
-									// Skip template arguments on member if present (e.g., ::member<T>)
-									if (peek() == "<"_tok) {
-										skip_template_arguments();
-									}
-									// Skip function call arguments if present (e.g., ::member(a, b))
-									if (peek() == "("_tok) {
-										skip_balanced_parens();
+										// Skip template arguments on member if present (e.g., ::member<T>)
+										if (peek() == "<"_tok) {
+											skip_template_arguments();
+										}
+										// Skip function call arguments if present (e.g., ::member(a, b))
+										if (peek() == "("_tok) {
+											skip_balanced_parens();
+										}
 									}
 									FLASH_LOG_FORMAT(Parser, Debug,
 										"Deferred dependent qualified call: {}< dependent args >::...",
@@ -5318,7 +5320,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 						}
 						if (any_dependent) {
-							// Skip ::member part(s)
+							// Skip ::member<T>(args) segments — template args and call
+							// parens must be consumed inside the loop so multi-level
+							// expressions like A<T>::B<U>::C(args) are fully skipped.
 							while (peek() == "::"_tok) {
 								advance(); // consume ::
 								if (peek() == "template"_tok) {
@@ -5327,14 +5331,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								if (peek().is_identifier()) {
 									advance(); // consume member name
 								}
-							}
-							// Skip template arguments on member if present
-							if (peek() == "<"_tok) {
-								skip_template_arguments();
-							}
-							// Skip function call arguments if present
-							if (peek() == "("_tok) {
-								skip_balanced_parens();
+								// Skip template arguments on member if present
+								if (peek() == "<"_tok) {
+									skip_template_arguments();
+								}
+								// Skip function call arguments if present
+								if (peek() == "("_tok) {
+									skip_balanced_parens();
+								}
 							}
 							FLASH_LOG_FORMAT(Parser, Debug,
 								"Deferred dependent qualified call: {}< dependent args >::...",
