@@ -826,7 +826,7 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 				if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
 					return EvalResult::error("Array access out of bounds in constant expression (heap)");
 				}
-				return heap_val.array_elements[static_cast<size_t>(offset)];
+				return validateConstexprRead(heap_val.array_elements[static_cast<size_t>(offset)]);
 			}
 			if (offset != 0) {
 				return EvalResult::error("Non-zero offset on non-array heap object in constant expression");
@@ -953,7 +953,7 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 												 " out of bounds (array size " + std::to_string(arr_result.array_elements.size()) + ")",
 											 EvalErrorType::NotConstantExpression);
 				}
-				return arr_result.array_elements[static_cast<size_t>(offset)];
+				return validateConstexprRead(arr_result.array_elements[static_cast<size_t>(offset)]);
 			}
 			if (!arr_result.array_values.empty()) {
 				if (static_cast<size_t>(offset) >= arr_result.array_values.size()) {
@@ -1008,7 +1008,7 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 				if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
 					return EvalResult::error("Array access out of bounds in constant expression (heap)");
 				}
-				return heap_val.array_elements[static_cast<size_t>(offset)];
+				return validateConstexprRead(heap_val.array_elements[static_cast<size_t>(offset)]);
 			}
 			if (offset != 0) {
 				return EvalResult::error("Non-zero offset on non-array heap object in constant expression");
@@ -1028,7 +1028,7 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 			if (!bound.array_elements.empty()) {
 				if (idx >= bound.array_elements.size())
 					return EvalResult::error("Array index out of bounds in constant expression");
-				return bound.array_elements[idx];
+				return validateConstexprRead(bound.array_elements[idx]);
 			}
 			if (!bound.array_values.empty()) {
 				if (idx >= bound.array_values.size())
@@ -2082,7 +2082,7 @@ EvalResult Evaluator::evaluate_new_expression(
 	};
 
 	if (new_expr.is_array()) {
-		// new T[n]: allocate an array of n default-initialized elements
+		// new T[n]: allocate an array of elements according to the selected initialization form
 		if (!new_expr.size_expr().has_value()) {
 			return EvalResult::error("new[]: missing array size expression");
 		}
@@ -2098,9 +2098,14 @@ EvalResult Evaluator::evaluate_new_expression(
 		}
 		EvalResult array_result = EvalResult::from_int(0LL);
 		array_result.is_array = true;
-		for (int64_t i = 0; i < n; ++i) {
-			array_result.array_elements.push_back(make_default_init(type_spec));
+		EvalResult element_init;
+		if (new_expr.has_value_init()) {
+			element_init = make_default_init(type_spec);
+		} else {
+			element_init = EvalResult::indeterminate();
+			element_init.set_exact_type(type_spec);
 		}
+		array_result.array_elements.assign(static_cast<size_t>(n), element_init);
 		StringHandle heap_key = context.alloc_heap_slot();
 		context.constexpr_heap[heap_key] = {std::move(array_result), false, true};
 		return EvalResult::from_pointer(heap_key);
