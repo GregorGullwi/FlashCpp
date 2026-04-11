@@ -599,7 +599,9 @@ public:
 		const ChunkedVector<ASTNode>& args,
 		EvaluationContext& context,
 		bool skip_implicit_constructors,
-		const std::unordered_map<std::string_view, EvalResult>* outer_bindings);
+		const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
+		const ConstructorDeclarationNode* resolved_ctor,
+		bool ignore_default_initializer_errors);
 	static EvalResult evaluate_member_array_subscript(
 		const MemberAccessNode& member_access,
 		size_t index,
