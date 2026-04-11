@@ -10,19 +10,18 @@
 1. Keep `materializePrimaryTemplateOwnerForLookup(...)` itself
    registration-free. The new
    `materializePrimaryTemplateOwnerForConstructorLookup(...)` wrapper in
-   `src/Parser_Expr_PrimaryExpr.cpp` is intentionally limited to the three
-   already-proven constructor-style exits that immediately build constructor
-   lookup/temporary expressions.
-2. Do **not** generalize that constructor-style wrapper to the older
-   `qual_id`-based path yet. A would-be regression like
-   `ns::box<char>().value` still routes through the older qualified-id call
-   path instead of the new constructor-style exits, and the safe fix there is
-   still unresolved.
-3. If you revisit the older qualified-id owner recovery, reproduce both
-   `test_namespaced_pair_swap_sfinae_ret0.cpp` and a focused namespaced
-   functional-style cast case first. The former still guards against
-   over-eager owner registration, while the latter exposes the remaining
-   `ns::Template<Args>()` hole.
+   `src/Parser_Expr_PrimaryExpr.cpp` stays constructor-style only. The older
+   qualified-id functional-cast fix now reuses it locally, but only for
+   non-dependent `ns::Template<Args>()` temporaries.
+2. If you extend the older qualified-id path further, keep the new branch local
+   to constructor-style parsing and continue skipping dependent template-arg
+   cases until there is an explicit placeholder/deferred contract for
+   `ns::Template<T>()`.
+3. Reproduce the qualified-id constructor cluster before touching that code:
+   - `test_namespace_template_default_functional_cast_ret42.cpp`
+   - `test_namespace_alias_template_default_functional_cast_ret42.cpp`
+   - `test_nested_namespace_template_default_functional_cast_ret42.cpp`
+   - `test_namespaced_pair_swap_sfinae_ret0.cpp`
 4. Continue Phase 6 from the new stable baseline: keep the name-based
    `buildDeductionMapFromCallArgs(...)` path for explicit deduction only when
    there is no template-parameter pack and no function-parameter pack. Any
@@ -30,6 +29,35 @@
    mapping contract first.
 
 ### Latest completed slice
+
+  - extracted the duplicated template functional-style cast parsing/building
+    into `Parser::parseMaterializedTemplateFunctionalCast(...)` in:
+    - `src/Parser.h`
+    - `src/Parser_Expr_PrimaryExpr.cpp`
+  - fixed the older qualified-id branch in
+    `src/Parser_Expr_PrimaryExpr.cpp` so non-dependent
+    `ns::Template<Args>()` expressions no longer fall through into the generic
+    qualified-id call path; when class/alias owner materialization succeeds,
+    the parser now builds a constructor-style temporary directly
+  - deliberately kept that older qualified-id fix local and narrow:
+    - still uses `materializePrimaryTemplateOwnerForConstructorLookup(...)`
+      only from the constructor-style branch
+    - still skips dependent explicit template arguments
+    - still leaves `materializePrimaryTemplateOwnerForLookup(...)`
+      registration-free
+  - added:
+    - `tests/test_namespace_template_default_functional_cast_ret42.cpp`
+    - `tests/test_namespace_alias_template_default_functional_cast_ret42.cpp`
+    - `tests/test_nested_namespace_template_default_functional_cast_ret42.cpp`
+  - validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_default_functional_cast_ret42.cpp test_late_member_body_class_template_functional_style_ret42.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_namespace_template_default_functional_cast_ret42.cpp test_template_default_functional_cast_ret42.cpp test_namespace_template_default_member_ret42.cpp test_nested_namespace_template_default_member_ret42.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_namespace_template_default_functional_cast_ret42.cpp test_namespace_alias_template_default_functional_cast_ret42.cpp test_nested_namespace_template_default_functional_cast_ret42.cpp test_template_default_functional_cast_ret42.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+    - 2061 pass, 131 expected-fail
+
+### Older completed slices
 
   - extracted shared explicit/implicit pre-deduction into
     `Parser::buildDeductionMapFromCallArgs(...)` in:
@@ -61,8 +89,6 @@
     - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_default_functional_cast_ret42.cpp test_namespace_template_default_member_ret42.cpp test_nested_namespace_template_default_member_ret42.cpp test_late_member_body_class_template_functional_style_ret42.cpp test_method_on_temporary_ret0.cpp test_namespaced_pair_swap_sfinae_ret0.cpp test_explicit_template_defaulted_param_deduction_ret42.cpp`
     - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
     - 2058 pass, 131 expected-fail
-
-### Older completed slices
 
   - added an explicit parser-owned
     `registerAndNormalizeLateMaterializedTopLevelNode(...)` step to the
