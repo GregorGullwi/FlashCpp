@@ -2484,6 +2484,32 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 			}
 
+		// Check if this is a qualified class-template functional-style cast: ns::Template<Args>()
+			if (template_args.has_value() && current_token_.value() == "(") {
+				bool has_dependent_template_args = false;
+				for (const auto& template_arg : *template_args) {
+					if (template_arg.is_dependent || template_arg.dependent_name.isValid()) {
+						has_dependent_template_args = true;
+						break;
+					}
+				}
+				if (!has_dependent_template_args) {
+					std::string_view qualified_name = buildQualifiedNameFromHandle(
+						qual_id.namespace_handle(),
+						qual_id.name());
+					AliasTemplateMaterializationResult materialized_owner =
+						materializePrimaryTemplateOwnerForConstructorLookup(
+							qualified_name,
+							qual_id.name(),
+							*template_args);
+					if (!materialized_owner.instantiated_name.empty()) {
+						return parseMaterializedTemplateFunctionalCast(
+							materialized_owner,
+							final_identifier);
+					}
+				}
+			}
+
 		// Check if followed by '(' for function call
 			if (current_token_.value() == "(") {
 				advance(); // consume '('
