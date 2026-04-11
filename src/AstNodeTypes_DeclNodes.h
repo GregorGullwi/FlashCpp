@@ -219,7 +219,7 @@ struct StructTypeInfo {
 		} else if (!bitfield_width.has_value()) {
 			size_t data_extent = offset + layout_member_size;
 			size_t object_extent = data_extent;
-			if (is_no_unique_address && member_struct_info) {
+			if (is_no_unique_address && member_struct_info && !is_empty_layout_member) {
 				object_extent = std::max(object_extent, offset + member_size);
 			}
 			if (is_no_unique_address && is_empty_layout_member) {

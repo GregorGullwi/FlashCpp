@@ -1,5 +1,3 @@
-#include <cstddef>
-
 struct Padded {
 	short value;
 	char tag;
@@ -24,7 +22,7 @@ int main() {
 	}
 
 	if (holder.padded.value != 7 || holder.padded.tag != 9 || holder.tail != 11) {
-		return 1;
+		return 2;
 	}
 
 	return 0;
