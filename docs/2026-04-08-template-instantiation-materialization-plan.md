@@ -27,6 +27,17 @@
 4. If you continue Phase 6 after that, the next worthwhile slice is designing a
    pack-aware mapping helper rather than widening the current name-based remap
    in place.
+5. **Known gap — early instantiation without arg_types**: In the regular
+   namespace-qualified identifier path in `src/Parser_Expr_PrimaryExpr.cpp`,
+   there is a pre-existing `try_instantiate_template_explicit(name, *template_args)`
+   call that fires **before** `(` is consumed and call arguments are parsed. This
+   call does not pass `arg_types`, so if it succeeds (e.g. all trailing params
+   have defaults), the subsequent arg_types-aware deduction added by PR #1231
+   may be short-circuited. The PR #1231 tests pass, suggesting this path does
+   not fire for function-call patterns, but it has not been verified. If you
+   work on this area, investigate whether that early site can succeed for
+   function templates and, if so, gate it on non-call contexts or defer it
+   until after argument parsing.
 
 ### Latest completed slice
 
