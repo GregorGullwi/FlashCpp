@@ -5472,8 +5472,8 @@ EvalResult Evaluator::materialize_constructor_object_value(
 		context,
 		false,
 		outer_bindings,
-		nullptr,
-		false);
+		ctor_call.resolved_constructor(),
+		true);
 	if (ctor_result.has_value()) {
 		if (!ctor_result->success()) {
 			return *ctor_result;
