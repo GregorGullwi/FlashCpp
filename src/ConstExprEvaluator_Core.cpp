@@ -274,7 +274,7 @@ void apply_uint_init_narrowing(EvalResult& result) {
 		return;
 	}
 
-	const TypeSpecifierNode& type_spec = *result.exact_type;
+	const TypeSpecifierNode type_spec = *result.exact_type;
 	if (!isUnsignedIntegralType(type_spec.category())) {
 		return;
 	}
