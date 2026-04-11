@@ -186,6 +186,14 @@ struct StructTypeInfo {
 				// [[no_unique_address]] empty members remain zero-size even when their
 				// offset was bumped to keep same-type subobjects at distinct addresses.
 				layout_member_size = 0;
+			} else if (is_no_unique_address && member_struct_info) {
+				size_t member_layout_size = toSizeT(member_struct_info->layout_data_size);
+				if (member_layout_size > 0 && member_layout_size < member_size) {
+					// C++20 [[no_unique_address]] permits overlapping the member's tail padding
+					// with later members, so advance the placement cursor by the member's
+					// dsize-like layout extent instead of its full object size.
+					layout_member_size = member_layout_size;
+				}
 			}
 		}
 
@@ -211,6 +219,9 @@ struct StructTypeInfo {
 		} else if (!bitfield_width.has_value()) {
 			size_t data_extent = offset + layout_member_size;
 			size_t object_extent = data_extent;
+			if (is_no_unique_address && member_struct_info) {
+				object_extent = std::max(object_extent, offset + member_size);
+			}
 			if (is_no_unique_address && is_empty_layout_member) {
 				// Zero-size [[no_unique_address]] members do not advance the placement cursor,
 				// but the complete object still needs to cover any distinct address we assigned,
