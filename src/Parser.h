@@ -855,6 +855,10 @@ private:
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
 		std::unordered_set<size_t> pre_deduced_arg_indices;
 	};
+	bool tryAppendDefaultTemplateArg(
+		const TemplateParameterNode& param,
+		const std::vector<ASTNode>& template_params,
+		InlineVector<TemplateTypeArg, 4>& template_args);
 	std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const std::vector<ASTNode>& template_params,
 		const FunctionDeclarationNode& func_decl,

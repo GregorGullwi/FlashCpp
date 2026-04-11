@@ -83,6 +83,165 @@ static void mergeAliasAndUseSiteTypeSpec(
 	}
 }
 
+bool Parser::tryAppendDefaultTemplateArg(
+	const TemplateParameterNode& param,
+	const std::vector<ASTNode>& template_params,
+	InlineVector<TemplateTypeArg, 4>& template_args) {
+	FLASH_LOG_FORMAT(Templates, Debug,
+					 "tryAppendDefaultTemplateArg: param='{}', has_default={}, has_default_pos={}",
+					 param.name(), param.has_default(), param.has_default_value_position());
+	if (!param.has_default()) {
+		return false;
+	}
+
+	const ASTNode& default_node = param.default_value();
+	auto buildTemplateSubstitutionMaps = [&]() {
+		std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
+		std::unordered_map<std::string_view, int64_t> nontype_sub_map;
+		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) {
+				continue;
+			}
+			const auto& template_param = template_params[i].as<TemplateParameterNode>();
+			if (template_param.kind() == TemplateParameterKind::Type && !template_args[i].is_value) {
+				auto type_it = getTypesByNameMap().find(template_param.nameHandle());
+				if (type_it != getTypesByNameMap().end()) {
+					type_sub_map[type_it->second->type_index_] = template_args[i];
+				} else {
+					type_sub_map[TypeIndex{getTypeInfoCount() + type_sub_map.size() + 1}] = template_args[i];
+				}
+			} else if (template_param.kind() == TemplateParameterKind::NonType && template_args[i].is_value) {
+				nontype_sub_map[template_param.name()] = template_args[i].value;
+			}
+		}
+		return std::pair(std::move(type_sub_map), std::move(nontype_sub_map));
+	};
+
+	if (param.kind() == TemplateParameterKind::Type) {
+		if (param.has_default_value_position() && !template_args.empty()) {
+			bool prev_sfinae_context = in_sfinae_context_;
+			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
+			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
+			in_sfinae_context_ = true;
+			ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
+			parsing_template_depth_ = 0;
+			current_template_param_names_.clear();
+			sfinae_type_map_.clear();
+
+			SaveHandle sfinae_pos = save_token_position();
+			restore_lexer_position_only(param.default_value_position());
+
+			FlashCpp::TemplateParameterScope sfinae_scope;
+			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
+
+			auto reparse_result = parse_type_specifier();
+			restore_lexer_position_only(sfinae_pos);
+
+			if (reparse_result.is_error() || !reparse_result.node().has_value() ||
+				!reparse_result.node()->is<TypeSpecifierNode>()) {
+				FLASH_LOG_FORMAT(Templates, Debug,
+								 "SFINAE: default template arg re-parse failed for param '{}', rejecting overload",
+								 param.name());
+				return false;
+			}
+			const TypeSpecifierNode& reparsed_type = reparse_result.node()->as<TypeSpecifierNode>();
+			TemplateTypeArg default_arg(reparsed_type);
+			if (is_builtin_type(default_arg.typeEnum())) {
+				default_arg.type_index = nativeTypeIndex(default_arg.typeEnum());
+			}
+			template_args.push_back(default_arg);
+			return true;
+		}
+
+		if (!default_node.is<TypeSpecifierNode>()) {
+			return false;
+		}
+
+		const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
+		TemplateTypeArg default_arg(default_type);
+		if (is_builtin_type(default_arg.typeEnum())) {
+			default_arg.type_index = nativeTypeIndex(default_arg.typeEnum());
+		}
+		template_args.push_back(default_arg);
+		return true;
+	}
+
+	if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
+		{
+			auto [type_sub_map, nontype_sub_map] = buildTemplateSubstitutionMaps();
+			ASTNode substituted_default =
+				substitute_template_params_in_expression(default_node, type_sub_map, nontype_sub_map);
+			auto default_value = try_evaluate_constant_expression(substituted_default);
+			if (default_value.has_value()) {
+				template_args.push_back(TemplateTypeArg::makeValue(
+					default_value->value,
+					default_value->type));
+				return true;
+			}
+		}
+
+		if (param.has_default_value_position() && !template_args.empty()) {
+			bool prev_sfinae_context = in_sfinae_context_;
+			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
+			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
+			in_sfinae_context_ = true;
+			ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
+			parsing_template_depth_ = 0;
+			current_template_param_names_.clear();
+			sfinae_type_map_.clear();
+
+			SaveHandle sfinae_pos = save_token_position();
+			restore_lexer_position_only(param.default_value_position());
+
+			FlashCpp::TemplateParameterScope sfinae_scope;
+			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
+
+			auto reparse_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::TemplateTypeArg);
+			restore_lexer_position_only(sfinae_pos);
+
+			if (reparse_result.is_error() || !reparse_result.node().has_value() ||
+				!reparse_result.node()->is<ExpressionNode>()) {
+				FLASH_LOG_FORMAT(Templates, Debug,
+								 "SFINAE: non-type default template arg re-parse failed for param '{}', rejecting overload",
+								 param.name());
+				return false;
+			}
+
+			auto default_value = try_evaluate_constant_expression(*reparse_result.node());
+			if (!default_value.has_value()) {
+				return false;
+			}
+			template_args.push_back(TemplateTypeArg::makeValue(
+				default_value->value,
+				default_value->type));
+			return true;
+		}
+
+		auto default_value = try_evaluate_constant_expression(default_node);
+		if (!default_value.has_value()) {
+			return false;
+		}
+		template_args.push_back(TemplateTypeArg::makeValue(
+			default_value->value,
+			default_value->type));
+		return true;
+	}
+
+	if (param.kind() == TemplateParameterKind::Template && default_node.is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
+		StringHandle tpl_name_handle = StringTable::getOrInternStringHandle(default_type.token().value());
+		if (const TypeInfo* type_info = tryGetTypeInfo(default_type.type_index())) {
+			tpl_name_handle = type_info->name();
+		}
+		template_args.push_back(TemplateTypeArg::makeTemplate(tpl_name_handle));
+		return true;
+	}
+
+	return false;
+}
+
 template <typename ParamContainer, typename ArgContainer>
 static void applyTemplateArgIndirection(
 	TypeSpecifierNode& substituted_type,
@@ -833,81 +992,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		}
 		bool overload_mismatch = false;
-		auto appendDefaultTemplateArg = [&](const TemplateParameterNode& param) -> bool {
-			FLASH_LOG_FORMAT(Templates, Debug, "appendDefaultTemplateArg: param='{}', has_default={}, has_default_pos={}", param.name(), param.has_default(), param.has_default_value_position());
-			if (!param.has_default())
-				return false;
-			const ASTNode& default_node = param.default_value();
-			if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
-				// If we have a saved lexer position for this default, re-parse it with
-				// concrete template arguments in SFINAE context. This handles patterns like:
-				//   template<typename T, typename = decltype(swap(declval<T&>(), declval<T&>()))>
-				//   true_type test(int);
-				// At definition time, the decltype resolves against the generic swap overload
-				// (since T is still dependent). At instantiation time, re-parsing with the
-				// concrete T may fail (e.g., the matching swap is = delete), triggering SFINAE.
-				if (param.has_default_value_position() && !template_args.empty()) {
-					bool prev_sfinae_context = in_sfinae_context_;
-					FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
-					FlashCpp::ScopedState guard_param_names(current_template_param_names_);
-					FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-					in_sfinae_context_ = true;
-					ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
-					parsing_template_depth_ = 0;
-					current_template_param_names_.clear();
-					sfinae_type_map_.clear();
-
-					SaveHandle sfinae_pos = save_token_position();
-					restore_lexer_position_only(param.default_value_position());
-
-					FlashCpp::TemplateParameterScope sfinae_scope;
-					registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
-
-					auto reparse_result = parse_type_specifier();
-					restore_lexer_position_only(sfinae_pos);
-
-					if (reparse_result.is_error() || !reparse_result.node().has_value() ||
-						!reparse_result.node()->is<TypeSpecifierNode>()) {
-						FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: default template arg re-parse failed for param '{}', rejecting overload", param.name());
-						return false;
-					}
-					const TypeSpecifierNode& reparsed_type = reparse_result.node()->as<TypeSpecifierNode>();
-					TemplateTypeArg default_arg(reparsed_type);
-					if (is_builtin_type(default_arg.typeEnum())) {
-						default_arg.type_index = nativeTypeIndex(default_arg.typeEnum());
-					}
-					template_args.push_back(default_arg);
-					return true;
-				}
-
-				const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
-				TemplateTypeArg default_arg(default_type);
-				if (is_builtin_type(default_arg.typeEnum())) {
-					default_arg.type_index = nativeTypeIndex(default_arg.typeEnum());
-				}
-				template_args.push_back(default_arg);
-				return true;
-			}
-			if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
-				auto default_value = try_evaluate_constant_expression(default_node);
-				if (!default_value.has_value())
-					return false;
-				template_args.push_back(TemplateTypeArg::makeValue(
-					default_value->value,
-					default_value->type));
-				return true;
-			}
-			if (param.kind() == TemplateParameterKind::Template && default_node.is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
-				StringHandle tpl_name_handle = StringTable::getOrInternStringHandle(default_type.token().value());
-				if (const TypeInfo* type_info = tryGetTypeInfo(default_type.type_index())) {
-					tpl_name_handle = type_info->name();
-				}
-				template_args.push_back(TemplateTypeArg::makeTemplate(tpl_name_handle));
-				return true;
-			}
-			return false;
-		};
 		for (size_t i = 0; i < template_params.size(); ++i) {
 			if (!template_params[i].is<TemplateParameterNode>()) {
 				FLASH_LOG_FORMAT(Templates, Error, "Template parameter {} is not a TemplateParameterNode (type: {})", i, template_params[i].type_name());
@@ -926,7 +1010,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					}
 					template_args.push_back(TemplateTypeArg::makeTemplate(tpl_name_handle));
 					++explicit_idx;
-				} else if (!appendDefaultTemplateArg(param)) {
+				} else if (!tryAppendDefaultTemplateArg(param, template_params, template_args)) {
 					overload_mismatch = true;
 					break;
 				}
@@ -968,7 +1052,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 							continue;
 						}
 					}
-					if (appendDefaultTemplateArg(param)) {
+					if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
 						continue;
 					}
 
@@ -1778,18 +1862,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						// Store full TypeSpecifierNode to preserve reference info for perfect forwarding
 						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(arg_types[arg_index]));
 						arg_index++;
-					} else if (param.has_default()) {
-						// Use the default value for type parameters that can't be deduced
-						const ASTNode& default_node = param.default_value();
-						if (default_node.is<TypeSpecifierNode>()) {
-							TemplateTypeArg default_arg(default_node.as<TypeSpecifierNode>());
-							if (is_builtin_type(default_arg.typeEnum())) {
-								default_arg.type_index = nativeTypeIndex(default_arg.typeEnum());
-							}
-							template_args.push_back(default_arg);
-						} else {
-							return std::nullopt;
-						}
+					} else if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
+						continue;
 					} else {
 						// Not enough arguments to deduce all template parameters and no default
 						return std::nullopt;
@@ -1802,13 +1876,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			auto map_it = param_name_to_arg.find(param_handle);
 			if (map_it != param_name_to_arg.end()) {
 				template_args.push_back(map_it->second);
-			} else if (param.has_default()) {
-				// Use the default value for non-type parameters
-				// The default value is an expression that will be evaluated during instantiation
-				// For now, we skip it in deduction and let the instantiation phase use the default
-				FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Non-type parameter '{}' has default, skipping deduction",
-								 recursion_depth, param.name());
-				// Don't add anything to template_args - the instantiation will use the default
+			} else if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
 				continue;
 			} else {
 				// No default value and can't deduce - fail
