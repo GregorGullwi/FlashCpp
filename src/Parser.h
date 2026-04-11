@@ -855,6 +855,9 @@ private:
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
 		std::unordered_set<size_t> pre_deduced_arg_indices;
 	};
+	// Shared pre-deduction helper for matching function-parameter slots to call-argument
+	// types. The explicit-template-argument path must only rely on this map for non-pack
+	// signatures; pack-aware remapping needs an explicit contract first.
 	std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const std::vector<ASTNode>& template_params,
 		const FunctionDeclarationNode& func_decl,
