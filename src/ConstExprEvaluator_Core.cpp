@@ -65,6 +65,10 @@ std::optional<size_t> tryGetConstexprTypeSizeBytes(const TypeSpecifierNode& type
 	return static_cast<size_t>(size_bits) / 8;
 }
 
+// Returns the total element count for an array declaration when constexpr evaluation can
+// determine it immediately. Handles both explicit dimensions (`int a[2][3]`) and
+// inferred-size arrays backed by an initializer list (`int a[] = {1, 2, 3}`).
+// Returns std::nullopt when any dimension cannot be evaluated or when the total would overflow.
 std::optional<size_t> tryGetConstexprArrayElementCount(
 	const DeclarationNode& decl,
 	const ASTNode& symbol,
@@ -74,19 +78,32 @@ std::optional<size_t> tryGetConstexprArrayElementCount(
 		size_t total_count = 1;
 		for (const auto& dim_expr : dims) {
 			auto eval_result = Evaluator::evaluate(dim_expr, context);
-			if (!eval_result.success() || eval_result.as_int() <= 0) {
+			if (!eval_result.success()) {
 				return std::nullopt;
 			}
-			total_count *= static_cast<size_t>(eval_result.as_int());
+			const long long dim_value = eval_result.as_int();
+			if (dim_value <= 0 ||
+				static_cast<unsigned long long>(dim_value) > std::numeric_limits<size_t>::max()) {
+				return std::nullopt;
+			}
+			const size_t dim_count = static_cast<size_t>(dim_value);
+			if (dim_count > std::numeric_limits<size_t>::max() / total_count) {
+				return std::nullopt;
+			}
+			total_count *= dim_count;
 		}
 		return total_count;
 	}
 
-	if (decl.is_unsized_array() &&
-		symbol.is<VariableDeclarationNode>() &&
-		symbol.as<VariableDeclarationNode>().initializer().has_value() &&
-		symbol.as<VariableDeclarationNode>().initializer()->is<InitializerListNode>()) {
-		return symbol.as<VariableDeclarationNode>().initializer()->as<InitializerListNode>().initializers().size();
+	if (decl.is_unsized_array() && symbol.is<VariableDeclarationNode>()) {
+		const auto& var_decl = symbol.as<VariableDeclarationNode>();
+		if (var_decl.initializer().has_value() && var_decl.initializer()->is<InitializerListNode>()) {
+			const size_t initializer_count = var_decl.initializer()->as<InitializerListNode>().initializers().size();
+			if (initializer_count == 0) {
+				return std::nullopt;
+			}
+			return initializer_count;
+		}
 	}
 
 	return std::nullopt;
@@ -1150,6 +1167,9 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 							size_t element_size = get_typespec_size_bytes(array_type_spec);
 							if (element_size > 0) {
 								if (auto total_count = tryGetConstexprArrayElementCount(*decl, *symbol, context); total_count.has_value()) {
+									if (*total_count > std::numeric_limits<size_t>::max() / element_size) {
+										return EvalResult::error("sizeof array byte size overflow in constant expression");
+									}
 									return EvalResult::from_int(static_cast<long long>(element_size * *total_count));
 								}
 							}
@@ -1389,6 +1409,9 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 								size_t element_size = get_typespec_size_bytes(type_spec);
 								if (element_size > 0) {
 									if (auto total_count = tryGetConstexprArrayElementCount(*decl, *symbol, context); total_count.has_value()) {
+										if (*total_count > std::numeric_limits<size_t>::max() / element_size) {
+											return EvalResult::error("sizeof array byte size overflow in constant expression");
+										}
 										return EvalResult::from_int(static_cast<long long>(element_size * *total_count));
 									}
 								}
