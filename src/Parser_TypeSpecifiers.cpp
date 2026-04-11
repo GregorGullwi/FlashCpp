@@ -1816,22 +1816,22 @@ ParseResult Parser::parse_type_specifier() {
 						return tryResolveQualifiedType(buildQualifiedTypeName(parent_name));
 					};
 
-					std::string_view original_instantiated_name = get_instantiated_class_name(type_name, *template_args);
-					std::string_view normalized_instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
+					std::string_view user_provided_instantiation = get_instantiated_class_name(type_name, *template_args);
+					std::string_view instantiation_with_defaults = get_instantiated_class_name(type_name, filled_template_args);
 					std::array<std::string_view, 3> candidate_parent_names = {
 						instantiated_name,
-						normalized_instantiated_name,
-						original_instantiated_name
+						instantiation_with_defaults,
+						user_provided_instantiation
 					};
-					std::array<std::string_view, 3> checked_parent_names{};
-					size_t checked_parent_count = 0;
+					std::array<std::string_view, 3> previously_checked_parents{};
+					size_t previously_checked_parent_count = 0;
 					for (std::string_view candidate_parent_name : candidate_parent_names) {
 						if (candidate_parent_name.empty()) {
 							continue;
 						}
 						bool already_checked = false;
-						for (size_t checked_index = 0; checked_index < checked_parent_count; ++checked_index) {
-							std::string_view previous_parent_name = checked_parent_names[checked_index];
+						for (size_t checked_index = 0; checked_index < previously_checked_parent_count; ++checked_index) {
+							std::string_view previous_parent_name = previously_checked_parents[checked_index];
 							if (previous_parent_name == candidate_parent_name) {
 								already_checked = true;
 								break;
@@ -1840,7 +1840,7 @@ ParseResult Parser::parse_type_specifier() {
 						if (already_checked) {
 							continue;
 						}
-						checked_parent_names[checked_parent_count++] = candidate_parent_name;
+						previously_checked_parents[previously_checked_parent_count++] = candidate_parent_name;
 						if (auto resolved_type = tryResolveQualifiedTypeFromParent(candidate_parent_name); resolved_type.has_value()) {
 							return ParseResult::success(*resolved_type);
 						}
