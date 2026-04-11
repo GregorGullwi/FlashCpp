@@ -1090,7 +1090,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	// Synthesized direct calls can already carry the exact callee on the call node
 	// itself even though semantic analysis never saw the temporary expression.
-	if (!matched_func_decl) {
+	if (!matched_func_decl && !has_synthesized_template_suffix) {
 		consumeResolvedDirectCallTarget(callExprNode.callee().function_declaration_or_null(), "callee-resolved");
 	}
 
@@ -2010,20 +2010,25 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 		// Check if this is an indirect call (function pointer/reference)
 	call_op.is_indirect_call = callExprNode.callee().is_indirect();
-	if (matched_func_decl && matched_func_decl->is_member_function() && !matched_func_decl->is_static()) {
-		call_op.is_member_function = true;
-		TypeCategory this_type = TypeCategory::Struct;
-		TypeIndex this_type_index{};
-		std::string_view parent_struct = matched_func_decl->parent_struct_name();
-		if (!parent_struct.empty()) {
-			StringHandle parent_struct_handle = StringTable::getOrInternStringHandle(parent_struct);
-			auto parent_it = getTypesByNameMap().find(parent_struct_handle);
-			if (parent_it != getTypesByNameMap().end() && parent_it->second != nullptr) {
-				this_type = parent_it->second->typeEnum();
-				this_type_index = parent_it->second->type_index_;
+	if (matched_func_decl &&
+		matched_func_decl->is_member_function() &&
+		!callExprNode.callee().is_static_member() &&
+		!matched_func_decl->is_static()) {
+		if (lookupDeclaration("this")) {
+			call_op.is_member_function = true;
+			TypeCategory this_type = TypeCategory::Struct;
+			TypeIndex this_type_index{};
+			std::string_view parent_struct = matched_func_decl->parent_struct_name();
+			if (!parent_struct.empty()) {
+				StringHandle parent_struct_handle = StringTable::getOrInternStringHandle(parent_struct);
+				auto parent_it = getTypesByNameMap().find(parent_struct_handle);
+				if (parent_it != getTypesByNameMap().end() && parent_it->second != nullptr) {
+					this_type = parent_it->second->typeEnum();
+					this_type_index = parent_it->second->type_index_;
+				}
 			}
+			call_op.args.push_back(makeTypedValue(this_type_index.withCategory(this_type), SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle("this"))));
 		}
-		call_op.args.push_back(makeTypedValue(this_type_index.withCategory(this_type), SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle("this"))));
 	}
 
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
