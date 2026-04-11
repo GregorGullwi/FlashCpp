@@ -2098,17 +2098,14 @@ EvalResult Evaluator::evaluate_new_expression(
 		}
 		EvalResult array_result = EvalResult::from_int(0LL);
 		array_result.is_array = true;
-		auto make_array_element_init = [&]() -> EvalResult {
-			if (new_expr.has_value_init()) {
-				return make_default_init(type_spec);
-			}
-			EvalResult element = EvalResult::indeterminate();
-			element.set_exact_type(type_spec);
-			return element;
-		};
-		for (int64_t i = 0; i < n; ++i) {
-			array_result.array_elements.push_back(make_array_element_init());
+		EvalResult element_init;
+		if (new_expr.has_value_init()) {
+			element_init = make_default_init(type_spec);
+		} else {
+			element_init = EvalResult::indeterminate();
+			element_init.set_exact_type(type_spec);
 		}
+		array_result.array_elements.assign(static_cast<size_t>(n), element_init);
 		StringHandle heap_key = context.alloc_heap_slot();
 		context.constexpr_heap[heap_key] = {std::move(array_result), false, true};
 		return EvalResult::from_pointer(heap_key);
