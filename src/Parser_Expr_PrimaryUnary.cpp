@@ -491,6 +491,51 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, std::move(args), all_placement_args, /*has_value_init=*/true));
 			return ParseResult::success(new_expr);
 		}
+		// Check for brace initialization: new Type{args}
+		else if (peek() == "{"_tok) {
+			advance(); // consume '{'
+
+			ChunkedVector<ASTNode, 128, 256> args;
+
+			if (peek() != "}"_tok) {
+				while (true) {
+					ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (arg_result.is_error()) {
+						return arg_result;
+					}
+
+					if (auto arg_node = arg_result.node()) {
+						if (peek() == "..."_tok) {
+							Token ellipsis_token = peek_info();
+							advance(); // consume '...'
+
+							auto pack_expr = emplace_node<ExpressionNode>(
+								PackExpansionExprNode(*arg_node, ellipsis_token));
+							args.push_back(pack_expr);
+						} else {
+							args.push_back(*arg_node);
+						}
+					}
+
+					if (peek() == ","_tok) {
+						advance(); // consume ','
+						if (peek() == "}"_tok) {
+							break;
+						}
+					} else {
+						break;
+					}
+				}
+			}
+
+			if (!consume("}"_tok)) {
+				return ParseResult::error("Expected '}' after brace initializer", current_token_);
+			}
+
+			auto new_expr = emplace_node<ExpressionNode>(
+				NewExpressionNode(*type_node, /*is_array=*/false, std::nullopt, std::move(args), all_placement_args, /*has_value_init=*/true));
+			return ParseResult::success(new_expr);
+		}
 		// Simple new: new Type
 		else {
 			auto new_expr = emplace_node<ExpressionNode>(
