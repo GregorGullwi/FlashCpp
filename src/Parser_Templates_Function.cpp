@@ -12,6 +12,19 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// This position is at the start of the return type, before parse_type_and_name()
 	SaveHandle declaration_start = save_token_position();
 
+	FlashCpp::TemplateParameterScope template_scope;
+	for (auto& param : template_params) {
+		if (!param.is<TemplateParameterNode>()) {
+			continue;
+		}
+		TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+		if (tparam.kind() == TemplateParameterKind::Type && !tparam.registered_type_index().is_valid()) {
+			TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0);
+			tparam.set_registered_type_index(type_info.type_index_);
+			template_scope.addParameter(&type_info);
+		}
+	}
+
 	// Parse storage class specifiers (constexpr, inline, static, etc.)
 	// This must be done BEFORE parse_type_and_name() to capture constexpr for template functions
 	auto specs = parse_declaration_specifiers();
@@ -1197,6 +1210,13 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		}
 		FLASH_LOG(Templates, Debug, "Failed to evaluate unary operator");
 		return std::nullopt;
+	}
+
+	auto ctx = makeConstExprContext();
+	auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
+	if (eval_result.success()) {
+		FLASH_LOG_FORMAT(Templates, Debug, "General constexpr evaluation succeeded: {}", eval_result.as_int());
+		return ConstantValue{eval_result.as_int(), TypeCategory::Int};
 	}
 
 	return std::nullopt;
