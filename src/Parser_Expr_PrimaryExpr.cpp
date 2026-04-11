@@ -803,6 +803,77 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 	return materialized_owner;
 }
 
+ParseResult Parser::parseMaterializedTemplateFunctionalCast(
+	const AliasTemplateMaterializationResult& materialized_owner,
+	const Token& source_token) {
+	std::string_view instantiated_type_name = materialized_owner.instantiated_name;
+	const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
+	if (instantiated_type_name.empty()) {
+		return ParseResult::error(
+			"Failed to materialize class template for functional-style cast",
+			source_token);
+	}
+	if (instantiated_type_info == nullptr) {
+		instantiated_type_info = findTypeByName(
+			StringTable::getOrInternStringHandle(instantiated_type_name));
+	}
+
+	advance(); // consume '('
+
+	ChunkedVector<ASTNode> args;
+	if (current_token_.value() != ")") {
+		while (true) {
+			auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (arg_result.is_error()) {
+				return arg_result;
+			}
+			if (auto arg = arg_result.node()) {
+				args.push_back(*arg);
+			}
+
+			if (current_token_.kind().is_eof() || current_token_.value() != ",") {
+				break;
+			}
+			advance(); // consume ','
+		}
+	}
+
+	if (!consume(")"_tok)) {
+		return ParseResult::error("Expected ')' after constructor arguments", current_token_);
+	}
+
+	Token inst_type_token(
+		Token::Type::Identifier,
+		instantiated_type_name,
+		source_token.line(),
+		source_token.column(),
+		source_token.file_index());
+	ASTNode type_spec_node;
+	if (instantiated_type_info != nullptr && instantiated_type_info->isStruct()) {
+		TypeIndex inst_type_index = instantiated_type_info->type_index_;
+		SizeInBits inst_type_size{};
+		if (instantiated_type_info->struct_info_) {
+			inst_type_size = instantiated_type_info->struct_info_->sizeInBits();
+		}
+		type_spec_node = emplace_node<TypeSpecifierNode>(
+			inst_type_index.withCategory(TypeCategory::Struct),
+			inst_type_size,
+			inst_type_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
+	} else {
+		type_spec_node = emplace_node<TypeSpecifierNode>(
+			TypeCategory::UserDefined,
+			TypeQualifier::None,
+			0,
+			inst_type_token,
+			CVQualifier::None);
+	}
+
+	auto result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), inst_type_token));
+	return ParseResult::success(result);
+}
+
 ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 	std::optional<ASTNode> result;
 
@@ -4627,65 +4698,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										identifier_token.value(),
 										{},
 										*explicit_template_args);
-								std::string_view instantiated_type_name = materialized_owner.instantiated_name;
-								const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
-								if (instantiated_type_name.empty()) {
-									return ParseResult::error(
-										"Failed to materialize class template for functional-style cast",
-										identifier_token);
-								}
-								if (instantiated_type_info == nullptr) {
-									instantiated_type_info = findTypeByName(
-										StringTable::getOrInternStringHandle(instantiated_type_name));
-								}
-
-								// Consume '(' and parse constructor arguments
-								advance(); // consume '('
-
-								// Parse constructor arguments
-								ChunkedVector<ASTNode> args;
-								if (current_token_.value() != ")") {
-									while (true) {
-										auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-										if (arg_result.is_error()) {
-											return arg_result;
-										}
-										if (auto arg = arg_result.node()) {
-											args.push_back(*arg);
-										}
-
-										if (current_token_.kind().is_eof() || current_token_.value() != ",") {
-											break;
-										}
-										advance(); // consume ','
-									}
-								}
-
-								if (!consume(")"_tok)) {
-									return ParseResult::error("Expected ')' after constructor arguments", current_token_);
-								}
-
-								// Create TypeSpecifierNode for the instantiated template type
-								// Look up the type to get the proper TypeIndex and size for mangling
-								Token inst_type_token(Token::Type::Identifier, instantiated_type_name,
-													  identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-								ASTNode type_spec_node;
-								if (instantiated_type_info != nullptr && instantiated_type_info->isStruct()) {
-									const TypeInfo& inst_type_info = *instantiated_type_info;
-									TypeIndex inst_type_index = inst_type_info.type_index_;
-									SizeInBits inst_type_size{};
-									if (inst_type_info.struct_info_) {
-										inst_type_size = inst_type_info.struct_info_->sizeInBits();
-									}
-									type_spec_node = emplace_node<TypeSpecifierNode>(inst_type_index.withCategory(TypeCategory::Struct), inst_type_size, inst_type_token, CVQualifier::None, ReferenceQualifier::None);
-								} else {
-									// Type not found yet (e.g. dependent/incomplete); size 0 is the standard placeholder
-									type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, inst_type_token, CVQualifier::None);
-								}
-
-								// Create ConstructorCallNode for functional-style cast
-								result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), inst_type_token));
-								return ParseResult::success(*result);
+								return parseMaterializedTemplateFunctionalCast(
+									materialized_owner,
+									identifier_token);
 							}
 						}
 
@@ -5386,72 +5401,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							identifier_token.value(),
 							{},
 							*explicit_template_args);
-					std::string_view instantiated_type_name = materialized_owner.instantiated_name;
-					const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
-					if (instantiated_type_name.empty()) {
-						return ParseResult::error(
-							"Failed to materialize class template for functional-style cast",
-							identifier_token);
-					}
-					if (instantiated_type_info == nullptr) {
-						instantiated_type_info =
-							findTypeByName(StringTable::getOrInternStringHandle(instantiated_type_name));
-					}
-
-					// Consume '(' and parse constructor arguments
-					advance(); // consume '('
-
-					// Parse constructor arguments
-					ChunkedVector<ASTNode> args;
-					if (current_token_.value() != ")") {
-						while (true) {
-							auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-							if (arg_result.is_error()) {
-								return arg_result;
-							}
-							if (auto arg = arg_result.node()) {
-								args.push_back(*arg);
-							}
-
-							if (current_token_.kind().is_eof() || current_token_.value() != ",") {
-								break;
-							}
-							advance(); // consume ','
-						}
-					}
-
-					if (!consume(")"_tok)) {
-						return ParseResult::error("Expected ')' after constructor arguments", current_token_);
-					}
-
-					// Create TypeSpecifierNode for the instantiated template type
-					Token inst_type_token(Token::Type::Identifier, instantiated_type_name,
-										  identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-					ASTNode type_spec_node;
-					if (instantiated_type_info != nullptr && instantiated_type_info->isStruct()) {
-						TypeIndex inst_type_index = instantiated_type_info->type_index_;
-						SizeInBits inst_type_size{};
-						if (instantiated_type_info->struct_info_) {
-							inst_type_size = instantiated_type_info->struct_info_->sizeInBits();
-						}
-						type_spec_node = emplace_node<TypeSpecifierNode>(
-							inst_type_index.withCategory(TypeCategory::Struct),
-							inst_type_size,
-							inst_type_token,
-							CVQualifier::None,
-							ReferenceQualifier::None);
-					} else {
-						type_spec_node = emplace_node<TypeSpecifierNode>(
-							TypeCategory::UserDefined,
-							TypeQualifier::None,
-							0,
-							inst_type_token,
-							CVQualifier::None);
-					}
-
-					// Create ConstructorCallNode for functional-style cast
-					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), inst_type_token));
-					return ParseResult::success(*result);
+					return parseMaterializedTemplateFunctionalCast(
+						materialized_owner,
+						identifier_token);
 				}
 			}
 

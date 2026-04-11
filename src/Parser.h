@@ -1313,6 +1313,9 @@ private:
 		std::string_view primary_template_name,
 		std::string_view fallback_template_name,
 		const std::vector<TemplateTypeArg>& template_args);
+	ParseResult parseMaterializedTemplateFunctionalCast(
+		const AliasTemplateMaterializationResult& materialized_owner,
+		const Token& source_token);
 	const TypeInfo* materializeInstantiatedMemberAliasTarget(
 		const TypeSpecifierNode& alias_type_spec,
 		TypeIndex fallback_type_index,
