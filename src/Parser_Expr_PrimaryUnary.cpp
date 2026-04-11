@@ -381,7 +381,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			return ParseResult::error("Expected type after 'new'", current_token_);
 		}
 
-		std::string_view initializer_parse_error;
+		std::optional<ParseResult> initializer_parse_error;
 		auto parse_new_initializer_args = [&](TokenKind closing_token_kind, std::string_view expected_closing_error, bool allow_trailing_comma) -> std::optional<ChunkedVector<ASTNode, 128, 256>> {
 			ChunkedVector<ASTNode, 128, 256> args;
 
@@ -389,6 +389,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 				while (true) {
 					ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (arg_result.is_error()) {
+						initializer_parse_error = std::move(arg_result);
 						return std::nullopt;
 					}
 
@@ -417,7 +418,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			}
 
 			if (!consume(closing_token_kind)) {
-				initializer_parse_error = expected_closing_error;
+				initializer_parse_error = ParseResult::error(std::string(expected_closing_error), current_token_);
 				return std::nullopt;
 			}
 
@@ -494,7 +495,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 
 			auto args = parse_new_initializer_args(")"_tok, "Expected ')' after constructor arguments", false);
 			if (!args.has_value()) {
-				return ParseResult::error(std::string(initializer_parse_error), current_token_);
+				return std::move(*initializer_parse_error);
 			}
 
 			auto new_expr = emplace_node<ExpressionNode>(
@@ -507,7 +508,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 
 			auto args = parse_new_initializer_args("}"_tok, "Expected '}' after brace initializer", true);
 			if (!args.has_value()) {
-				return ParseResult::error(std::string(initializer_parse_error), current_token_);
+				return std::move(*initializer_parse_error);
 			}
 
 			auto new_expr = emplace_node<ExpressionNode>(
