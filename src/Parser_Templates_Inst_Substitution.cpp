@@ -556,8 +556,13 @@ ASTNode Parser::substitute_template_params_in_expression(
 			// This handles the case where template parameter type_indices don't match due to
 			// multiple template parameters with the same name in different templates
 			if ((type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias || type_node.category() == TypeCategory::Template)) {
-				if (const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index())) {
-					std::string_view type_name = StringTable::getStringView(type_info->name());
+				std::string_view type_name = type_node.token().value();
+				if (type_name.empty()) {
+					if (const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index())) {
+						type_name = StringTable::getStringView(type_info->name());
+					}
+				}
+				if (!type_name.empty()) {
 					FLASH_LOG(Templates, Debug, "sizeof substitution: checking by name: ", type_name);
 
 					// Search substitution map for any entry where the key type_index has the same name

@@ -95,7 +95,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 	}
 
 	const ASTNode& default_node = param.default_value();
-	auto buildTemplateSubstitutionMaps = [&]() {
+	auto buildSubstitutionMaps = [&]() {
 		std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
 		std::unordered_map<std::string_view, int64_t> nontype_sub_map;
 		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
@@ -104,17 +104,67 @@ bool Parser::tryAppendDefaultTemplateArg(
 			}
 			const auto& template_param = template_params[i].as<TemplateParameterNode>();
 			if (template_param.kind() == TemplateParameterKind::Type && !template_args[i].is_value) {
-				auto type_it = getTypesByNameMap().find(template_param.nameHandle());
-				if (type_it != getTypesByNameMap().end()) {
-					type_sub_map[type_it->second->type_index_] = template_args[i];
+				if (template_param.registered_type_index().is_valid()) {
+					type_sub_map[template_param.registered_type_index()] = template_args[i];
 				} else {
-					type_sub_map[TypeIndex{getTypeInfoCount() + type_sub_map.size() + 1}] = template_args[i];
+					auto type_it = getTypesByNameMap().find(template_param.nameHandle());
+					if (type_it != getTypesByNameMap().end()) {
+						type_sub_map[type_it->second->type_index_] = template_args[i];
+					} else {
+						// Use a unique synthetic key only as a local placeholder when the
+						// template parameter was never registered in the global type map.
+						type_sub_map[TypeIndex{getTypeInfoCount() + type_sub_map.size() + 1}] = template_args[i];
+					}
 				}
 			} else if (template_param.kind() == TemplateParameterKind::NonType && template_args[i].is_value) {
 				nontype_sub_map[template_param.name()] = template_args[i].value;
 			}
 		}
 		return std::pair(std::move(type_sub_map), std::move(nontype_sub_map));
+	};
+	auto appendEvaluatedNonTypeArg = [&](const ASTNode& expr) -> bool {
+		auto default_value = try_evaluate_constant_expression(expr);
+		if (!default_value.has_value()) {
+			return false;
+		}
+		template_args.push_back(TemplateTypeArg::makeValue(
+			default_value->value,
+			default_value->type));
+		return true;
+	};
+	auto tryReparseNonTypeDefaultArg = [&]() -> bool {
+		if (!param.has_default_value_position() || template_args.empty()) {
+			return false;
+		}
+
+		bool prev_sfinae_context = in_sfinae_context_;
+		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
+		FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+		FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
+		in_sfinae_context_ = true;
+		ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
+		parsing_template_depth_ = 0;
+		current_template_param_names_.clear();
+		sfinae_type_map_.clear();
+
+		SaveHandle sfinae_pos = save_token_position();
+		restore_lexer_position_only(param.default_value_position());
+
+		FlashCpp::TemplateParameterScope sfinae_scope;
+		registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
+
+		auto reparse_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::TemplateTypeArg);
+		restore_lexer_position_only(sfinae_pos);
+
+		if (reparse_result.is_error() || !reparse_result.node().has_value() ||
+			!reparse_result.node()->is<ExpressionNode>()) {
+			FLASH_LOG_FORMAT(Templates, Debug,
+							 "SFINAE: non-type default template arg re-parse failed for param '{}', rejecting overload",
+							 param.name());
+			return false;
+		}
+
+		return appendEvaluatedNonTypeArg(*reparse_result.node());
 	};
 
 	if (param.kind() == TemplateParameterKind::Type) {
@@ -168,65 +218,18 @@ bool Parser::tryAppendDefaultTemplateArg(
 	}
 
 	if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
-		{
-			auto [type_sub_map, nontype_sub_map] = buildTemplateSubstitutionMaps();
-			ASTNode substituted_default =
-				substitute_template_params_in_expression(default_node, type_sub_map, nontype_sub_map);
-			auto default_value = try_evaluate_constant_expression(substituted_default);
-			if (default_value.has_value()) {
-				template_args.push_back(TemplateTypeArg::makeValue(
-					default_value->value,
-					default_value->type));
-				return true;
-			}
-		}
-
-		if (param.has_default_value_position() && !template_args.empty()) {
-			bool prev_sfinae_context = in_sfinae_context_;
-			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
-			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
-			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-			in_sfinae_context_ = true;
-			ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
-			parsing_template_depth_ = 0;
-			current_template_param_names_.clear();
-			sfinae_type_map_.clear();
-
-			SaveHandle sfinae_pos = save_token_position();
-			restore_lexer_position_only(param.default_value_position());
-
-			FlashCpp::TemplateParameterScope sfinae_scope;
-			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
-
-			auto reparse_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::TemplateTypeArg);
-			restore_lexer_position_only(sfinae_pos);
-
-			if (reparse_result.is_error() || !reparse_result.node().has_value() ||
-				!reparse_result.node()->is<ExpressionNode>()) {
-				FLASH_LOG_FORMAT(Templates, Debug,
-								 "SFINAE: non-type default template arg re-parse failed for param '{}', rejecting overload",
-								 param.name());
-				return false;
-			}
-
-			auto default_value = try_evaluate_constant_expression(*reparse_result.node());
-			if (!default_value.has_value()) {
-				return false;
-			}
-			template_args.push_back(TemplateTypeArg::makeValue(
-				default_value->value,
-				default_value->type));
+		auto [type_sub_map, nontype_sub_map] = buildSubstitutionMaps();
+		ASTNode substituted_default =
+			substitute_template_params_in_expression(default_node, type_sub_map, nontype_sub_map);
+		if (appendEvaluatedNonTypeArg(substituted_default)) {
 			return true;
 		}
 
-		auto default_value = try_evaluate_constant_expression(default_node);
-		if (!default_value.has_value()) {
-			return false;
+		if (tryReparseNonTypeDefaultArg()) {
+			return true;
 		}
-		template_args.push_back(TemplateTypeArg::makeValue(
-			default_value->value,
-			default_value->type));
-		return true;
+
+		return appendEvaluatedNonTypeArg(default_node);
 	}
 
 	if (param.kind() == TemplateParameterKind::Template && default_node.is<TypeSpecifierNode>()) {
