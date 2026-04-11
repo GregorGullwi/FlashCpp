@@ -551,7 +551,7 @@ int main_impl(int argc, char* argv[]) {
 				}
 				if (has_dependent_params) {
 					FLASH_LOG(Codegen, Warning, "IR error for function '", node_desc,
-							  "' with likely unsubstituted dependent parameter types: ", e.what());
+							  "' with unsubstituted dependent parameter types: ", e.what());
 				} else {
 					FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
 				}
