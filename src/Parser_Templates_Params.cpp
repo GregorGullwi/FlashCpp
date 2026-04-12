@@ -806,7 +806,6 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								// sizeof/alignof have type size_t (modeled as UnsignedLongLong on 64-bit).
 								value_category = TypeCategory::UnsignedLongLong;
 							}
-							FLASH_LOG(Templates, Debug, "makeDependentCompileTimeArg: dep_expr.has_value()=", dep_expr.has_value());
 							return TemplateTypeArg::makeDependentValue(dependent_name, value_category, 0, std::move(dep_expr));
 						};
 
@@ -819,7 +818,6 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							std::holds_alternative<TypeTraitExprNode>(expr)) {
 							if (expr_result.node().has_value()) {
 								stored_expr = *expr_result.node();
-								FLASH_LOG(Templates, Debug, "Storing dependent NTTP expression for sizeof/alignof/noexcept/type_trait");
 							}
 						}
 
@@ -833,9 +831,6 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							dependent_arg = makeDependentCompileTimeArg(
 								StringTable::getOrInternStringHandle(qual_id.full_name()), std::nullopt);
 						}
-						
-						FLASH_LOG(Templates, Debug, "Final dependent_arg: is_value=", dependent_arg.is_value, 
-								  ", dependent_expr.has_value()=", dependent_arg.dependent_expr.has_value());
 
 						// Check for pack expansion (...)
 						if (peek() == "..."_tok) {
