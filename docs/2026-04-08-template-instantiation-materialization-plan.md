@@ -31,22 +31,18 @@ The plan is stable. Choose based on your expertise and available time:
 - Key files: `src/Parser_Templates_Inst_Deduction.cpp:608-881`, `src/Parser.h:865-869`
 - Preserve: non-pack signatures must keep using the name-based pre-deduction map
 
-**Option B: Investigate the "early instantiation without arg_types" gap**
-- Location: `src/Parser_Expr_PrimaryExpr.cpp:2405-2414`
-- This path calls `try_instantiate_template_explicit()` without arg_types
-- If it succeeds (all trailing params have defaults), arg_types-aware deduction may be skipped
-- Task: verify whether this path can fire for function templates in call contexts
-- If yes: gate it on non-call contexts or defer until after argument parsing
-
-**Option C: Work on Phase 1-4 architectural cleanup**
+**Option B: Work on Phase 1-4 architectural cleanup**
 - Phase 1: canonicalize non-type template-argument identity (see detailed plan below)
 - Phase 2: centralize alias-template materialization
 - Phase 3: make late materialization + pending-sema normalization explicit
 - Phase 4: replace unresolved-placeholder heuristics with explicit state
 
-**Option D: Fix bugs in `docs/KNOWN_ISSUES.md`**
+**Option C: Fix bugs in `docs/KNOWN_ISSUES.md`**
 - Currently tracked: premature `layout_is_complete` during anonymous union processing
 - Low priority, no user-facing issues currently
+
+**Note:** The "early instantiation without arg_types" gap (Option B in earlier versions)
+was investigated on 2026-04-12 and found to NOT be a bug. See detailed notes below.
 
 ### Important invariants to preserve
 
