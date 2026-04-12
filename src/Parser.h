@@ -17,6 +17,7 @@
 #include <source_location>
 #include <functional>
 #include <type_traits>
+#include <span>
 
 #include "AstNodeTypes.h"
 #include "Lexer.h"
@@ -956,7 +957,10 @@ private:
 				(!base_type_info->getStructInfo() || !base_type_info->getStructInfo()->total_size.is_set())) {
 				std::string_view base_template_name = StringTable::getStringView(base_type_info->baseTemplateName());
 				std::vector<TemplateTypeArg> concrete_base_args =
-					materializeTemplateArgs(*base_type_info, template_params, template_args);
+					materializeTemplateArgs(*base_type_info, template_params, template_args,
+						[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
+							return this->evaluateDependentNTTPExpression(expr, params, args);
+						});
 				auto instantiated_base = try_instantiate_class_template(base_template_name, concrete_base_args);
 				if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
 					registerAndNormalizeLateMaterializedTopLevelNode(*instantiated_base);
@@ -1039,7 +1043,10 @@ private:
 				continue;
 			}
 			concrete_args.push_back(
-				materializeTemplateArg(arg_info, template_params, template_args));
+				materializeTemplateArg(arg_info, template_params, template_args,
+					[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
+						return this->evaluateDependentNTTPExpression(expr, params, args);
+					}));
 		}
 
 		const auto resolveConcreteBaseHandle = [&](std::string_view base_name) -> StringHandle {
@@ -1060,7 +1067,10 @@ private:
 			}
 
 			std::vector<TemplateTypeArg> nested_args =
-				materializeTemplateArgs(*base_info, template_params, template_args);
+				materializeTemplateArgs(*base_info, template_params, template_args,
+					[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
+						return this->evaluateDependentNTTPExpression(expr, params, args);
+					});
 			try_instantiate_class_template(nested_template_name, nested_args);
 			std::string_view instantiated_nested_name =
 				get_instantiated_class_name(nested_template_name, nested_args);
@@ -1117,7 +1127,10 @@ private:
 					StringTable::getStringView(concrete_type_info->baseTemplateName());
 				if (!base_template_name.empty()) {
 					std::vector<TemplateTypeArg> exact_args =
-						materializeTemplateArgs(*concrete_type_info, template_params, template_args);
+						materializeTemplateArgs(*concrete_type_info, template_params, template_args,
+							[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
+								return this->evaluateDependentNTTPExpression(expr, params, args);
+							});
 					auto specialization_ast =
 						gTemplateRegistry.lookupExactSpecialization(base_template_name, exact_args);
 					if (!specialization_ast.has_value()) {
@@ -1208,10 +1221,26 @@ private:
 	std::optional<std::vector<TemplateTypeArg>> materializeDeferredAliasTemplateArgs(
 		const TemplateAliasNode& alias_node,
 		const std::vector<TemplateTypeArg>& template_args);
+	// Substitute template parameters in an expression.
+	// substitution_owner: when valid, member aliases of that instantiation are resolved for sizeof/alignof.
 	ASTNode substitute_template_params_in_expression(
 		const ASTNode& expr,
 		const std::unordered_map<TypeIndex, TemplateTypeArg>& type_substitution_map,
-		const std::unordered_map<std::string_view, int64_t>& nontype_substitution_map = {});	 // NEW: Substitute template parameters in expressions
+		const std::unordered_map<std::string_view, int64_t>& nontype_substitution_map,
+		StringHandle substitution_owner);
+	// Helper: resolve sizeof(member_alias) for a given substitution owner.
+	// Returns a concrete sizeof(resolved_type) node, or nullopt if not found.
+	std::optional<ASTNode> tryResolveSizeofMemberAlias(
+		StringHandle substitution_owner,
+		std::string_view type_name,
+		const Token& sizeof_token);
+	// Evaluate a dependent NTTP expression (e.g., sizeof(T), alignof(T)) with concrete template arguments.
+	// Builds substitution maps, substitutes the expression, then evaluates via ConstExpr::Evaluator.
+	// Returns the evaluated integer value, or nullopt if evaluation fails.
+	std::optional<int64_t> evaluateDependentNTTPExpression(
+		const ASTNode& dependent_expr,
+		std::span<const ASTNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
 	std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Instantiate member function template
 	std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, const std::vector<TemplateTypeArg>& template_type_args);  // NEW: Instantiate member function template with explicit args
 		// Core logic shared by both try_instantiate_member_function_template and _explicit.

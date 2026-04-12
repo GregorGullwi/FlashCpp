@@ -1253,7 +1253,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				nontype_sub_map[tparam.name()] = args[pi].value;
 		}
 		ASTNode substituted = substitute_template_params_in_expression(
-			*member_decl.bitfield_width_expr, type_sub_map, nontype_sub_map);
+			*member_decl.bitfield_width_expr, type_sub_map, nontype_sub_map, StringHandle{});
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
 		if (eval_result.success() && eval_result.as_int() >= 0)
@@ -1281,7 +1281,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		for (const auto& dim_expr : decl.array_dimensions()) {
-			ASTNode substituted = substitute_template_params_in_expression(dim_expr, type_sub_map, nontype_sub_map);
+			ASTNode substituted = substitute_template_params_in_expression(dim_expr, type_sub_map, nontype_sub_map, StringHandle{});
 			auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
 			if (eval_result.success() && eval_result.as_int() > 0) {
 				resolved_dims.push_back(static_cast<size_t>(eval_result.as_int()));
@@ -1309,25 +1309,32 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		TypeSpecifierNode substituted_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
 		substituted_type_spec.set_type_index(substituted_type_index.withCategory(substituted_type));
 		substituted_type_spec.set_category(substituted_type);
-		if (type_alias.array_dimensions.empty() && !resolved_alias_target.isArray()) {
+
+		FLASH_LOG(Templates, Debug, "buildSubstitutedTypeAliasSpecifier: alias_name=", StringTable::getStringView(type_alias.alias_name),
+				  ", array_dimensions.size()=", type_alias.array_dimensions.size(),
+				  ", resolved_alias_target.isArray()=", resolved_alias_target.isArray());
+
+		// Only process array dimensions that are directly part of this alias definition
+		// (e.g., "using type = char[N]" has array dimensions from N).
+		// Do NOT include array dimensions from the resolved alias target, as those
+		// will be picked up by resolveAliasTypeInfo when it traverses the alias chain.
+		if (type_alias.array_dimensions.empty()) {
 			return substituted_type_spec;
 		}
 
 		std::vector<size_t> resolved_dims;
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		for (const auto& dim_expr : type_alias.array_dimensions) {
+			FLASH_LOG(Templates, Debug, "buildSubstitutedTypeAliasSpecifier: substituting dim_expr, params.size()=", params.size(),
+					  ", args.size()=", args.size());
 			ASTNode substituted_dim = substituteTemplateParameters(dim_expr, params, args);
 			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_dim, eval_ctx);
+			FLASH_LOG(Templates, Debug, "buildSubstitutedTypeAliasSpecifier: evaluated dim, success=", eval_result.success(),
+					  ", value=", eval_result.success() ? eval_result.as_int() : -999);
 			if (!eval_result.success() || eval_result.as_int() <= 0) {
 				return std::nullopt;
 			}
 			resolved_dims.push_back(static_cast<size_t>(eval_result.as_int()));
-		}
-		if (resolved_alias_target.isArray()) {
-			resolved_dims.insert(
-				resolved_dims.end(),
-				resolved_alias_target.array_dimensions.begin(),
-				resolved_alias_target.array_dimensions.end());
 		}
 		substituted_type_spec.set_array_dimensions(resolved_dims);
 		return substituted_type_spec;
@@ -7418,7 +7425,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 							ASTNode substituted_default = substitute_template_params_in_expression(
-								param_decl.default_value(), type_sub_map, nontype_sub_map);
+								param_decl.default_value(), type_sub_map, nontype_sub_map, StringHandle{});
 							new_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 						}
 						new_func_ref.add_parameter_node(new_param_decl);

@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include <optional>
 #include <algorithm>
+#include <span>
 
 // SaveHandle type for parser save/restore operations
 // Matches Parser::SaveHandle typedef in Parser.h
@@ -177,6 +178,7 @@ struct TemplateTypeArg {
 	// For dependent types (types that depend on template parameters)
 	bool is_dependent;  // true if this type depends on uninstantiated template parameters
 	StringHandle dependent_name;	 // name of the dependent template parameter or type name (set when is_dependent is true)
+	std::optional<ASTNode> dependent_expr;  // Original AST for dependent NTTP expressions (e.g., sizeof(T))
 
 	// For template template parameters (e.g., template<typename...> class Op)
 	bool is_template_template_arg;  // true if this is a template template argument
@@ -248,16 +250,25 @@ struct TemplateTypeArg {
 	}
 
 	static TemplateTypeArg makeDependentValue(StringHandle name, TypeCategory category) {
-		return makeDependentValue(name, category, 0);
+		return makeDependentValue(name, category, 0, std::nullopt);
 	}
 
 	static TemplateTypeArg makeDependentValue(
 		StringHandle name,
 		TypeCategory category,
 		int64_t placeholder_value) {
+		return makeDependentValue(name, category, placeholder_value, std::nullopt);
+	}
+
+	static TemplateTypeArg makeDependentValue(
+		StringHandle name,
+		TypeCategory category,
+		int64_t placeholder_value,
+		std::optional<ASTNode> expr) {
 		TemplateTypeArg arg(placeholder_value, category);
 		arg.is_dependent = true;
 		arg.dependent_name = name;
+		arg.dependent_expr = std::move(expr);
 		return arg;
 	}
 
@@ -749,11 +760,14 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 // dependent names from the provided template parameter/argument lists.
 // This is the single authoritative conversion point — all call sites that previously
 // had hand-rolled loops copying TemplateArgInfo fields should use this instead.
-template <typename ParamContainer, typename ArgContainer>
+// EvalFn: callable with signature std::optional<int64_t>(const ASTNode&, std::span<const ASTNode>, std::span<const TemplateTypeArg>)
+// Pass nullptr when dependent NTTP expression evaluation is not needed (e.g., non-Parser contexts).
+template <typename ParamContainer, typename ArgContainer, typename EvalFn>
 inline TemplateTypeArg materializeTemplateArg(
 	const TypeInfo::TemplateArgInfo& arg_info,
 	const ParamContainer& template_params,
-	const ArgContainer& template_args) {
+	const ArgContainer& template_args,
+	EvalFn&& eval_dependent_expr) {
 	TemplateTypeArg concrete_arg;
 	concrete_arg.setCategory(arg_info.category());
 	concrete_arg.type_index = arg_info.type_index;
@@ -767,7 +781,8 @@ inline TemplateTypeArg materializeTemplateArg(
 	concrete_arg.is_array = arg_info.is_array;
 	concrete_arg.function_signature = arg_info.function_signature;
 	concrete_arg.dependent_name = arg_info.dependent_name;
-	concrete_arg.is_dependent = arg_info.dependent_name.isValid();
+	concrete_arg.dependent_expr = arg_info.dependent_expr;
+	concrete_arg.is_dependent = arg_info.dependent_name.isValid() || arg_info.dependent_expr.has_value();
 
 	if (arg_info.dependent_name.isValid()) {
 		std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);
@@ -784,22 +799,56 @@ inline TemplateTypeArg materializeTemplateArg(
 				break;
 			}
 		}
+	} else if (arg_info.dependent_expr.has_value() && arg_info.is_value) {
+		// For dependent NTTP expressions (e.g., sizeof(T)), evaluate with concrete args.
+		// Only attempted when a non-null evaluator callback is provided.
+		if constexpr (!std::is_null_pointer_v<std::decay_t<EvalFn>>) {
+			// Copy to contiguous storage so we can form std::span (InlineVector is non-contiguous).
+			std::vector<ASTNode> params_vec(template_params.begin(), template_params.end());
+			std::vector<TemplateTypeArg> args_vec(template_args.begin(), template_args.end());
+			if (auto evaluated = eval_dependent_expr(*arg_info.dependent_expr, std::span<const ASTNode>{params_vec}, std::span<const TemplateTypeArg>{args_vec})) {
+				concrete_arg.value = *evaluated;
+				concrete_arg.is_dependent = false;
+				concrete_arg.dependent_expr = std::nullopt;
+			}
+		}
 	}
 
 	return concrete_arg;
 }
 
+// Overload without evaluator: leaves dependent NTTP expressions unevaluated.
+template <typename ParamContainer, typename ArgContainer>
+inline TemplateTypeArg materializeTemplateArg(
+	const TypeInfo::TemplateArgInfo& arg_info,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	return materializeTemplateArg(arg_info, template_params, template_args, nullptr);
+}
+
 // Convenience: materialize all stored TemplateArgInfo entries from a TypeInfo
 // into a concrete TemplateTypeArg vector, substituting dependent names.
+// EvalFn: callable with signature std::optional<int64_t>(const ASTNode&, std::span<const ASTNode>, std::span<const TemplateTypeArg>)
+// Pass nullptr if not available.
+template <typename ParamContainer, typename ArgContainer, typename EvalFn>
+inline std::vector<TemplateTypeArg> materializeTemplateArgs(
+	const TypeInfo& type_info,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args,
+	EvalFn&& eval_dependent_expr) {
+	std::vector<TemplateTypeArg> result;
+	result.reserve(type_info.templateArgs().size());
+	for (const auto& arg_info : type_info.templateArgs()) {
+		result.push_back(materializeTemplateArg(arg_info, template_params, template_args, eval_dependent_expr));
+	}
+	return result;
+}
+
+// Overload without evaluator: leaves dependent NTTP expressions unevaluated.
 template <typename ParamContainer, typename ArgContainer>
 inline std::vector<TemplateTypeArg> materializeTemplateArgs(
 	const TypeInfo& type_info,
 	const ParamContainer& template_params,
 	const ArgContainer& template_args) {
-	std::vector<TemplateTypeArg> result;
-	result.reserve(type_info.templateArgs().size());
-	for (const auto& arg_info : type_info.templateArgs()) {
-		result.push_back(materializeTemplateArg(arg_info, template_params, template_args));
-	}
-	return result;
+	return materializeTemplateArgs(type_info, template_params, template_args, nullptr);
 }

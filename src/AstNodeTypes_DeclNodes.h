@@ -940,6 +940,7 @@ struct TypeInfo {
 		std::optional<size_t> array_size = std::nullopt;
 		StringHandle dependent_name;	 // Name of the dependent template parameter (for inner deduction)
 		std::optional<FunctionSignature> function_signature; // For function pointer template arguments
+		std::optional<ASTNode> dependent_expr;  // Original AST for dependent NTTP expressions (e.g., sizeof(T))
 
 		// Category accessor (delegates to type_index.category())
 		TypeCategory category() const noexcept { return type_index.category(); }

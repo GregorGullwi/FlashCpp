@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include <span>
 #include "ExpressionSubstitutor.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -483,12 +484,60 @@ std::string_view Parser::instantiate_and_register_base_template(
 	return std::string_view();
 }
 
+// Helper: resolve sizeof(member_alias_type) for a qualified owner.
+// Looks up owner::type_name in the type registry, resolves the alias, and
+// returns a concrete sizeof(resolved_type) AST node.  Returns nullopt if the
+// lookup or resolution fails.
+std::optional<ASTNode> Parser::tryResolveSizeofMemberAlias(
+	StringHandle substitution_owner,
+	std::string_view type_name,
+	const Token& sizeof_token) {
+	if (!substitution_owner.isValid() || type_name.empty()) {
+		return std::nullopt;
+	}
+	StringHandle qualified_alias_name = StringTable::getOrInternStringHandle(
+		StringBuilder()
+			.append(substitution_owner)
+			.append("::")
+			.append(type_name)
+			.commit());
+	auto qualified_type_it = getTypesByNameMap().find(qualified_alias_name);
+	if (qualified_type_it == getTypesByNameMap().end() || qualified_type_it->second == nullptr) {
+		return std::nullopt;
+	}
+	const TypeInfo& qualified_type_info = *qualified_type_it->second;
+	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+		qualified_type_info.registeredTypeIndex().withCategory(qualified_type_info.typeEnum()));
+	FLASH_LOG(Templates, Debug, "sizeof substitution: resolved member alias ", StringTable::getStringView(qualified_alias_name),
+			  " size_bits=", qualified_type_info.sizeInBits().value);
+	TypeSpecifierNode new_type(
+		qualified_type_info.registeredTypeIndex().withCategory(qualified_type_info.typeEnum()),
+		qualified_type_info.hasStoredSize() ? qualified_type_info.sizeInBits().value : 0,
+		sizeof_token,
+		CVQualifier::None,
+		ReferenceQualifier::None);
+	new_type.set_reference_qualifier(resolved_alias.reference_qualifier);
+	for (size_t p = 0; p < resolved_alias.pointer_depth; ++p) {
+		new_type.add_pointer_level(CVQualifier::None);
+	}
+	if (!resolved_alias.array_dimensions.empty()) {
+		new_type.set_array_dimensions(resolved_alias.array_dimensions);
+	}
+	if (resolved_alias.function_signature.has_value()) {
+		new_type.set_function_signature(*resolved_alias.function_signature);
+	}
+	auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
+	SizeofExprNode new_sizeof(new_type_node, sizeof_token);
+	return emplace_node<ExpressionNode>(new_sizeof);
+}
+
 // Helper function to substitute template parameters in an expression
 // This recursively traverses the expression tree and replaces constructor calls with template parameter types
 ASTNode Parser::substitute_template_params_in_expression(
 	const ASTNode& expr,
 	const std::unordered_map<TypeIndex, TemplateTypeArg>& type_substitution_map,
-	const std::unordered_map<std::string_view, int64_t>& nontype_substitution_map) {
+	const std::unordered_map<std::string_view, int64_t>& nontype_substitution_map,
+	StringHandle substitution_owner) {
 
 	// ASTNode is a typed pointer wrapper, check if it contains an ExpressionNode
 	if (!expr.is<ExpressionNode>()) {
@@ -580,11 +629,22 @@ ASTNode Parser::substitute_template_params_in_expression(
 				}
 			}
 
+			if (auto resolved = tryResolveSizeofMemberAlias(substitution_owner, type_node.token().value(), sizeof_node.sizeof_token())) {
+				return *resolved;
+			}
+
 			FLASH_LOG(Templates, Debug, "sizeof substitution: NO match found");
 		} else if (!sizeof_node.is_type()) {
+			if (sizeof_node.type_or_expr().is<ExpressionNode>() &&
+				std::holds_alternative<IdentifierNode>(sizeof_node.type_or_expr().as<ExpressionNode>())) {
+				const IdentifierNode& id_node = std::get<IdentifierNode>(sizeof_node.type_or_expr().as<ExpressionNode>());
+				if (auto resolved = tryResolveSizeofMemberAlias(substitution_owner, id_node.name(), sizeof_node.sizeof_token())) {
+					return *resolved;
+				}
+			}
 			// If sizeof has an expression operand, recursively substitute
 			auto new_operand = substitute_template_params_in_expression(
-				sizeof_node.type_or_expr(), type_substitution_map, nontype_substitution_map);
+				sizeof_node.type_or_expr(), type_substitution_map, nontype_substitution_map, substitution_owner);
 			SizeofExprNode new_sizeof = SizeofExprNode::from_expression(new_operand, sizeof_node.sizeof_token());
 			return emplace_node<ExpressionNode>(new_sizeof);
 		}
@@ -633,7 +693,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 				// Recursively substitute in arguments
 				ChunkedVector<ASTNode> new_args;
 				for (size_t i = 0; i < ctor.arguments().size(); ++i) {
-					new_args.push_back(substitute_template_params_in_expression(ctor.arguments()[i], type_substitution_map, nontype_substitution_map));
+					new_args.push_back(substitute_template_params_in_expression(ctor.arguments()[i], type_substitution_map, nontype_substitution_map, substitution_owner));
 				}
 
 				// Create new constructor call with substituted type
@@ -646,7 +706,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 		// Not a template parameter constructor - recursively substitute in arguments
 		ChunkedVector<ASTNode> new_args;
 		for (size_t i = 0; i < ctor.arguments().size(); ++i) {
-			new_args.push_back(substitute_template_params_in_expression(ctor.arguments()[i], type_substitution_map, nontype_substitution_map));
+			new_args.push_back(substitute_template_params_in_expression(ctor.arguments()[i], type_substitution_map, nontype_substitution_map, substitution_owner));
 		}
 		ConstructorCallNode new_ctor(ctor.type_node(), std::move(new_args), ctor.called_from());
 		return emplace_node<ExpressionNode>(new_ctor);
@@ -656,9 +716,9 @@ ASTNode Parser::substitute_template_params_in_expression(
 	if (std::holds_alternative<BinaryOperatorNode>(expr_variant)) {
 		const BinaryOperatorNode& binop = std::get<BinaryOperatorNode>(expr_variant);
 		auto new_left = substitute_template_params_in_expression(
-			binop.get_lhs(), type_substitution_map, nontype_substitution_map);
+			binop.get_lhs(), type_substitution_map, nontype_substitution_map, substitution_owner);
 		auto new_right = substitute_template_params_in_expression(
-			binop.get_rhs(), type_substitution_map, nontype_substitution_map);
+			binop.get_rhs(), type_substitution_map, nontype_substitution_map, substitution_owner);
 
 		BinaryOperatorNode new_binop(
 			binop.get_token(),
@@ -711,7 +771,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 
 		// General case: recursively substitute in operand
 		auto new_operand = substitute_template_params_in_expression(
-			unop.get_operand(), type_substitution_map, nontype_substitution_map);
+			unop.get_operand(), type_substitution_map, nontype_substitution_map, substitution_owner);
 
 		UnaryOperatorNode new_unop(
 			unop.get_token(),
@@ -1695,3 +1755,110 @@ std::optional<ASTNode> Parser::substitute_nontype_template_param(
 
 // Helper function to fill in default template arguments before pattern matching
 // This is critical for SFINAE patterns like void_t
+
+// Evaluates a dependent NTTP expression (e.g., sizeof(T), alignof(T)) with concrete template arguments.
+// Delegates to substitute_template_params_in_expression then ConstExpr::Evaluator for correctness
+// with struct types and complex expressions.
+// Returns the evaluated value if successful, or nullopt if evaluation fails.
+std::optional<int64_t> Parser::evaluateDependentNTTPExpression(
+	const ASTNode& dependent_expr,
+	std::span<const ASTNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+
+	// Build type substitution map from template params to args
+	std::unordered_map<TypeIndex, TemplateTypeArg> type_substitution_map;
+	// Build non-type substitution map for value parameters
+	std::unordered_map<std::string_view, int64_t> nontype_substitution_map;
+	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+		if (!template_params[i].is<TemplateParameterNode>()) {
+			continue;
+		}
+		const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+		if (param.kind() == TemplateParameterKind::Type) {
+			// For typename/class parameters, registered_type_index() is the TypeIndex assigned
+			// when the template was parsed (via add_user_type in Parser_Templates_Function.cpp).
+			// This is the same TypeIndex that sizeof(T) will carry in its TypeSpecifierNode.
+			if (param.registered_type_index().is_valid()) {
+				type_substitution_map[param.registered_type_index()] = template_args[i];
+			}
+			// For non-type parameters that have an explicit type node (e.g., template<int N>
+			// where someone uses sizeof(N)), also map by the param's type specifier index.
+			if (param.has_type() && param.type_node().is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& param_type = param.type_node().as<TypeSpecifierNode>();
+				type_substitution_map[param_type.type_index()] = template_args[i];
+			}
+			// Name-based fallback: look up by param name in the type registry.
+			auto type_it = getTypesByNameMap().find(param.nameHandle());
+			if (type_it != getTypesByNameMap().end() && type_it->second != nullptr) {
+				type_substitution_map[type_it->second->type_index_] = template_args[i];
+			}
+		} else if (param.kind() == TemplateParameterKind::NonType && template_args[i].is_value) {
+			nontype_substitution_map[param.name()] = template_args[i].value;
+		}
+	}
+
+	// Additional pass: for sizeof/alignof expressions, directly match the type name
+	// against template parameter names.  This handles class template type parameters
+	// where registered_type_index() was not set by add_template_param_type and the
+	// TypeInfo was removed from getTypesByNameMap() after template parsing.
+	// We map the TypeIndex that appears inside sizeof(T) directly, which the
+	// substitute_template_params_in_expression type_index lookup will then find.
+	// TODO: The root cause is that Parser_Templates_Class.cpp does not call
+	// tparam.set_registered_type_index() after add_template_param_type(), unlike
+	// Parser_Templates_Function.cpp which does.  Fixing that would eliminate this
+	// fallback.  See also: the RAII TemplateParameterScope removes the TypeInfo from
+	// getTypesByNameMap() after parsing, making name-based lookup unreliable here.
+	auto tryMapSizeofTypeByName = [&](const TypeSpecifierNode& type_node) {
+		if (type_substitution_map.count(type_node.type_index())) {
+			return;  // Already mapped via registered_type_index or getTypesByNameMap
+		}
+		std::string_view token_name = type_node.token().value();
+		if (token_name.empty()) {
+			if (const TypeInfo* ti = tryGetTypeInfo(type_node.type_index())) {
+				token_name = StringTable::getStringView(ti->name());
+			}
+		}
+		if (token_name.empty()) {
+			return;
+		}
+		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) {
+				continue;
+			}
+			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+			if (param.kind() == TemplateParameterKind::Type && param.name() == token_name) {
+				type_substitution_map[type_node.type_index()] = template_args[i];
+				break;
+			}
+		}
+	};
+	if (dependent_expr.is<ExpressionNode>()) {
+		const ExpressionNode& top_variant = dependent_expr.as<ExpressionNode>();
+		if (std::holds_alternative<SizeofExprNode>(top_variant)) {
+			const SizeofExprNode& sn = std::get<SizeofExprNode>(top_variant);
+			if (sn.is_type() && sn.type_or_expr().is<TypeSpecifierNode>()) {
+				tryMapSizeofTypeByName(sn.type_or_expr().as<TypeSpecifierNode>());
+			}
+		} else if (std::holds_alternative<AlignofExprNode>(top_variant)) {
+			const AlignofExprNode& an = std::get<AlignofExprNode>(top_variant);
+			if (an.is_type() && an.type_or_expr().is<TypeSpecifierNode>()) {
+				tryMapSizeofTypeByName(an.type_or_expr().as<TypeSpecifierNode>());
+			}
+		}
+	}
+
+	// Substitute template parameters in the expression to get a concrete AST
+	ASTNode substituted = substitute_template_params_in_expression(
+		dependent_expr, type_substitution_map, nontype_substitution_map, StringHandle{});
+
+	// Evaluate the substituted expression using the standard constant expression evaluator
+	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+	eval_ctx.parser = this;
+	ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
+	if (result.success()) {
+		return static_cast<int64_t>(result.as_int());
+	}
+
+	FLASH_LOG(Templates, Debug, "evaluateDependentNTTPExpression: evaluation failed for dependent expression");
+	return std::nullopt;
+}
