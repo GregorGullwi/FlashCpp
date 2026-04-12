@@ -167,6 +167,154 @@ struct TypeIndexArg {
 };
 
 // ============================================================================
+// NonTypeValueIdentity - Canonical carrier for non-type template argument identity
+// ============================================================================
+
+/**
+ * NonTypeValueIdentity: Canonical carrier for non-type template argument identity.
+ * 
+ * Phase 1 of template-instantiation identity cleanup (see docs/2026-04-08-template-instantiation-materialization-plan.md).
+ * 
+ * This structure captures the identity of a non-type template argument in one place:
+ * - For CONCRETE values: value + value_type_index define identity; dependent_name is invalid
+ * - For DEPENDENT values: dependent_name defines identity; value/value_type_index are placeholders
+ * 
+ * Key invariants:
+ * - is_dependent == true implies dependent_name.isValid()
+ * - is_dependent == false implies !dependent_name.isValid() (concrete arg)
+ * - Bool/Int are interchangeable for value comparison (C++ allows bool as non-type template param)
+ * 
+ * This replaces the scattered `is_value + value + is_dependent + dependent_name` fields in:
+ * - TemplateTypeArg (when is_value==true)
+ * - ValueArgKey (deprecated alias, now forwards to NonTypeValueIdentity)
+ * 
+ * The goal is one canonical representation that TemplateInstantiationKey consumes directly.
+ */
+struct NonTypeValueIdentity {
+	int64_t value = 0;              // The concrete value (meaningful when !is_dependent)
+	TypeIndex value_type_index = nativeTypeIndex(TypeCategory::Int);  // The full type identity of the value
+	StringHandle dependent_name{};  // Name when dependent (e.g., "N" for template<int N>)
+	bool is_dependent = false;      // True if this is a dependent (not yet substituted) value
+
+	TypeCategory valueTypeCategory() const {
+		return value_type_index.category();
+	}
+
+	// Factory methods for common cases
+	static NonTypeValueIdentity makeConcrete(int64_t val, TypeCategory type) {
+		return makeConcrete(val, TypeIndex{0, type});
+	}
+
+	static NonTypeValueIdentity makeConcrete(int64_t val, TypeIndex type_index) {
+		NonTypeValueIdentity id;
+		id.value = val;
+		id.value_type_index = type_index;
+		id.is_dependent = false;
+		id.dependent_name = {};
+		return id;
+	}
+
+	static NonTypeValueIdentity makeDependent(StringHandle name) {
+		return makeDependent(name, nativeTypeIndex(TypeCategory::Int));
+	}
+
+	static NonTypeValueIdentity makeDependent(StringHandle name, TypeIndex type_index) {
+		NonTypeValueIdentity id;
+		id.value = 0;
+		id.value_type_index = type_index;
+		id.is_dependent = true;
+		id.dependent_name = name;
+		return id;
+	}
+
+	static NonTypeValueIdentity makeDependentWithPlaceholder(StringHandle name, int64_t placeholder_value, TypeCategory type) {
+		return makeDependentWithPlaceholder(name, placeholder_value, TypeIndex{0, type});
+	}
+
+	static NonTypeValueIdentity makeDependentWithPlaceholder(StringHandle name, int64_t placeholder_value, TypeIndex type_index) {
+		NonTypeValueIdentity id;
+		id.value = placeholder_value;
+		id.value_type_index = type_index;
+		id.is_dependent = true;
+		id.dependent_name = name;
+		return id;
+	}
+
+	// Helper: normalize Bool/Int to Int for comparison/hashing.
+	// C++ non-type template argument matching treats bool/int values as interchangeable
+	// in the places FlashCpp currently models with an integral carrier.
+	static TypeCategory normalizedTypeForComparison(TypeCategory t) {
+		return (t == TypeCategory::Bool || t == TypeCategory::Int) ? TypeCategory::Int : t;
+	}
+
+	static bool equalValueTypeIdentity(TypeIndex lhs, TypeIndex rhs) {
+		// Comparison tiers:
+		// 1. Different normalized categories never match.
+		// 2. Normalized integral values (bool/int) match by category alone.
+		// 3. User-defined / index-backed types must match by full TypeIndex identity.
+		// 4. Other native types match by normalized category alone.
+		TypeCategory lhs_category = normalizedTypeForComparison(lhs.category());
+		TypeCategory rhs_category = normalizedTypeForComparison(rhs.category());
+		if (lhs_category != rhs_category) {
+			return false;
+		}
+		if (lhs_category == TypeCategory::Int) {
+			return true;
+		}
+		if (lhs.needsTypeIndex() || rhs.needsTypeIndex()) {
+			return equalTypeIndexIdentity(lhs, rhs);
+		}
+		return true;
+	}
+
+	static size_t hashValueTypeIdentity(TypeIndex type_index) {
+		TypeCategory normalized_category = normalizedTypeForComparison(type_index.category());
+		size_t h = std::hash<uint8_t>{}(static_cast<uint8_t>(normalized_category));
+		if (normalized_category != TypeCategory::Int && type_index.needsTypeIndex()) {
+			h ^= hashTypeIndexIdentity(type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		return h;
+	}
+
+	bool operator==(const NonTypeValueIdentity& other) const {
+		if (is_dependent != other.is_dependent)
+			return false;
+		if (is_dependent) {
+			// Dependent args: identity is the name only
+			return dependent_name == other.dependent_name;
+		}
+		// Concrete args: identity is value + type (with Bool/Int interchangeability)
+		return value == other.value &&
+			   equalValueTypeIdentity(value_type_index, other.value_type_index);
+	}
+
+	size_t hash() const {
+		size_t h = std::hash<bool>{}(is_dependent);
+		if (is_dependent) {
+			if (dependent_name.isValid()) {
+				h ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			}
+			return h;
+		}
+		h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= hashValueTypeIdentity(value_type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		return h;
+	}
+
+	// String representation for debugging and name generation
+	std::string toString() const {
+		if (is_dependent && dependent_name.isValid()) {
+			return std::string(StringTable::getStringView(dependent_name));
+		}
+		// For boolean values, use "true" or "false" instead of "1" or "0"
+		if (valueTypeCategory() == TypeCategory::Bool) {
+			return value != 0 ? "true" : "false";
+		}
+		return std::to_string(value);
+	}
+};
+
+// ============================================================================
 // TemplateInstantiationKey - TypeIndex-based template instantiation key
 // ============================================================================
 
@@ -191,26 +339,10 @@ struct TypeIndexArg {
  * TypeIndex-based keys are unambiguous because TypeIndex is assigned uniquely
  * to each type during parsing.
  */
-struct ValueArgKey {
-	int64_t value = 0;
-	StringHandle dependent_name{};
-	bool is_dependent = false;
 
-	bool operator==(const ValueArgKey& other) const {
-		return value == other.value &&
-			   dependent_name == other.dependent_name &&
-			   is_dependent == other.is_dependent;
-	}
-
-	size_t hash() const {
-		size_t h = std::hash<int64_t>{}(value);
-		h ^= std::hash<bool>{}(is_dependent) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		if (is_dependent && dependent_name.isValid()) {
-			h ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		}
-		return h;
-	}
-};
+// ValueArgKey is now an alias for NonTypeValueIdentity for backward compatibility
+// during Phase 1 migration. New code should use NonTypeValueIdentity directly.
+using ValueArgKey = NonTypeValueIdentity;
 
 struct TemplateInstantiationKey {
 	StringHandle base_template;							// Template name handle

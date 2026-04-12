@@ -2691,8 +2691,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				struct_info->alignment = std::max(struct_info->alignment, effective_alignment);
 			}
 
-			// Update total_size to account for the union (largest member)
-			struct_info->finalizeLayoutSize(aligned_union_start + union_max_size, aligned_union_start + union_max_size, struct_info->alignment);
+			// Update the in-progress layout to account for the union (largest member)
+			struct_info->advanceLayoutSize(aligned_union_start + union_max_size, aligned_union_start + union_max_size, union_max_alignment);
 			struct_info->active_bitfield_unit_size = 0;
 			struct_info->active_bitfield_bits_used = 0;
 			struct_info->active_bitfield_unit_alignment = 0;
@@ -2734,13 +2734,34 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			const auto& dims = decl.array_dimensions();
 			for (const auto& dim_expr : dims) {
 				ConstExpr::EvaluationContext ctx(gSymbolTable);
+				// Lets constexpr evaluation classify unsubstituted template bounds as dependent.
+				ctx.parser = this;
 				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-				if (eval_result.success() && eval_result.as_int() > 0) {
-					size_t dim_size = static_cast<size_t>(eval_result.as_int());
-					array_dimensions.push_back(dim_size);
-					member_size *= dim_size;
-					referenced_size_bits *= dim_size;
+				if (!eval_result.success()) {
+					const bool can_defer_dependent_bound =
+						eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression &&
+						(parsing_template_class_ || parsing_template_depth_ > 0 || !current_template_param_names_.empty());
+					if (can_defer_dependent_bound) {
+						continue;
+					}
+
+					return ParseResult::error(
+						"Invalid array bound for member '" + std::string(decl.identifier_token().value()) +
+						"': " + eval_result.error_message,
+						decl.identifier_token());
 				}
+
+				if (eval_result.as_int() <= 0) {
+					return ParseResult::error(
+						"Array bound for member '" + std::string(decl.identifier_token().value()) +
+						"' must be greater than 0",
+						decl.identifier_token());
+				}
+
+				size_t dim_size = static_cast<size_t>(eval_result.as_int());
+				array_dimensions.push_back(dim_size);
+				member_size *= dim_size;
+				referenced_size_bits *= dim_size;
 			}
 		}
 
