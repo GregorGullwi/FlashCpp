@@ -814,13 +814,187 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		}
 	}
 
+	auto template_opt = gTemplateRegistry.lookupVariableTemplate(template_name);
+	if (!template_opt.has_value() && template_name != simple_template_name) {
+		template_opt = gTemplateRegistry.lookupVariableTemplate(simple_template_name);
+	}
+	if (!template_opt.has_value()) {
+		FLASH_LOG(Templates, Error, "Variable template '", template_name, "' not found");
+		return std::nullopt;
+	}
+
+	if (!template_opt->is<TemplateVariableDeclarationNode>()) {
+		FLASH_LOG(Templates, Error, "Expected TemplateVariableDeclarationNode");
+		return std::nullopt;
+	}
+
+	const TemplateVariableDeclarationNode& var_template = template_opt->as<TemplateVariableDeclarationNode>();
+	const auto& template_params = var_template.template_parameters();
+
+	auto fill_missing_variable_template_args =
+		[&](const std::vector<TemplateTypeArg>& input_args) -> std::optional<std::vector<TemplateTypeArg>> {
+		bool has_parameter_pack = false;
+		size_t non_variadic_param_count = 0;
+		for (const auto& param_node : template_params) {
+			if (!param_node.is<TemplateParameterNode>()) {
+				continue;
+			}
+
+			const auto& param = param_node.as<TemplateParameterNode>();
+			if (param.is_variadic()) {
+				has_parameter_pack = true;
+				continue;
+			}
+			++non_variadic_param_count;
+		}
+
+		if (has_parameter_pack) {
+			size_t minimum_required_args = 0;
+			for (const auto& param_node : template_params) {
+				if (!param_node.is<TemplateParameterNode>()) {
+					continue;
+				}
+
+				const auto& param = param_node.as<TemplateParameterNode>();
+				if (param.is_variadic() || param.has_default()) {
+					continue;
+				}
+				++minimum_required_args;
+			}
+
+			if (input_args.size() < minimum_required_args) {
+				FLASH_LOG(Templates, Error, "Too few arguments for variadic variable template '",
+						  template_name, "' (got ", input_args.size(), ", need at least ", minimum_required_args, ")");
+				return std::nullopt;
+			}
+		} else if (input_args.size() > non_variadic_param_count) {
+			FLASH_LOG(Templates, Error, "Too many arguments for variable template '",
+					  template_name, "' (got ", input_args.size(), ", max ", non_variadic_param_count, ")");
+			return std::nullopt;
+		}
+
+		auto materialize_default_arg =
+			[&](const TemplateParameterNode& param, const std::vector<TemplateTypeArg>& bound_args) -> std::optional<TemplateTypeArg> {
+			if (!param.has_default()) {
+				return std::nullopt;
+			}
+
+			const ASTNode& default_node = param.default_value();
+			InlineVector<TemplateTypeArg, 4> bound_args_inline = toInlineTemplateArgs(bound_args);
+			ASTNode substituted_default = substituteTemplateParameters(default_node, template_params, bound_args_inline);
+
+			if (param.kind() == TemplateParameterKind::Type) {
+				if (substituted_default.is<TypeSpecifierNode>()) {
+					return TemplateTypeArg(substituted_default.as<TypeSpecifierNode>());
+				}
+				if (default_node.is<TypeSpecifierNode>()) {
+					return TemplateTypeArg(default_node.as<TypeSpecifierNode>());
+				}
+				FLASH_LOG(Templates, Error, "Failed to materialize type default for variable template parameter '",
+						  param.name(), "'");
+				return std::nullopt;
+			}
+
+			if (param.kind() == TemplateParameterKind::NonType) {
+				if (!substituted_default.is<ExpressionNode>()) {
+					FLASH_LOG(Templates, Error, "Failed to substitute non-type default for variable template parameter '",
+							  param.name(), "'");
+					return std::nullopt;
+				}
+
+				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default, eval_ctx);
+				if (!eval_result.success()) {
+					FLASH_LOG(Templates, Error, "Failed to evaluate non-type default for variable template parameter '",
+							  param.name(), "'");
+					return std::nullopt;
+				}
+
+				if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
+					return TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool);
+				}
+				if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
+					TypeCategory value_category = eval_result.exact_type.has_value()
+						? eval_result.exact_type->category()
+						: TypeCategory::UnsignedLongLong;
+					return TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category);
+				}
+				if (eval_result.exact_type.has_value()) {
+					return TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category());
+				}
+				return TemplateTypeArg(eval_result.as_int());
+			}
+
+			FLASH_LOG(Templates, Error, "Unsupported variable template parameter kind for default argument on '",
+					  param.name(), "'");
+			return std::nullopt;
+		};
+
+		std::vector<TemplateTypeArg> filled_args;
+		filled_args.reserve(std::max(input_args.size(), template_params.size()));
+		size_t arg_index = 0;
+
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) {
+				continue;
+			}
+
+			const auto& param = template_params[i].as<TemplateParameterNode>();
+			if (param.is_variadic()) {
+				size_t remaining_args = arg_index < input_args.size()
+					? input_args.size() - arg_index
+					: 0;
+				size_t required_after = countRequiredTemplateArgsAfter<InlineVector<ASTNode, 4>, std::vector<TemplateTypeArg>>(
+					template_params, i + 1);
+				size_t pack_size = remaining_args > required_after
+					? remaining_args - required_after
+					: 0;
+				for (size_t pack_index = 0; pack_index < pack_size; ++pack_index) {
+					filled_args.push_back(input_args[arg_index + pack_index]);
+				}
+				arg_index += pack_size;
+				continue;
+			}
+
+			if (arg_index < input_args.size()) {
+				filled_args.push_back(input_args[arg_index]);
+				++arg_index;
+				continue;
+			}
+
+			auto default_arg = materialize_default_arg(param, filled_args);
+			if (!default_arg.has_value()) {
+				FLASH_LOG(Templates, Error, "Variable template '", template_name,
+						  "': missing argument for parameter '", param.name(), "'");
+				return std::nullopt;
+			}
+
+			filled_args.push_back(*default_arg);
+		}
+
+		if (arg_index != input_args.size()) {
+			FLASH_LOG(Templates, Error, "Too many arguments for variable template '",
+					  template_name, "' after canonical binding (consumed ", arg_index,
+					  " of ", input_args.size(), ")");
+			return std::nullopt;
+		}
+
+		return filled_args;
+	};
+
+	auto filled_args_opt = fill_missing_variable_template_args(resolved_args);
+	if (!filled_args_opt.has_value()) {
+		return std::nullopt;
+	}
+	const std::vector<TemplateTypeArg>& filled_args = *filled_args_opt;
+
 	// Structural pattern matching: find the best matching partial specialization
 	// Uses TemplatePattern::matches() which handles qualifier matching, multi-arg,
 	// and proper template parameter deduction without string-based pattern keys.
-	auto structural_match = gTemplateRegistry.findVariableTemplateSpecialization(simple_template_name, resolved_args);
+	auto structural_match = gTemplateRegistry.findVariableTemplateSpecialization(simple_template_name, filled_args);
 	// Also try qualified name if simple name didn't match
 	if (!structural_match.has_value() && template_name != simple_template_name) {
-		structural_match = gTemplateRegistry.findVariableTemplateSpecialization(template_name, resolved_args);
+		structural_match = gTemplateRegistry.findVariableTemplateSpecialization(template_name, filled_args);
 	}
 
 	if (structural_match.has_value() && structural_match->node.is<TemplateVariableDeclarationNode>()) {
@@ -828,7 +1002,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		const TemplateVariableDeclarationNode& spec_template = structural_match->node.as<TemplateVariableDeclarationNode>();
 		const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
 		const Token& orig_token = spec_var_decl.declaration().identifier_token();
-		std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, resolved_args);
+		std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, filled_args);
 
 		if (gSymbolTable.lookup(persistent_name).has_value()) {
 			return gSymbolTable.lookup(persistent_name);
@@ -851,10 +1025,10 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 						converted_args.push_back(it->second);
 					} else {
 						// Fallback: use resolved arg with qualifiers stripped
-						if (converted_args.size() < resolved_args.size()) {
+						if (converted_args.size() < filled_args.size()) {
 							FLASH_LOG(Templates, Debug, "Deduction fallback for param '",
 									  tp.name(), "': using arg[", converted_args.size(), "] with qualifiers stripped");
-							TemplateTypeArg deduced = resolved_args[converted_args.size()];
+							TemplateTypeArg deduced = filled_args[converted_args.size()];
 							deduced.ref_qualifier = ReferenceQualifier::None;
 							deduced.pointer_depth = 0;
 							deduced.pointer_cv_qualifiers.clear();
@@ -896,147 +1070,35 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		return var_decl_node;
 	}
 
-	// No partial specialization found - use the primary template
-	auto template_opt = gTemplateRegistry.lookupVariableTemplate(template_name);
-	if (!template_opt.has_value()) {
-		FLASH_LOG(Templates, Error, "Variable template '", template_name, "' not found");
-		return std::nullopt;
-	}
-
-	if (!template_opt->is<TemplateVariableDeclarationNode>()) {
-		FLASH_LOG(Templates, Error, "Expected TemplateVariableDeclarationNode");
-		return std::nullopt;
-	}
-
-	const TemplateVariableDeclarationNode& var_template = template_opt->as<TemplateVariableDeclarationNode>();
-
 	// Generate unique name for the instantiation using hash-based naming
 	// This ensures consistent naming with class template instantiations
-	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, resolved_args);
+	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, filled_args);
 
 	// Check if already instantiated
 	if (gSymbolTable.lookup(persistent_name).has_value()) {
 		return gSymbolTable.lookup(persistent_name);
 	}
 
-	// Perform template substitution
-	const auto& template_params = var_template.template_parameters();
-	if (resolved_args.size() != template_params.size()) {
-		FLASH_LOG(Templates, Error, "Template argument count mismatch: expected ", template_params.size(),
-				  ", got ", resolved_args.size());
-		return std::nullopt;
-	}
-
 	// Get the original variable declaration
 	const VariableDeclarationNode& orig_var_decl = var_template.variable_decl_node();
 	const DeclarationNode& orig_decl = orig_var_decl.declaration();
-	const TypeSpecifierNode& orig_type = orig_decl.type_node().as<TypeSpecifierNode>();
-
-	// Build a map from template parameter type_index to concrete type for substitution
-	std::unordered_map<TypeIndex, TemplateTypeArg> type_substitution_map;
-	// Build a map from non-type template parameter name to value for substitution
-	std::unordered_map<std::string_view, int64_t> nontype_substitution_map;
-
-	// Substitute template parameter with concrete type
-	// For now, assume simple case where the type is just the template parameter
-	TypeSpecifierNode substituted_type = orig_type;
-
-	// Build substitution maps for all template parameters
-	for (size_t i = 0; i < template_params.size(); ++i) {
-		if (!template_params[i].is<TemplateParameterNode>())
-			continue;
-
-		const auto& tparam = template_params[i].as<TemplateParameterNode>();
-
-		if (tparam.kind() == TemplateParameterKind::Type) {
-			// For type template parameters, look up the type_index in gTypeInfo
-			// The template parameter name was registered as a type during parsing
-			const TemplateTypeArg& arg = resolved_args[i];
-
-			// Find the type_index for this template parameter by name
-			// During template parsing, template parameters are added to gTypeInfo
-			// We need to find the type_index that corresponds to this template parameter name
-			std::string_view param_name = tparam.name();
-			TypeIndex param_type_index{};
-			bool found_param = false;
-
-			// IMPORTANT: If orig_type refers to a template parameter (Type::UserDefined),
-			// we should use orig_type.type_index() directly, as it's the correct type_index
-			// for THIS template's parameter. Searching by name can find the wrong type_index
-			// when multiple templates use the same parameter name (e.g., 'T').
-			if (orig_type.category() == TypeCategory::UserDefined || orig_type.category() == TypeCategory::TypeAlias || orig_type.category() == TypeCategory::Template) {
-				// Check if orig_type's type name matches this template parameter
-				if (const TypeInfo* orig_type_info = tryGetTypeInfo(orig_type.type_index())) {
-					std::string_view orig_type_name = StringTable::getStringView(orig_type_info->name());
-					if (orig_type_name == param_name) {
-						// Use the type_index from orig_type directly
-						param_type_index = orig_type.type_index();
-						found_param = true;
-					}
-				}
-			}
-
-			// If we didn't find it from orig_type, use the placeholder type_index captured
-			// when this template parameter was parsed.
-			if (!found_param) {
-				TypeIndex registered_param_type_index = tparam.registered_type_index();
-				if (registered_param_type_index.is_valid()) {
-					param_type_index = registered_param_type_index;
-					found_param = true;
-				}
-			}
-
-			// Add to substitution map if we found the type_index
-			if (found_param) {
-				type_substitution_map[param_type_index] = arg;
-				FLASH_LOG(Templates, Debug, "Added type parameter substitution: ", param_name,
-						  " (type_index=", param_type_index, ") -> ", arg.toString());
-			}
-
-			// Also check if the variable's return type itself is the template parameter
-			// (for cases like template<typename T> T value = T();)
-			if ((orig_type.category() == TypeCategory::UserDefined || orig_type.category() == TypeCategory::TypeAlias || orig_type.category() == TypeCategory::Template) && orig_type.type_index() == param_type_index) {
-				// Use original token info for better diagnostics
-				const Token& orig_token = orig_decl.identifier_token();
-				substituted_type = TypeSpecifierNode(
-					arg.typeEnum(),
-					TypeQualifier::None,
-					get_type_size_bits(arg.category()),
-					orig_token, CVQualifier::None);
-				// Apply cv-qualifiers, references, and pointers from template argument
-				substituted_type.set_reference_qualifier(arg.ref_qualifier);
-				for (size_t p = 0; p < arg.pointer_depth; ++p) {
-					substituted_type.add_pointer_level(CVQualifier::None);
-				}
-			} else {
-				FLASH_LOG(Templates, Debug, "Type does NOT match - skipping substitution for '", template_name, "'");
-			}
-		} else if (tparam.kind() == TemplateParameterKind::NonType) {
-			// Handle non-type template parameters
-			const TemplateTypeArg& arg = resolved_args[i];
-			if (arg.is_value) {
-				// Add to non-type substitution map
-				nontype_substitution_map[tparam.name()] = arg.value;
-				FLASH_LOG(Templates, Debug, "Added non-type parameter substitution: ", tparam.name(), " -> ", arg.value);
-			}
-		}
-	}
+	InlineVector<TemplateTypeArg, 4> filled_args_inline = toInlineTemplateArgs(filled_args);
+	ASTNode substituted_type = substituteTemplateParameters(orig_decl.type_node(), template_params, filled_args_inline);
 
 	// Create new declaration with substituted type and instantiated name
 	// Use original token's line/column/file info for better diagnostics
 	const Token& orig_token = orig_decl.identifier_token();
 	Token instantiated_name_token(Token::Type::Identifier, persistent_name, orig_token.line(), orig_token.column(), orig_token.file_index());
-	auto new_type_node = emplace_node<TypeSpecifierNode>(substituted_type);
-	auto new_decl_node = emplace_node<DeclarationNode>(new_type_node, instantiated_name_token);
+	auto new_decl_node = emplace_node<DeclarationNode>(substituted_type, instantiated_name_token);
 
 	// Substitute template parameters in initializer expression
 	std::optional<ASTNode> new_initializer = std::nullopt;
 	if (orig_var_decl.initializer().has_value()) {
 		FLASH_LOG(Templates, Debug, "Substituting initializer expression for variable template");
-		new_initializer = substitute_template_params_in_expression(
+		new_initializer = substituteTemplateParameters(
 			orig_var_decl.initializer().value(),
-			type_substitution_map,
-			nontype_substitution_map);
+			template_params,
+			filled_args_inline);
 		FLASH_LOG(Templates, Debug, "Initializer substitution complete");
 
 		// PHASE 3 FIX: After substitution, trigger instantiation of any class templates
@@ -1082,20 +1144,20 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 						// Try to instantiate the struct/class referenced in the qualified identifier
 						// Look it up to see if it's a template
 						auto inner_template_opt = gTemplateRegistry.lookupTemplate(template_name_to_lookup);
-						if (inner_template_opt.has_value() && resolved_args.size() > 0) {
+						if (inner_template_opt.has_value() && filled_args.size() > 0) {
 							// This is a template - try to instantiate it with the concrete arguments
 							// The template arguments from the variable template should be used
 							FLASH_LOG(Templates, Debug, "Phase 3: Triggering instantiation of '", template_name_to_lookup,
-									  "' with ", resolved_args.size(), " args from variable template initializer");
+									  "' with ", filled_args.size(), " args from variable template initializer");
 
-							auto instantiated = try_instantiate_class_template(template_name_to_lookup, resolved_args);
+							auto instantiated = try_instantiate_class_template(template_name_to_lookup, filled_args);
 							if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 								// Add to AST so it gets codegen
 								registerAndNormalizeLateMaterializedTopLevelNode(*instantiated);
 
 								// Now update the qualified identifier to use the correct instantiated name
 								// Get the instantiated class name (e.g., "is_pointer_impl_intP")
-								std::string_view instantiated_name = get_instantiated_class_name(template_name_to_lookup, resolved_args);
+								std::string_view instantiated_name = get_instantiated_class_name(template_name_to_lookup, filled_args);
 								FLASH_LOG(Templates, Debug, "Phase 3: Instantiated class name: '", instantiated_name, "'");
 
 								// Create a new qualified identifier with the updated namespace
@@ -1125,7 +1187,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	// Mark as constexpr to match the template pattern
 	instantiated_var_decl.as<VariableDeclarationNode>().set_is_thread_local(orig_var_decl.is_thread_local());
 	instantiated_var_decl.as<VariableDeclarationNode>().set_is_constexpr(true);
-	setOuterTemplateBindingsFromParams(instantiated_var_decl.as<VariableDeclarationNode>(), template_params, resolved_args);
+	setOuterTemplateBindingsFromParams(instantiated_var_decl.as<VariableDeclarationNode>(), template_params, filled_args);
 
 	// Register the VariableDeclarationNode in symbol table (not just DeclarationNode)
 	// This allows constexpr evaluation to find and evaluate the variable

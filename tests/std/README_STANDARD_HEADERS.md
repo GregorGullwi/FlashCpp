@@ -14,14 +14,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~639ms. The header still compiles, but `std::ratio_less` remains blocked because non-type default template arguments that depend on qualified constexpr members (for example `__ratio_less_impl`'s bool defaults) are still not fully instantiated/evaluated. |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | ~1054ms (retested 2026-04-11). "Expected primary expression" at `emplace(*__t)` inside a template member body during class template instantiation. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | ~2474ms (retested 2026-04-12). The old `_Is_any_of_v` variable-template arity stop is fixed; MSVC `<type_traits>` now gets further and fails at `_Is_invocable_r_ = typename _Select_invoke_traits<...>::template _Is_invocable_r<_Rx>;` with "Expected ';' after alias template declaration". |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
 | `<utility>` | `test_std_utility.cpp` | ❌ Codegen Error | ~830ms (retested 2026-04-11). Targeted test now fails with codegen errors from template deduction / Non-type parameter issues. |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~540ms |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~1460ms (retested 2026-04-11). Call to deleted function 'swap' in `stl_pair.h:308`. Blocked by eager inline member body parsing during implicit template class instantiation (std::pair::swap tries to swap const members). |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~2192ms (retested 2026-04-11). Call to deleted function 'swap' — same `stl_pair.h:308` blocker as `<string_view>`. |
-| `<array>` | `test_std_array.cpp` | ❌ Compile Error | ~885ms (retested 2026-04-11). Call to deleted function 'swap' — same `stl_pair.h:308` blocker. |
+| `<array>` | `test_std_array.cpp` | ❌ Parse Error | ~2468ms (retested 2026-04-12). The old `_Is_any_of_v` variable-template arity stop is fixed; MSVC `<type_traits>` now fails later at `_Is_invocable_r_ = typename _Select_invoke_traits<...>::template _Is_invocable_r<_Rx>;` with "Expected ';' after alias template declaration". |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2051ms (retested 2026-04-11). "Operator- not defined for operand types". |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~1564ms (retested 2026-04-11). "unsupported PackExpansionExprNode reached semantic analysis". |
@@ -31,10 +31,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
 | `<memory>` | `test_std_memory.cpp` | 💥 Crash | ~5108ms (retested 2026-04-11). |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~2670ms (retested 2026-04-11). Call to deleted function 'swap' — same `stl_pair.h:308` blocker. |
-| `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2133ms (retested 2026-04-11). Call to deleted function 'swap'. |
-| `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2139ms (retested 2026-04-11). Call to deleted function 'swap'. |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2548ms (retested 2026-04-11). Call to deleted function 'swap'. |
+| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | ~3456ms (retested 2026-04-12). The old `_Is_any_of_v` variable-template arity stop is fixed; MSVC `<type_traits>` now fails later at `_Is_invocable_r_ = typename _Select_invoke_traits<...>::template _Is_invocable_r<_Rx>;` with "Expected ';' after alias template declaration". |
+| `<map>` | `test_std_map.cpp` | ❌ Parse Error | ~2752ms (retested 2026-04-12). The old `_Is_any_of_v` variable-template arity stop is fixed; MSVC `<type_traits>` now fails later at `_Is_invocable_r_ = typename _Select_invoke_traits<...>::template _Is_invocable_r<_Rx>;` with "Expected ';' after alias template declaration". |
+| `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2404ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~3117ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~4559ms (retested 2026-04-11). |
 | `<sstream>` | `test_std_sstream.cpp` | 💥 Crash | ~4565ms (retested 2026-04-11). |
 | `<fstream>` | `test_std_fstream.cpp` | 💥 Crash | ~4642ms (retested 2026-04-11). |
@@ -47,7 +47,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<typeindex>` | N/A | ❌ Codegen Error | ~640ms (retested 2026-04-11). "Cannot use copy initialization with explicit constructor". |
 | `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | ~2299ms (retested 2026-04-11). Targeted test now fails with codegen errors. |
 | `<iterator>` | `test_std_iterator.cpp` | ❌ Compile Error | ~2481ms (retested 2026-04-11). Call to deleted function 'swap'. |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | ~1098ms (retested 2026-04-11). "Expected primary expression" at `make_index_sequence<variant_size_v<_Next>>()`. |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | ~2802ms (retested 2026-04-12). The old `_Is_any_of_v` variable-template arity stop is fixed; MSVC `<type_traits>` now gets further and fails at `_Is_invocable_r_ = typename _Select_invoke_traits<...>::template _Is_invocable_r<_Rx>;` with "Expected ';' after alias template declaration". |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
 | `<csignal>` | N/A | ✅ Compiled | ~140ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~16ms (C++23) |
@@ -128,6 +128,12 @@ This directory contains test files for C++ standard library headers to assess Fl
 - Function-template instantiation now shares dependent default-template-argument recovery between explicit-argument and call-argument deduction paths, including dependent type aliases/conditionals and dependent non-type defaults such as `sizeof(T)`. The new focused regressions `tests/test_func_template_dependent_default_alias_ret0.cpp`, `tests/test_func_template_dependent_default_conditional_ret0.cpp`, and `tests/test_func_template_dependent_default_nontype_sizeof_ret0.cpp` all pass.
 - Re-checking `<set>` (~2.27s), `<functional>` (~2.77s), `<deque>` (~2.97s), and `<memory>` (~4.85s) shows that the old `alloc_traits.h:904` `__make_move_if_noexcept_iterator` stop is gone. `<set>` and `<functional>` now fail later at `bits/node_handle.h:285` on deleted `swap(_M_pkey, __nh._M_pkey)`, while `<deque>` and `<memory>` run deeper and currently crash after repeated zero-size dependent `sizeof` static-assert fallout (`__is_integer_nonstrict::__value` / allocator-style completeness checks).
 
+#### 2026-04-12 Retests
+
+- Variable-template primary instantiation now canonicalizes explicit arguments with parameter packs and defaults before substitution, and primary variable-template initializers now go through the generic pack-aware template substitutor instead of the old fixed-arity map path. The new focused regressions `tests/test_var_template_variadic_primary_ret42.cpp` and `tests/test_var_template_default_dependent_primary_ret42.cpp` both pass alongside the older variable-template coverage.
+- Re-checking `<array>` (~2.47s), `<optional>` (~2.47s), `<variant>` (~2.80s), `<functional>` (~3.46s), and `<map>` (~2.75s) shows that the old `_Is_any_of_v` / "Template argument count mismatch: expected 2, got 17" stop is gone. These headers now reach a later parser gap in MSVC `<type_traits>` at `using _Is_invocable_r_ = typename _Select_invoke_traits<_Callable, _Args...>::template _Is_invocable_r<_Rx>;`.
+- Re-checking `<set>` (~2.40s) and `<ranges>` (~3.12s) shows that the same variable-template blocker is gone there too. Both headers now get further into the Windows UCRT path and currently stop on `__stdio_common_vfwprintf` overload resolution instead of the earlier template-arity failure.
+
 #### 2026-04-07 Retests
 
 - `<atomic>` and `<latch>` were re-checked after teaching sema/parser to preserve user-defined enum identity for overloaded binary operators and parenthesized functional casts. That clears the old `memory_order | __memory_order_modifier(...)` semantic stop from `bits/atomic_base.h`, so both headers now progress into later atomic-wait codegen fallout instead of failing during scoped-enum checking. `<atomic>` currently stops on the same deeper `_M_do_wait` / missing default-argument / dependent-payload-size / `memory_order_seq_cst` symbol issues summarized in the table, while `<latch>` now fails even later on `_M_do_wait`, `__mutex_base` constructor recovery, integer-conversion gaps in wait helpers, and missing `memory_order_relaxed` symbol recovery.
@@ -144,6 +150,8 @@ The overall header counts above still reflect the older full sweep and need a fu
 ### Known Blockers
 
 The most impactful blockers preventing more headers from compiling, ordered by impact:
+
+As of the 2026-04-12 targeted retest, the newly unblocked MSVC headers now hit a higher-value parser gap around dependent alias-template targets after a template-id (`Template<...>::template Alias<...>`). `<array>`, `<optional>`, `<variant>`, `<functional>`, and `<map>` all now stop first at `type_traits:1824`, while `<set>` / `<ranges>` have moved further into later Windows UCRT overload-resolution fallout.
 
 1. **Template deduction / semantic follow-on failures after the earlier mangling blockers**: In the 2026-03-31 targeted retest, `<algorithm>` no longer failed first on unresolved- `auto` mangling. It now gets further and then fails on concepts/ranges diagnostics followed by explicit-constructor copy-initialization errors. The same family of deeper issues likely explains several headers previously bucketed under the stale unresolved- `auto` note.
 
