@@ -202,12 +202,10 @@ struct TemplateTypeArg {
 	// Get the NonTypeValueIdentity for this argument (only valid when is_value == true)
 	// This is the canonical identity for non-type template arguments.
 	FlashCpp::NonTypeValueIdentity valueIdentity() const {
-		FlashCpp::NonTypeValueIdentity id;
-		id.value = value;
-		id.value_type = category();
-		id.is_dependent = is_dependent;
-		id.dependent_name = dependent_name;
-		return id;
+		if (is_dependent) {
+			return FlashCpp::NonTypeValueIdentity::makeDependentWithPlaceholder(dependent_name, value, category());
+		}
+		return FlashCpp::NonTypeValueIdentity::makeConcrete(value, category());
 	}
 
 	// Builds a TypeIndex with category directly.
@@ -358,16 +356,8 @@ struct TemplateTypeArg {
 	// Get string representation for mangling
 	std::string toString() const {
 		if (is_value) {
-			if (is_dependent && dependent_name.isValid()) {
-				return std::string(StringTable::getStringView(dependent_name));
-			}
-			// For boolean values, use "true" or "false" instead of "1" or "0"
-			// This is important for template specialization matching
-			if (category() == TypeCategory::Bool) {
-				return value != 0 ? "true" : "false";
-			}
-			// For non-boolean values, return the numeric value as string
-			return std::to_string(value);
+			// Use the canonical NonTypeValueIdentity representation for value args
+			return valueIdentity().toString();
 		}
 
 		std::string result;

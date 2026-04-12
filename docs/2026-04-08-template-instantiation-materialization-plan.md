@@ -20,29 +20,38 @@
     test_namespaced_pair_swap_sfinae_ret0.cpp
   ```
 
+### Current work in progress: Phase 1 (IN PROGRESS)
+
+**Phase 1 status:** ~70% complete. `NonTypeValueIdentity` carrier introduced, `ValueArgKey` now uses it.
+
+**Next steps for Phase 1:**
+- Optional: Update `toHashString()` and `TemplateTypeArgHash` to share hash logic with `NonTypeValueIdentity`
+- Optional: Remove redundant fields from `TemplateTypeArg` (larger refactor)
+
+**Ready to start Phase 2:** Yes - Phase 1 core work is complete. Phase 2 can begin in parallel.
+
 ### Choose your next task
 
-The plan is stable. Choose based on your expertise and available time:
+**Option A: Continue Phase 1 (refine non-type value identity)**
+- Update hash logic to use shared helpers
+- Consider removing redundant fields from `TemplateTypeArg`
+- Low priority - the core identity model is already unified
 
-**Option A: Continue Phase 6 (pack-aware explicit deduction)**
+**Option B: Start Phase 2 (centralize alias-template materialization)**
+- Add shared helper for alias-template resolution
+- Consolidate top-level `using`, struct-local `using`, and type-specifier alias handling
+- Key files: `src/Parser_Decl_TopLevel.cpp`, `src/Parser_Decl_TypedefUsing.cpp`, `src/Parser_TypeSpecifiers.cpp`
+
+**Option C: Continue Phase 6 (pack-aware explicit deduction)**
 - Design a pack-aware mapping helper in `buildDeductionMapFromCallArgs(...)`
 - Currently, pack-bearing signatures fall back to older positional deduction
-- The helper should map function-parameter-pack slots onto template-parameter-pack elements
 - Key files: `src/Parser_Templates_Inst_Deduction.cpp:608-881`, `src/Parser.h:865-869`
-- Preserve: non-pack signatures must keep using the name-based pre-deduction map
 
-**Option B: Work on Phase 1-4 architectural cleanup**
-- Phase 1: canonicalize non-type template-argument identity (see detailed plan below)
-- Phase 2: centralize alias-template materialization
-- Phase 3: make late materialization + pending-sema normalization explicit
-- Phase 4: replace unresolved-placeholder heuristics with explicit state
-
-**Option C: Fix bugs in `docs/KNOWN_ISSUES.md`**
+**Option D: Fix bugs in `docs/KNOWN_ISSUES.md`**
 - Currently tracked: premature `layout_is_complete` during anonymous union processing
 - Low priority, no user-facing issues currently
 
-**Note:** The "early instantiation without arg_types" gap (Option B in earlier versions)
-was investigated on 2026-04-12 and found to NOT be a bug. See detailed notes below.
+**Note:** The "early instantiation without arg_types" gap was investigated on 2026-04-12 and found to NOT be a bug. See detailed notes below.
 
 ### Important invariants to preserve
 
@@ -735,6 +744,27 @@ Keep the recent metaprogramming fixes stable while refactoring the underlying re
 ---
 
 ## Phase 1: canonicalize non-type template-argument identity
+
+**Status:** IN PROGRESS (as of 2026-04-12)
+
+**Completed work:**
+1. ✅ Introduced `NonTypeValueIdentity` carrier struct in `src/TemplateTypes.h`
+   - Added `value_type` field to capture TypeCategory for value args
+   - Added factory methods: `makeConcrete()`, `makeDependent()`
+   - Added `toString()` for debugging/name generation  
+   - Added `operator==` with Bool/Int interchangeability
+   - Added `hash()` consistent with equality
+2. ✅ Made `ValueArgKey` an alias for `NonTypeValueIdentity` for backward compatibility
+3. ✅ Added `valueIdentity()` accessor to `TemplateTypeArg` 
+4. ✅ Updated `makeInstantiationKey()` to use `valueIdentity()` accessor
+5. ✅ Updated `TemplateTypeArg::toString()` to delegate to `NonTypeValueIdentity::toString()`
+6. ✅ All 2052 tests pass, 132 expected-fail
+
+**Remaining work:**
+- Consider removing redundant `is_value + value + is_dependent + dependent_name` fields from `TemplateTypeArg` 
+  (would be a larger refactor touching many files)
+- Update `toHashString()` and `TemplateTypeArgHash` to share hash logic with `NonTypeValueIdentity`
+  (requires careful migration to avoid breaking existing instantiation lookups)
 
 **Goal**
 

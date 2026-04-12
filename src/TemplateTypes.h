@@ -215,13 +215,18 @@ struct NonTypeValueIdentity {
 		return id;
 	}
 
-	static NonTypeValueIdentity makeDependent(StringHandle name, int64_t placeholder_value, TypeCategory type) {
+	static NonTypeValueIdentity makeDependentWithPlaceholder(StringHandle name, int64_t placeholder_value, TypeCategory type) {
 		NonTypeValueIdentity id;
 		id.value = placeholder_value;
 		id.value_type = type;
 		id.is_dependent = true;
 		id.dependent_name = name;
 		return id;
+	}
+
+	// Helper: normalize Bool/Int to Int for comparison/hashing (C++ allows bool as non-type template param)
+	static TypeCategory normalizedTypeForComparison(TypeCategory t) {
+		return (t == TypeCategory::Bool || t == TypeCategory::Int) ? TypeCategory::Int : t;
 	}
 
 	bool operator==(const NonTypeValueIdentity& other) const {
@@ -232,10 +237,8 @@ struct NonTypeValueIdentity {
 			return dependent_name == other.dependent_name;
 		}
 		// Concrete args: identity is value + type (with Bool/Int interchangeability)
-		bool this_is_bool_or_int = (value_type == TypeCategory::Bool || value_type == TypeCategory::Int);
-		bool other_is_bool_or_int = (other.value_type == TypeCategory::Bool || other.value_type == TypeCategory::Int);
-		if (this_is_bool_or_int && other_is_bool_or_int) {
-			return value == other.value;  // Bool/Int are interchangeable
+		if (normalizedTypeForComparison(value_type) == normalizedTypeForComparison(other.value_type)) {
+			return value == other.value;
 		}
 		return value == other.value && value_type == other.value_type;
 	}
@@ -247,9 +250,8 @@ struct NonTypeValueIdentity {
 		}
 		// Always include value in hash (for concrete args, and for stable hashing of dependent placeholders)
 		h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		// Normalize Bool/Int to Int for hash consistency (matches operator== interchangeability)
-		TypeCategory effective_type = (value_type == TypeCategory::Bool || value_type == TypeCategory::Int)
-									  ? TypeCategory::Int : value_type;
+		// Use normalized type for hash consistency (matches operator== interchangeability)
+		TypeCategory effective_type = normalizedTypeForComparison(value_type);
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(effective_type)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		return h;
 	}
