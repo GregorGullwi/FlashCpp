@@ -580,8 +580,85 @@ ASTNode Parser::substitute_template_params_in_expression(
 				}
 			}
 
+			if (active_template_substitution_owner_.isValid()) {
+				std::string_view type_name = type_node.token().value();
+				if (!type_name.empty()) {
+					StringHandle qualified_alias_name = StringTable::getOrInternStringHandle(
+						StringBuilder()
+							.append(active_template_substitution_owner_)
+							.append("::")
+							.append(type_name)
+							.commit());
+					auto qualified_type_it = getTypesByNameMap().find(qualified_alias_name);
+					if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
+						const TypeInfo& qualified_type_info = *qualified_type_it->second;
+						const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+							qualified_type_info.registeredTypeIndex().withCategory(qualified_type_info.typeEnum()));
+						FLASH_LOG(Templates, Debug, "sizeof substitution: resolved member alias ", StringTable::getStringView(qualified_alias_name),
+								  " size_bits=", qualified_type_info.sizeInBits().value);
+						TypeSpecifierNode new_type(
+							qualified_type_info.registeredTypeIndex().withCategory(qualified_type_info.typeEnum()),
+							qualified_type_info.hasStoredSize() ? qualified_type_info.sizeInBits().value : 0,
+							sizeof_node.sizeof_token(),
+							CVQualifier::None,
+							ReferenceQualifier::None);
+						new_type.set_reference_qualifier(resolved_alias.reference_qualifier);
+						for (size_t p = 0; p < resolved_alias.pointer_depth; ++p) {
+							new_type.add_pointer_level(CVQualifier::None);
+						}
+						if (!resolved_alias.array_dimensions.empty()) {
+							new_type.set_array_dimensions(resolved_alias.array_dimensions);
+						}
+						if (resolved_alias.function_signature.has_value()) {
+							new_type.set_function_signature(*resolved_alias.function_signature);
+						}
+
+						auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
+						SizeofExprNode new_sizeof(new_type_node, sizeof_node.sizeof_token());
+						return emplace_node<ExpressionNode>(new_sizeof);
+					}
+				}
+			}
+
 			FLASH_LOG(Templates, Debug, "sizeof substitution: NO match found");
 		} else if (!sizeof_node.is_type()) {
+			if (active_template_substitution_owner_.isValid() &&
+				sizeof_node.type_or_expr().is<ExpressionNode>() &&
+				std::holds_alternative<IdentifierNode>(sizeof_node.type_or_expr().as<ExpressionNode>())) {
+				const IdentifierNode& id_node = std::get<IdentifierNode>(sizeof_node.type_or_expr().as<ExpressionNode>());
+				StringHandle qualified_alias_name = StringTable::getOrInternStringHandle(
+					StringBuilder()
+						.append(active_template_substitution_owner_)
+						.append("::")
+						.append(id_node.name())
+						.commit());
+				auto qualified_type_it = getTypesByNameMap().find(qualified_alias_name);
+				if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
+					const TypeInfo& qualified_type_info = *qualified_type_it->second;
+					const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+						qualified_type_info.registeredTypeIndex().withCategory(qualified_type_info.typeEnum()));
+					TypeSpecifierNode new_type(
+						qualified_type_info.registeredTypeIndex().withCategory(qualified_type_info.typeEnum()),
+						qualified_type_info.hasStoredSize() ? qualified_type_info.sizeInBits().value : 0,
+						sizeof_node.sizeof_token(),
+						CVQualifier::None,
+						ReferenceQualifier::None);
+					new_type.set_reference_qualifier(resolved_alias.reference_qualifier);
+					for (size_t p = 0; p < resolved_alias.pointer_depth; ++p) {
+						new_type.add_pointer_level(CVQualifier::None);
+					}
+					if (!resolved_alias.array_dimensions.empty()) {
+						new_type.set_array_dimensions(resolved_alias.array_dimensions);
+					}
+					if (resolved_alias.function_signature.has_value()) {
+						new_type.set_function_signature(*resolved_alias.function_signature);
+					}
+
+					auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
+					SizeofExprNode new_sizeof(new_type_node, sizeof_node.sizeof_token());
+					return emplace_node<ExpressionNode>(new_sizeof);
+				}
+			}
 			// If sizeof has an expression operand, recursively substitute
 			auto new_operand = substitute_template_params_in_expression(
 				sizeof_node.type_or_expr(), type_substitution_map, nontype_substitution_map);

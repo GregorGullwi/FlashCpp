@@ -644,6 +644,10 @@ private:
 		// Track template aliases currently being resolved to prevent infinite recursion
 	std::unordered_set<std::string_view> resolving_aliases_;
 
+		// Active instantiated class whose member aliases should be visible during
+		// AST substitution of template member bodies.
+	StringHandle active_template_substitution_owner_;
+
 		// Pending variable declarations from struct definitions (e.g., struct Point { ... } p, q;)
 	std::vector<ASTNode> pending_struct_variables_;
 

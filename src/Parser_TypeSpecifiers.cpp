@@ -1026,19 +1026,42 @@ ParseResult Parser::parse_type_specifier() {
 					auto buildTypeFromInfo = [&](const TypeInfo& type_info, const Token& token, bool resolve_aliases) -> ParseResult {
 						TypeIndex resolved_type_index = type_info.registeredTypeIndex();
 						TypeCategory resolved_category = type_info.typeEnum();
-						if (resolve_aliases) {
+						size_t resolved_pointer_depth = 0;
+						ReferenceQualifier resolved_reference = ReferenceQualifier::None;
+						std::vector<size_t> resolved_array_dimensions;
+						std::optional<FunctionSignature> resolved_function_signature;
+						CVQualifier resolved_cv = CVQualifier::None;
+						if (resolve_aliases || type_info.isTypeAlias()) {
 							ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_info.registeredTypeIndex());
-							if (resolved_alias.type_index.is_valid()) {
+							if (resolve_aliases && resolved_alias.type_index.is_valid()) {
 								resolved_type_index = resolved_alias.type_index;
 								resolved_category = resolved_alias.typeEnum();
 							}
+							resolved_pointer_depth = resolved_alias.pointer_depth;
+							resolved_reference = resolved_alias.reference_qualifier;
+							resolved_array_dimensions = resolved_alias.array_dimensions;
+							resolved_function_signature = resolved_alias.function_signature;
+							resolved_cv = resolved_alias.cv_qualifier;
 						}
-						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+						auto type_node = emplace_node<TypeSpecifierNode>(
 							resolved_type_index.withCategory(resolved_category),
 							type_info.hasStoredSize() ? static_cast<unsigned char>(type_info.sizeInBits().value) : 0,
 							token,
-							cv_qualifier,
-							ReferenceQualifier::None));
+							cv_qualifier | resolved_cv,
+							ReferenceQualifier::None);
+						if (resolved_pointer_depth > 0) {
+							type_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_pointer_depth);
+						}
+						if (resolved_reference != ReferenceQualifier::None) {
+							type_node.as<TypeSpecifierNode>().set_reference_qualifier(resolved_reference);
+						}
+						if (!resolved_array_dimensions.empty()) {
+							type_node.as<TypeSpecifierNode>().set_array_dimensions(resolved_array_dimensions);
+						}
+						if (resolved_function_signature.has_value()) {
+							type_node.as<TypeSpecifierNode>().set_function_signature(*resolved_function_signature);
+						}
+						return ParseResult::success(type_node);
 					};
 
 					auto finalizeInstantiatedAliasType = [&](std::string_view instantiated_type_name, const TypeInfo* instantiated_type_info) -> std::optional<ParseResult> {
