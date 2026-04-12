@@ -1461,7 +1461,10 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 								const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 								if (decl && decl->is_array()) {
 									const auto& array_type_spec = decl->type_node().as<TypeSpecifierNode>();
-									size_t element_size = get_typespec_size_bytes(array_type_spec);
+									// Get element size by creating a copy without array dimensions
+									TypeSpecifierNode element_type_spec = array_type_spec;
+									element_type_spec.set_array_dimensions({});
+									size_t element_size = get_typespec_size_bytes(element_type_spec);
 
 									// For multidimensional arrays, calculate sub-array size
 									const auto& dims = decl->array_dimensions();
