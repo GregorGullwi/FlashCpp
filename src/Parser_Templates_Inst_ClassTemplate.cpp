@@ -1253,7 +1253,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				nontype_sub_map[tparam.name()] = args[pi].value;
 		}
 		ASTNode substituted = substitute_template_params_in_expression(
-			*member_decl.bitfield_width_expr, type_sub_map, nontype_sub_map);
+			*member_decl.bitfield_width_expr, type_sub_map, nontype_sub_map, StringHandle{});
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
 		if (eval_result.success() && eval_result.as_int() >= 0)
@@ -1281,7 +1281,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		for (const auto& dim_expr : decl.array_dimensions()) {
-			ASTNode substituted = substitute_template_params_in_expression(dim_expr, type_sub_map, nontype_sub_map);
+			ASTNode substituted = substitute_template_params_in_expression(dim_expr, type_sub_map, nontype_sub_map, StringHandle{});
 			auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
 			if (eval_result.success() && eval_result.as_int() > 0) {
 				resolved_dims.push_back(static_cast<size_t>(eval_result.as_int()));
@@ -2358,11 +2358,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_func_ref.set_is_const_member_function(mem_func.is_const());
 					new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 					if (orig_func.get_definition().has_value()) {
-						StringHandle saved_substitution_owner = active_template_substitution_owner_;
-						active_template_substitution_owner_ = instantiated_name;
-						auto restore_substitution_owner = ScopeGuard([this, saved_substitution_owner]() {
-							active_template_substitution_owner_ = saved_substitution_owner;
-						});
 						ASTNode substituted_body = substituteTemplateParameters(
 							*orig_func.get_definition(),
 							template_params,
@@ -7430,7 +7425,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 							ASTNode substituted_default = substitute_template_params_in_expression(
-								param_decl.default_value(), type_sub_map, nontype_sub_map);
+								param_decl.default_value(), type_sub_map, nontype_sub_map, StringHandle{});
 							new_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 						}
 						new_func_ref.add_parameter_node(new_param_decl);

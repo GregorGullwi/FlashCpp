@@ -551,7 +551,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				if (substituted_default.is<ExpressionNode>() &&
 					std::holds_alternative<ConstructorCallNode>(substituted_default.as<ExpressionNode>())) {
 					substituted_default = substitute_template_params_in_expression(
-						substituted_default, default_type_sub_map, default_nontype_sub_map);
+						substituted_default, default_type_sub_map, default_nontype_sub_map, StringHandle{});
 				}
 				new_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 			}

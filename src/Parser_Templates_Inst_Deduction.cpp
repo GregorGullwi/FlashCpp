@@ -220,7 +220,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 	if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
 		auto [type_sub_map, nontype_sub_map] = buildSubstitutionMaps();
 		ASTNode substituted_default =
-			substitute_template_params_in_expression(default_node, type_sub_map, nontype_sub_map);
+			substitute_template_params_in_expression(default_node, type_sub_map, nontype_sub_map, StringHandle{});
 		if (appendEvaluatedNonTypeArg(substituted_default)) {
 			return true;
 		}
@@ -663,7 +663,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		}
 
 		ASTNode substituted_expr = substitute_template_params_in_expression(
-			bound_expr, type_substitution_map, nontype_substitution_map);
+			bound_expr, type_substitution_map, nontype_substitution_map, StringHandle{});
 
 		if (substituted_expr.is<ExpressionNode>()) {
 			const ExpressionNode& substituted_node = substituted_expr.as<ExpressionNode>();

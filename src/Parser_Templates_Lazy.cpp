@@ -643,13 +643,6 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		};
 		std::unique_ptr<void, decltype(pop_struct_ctx)> struct_ctx_scope(reinterpret_cast<void*>(1), pop_struct_ctx);
 
-		// Set active substitution owner so sizeof(size_type) resolves to Holder<int>::size_type
-		StringHandle saved_substitution_owner = active_template_substitution_owner_;
-		active_template_substitution_owner_ = lazy_info.identity.instantiated_owner_name;
-		auto restore_substitution_owner = ScopeGuard([this, saved_substitution_owner]() {
-			active_template_substitution_owner_ = saved_substitution_owner;
-		});
-
 		ASTNode substituted_body = substituteTemplateParameters(
 			*body_to_substitute,
 			lazy_info.template_params,

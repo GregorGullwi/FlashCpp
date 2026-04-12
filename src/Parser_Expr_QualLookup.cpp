@@ -897,7 +897,10 @@ TypeIndex Parser::substitute_template_parameter(
 		current_type = resolved_info.typeEnum();
 	};
 	auto materializePlaceholderArgs = [&](const TypeInfo& placeholder_info) {
-		return materializeTemplateArgs(placeholder_info, template_params, template_args);
+		return materializeTemplateArgs(placeholder_info, template_params, template_args,
+			[this](const ASTNode& expr, const std::vector<ASTNode>& params, const std::vector<TemplateTypeArg>& args) {
+				return this->evaluateDependentNTTPExpression(expr, params, args);
+			});
 	};
 	auto rebindConcretePlaceholderArgsByTypeName = [&](std::vector<TemplateTypeArg>& concrete_args) {
 		for (TemplateTypeArg& concrete_arg : concrete_args) {
