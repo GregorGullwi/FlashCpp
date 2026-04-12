@@ -14,6 +14,7 @@ class StructDeclarationNode;
 class FunctionDeclarationNode;
 class ConstructorDeclarationNode;
 class IdentifierNode;
+class QualifiedIdentifierNode;
 class DestructorDeclarationNode;
 class BlockNode;
 class NamespaceDeclarationNode;
@@ -116,7 +117,24 @@ public:
 
 		explicit operator bool() const { return member != nullptr; }
 	};
+	struct ResolvedQualifiedIdentifierInfo {
+		enum class Kind : uint8_t {
+			Symbol,
+			StaticMember,
+			EnumConstant,
+		};
+
+		Kind kind = Kind::Symbol;
+		ASTNode symbol;
+		StringHandle storage_name{};
+		TypeSpecifierNode type;
+		TypeCategory constant_type = TypeCategory::Invalid;
+		SizeInBits constant_size{0};
+		unsigned long long constant_value = 0;
+		bool is_global = false;
+	};
 	std::optional<ResolvedIdentifierMemberInfo> getResolvedIdentifierMember(const IdentifierNode* key) const;
+	std::optional<ResolvedQualifiedIdentifierInfo> getResolvedQualifiedIdentifier(const QualifiedIdentifierNode* key) const;
 	bool resolveOrGetMemberAccess(const MemberAccessNode& key,
 								  const StructTypeInfo*& out_struct_info,
 								  const StructMember*& out_member);
@@ -279,6 +297,7 @@ private:
 	bool tryResolveMemberAccessInfo(const MemberAccessNode& member_access,
 								   ResolvedMemberAccessInfo& out_info);
 	std::optional<ResolvedIdentifierMemberInfo> tryResolveIdentifierMember(const IdentifierNode& identifier) const;
+	std::optional<ResolvedQualifiedIdentifierInfo> tryResolveQualifiedIdentifier(const QualifiedIdentifierNode& qualified_identifier);
 
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
@@ -348,6 +367,7 @@ private:
 	std::unordered_map<const void*, const FunctionDeclarationNode*> resolved_direct_call_table_;
 	std::unordered_map<const void*, ResolvedMemberAccessInfo> resolved_member_access_table_;
 	std::unordered_map<const IdentifierNode*, ResolvedIdentifierMemberInfo> resolved_identifier_member_table_;
+	std::unordered_map<const QualifiedIdentifierNode*, ResolvedQualifiedIdentifierInfo> resolved_qualified_identifier_table_;
 	std::unordered_map<const void*, TypeSpecifierNode> overload_resolution_arg_types_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
 

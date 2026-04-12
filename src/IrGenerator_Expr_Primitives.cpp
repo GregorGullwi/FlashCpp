@@ -1382,6 +1382,100 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 }
 
 ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
+	auto emitQualifiedGlobalLoad = [&](const TypeSpecifierNode& type_node,
+									 bool is_array_decl,
+									 StringHandle global_name) -> ExprResult {
+		TempVar result_temp = var_counter.next();
+		const bool is_array_type = is_array_decl || type_node.is_array();
+		const bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
+		const int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
+		GlobalLoadOp op;
+		op.result.setType(type_node.category());
+		op.result.ir_type = toIrType(type_node.type());
+		op.result.size_in_bits = SizeInBits{size_bits};
+		op.result.value = result_temp;
+		op.global_name = global_name;
+		op.is_array = is_array_type;
+		ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+		if (!is_array_type) {
+			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+												LValueInfo(LValueInfo::Kind::Global, global_name, 0),
+												type_node.category(), size_bits));
+		}
+		TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
+		return makeExprResult(type_index, SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
+	};
+
+	auto emitQualifiedStaticMemberLoad = [&](const TypeSpecifierNode& type_node,
+										 StringHandle global_name) -> ExprResult {
+		int size_bits = resolveCodegenSizeBits(type_node, "sema-resolved qualified static member");
+		if (type_node.is_pointer() || type_node.is_reference() || type_node.is_array() || type_node.is_function_pointer()) {
+			size_bits = POINTER_SIZE_BITS;
+		}
+
+		TempVar result_temp = var_counter.next();
+		GlobalLoadOp op;
+		op.result.setType(type_node.category());
+		op.result.ir_type = toIrType(type_node.type());
+		op.result.size_in_bits = SizeInBits{size_bits};
+		op.result.value = result_temp;
+		op.global_name = global_name;
+		op.is_array = type_node.is_array();
+		ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+
+		if (type_node.is_reference()) {
+			TempVar deref_temp = var_counter.next();
+			DereferenceOp deref_op;
+			deref_op.result = deref_temp;
+			deref_op.pointer.setType(type_node.category());
+			deref_op.pointer.type_index = type_node.type_index();
+			deref_op.pointer.size_in_bits = SizeInBits{get_type_size_bits(type_node.type())};
+			deref_op.pointer.pointer_depth = PointerDepth{1};
+			deref_op.pointer.value = result_temp;
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, deref_op, Token()));
+			TypeIndex type_index = (is_struct_type(type_node.category())) ? type_node.type_index() : TypeIndex{};
+			return makeExprResult(type_index.withCategory(type_node.type()), SizeInBits{get_type_size_bits(type_node.type())}, IrOperand{deref_temp}, PointerDepth{}, ValueStorage::ContainsData);
+		}
+
+		TypeIndex type_index = (is_struct_type(type_node.category())) ? type_node.type_index() : TypeIndex{};
+		return makeExprResult(type_index.withCategory(type_node.type()), SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
+	};
+
+	if (sema_) {
+		if (auto resolved = sema_->getResolvedQualifiedIdentifier(&qualifiedIdNode); resolved.has_value()) {
+			switch (resolved->kind) {
+				case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::EnumConstant:
+					return makeExprResult(
+						nativeTypeIndex(resolved->constant_type),
+						resolved->constant_size,
+						resolved->constant_value,
+						PointerDepth{},
+						ValueStorage::ContainsData);
+				case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::StaticMember:
+					return emitQualifiedStaticMemberLoad(resolved->type, resolved->storage_name);
+				case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::Symbol:
+					if (resolved->symbol.is<DeclarationNode>()) {
+						const auto& decl_node = resolved->symbol.as<DeclarationNode>();
+						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+						if (resolved->is_global) {
+							return emitQualifiedGlobalLoad(type_node, decl_node.is_array(), resolved->storage_name);
+						}
+						TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
+						return makeExprResult(type_index, SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
+					}
+					if (resolved->symbol.is<VariableDeclarationNode>()) {
+						const auto& decl_node = resolved->symbol.as<VariableDeclarationNode>().declaration_node().as<DeclarationNode>();
+						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+						return emitQualifiedGlobalLoad(type_node, decl_node.is_array(), resolved->storage_name);
+					}
+					if (resolved->symbol.is<FunctionDeclarationNode>()) {
+						return makeExprResult(nativeTypeIndex(TypeCategory::Function), SizeInBits{64}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
+					}
+					break;
+			}
+		}
+	}
+
 		// Check if this is a scoped enum value (e.g., Direction::North)
 	NamespaceHandle ns_handle = qualifiedIdNode.namespace_handle();
 	if (!ns_handle.isGlobal()) {

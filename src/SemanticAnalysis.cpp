@@ -180,6 +180,20 @@ CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& me
 	return desc;
 }
 
+TypeSpecifierNode typeSpecifierFromStaticMember(const StructStaticMember& member, const Token& token) {
+	TypeSpecifierNode type(
+		member.type_index.withCategory(member.memberType()),
+		SizeInBits{static_cast<int>(member.size * 8)},
+		token,
+		member.cv_qualifier,
+		member.reference_qualifier);
+	type.add_pointer_levels(member.pointer_depth);
+	if (member.is_array) {
+		type.set_array_dimensions(member.array_dimensions);
+	}
+	return type;
+}
+
 CanonicalTypeDesc canonicalTypeDescFromTemplateArgInfo(const TypeInfo::TemplateArgInfo& arg) {
 	CanonicalTypeDesc desc;
 	desc.type_index = arg.type_index.withCategory(arg.typeEnum());
@@ -2297,6 +2311,12 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				} else {
 					resolved_identifier_member_table_.erase(&e);
 				}
+			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
+				if (auto resolved = tryResolveQualifiedIdentifier(e); resolved.has_value()) {
+					resolved_qualified_identifier_table_[&e] = *resolved;
+				} else {
+					resolved_qualified_identifier_table_.erase(&e);
+				}
 			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				normalizeExpression(e.expr(), ctx);
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
@@ -2479,6 +2499,10 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
 			return inner.binding() != IdentifierBinding::EnumConstant ? ValueCategory::LValue : ValueCategory::PRValue;
 		} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
+			if (auto resolved = getResolvedQualifiedIdentifier(&inner); resolved.has_value() &&
+				resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::EnumConstant) {
+				return ValueCategory::PRValue;
+			}
 			return ValueCategory::LValue;
 		} else if constexpr (std::is_same_v<T, ArraySubscriptNode> ||
 							 std::is_same_v<T, PointerToMemberAccessNode> ||
@@ -2615,6 +2639,14 @@ std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> SemanticAnalysis::
 	return it->second;
 }
 
+std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysis::getResolvedQualifiedIdentifier(const QualifiedIdentifierNode* key) const {
+	auto it = resolved_qualified_identifier_table_.find(key);
+	if (it == resolved_qualified_identifier_table_.end()) {
+		return std::nullopt;
+	}
+	return it->second;
+}
+
 bool SemanticAnalysis::resolveOrGetMemberAccess(const MemberAccessNode& key,
 												const StructTypeInfo*& out_struct_info,
 												const StructMember*& out_member) {
@@ -2658,6 +2690,81 @@ std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> SemanticAnalysis::
 	}
 
 	return std::nullopt;
+}
+
+std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysis::tryResolveQualifiedIdentifier(
+	const QualifiedIdentifierNode& qualified_identifier) {
+	const NamespaceHandle ns_handle = qualified_identifier.namespace_handle();
+	const StringHandle name_handle = qualified_identifier.nameHandle();
+
+	if (!ns_handle.isValid()) {
+		return std::nullopt;
+	}
+
+	if (!ns_handle.isGlobal()) {
+		StringHandle owner_handle = StringTable::getOrInternStringHandle(gNamespaceRegistry.getName(ns_handle));
+		auto owner_it = getTypesByNameMap().find(owner_handle);
+		if (owner_it == getTypesByNameMap().end() && gNamespaceRegistry.getDepth(ns_handle) > 1) {
+			owner_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
+			owner_it = getTypesByNameMap().find(owner_handle);
+		}
+
+		if (owner_it != getTypesByNameMap().end()) {
+			if (owner_it->second->isStruct()) {
+				const StructTypeInfo* struct_info = owner_it->second->getStructInfo();
+				if (struct_info) {
+					parser_.instantiateLazyStaticMember(struct_info->name, name_handle);
+					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(name_handle);
+					if (static_member && owner_struct) {
+						ResolvedQualifiedIdentifierInfo resolved;
+						resolved.kind = ResolvedQualifiedIdentifierInfo::Kind::StaticMember;
+						resolved.storage_name = StringTable::getOrInternStringHandle(
+							StringBuilder()
+								.append(owner_struct->getName())
+								.append("::"sv)
+								.append(name_handle)
+								.commit());
+						resolved.type = typeSpecifierFromStaticMember(*static_member, qualified_identifier.identifier_token());
+						return resolved;
+					}
+				}
+			} else if (owner_it->second->isEnum()) {
+				const EnumTypeInfo* enum_info = owner_it->second->getEnumInfo();
+				if (enum_info && enum_info->findEnumerator(name_handle)) {
+					ResolvedQualifiedIdentifierInfo resolved;
+					resolved.kind = ResolvedQualifiedIdentifierInfo::Kind::EnumConstant;
+					resolved.constant_type = enum_info->underlying_type;
+					resolved.constant_size = enum_info->underlying_size;
+					resolved.constant_value = static_cast<unsigned long long>(enum_info->getEnumeratorValue(name_handle));
+					return resolved;
+				}
+			}
+		}
+	}
+
+	std::optional<ASTNode> symbol = symbols_.lookup_qualified(qualified_identifier.qualifiedIdentifier());
+	if (!symbol.has_value()) {
+		return std::nullopt;
+	}
+
+	ResolvedQualifiedIdentifierInfo resolved;
+	resolved.kind = ResolvedQualifiedIdentifierInfo::Kind::Symbol;
+	resolved.symbol = *symbol;
+	resolved.is_global = true;
+
+	if (symbol->is<DeclarationNode>()) {
+		const auto& decl = symbol->as<DeclarationNode>();
+		resolved.storage_name = decl.has_mangled_name()
+									? decl.mangled_name_handle()
+									: gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, name_handle);
+	} else if (symbol->is<VariableDeclarationNode>()) {
+		const auto& decl = symbol->as<VariableDeclarationNode>().declaration_node().as<DeclarationNode>();
+		resolved.storage_name = decl.has_mangled_name()
+									? decl.mangled_name_handle()
+									: gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, name_handle);
+	}
+
+	return resolved;
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const ArraySubscriptNode* key) const {
