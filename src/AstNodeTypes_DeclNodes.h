@@ -336,10 +336,14 @@ struct StructTypeInfo {
 
 	SizeInBytes sizeInBytes() const {
 		SizeInBytes size = toSizeInBytes(currentLayoutOffset());
-		if (layout_is_complete && !hasDependentOrIncompleteLayout()) {
+		if (hasCompleteObjectLayout()) {
 			enforceMinimumCompleteObjectSize(size, alignment);
 		}
 		return size;
+	}
+
+	bool hasCompleteObjectLayout() const {
+		return layout_is_complete && !hasDependentOrIncompleteLayout();
 	}
 
 	SizeInBytes baseSubobjectSizeInBytes() const {
@@ -376,6 +380,12 @@ struct StructTypeInfo {
 		if (toSizeT(size) == 0) {
 			size = toSizeInBytes(std::max<size_t>(alignment, 1));
 		}
+	}
+
+	void advanceLayoutSize(size_t raw_layout_size, size_t raw_object_size, size_t min_alignment) {
+		alignment = std::max(alignment, min_alignment);
+		layout_data_size = toSizeInBytes(std::max(raw_layout_size, toSizeT(layout_data_size)));
+		total_size = toSizeInBytes(std::max(raw_object_size, toSizeT(total_size)));
 	}
 
 	void finalizeLayoutSize(size_t raw_layout_size, size_t raw_object_size, size_t final_alignment) {
@@ -1659,6 +1669,12 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	if (idx.is_valid()) {
 		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(idx);
 		if (const TypeInfo* ti = resolved_alias.terminal_type_info) {
+			if (const StructTypeInfo* struct_info = ti->getStructInfo()) {
+				// Incomplete class layouts have no object size for sizeof/array bounds.
+				if (!struct_info->hasCompleteObjectLayout()) {
+					return 0;
+				}
+			}
 			if (ti->hasStoredSize()) {
 				return ti->sizeInBits().value;
 			}
