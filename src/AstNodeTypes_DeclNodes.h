@@ -1,6 +1,5 @@
 #pragma once
 #include <cassert>
-#include <limits>
 #include "AstNodeTypes_TypeSystem.h"
 #include "SizeTypes.h"
 #include "VariantUtils.h"
@@ -1661,23 +1660,6 @@ inline TypeSpecifierNode finalizePlaceholderTypeDeduction(TypeCategory placehold
 // Final fallback: type_spec.size_in_bits() (set during parsing).
 // Returns 0 only for genuinely incomplete or void types.
 inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
-	auto applyArrayExtents = [](int base_bits, const std::vector<size_t>& dimensions) {
-		if (base_bits <= 0 || dimensions.empty()) {
-			return base_bits;
-		}
-		size_t total_bits = static_cast<size_t>(base_bits);
-		for (size_t dimension : dimensions) {
-			if (dimension == 0 || total_bits > (std::numeric_limits<size_t>::max() / dimension)) {
-				return 0;
-			}
-			total_bits *= dimension;
-		}
-		if (total_bits > static_cast<size_t>(std::numeric_limits<int>::max())) {
-			return 0;
-		}
-		return static_cast<int>(total_bits);
-	};
-
 	// Pointers are always 64 bits on x64 regardless of the pointee type
 	if (type_spec.pointer_depth() > 0) {
 		return 64;
@@ -1686,12 +1668,6 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	TypeIndex idx = type_spec.type_index();
 	if (idx.is_valid()) {
 		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(idx);
-		std::vector<size_t> array_dimensions = type_spec.array_dimensions();
-		if (!resolved_alias.array_dimensions.empty()) {
-			array_dimensions.insert(array_dimensions.end(),
-								   resolved_alias.array_dimensions.begin(),
-								   resolved_alias.array_dimensions.end());
-		}
 		if (const TypeInfo* ti = resolved_alias.terminal_type_info) {
 			if (const StructTypeInfo* struct_info = ti->getStructInfo()) {
 				// Incomplete class layouts have no object size for sizeof/array bounds.
@@ -1700,7 +1676,7 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 				}
 			}
 			if (ti->hasStoredSize()) {
-				return applyArrayExtents(ti->sizeInBits().value, array_dimensions);
+				return ti->sizeInBits().value;
 			}
 		}
 		TypeIndex canonical_index = resolved_alias.type_index;
@@ -1709,7 +1685,7 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 			if (!needs_type_index(canonical_type)) {
 				int bits = get_type_size_bits(canonical_type);
 				if (bits > 0) {
-					return applyArrayExtents(bits, array_dimensions);
+					return bits;
 				}
 			}
 		}
@@ -1717,7 +1693,7 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	if (!needs_type_index(t)) {
 		int bits = get_type_size_bits(t);
 		if (bits > 0)
-			return applyArrayExtents(bits, type_spec.array_dimensions());
+			return bits;
 	}
 	// Fallback: the parser may have stored the correct size directly
 	int stored = static_cast<int>(type_spec.size_in_bits());
