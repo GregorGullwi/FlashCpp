@@ -1475,6 +1475,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		global_load.result.setType(static_member->type_index.category());
 		global_load.result.size_in_bits = SizeInBits{static_cast<int>(sm_size_bits)};
 		global_load.global_name = StringTable::getOrInternStringHandle(qualified_name);
+		global_load.is_array = static_member->is_array;
 
 		ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(global_load), Token()));
 
