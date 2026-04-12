@@ -819,7 +819,6 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 SemanticAnalysis::SemanticAnalysis(Parser& parser, CompileContext& context, SymbolTable& symbols)
 	: parser_(parser), context_(context), symbols_(symbols) {
 	(void)context_;
-	(void)symbols_;
 	previous_active_sema_ = parser_.getActiveSemanticAnalysis();
 	parser_.setActiveSemanticAnalysis(this);
 
@@ -4744,6 +4743,18 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		if (candidate && &candidate->decl_node() == &decl) {
 			func_decl = candidate;
 			break;
+		}
+	}
+
+	if (!func_decl && call_info.mangled_name.isValid()) {
+		const std::string_view call_mangled_name = call_info.mangled_name.view();
+		for (const auto& overload : overloads) {
+			const FunctionDeclarationNode* candidate = getCallTargetFunctionCandidate(overload);
+			if (candidate && candidate->has_mangled_name() &&
+				candidate->mangled_name() == call_mangled_name) {
+				func_decl = candidate;
+				break;
+			}
 		}
 	}
 
