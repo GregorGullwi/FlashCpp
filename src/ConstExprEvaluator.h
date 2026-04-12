@@ -696,6 +696,7 @@ private:
 	static EvalResult evaluate_alignof(const AlignofExprNode& alignof_expr, EvaluationContext& context);
 	static EvalResult evaluate_offsetof(const OffsetofExprNode& offsetof_expr);
 	static EvalResult evaluate_noexcept_expr(const NoexceptExprNode& noexcept_expr, EvaluationContext& context);
+	static EvalResult evaluate_throw_expression(const ThrowExpressionNode& throw_expr);
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context);
 	static EvalResult evaluate_new_expression(
 		const NewExpressionNode& new_expr,
