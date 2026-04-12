@@ -1,5 +1,3 @@
-#include <stddef.h>
-
 struct Padded {
 	short value;
 	char tag;
