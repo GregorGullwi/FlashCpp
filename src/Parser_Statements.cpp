@@ -790,11 +790,13 @@ ParseResult Parser::parse_variable_declaration() {
 	// Check for direct brace initialization: Type var{args}
 	else if (peek() == "{"_tok) {
 		// Direct list initialization: Type var{args}
+		prepareArrayTypeForBraceInitializer(first_decl, type_specifier);
 		ParseResult init_list_result = parse_brace_initializer(type_specifier);
 		if (init_list_result.is_error()) {
 			return init_list_result;
 		}
 		first_init_expr = init_list_result.node();
+		inferUnsizedArraySizeFromInitializer(first_decl, type_specifier, first_init_expr);
 	}
 
 	if (first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
@@ -879,11 +881,15 @@ ParseResult Parser::parse_variable_declaration() {
 				}
 			} else if (peek() == "{"_tok) {
 				// Direct list initialization for comma-separated declaration: Type var1, var2{args}
-				ParseResult init_list_result = parse_brace_initializer(type_specifier);
+				DeclarationNode& next_decl = var_decl_node.as<VariableDeclarationNode>().declaration();
+				TypeSpecifierNode& next_type_specifier = next_decl.type_node().as<TypeSpecifierNode>();
+				prepareArrayTypeForBraceInitializer(next_decl, next_type_specifier);
+				ParseResult init_list_result = parse_brace_initializer(next_type_specifier);
 				if (init_list_result.is_error()) {
 					return init_list_result;
 				}
 				init_expr = init_list_result.node();
+				inferUnsizedArraySizeFromInitializer(next_decl, next_type_specifier, init_expr);
 			}
 
 			var_decl_node.as<VariableDeclarationNode>().set_initializer(init_expr);
@@ -946,6 +952,53 @@ std::optional<ASTNode> Parser::parse_direct_initialization() {
 	return init_list_node;
 }
 
+void Parser::prepareArrayTypeForBraceInitializer(const DeclarationNode& decl_node, TypeSpecifierNode& type_specifier) {
+	if (!decl_node.is_array() && !decl_node.is_unsized_array()) {
+		return;
+	}
+
+	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+	const auto& decl_dims = decl_node.array_dimensions();
+	if (decl_dims.size() > 1) {
+		std::vector<size_t> dim_sizes;
+		dim_sizes.reserve(decl_dims.size());
+		bool all_evaluated = true;
+		for (const auto& dim_expr : decl_dims) {
+			auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
+			if (!eval_result.success()) {
+				all_evaluated = false;
+				break;
+			}
+			dim_sizes.push_back(static_cast<size_t>(eval_result.as_int()));
+		}
+		if (all_evaluated && !dim_sizes.empty()) {
+			type_specifier.set_array_dimensions(dim_sizes);
+		}
+		return;
+	}
+
+	std::optional<size_t> array_size_val;
+	if (decl_node.array_size().has_value()) {
+		auto eval_result = ConstExpr::Evaluator::evaluate(*decl_node.array_size(), eval_ctx);
+		if (eval_result.success()) {
+			array_size_val = static_cast<size_t>(eval_result.as_int());
+		}
+	}
+
+	type_specifier.set_array(true, array_size_val);
+}
+
+void Parser::inferUnsizedArraySizeFromInitializer(const DeclarationNode& decl_node,
+												  TypeSpecifierNode& type_specifier,
+												  const std::optional<ASTNode>& initializer) {
+	if (!decl_node.is_unsized_array() || !initializer.has_value() || !initializer->is<InitializerListNode>()) {
+		return;
+	}
+
+	const InitializerListNode& init_list = initializer->as<InitializerListNode>();
+	type_specifier.set_array(true, init_list.initializers().size());
+}
+
 // Phase 3 Consolidation: Parse copy initialization: TypeCategory var = expr or TypeCategory var = {args}
 // Returns the initializer expression/list node or std::nullopt if not at '='
 // Also handles auto type deduction and array size inference
@@ -959,42 +1012,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 
 	// Check if this is a brace initializer (e.g., Point p = {10, 20} or int arr[5] = {1, 2, 3, 4, 5})
 	if (peek() == "{"_tok) {
-		// If this is an array declaration, set the array info on type_specifier
-		if (decl_node.is_array()) {
-			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-			const auto& decl_dims = decl_node.array_dimensions();
-			if (decl_dims.size() > 1) {
-				// Multi-dimensional array: evaluate all dimension sizes and propagate them.
-				std::vector<size_t> dim_sizes;
-				dim_sizes.reserve(decl_dims.size());
-				bool all_evaluated = true;
-				for (const auto& dim_expr : decl_dims) {
-					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
-					if (eval_result.success()) {
-						dim_sizes.push_back(static_cast<size_t>(eval_result.as_int()));
-					} else {
-						all_evaluated = false;
-						break;
-					}
-				}
-				if (all_evaluated && !dim_sizes.empty()) {
-					type_specifier.set_array_dimensions(dim_sizes);
-				}
-			} else {
-				// Single-dimension array (original path).
-				std::optional<size_t> array_size_val;
-				if (decl_node.array_size().has_value()) {
-					// Try to evaluate the array size as a constant expression
-					auto eval_result = ConstExpr::Evaluator::evaluate(*decl_node.array_size(), eval_ctx);
-					if (eval_result.success()) {
-						array_size_val = static_cast<size_t>(eval_result.as_int());
-					}
-				}
-				// Note: for unsized arrays (int arr[] = {...}), array_size_val will remain empty
-				// and will be set after parsing the initializer list
-				type_specifier.set_array(true, array_size_val);
-			}
-		}
+		prepareArrayTypeForBraceInitializer(decl_node, type_specifier);
 
 		// Parse brace initializer list
 		ParseResult init_list_result = parse_brace_initializer(type_specifier);
@@ -1004,13 +1022,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 
 		auto initializer = init_list_result.node();
 
-		// For unsized arrays, infer the size from the initializer list
-		if (decl_node.is_unsized_array() && initializer.has_value() &&
-			initializer->is<InitializerListNode>()) {
-			const InitializerListNode& init_list = initializer->as<InitializerListNode>();
-			size_t inferred_size = init_list.initializers().size();
-			type_specifier.set_array(true, inferred_size);
-		}
+		inferUnsizedArraySizeFromInitializer(decl_node, type_specifier, initializer);
 
 		return initializer;
 	} else {

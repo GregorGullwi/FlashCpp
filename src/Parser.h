@@ -1402,6 +1402,10 @@ private:	 // Resume private methods
 		// Phase 3: Consolidated initialization helpers
 	std::optional<ASTNode> parse_direct_initialization();  // Parse Type var(args) - returns initializer node
 	std::optional<ASTNode> parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier);	 // Parse Type var = expr or Type var = {args}
+	void prepareArrayTypeForBraceInitializer(const DeclarationNode& decl_node, TypeSpecifierNode& type_specifier);
+	void inferUnsizedArraySizeFromInitializer(const DeclarationNode& decl_node,
+											 TypeSpecifierNode& type_specifier,
+											 const std::optional<ASTNode>& initializer);
 	ParseResult parse_extern_block(Linkage linkage);	 // Parse extern "C" { ... } block
 	ParseResult parse_brace_initializer(const TypeSpecifierNode& type_specifier);  // Add brace initializer parser
 	static bool isFoldOperatorToken(std::string_view op);
