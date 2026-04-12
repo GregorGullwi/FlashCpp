@@ -98,27 +98,33 @@ ParseResult Parser::parse_block() {
 //   struct Foo f = { 1, 2 };    → true (variable declaration)
 //   struct Foo *ptr;             → true (variable declaration)
 //   struct Foo &ref = obj;       → true (variable declaration)
+//   struct ::Foo f;              → true (variable declaration with global scope)
 //   struct Foo { ... };          → false (struct definition)
 //   struct Foo;                  → false (forward declaration)
 //   struct Foo : Base { ... };   → false (struct definition with base)
 //   struct { ... };              → false (anonymous struct)
 //   struct Foo f(args);          → true (variable with direct-init)
+//   struct Foo final { ... };    → false (struct definition with final)
 bool Parser::looks_like_elaborated_type_variable_declaration() {
 	SaveHandle saved = save_token_position();
-	auto restore = [&]() { restore_token_position(saved); };
+	ScopeGuard restore_guard([&]() { restore_token_position(saved); });
 
 	// Skip struct/class/union keyword
 	advance();
 
 	// Skip any C++11 attributes [[...]] or GCC __attribute__((...)) or __declspec(...)
-	// that can appear between keyword and name
+	// that can appear between keyword and name.
+	// Note: skip_cpp_attributes() internally calls skip_gcc_attributes().
 	skip_cpp_attributes();
-	skip_gcc_attributes();
 	parse_declspec_attributes();
+
+	// Skip leading :: for globally qualified types (e.g., struct ::timespec ts;)
+	if (peek() == "::"_tok) {
+		advance();
+	}
 
 	// Must have an identifier (the type name)
 	if (!peek().is_identifier()) {
-		restore();
 		return false; // anonymous struct: struct { ... }
 	}
 	advance(); // consume the type name
@@ -139,30 +145,24 @@ bool Parser::looks_like_elaborated_type_variable_declaration() {
 		}
 	}
 
-	// Now check what follows struct Name [<...>] [::Name]*
+	// Skip any attributes that can appear after the type name but before the
+	// definition body or variable name (e.g., struct Foo [[gnu::aligned(16)]] f;)
+	skip_cpp_attributes();
+	parse_declspec_attributes();
+
+	// Now check what follows struct Name [<...>] [::Name]* [attributes]*
 	// If it's one of the tokens that indicate a struct definition/forward declaration, return false.
 	// Otherwise, it's an elaborated type specifier used in a variable declaration.
 	auto next = peek();
 	if (next == "{"_tok || next == ";"_tok || next == ":"_tok || next == "final"_tok) {
-		restore();
-		return false; // struct definition, forward declaration, or base class list
-	}
-	if (next == "["_tok) {
-		// Could be [[attribute]] before struct body
-		auto next2 = peek(1);
-		if (next2 == "["_tok) {
-			restore();
-			return false; // [[attribute]] before struct body
-		}
+		return false; // struct definition, forward declaration, base class list, or final specifier
 	}
 	if (next.is_eof()) {
-		restore();
 		return false;
 	}
 
 	// Anything else (identifier, *, &, &&, const, volatile, etc.) means this is
 	// an elaborated type specifier used in a variable/parameter declaration
-	restore();
 	return true;
 }
 

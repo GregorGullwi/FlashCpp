@@ -648,7 +648,10 @@ ParseResult Parser::parse_namespace() {
 			}
 		}
 		// Check if it's a struct/class/union declaration
-		else if ((peek() == "class"_tok || peek() == "struct"_tok || peek() == "union"_tok)) {
+		// Disambiguate elaborated type specifier variable declarations (e.g., struct Foo f;)
+		// from struct definitions (struct Foo { ... }) and forward declarations (struct Foo;)
+		else if ((peek() == "class"_tok || peek() == "struct"_tok || peek() == "union"_tok) &&
+				 !looks_like_elaborated_type_variable_declaration()) {
 			decl_result = parse_struct_declaration();
 		}
 		// Check if it's an enum declaration
