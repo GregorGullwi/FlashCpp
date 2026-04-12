@@ -1,6 +1,8 @@
 # Known Issues
 
-## Dependent `sizeof`/`alignof` non-type template arguments can lose size information
+## ~~Dependent `sizeof`/`alignof` non-type template arguments can lose size information~~ (FIXED)
+
+**Status: Fixed** in commit 6249ac79 - The `dependent_expr` field was added to store the original AST for dependent NTTP expressions, allowing them to be re-evaluated during template instantiation.
 
 While investigating PR #1242 review feedback, a targeted regression using
 `SizeValue<sizeof(T)>` inside a class template compiled but produced the wrong
