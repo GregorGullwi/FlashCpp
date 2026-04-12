@@ -430,6 +430,43 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				std::string_view object_name = object_ident.name();
 				// Look up the object to get struct type
 				const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+				auto emitResolvedArrayAccess = [&](TypeCategory element_type,
+												  int element_size_bits,
+												  TypeIndex element_type_index,
+												  StringHandle qualified_name,
+												  int64_t member_offset) -> ExprResult {
+					ExprResult index_result = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
+					TempVar result_var = var_counter.next();
+
+					LValueInfo lvalue_info(
+						LValueInfo::Kind::ArrayElement,
+						qualified_name,
+						member_offset);
+					lvalue_info.array_index = toIrValue(index_result.value);
+					lvalue_info.is_pointer_to_array = false;
+					setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
+
+					ArrayAccessOp payload;
+					payload.result = result_var;
+					payload.element_type_index = element_type_index.withCategory(element_type);
+					payload.element_size_in_bits = element_size_bits;
+					payload.array = qualified_name;
+					payload.member_offset = member_offset;
+					payload.is_pointer_to_array = false;
+					payload.index.setType(index_result.category());
+					payload.index.ir_type = index_result.effectiveIrType();
+					payload.index.size_in_bits = index_result.size_in_bits;
+					payload.index.value = toIrValue(index_result.value);
+
+					unsigned long long elem_type_index = static_cast<unsigned long long>(element_type_index.index());
+					if (context == ExpressionContext::LValueAddress) {
+						return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, TypeIndex{elem_type_index}, PointerDepth{}, ValueStorage::ContainsAddress);
+					}
+
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
+					return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, TypeIndex{elem_type_index}, PointerDepth{}, ValueStorage::ContainsData);
+				};
+
 				const DeclarationNode* member_decl_ptr = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
 				if (member_decl_ptr) {
 					const auto& type_node = member_decl_ptr->type_node().as<TypeSpecifierNode>();
@@ -442,15 +479,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 							if (member_result) {
 								const StructMember* member = member_result.member;
-								// Get index expression
-								ExprResult index_result = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
-
-								// Get element type and size from the member
 								TypeCategory element_type = member->memberType();
 								int element_size_bits = static_cast<int>(member->size * 8);
-
-								// Use array_dimensions to compute actual element size
-								// member->size is the total array size; array_dimensions stores per-dimension counts
 								if (member->is_array && !member->array_dimensions.empty()) {
 									size_t total_elements = 1;
 									for (auto dim : member->array_dimensions)
@@ -458,59 +488,55 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 									if (total_elements > 0)
 										element_size_bits /= static_cast<int>(total_elements);
 								} else {
-									// Fallback heuristic for cases where array_dimensions may not be set
 									int base_element_size = get_type_size_bits(element_type);
 									if (base_element_size > 0 && element_size_bits > base_element_size)
 										element_size_bits = base_element_size;
 								}
 
-								// Create a temporary variable for the result
-								TempVar result_var = var_counter.next();
-
-								// Mark array element access as lvalue (Option 2: Value Category Tracking)
 								StringHandle qualified_name = StringTable::getOrInternStringHandle(
 									StringBuilder().append(object_name).append(".").append(member_name));
-								LValueInfo lvalue_info(
-									LValueInfo::Kind::ArrayElement,
+								return emitResolvedArrayAccess(
+									element_type,
+									element_size_bits,
+									member->type_index,
 									qualified_name,
-									static_cast<int64_t>(member_result.adjusted_offset) // member offset in struct
-								);
-								// Store index information for unified assignment handler
-								lvalue_info.array_index = toIrValue(index_result.value);
-								lvalue_info.is_pointer_to_array = false; // Member arrays are actual arrays, not pointers
-								setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
-
-								// Create typed payload for ArrayAccess with qualified member name
-								ArrayAccessOp payload;
-								payload.result = result_var;
-								payload.element_type_index = member->type_index.withCategory(element_type);
-								payload.element_size_in_bits = element_size_bits;
-								payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
-								payload.member_offset = static_cast<int64_t>(member_result.adjusted_offset);
-								payload.is_pointer_to_array = false; // Member arrays are actual arrays, not pointers
-
-								// Set index as TypedValue
-								payload.index.setType(index_result.category());
-								payload.index.ir_type = index_result.effectiveIrType();
-								payload.index.size_in_bits = index_result.size_in_bits;
-								payload.index.value = toIrValue(index_result.value);
-
-								// Propagate type_index for struct element types so downstream member access
-								// (e.g. c.items[0].value) can look up the struct's member layout
-								unsigned long long elem_type_index = static_cast<unsigned long long>(member->type_index.index());
-
-								// When context is LValueAddress, skip the load and return address/metadata only
-								if (context == ExpressionContext::LValueAddress) {
-									// Don't emit ArrayAccess instruction (no load)
-									// Just return the metadata with the result temp var
-									return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, TypeIndex{elem_type_index}, PointerDepth{}, ValueStorage::ContainsAddress);
+									static_cast<int64_t>(member_result.adjusted_offset));
+							}
+						}
+					}
+				} else {
+					auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(object_name));
+					if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
+						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+						if (struct_info) {
+							auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(
+								StringTable::getOrInternStringHandle(std::string(member_name)));
+							if (static_member && owner_struct && static_member->is_array) {
+								TypeCategory element_type = static_member->memberType();
+								int element_size_bits = static_cast<int>(static_member->size * 8);
+								if (!static_member->array_dimensions.empty()) {
+									size_t total_elements = 1;
+									for (auto dim : static_member->array_dimensions)
+										total_elements *= dim;
+									if (total_elements > 0)
+										element_size_bits /= static_cast<int>(total_elements);
+								} else {
+									int base_element_size = get_type_size_bits(element_type);
+									if (base_element_size > 0 && element_size_bits > base_element_size)
+										element_size_bits = base_element_size;
 								}
 
-								// Create instruction with typed payload (Load context - default)
-								ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
-
-								// Return the result with the element type and its type index
-								return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, TypeIndex{elem_type_index}, PointerDepth{}, ValueStorage::ContainsData);
+								StringHandle qualified_name = StringTable::getOrInternStringHandle(
+									StringBuilder()
+										.append(StringTable::getStringView(owner_struct->getName()))
+										.append("::"sv)
+										.append(member_name));
+								return emitResolvedArrayAccess(
+									element_type,
+									element_size_bits,
+									static_member->type_index,
+									qualified_name,
+									0);
 							}
 						}
 					}
