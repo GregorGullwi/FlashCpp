@@ -980,8 +980,67 @@ private:
 		const TypeInfo& placeholder_info,
 		const TemplateParamsContainer& template_params,
 		const TemplateArgsContainer& template_args) {
-		std::vector<TemplateTypeArg> concrete_args =
-			materializeTemplateArgs(placeholder_info, template_params, template_args);
+		auto appendExpandedPackArgs =
+			[&](const TypeInfo::TemplateArgInfo& arg_info,
+				std::vector<TemplateTypeArg>& out_args) -> bool {
+			if (!arg_info.dependent_name.isValid()) {
+				return false;
+			}
+
+			size_t arg_index = 0;
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				if (!template_params[i].template is<TemplateParameterNode>()) {
+					continue;
+				}
+
+				const auto& param =
+					template_params[i].template as<TemplateParameterNode>();
+				if (param.is_variadic()) {
+					size_t remaining_args = arg_index < template_args.size()
+						? template_args.size() - arg_index
+						: 0;
+					size_t required_after =
+						countRequiredTemplateArgsAfter<
+							TemplateParamsContainer,
+							TemplateArgsContainer>(template_params, i + 1);
+					size_t pack_size = remaining_args > required_after
+						? remaining_args - required_after
+						: 0;
+
+					if (param.nameHandle() == arg_info.dependent_name) {
+						for (size_t pack_index = 0;
+							 pack_index < pack_size &&
+							 (arg_index + pack_index) < template_args.size();
+							 ++pack_index) {
+							out_args.push_back(rebindDependentTemplateTypeArg(
+								template_args[arg_index + pack_index],
+								arg_info));
+						}
+						return true;
+					}
+
+					arg_index += pack_size;
+					continue;
+				}
+
+				if (arg_index >= template_args.size()) {
+					break;
+				}
+				++arg_index;
+			}
+
+			return false;
+		};
+
+		std::vector<TemplateTypeArg> concrete_args;
+		concrete_args.reserve(placeholder_info.templateArgs().size());
+		for (const auto& arg_info : placeholder_info.templateArgs()) {
+			if (appendExpandedPackArgs(arg_info, concrete_args)) {
+				continue;
+			}
+			concrete_args.push_back(
+				materializeTemplateArg(arg_info, template_params, template_args));
+		}
 
 		const auto resolveConcreteBaseHandle = [&](std::string_view base_name) -> StringHandle {
 			auto base_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_name));
