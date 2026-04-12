@@ -2344,6 +2344,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			const ASTNode& operand = unary_op->get_operand();
 			if (operand.is<ExpressionNode>()) {
 				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
+				if (const auto* qualified_id = std::get_if<QualifiedIdentifierNode>(&operand_expr)) {
+					if (auto member = tryResolveMemberPointerTarget(*qualified_id)) {
+						return EvalResult::from_member_pointer(member->member_name, member->offset);
+					}
+				}
 				// &identifier  or  &this->member
 				std::string_view simple_name;
 				if (const auto* id = std::get_if<IdentifierNode>(&operand_expr)) {
@@ -2654,6 +2659,34 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				return materialize_constructor_object_value(*ctor_call, context, &bindings);
 			}
 		}
+	}
+
+	if (const auto* member_pointer_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
+		auto member_pointer_result = recursive_eval(member_pointer_access->member_pointer(), bindings, context);
+		if (!member_pointer_result.success()) {
+			return member_pointer_result;
+		}
+		if (member_pointer_result.is_null_member_pointer) {
+			return EvalResult::error(
+				"Pointer-to-member access does not support null member pointers in constant expressions",
+				EvalErrorType::NotConstantExpression);
+		}
+		if (!member_pointer_result.member_pointer_member.isValid()) {
+			return EvalResult::error("Pointer-to-member access requires a compile-time constant data-member pointer");
+		}
+
+		Token member_token(
+			Token::Type::Identifier,
+			StringTable::getStringView(member_pointer_result.member_pointer_member),
+			kSyntheticTokenLine,
+			kSyntheticTokenColumn,
+			kSyntheticTokenFileIndex);
+		ExpressionNode synthetic_member_access =
+			MemberAccessNode(member_pointer_access->object(), member_token, member_pointer_access->is_arrow());
+		if (auto member_result = try_evaluate_bound_member_access(synthetic_member_access, bindings, context)) {
+			return *member_result;
+		}
+		return evaluate_member_access(std::get<MemberAccessNode>(synthetic_member_access), context);
 	}
 
 	// For literals and other expressions without parameters, evaluate normally
