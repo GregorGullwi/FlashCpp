@@ -586,6 +586,10 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 		return evaluate_noexcept_expr(*noexcept_expr, context);
 	}
 
+	if (const auto* throw_expr = std::get_if<ThrowExpressionNode>(&expr)) {
+		return evaluate_throw_expression(*throw_expr);
+	}
+
 	// For ConstructorCallNode (type conversions like float(3.14), int(100))
 	if (const auto* constructor_call = std::get_if<ConstructorCallNode>(&expr)) {
 		return evaluate_constructor_call(*constructor_call, context);
@@ -1620,6 +1624,18 @@ EvalResult Evaluator::evaluate_noexcept_expr(const NoexceptExprNode& noexcept_ex
 	}
 
 	return EvalResult::from_bool(is_expression_noexcept(noexcept_expr.expr().as<ExpressionNode>(), context));
+}
+
+EvalResult Evaluator::evaluate_throw_expression(const ThrowExpressionNode& throw_expr) {
+	if (throw_expr.is_rethrow()) {
+		return EvalResult::error(
+			"rethrow expression is not allowed in a constant expression",
+			EvalErrorType::NotConstantExpression);
+	}
+
+	return EvalResult::error(
+		"throw expression is not allowed in a constant expression",
+		EvalErrorType::NotConstantExpression);
 }
 
 bool Evaluator::is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context) {
