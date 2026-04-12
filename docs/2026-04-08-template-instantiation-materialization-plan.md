@@ -1,9 +1,64 @@
 # Template Instantiation Identity / Materialization Follow-up Plan
 
 **Date:** 2026-04-08  
+**Last Updated:** 2026-04-12  
 **Context:** Follows the branch fix that made `test_integral_constant_comprehensive_ret100.cpp`, `test_integral_constant_pattern_ret42.cpp`, `test_ratio_less_alias_ret0.cpp`, `test_sfinae_enable_if_ret0.cpp`, and `test_sfinae_same_name_overload_ret0.cpp` pass by preserving dependent non-type template-argument identity in template-instantiation keys.
 
-## Next agent starting point
+## Quick start for next agent
+
+### Current baseline (2026-04-12)
+
+- Linux: `make main CXX=clang++` compiles cleanly
+- Linux: `bash ./tests/run_all_tests.sh` → 2052 pass, 132 expected-fail
+- All key regression tests pass:
+  ```bash
+  bash ./tests/run_all_tests.sh test_explicit_template_defaulted_param_deduction_ret42.cpp \
+    test_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp \
+    test_global_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp \
+    test_pack_decltype_simple_ret42.cpp \
+    test_variadic_template_pack_before_tail_trailing_return_ret0.cpp \
+    test_namespaced_pair_swap_sfinae_ret0.cpp
+  ```
+
+### Choose your next task
+
+The plan is stable. Choose based on your expertise and available time:
+
+**Option A: Continue Phase 6 (pack-aware explicit deduction)**
+- Design a pack-aware mapping helper in `buildDeductionMapFromCallArgs(...)`
+- Currently, pack-bearing signatures fall back to older positional deduction
+- The helper should map function-parameter-pack slots onto template-parameter-pack elements
+- Key files: `src/Parser_Templates_Inst_Deduction.cpp:608-881`, `src/Parser.h:865-869`
+- Preserve: non-pack signatures must keep using the name-based pre-deduction map
+
+**Option B: Investigate the "early instantiation without arg_types" gap**
+- Location: `src/Parser_Expr_PrimaryExpr.cpp:2405-2414`
+- This path calls `try_instantiate_template_explicit()` without arg_types
+- If it succeeds (all trailing params have defaults), arg_types-aware deduction may be skipped
+- Task: verify whether this path can fire for function templates in call contexts
+- If yes: gate it on non-call contexts or defer until after argument parsing
+
+**Option C: Work on Phase 1-4 architectural cleanup**
+- Phase 1: canonicalize non-type template-argument identity (see detailed plan below)
+- Phase 2: centralize alias-template materialization
+- Phase 3: make late materialization + pending-sema normalization explicit
+- Phase 4: replace unresolved-placeholder heuristics with explicit state
+
+**Option D: Fix bugs in `docs/KNOWN_ISSUES.md`**
+- Currently tracked: premature `layout_is_complete` during anonymous union processing
+- Low priority, no user-facing issues currently
+
+### Important invariants to preserve
+
+1. **Non-pack signatures**: Use name-based pre-deduction map first, then defaults, then overload mismatch
+2. **Pack-bearing signatures**: Use existing positional fallback only
+3. **Always validate** after changes:
+   - Run the key regression tests listed above
+   - Run the full test suite
+
+---
+
+## Next agent starting point (detailed)
 
 ### Do this next
 
@@ -27,17 +82,17 @@
 4. If you continue Phase 6 after that, the next worthwhile slice is designing a
    pack-aware mapping helper rather than widening the current name-based remap
    in place.
-5. **Known gap — early instantiation without arg_types**: In the regular
-   namespace-qualified identifier path in `src/Parser_Expr_PrimaryExpr.cpp`,
-   there is a pre-existing `try_instantiate_template_explicit(name, *template_args)`
-   call that fires **before** `(` is consumed and call arguments are parsed. This
-   call does not pass `arg_types`, so if it succeeds (e.g. all trailing params
-   have defaults), the subsequent arg_types-aware deduction added by PR #1231
-   may be short-circuited. The PR #1231 tests pass, suggesting this path does
-   not fire for function-call patterns, but it has not been verified. If you
-   work on this area, investigate whether that early site can succeed for
-   function templates and, if so, gate it on non-call contexts or defer it
-   until after argument parsing.
+5. **~~Known gap — early instantiation without arg_types~~ (INVESTIGATED: NOT A BUG)**:
+   The early `try_instantiate_template_explicit(name, *template_args)` call at
+   `src/Parser_Expr_PrimaryExpr.cpp:2405` does fire and can succeed for function
+   templates, BUT it does not cause issues because:
+   - The early instantiation uses `explicit_args + defaults` as template args
+   - The later instantiation uses `explicit_args + deduced_from_call_args`
+   - These produce DIFFERENT instantiation keys (e.g., `func<T, int>` vs `func<T, Marker>`)
+   - The later path creates a separate instantiation with the correctly deduced args
+   - The call expression uses the later instantiation, not the early one
+   This was verified by debug tracing on 2026-04-12. The warning message at line 2411
+   ("Parsed template arguments but instantiation failed") appears but is benign.
 
 ### Latest completed slice
 
