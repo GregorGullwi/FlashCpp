@@ -287,14 +287,18 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 						}
 					}
 				}
+				normalizePendingSemanticRoots();
 				visitFunctionDeclarationNode(func);
 			} else if (info.function_node.is<ConstructorDeclarationNode>()) {
+				normalizePendingSemanticRoots();
 				visitConstructorDeclarationNode(info.function_node.as<ConstructorDeclarationNode>());
 			} else if (info.function_node.is<DestructorDeclarationNode>()) {
+				normalizePendingSemanticRoots();
 				visitDestructorDeclarationNode(info.function_node.as<DestructorDeclarationNode>());
 			} else if (info.function_node.is<TemplateFunctionDeclarationNode>()) {
 				const auto& tmpl = info.function_node.as<TemplateFunctionDeclarationNode>();
 				if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
+					normalizePendingSemanticRoots();
 					visitFunctionDeclarationNode(tmpl.function_declaration().as<FunctionDeclarationNode>());
 				}
 			}

@@ -1090,11 +1090,22 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		FLASH_LOG_FORMAT(Codegen, Debug, "Using {} cross-struct direct call target for: {}", source_label, func_name_view);
 	};
 
-	// Only trust call-node-resolved synthesized callees after sema re-resolves them:
-	// template substitution can preserve a stale callee descriptor even when the
-	// mangled name is already concrete.
-	if (!matched_func_decl && !has_synthesized_template_suffix) {
-		consumeResolvedDirectCallTarget(callExprNode.callee().function_declaration_or_null(), "callee-resolved");
+	// Template substitution can preserve stale member-call descriptors from the
+	// template pattern. Still trust pre-resolved free/static callees and concrete
+	// instantiated members; only gate pattern-owned member descriptors.
+	if (!matched_func_decl) {
+		const FunctionDeclarationNode* callee_resolved_target =
+			callExprNode.callee().function_declaration_or_null();
+		if (callee_resolved_target) {
+			bool is_pattern_member_target = false;
+			if (!callee_resolved_target->parent_struct_name().empty()) {
+				is_pattern_member_target = gTemplateRegistry.isPatternStructName(
+					StringTable::getOrInternStringHandle(callee_resolved_target->parent_struct_name()));
+			}
+			if (!has_synthesized_template_suffix || !is_pattern_member_target) {
+				consumeResolvedDirectCallTarget(callee_resolved_target, "callee-resolved");
+			}
+		}
 	}
 
 	// Phase 1 (sema-owned ordinary call resolution): consume the pre-resolved
@@ -1122,7 +1133,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	const bool allow_lookup_recovery =
 		!sema_ || // no semantic data wired into codegen
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
-		has_synthesized_template_suffix || // hashed instantiated callee names (notably member-template instantiations) still rely on legacy direct-call lowering
 		sema_recorded_unresolved_call; // sema recorded a known resolution gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
