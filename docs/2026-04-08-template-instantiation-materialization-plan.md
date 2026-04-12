@@ -1,9 +1,63 @@
 # Template Instantiation Identity / Materialization Follow-up Plan
 
 **Date:** 2026-04-08  
+**Last Updated:** 2026-04-12  
 **Context:** Follows the branch fix that made `test_integral_constant_comprehensive_ret100.cpp`, `test_integral_constant_pattern_ret42.cpp`, `test_ratio_less_alias_ret0.cpp`, `test_sfinae_enable_if_ret0.cpp`, and `test_sfinae_same_name_overload_ret0.cpp` pass by preserving dependent non-type template-argument identity in template-instantiation keys.
 
-## Next agent starting point
+## Quick start for next agent
+
+### Current baseline (2026-04-12)
+
+- Linux: `make main CXX=clang++` compiles cleanly
+- Linux: `bash ./tests/run_all_tests.sh` → 2052 pass, 132 expected-fail
+- All key regression tests pass:
+  ```bash
+  bash ./tests/run_all_tests.sh test_explicit_template_defaulted_param_deduction_ret42.cpp \
+    test_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp \
+    test_global_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp \
+    test_pack_decltype_simple_ret42.cpp \
+    test_variadic_template_pack_before_tail_trailing_return_ret0.cpp \
+    test_namespaced_pair_swap_sfinae_ret0.cpp
+  ```
+
+### Current work in progress: Phase 2+
+
+**Phase 1 status:** complete. `NonTypeValueIdentity` is now the canonical non-type value carrier and the remaining hash/string entry points route through it.
+
+**Phase 1 follow-up (optional, not required for Phase 2):**
+- Remove redundant `TemplateTypeArg` storage fields once a broader caller migration is worthwhile
+
+**Ready to start Phase 2:** Yes - Phase 1 is complete.
+
+### Choose your next task
+
+**Option A: Start Phase 2 (centralize alias-template materialization)**
+- Add shared helper for alias-template resolution
+- Consolidate top-level `using`, struct-local `using`, and type-specifier alias handling
+- Key files: `src/Parser_Decl_TopLevel.cpp`, `src/Parser_Decl_TypedefUsing.cpp`, `src/Parser_TypeSpecifiers.cpp`
+
+**Option B: Continue Phase 6 (pack-aware explicit deduction)**
+- Design a pack-aware mapping helper in `buildDeductionMapFromCallArgs(...)`
+- Currently, pack-bearing signatures fall back to older positional deduction
+- Key files: `src/Parser_Templates_Inst_Deduction.cpp:608-881`, `src/Parser.h:865-869`
+
+**Option C: Fix bugs in `docs/KNOWN_ISSUES.md`**
+- Currently tracked: premature `layout_is_complete` during anonymous union processing
+- Low priority, no user-facing issues currently
+
+**Note:** The "early instantiation without arg_types" gap was investigated on 2026-04-12 and found to NOT be a bug. See detailed notes below.
+
+### Important invariants to preserve
+
+1. **Non-pack signatures**: Use name-based pre-deduction map first, then defaults, then overload mismatch
+2. **Pack-bearing signatures**: Use existing positional fallback only
+3. **Always validate** after changes:
+   - Run the key regression tests listed above
+   - Run the full test suite
+
+---
+
+## Next agent starting point (detailed)
 
 ### Do this next
 
@@ -27,17 +81,17 @@
 4. If you continue Phase 6 after that, the next worthwhile slice is designing a
    pack-aware mapping helper rather than widening the current name-based remap
    in place.
-5. **Known gap — early instantiation without arg_types**: In the regular
-   namespace-qualified identifier path in `src/Parser_Expr_PrimaryExpr.cpp`,
-   there is a pre-existing `try_instantiate_template_explicit(name, *template_args)`
-   call that fires **before** `(` is consumed and call arguments are parsed. This
-   call does not pass `arg_types`, so if it succeeds (e.g. all trailing params
-   have defaults), the subsequent arg_types-aware deduction added by PR #1231
-   may be short-circuited. The PR #1231 tests pass, suggesting this path does
-   not fire for function-call patterns, but it has not been verified. If you
-   work on this area, investigate whether that early site can succeed for
-   function templates and, if so, gate it on non-call contexts or defer it
-   until after argument parsing.
+5. **~~Known gap — early instantiation without arg_types~~ (INVESTIGATED: NOT A BUG)**:
+   The early `try_instantiate_template_explicit(name, *template_args)` call at
+   `src/Parser_Expr_PrimaryExpr.cpp:2405` does fire and can succeed for function
+   templates, BUT it does not cause issues because:
+   - The early instantiation uses `explicit_args + defaults` as template args
+   - The later instantiation uses `explicit_args + deduced_from_call_args`
+   - These produce DIFFERENT instantiation keys (e.g., `func<T, int>` vs `func<T, Marker>`)
+   - The later path creates a separate instantiation with the correctly deduced args
+   - The call expression uses the later instantiation, not the early one
+   This was verified by debug tracing on 2026-04-12. The warning message at line 2411
+   ("Parsed template arguments but instantiation failed") appears but is benign.
 
 ### Latest completed slice
 
@@ -685,6 +739,26 @@ Keep the recent metaprogramming fixes stable while refactoring the underlying re
 
 ## Phase 1: canonicalize non-type template-argument identity
 
+**Status:** COMPLETE (as of 2026-04-12)
+
+**Completed work:**
+1. ✅ Introduced `NonTypeValueIdentity` carrier struct in `src/TemplateTypes.h`
+   - Added `value_type_index` field to capture full type identity for value args (not just `TypeCategory`)
+   - Added factory methods: `makeConcrete()`, `makeDependent()`
+   - Added `toString()` for debugging/name generation  
+   - Added `operator==` with Bool/Int interchangeability
+   - Added `hash()` consistent with equality
+2. ✅ Made `ValueArgKey` an alias for `NonTypeValueIdentity` for backward compatibility
+3. ✅ Added `valueIdentity()` accessor to `TemplateTypeArg` 
+4. ✅ Updated `makeInstantiationKey()` to use `valueIdentity()` accessor
+5. ✅ Updated `TemplateTypeArg::toString()` to delegate to `NonTypeValueIdentity::toString()`
+6. ✅ Updated `TemplateTypeArg::hash()`, `toHashString()`, and `TemplateTypeArgHash` to share one hash path
+7. ✅ Added canonical `TemplateTypeArg::makeDependentValue(...)` helpers and reused them in the main deferred/dependent non-type argument materialization paths
+8. ✅ All 2052 tests pass, 132 expected-fail
+
+**Deferred follow-up (not required to consider Phase 1 complete):**
+- Removing redundant `is_value + value + is_dependent + dependent_name` storage from `TemplateTypeArg` is still a larger mechanical migration touching many callers. That can now be done independently because the canonical identity, stringification, and hashing paths are already unified.
+
 **Goal**
 
 Remove the split-state representation where `TemplateTypeArg` owns one dependency model and `TemplateInstantiationKey` owns another.
@@ -956,7 +1030,7 @@ The `normalizeDependentNonTypeArgs` lambda at `src/Parser_TypeSpecifiers.cpp:961
 
 ### Hash strategy drift between `TemplateTypeArg::hash()` and `ValueArgKey::hash()`
 
-`TemplateTypeArg::hash()` (`src/TemplateRegistry_Types.h:267-272`) uses `std::hash<StringHandle>` for `dependent_name`, while `ValueArgKey::hash()` (`src/TemplateTypes.h:196-203`) uses `std::hash<uint32_t>` on the raw `.handle` field. The two types are never compared in the same hash map so this is not a correctness bug today, but it is exactly the kind of drift that Phase 1 canonicalization should eliminate. **Relates to Phase 1.**
+~~`TemplateTypeArg::hash()` (`src/TemplateRegistry_Types.h:267-272`) uses `std::hash<StringHandle>` for `dependent_name`, while `ValueArgKey::hash()` (`src/TemplateTypes.h:196-203`) uses `std::hash<uint32_t>` on the raw `.handle` field. The two types are never compared in the same hash map so this is not a correctness bug today, but it is exactly the kind of drift that Phase 1 canonicalization should eliminate.~~ **ADDRESSED in Phase 1 (2026-04-12):** `ValueArgKey` is now an alias for `NonTypeValueIdentity`, which uses `std::hash<StringHandle>{}(dependent_name)` consistently with `TemplateTypeArg::hash()`.
 
 ---
 
