@@ -926,8 +926,8 @@ void AstToIr::generateStaticMemberDeclarations() {
 								for (size_t dim_size : static_member.array_dimensions) {
 									total_elements *= dim_size;
 								}
-								size_t element_size = total_elements == 0 ? 0 : toSizeT(static_member.size) / total_elements;
-								op.init_data.resize(toSizeT(static_member.size), 0);
+								size_t element_size = total_elements == 0 ? 0 : static_member.size / total_elements;
+								op.init_data.resize(static_member.size, 0);
 
 								size_t element_index = 0;
 								auto pack_native_array_level =
