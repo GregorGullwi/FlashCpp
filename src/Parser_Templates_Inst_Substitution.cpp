@@ -69,12 +69,7 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 			alias_param_idx.has_value() && *alias_param_idx < template_args.size()) {
 			return normalize_alias_param_arg(*alias_param_idx, template_args[*alias_param_idx]);
 		}
-		TemplateTypeArg dependent_arg;
-		dependent_arg.is_value = true;
-		dependent_arg.is_dependent = true;
-		dependent_arg.type_index = nativeTypeIndex(TypeCategory::Int);
-		dependent_arg.dependent_name = tparam_ref->param_name();
-		return dependent_arg;
+		return TemplateTypeArg::makeDependentValue(tparam_ref->param_name(), TypeCategory::Int);
 	}
 
 	if (const auto* id = std::get_if<IdentifierNode>(&arg_expr)) {
@@ -84,12 +79,7 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 			return normalize_alias_param_arg(*alias_param_idx, template_args[*alias_param_idx]);
 		}
 
-		TemplateTypeArg dependent_arg;
-		dependent_arg.is_value = true;
-		dependent_arg.is_dependent = true;
-		dependent_arg.type_index = nativeTypeIndex(TypeCategory::Int);
-		dependent_arg.dependent_name = id_handle;
-		return dependent_arg;
+		return TemplateTypeArg::makeDependentValue(id_handle, TypeCategory::Int);
 	}
 
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
@@ -111,12 +101,9 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	}
 
 	if (const auto* qual_id = std::get_if<QualifiedIdentifierNode>(&arg_expr)) {
-		TemplateTypeArg dependent_arg;
-		dependent_arg.is_value = true;
-		dependent_arg.is_dependent = true;
-		dependent_arg.type_index = nativeTypeIndex(TypeCategory::Bool);
-		dependent_arg.dependent_name = StringTable::getOrInternStringHandle(qual_id->full_name());
-		return dependent_arg;
+		return TemplateTypeArg::makeDependentValue(
+			StringTable::getOrInternStringHandle(qual_id->full_name()),
+			TypeCategory::Bool);
 	}
 
 	return std::nullopt;

@@ -800,15 +800,16 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						FLASH_LOG(Templates, Debug, "Accepting dependent compile-time expression as template argument");
 						// Create a dependent template argument
 						TemplateTypeArg dependent_arg;
-						dependent_arg.type_index = nativeTypeIndex(TypeCategory::Bool);	// noexcept, sizeof, alignof return bool/size_t
-						dependent_arg.is_value = true;  // This is a non-type (value) template argument
-						dependent_arg.is_dependent = true;
 						if (std::holds_alternative<IdentifierNode>(expr)) {
 							const auto& id = std::get<IdentifierNode>(expr);
-							dependent_arg.dependent_name = StringTable::getOrInternStringHandle(id.name());
+							dependent_arg = TemplateTypeArg::makeDependentValue(
+								StringTable::getOrInternStringHandle(id.name()),
+								TypeCategory::Bool);
 						} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 							const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
-							dependent_arg.dependent_name = StringTable::getOrInternStringHandle(qual_id.full_name());
+							dependent_arg = TemplateTypeArg::makeDependentValue(
+								StringTable::getOrInternStringHandle(qual_id.full_name()),
+								TypeCategory::Bool);
 						}
 
 						// Check for pack expansion (...)
@@ -1091,8 +1092,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								std::holds_alternative<AlignofExprNode>(expr) ||
 								std::holds_alternative<TypeTraitExprNode>(expr);
 							if (is_value_like_dependent_expr) {
-								dependent_arg.type_index = nativeTypeIndex(TypeCategory::Bool);
-								dependent_arg.is_value = true;
+								dependent_arg = TemplateTypeArg::makeDependentValue(StringHandle{}, TypeCategory::Bool);
 							} else {
 								dependent_arg.type_index = nativeTypeIndex(TypeCategory::UserDefined);  // Template parameter is a user-defined type placeholder; will try to look up
 								dependent_arg.is_value = false;	// This is a TYPE parameter, not a value

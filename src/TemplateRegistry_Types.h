@@ -246,6 +246,20 @@ struct TemplateTypeArg {
 		return TemplateTypeArg(v, cat);
 	}
 
+	static TemplateTypeArg makeDependentValue(StringHandle name, TypeCategory category) {
+		return makeDependentValue(name, category, 0);
+	}
+
+	static TemplateTypeArg makeDependentValue(
+		StringHandle name,
+		TypeCategory category,
+		int64_t placeholder_value) {
+		TemplateTypeArg arg(placeholder_value, category);
+		arg.is_dependent = true;
+		arg.dependent_name = name;
+		return arg;
+	}
+
 	static TemplateTypeArg makeTemplate(StringHandle name) {
 		TemplateTypeArg arg;
 		arg.is_template_template_arg = true;
@@ -253,13 +267,18 @@ struct TemplateTypeArg {
 		return arg;
 	}
 
+	TypeCategory normalizedValueCategory() const {
+		if (!is_value) {
+			return category();
+		}
+		return FlashCpp::NonTypeValueIdentity::normalizedTypeForComparison(category());
+	}
+
 	// Hash for use in maps (used by InstantiationQueue and SpecializationKey)
 	size_t hash() const {
 		// Normalize Bool/Int to Int to match operator== which treats them as interchangeable
 		// for value parameters. This maintains the invariant: a == b → hash(a) == hash(b).
-		TypeCategory effective_cat = (is_value && (category() == TypeCategory::Bool || category() == TypeCategory::Int))
-										 ? TypeCategory::Int
-										 : category();
+		TypeCategory effective_cat = normalizedValueCategory();
 		size_t h = std::hash<uint8_t>{}(static_cast<uint8_t>(effective_cat));
 		if (type_index.needsTypeIndex()) {
 			h ^= std::hash<size_t>{}(type_index.index()) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -273,12 +292,13 @@ struct TemplateTypeArg {
 		}
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(member_pointer_kind)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<bool>{}(is_value) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		h ^= std::hash<bool>{}(is_dependent) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		if (is_dependent && dependent_name.isValid()) {
-			h ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		}
 		if (is_value) {
-			h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= valueIdentity().hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+		} else {
+			h ^= std::hash<bool>{}(is_dependent) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			if (is_dependent && dependent_name.isValid()) {
+				h ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			}
 		}
 		h ^= std::hash<bool>{}(is_template_template_arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		if (is_template_template_arg) {
@@ -484,38 +504,7 @@ struct TemplateTypeArg {
 	// Get hash-based string representation for mangling (unambiguous)
 	// Uses the same hash algorithm as TemplateTypeArgHash for consistency
 	std::string toHashString() const {
-		// Compute hash using the same algorithm as TemplateTypeArgHash
-		// Normalize Bool/Int to Int (matches operator== interchangeability for value parameters)
-		TypeCategory effective_cat = (is_value && (category() == TypeCategory::Bool || category() == TypeCategory::Int))
-										 ? TypeCategory::Int
-										 : category();
-		size_t hash = std::hash<uint8_t>{}(static_cast<uint8_t>(effective_cat));
-		if (type_index.needsTypeIndex()) {
-			hash ^= std::hash<size_t>{}(type_index.index()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		hash ^= std::hash<size_t>{}(pointer_depth) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(cv_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		hash ^= std::hash<bool>{}(is_array) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		if (array_size.has_value()) {
-			hash ^= std::hash<size_t>{}(*array_size) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(member_pointer_kind)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		hash ^= std::hash<bool>{}(is_value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		hash ^= std::hash<bool>{}(is_dependent) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		if (is_dependent && dependent_name.isValid()) {
-			hash ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		if (is_value) {
-			hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		hash ^= std::hash<bool>{}(is_template_template_arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		if (is_template_template_arg) {
-			hash ^= std::hash<StringHandle>{}(template_name_handle) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		if (function_signature.has_value()) {
-			hash ^= FlashCpp::hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
+		size_t hash = this->hash();
 
 		// Convert to hex string
 		char buf[17];
@@ -527,40 +516,7 @@ struct TemplateTypeArg {
 // Hash function for TemplateTypeArg
 struct TemplateTypeArgHash {
 	size_t operator()(const TemplateTypeArg& arg) const {
-		// Normalize Bool/Int to Int (matches operator== interchangeability for value parameters)
-		TypeCategory effective_cat = (arg.is_value && (arg.category() == TypeCategory::Bool || arg.category() == TypeCategory::Int))
-										 ? TypeCategory::Int
-										 : arg.category();
-		size_t hash = std::hash<uint8_t>{}(static_cast<uint8_t>(effective_cat));
-		// Only include type_index in hash for user-defined types (to match operator==)
-		if (arg.type_index.needsTypeIndex()) {
-			hash ^= std::hash<size_t>{}(arg.type_index.index()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(arg.ref_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		hash ^= std::hash<size_t>{}(arg.pointer_depth) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(arg.cv_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		hash ^= std::hash<bool>{}(arg.is_array) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		if (arg.array_size.has_value()) {
-			hash ^= std::hash<size_t>{}(*arg.array_size) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(arg.member_pointer_kind)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		hash ^= std::hash<bool>{}(arg.is_value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		hash ^= std::hash<bool>{}(arg.is_dependent) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		if (arg.is_dependent && arg.dependent_name.isValid()) {
-			hash ^= std::hash<StringHandle>{}(arg.dependent_name) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		if (arg.is_value) {
-			hash ^= std::hash<int64_t>{}(arg.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		hash ^= std::hash<bool>{}(arg.is_template_template_arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		if (arg.is_template_template_arg) {
-			hash ^= std::hash<StringHandle>{}(arg.template_name_handle) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		if (arg.function_signature.has_value()) {
-			hash ^= FlashCpp::hashFunctionSignatureIdentity(*arg.function_signature) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		// NOTE: is_pack is intentionally NOT included in the hash to match operator==
-		return hash;
+		return arg.hash();
 	}
 };
 
