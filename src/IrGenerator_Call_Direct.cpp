@@ -1097,11 +1097,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		const FunctionDeclarationNode* callee_resolved_target =
 			callExprNode.callee().function_declaration_or_null();
 		if (callee_resolved_target) {
-			bool is_pattern_member_target = false;
-			if (!callee_resolved_target->parent_struct_name().empty()) {
-				is_pattern_member_target = gTemplateRegistry.isPatternStructName(
+			const bool is_pattern_member_target =
+				!callee_resolved_target->parent_struct_name().empty() &&
+				gTemplateRegistry.isPatternStructName(
 					StringTable::getOrInternStringHandle(callee_resolved_target->parent_struct_name()));
-			}
 			if (!has_synthesized_template_suffix || !is_pattern_member_target) {
 				consumeResolvedDirectCallTarget(callee_resolved_target, "callee-resolved");
 			}
