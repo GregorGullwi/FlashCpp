@@ -743,7 +743,7 @@ Keep the recent metaprogramming fixes stable while refactoring the underlying re
 
 **Completed work:**
 1. ✅ Introduced `NonTypeValueIdentity` carrier struct in `src/TemplateTypes.h`
-   - Added `value_type` field to capture TypeCategory for value args
+   - Added `value_type_index` field to capture full type identity for value args (not just `TypeCategory`)
    - Added factory methods: `makeConcrete()`, `makeDependent()`
    - Added `toString()` for debugging/name generation  
    - Added `operator==` with Bool/Int interchangeability

@@ -176,8 +176,8 @@ struct TypeIndexArg {
  * Phase 1 of template-instantiation identity cleanup (see docs/2026-04-08-template-instantiation-materialization-plan.md).
  * 
  * This structure captures the identity of a non-type template argument in one place:
- * - For CONCRETE values: value + value_type define identity; dependent_name is invalid
- * - For DEPENDENT values: dependent_name defines identity; value/value_type are placeholders
+ * - For CONCRETE values: value + value_type_index define identity; dependent_name is invalid
+ * - For DEPENDENT values: dependent_name defines identity; value/value_type_index are placeholders
  * 
  * Key invariants:
  * - is_dependent == true implies dependent_name.isValid()
@@ -192,33 +192,49 @@ struct TypeIndexArg {
  */
 struct NonTypeValueIdentity {
 	int64_t value = 0;              // The concrete value (meaningful when !is_dependent)
-	TypeCategory value_type = TypeCategory::Int;  // The type of the value
+	TypeIndex value_type_index = nativeTypeIndex(TypeCategory::Int);  // The full type identity of the value
 	StringHandle dependent_name{};  // Name when dependent (e.g., "N" for template<int N>)
 	bool is_dependent = false;      // True if this is a dependent (not yet substituted) value
 
+	TypeCategory valueTypeCategory() const {
+		return value_type_index.category();
+	}
+
 	// Factory methods for common cases
 	static NonTypeValueIdentity makeConcrete(int64_t val, TypeCategory type) {
+		return makeConcrete(val, TypeIndex{0, type});
+	}
+
+	static NonTypeValueIdentity makeConcrete(int64_t val, TypeIndex type_index) {
 		NonTypeValueIdentity id;
 		id.value = val;
-		id.value_type = type;
+		id.value_type_index = type_index;
 		id.is_dependent = false;
 		id.dependent_name = {};
 		return id;
 	}
 
 	static NonTypeValueIdentity makeDependent(StringHandle name) {
+		return makeDependent(name, nativeTypeIndex(TypeCategory::Int));
+	}
+
+	static NonTypeValueIdentity makeDependent(StringHandle name, TypeIndex type_index) {
 		NonTypeValueIdentity id;
 		id.value = 0;
-		id.value_type = TypeCategory::Int;  // placeholder
+		id.value_type_index = type_index;
 		id.is_dependent = true;
 		id.dependent_name = name;
 		return id;
 	}
 
 	static NonTypeValueIdentity makeDependentWithPlaceholder(StringHandle name, int64_t placeholder_value, TypeCategory type) {
+		return makeDependentWithPlaceholder(name, placeholder_value, TypeIndex{0, type});
+	}
+
+	static NonTypeValueIdentity makeDependentWithPlaceholder(StringHandle name, int64_t placeholder_value, TypeIndex type_index) {
 		NonTypeValueIdentity id;
 		id.value = placeholder_value;
-		id.value_type = type;
+		id.value_type_index = type_index;
 		id.is_dependent = true;
 		id.dependent_name = name;
 		return id;
@@ -229,6 +245,30 @@ struct NonTypeValueIdentity {
 		return (t == TypeCategory::Bool || t == TypeCategory::Int) ? TypeCategory::Int : t;
 	}
 
+	static bool equalValueTypeIdentity(TypeIndex lhs, TypeIndex rhs) {
+		TypeCategory lhs_category = normalizedTypeForComparison(lhs.category());
+		TypeCategory rhs_category = normalizedTypeForComparison(rhs.category());
+		if (lhs_category != rhs_category) {
+			return false;
+		}
+		if (lhs_category == TypeCategory::Int) {
+			return true;
+		}
+		if (lhs.needsTypeIndex() || rhs.needsTypeIndex()) {
+			return equalTypeIndexIdentity(lhs, rhs);
+		}
+		return true;
+	}
+
+	static size_t hashValueTypeIdentity(TypeIndex type_index) {
+		TypeCategory normalized_category = normalizedTypeForComparison(type_index.category());
+		size_t h = std::hash<uint8_t>{}(static_cast<uint8_t>(normalized_category));
+		if (normalized_category != TypeCategory::Int && type_index.needsTypeIndex()) {
+			h ^= hashTypeIndexIdentity(type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		return h;
+	}
+
 	bool operator==(const NonTypeValueIdentity& other) const {
 		if (is_dependent != other.is_dependent)
 			return false;
@@ -237,10 +277,10 @@ struct NonTypeValueIdentity {
 			return dependent_name == other.dependent_name;
 		}
 		// Concrete args: identity is value + type (with Bool/Int interchangeability)
-		if (normalizedTypeForComparison(value_type) == normalizedTypeForComparison(other.value_type)) {
+		if (equalValueTypeIdentity(value_type_index, other.value_type_index)) {
 			return value == other.value;
 		}
-		return value == other.value && value_type == other.value_type;
+		return value == other.value && equalTypeIndexIdentity(value_type_index, other.value_type_index);
 	}
 
 	size_t hash() const {
@@ -250,9 +290,7 @@ struct NonTypeValueIdentity {
 		}
 		// Always include value in hash (for concrete args, and for stable hashing of dependent placeholders)
 		h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		// Use normalized type for hash consistency (matches operator== interchangeability)
-		TypeCategory effective_type = normalizedTypeForComparison(value_type);
-		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(effective_type)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= hashValueTypeIdentity(value_type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		return h;
 	}
 
@@ -262,7 +300,7 @@ struct NonTypeValueIdentity {
 			return std::string(StringTable::getStringView(dependent_name));
 		}
 		// For boolean values, use "true" or "false" instead of "1" or "0"
-		if (value_type == TypeCategory::Bool) {
+		if (valueTypeCategory() == TypeCategory::Bool) {
 			return value != 0 ? "true" : "false";
 		}
 		return std::to_string(value);

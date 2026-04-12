@@ -203,9 +203,9 @@ struct TemplateTypeArg {
 	// This is the canonical identity for non-type template arguments.
 	FlashCpp::NonTypeValueIdentity valueIdentity() const {
 		if (is_dependent) {
-			return FlashCpp::NonTypeValueIdentity::makeDependentWithPlaceholder(dependent_name, value, category());
+			return FlashCpp::NonTypeValueIdentity::makeDependentWithPlaceholder(dependent_name, value, type_index);
 		}
-		return FlashCpp::NonTypeValueIdentity::makeConcrete(value, category());
+		return FlashCpp::NonTypeValueIdentity::makeConcrete(value, type_index);
 	}
 
 	// Builds a TypeIndex with category directly.
