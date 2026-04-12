@@ -2672,7 +2672,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				EvalErrorType::NotConstantExpression);
 		}
 		if (!member_pointer_result.member_pointer_member.isValid()) {
-			return EvalResult::error("Pointer-to-member access requires a constexpr member-object pointer");
+			return EvalResult::error("Pointer-to-member access requires a compile-time constant data-member pointer");
 		}
 
 		Token member_token(
@@ -2681,12 +2681,12 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			kSyntheticTokenLine,
 			kSyntheticTokenColumn,
 			kSyntheticTokenFileIndex);
-		ExpressionNode member_access_expr =
+		ExpressionNode synthetic_member_access =
 			MemberAccessNode(member_pointer_access->object(), member_token, member_pointer_access->is_arrow());
-		if (auto member_result = try_evaluate_bound_member_access(member_access_expr, bindings, context)) {
+		if (auto member_result = try_evaluate_bound_member_access(synthetic_member_access, bindings, context)) {
 			return *member_result;
 		}
-		return evaluate_member_access(std::get<MemberAccessNode>(member_access_expr), context);
+		return evaluate_member_access(std::get<MemberAccessNode>(synthetic_member_access), context);
 	}
 
 	// For literals and other expressions without parameters, evaluate normally
