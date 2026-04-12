@@ -2980,7 +2980,8 @@ EvalResult Evaluator::evaluate_callable_object(
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
 	std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings,
-	EvalResult* callable_state) {
+	EvalResult* callable_state,
+	const FunctionDeclarationNode* resolved_call_operator) {
 
 	// Check for lambda
 	const LambdaExpressionNode* lambda = extract_lambda_from_initializer(var_decl.initializer());
@@ -2995,6 +2996,46 @@ EvalResult Evaluator::evaluate_callable_object(
 	// and ExpressionNode-wrapping (e.g., Add() parsed as ExpressionNode(ConstructorCallNode(...))).
 	const auto& initializer = var_decl.initializer();
 	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer);
+	auto try_resolve_call_operator = [&](const StructTypeInfo* struct_info) -> const FunctionDeclarationNode* {
+		if (!struct_info || !resolved_call_operator) {
+			return nullptr;
+		}
+
+		std::string_view resolved_name = resolved_call_operator->decl_node().identifier_token().value();
+		if (overloadableOperatorFromFunctionName(resolved_name) != OverloadableOperator::Call) {
+			return nullptr;
+		}
+
+		const size_t parameter_count = resolved_call_operator->parameter_nodes().size();
+		const size_t min_required = countMinRequiredArgs(*resolved_call_operator);
+		if (arguments.size() < min_required || arguments.size() > parameter_count) {
+			return nullptr;
+		}
+
+		for (const auto& member_func : struct_info->member_functions) {
+			if (member_func.operator_kind != OverloadableOperator::Call ||
+				!member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+
+			const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (&candidate.decl_node() == &resolved_call_operator->decl_node()) {
+				return &candidate;
+			}
+			if (candidate.has_mangled_name() && resolved_call_operator->has_mangled_name() &&
+				candidate.mangled_name() == resolved_call_operator->mangled_name()) {
+				return &candidate;
+			}
+		}
+
+		if ((resolved_call_operator->is_constexpr() || resolved_call_operator->is_consteval()) &&
+			resolved_call_operator->get_definition().has_value()) {
+			return resolved_call_operator;
+		}
+
+		return nullptr;
+	};
+
 	if (ctor_call_ptr) {
 		const ConstructorCallNode& ctor_call = *ctor_call_ptr;
 		const ASTNode& type_node = ctor_call.type_node();
@@ -3008,19 +3049,20 @@ EvalResult Evaluator::evaluate_callable_object(
 			return EvalResult::error("Callable object is not a struct/class type");
 		}
 
-		// Known limitation: overload selection currently matches by arity only.
-		// If multiple same-arity operator() overloads exist, we reject as ambiguous.
-		auto call_operator_match = find_call_operator_candidate(struct_info, arguments.size(), true);
-		if (call_operator_match.ambiguous) {
-			return EvalResult::error("Ambiguous operator() overload: multiple candidates with same arity");
+		const FunctionDeclarationNode* call_operator = try_resolve_call_operator(struct_info);
+		if (!call_operator) {
+			auto call_operator_match = find_call_operator_candidate(struct_info, arguments.size(), true);
+			if (call_operator_match.ambiguous) {
+				return EvalResult::error("Ambiguous operator() overload: multiple candidates with same arity");
+			}
+			call_operator = call_operator_match.function;
 		}
-		const FunctionDeclarationNode* call_operator = call_operator_match.function;
 
 		if (!call_operator) {
 			return EvalResult::error("Callable object has no matching operator()");
 		}
 
-		if (!call_operator->is_constexpr()) {
+		if (!call_operator->is_constexpr() && !call_operator->is_consteval()) {
 			return EvalResult::error("Callable object operator() in constant expression must be constexpr");
 		}
 
@@ -3116,13 +3158,16 @@ EvalResult Evaluator::evaluate_callable_object(
 		}
 
 		// Find operator()
-		auto call_operator_match = find_call_operator_candidate(struct_info, arguments.size(), true);
-		if (call_operator_match.ambiguous)
-			return EvalResult::error("Ambiguous operator() overload in brace-initialized callable object");
-		const FunctionDeclarationNode* call_operator = call_operator_match.function;
+		const FunctionDeclarationNode* call_operator = try_resolve_call_operator(struct_info);
+		if (!call_operator) {
+			auto call_operator_match = find_call_operator_candidate(struct_info, arguments.size(), true);
+			if (call_operator_match.ambiguous)
+				return EvalResult::error("Ambiguous operator() overload in brace-initialized callable object");
+			call_operator = call_operator_match.function;
+		}
 		if (!call_operator)
 			return EvalResult::error("Brace-initialized callable object has no matching operator()");
-		if (!call_operator->is_constexpr())
+		if (!call_operator->is_constexpr() && !call_operator->is_consteval())
 			return EvalResult::error("operator() in brace-initialized callable object must be constexpr");
 		const auto& definition = call_operator->get_definition();
 		if (!definition.has_value())
@@ -4018,7 +4063,14 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	// Check if it's a VariableDeclarationNode (could be a lambda/functor callable object)
 	if (symbol_node.is<VariableDeclarationNode>()) {
 		const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
-		return evaluate_callable_object(var_decl, call_expr.arguments(), context);
+		return evaluate_callable_object(
+			var_decl,
+			call_expr.arguments(),
+			context,
+			nullptr,
+			nullptr,
+			nullptr,
+			call_expr.callee().function_declaration_or_null());
 	}
 
 	return EvalResult::error("Identifier is not a function or callable object: " + std::string(func_name));

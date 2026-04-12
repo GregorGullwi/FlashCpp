@@ -695,7 +695,14 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 			mutable_bound_callable = findMutableBindingValue(func_name, *mutable_bindings, context);
 		}
 		if (bound_callable->callable_var_decl) {
-			return evaluate_callable_object(*bound_callable->callable_var_decl, call_expr.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
+			return evaluate_callable_object(
+				*bound_callable->callable_var_decl,
+				call_expr.arguments(),
+				context,
+				&bindings,
+				mutable_bindings,
+				mutable_bound_callable,
+				call_expr.callee().function_declaration_or_null());
 		}
 		return evaluate_lambda_call(*bound_callable->callable_lambda, call_expr.arguments(), context, &bindings, mutable_bindings,
 									&bound_callable->callable_bindings,
@@ -757,7 +764,14 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	if (!symbol_node.is<FunctionDeclarationNode>()) {
 		if (symbol_node.is<VariableDeclarationNode>()) {
 			const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
-			return evaluate_callable_object(var_decl, call_expr.arguments(), context, &bindings, mutable_bindings);
+			return evaluate_callable_object(
+				var_decl,
+				call_expr.arguments(),
+				context,
+				&bindings,
+				mutable_bindings,
+				nullptr,
+				call_expr.callee().function_declaration_or_null());
 		}
 
 		if (symbol_node.is<TemplateVariableDeclarationNode>()) {
@@ -844,7 +858,14 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 				mutable_bound_callable = findMutableBindingValue(callable_id->name(), *mutable_bindings, context);
 			}
 			if (callable_value->callable_var_decl) {
-				return evaluate_callable_object(*callable_value->callable_var_decl, *call_info->arguments, context, &bindings, mutable_bindings, mutable_bound_callable);
+				return evaluate_callable_object(
+					*callable_value->callable_var_decl,
+					*call_info->arguments,
+					context,
+					&bindings,
+					mutable_bindings,
+					mutable_bound_callable,
+					call_info->function_declaration);
 			}
 			return evaluate_lambda_call(*callable_value->callable_lambda, *call_info->arguments, context, &bindings, mutable_bindings,
 										&callable_value->callable_bindings,
@@ -5329,7 +5350,14 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 			if (!var_decl) {
 				return EvalResult::error("Callable object is not a variable");
 			}
-			return evaluate_callable_object(*var_decl, call_expr.arguments(), context);
+			return evaluate_callable_object(
+				*var_decl,
+				call_expr.arguments(),
+				context,
+				nullptr,
+				nullptr,
+				nullptr,
+				call_expr.callee().function_declaration_or_null());
 		}
 	}
 
