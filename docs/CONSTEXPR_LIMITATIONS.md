@@ -1138,7 +1138,7 @@ Potential areas for enhancement (in order of complexity):
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
-- ⚠️ Inferred array size parsing in richer contexts beyond the currently supported straightforward cases — straightforward copy-init and direct-list forms such as `int arr[] = {1,2,3}` and `int arr[]{1,2,3}` now work in current local/global constexpr paths, and simple global `sizeof(arr)` / `sizeof(arr) / sizeof(arr[0])` on inferred-size constexpr arrays are supported.
+- ⚠️ Inferred array size parsing in richer contexts beyond the currently supported straightforward cases — straightforward copy-init and direct-list forms such as `int arr[] = {1,2,3}` and `int arr[]{1,2,3}` now work in current local/global constexpr paths, and simple global `sizeof(arr)` plus `sizeof(arr) / sizeof(arr[0])` on inferred-size constexpr arrays are supported.
 - ⚠️ Fold expressions / pack expansions require template instantiation context
 - ✅ Range-based for loops over objects with `constexpr begin()`/`end()` member functions are now supported. The iterator methods must return a member array (which the evaluator iterates) or a pointer (`&data[0]` / `&data[N]` style). Template structs with `constexpr begin()`/`end()` are also supported. Nested range-for loops and `break`/`continue` work correctly inside these loops.
 - ✅ **Bitwise compound assignments (`&=`, `|=`, `^=`, `<<=`, `>>=`) in constexpr function bodies** *(Implemented)* — All five operators now work correctly in constexpr function bodies, including inside loops and XOR-swap idioms.
