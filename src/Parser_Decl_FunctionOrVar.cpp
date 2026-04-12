@@ -928,11 +928,13 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			}
 		} else if (peek() == "{"_tok) {
 			// Direct list initialization: Type var{args}
+			prepareArrayTypeForBraceInitializer(decl_node, type_specifier);
 			ParseResult init_list_result = parse_brace_initializer(type_specifier);
 			if (init_list_result.is_error()) {
 				return init_list_result;
 			}
 			initializer = init_list_result.node();
+			inferUnsizedArraySizeFromInitializer(decl_node, type_specifier, initializer);
 		} else if (peek() == "("_tok) {
 			// Direct initialization: Type var(args)
 			// At global scope with struct types, use ConstructorCallNode for constexpr evaluation.
@@ -1105,11 +1107,13 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 					}
 				} else if (peek() == "{"_tok) {
 					// Direct list initialization for comma-separated declaration: Type var1, var2{args}
-					ParseResult init_list_result = parse_brace_initializer(type_specifier);
+					prepareArrayTypeForBraceInitializer(next_decl, next_type_spec);
+					ParseResult init_list_result = parse_brace_initializer(next_type_spec);
 					if (init_list_result.is_error()) {
 						return init_list_result;
 					}
 					next_initializer = init_list_result.node();
+					inferUnsizedArraySizeFromInitializer(next_decl, next_type_spec, next_initializer);
 				}
 
 				next_var_decl.set_initializer(next_initializer);
