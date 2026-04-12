@@ -431,11 +431,8 @@ std::string_view Parser::instantiate_and_register_base_template(
 
 				const ASTNode& default_node = param.default_value();
 				if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
-					InlineVector<TemplateTypeArg, 4> filled_args_inline;
-					filled_args_inline.reserve(filled_args.size());
-					for (const auto& filled_arg : filled_args) {
-						filled_args_inline.push_back(filled_arg);
-					}
+					InlineVector<TemplateTypeArg, 4> filled_args_inline =
+						toInlineTemplateArgs(filled_args);
 					ASTNode substituted_default_node = substituteTemplateParameters(
 						default_node,
 						primary_params,
@@ -887,9 +884,6 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				if (substituted_default.is<TypeSpecifierNode>()) {
 					return TemplateTypeArg(substituted_default.as<TypeSpecifierNode>());
 				}
-				if (default_node.is<TypeSpecifierNode>()) {
-					return TemplateTypeArg(default_node.as<TypeSpecifierNode>());
-				}
 				FLASH_LOG(Templates, Error, "Failed to materialize type default for variable template parameter '",
 						  param.name(), "'");
 				return std::nullopt;
@@ -1144,20 +1138,33 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 						// Try to instantiate the struct/class referenced in the qualified identifier
 						// Look it up to see if it's a template
 						auto inner_template_opt = gTemplateRegistry.lookupTemplate(template_name_to_lookup);
-						if (inner_template_opt.has_value() && filled_args.size() > 0) {
-							// This is a template - try to instantiate it with the concrete arguments
-							// The template arguments from the variable template should be used
-							FLASH_LOG(Templates, Debug, "Phase 3: Triggering instantiation of '", template_name_to_lookup,
-									  "' with ", filled_args.size(), " args from variable template initializer");
+						if (inner_template_opt.has_value()) {
+							std::vector<TemplateTypeArg> inner_template_args = resolved_args;
+							auto inner_type_it = getTypesByNameMap().find(
+								StringTable::getOrInternStringHandle(struct_name_view));
+							if (inner_type_it != getTypesByNameMap().end() &&
+								inner_type_it->second != nullptr &&
+								inner_type_it->second->isTemplateInstantiation()) {
+								inner_template_args = materializePlaceholderTemplateArgs(
+									*inner_type_it->second,
+									template_params,
+									filled_args);
+							}
 
-							auto instantiated = try_instantiate_class_template(template_name_to_lookup, filled_args);
+							// This is a template - try to instantiate it with the concrete arguments
+							// Use the referenced placeholder's own template arguments so outer
+							// defaults are only forwarded when the inner template actually uses them.
+							FLASH_LOG(Templates, Debug, "Phase 3: Triggering instantiation of '", template_name_to_lookup,
+									  "' with ", inner_template_args.size(), " args from variable template initializer");
+
+							auto instantiated = try_instantiate_class_template(template_name_to_lookup, inner_template_args);
 							if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 								// Add to AST so it gets codegen
 								registerAndNormalizeLateMaterializedTopLevelNode(*instantiated);
 
 								// Now update the qualified identifier to use the correct instantiated name
 								// Get the instantiated class name (e.g., "is_pointer_impl_intP")
-								std::string_view instantiated_name = get_instantiated_class_name(template_name_to_lookup, filled_args);
+								std::string_view instantiated_name = get_instantiated_class_name(template_name_to_lookup, inner_template_args);
 								FLASH_LOG(Templates, Debug, "Phase 3: Instantiated class name: '", instantiated_name, "'");
 
 								// Create a new qualified identifier with the updated namespace
