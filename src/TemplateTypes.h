@@ -284,18 +284,18 @@ struct NonTypeValueIdentity {
 			return dependent_name == other.dependent_name;
 		}
 		// Concrete args: identity is value + type (with Bool/Int interchangeability)
-		if (equalValueTypeIdentity(value_type_index, other.value_type_index)) {
-			return value == other.value;
-		}
-		return value == other.value && equalTypeIndexIdentity(value_type_index, other.value_type_index);
+		return value == other.value &&
+			   equalValueTypeIdentity(value_type_index, other.value_type_index);
 	}
 
 	size_t hash() const {
 		size_t h = std::hash<bool>{}(is_dependent);
-		if (is_dependent && dependent_name.isValid()) {
-			h ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (is_dependent) {
+			if (dependent_name.isValid()) {
+				h ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			}
+			return h;
 		}
-		// Always include value in hash (for concrete args, and for stable hashing of dependent placeholders)
 		h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= hashValueTypeIdentity(value_type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		return h;

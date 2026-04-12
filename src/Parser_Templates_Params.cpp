@@ -799,17 +799,25 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					if (!is_concrete_qualified_type && (peek() == ">"_tok || peek() == ","_tok || peek() == "..."_tok)) {
 						FLASH_LOG(Templates, Debug, "Accepting dependent compile-time expression as template argument");
 						// Create a dependent template argument
-						TemplateTypeArg dependent_arg;
+						auto makeDependentCompileTimeArg = [&](StringHandle dependent_name) {
+							TypeCategory value_category = TypeCategory::Bool;
+							if (std::holds_alternative<SizeofExprNode>(expr) ||
+								std::holds_alternative<AlignofExprNode>(expr)) {
+								// sizeof/alignof have type size_t (modeled as UnsignedLongLong on 64-bit).
+								value_category = TypeCategory::UnsignedLongLong;
+							}
+							return TemplateTypeArg::makeDependentValue(dependent_name, value_category);
+						};
+
+						TemplateTypeArg dependent_arg = makeDependentCompileTimeArg(StringHandle{});
 						if (std::holds_alternative<IdentifierNode>(expr)) {
 							const auto& id = std::get<IdentifierNode>(expr);
-							dependent_arg = TemplateTypeArg::makeDependentValue(
-								StringTable::getOrInternStringHandle(id.name()),
-								TypeCategory::Bool);
+							dependent_arg = makeDependentCompileTimeArg(
+								StringTable::getOrInternStringHandle(id.name()));
 						} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 							const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
-							dependent_arg = TemplateTypeArg::makeDependentValue(
-								StringTable::getOrInternStringHandle(qual_id.full_name()),
-								TypeCategory::Bool);
+							dependent_arg = makeDependentCompileTimeArg(
+								StringTable::getOrInternStringHandle(qual_id.full_name()));
 						}
 
 						// Check for pack expansion (...)
