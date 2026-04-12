@@ -1029,17 +1029,12 @@ Some parsed expression kinds are not yet fully handled by the constexpr evaluato
 
 - `noexcept(expr)`
 - `offsetof(T, member)` for direct and straightforward nested data-member access (for example `offsetof(T, inner.value)`)
+- `throw` expressions now behave correctly in constant evaluation: untaken `?:` / short-circuit branches are skipped, and an evaluated `throw` produces a dedicated not-constant-expression diagnostic
 
 **Partial support:**
 
 - fold expressions require template instantiation context
 - pack expansions require template instantiation context
-
-**Currently unsupported in constexpr evaluation:**
-
-- `throw` expressions used in expression contexts
-
-These may currently fail with a generic "expression type not supported in constant expressions" error rather than a specialized diagnostic.
 
 ## Implementation Details
 
@@ -1105,6 +1100,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Straightforward constructor-body member assignments in constexpr objects (including if/else, for/while, and switch bodies)
 - ✅ `noexcept(expr)` in constexpr evaluation
 - ✅ `offsetof(T, member)` for direct and straightforward nested data-member access in constexpr evaluation
+- ✅ `throw` expressions now produce a dedicated not-constant-expression diagnostic when evaluated, while untaken `?:` / short-circuit branches continue to work
 - ✅ `break` and `continue` statements in constexpr for/while loops
 - ✅ `switch` statements with case labels, default label, fall-through, and `break` in constexpr functions
 - ✅ Range-based for loops over local arrays (primitive and struct element types) in constexpr functions
