@@ -2734,6 +2734,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			const auto& dims = decl.array_dimensions();
 			for (const auto& dim_expr : dims) {
 				ConstExpr::EvaluationContext ctx(gSymbolTable);
+				// Lets constexpr evaluation classify unsubstituted template bounds as dependent.
 				ctx.parser = this;
 				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 				if (!eval_result.success()) {

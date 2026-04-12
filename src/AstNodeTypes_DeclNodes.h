@@ -1670,6 +1670,7 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(idx);
 		if (const TypeInfo* ti = resolved_alias.terminal_type_info) {
 			if (const StructTypeInfo* struct_info = ti->getStructInfo()) {
+				// Incomplete class layouts have no object size for sizeof/array bounds.
 				if (!struct_info->hasCompleteObjectLayout()) {
 					return 0;
 				}
