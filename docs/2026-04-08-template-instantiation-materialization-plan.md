@@ -6,10 +6,45 @@
 
 ## Quick start for next agent
 
+### Latest completed slice (2026-04-12)
+
+- kept the Phase 2 work scoped to member alias-template materialization:
+  - `src/Parser_Templates_Variable.cpp` now preserves deferred alias-template
+    targets for member template aliases instead of always storing them as eager
+    `TemplateAliasNode`s
+  - `src/Parser_Templates_Inst_Substitution.cpp` now follows qualified
+    member-alias targets when materializing member alias templates, but only for
+    `Struct::alias_t<...>`-style aliases so the broader top-level alias paths
+    stay unchanged
+- validation after this slice:
+  - `make main CXX=clang++`
+  - `bash ./tests/run_all_tests.sh test_member_alias_template_ret0.cpp test_namespace_alias_template_default_member_ret42.cpp test_struct_local_alias_static_init_ret0.cpp test_alias_template_const_deferred_ref_ret0.cpp test_alias_template_deferred_return_ret0.cpp test_alias_template_member_type_type_specifier_ret42.cpp test_sfinae_enable_if_t_ret0.cpp`
+  - `bash ./tests/run_all_tests.sh`
+  - `2061` pass, `134` expected-fail
+
+### Next recommended slice
+
+1. Continue Phase 2 by extracting the raw alias-target capture/resolution logic
+   into one helper shared by:
+   - `src/Parser_Templates_Class.cpp`
+   - `src/Parser_Templates_Variable.cpp`
+   - the top-level/member `using` alias paths
+2. Keep the qualified-expression follow-up (`Struct::alias_t<...>::member`)
+   separate for now. The parser still needs an explicit concrete-owner/static-
+   member contract there before widening that path.
+3. Re-run this focused alias cluster before touching the materialization code:
+   - `test_member_alias_template_ret0.cpp`
+   - `test_namespace_alias_template_default_member_ret42.cpp`
+   - `test_struct_local_alias_static_init_ret0.cpp`
+   - `test_alias_template_const_deferred_ref_ret0.cpp`
+   - `test_alias_template_deferred_return_ret0.cpp`
+   - `test_alias_template_member_type_type_specifier_ret42.cpp`
+   - `test_sfinae_enable_if_t_ret0.cpp`
+
 ### Current baseline (2026-04-12)
 
 - Linux: `make main CXX=clang++` compiles cleanly
-- Linux: `bash ./tests/run_all_tests.sh` → 2052 pass, 132 expected-fail
+- Linux: `bash ./tests/run_all_tests.sh` → 2061 pass, 134 expected-fail
 - All key regression tests pass:
   ```bash
   bash ./tests/run_all_tests.sh test_explicit_template_defaulted_param_deduction_ret42.cpp \
@@ -27,7 +62,9 @@
 **Phase 1 follow-up (optional, not required for Phase 2):**
 - Remove redundant `TemplateTypeArg` storage fields once a broader caller migration is worthwhile
 
-**Ready to start Phase 2:** Yes - Phase 1 is complete.
+**Phase 2 status:** started, but still narrow. Member template aliases now keep
+their deferred alias-template targets; the broader alias-target capture /
+resolution logic is still duplicated elsewhere.
 
 ### Choose your next task
 
