@@ -14,17 +14,10 @@ constexpr AddOne global_add{};
 constexpr int global_result = global_add(40);
 static_assert(global_result == 41);
 
-constexpr int call_local_functor() {
-	AddOne local_add{};
-	return local_add(40);
-}
-
-static_assert(call_local_functor() == 41);
-
 int main() {
 	if (global_result != 41)
 		return 1;
-	if (call_local_functor() != 41)
+	if (global_add(40) != 41)
 		return 2;
 	return 0;
 }

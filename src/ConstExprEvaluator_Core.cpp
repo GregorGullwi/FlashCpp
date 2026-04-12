@@ -2996,6 +2996,9 @@ EvalResult Evaluator::evaluate_callable_object(
 	// and ExpressionNode-wrapping (e.g., Add() parsed as ExpressionNode(ConstructorCallNode(...))).
 	const auto& initializer = var_decl.initializer();
 	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(initializer);
+	auto is_constexpr_callable = [](const FunctionDeclarationNode* function_decl) {
+		return function_decl && (function_decl->is_constexpr() || function_decl->is_consteval());
+	};
 	auto try_resolve_call_operator = [&](const StructTypeInfo* struct_info) -> const FunctionDeclarationNode* {
 		if (!struct_info || !resolved_call_operator) {
 			return nullptr;
@@ -3028,7 +3031,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			}
 		}
 
-		if ((resolved_call_operator->is_constexpr() || resolved_call_operator->is_consteval()) &&
+		if (is_constexpr_callable(resolved_call_operator) &&
 			resolved_call_operator->get_definition().has_value()) {
 			return resolved_call_operator;
 		}
@@ -3062,7 +3065,7 @@ EvalResult Evaluator::evaluate_callable_object(
 			return EvalResult::error("Callable object has no matching operator()");
 		}
 
-		if (!call_operator->is_constexpr() && !call_operator->is_consteval()) {
+		if (!is_constexpr_callable(call_operator)) {
 			return EvalResult::error("Callable object operator() in constant expression must be constexpr");
 		}
 
@@ -3167,7 +3170,7 @@ EvalResult Evaluator::evaluate_callable_object(
 		}
 		if (!call_operator)
 			return EvalResult::error("Brace-initialized callable object has no matching operator()");
-		if (!call_operator->is_constexpr() && !call_operator->is_consteval())
+		if (!is_constexpr_callable(call_operator))
 			return EvalResult::error("operator() in brace-initialized callable object must be constexpr");
 		const auto& definition = call_operator->get_definition();
 		if (!definition.has_value())
