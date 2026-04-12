@@ -406,6 +406,7 @@ struct StructTypeInfo {
 			for (auto& member : members) {
 				member.offset += 8;
 			}
+			layout_data_size = toSizeInBytes(toSizeT(layout_data_size) + 8);
 			total_size = toSizeInBytes(toSizeT(total_size) + 8);
 			alignment = std::max(alignment, size_t(8));	// At least pointer alignment
 		}
