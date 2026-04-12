@@ -1399,6 +1399,7 @@ private:	 // Resume private methods
 	ParseResult parse_variable_declaration();
 	FlashCpp::DeclarationSpecifiers parse_declaration_specifiers();	// Phase 1: Shared specifier parsing
 	bool looks_like_function_parameters();  // Phase 2: Detect if '(' starts function params vs direct init
+	bool looks_like_elaborated_type_variable_declaration();  // Disambiguate 'struct Foo f = ...' from 'struct Foo { ... }'
 		// Phase 3: Consolidated initialization helpers
 	std::optional<ASTNode> parse_direct_initialization();  // Parse Type var(args) - returns initializer node
 	std::optional<ASTNode> parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier);	 // Parse Type var = expr or Type var = {args}

@@ -6,96 +6,96 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~153ms |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~196ms |
-| `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~20ms (targeted retest 2026-03-31) |
-| `<version>` | `test_std_version.cpp` | ✅ Compiled | ~15ms |
-| `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~3ms |
-| `<numbers>` | N/A | ✅ Compiled | ~194ms |
-| `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
-| `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~600ms (targeted retest 2026-04-05). The header still compiles, but `std::ratio_less` remains blocked because non-type default template arguments that depend on qualified constexpr members (for example `__ratio_less_impl`'s bool defaults) are still not fully instantiated/evaluated. |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1400ms (targeted retest 2026-04-03). Chained member-access IR now keeps the concrete `_Optional_payload<...>` type index instead of collapsing back to `type_index=0`, but libstdc++ still fails later because one `_Optional_payload<...>` path is not recovered as a struct during deferred member codegen and inherited `_M_engaged` lookups still fail. |
-| `<any>` | `test_std_any.cpp` | ✅ Compiled | ~271ms |
-| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~356ms |
-| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~220ms |
-| `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~237ms |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | ~2000ms (targeted retest 2026-04-07). The earlier `wmemchr` ambiguity plus the bogus namespace-scope empty-brace copy-init stop are fixed, so the old `_Synth3way` constructor failure is gone. Current blockers are later iterator/ranges follow-ons (`Operator+`, relational operators), `__as_const` / `move` reference-size propagation gaps, and the existing `bool -> int` constructor-init recovery miss in `__max_size_type`. |
-| `<string>` | `test_std_string.cpp` | 💥 Crash | ~10220ms (targeted retest 2026-04-06). Qualified direct-init arguments such as `_Alloc_traits::_S_select_on_copy(__a)` now parse correctly inside `std::__str_concat`, so `<string>` gets past the old phase-1 `__str` stop in `basic_string.h`. The current Linux repro now runs much deeper into `basic_string` / iterator instantiation before segfaulting. |
-| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | ~1140ms (targeted retest 2026-04-07). The aggregate brace-init blocker still holds, and the newer namespace-scope empty-brace / empty-object-size fixes remove the old `_Synth3way` constructor failure from the ranges CPO layer. Current failures are later iterator/ranges follow-ons (`Operator-` via `operator+`, `operator==`, and placeholder-sized helper types around `move` / `fill_n`). |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2710ms (targeted retest 2026-04-03). Now gets well into ranges/view lowering, but still fails later on `_S_empty` / `_S_size`, iterator comparisons/arithmetic (`Operator==`, `Operator-`, `Operator<` / `Operator>`), and an eventual unresolved-`auto` mangling path. |
-| `<span>` | `test_std_span.cpp` | ❌ Codegen Error | ~1480ms (targeted retest 2026-04-08). The newer self-referential template member-operator matching fix adds focused regression coverage for pointer/mixed-member layouts, but the libstdc++ `<span>` repro still fails later in the same iterator/ranges stack. Current blockers remain placeholder-sized `move` / `fill_n` parameters, missing `_Extent` symbol recovery in `__extent_storage::_M_extent`, the `bool -> int` constructor-init recovery miss in `__max_size_type`, and a final `Operator-` failure. |
-| `<tuple>` | `test_std_tuple.cpp` | 💥 Crash | ~1960ms (targeted retest 2026-04-06). Deferred `_Tuple_impl<I + 1, Rest...>` base arguments with non-type expressions now substitute/evaluate instead of stopping at the old post-parse `PackExpansionExprNode` boundary, but the current run still falls later into `_Head_base` default-non-type evaluation / repeated deferred-base recursion and segfaults. |
-| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~7830ms (targeted retest 2026-04-03). Base-member lookup is no longer the first stop; the current Linux repro now gets much deeper into `__copy_move_a` / `__copy_move_backward_a` / relocation helpers before failing on non-type deduction gaps, static-assert follow-ons, and a later unknown-type Itanium mangling abort. |
-| `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2970ms (targeted retest 2026-04-11). Shared dependent default-template-argument recovery now gets past the old `alloc_traits.h:904` `__make_move_if_noexcept_iterator` stop, but `<deque>` currently runs deeper into the iterator/node-handle stack and then crashes after repeated zero-size dependent `sizeof` static-assert fallout plus `__is_integer_nonstrict::__value` invalid-specialization diagnostics. |
-| `<list>` | `test_std_list.cpp` | ❌ Codegen Error | member '_M_impl' not found in struct 'std::__cxx11::list' |
-| `<queue>` | `test_std_queue.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
-| `<stack>` | `test_std_stack.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
-| `<memory>` | `test_std_memory.cpp` | 💥 Crash | ~4850ms (targeted retest 2026-04-11). Shared dependent default-template-argument recovery now gets past the old `alloc_traits.h:904` `__make_move_if_noexcept_iterator` stop, but `<memory>` currently runs much deeper into iterator/node-handle/char_traits instantiation before repeated zero-size dependent `sizeof` static-assert fallout and `__is_integer_nonstrict::__value` invalid-specialization diagnostics eventually end in a crash. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~2770ms (targeted retest 2026-04-11). Shared dependent default-template-argument recovery now gets past the old `alloc_traits.h:904` `__make_move_if_noexcept_iterator` stop, but the real libstdc++ include stack now fails later in `bits/node_handle.h:285` where `swap(_M_pkey, __nh._M_pkey)` resolves to a deleted candidate. |
-| `<map>` | `test_std_map.cpp` | ❌ Codegen Error | member 'first' not found in struct 'std::iterator' |
-| `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2270ms (targeted retest 2026-04-11). Shared dependent default-template-argument recovery now gets past the old `alloc_traits.h:904` `__make_move_if_noexcept_iterator` stop, but `<set>` still fails later in `bits/node_handle.h:285` where `swap(_M_pkey, __nh._M_pkey)` resolves to a deleted candidate. |
-| `<ranges>` | `test_std_ranges.cpp` | 💥 Crash | ~12960ms (targeted retest 2026-04-06). The earlier `streamoff`, `size_t(-1)`, and alias-constructor fixes still hold, and qualified direct-init parsing now also gets past the inherited `std::__str_concat` / `__str` stop from `<string>`. The current Linux repro now crashes later after much deeper `basic_string` / iterator instantiation. |
-| `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~4760ms (targeted retest 2026-04-02). The earlier `wmemchr` ambiguity is fixed and it gets much further, but still hits later ranges/string-view issues (`Operator-`, `make_move_iterator`, unresolved `auto`) before crashing in `IROperandHelpers::toIrValue` |
-| `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
-| `<fstream>` | `test_std_fstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
-| `<chrono>` | `test_std_chrono.cpp` | ❌ Compile Error | ~4380ms (targeted retest 2026-04-05). Leading-identifier statement disambiguation still gets past the old `duration::operator+=` / `operator-=` parse stop in `bits/chrono.h`; the current blocker remains the later non-dependent-name error for `__time_point`, with repeated ratio/time_point static-assert fallout still showing up beforehand. |
-| `<atomic>` | `test_std_atomic.cpp` | ❌ Codegen Error | ~1820ms (targeted retest 2026-04-07). Scoped-enum operator overloads plus parenthesized enum casts now keep their enum `TypeIndex` metadata through parsing/sema, so `<atomic>` gets past the earlier `memory_order | __memory_order_modifier(...)` stop in `bits/atomic_base.h`. The current blocker is later atomic-wait codegen fallout: unresolved `_M_do_wait` calls with missing default-argument recovery, zero-size dependent payloads in `std::__atomic_impl::__compare_exchange`, and a later missing `memory_order_seq_cst` symbol during IR generation. |
-| `<new>` | `test_std_new.cpp` | ✅ Compiled | ~24ms |
-| `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~238ms |
-| `<stdexcept>` | `test_std_stdexcept.cpp` | 💥 Crash | ~12260ms (targeted retest 2026-04-06). Same new state as `<string>`: alias-based constructor calls and qualified direct-init arguments now parse correctly, so the old `wstring(...)` and later `std::__str_concat` / `__str` stops are gone. The current Linux repro now crashes later after much deeper `basic_string` / iterator instantiation. |
-| `<typeinfo>` | N/A | ✅ Compiled | ~32ms |
-| `<typeindex>` | N/A | ✅ Compiled | ~284ms |
-| `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~632ms |
-| `<iterator>` | `test_std_iterator.cpp` | ✅ Compiled | ~1669ms (some codegen warnings) |
-| `<variant>` | `test_std_variant.cpp` | ❌ Codegen Error | ~1200ms (targeted retest 2026-04-03). The earlier post-parse `PackExpansionExprNode` blocker is gone; libstdc++ now gets through the pattern-struct boundary and fails later on variant visitation instantiation / Itanium mangling (`unknown type`). |
-| `<csetjmp>` | N/A | ✅ Compiled | ~18ms |
-| `<csignal>` | N/A | ✅ Compiled | ~103ms |
-| `<stdfloat>` | N/A | ✅ Compiled | ~3ms (C++23) |
-| `<spanstream>` | N/A | ✅ Compiled | ~24ms (C++23) |
-| `<print>` | N/A | ✅ Compiled | ~28ms (C++23) |
-| `<expected>` | N/A | ✅ Compiled | ~41ms (C++23) |
-| `<text_encoding>` | N/A | ✅ Compiled | ~26ms (C++26) |
-| `<stacktrace>` | N/A | ✅ Compiled | ~25ms (C++23) |
-| `<barrier>` | N/A | 💥 Crash | Stack overflow during template instantiation |
-| `<coroutine>` | N/A | ❌ Parse Error | Requires `-fcoroutines` flag |
-| `<latch>` | `test_std_latch.cpp` | ❌ Codegen Error | ~1050ms (targeted retest 2026-04-07). The same scoped-enum overload / functional-cast fix also gets `<latch>` past the earlier `memory_order | __memory_order_modifier(...)` semantic stop in the atomic-wait path. The current blocker is later codegen fallout: unresolved `_M_do_wait` calls, missing `std::__mutex_base` constructor recovery, `int -> long` / `int -> unsigned long` conversion gaps in wait helpers, and missing `memory_order_relaxed` symbol recovery. |
-| `<shared_mutex>` | `test_std_shared_mutex.cpp` | ❌ Codegen Error | ~1440ms (targeted retest 2026-04-05). The old chrono parse blocker is still gone; it now gets through the chrono stack and further into codegen before failing in `_S_from_sys` on missing symbol `_S_epoch_diff` rather than the older `denorm_absent` stop. |
-| `<cstdlib>` | N/A | ✅ Compiled | ~76ms |
-| `<cstdio>` | N/A | ✅ Compiled | ~43ms |
-| `<cstring>` | N/A | ✅ Compiled | ~39ms |
-| `<cctype>` | N/A | ✅ Compiled | ~33ms |
-| `<cwchar>` | N/A | ✅ Compiled | ~41ms |
-| `<cwctype>` | N/A | ✅ Compiled | ~44ms |
-| `<cerrno>` | N/A | ✅ Compiled | ~15ms |
-| `<cassert>` | N/A | ✅ Compiled | ~15ms |
-| `<cstdarg>` | N/A | ✅ Compiled | ~13ms |
-| `<cstddef>` | N/A | ✅ Compiled | ~33ms |
-| `<cstdint>` | N/A | ✅ Compiled | ~17ms |
-| `<cinttypes>` | N/A | ✅ Compiled | ~22ms |
-| `<cuchar>` | N/A | ✅ Compiled | ~48ms |
-| `<cfenv>` | N/A | ✅ Compiled | ~15ms |
-| `<clocale>` | N/A | ✅ Compiled | ~20ms |
-| `<ctime>` | N/A | ✅ Compiled | ~34ms |
-| `<climits>` | N/A | ✅ Compiled | ~14ms |
-| `<cfloat>` | N/A | ✅ Compiled | ~14ms |
-| `<cmath>` | `test_std_cmath.cpp` | ✅ Compiled | ~3743ms |
-| `<system_error>` | N/A | ✅ Compiled | (some codegen warnings) |
-| `<scoped_allocator>` | N/A | ✅ Compiled | |
-| `<charconv>` | N/A | ✅ Compiled | |
-| `<numbers>` | N/A | ✅ Compiled | |
-| `<mdspan>` | N/A | ✅ Compiled | (C++23) |
-| `<flat_map>` | N/A | ✅ Compiled | (C++23) |
-| `<flat_set>` | N/A | ✅ Compiled | (C++23) |
-| `<unordered_set>` | N/A | ❌ Codegen Error | struct type info not found (parsing succeeds) |
-| `<unordered_map>` | N/A | ❌ Codegen Error | Cannot use implicit conversion with explicit std::pair constructor |
-| `<mutex>` | N/A | ❌ Parse Error | Expected primary expression |
-| `<condition_variable>` | N/A | 💥 Crash | Stack overflow |
-| `<thread>` | N/A | ❌ Parse Error | Expected ')' after if condition |
-| `<semaphore>` | N/A | ❌ Parse Error | Expected ')' after if condition |
-| `<stop_token>` | N/A | ❌ Parse Error | Expected ')' after if condition |
-| `<bitset>` | N/A | ❌ Parse Error | Expected identifier token |
-| `<execution>` | N/A | ❌ Parse Error | Expected ';' after for loop initialization (forward type ref) |
-| `<generator>` | N/A | ❌ Parse Error | Ambiguous call to `__to_unsigned_like` (C++23) |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1369ms |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~479ms |
+| `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | ~609ms (retested 2026-04-11). Targeted test still compiles, but bare `#include <compare>` now fails with "Ambiguous constructor call" during codegen of a namespace-level node. |
+| `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
+| `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
+| `<numbers>` | N/A | ✅ Compiled | ~510ms |
+| `<initializer_list>` | N/A | ✅ Compiled | ~32ms |
+| `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~639ms. The header still compiles, but `std::ratio_less` remains blocked because non-type default template arguments that depend on qualified constexpr members (for example `__ratio_less_impl`'s bool defaults) are still not fully instantiated/evaluated. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | ~1054ms (retested 2026-04-11). "Expected primary expression" at `emplace(*__t)` inside a template member body during class template instantiation. |
+| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
+| `<utility>` | `test_std_utility.cpp` | ❌ Codegen Error | ~830ms (retested 2026-04-11). Targeted test now fails with codegen errors from template deduction / Non-type parameter issues. |
+| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~540ms |
+| `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~1460ms (retested 2026-04-11). Call to deleted function 'swap' in `stl_pair.h:308`. Blocked by eager inline member body parsing during implicit template class instantiation (std::pair::swap tries to swap const members). |
+| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~2192ms (retested 2026-04-11). Call to deleted function 'swap' — same `stl_pair.h:308` blocker as `<string_view>`. |
+| `<array>` | `test_std_array.cpp` | ❌ Compile Error | ~885ms (retested 2026-04-11). Call to deleted function 'swap' — same `stl_pair.h:308` blocker. |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2051ms (retested 2026-04-11). "Operator- not defined for operand types". |
+| `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~1564ms (retested 2026-04-11). "unsupported PackExpansionExprNode reached semantic analysis". |
+| `<vector>` | `test_std_vector.cpp` | 💥 Crash | ~6741ms (retested 2026-04-11). |
+| `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
+| `<list>` | `test_std_list.cpp` | 💥 Crash | ~1987ms (retested 2026-04-11). |
+| `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
+| `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
+| `<memory>` | `test_std_memory.cpp` | 💥 Crash | ~5108ms (retested 2026-04-11). |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~2670ms (retested 2026-04-11). Call to deleted function 'swap' — same `stl_pair.h:308` blocker. |
+| `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2133ms (retested 2026-04-11). Call to deleted function 'swap'. |
+| `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2139ms (retested 2026-04-11). Call to deleted function 'swap'. |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2548ms (retested 2026-04-11). Call to deleted function 'swap'. |
+| `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~4559ms (retested 2026-04-11). |
+| `<sstream>` | `test_std_sstream.cpp` | 💥 Crash | ~4565ms (retested 2026-04-11). |
+| `<fstream>` | `test_std_fstream.cpp` | 💥 Crash | ~4642ms (retested 2026-04-11). |
+| `<chrono>` | `test_std_chrono.cpp` | ❌ Compile Error | ~6638ms (retested 2026-04-11). Call to deleted function 'swap'. |
+| `<atomic>` | `test_std_atomic.cpp` | ❌ Codegen Error | ~1922ms (retested 2026-04-11). Parsing succeeds; codegen fails with deferred member function errors. |
+| `<new>` | `test_std_new.cpp` | ✅ Compiled | ~56ms |
+| `<exception>` | `test_std_exception.cpp` | ❌ Codegen Error | ~574ms (retested 2026-04-11). Targeted test now fails with template deduction / Non-type parameter issues. |
+| `<stdexcept>` | `test_std_stdexcept.cpp` | 💥 Crash | ~4390ms (retested 2026-04-11). |
+| `<typeinfo>` | N/A | ✅ Compiled | ~54ms |
+| `<typeindex>` | N/A | ❌ Codegen Error | ~640ms (retested 2026-04-11). "Cannot use copy initialization with explicit constructor". |
+| `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | ~2299ms (retested 2026-04-11). Targeted test now fails with codegen errors. |
+| `<iterator>` | `test_std_iterator.cpp` | ❌ Compile Error | ~2481ms (retested 2026-04-11). Call to deleted function 'swap'. |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | ~1098ms (retested 2026-04-11). "Expected primary expression" at `make_index_sequence<variant_size_v<_Next>>()`. |
+| `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
+| `<csignal>` | N/A | ✅ Compiled | ~140ms |
+| `<stdfloat>` | N/A | ✅ Compiled | ~16ms (C++23) |
+| `<spanstream>` | N/A | ✅ Compiled | ~44ms (C++23) |
+| `<print>` | N/A | ✅ Compiled | ~52ms (C++23) |
+| `<expected>` | N/A | ✅ Compiled | ~62ms (C++23) |
+| `<text_encoding>` | N/A | ✅ Compiled | ~45ms (C++26) |
+| `<stacktrace>` | N/A | ✅ Compiled | ~47ms (C++23) |
+| `<barrier>` | N/A | 💥 Crash | ~5458ms. Stack overflow during template instantiation |
+| `<coroutine>` | N/A | ❌ Parse Error | ~36ms. Requires `-fcoroutines` flag |
+| `<latch>` | `test_std_latch.cpp` | ❌ Codegen Error | ~1155ms (retested 2026-04-11). Parsing succeeds; codegen fails with "sema missed return conversion (int -> long)" in latch member functions. |
+| `<shared_mutex>` | `test_std_shared_mutex.cpp` | ❌ Codegen Error | ~2733ms (retested 2026-04-11). "Ambiguous constructor call for 'std::chrono::time_point'". |
+| `<cstdlib>` | N/A | ✅ Compiled | ~120ms |
+| `<cstdio>` | N/A | ✅ Compiled | ~70ms |
+| `<cstring>` | N/A | ✅ Compiled | ~64ms |
+| `<cctype>` | N/A | ✅ Compiled | ~110ms |
+| `<cwchar>` | N/A | ✅ Compiled | ~66ms |
+| `<cwctype>` | N/A | ✅ Compiled | ~360ms |
+| `<cerrno>` | N/A | ✅ Compiled | ~32ms |
+| `<cassert>` | N/A | ✅ Compiled | ~31ms |
+| `<cstdarg>` | N/A | ✅ Compiled | ~31ms |
+| `<cstddef>` | N/A | ✅ Compiled | ~56ms |
+| `<cstdint>` | N/A | ✅ Compiled | ~35ms |
+| `<cinttypes>` | N/A | ✅ Compiled | ~75ms |
+| `<cuchar>` | N/A | ✅ Compiled | ~78ms |
+| `<cfenv>` | N/A | ✅ Compiled | ~44ms |
+| `<clocale>` | N/A | ✅ Compiled | ~36ms |
+| `<ctime>` | N/A | ✅ Compiled | ~58ms |
+| `<climits>` | N/A | ✅ Compiled | ~30ms |
+| `<cfloat>` | N/A | ✅ Compiled | ~32ms |
+| `<cmath>` | `test_std_cmath.cpp` | ❌ Compile Error | ~6327ms (retested 2026-04-11). "Operator- not defined for operand types". |
+| `<system_error>` | N/A | 💥 Crash | ~4400ms (retested 2026-04-11). |
+| `<scoped_allocator>` | N/A | ❌ Compile Error | ~1868ms (retested 2026-04-11). "unsupported PackExpansionExprNode". |
+| `<charconv>` | N/A | ✅ Compiled | ~930ms |
+| `<numbers>` | N/A | ✅ Compiled | ~510ms |
+| `<mdspan>` | N/A | ❌ Compile Error | ~12ms (retested 2026-04-11). |
+| `<flat_map>` | N/A | ❌ Compile Error | ~12ms (retested 2026-04-11). |
+| `<flat_set>` | N/A | ❌ Compile Error | ~13ms (retested 2026-04-11). |
+| `<unordered_set>` | N/A | ❌ Compile Error | ~2801ms (retested 2026-04-11). Call to deleted function 'swap'. |
+| `<unordered_map>` | N/A | ❌ Compile Error | ~2801ms (retested 2026-04-11). Call to deleted function 'swap'. |
+| `<mutex>` | N/A | ❌ Compile Error | ~3690ms (retested 2026-04-11). "unsupported PackExpansionExprNode" — previously was a parse error, now gets further. |
+| `<condition_variable>` | N/A | ❌ Compile Error | ~5581ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a crash, now parses successfully. |
+| `<thread>` | N/A | ❌ Compile Error | ~2801ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. |
+| `<semaphore>` | N/A | ❌ Codegen Error | ~3207ms (retested 2026-04-11). "Ambiguous constructor call for 'std::chrono::time_point'" — previously was a parse error, now parses successfully. |
+| `<stop_token>` | N/A | 💥 Crash | ~6254ms (retested 2026-04-11). |
+| `<bitset>` | N/A | 💥 Crash | ~4850ms (retested 2026-04-11). |
+| `<execution>` | N/A | ❌ Compile Error | ~3331ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. |
+| `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
