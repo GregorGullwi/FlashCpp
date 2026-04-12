@@ -240,12 +240,19 @@ struct NonTypeValueIdentity {
 		return id;
 	}
 
-	// Helper: normalize Bool/Int to Int for comparison/hashing (C++ allows bool as non-type template param)
+	// Helper: normalize Bool/Int to Int for comparison/hashing.
+	// C++ non-type template argument matching treats bool/int values as interchangeable
+	// in the places FlashCpp currently models with an integral carrier.
 	static TypeCategory normalizedTypeForComparison(TypeCategory t) {
 		return (t == TypeCategory::Bool || t == TypeCategory::Int) ? TypeCategory::Int : t;
 	}
 
 	static bool equalValueTypeIdentity(TypeIndex lhs, TypeIndex rhs) {
+		// Comparison tiers:
+		// 1. Different normalized categories never match.
+		// 2. Normalized integral values (bool/int) match by category alone.
+		// 3. User-defined / index-backed types must match by full TypeIndex identity.
+		// 4. Other native types match by normalized category alone.
 		TypeCategory lhs_category = normalizedTypeForComparison(lhs.category());
 		TypeCategory rhs_category = normalizedTypeForComparison(rhs.category());
 		if (lhs_category != rhs_category) {

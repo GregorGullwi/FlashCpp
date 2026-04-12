@@ -199,8 +199,9 @@ struct TemplateTypeArg {
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 	bool isTypeArgument() const { return !is_value && !is_template_template_arg; }
 
-	// Get the NonTypeValueIdentity for this argument (only valid when is_value == true)
-	// This is the canonical identity for non-type template arguments.
+	// Get the canonical non-type template argument identity for this argument.
+	// Callers should prefer this accessor over directly reading value/dependent_name/type fields
+	// when building instantiation keys, hashes, or mangled names for non-type arguments.
 	FlashCpp::NonTypeValueIdentity valueIdentity() const {
 		if (is_dependent) {
 			return FlashCpp::NonTypeValueIdentity::makeDependentWithPlaceholder(dependent_name, value, type_index);
