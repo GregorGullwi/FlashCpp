@@ -799,26 +799,43 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					if (!is_concrete_qualified_type && (peek() == ">"_tok || peek() == ","_tok || peek() == "..."_tok)) {
 						FLASH_LOG(Templates, Debug, "Accepting dependent compile-time expression as template argument");
 						// Create a dependent template argument
-						auto makeDependentCompileTimeArg = [&](StringHandle dependent_name) {
+						auto makeDependentCompileTimeArg = [&](StringHandle dependent_name, std::optional<ASTNode> dep_expr) {
 							TypeCategory value_category = TypeCategory::Bool;
 							if (std::holds_alternative<SizeofExprNode>(expr) ||
 								std::holds_alternative<AlignofExprNode>(expr)) {
 								// sizeof/alignof have type size_t (modeled as UnsignedLongLong on 64-bit).
 								value_category = TypeCategory::UnsignedLongLong;
 							}
-							return TemplateTypeArg::makeDependentValue(dependent_name, value_category);
+							FLASH_LOG(Templates, Debug, "makeDependentCompileTimeArg: dep_expr.has_value()=", dep_expr.has_value());
+							return TemplateTypeArg::makeDependentValue(dependent_name, value_category, 0, std::move(dep_expr));
 						};
 
-						TemplateTypeArg dependent_arg = makeDependentCompileTimeArg(StringHandle{});
+						// For compile-time expressions like sizeof(T), alignof(T), store the AST expression
+						// so it can be re-evaluated during template instantiation with concrete arguments.
+						std::optional<ASTNode> stored_expr = std::nullopt;
+						if (std::holds_alternative<SizeofExprNode>(expr) ||
+							std::holds_alternative<AlignofExprNode>(expr) ||
+							std::holds_alternative<NoexceptExprNode>(expr) ||
+							std::holds_alternative<TypeTraitExprNode>(expr)) {
+							if (expr_result.node().has_value()) {
+								stored_expr = *expr_result.node();
+								FLASH_LOG(Templates, Debug, "Storing dependent NTTP expression for sizeof/alignof/noexcept/type_trait");
+							}
+						}
+
+						TemplateTypeArg dependent_arg = makeDependentCompileTimeArg(StringHandle{}, stored_expr);
 						if (std::holds_alternative<IdentifierNode>(expr)) {
 							const auto& id = std::get<IdentifierNode>(expr);
 							dependent_arg = makeDependentCompileTimeArg(
-								StringTable::getOrInternStringHandle(id.name()));
+								StringTable::getOrInternStringHandle(id.name()), std::nullopt);
 						} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 							const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
 							dependent_arg = makeDependentCompileTimeArg(
-								StringTable::getOrInternStringHandle(qual_id.full_name()));
+								StringTable::getOrInternStringHandle(qual_id.full_name()), std::nullopt);
 						}
+						
+						FLASH_LOG(Templates, Debug, "Final dependent_arg: is_value=", dependent_arg.is_value, 
+								  ", dependent_expr.has_value()=", dependent_arg.dependent_expr.has_value());
 
 						// Check for pack expansion (...)
 						if (peek() == "..."_tok) {
@@ -1100,7 +1117,24 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								std::holds_alternative<AlignofExprNode>(expr) ||
 								std::holds_alternative<TypeTraitExprNode>(expr);
 							if (is_value_like_dependent_expr) {
-								dependent_arg = TemplateTypeArg::makeDependentValue(StringHandle{}, TypeCategory::Bool);
+								// For sizeof/alignof expressions, use UnsignedLongLong (size_t) as the type
+								TypeCategory value_category = TypeCategory::Bool;
+								if (std::holds_alternative<SizeofExprNode>(expr) ||
+									std::holds_alternative<AlignofExprNode>(expr)) {
+									value_category = TypeCategory::UnsignedLongLong;
+								}
+								// Store the original AST expression for dependent NTTP expressions
+								// so it can be re-evaluated during template instantiation
+								std::optional<ASTNode> stored_expr = std::nullopt;
+								if ((std::holds_alternative<SizeofExprNode>(expr) ||
+									 std::holds_alternative<AlignofExprNode>(expr) ||
+									 std::holds_alternative<NoexceptExprNode>(expr) ||
+									 std::holds_alternative<TypeTraitExprNode>(expr)) &&
+									expr_result.node().has_value()) {
+									stored_expr = *expr_result.node();
+									FLASH_LOG(Templates, Debug, "Storing dependent NTTP expression (sizeof/alignof/etc) for re-evaluation");
+								}
+								dependent_arg = TemplateTypeArg::makeDependentValue(StringHandle{}, value_category, 0, std::move(stored_expr));
 							} else {
 								dependent_arg.type_index = nativeTypeIndex(TypeCategory::UserDefined);  // Template parameter is a user-defined type placeholder; will try to look up
 								dependent_arg.is_value = false;	// This is a TYPE parameter, not a value

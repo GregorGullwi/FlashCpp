@@ -1772,3 +1772,106 @@ std::optional<ASTNode> Parser::substitute_nontype_template_param(
 
 // Helper function to fill in default template arguments before pattern matching
 // This is critical for SFINAE patterns like void_t
+
+// Evaluates a dependent NTTP expression (e.g., sizeof(T)) with concrete template arguments.
+// This is called from materializeTemplateArg when a dependent_expr is present.
+// Returns the evaluated value if successful, or nullopt if evaluation fails.
+std::optional<int64_t> evaluateDependentNTTPExpression(
+	const ASTNode& dependent_expr,
+	const std::vector<ASTNode>& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+
+	// Build substitution map from template params to args
+	std::unordered_map<TypeIndex, TemplateTypeArg, std::hash<TypeIndex>> type_substitution_map;
+	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+		if (!template_params[i].is<TemplateParameterNode>()) {
+			continue;
+		}
+		const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+		if (param.kind() == TemplateParameterKind::Type && param.has_type() &&
+			param.type_node().is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& param_type = param.type_node().as<TypeSpecifierNode>();
+			type_substitution_map[param_type.type_index()] = template_args[i];
+		}
+	}
+
+	// Handle SizeofExprNode directly
+	if (dependent_expr.is<ExpressionNode>()) {
+		const auto& expr_variant = dependent_expr.as<ExpressionNode>();
+		if (std::holds_alternative<SizeofExprNode>(expr_variant)) {
+			const SizeofExprNode& sizeof_node = std::get<SizeofExprNode>(expr_variant);
+			if (sizeof_node.is_type() && sizeof_node.type_or_expr().is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& type_node = sizeof_node.type_or_expr().as<TypeSpecifierNode>();
+
+				// Try to find by type_index
+				auto it = type_substitution_map.find(type_node.type_index());
+				if (it != type_substitution_map.end()) {
+					const TemplateTypeArg& arg = it->second;
+					// Calculate sizeof for the substituted type
+					int size_bits = get_type_size_bits(arg.category());
+					// Apply pointer depth
+					for (size_t p = 0; p < arg.pointer_depth; ++p) {
+						size_bits = 64;  // Pointer size on 64-bit systems
+					}
+					return size_bits / 8;
+				}
+
+				// Try to find by name matching
+				std::string_view type_name = type_node.token().value();
+				if (!type_name.empty()) {
+					for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+						if (!template_params[i].is<TemplateParameterNode>()) {
+							continue;
+						}
+						const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+						if (param.name() == type_name) {
+							const TemplateTypeArg& arg = template_args[i];
+							// Calculate sizeof for the substituted type
+							int size_bits = get_type_size_bits(arg.category());
+							// Apply pointer depth
+							for (size_t p = 0; p < arg.pointer_depth; ++p) {
+								size_bits = 64;  // Pointer size on 64-bit systems
+							}
+							return size_bits / 8;
+						}
+					}
+				}
+			}
+		} else if (std::holds_alternative<AlignofExprNode>(expr_variant)) {
+			const AlignofExprNode& alignof_node = std::get<AlignofExprNode>(expr_variant);
+			if (alignof_node.is_type() && alignof_node.type_or_expr().is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& type_node = alignof_node.type_or_expr().as<TypeSpecifierNode>();
+
+				// Try to find by type_index
+				auto it = type_substitution_map.find(type_node.type_index());
+				if (it != type_substitution_map.end()) {
+					const TemplateTypeArg& arg = it->second;
+					// Calculate alignof for the substituted type
+					int size_bits = get_type_size_bits(arg.category());
+					// Alignment is typically the same as size for primitive types
+					return std::min(static_cast<int64_t>(size_bits / 8), static_cast<int64_t>(8));
+				}
+
+				// Try to find by name matching
+				std::string_view type_name = type_node.token().value();
+				if (!type_name.empty()) {
+					for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+						if (!template_params[i].is<TemplateParameterNode>()) {
+							continue;
+						}
+						const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+						if (param.name() == type_name) {
+							const TemplateTypeArg& arg = template_args[i];
+							// Calculate alignof for the substituted type
+							int size_bits = get_type_size_bits(arg.category());
+							return std::min(static_cast<int64_t>(size_bits / 8), static_cast<int64_t>(8));
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Fallback: return nullopt if we can't evaluate
+	return std::nullopt;
+}

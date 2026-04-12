@@ -196,6 +196,7 @@ InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const std::v
 		info.is_value = arg.is_value;
 		info.dependent_name = arg.dependent_name;
 		info.function_signature = arg.function_signature;
+		info.dependent_expr = arg.dependent_expr;
 		result.push_back(info);
 	}
 	return result;

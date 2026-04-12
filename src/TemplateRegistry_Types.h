@@ -177,6 +177,7 @@ struct TemplateTypeArg {
 	// For dependent types (types that depend on template parameters)
 	bool is_dependent;  // true if this type depends on uninstantiated template parameters
 	StringHandle dependent_name;	 // name of the dependent template parameter or type name (set when is_dependent is true)
+	std::optional<ASTNode> dependent_expr;  // Original AST for dependent NTTP expressions (e.g., sizeof(T))
 
 	// For template template parameters (e.g., template<typename...> class Op)
 	bool is_template_template_arg;  // true if this is a template template argument
@@ -248,16 +249,25 @@ struct TemplateTypeArg {
 	}
 
 	static TemplateTypeArg makeDependentValue(StringHandle name, TypeCategory category) {
-		return makeDependentValue(name, category, 0);
+		return makeDependentValue(name, category, 0, std::nullopt);
 	}
 
 	static TemplateTypeArg makeDependentValue(
 		StringHandle name,
 		TypeCategory category,
 		int64_t placeholder_value) {
+		return makeDependentValue(name, category, placeholder_value, std::nullopt);
+	}
+
+	static TemplateTypeArg makeDependentValue(
+		StringHandle name,
+		TypeCategory category,
+		int64_t placeholder_value,
+		std::optional<ASTNode> expr) {
 		TemplateTypeArg arg(placeholder_value, category);
 		arg.is_dependent = true;
 		arg.dependent_name = name;
+		arg.dependent_expr = std::move(expr);
 		return arg;
 	}
 
@@ -745,6 +755,14 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 	return rebindDependentTemplateTypeArg(substituted_arg, pattern_arg);
 }
 
+// Forward declaration: Evaluates a dependent NTTP expression with concrete template arguments.
+// Returns the evaluated value if successful, or nullopt if evaluation fails.
+// Defined in Parser_Templates_Inst_Substitution.cpp
+std::optional<int64_t> evaluateDependentNTTPExpression(
+	const ASTNode& dependent_expr,
+	const std::vector<ASTNode>& template_params,
+	const std::vector<TemplateTypeArg>& template_args);
+
 // Convert a TypeInfo::TemplateArgInfo to a TemplateTypeArg, optionally substituting
 // dependent names from the provided template parameter/argument lists.
 // This is the single authoritative conversion point — all call sites that previously
@@ -767,7 +785,8 @@ inline TemplateTypeArg materializeTemplateArg(
 	concrete_arg.is_array = arg_info.is_array;
 	concrete_arg.function_signature = arg_info.function_signature;
 	concrete_arg.dependent_name = arg_info.dependent_name;
-	concrete_arg.is_dependent = arg_info.dependent_name.isValid();
+	concrete_arg.dependent_expr = arg_info.dependent_expr;
+	concrete_arg.is_dependent = arg_info.dependent_name.isValid() || arg_info.dependent_expr.has_value();
 
 	if (arg_info.dependent_name.isValid()) {
 		std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);
@@ -783,6 +802,16 @@ inline TemplateTypeArg materializeTemplateArg(
 				}
 				break;
 			}
+		}
+	} else if (arg_info.dependent_expr.has_value() && arg_info.is_value) {
+		// For dependent NTTP expressions (e.g., sizeof(T)), evaluate with concrete args
+		// Convert to the expected types for the helper function
+		std::vector<ASTNode> params_vec(template_params.begin(), template_params.end());
+		std::vector<TemplateTypeArg> args_vec(template_args.begin(), template_args.end());
+		if (auto evaluated = evaluateDependentNTTPExpression(*arg_info.dependent_expr, params_vec, args_vec)) {
+			concrete_arg.value = *evaluated;
+			concrete_arg.is_dependent = false;
+			concrete_arg.dependent_expr = std::nullopt;
 		}
 	}
 
