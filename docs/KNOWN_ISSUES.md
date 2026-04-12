@@ -1,18 +1,21 @@
 # Known Issues
 
-## EBO / `[[no_unique_address]]` — PR #1232
+## Premature `layout_is_complete` during anonymous union processing
 
-### Chained `[[no_unique_address]]` tail-padding reuse
+When a struct contains an anonymous union, the layout code in
+`src/Parser_Decl_StructEnum.cpp` calls `struct_info->finalizeLayoutSize()`
+on the **enclosing struct** (not the anonymous union) to commit the union's
+extent into the parent layout. This sets `layout_is_complete = true`
+(`src/AstNodeTypes_DeclNodes.h:385`) while the enclosing struct still has
+members left to process.
 
-`finalizeLayoutSize()` in `src/AstNodeTypes_DeclNodes.h` sets `layout_data_size`
-to `total_size` (pre-alignment), which erases the distinction between data extent
-and object extent after finalization. This means nested/chained NUA tail-padding
-reuse does not work:
+If `sizeInBytes()` were called on the enclosing struct during subsequent
+member processing it would prematurely apply `enforceMinimumCompleteObjectSize`
+(`src/AstNodeTypes_DeclNodes.h:339-341`), potentially returning an incorrect
+size for an in-progress layout.
 
-```cpp
-struct Padded { short value; char tag; };          // sizeof == 4, dsize == 3
-struct A { [[no_unique_address]] Padded p; char c; }; // sizeof == 4, but layout_data_size == 4 after finalize
-struct B { [[no_unique_address]] A a; char c; };      // will NOT reuse A's inherited tail padding
-```
-
-Single-level NUA tail-padding reuse (the common case) works correctly.
+This does not cause issues in practice because `sizeInBytes()` is never called
+on the struct being built during its own layout phase, but the invariant is
+fragile. A future refactor could split `layout_is_complete` into separate
+"layout computed" and "complete object" flags, or avoid calling
+`finalizeLayoutSize` on the enclosing struct mid-layout.

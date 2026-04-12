@@ -378,10 +378,10 @@ struct StructTypeInfo {
 		}
 	}
 
-	void finalizeLayoutSize(size_t raw_size, size_t final_alignment) {
+	void finalizeLayoutSize(size_t raw_layout_size, size_t raw_object_size, size_t final_alignment) {
 		alignment = final_alignment;
-		layout_data_size = toSizeInBytes(raw_size);
-		total_size = toSizeInBytes(alignLayoutSize(std::max(raw_size, toSizeT(total_size)), alignment));
+		layout_data_size = toSizeInBytes(raw_layout_size);
+		total_size = toSizeInBytes(alignLayoutSize(std::max(raw_object_size, toSizeT(total_size)), alignment));
 		layout_is_complete = true;
 	}
 
@@ -406,12 +406,13 @@ struct StructTypeInfo {
 			for (auto& member : members) {
 				member.offset += 8;
 			}
+			layout_data_size = toSizeInBytes(toSizeT(layout_data_size) + 8);
 			total_size = toSizeInBytes(toSizeT(total_size) + 8);
 			alignment = std::max(alignment, size_t(8));	// At least pointer alignment
 		}
 
 		// Pad struct to its alignment
-		finalizeLayoutSize(toSizeT(total_size), alignment);
+		finalizeLayoutSize(toSizeT(layout_data_size), toSizeT(total_size), alignment);
 		return true;
 	}
 

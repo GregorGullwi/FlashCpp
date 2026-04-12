@@ -998,7 +998,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 									max_alignment = member.alignment;
 								}
 							}
-							anon_struct_info->finalizeLayoutSize(max_size, max_alignment);
+							anon_struct_info->finalizeLayoutSize(max_size, max_size, max_alignment);
 						} else {
 							// Struct layout: members are laid out sequentially
 							size_t offset = 0;
@@ -1018,7 +1018,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							if (max_alignment > 0) {
 								offset = (offset + max_alignment - 1) / max_alignment * max_alignment;
 							}
-							anon_struct_info->finalizeLayoutSize(offset, max_alignment);
+							anon_struct_info->finalizeLayoutSize(offset, offset, max_alignment);
 						}
 
 						// Set the StructTypeInfo for the anonymous type
@@ -2692,7 +2692,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 
 			// Update total_size to account for the union (largest member)
-			struct_info->finalizeLayoutSize(aligned_union_start + union_max_size, struct_info->alignment);
+			struct_info->finalizeLayoutSize(aligned_union_start + union_max_size, aligned_union_start + union_max_size, struct_info->alignment);
 			struct_info->active_bitfield_unit_size = 0;
 			struct_info->active_bitfield_bits_used = 0;
 			struct_info->active_bitfield_unit_alignment = 0;
@@ -3906,7 +3906,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 							max_alignment = nested_member.alignment;
 						}
 					}
-					nested_anon_struct_info->finalizeLayoutSize(max_size, max_alignment);
+					nested_anon_struct_info->finalizeLayoutSize(max_size, max_size, max_alignment);
 				} else {
 					// Struct layout: sequential members with alignment
 					size_t current_offset = 0;
@@ -3926,7 +3926,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 					if (max_alignment > 0) {
 						current_offset = (current_offset + max_alignment - 1) & ~(max_alignment - 1);
 					}
-					nested_anon_struct_info->finalizeLayoutSize(current_offset, max_alignment);
+					nested_anon_struct_info->finalizeLayoutSize(current_offset, current_offset, max_alignment);
 				}
 
 				// Set the struct info on the type info
