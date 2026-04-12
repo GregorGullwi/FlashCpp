@@ -895,6 +895,67 @@ void AstToIr::generateStaticMemberDeclarations() {
 							fillAggregateInitData(op.init_data, *static_struct_info, static_member.initializer->as<InitializerListNode>(), eval_aggregate_leaf);
 							FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "' (", op.init_data.size(), " bytes)");
 							write_back_constant_bytes();
+						} else if (static_member.is_array && !static_member.array_dimensions.empty()) {
+							ConstExpr::EvaluationContext eval_ctx(*global_symbol_table_);
+							eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
+							eval_ctx.parser = parser_;
+							eval_ctx.sema = sema_;
+							eval_ctx.struct_info = struct_info;
+							if (struct_info && struct_info->own_type_index_.has_value()) {
+								if (const TypeInfo* ti = tryGetTypeInfo(*struct_info->own_type_index_)) {
+									ConstExpr::Evaluator::load_template_bindings_from_type(ti, eval_ctx);
+								}
+							}
+
+							TypeSpecifierNode array_type(static_member.type_index, TypeQualifier::None, op.size_in_bits, Token(), CVQualifier::None);
+							array_type.add_pointer_levels(static_member.pointer_depth);
+							array_type.set_array_dimensions(static_member.array_dimensions);
+
+							ConstExpr::EvalResult array_result = ConstExpr::Evaluator::materialize_array_value_with_spec(
+								array_type,
+								static_member.initializer->as<InitializerListNode>(),
+								eval_ctx,
+								nullptr);
+							if (!array_result.success()) {
+								FLASH_LOG(Codegen, Debug, "Failed to materialize array initializer for static member '", qualified_name,
+									"': ", array_result.error_message, ", zero-initializing");
+								allowNormalizedWriteBack = false;
+								zero_initialize();
+							} else {
+								size_t total_elements = 1;
+								for (size_t dim_size : static_member.array_dimensions) {
+									total_elements *= dim_size;
+								}
+								size_t element_size = total_elements == 0 ? 0 : toSizeT(static_member.size) / total_elements;
+								op.init_data.resize(toSizeT(static_member.size), 0);
+
+								size_t element_index = 0;
+								auto pack_native_array_level =
+									[&](const auto& self, const ConstExpr::EvalResult& current) -> void {
+									if (current.is_array) {
+										for (const auto& child : current.array_elements) {
+											self(self, child);
+										}
+										return;
+									}
+
+									if (element_size == 0 || element_index >= total_elements) {
+										return;
+									}
+
+									unsigned long long raw_value = evalResultMemberToRaw(current, static_member.memberType());
+									for (size_t byte_index = 0; byte_index < element_size; ++byte_index) {
+										op.init_data[element_index * element_size + byte_index] =
+											static_cast<char>((raw_value >> (byte_index * 8)) & 0xFF);
+									}
+									element_index++;
+								};
+
+								pack_native_array_level(pack_native_array_level, array_result);
+								FLASH_LOG(Codegen, Debug, "Packed native array initializer for static member '", qualified_name,
+									"' (", op.init_data.size(), " bytes)");
+								write_back_constant_bytes();
+							}
 						} else {
 							// Non-struct InitializerListNode (e.g., static constexpr int x{42}).
 							// Extract the single element and evaluate as a scalar.
