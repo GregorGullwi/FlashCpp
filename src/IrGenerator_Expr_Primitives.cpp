@@ -1636,6 +1636,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 					op.result.value = result_temp;
 						// Use qualified name as the global symbol name: StructName::static_member
 					op.global_name = StringTable::getOrInternStringHandle(StringBuilder().append(qualified_struct_name).append("::"sv).append(qualifiedIdNode.name()));
+					op.is_array = static_member->is_array;
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 						// For reference members, the global holds a pointer — dereference it
