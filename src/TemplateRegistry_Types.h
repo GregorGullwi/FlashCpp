@@ -199,6 +199,17 @@ struct TemplateTypeArg {
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 	bool isTypeArgument() const { return !is_value && !is_template_template_arg; }
 
+	// Get the NonTypeValueIdentity for this argument (only valid when is_value == true)
+	// This is the canonical identity for non-type template arguments.
+	FlashCpp::NonTypeValueIdentity valueIdentity() const {
+		FlashCpp::NonTypeValueIdentity id;
+		id.value = value;
+		id.value_type = category();
+		id.is_dependent = is_dependent;
+		id.dependent_name = dependent_name;
+		return id;
+	}
+
 	// Builds a TypeIndex with category directly.
 	static TypeIndex makeTypeIndex(TypeIndex idx) noexcept {
 		return idx;
@@ -707,8 +718,8 @@ inline TemplateInstantiationKey makeInstantiationKey(
 
 	for (const auto& arg : args) {
 		if (arg.is_value) {
-			// Non-type template argument
-			key.value_args.push_back(ValueArgKey{arg.value, arg.dependent_name, arg.is_dependent});
+			// Non-type template argument - use the canonical valueIdentity() accessor
+			key.value_args.push_back(arg.valueIdentity());
 		} else if (arg.is_template_template_arg) {
 			// Template template argument
 			key.template_template_args.push_back(arg.template_name_handle);
