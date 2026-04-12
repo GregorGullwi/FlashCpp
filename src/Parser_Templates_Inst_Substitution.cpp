@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include <span>
 #include "ExpressionSubstitutor.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -1761,8 +1762,8 @@ std::optional<ASTNode> Parser::substitute_nontype_template_param(
 // Returns the evaluated value if successful, or nullopt if evaluation fails.
 std::optional<int64_t> Parser::evaluateDependentNTTPExpression(
 	const ASTNode& dependent_expr,
-	const std::vector<ASTNode>& template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const ASTNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
 
 	// Build type substitution map from template params to args
 	std::unordered_map<TypeIndex, TemplateTypeArg> type_substitution_map;

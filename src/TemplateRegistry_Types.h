@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include <optional>
 #include <algorithm>
+#include <span>
 
 // SaveHandle type for parser save/restore operations
 // Matches Parser::SaveHandle typedef in Parser.h
@@ -759,7 +760,7 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 // dependent names from the provided template parameter/argument lists.
 // This is the single authoritative conversion point — all call sites that previously
 // had hand-rolled loops copying TemplateArgInfo fields should use this instead.
-// EvalFn: callable with signature std::optional<int64_t>(const ASTNode&, const std::vector<ASTNode>&, const std::vector<TemplateTypeArg>&)
+// EvalFn: callable with signature std::optional<int64_t>(const ASTNode&, std::span<const ASTNode>, std::span<const TemplateTypeArg>)
 // Pass nullptr when dependent NTTP expression evaluation is not needed (e.g., non-Parser contexts).
 template <typename ParamContainer, typename ArgContainer, typename EvalFn>
 inline TemplateTypeArg materializeTemplateArg(
@@ -802,9 +803,10 @@ inline TemplateTypeArg materializeTemplateArg(
 		// For dependent NTTP expressions (e.g., sizeof(T)), evaluate with concrete args.
 		// Only attempted when a non-null evaluator callback is provided.
 		if constexpr (!std::is_null_pointer_v<std::decay_t<EvalFn>>) {
+			// Copy to contiguous storage so we can form std::span (InlineVector is non-contiguous).
 			std::vector<ASTNode> params_vec(template_params.begin(), template_params.end());
 			std::vector<TemplateTypeArg> args_vec(template_args.begin(), template_args.end());
-			if (auto evaluated = eval_dependent_expr(*arg_info.dependent_expr, params_vec, args_vec)) {
+			if (auto evaluated = eval_dependent_expr(*arg_info.dependent_expr, std::span<const ASTNode>{params_vec}, std::span<const TemplateTypeArg>{args_vec})) {
 				concrete_arg.value = *evaluated;
 				concrete_arg.is_dependent = false;
 				concrete_arg.dependent_expr = std::nullopt;
@@ -826,7 +828,8 @@ inline TemplateTypeArg materializeTemplateArg(
 
 // Convenience: materialize all stored TemplateArgInfo entries from a TypeInfo
 // into a concrete TemplateTypeArg vector, substituting dependent names.
-// EvalFn: callable for dependent NTTP expression evaluation (pass nullptr if not available).
+// EvalFn: callable with signature std::optional<int64_t>(const ASTNode&, std::span<const ASTNode>, std::span<const TemplateTypeArg>)
+// Pass nullptr if not available.
 template <typename ParamContainer, typename ArgContainer, typename EvalFn>
 inline std::vector<TemplateTypeArg> materializeTemplateArgs(
 	const TypeInfo& type_info,

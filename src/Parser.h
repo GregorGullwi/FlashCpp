@@ -17,6 +17,7 @@
 #include <source_location>
 #include <functional>
 #include <type_traits>
+#include <span>
 
 #include "AstNodeTypes.h"
 #include "Lexer.h"
@@ -957,7 +958,7 @@ private:
 				std::string_view base_template_name = StringTable::getStringView(base_type_info->baseTemplateName());
 				std::vector<TemplateTypeArg> concrete_base_args =
 					materializeTemplateArgs(*base_type_info, template_params, template_args,
-						[this](const ASTNode& expr, const std::vector<ASTNode>& params, const std::vector<TemplateTypeArg>& args) {
+						[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
 							return this->evaluateDependentNTTPExpression(expr, params, args);
 						});
 				auto instantiated_base = try_instantiate_class_template(base_template_name, concrete_base_args);
@@ -1043,7 +1044,7 @@ private:
 			}
 			concrete_args.push_back(
 				materializeTemplateArg(arg_info, template_params, template_args,
-					[this](const ASTNode& expr, const std::vector<ASTNode>& params, const std::vector<TemplateTypeArg>& args) {
+					[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
 						return this->evaluateDependentNTTPExpression(expr, params, args);
 					}));
 		}
@@ -1067,7 +1068,7 @@ private:
 
 			std::vector<TemplateTypeArg> nested_args =
 				materializeTemplateArgs(*base_info, template_params, template_args,
-					[this](const ASTNode& expr, const std::vector<ASTNode>& params, const std::vector<TemplateTypeArg>& args) {
+					[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
 						return this->evaluateDependentNTTPExpression(expr, params, args);
 					});
 			try_instantiate_class_template(nested_template_name, nested_args);
@@ -1127,7 +1128,7 @@ private:
 				if (!base_template_name.empty()) {
 					std::vector<TemplateTypeArg> exact_args =
 						materializeTemplateArgs(*concrete_type_info, template_params, template_args,
-							[this](const ASTNode& expr, const std::vector<ASTNode>& params, const std::vector<TemplateTypeArg>& args) {
+							[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
 								return this->evaluateDependentNTTPExpression(expr, params, args);
 							});
 					auto specialization_ast =
@@ -1238,8 +1239,8 @@ private:
 	// Returns the evaluated integer value, or nullopt if evaluation fails.
 	std::optional<int64_t> evaluateDependentNTTPExpression(
 		const ASTNode& dependent_expr,
-		const std::vector<ASTNode>& template_params,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const ASTNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
 	std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Instantiate member function template
 	std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, const std::vector<TemplateTypeArg>& template_type_args);  // NEW: Instantiate member function template with explicit args
 		// Core logic shared by both try_instantiate_member_function_template and _explicit.

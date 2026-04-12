@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
+#include <span>
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
@@ -898,7 +899,7 @@ TypeIndex Parser::substitute_template_parameter(
 	};
 	auto materializePlaceholderArgs = [&](const TypeInfo& placeholder_info) {
 		return materializeTemplateArgs(placeholder_info, template_params, template_args,
-			[this](const ASTNode& expr, const std::vector<ASTNode>& params, const std::vector<TemplateTypeArg>& args) {
+			[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
 				return this->evaluateDependentNTTPExpression(expr, params, args);
 			});
 	};
