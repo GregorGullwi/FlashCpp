@@ -3,6 +3,54 @@
 #include "SemanticAnalysis.h"
 #include "CallNodeHelpers.h"
 
+static std::optional<size_t> tryGetTypeSizeForSizeof(const TypeSpecifierNode& type_spec) {
+	if (type_spec.is_array()) {
+		TypeSpecifierNode element_type = type_spec;
+		element_type.set_array_dimensions({});
+		const int element_size_bits = getTypeSpecSizeBits(element_type);
+		if (element_size_bits <= 0) {
+			return std::nullopt;
+		}
+		size_t total_size = static_cast<size_t>(element_size_bits) / 8;
+		for (size_t dimension : type_spec.array_dimensions()) {
+			total_size *= dimension;
+		}
+		return total_size;
+	}
+
+	const int size_bits = getTypeSpecSizeBits(type_spec);
+	if (size_bits <= 0) {
+		return std::nullopt;
+	}
+	return static_cast<size_t>(size_bits) / 8;
+}
+
+static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNode& type_spec) {
+	TypeSpecifierNode aligned_type = type_spec;
+	if (aligned_type.is_array()) {
+		aligned_type.set_array_dimensions({});
+	}
+
+	TypeCategory aligned_category = aligned_type.category();
+	if (aligned_type.type_index().is_valid()) {
+		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(aligned_type.type_index());
+		if (resolved_alias.type_index.is_valid()) {
+			aligned_category = resolved_alias.type_index.category();
+			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(resolved_alias.type_index)) {
+				return struct_info->alignment;
+			}
+		}
+	}
+
+	const int size_bits = getTypeSpecSizeBits(aligned_type);
+	if (size_bits <= 0) {
+		return std::nullopt;
+	}
+
+	const size_t size_in_bytes = static_cast<size_t>(size_bits) / 8;
+	return calculate_alignment_from_size(size_in_bytes, aligned_category);
+}
+
 AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript) {
 	MultiDimMemberArrayAccess result;
 	std::vector<ASTNode> indices_reversed;
@@ -1789,40 +1837,8 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 			}
 		}
 
-		// Handle array types: sizeof(int[10])
-		if (type_spec.is_array()) {
-			size_t element_size = type_spec.size_in_bits() / 8;
-			size_t array_count = 0;
-
-			if (type_spec.array_size().has_value()) {
-				array_count = *type_spec.array_size();
-			}
-
-			if (array_count > 0) {
-				size_in_bytes = element_size * array_count;
-			} else {
-				size_in_bytes = element_size; // Fallback: just element size
-			}
-		}
-		// Handle struct types
-		else if (type_spec.category() == TypeCategory::Struct) {
-			size_t type_index = type_spec.type_index().index();
-			if (type_index >= getTypeInfoCount()) {
-				throw InternalError("Invalid type index for struct");
-				return ExprResult{};
-			}
-
-			const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
-			const StructTypeInfo* struct_info = type_info.getStructInfo();
-			if (!struct_info) {
-				throw InternalError("Struct type info not found");
-				return ExprResult{};
-			}
-
-			size_in_bytes = toSizeT(struct_info->sizeInBytes());
-		} else {
-			// For primitive types, convert bits to bytes
-			size_in_bytes = type_spec.size_in_bits() / 8;
+		if (const auto resolved_size = tryGetTypeSizeForSizeof(type_spec)) {
+			size_in_bytes = *resolved_size;
 		}
 	} else {
 		// sizeof(expression) - evaluate the type of the expression
@@ -2109,26 +2125,8 @@ ExprResult AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
 
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 
-		// Handle struct types
-		if (type_spec.category() == TypeCategory::Struct) {
-			size_t type_index = type_spec.type_index().index();
-			if (type_index >= getTypeInfoCount()) {
-				throw InternalError("Invalid type index for struct");
-				return ExprResult{};
-			}
-
-			const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
-			const StructTypeInfo* struct_info = type_info.getStructInfo();
-			if (!struct_info) {
-				throw InternalError("Struct type info not found");
-				return ExprResult{};
-			}
-
-			alignment = struct_info->alignment;
-		} else {
-			// For primitive types, use standard alignment calculation
-			size_t size_in_bytes = type_spec.size_in_bits() / 8;
-			alignment = calculate_alignment_from_size(size_in_bytes, type_spec.category());
+		if (const auto resolved_alignment = tryGetTypeAlignmentForAlignof(type_spec)) {
+			alignment = *resolved_alignment;
 		}
 	} else {
 		// alignof(expression) - determine the alignment of the expression's type
