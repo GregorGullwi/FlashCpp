@@ -2691,8 +2691,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				struct_info->alignment = std::max(struct_info->alignment, effective_alignment);
 			}
 
-			// Update total_size to account for the union (largest member)
-			struct_info->finalizeLayoutSize(aligned_union_start + union_max_size, aligned_union_start + union_max_size, struct_info->alignment);
+			// Update the in-progress layout to account for the union (largest member)
+			struct_info->advanceLayoutSize(aligned_union_start + union_max_size, aligned_union_start + union_max_size, union_max_alignment);
 			struct_info->active_bitfield_unit_size = 0;
 			struct_info->active_bitfield_bits_used = 0;
 			struct_info->active_bitfield_unit_alignment = 0;

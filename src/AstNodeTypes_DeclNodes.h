@@ -378,6 +378,12 @@ struct StructTypeInfo {
 		}
 	}
 
+	void advanceLayoutSize(size_t raw_layout_size, size_t raw_object_size, size_t min_alignment) {
+		alignment = std::max(alignment, min_alignment);
+		layout_data_size = toSizeInBytes(std::max(raw_layout_size, toSizeT(layout_data_size)));
+		total_size = toSizeInBytes(std::max(raw_object_size, toSizeT(total_size)));
+	}
+
 	void finalizeLayoutSize(size_t raw_layout_size, size_t raw_object_size, size_t final_alignment) {
 		alignment = final_alignment;
 		layout_data_size = toSizeInBytes(raw_layout_size);
