@@ -336,10 +336,14 @@ struct StructTypeInfo {
 
 	SizeInBytes sizeInBytes() const {
 		SizeInBytes size = toSizeInBytes(currentLayoutOffset());
-		if (layout_is_complete && !hasDependentOrIncompleteLayout()) {
+		if (hasCompleteObjectLayout()) {
 			enforceMinimumCompleteObjectSize(size, alignment);
 		}
 		return size;
+	}
+
+	bool hasCompleteObjectLayout() const {
+		return layout_is_complete && !hasDependentOrIncompleteLayout();
 	}
 
 	SizeInBytes baseSubobjectSizeInBytes() const {
@@ -1665,6 +1669,11 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	if (idx.is_valid()) {
 		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(idx);
 		if (const TypeInfo* ti = resolved_alias.terminal_type_info) {
+			if (const StructTypeInfo* struct_info = ti->getStructInfo()) {
+				if (!struct_info->hasCompleteObjectLayout()) {
+					return 0;
+				}
+			}
 			if (ti->hasStoredSize()) {
 				return ti->sizeInBits().value;
 			}
