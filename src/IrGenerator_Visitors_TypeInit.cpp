@@ -406,7 +406,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 							init_data,
 							abs_offset + elem_i * element_size,
 							element_size,
-							static_cast<unsigned long long>(member_result.array_values[elem_i]));
+							evalResultMemberToRaw(ConstExpr::EvalResult::from_int(member_result.array_values[elem_i]), member.memberType()));
 					}
 				}
 				continue;

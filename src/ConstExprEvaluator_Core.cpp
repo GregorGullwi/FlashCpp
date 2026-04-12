@@ -5282,7 +5282,7 @@ EvalResult Evaluator::materializeFromConstantBytes(
 				if (element_result.object_type_index.is_valid() || element_result.is_array ||
 					element_result.callable_var_decl != nullptr || element_result.callable_lambda != nullptr) {
 					all_scalar_elements = false;
-				} else {
+				} else if (std::get_if<double>(&element_result.value) == nullptr) {
 					array_values.push_back(element_result.as_int());
 				}
 
