@@ -800,6 +800,7 @@ static_assert(deref_or(&val, 0) == 42);  // ✅ Works
 
 **Supported pointer forms:**
 - `&named_var` (address-of a named constexpr variable)
+- `&Type::member` (pointer-to-data-member creation)
 - `&arr[i]` (address of array element — produces a pointer with offset)
 - `*ptr` (dereference to get the pointed-to value)
 - `*(ptr + n)` (dereference with pointer arithmetic)
@@ -814,9 +815,7 @@ static_assert(deref_or(&val, 0) == 42);  // ✅ Works
 - `ptr1 == ptr2`, `ptr1 != ptr2` (pointer equality — compares variable name AND offset)
 - `ptr1 < ptr2`, `ptr1 <= ptr2`, `ptr1 > ptr2`, `ptr1 >= ptr2` (pointer relational — both must point into same array)
 - `if (ptr)` / `!ptr` / `ptr && x` / `ptr || x` (pointer truthiness — valid pointer is always truthy)
-
-**Still unsupported pointer forms:**
-- Pointer-to-member (`obj.*pmf`)
+- `obj.*pmf` / `ptr->*pmf` for constexpr data-member pointers, including constexpr function parameters
 
 ### ✅ Pointer Arithmetic in Constexpr (NEW)
 
@@ -1222,7 +1221,7 @@ Potential areas for enhancement (in order of complexity):
 2. **Nested/member access is okay in supported shapes** - this includes straightforward local aggregate object reads like `obj.value` and `obj.inner.value`; prefer simple, directly initialized object graphs
 3. **Multi-statement member functions now work** - if/else, for/while, switch, and break/continue are all supported
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns, including simple local object member-array reads like `obj.data[1]`, straightforward local inferred-size arrays like `int arr[] = {1, 2}`, and straightforward loop-driven reads over supported local arrays
-5. **Pointer arithmetic is now supported** - `&arr[i]`, `ptr + n`, `ptr - n`, `ptr[i]`, `ptr1 - ptr2`, and pointer relational comparisons (`<`, `<=`, `>`, `>=`) all work for constexpr arrays of primitive types; pointer arithmetic in constexpr function bodies (with `&arr[i]` as argument) is also supported; pointer-to-member (`obj.*pmf`) is not yet supported
+5. **Pointer forms are broader now** - `&arr[i]`, `ptr + n`, `ptr - n`, `ptr[i]`, `ptr1 - ptr2`, pointer relational comparisons (`<`, `<=`, `>`, `>=`), and constexpr pointer-to-member forms (`&Type::member`, `obj.*pmf`) all work in the currently supported constexpr paths
 6. **Use straightforward lambda captures** - the following work best:
    - explicit captures
    - straightforward local `&` captures
@@ -1392,8 +1391,9 @@ static_assert(f() == 42);  // ✅ Supported (all memory freed before return)
 //     return *p;  // ❌ forgot delete p — ill-formed per C++20
 // }
 
-// Unsupported pointer forms — only pointer-to-member remains unsupported:
-// - Pointer-to-member: obj.*pmf  ❌
+// Pointer-to-member is now supported in constexpr for data members:
+// constexpr int S::* pm = &S::x;
+// static_assert(obj.*pm == 42);  // ✅
 // Note: pointer arithmetic (ptr + n, ptr - n, ptr[i]), address of array elements
 //       (&arr[0]), null pointer checks (ptr == nullptr), pointer equality (ptr1 == ptr2),
 //       and pointer truthiness (if (ptr), !ptr, ptr && x) are all now supported.
