@@ -202,7 +202,8 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 	is_ambiguous = false;
 
 	auto matches_call_arguments = [&](const ConstructorDeclarationNode& ctor) {
-		if (arg_types.size() > ctor.parameter_nodes().size()) {
+		size_t min_required = countMinRequiredArgs(ctor);
+		if (arg_types.size() < min_required || arg_types.size() > ctor.parameter_nodes().size()) {
 			return false;
 		}
 		for (size_t i = 0; i < arg_types.size(); ++i) {
