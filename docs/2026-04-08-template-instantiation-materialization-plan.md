@@ -28,6 +28,30 @@
     `materializeMatchingConstructorTemplate` after `resolve_constructor_overload`, matching the
     direct-init sema path.
 - **Validation**: `make main CXX=clang++` → clean; `bash ./tests/run_all_tests.sh` → **2080 pass, 135 expected-fail**.
+- **Additional audit/fixes after PR #1255 review follow-up pass:**
+  - Top-level `using` alias detection in `Parser_Decl_TopLevel.cpp` now reuses
+    `parseRawAliasTargetTemplateId(...)` with evaluated template args, so
+    qualified/global alias-template targets like
+    `using X = meta::enable_if_t<true, int>;` and
+    `using Y = ::meta::enable_if_t<true, int>;` are recognized and resolved.
+  - `try_instantiate_member_function_template(...)` no longer falls back to
+    `arg_types[0]` for undeduced template parameters. It now uses a default
+    template argument when present and otherwise fails deduction.
+  - Added regressions:
+    - `tests/test_top_level_using_qualified_alias_template_target_ret0.cpp`
+    - `tests/test_member_function_template_undeduced_param_fail.cpp`
+  - Re-audited the PR #1255 review list:
+    - already fixed: dead `ExpressionSubstitutor.cpp` branch, brace-init
+      constructor materialization in sema/codegen, `is_ambiguous` handling,
+      `_`-name heuristic in `is_unresolved_noop_ctor`
+    - still open: `appendFunctionCallArgType` compound-expression typing,
+      `is_unresolved_noop_ctor` destructor/stack-allocation mismatch,
+      `materializeMatchingConstructorTemplate` returning the uninstantiated
+      ctor on failure, constructor-template dummy AST churn, constructor-call
+      simple identifier-pack expansion
+  - **Validation**: `make main CXX=clang++`; focused regressions for the new
+    alias/member-template tests plus existing alias tests; `bash ./tests/run_all_tests.sh`
+    → **2082 pass, 136 expected-fail**.
 
 ### Latest completed slice (2026-04-13, third update)
 
@@ -93,14 +117,7 @@ Phase 6b: pack-aware deduction extended to non-pack params in variadic templates
 
 ### Next recommended slice
 
-1. **Phase 2 follow-up — top-level `using` alias in `Parser_Decl_TopLevel.cpp`:**
-   - The capture block at lines ~843-855 only handles a bare identifier (no qualified names,
-     no `::` prefix). `parseRawAliasTargetTemplateId` could replace it — but note the downstream
-     `resolveAliasTemplateInstantiation(name, evaluated_args)` call needs `TemplateTypeArg`
-     (evaluated args), not `ASTNode` (unevaluated). Either extend the helper to return both,
-     or leave this path as-is since it already passes all tests.
-
-2. **Phase 6 — further pack-aware deduction (mixed explicit + deduced pack elements):**
+1. **Phase 6 — further pack-aware deduction (mixed explicit + deduced pack elements):**
    - The implemented fix covers the common case where all explicit args go to non-pack
      template params and the pack is fully deduced from call args. The remaining open question
      is whether mixing explicit pack elements with call-deduced pack elements
@@ -111,7 +128,7 @@ Phase 6b: pack-aware deduction extended to non-pack params in variadic templates
    - Key files: `src/Parser_Templates_Inst_Deduction.cpp` variadic case in
      `try_instantiate_template_explicit`
 
-3. Re-run this alias cluster before touching any materialization code:
+2. Re-run this alias cluster before touching any materialization code:
    - `test_member_alias_template_ret0.cpp`
    - `test_namespace_alias_template_default_member_ret42.cpp`
    - `test_struct_local_alias_static_init_ret0.cpp`
@@ -125,7 +142,7 @@ Phase 6b: pack-aware deduction extended to non-pack params in variadic templates
 ### Current baseline (2026-04-13, second update)
 
 - Linux: `make main CXX=clang++` compiles cleanly
-- Linux: `bash ./tests/run_all_tests.sh` → 2071 pass, 135 expected-fail
+- Linux: `bash ./tests/run_all_tests.sh` → 2082 pass, 136 expected-fail
 - All key regression tests pass:
   ```bash
   bash ./tests/run_all_tests.sh test_explicit_template_defaulted_param_deduction_ret42.cpp \
@@ -146,9 +163,8 @@ Phase 6b: pack-aware deduction extended to non-pack params in variadic templates
 
 **Phase 2 status:** substantially complete. `parseRawAliasTargetTemplateId` is now the single
 shared capture helper for both class-level and member template aliases. The top-level `using`
-alias detection in `Parser_Decl_TopLevel.cpp` still has its own narrower detection (bare
-identifiers only, no `::` prefix) because it needs evaluated args, not AST nodes. That path
-works correctly for all current tests.
+alias detection in `Parser_Decl_TopLevel.cpp` now also uses the shared helper and handles
+qualified/global alias-template targets by collecting both unevaluated and evaluated args.
 
 **Phase 6 status:** substantially complete. The main pack deduction bug (empty pack when
 explicit args fill non-pack params) is now fixed. The remaining edge case (partially-explicit
@@ -156,15 +172,14 @@ packs) is likely out of scope per the C++20 standard.
 
 ### Choose your next task
 
-**Option A: Phase 2 remaining — top-level `using` alias qualified name detection**
-- `Parser_Decl_TopLevel.cpp` lines ~843-855: extend to handle `ns::alias_t<T>` targets
-- Would need `parseRawAliasTargetTemplateId` to also return evaluated `TemplateTypeArg` values,
-  or a separate lightweight helper that returns both
-- Low urgency: all current tests pass without this
-
-**Option B: Fix bugs in `docs/KNOWN_ISSUES.md`**
+**Option A: Fix bugs in `docs/KNOWN_ISSUES.md`**
 - Currently tracked: premature `layout_is_complete` during anonymous union processing
 - Low priority, no user-facing issues currently
+
+**Option B: Continue PR #1255 follow-up bug cleanup**
+- `appendFunctionCallArgType` still defaults many compound expressions to `int`
+- constructor-call parsing still lacks the simple identifier-pack expansion path
+- `materializeMatchingConstructorTemplate` / noop-ctor fallback still have failure-mode cleanup to tighten
 
 **Note:** The "early instantiation without arg_types" gap was investigated on 2026-04-12 and found to NOT be a bug. See detailed notes below.
 
