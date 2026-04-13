@@ -1479,6 +1479,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 		auto saved_outer_pack_param_info = std::move(pack_param_info_);
 		pack_param_info_.clear();
+		ScopeGuard restore_outer_pack_param_info([&]() {
+			pack_param_info_ = std::move(saved_outer_pack_param_info);
+		});
 		size_t arg_type_index = 0;
 
 	// Add parameters with concrete types
@@ -1623,6 +1626,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// preserve_ref_qualifier=true: explicit args carry the user-written ref (e.g. T=int&)
 		// and TypeInfo must reflect it so nested template-arg uses resolve the right specialization.
 			bool saved_has_parameter_packs = has_parameter_packs_;
+			ScopeGuard restore_has_parameter_packs([&]() {
+				has_parameter_packs_ = saved_has_parameter_packs;
+			});
 			auto saved_pack_param_info = std::move(pack_param_info_);
 			if (!saved_pack_param_info.empty()) {
 				has_parameter_packs_ = true;
@@ -1630,8 +1636,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
 										   /*preserve_ref_qualifier=*/true);
-			has_parameter_packs_ = saved_has_parameter_packs;
-			pack_param_info_ = std::move(saved_outer_pack_param_info);
 		} else {
 		// Copy the function body if it exists (for non-template or already-parsed bodies)
 			auto orig_body = func_decl.get_definition();
@@ -1639,7 +1643,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				new_func_ref.set_definition(
 					substituteTemplateParameters(*orig_body, template_params, template_args));
 			}
-			pack_param_info_ = std::move(saved_outer_pack_param_info);
 		}
 
 		copy_function_properties(new_func_ref, func_decl);
