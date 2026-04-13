@@ -412,51 +412,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		if (!parser_ || !type_info_ref.getStructInfo()) {
 			return;
 		}
-		if (ctor && ctor->has_template_parameters()) {
-			if (auto instantiated = parser_->try_instantiate_constructor_template(type_info_ref.name(), *ctor, arg_types);
-				instantiated.has_value() && instantiated->is<ConstructorDeclarationNode>()) {
-				ctor = &instantiated->as<ConstructorDeclarationNode>();
-			}
-			return;
-		}
-		if (ctor) {
-			return;
-		}
-		const StructTypeInfo& struct_info = *type_info_ref.getStructInfo();
-		const ConstructorDeclarationNode* instantiated_match = nullptr;
-		for (const auto& member_func : struct_info.member_functions) {
-			if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
-				continue;
-			}
-			const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
-			if (!ctor_decl.has_template_parameters()) {
-				continue;
-			}
-			auto instantiated = parser_->try_instantiate_constructor_template(type_info_ref.name(), ctor_decl, arg_types);
-			if (!instantiated.has_value() || !instantiated->is<ConstructorDeclarationNode>()) {
-				continue;
-			}
-			const auto& concrete_ctor = instantiated->as<ConstructorDeclarationNode>();
-			bool matches = arg_types.size() <= concrete_ctor.parameter_nodes().size();
-			for (size_t i = 0; matches && i < arg_types.size(); ++i) {
-				if (!concrete_ctor.parameter_nodes()[i].is<DeclarationNode>()) {
-					matches = false;
-					break;
-				}
-				const auto& param_type = concrete_ctor.parameter_nodes()[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-				if (!can_convert_type(arg_types[i], param_type).is_valid) {
-					matches = false;
-				}
-			}
-			if (!matches) {
-				continue;
-			}
-			instantiated_match = &concrete_ctor;
-			break;
-		}
-		if (instantiated_match) {
-			ctor = instantiated_match;
-		}
+		bool is_ambiguous = false;
+		ctor = parser_->materializeMatchingConstructorTemplate(
+			type_info_ref.name(),
+			*type_info_ref.getStructInfo(),
+			arg_types,
+			ctor,
+			is_ambiguous);
 	};
 	auto is_unresolved_noop_ctor = [](const ConstructorDeclarationNode* ctor) -> bool {
 		if (!ctor || (!ctor->has_template_parameters() && !ctor->has_template_body_position()) ||
@@ -1578,7 +1540,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											if (resolution.is_ambiguous) {
 												throw CompileError("Ambiguous constructor call");
 											}
-											materialize_template_ctor(*type_info, arg_types, matching_ctor);
 											if (resolution.has_match) {
 												has_matching_constructor = true;
 												matching_ctor = resolution.selected_overload;

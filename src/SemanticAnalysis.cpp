@@ -4995,51 +4995,15 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	// skip_implicit=true: avoid false ambiguity between an explicit copy/move
 	// ctor and a compiler-generated implicit one with the same signature.
 	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true);
-	if (resolution.selected_overload && resolution.selected_overload->has_template_parameters()) {
-		if (auto instantiated_ctor = parser_.try_instantiate_constructor_template(struct_info->getName(), *resolution.selected_overload, arg_types);
-			instantiated_ctor.has_value() && instantiated_ctor->is<ConstructorDeclarationNode>()) {
-			resolution.selected_overload = &instantiated_ctor->as<ConstructorDeclarationNode>();
-		}
-	}
-	if (!resolution.selected_overload) {
-		const ConstructorDeclarationNode* instantiated_match = nullptr;
-		for (const auto& member_func : struct_info->member_functions) {
-			if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
-				continue;
-			}
-			const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
-			if (!ctor_decl.has_template_parameters()) {
-				continue;
-			}
-			auto instantiated_ctor = parser_.try_instantiate_constructor_template(struct_info->getName(), ctor_decl, arg_types);
-			if (!instantiated_ctor.has_value() || !instantiated_ctor->is<ConstructorDeclarationNode>()) {
-				continue;
-			}
-			const auto& concrete_ctor = instantiated_ctor->as<ConstructorDeclarationNode>();
-			bool matches = arg_types.size() <= concrete_ctor.parameter_nodes().size();
-			for (size_t i = 0; matches && i < arg_types.size(); ++i) {
-				if (!concrete_ctor.parameter_nodes()[i].is<DeclarationNode>()) {
-					matches = false;
-					break;
-				}
-				const auto& param_type = concrete_ctor.parameter_nodes()[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-				if (!can_convert_type(arg_types[i], param_type).is_valid) {
-					matches = false;
-				}
-			}
-			if (!matches) {
-				continue;
-			}
-			if (instantiated_match) {
-				resolution.is_ambiguous = true;
-				instantiated_match = nullptr;
-				break;
-			}
-			instantiated_match = &concrete_ctor;
-		}
-		if (instantiated_match) {
-			resolution.selected_overload = instantiated_match;
-		}
+	bool template_ctor_ambiguous = false;
+	resolution.selected_overload = parser_.materializeMatchingConstructorTemplate(
+		struct_info->getName(),
+		*struct_info,
+		arg_types,
+		resolution.selected_overload,
+		template_ctor_ambiguous);
+	if (template_ctor_ambiguous) {
+		resolution.is_ambiguous = true;
 	}
 	if (!resolution.selected_overload) {
 		resolution.selected_overload = resolveUniqueArityConstructor(*struct_info, num_args);

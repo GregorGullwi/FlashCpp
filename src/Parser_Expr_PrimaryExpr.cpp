@@ -4441,43 +4441,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				return make_call_result(*resolution.selected_overload);
 			};
 
-			auto append_function_call_arg_type = [&](const ASTNode& arg_node, std::vector<TypeSpecifierNode>* arg_types_out) {
-				if (arg_types_out == nullptr || !arg_node.is<ExpressionNode>()) {
-					return;
-				}
-
-				const auto& expr = arg_node.as<ExpressionNode>();
-				TypeCategory arg_type = TypeCategory::Int;
-
-				std::visit([&](const auto& inner) {
-					using T = std::decay_t<decltype(inner)>;
-					if constexpr (std::is_same_v<T, BoolLiteralNode>) {
-						arg_type = TypeCategory::Bool;
-					} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
-						arg_type = inner.type();
-					} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-						arg_type = TypeCategory::Char;
-					} else if constexpr (std::is_same_v<T, IdentifierNode>) {
-						auto id_type = lookup_symbol(StringTable::getOrInternStringHandle(inner.name()));
-						if (id_type.has_value()) {
-							if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
-								if (decl->type_node().template is<TypeSpecifierNode>()) {
-									arg_type = decl->type_node().template as<TypeSpecifierNode>().type();
-								}
-							}
-						}
-					}
-				},
-						   expr);
-
-				arg_types_out->emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token(), CVQualifier::None);
-			};
-
 			auto append_function_call_argument =
 				[&](const ParseResult& arg_result, ChunkedVector<ASTNode>& args_out, std::vector<TypeSpecifierNode>* arg_types_out) -> std::optional<ParseResult> {
 				auto append_single_arg = [&](const ASTNode& node) {
 					args_out.push_back(node);
-					append_function_call_arg_type(node, arg_types_out);
+					appendFunctionCallArgType(node, arg_types_out);
 				};
 
 				if (peek() == "..."_tok) {

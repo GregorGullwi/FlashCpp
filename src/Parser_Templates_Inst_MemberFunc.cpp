@@ -193,6 +193,77 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 	return instantiateLazyMemberFunction(lazy_info);
 }
 
+const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate(
+	StringHandle instantiated_struct_name,
+	const StructTypeInfo& struct_info,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	const ConstructorDeclarationNode* preferred_ctor,
+	bool& is_ambiguous) {
+	is_ambiguous = false;
+
+	auto matches_call_arguments = [&](const ConstructorDeclarationNode& ctor) {
+		if (arg_types.size() > ctor.parameter_nodes().size()) {
+			return false;
+		}
+		for (size_t i = 0; i < arg_types.size(); ++i) {
+			if (!ctor.parameter_nodes()[i].is<DeclarationNode>()) {
+				return false;
+			}
+			const auto& param_type = ctor.parameter_nodes()[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			if (!can_convert_type(arg_types[i], param_type).is_valid) {
+				return false;
+			}
+		}
+		return true;
+	};
+
+	if (preferred_ctor != nullptr) {
+		if (!preferred_ctor->has_template_parameters()) {
+			return preferred_ctor;
+		}
+		auto instantiated = try_instantiate_constructor_template(
+			instantiated_struct_name,
+			*preferred_ctor,
+			arg_types);
+		if (instantiated.has_value() && instantiated->is<ConstructorDeclarationNode>()) {
+			const auto& concrete_ctor = instantiated->as<ConstructorDeclarationNode>();
+			if (matches_call_arguments(concrete_ctor)) {
+				return &concrete_ctor;
+			}
+		}
+		return preferred_ctor;
+	}
+
+	const ConstructorDeclarationNode* instantiated_match = nullptr;
+	for (const auto& member_func : struct_info.member_functions) {
+		if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+		const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
+		if (!ctor_decl.has_template_parameters()) {
+			continue;
+		}
+		auto instantiated = try_instantiate_constructor_template(
+			instantiated_struct_name,
+			ctor_decl,
+			arg_types);
+		if (!instantiated.has_value() || !instantiated->is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+		const auto& concrete_ctor = instantiated->as<ConstructorDeclarationNode>();
+		if (!matches_call_arguments(concrete_ctor)) {
+			continue;
+		}
+		if (instantiated_match != nullptr) {
+			is_ambiguous = true;
+			return nullptr;
+		}
+		instantiated_match = &concrete_ctor;
+	}
+
+	return instantiated_match;
+}
+
 // Instantiate member function template with explicit template arguments
 // Example: obj.convert<int>(42)
 std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit(
@@ -680,7 +751,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 	}
 
-	// Save pack_param_info_ for this instantiation (move leaves it in a valid empty state)
+	// Save and clear pack_param_info_ so this instantiation can rebuild the active pack state.
 	auto saved_pack_param_info = std::move(pack_param_info_);
 
 	// Helper to extract the type name from a TypeSpecifierNode, trying token value first, then TypeInfo lookup
@@ -700,7 +771,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		return name;
 	};
 
-	// Copy and substitute parameters
+	// Copy parameters while substituting template arguments and expanding variadic packs.
 	for (const auto& param : func_decl.parameter_nodes()) {
 		if (param.is<DeclarationNode>()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();

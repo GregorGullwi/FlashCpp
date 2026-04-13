@@ -830,6 +830,10 @@ private:
 		ASTNode& out_template_node);
 	ParseResult parse_template_parameter_list(InlineVector<ASTNode, 4>& out_params);	 // NEW: Parse template parameter list
 	ParseResult parse_template_parameter();	// NEW: Parse a single template parameter
+	bool parseDeferredAliasTargetTemplateId(
+		StringHandle& out_target_template_name,
+		std::vector<ASTNode>& out_target_template_arg_nodes,
+		bool consume_dependent_member_suffix);
 		// Simple struct to hold constant expression evaluation results
 		// Public members are intentional for this lightweight data structure
 	struct ConstantValue {
@@ -868,6 +872,7 @@ private:
 		const FunctionDeclarationNode& func_decl,
 		const std::vector<TypeSpecifierNode>& arg_types,
 		int recursion_depth);
+	void appendFunctionCallArgType(const ASTNode& arg_node, std::vector<TypeSpecifierNode>* arg_types_out);
 		// Shared helper: re-parse a template function body with concrete argument substitution.
 		// Called from both try_instantiate_template_explicit (preserve_ref_qualifier=true) and
 		// try_instantiate_single_template (preserve_ref_qualifier=false, default) after cycle
@@ -1389,6 +1394,12 @@ public:
 	}
 	std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
 	std::optional<ASTNode> try_instantiate_constructor_template(StringHandle instantiated_struct_name, const ConstructorDeclarationNode& ctor_decl, const std::vector<TypeSpecifierNode>& arg_types);
+	const ConstructorDeclarationNode* materializeMatchingConstructorTemplate(
+		StringHandle instantiated_struct_name,
+		const StructTypeInfo& struct_info,
+		const std::vector<TypeSpecifierNode>& arg_types,
+		const ConstructorDeclarationNode* preferred_ctor,
+		bool& is_ambiguous);
 	bool instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name);  // NEW: Instantiate lazy static member on-demand
 private:
 	bool instantiateLazyClassToPhase(StringHandle instantiated_name, ClassInstantiationPhase target_phase);	// Phase 2: Instantiate lazy class to specified phase
