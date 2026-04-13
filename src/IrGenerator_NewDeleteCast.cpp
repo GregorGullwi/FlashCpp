@@ -86,6 +86,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 				throwNarrowingNewBraceInitCompileError(source_category, target_category);
 			}
 		}
+		init_operands = generateTypeConversion(init_operands, init_operands.category(), allocated_type_enum, Token());
 		TypedValue init_value = toTypedValue(init_operands);
 		emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, pointer_var, Token());
 	};
