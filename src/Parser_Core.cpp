@@ -377,6 +377,8 @@ void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<Type
 			// The target type of a cast is directly available and exact.
 			if (inner.target_type().template is<TypeSpecifierNode>()) {
 				arg_type = inner.target_type().template as<TypeSpecifierNode>();
+			} else {
+				arg_type = TypeSpecifierNode(TypeCategory::Invalid, TypeQualifier::None, 0, Token(), CVQualifier::None);
 			}
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
 			// Use the return type of the resolved callee function.
