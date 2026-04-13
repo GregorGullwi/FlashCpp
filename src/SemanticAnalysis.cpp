@@ -3080,9 +3080,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					// handles full overload resolution; here we only need the
 					// result type for expressions like &obj.method or simple
 					// non-call member-function references.
-					auto [member_function, function_owner_struct] = struct_info->findMemberFunctionRecursive(member_name_handle);
-					(void)function_owner_struct;
-					if (member_function && member_function->function_decl.has_value() &&
+					const auto member_function_result = struct_info->findMemberFunctionRecursive(member_name_handle);
+					if (const StructMemberFunction* member_function = member_function_result.first;
+						member_function && member_function->function_decl.has_value() &&
 						member_function->function_decl.is<FunctionDeclarationNode>()) {
 						const auto& func = member_function->function_decl.as<FunctionDeclarationNode>();
 						const ASTNode ret_type_node = func.decl_node().type_node();
@@ -3448,7 +3448,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
-				auto infer_resolved_call_return_type = [this](const FunctionDeclarationNode* resolved_callable) -> CanonicalTypeId {
+				auto inferCallReturnType = [this](const FunctionDeclarationNode* resolved_callable) -> CanonicalTypeId {
 					if (!resolved_callable) {
 						return {};
 					}
@@ -3459,24 +3459,24 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return {};
 				};
 
-				if (const CanonicalTypeId resolved_type_id = infer_resolved_call_return_type(getResolvedOpCall(&e))) {
+				if (const CanonicalTypeId resolved_type_id = inferCallReturnType(getResolvedOpCall(&e))) {
 					return resolved_type_id;
 				}
-				if (const CanonicalTypeId resolved_type_id = infer_resolved_call_return_type(getResolvedDirectCall(&e))) {
+				if (const CanonicalTypeId resolved_type_id = inferCallReturnType(getResolvedDirectCall(&e))) {
 					return resolved_type_id;
 				}
 
 				tryResolveCallableOperator(e);
-				if (const CanonicalTypeId resolved_type_id = infer_resolved_call_return_type(getResolvedOpCall(&e))) {
+				if (const CanonicalTypeId resolved_type_id = inferCallReturnType(getResolvedOpCall(&e))) {
 					return resolved_type_id;
 				}
-				if (const CanonicalTypeId resolved_type_id = infer_resolved_call_return_type(getResolvedDirectCall(&e))) {
+				if (const CanonicalTypeId resolved_type_id = inferCallReturnType(getResolvedDirectCall(&e))) {
 					return resolved_type_id;
 				}
 
 				const CallInfo call_info = CallInfo::from(e);
 				if (const CanonicalTypeId resolved_type_id =
-						infer_resolved_call_return_type(resolveCallArgAnnotationTarget(call_info, &e))) {
+						inferCallReturnType(resolveCallArgAnnotationTarget(call_info, &e))) {
 					return resolved_type_id;
 				}
 
@@ -4602,19 +4602,19 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 														   const DeclarationNode& decl,
 														   const ChunkedVector<ASTNode>& arguments,
 														   const FunctionDeclarationNode*& func_decl) {
-	auto searchStructMembers = [&](const StructTypeInfo* si, const auto& self) -> bool {
-		if (!si)
+	auto searchStructMembers = [&](const StructTypeInfo* struct_info, const auto& self) -> bool {
+		if (!struct_info)
 			return false;
 		const std::string_view func_name = decl.identifier_token().value();
-		bool local_has_name_match = false;
-		for (const auto& mf : si->member_functions) {
+		bool has_local_overload_name = false;
+		for (const auto& mf : struct_info->member_functions) {
 			if (!mf.function_decl.has_value())
 				continue;
 			if (!mf.function_decl.is<FunctionDeclarationNode>())
 				continue;
 			const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
 			if (candidate.decl_node().identifier_token().value() == func_name) {
-				local_has_name_match = true;
+				has_local_overload_name = true;
 			}
 			if (&candidate.decl_node() == &decl) {
 				func_decl = &candidate;
@@ -4623,7 +4623,7 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		}
 		if (call_info.mangled_name.isValid()) {
 			const std::string_view call_mangled = call_info.mangled_name.view();
-			for (const auto& mf : si->member_functions) {
+			for (const auto& mf : struct_info->member_functions) {
 				if (!mf.function_decl.has_value())
 					continue;
 				if (!mf.function_decl.is<FunctionDeclarationNode>())
@@ -4638,7 +4638,7 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		}
 		const FunctionDeclarationNode* name_match = nullptr;
 		bool ambiguous = false;
-		for (const auto& mf : si->member_functions) {
+		for (const auto& mf : struct_info->member_functions) {
 			if (!mf.function_decl.has_value())
 				continue;
 			if (!mf.function_decl.is<FunctionDeclarationNode>())
@@ -4657,11 +4657,11 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 			func_decl = name_match;
 			return true;
 		}
-		if (local_has_name_match) {
+		if (has_local_overload_name) {
 			return false;
 		}
 
-		for (const auto& base_spec : si->base_classes) {
+		for (const auto& base_spec : struct_info->base_classes) {
 			if (const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_spec.type_index)) {
 				if (self(base_struct_info, self)) {
 					return true;
