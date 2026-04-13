@@ -1574,10 +1574,15 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												throw CompileError("Ambiguous constructor call");
 											}
 											if (resolution.has_match) {
-												has_matching_constructor = true;
 												matching_ctor = resolution.selected_overload;
-												materialize_template_ctor(*type_info, arg_types, matching_ctor);
 											}
+											// Call materialize_template_ctor unconditionally so that template
+											// constructors are instantiated even when resolve_constructor_overload
+											// returns has_match=false (which happens because uninstantiated template
+											// parameter types don't match concrete argument types). Mirrors the
+											// direct-init path in visitVariableDeclarationNode (direct-init branch).
+											materialize_template_ctor(*type_info, arg_types, matching_ctor);
+											has_matching_constructor = (matching_ctor != nullptr);
 										}
 									}
 								}

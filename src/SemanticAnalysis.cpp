@@ -5095,6 +5095,16 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	}
 
 	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
+	bool template_ctor_ambiguous = false;
+	resolution.selected_overload = parser_.materializeMatchingConstructorTemplate(
+		struct_info.getName(),
+		struct_info,
+		arg_types,
+		resolution.selected_overload,
+		template_ctor_ambiguous);
+	if (template_ctor_ambiguous) {
+		resolution.is_ambiguous = true;
+	}
 	if (!resolution.selected_overload) {
 		resolution.selected_overload = resolveUniqueArityConstructor(struct_info, initializers.size());
 	}

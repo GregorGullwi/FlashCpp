@@ -413,7 +413,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				// Skip GCC __attribute__ between specifiers and initializer list
 				skip_gcc_attributes();
 
-				// Parse member initializer list if present
+				// Parse member initializer list if present and store the initializers
+				// so they are available for substitution during lazy instantiation.
 				if (peek() == ":"_tok) {
 					advance(); // consume ':'
 
@@ -423,7 +424,9 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 							return ParseResult::error("Expected member name in initializer list", peek_info());
 						}
 
+						Token init_name_token = peek_info();
 						advance();
+						std::string_view init_name = init_name_token.value();
 
 						// Check for template arguments: Base<T>(...)
 						if (peek() == "<"_tok) {
@@ -437,11 +440,85 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 							return ParseResult::error("Expected '(' or '{' after initializer name", peek_info());
 						}
 
-						// Skip balanced delimiters - we don't need to parse the expressions for template patterns
-						if (is_paren) {
-							skip_balanced_parens();
+						advance(); // consume '(' or '{'
+						TokenKind close_kind = is_paren ? ")"_tok : "}"_tok;
+
+						// Parse arguments so they can be substituted at instantiation time
+						std::vector<ASTNode> init_args;
+						if (peek() != close_kind) {
+							do {
+								ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+								if (arg_result.is_error()) {
+									return arg_result;
+								}
+								if (auto arg_node = arg_result.node()) {
+									if (peek() == "..."_tok) {
+										Token ellipsis_token = peek_info();
+										advance(); // consume '...'
+										ExpressionNode& pack_expansion = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+											PackExpansionExprNode(*arg_node, ellipsis_token));
+										init_args.push_back(ASTNode(&pack_expansion));
+									} else {
+										init_args.push_back(*arg_node);
+									}
+								}
+							} while (peek() == ","_tok && (advance(), true));
+						}
+
+						if (!consume(close_kind)) {
+							return ParseResult::error(
+								is_paren ? "Expected ')' after initializer arguments"
+										 : "Expected '}' after initializer arguments",
+								peek_info());
+						}
+
+						// Classify as delegating, base class, or member initializer
+						std::string_view struct_name_view = StringTable::getStringView(struct_name_handle);
+						bool is_delegating = (init_name == struct_name_view);
+						bool is_base_init = false;
+
+						if (is_delegating) {
+							ctor_ref.set_delegating_initializer(std::move(init_args));
 						} else {
-							skip_balanced_braces();
+							// Intern the initializer name once for use in both base-class checks below.
+							StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
+							for (const auto& base : struct_node.base_classes()) {
+								if (base.name == init_name) {
+									is_base_init = true;
+									ctor_ref.add_base_initializer(init_name_handle, std::move(init_args));
+									break;
+								}
+							}
+
+							// Also check deferred template base classes (e.g., Base<T> in
+							// template<T> struct Derived : Base<T>). Without this, a base-class
+							// initializer like Base(v) is misclassified as a member initializer.
+							if (!is_base_init) {
+								for (const auto& deferred_base : struct_node.deferred_template_base_classes()) {
+									if (deferred_base.base_template_name == init_name_handle) {
+										is_base_init = true;
+										ctor_ref.add_base_initializer(init_name_handle, std::move(init_args));
+										break;
+									}
+								}
+							}
+
+							if (!is_base_init) {
+								auto make_init_list = [&]() -> ASTNode {
+									auto [node, ref] = create_node_ref(InitializerListNode());
+									for (auto& arg : init_args) {
+										ref.add_initializer(arg);
+									}
+									return node;
+								};
+								if (is_brace && init_args.empty()) {
+									ctor_ref.add_member_initializer(init_name, make_init_list());
+								} else if (is_brace && init_args.size() > 1) {
+									ctor_ref.add_member_initializer(init_name, make_init_list());
+								} else if (!init_args.empty()) {
+									ctor_ref.add_member_initializer(init_name, init_args[0]);
+								}
+							}
 						}
 
 					} while (consume(","_tok));
