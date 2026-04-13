@@ -1382,7 +1382,34 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 }
 
 ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
-		// Check if this is a scoped enum value (e.g., Direction::North)
+	auto emitQualifiedGlobalLoad = [&](const TypeSpecifierNode& type_node,
+									 bool is_array_decl,
+									 StringHandle global_name) -> ExprResult {
+		TempVar result_temp = var_counter.next();
+		const bool is_array_type = is_array_decl || type_node.is_array();
+		const bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
+		const int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
+		GlobalLoadOp op;
+		op.result.setType(type_node.category());
+		op.result.ir_type = toIrType(type_node.type());
+		op.result.size_in_bits = SizeInBits{size_bits};
+		op.result.value = result_temp;
+		op.global_name = global_name;
+		op.is_array = is_array_type;
+		ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+		if (!is_array_type) {
+			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+												LValueInfo(LValueInfo::Kind::Global, global_name, 0),
+												type_node.category(), size_bits));
+		}
+		TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
+		return makeExprResult(type_index, SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
+	};
+
+		// First preserve the legacy local enum-class lookup path.  Function-local
+		// enum types can collide by name in getTypesByNameMap(), so codegen must
+		// still prefer the local symbol-table TypeIndex before consulting sema's
+		// broader qualified-identifier metadata.
 	NamespaceHandle ns_handle = qualifiedIdNode.namespace_handle();
 	if (!ns_handle.isGlobal()) {
 			// The struct/enum name is the last namespace component (the name of the namespace handle)
@@ -1421,6 +1448,45 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 				long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 					// Return the enum value as a constant
 				return makeExprResult(nativeTypeIndex(enum_info->underlying_type), enum_info->underlying_size, static_cast<unsigned long long>(enum_value), PointerDepth{}, ValueStorage::ContainsData);
+			}
+		}
+
+		if (sema_) {
+			if (auto resolved = sema_->getResolvedQualifiedIdentifier(&qualifiedIdNode); resolved.has_value()) {
+				switch (resolved->kind) {
+					case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::EnumConstant:
+						return makeExprResult(
+							nativeTypeIndex(resolved->constant_type),
+							resolved->constant_size,
+							resolved->constant_value,
+							PointerDepth{},
+							ValueStorage::ContainsData);
+					case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::Symbol:
+						if (resolved->symbol.is<DeclarationNode>()) {
+							const auto& decl_node = resolved->symbol.as<DeclarationNode>();
+							const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+							if (resolved->is_global) {
+								return emitQualifiedGlobalLoad(type_node, decl_node.is_array(), resolved->storage_name);
+							}
+							TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
+							return makeExprResult(type_index, SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
+						}
+						if (resolved->symbol.is<VariableDeclarationNode>()) {
+							const auto& decl_node = resolved->symbol.as<VariableDeclarationNode>().declaration_node().as<DeclarationNode>();
+							const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+							return emitQualifiedGlobalLoad(type_node, decl_node.is_array(), resolved->storage_name);
+						}
+						if (resolved->symbol.is<FunctionDeclarationNode>()) {
+							StringHandle func_name = resolved->storage_name.isValid() ? resolved->storage_name : StringTable::getOrInternStringHandle(qualifiedIdNode.name());
+							return makeExprResult(nativeTypeIndex(TypeCategory::Function), SizeInBits{64}, IrOperand{func_name}, PointerDepth{}, ValueStorage::ContainsData);
+						}
+						break;
+					case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::StaticMember:
+						// Keep the legacy static-member path for now: template/nested
+						// static members still rely on its owner-name recovery and
+						// emitted-symbol heuristics to reach the instantiated global.
+						break;
+				}
 			}
 		}
 
