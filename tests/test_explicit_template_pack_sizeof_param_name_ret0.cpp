@@ -70,8 +70,8 @@ int main() {
 		return 5;
 	}
 
-	int c6 = probe_post_pack<int, char, short>(1, 'a', static_cast<short>(2), 0L);
-	if (c6 != 9) {
+	int post_pack_result = probe_post_pack<int, char, short>(1, 'a', static_cast<short>(2), 0L);
+	if (post_pack_result != 9) {
 		return 6;
 	}
 

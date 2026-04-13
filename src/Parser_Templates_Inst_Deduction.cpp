@@ -1540,7 +1540,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			pack_param_info_ = std::move(saved_parent_pack_param_info);
 		});
 		size_t arg_type_index = 0;
-		auto typeNameForTemplateMatching = [&](const TypeSpecifierNode& type_spec) -> std::string_view {
+		struct PackBinding {
+			size_t start_index;
+			size_t count;
+		};
+		auto getPackParameterName = [&](const TypeSpecifierNode& type_spec) -> std::string_view {
 			if (!type_spec.token().value().empty()) {
 				return type_spec.token().value();
 			}
@@ -1576,26 +1580,33 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			clone.set_registered_type_index(param.registered_type_index());
 			return clone;
 		};
-		auto getTemplateParamPackBinding = [&](std::string_view pack_param_name) -> std::optional<std::pair<size_t, size_t>> {
+		auto getTemplateParamPackBinding = [&](std::string_view pack_param_name) -> std::optional<PackBinding> {
 			for (size_t template_param_index = 0; template_param_index < template_params.size(); ++template_param_index) {
 				if (!template_params[template_param_index].is<TemplateParameterNode>()) {
 					continue;
 				}
 				const auto& template_param = template_params[template_param_index].as<TemplateParameterNode>();
 				if (template_param.is_variadic() && template_param.name() == pack_param_name) {
-					return std::pair(
+					return PackBinding{
 						template_param_arg_starts[template_param_index],
-						template_param_arg_counts[template_param_index]);
+						template_param_arg_counts[template_param_index]};
 				}
 			}
 			return std::nullopt;
+		};
+		auto buildPackElementParamName = [&](const DeclarationNode& declaration, size_t pack_element_offset) {
+			StringBuilder param_name_builder;
+			param_name_builder.append(declaration.identifier_token().value());
+			param_name_builder.append('_');
+			param_name_builder.append(pack_element_offset);
+			return param_name_builder.commit();
 		};
 		auto buildSubstitutionForPackElement =
 			[&](std::string_view pack_param_name, size_t pack_element_offset,
 				InlineVector<ASTNode, 4>& subst_params,
 				InlineVector<TemplateTypeArg, 4>& subst_args) -> bool {
 				auto pack_binding = getTemplateParamPackBinding(pack_param_name);
-				if (!pack_binding.has_value() || pack_element_offset >= pack_binding->second) {
+				if (!pack_binding.has_value() || pack_element_offset >= pack_binding->count) {
 					return false;
 				}
 				size_t template_arg_index = 0;
@@ -1671,10 +1682,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				if (param_decl.is_parameter_pack()) {
 					size_t pack_start_index = arg_type_index;
-					std::string_view pack_param_name = typeNameForTemplateMatching(orig_param_type);
+					std::string_view pack_param_name = getPackParameterName(orig_param_type);
 					auto pack_binding = getTemplateParamPackBinding(pack_param_name);
 					if (pack_binding.has_value()) {
-						for (size_t pack_element_offset = 0; pack_element_offset < pack_binding->second; ++pack_element_offset) {
+						for (size_t pack_element_offset = 0; pack_element_offset < pack_binding->count; ++pack_element_offset) {
 							InlineVector<ASTNode, 4> subst_params;
 							InlineVector<TemplateTypeArg, 4> subst_args;
 							if (!buildSubstitutionForPackElement(pack_param_name, pack_element_offset, subst_params, subst_args)) {
@@ -1683,11 +1694,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 							ASTNode param_type = buildMaterializedParamType(orig_param_type, subst_params, subst_args);
 
-							StringBuilder param_name_builder;
-							param_name_builder.append(param_decl.identifier_token().value());
-							param_name_builder.append('_');
-							param_name_builder.append(pack_element_offset);
-							std::string_view param_name = param_name_builder.commit();
+							std::string_view param_name = buildPackElementParamName(param_decl, pack_element_offset);
 
 							Token param_token(Token::Type::Identifier,
 											  param_name,
