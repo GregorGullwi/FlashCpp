@@ -119,39 +119,7 @@ Common non-type operands for `sizeof` and `alignof` now work in constexpr evalua
 - cast expressions such as `static_cast<short>(x)`
 - dereference expressions such as `*ptr`
 
-```cpp
-struct Pair { int x; double y; };
-struct MatrixBox {
-    int matrix[2][3];
-    int data[3];
-};
-
-constexpr int makeInt() { return 42; }
-constexpr double makeDouble() { return 3.5; }
-
-constexpr int test() {
-    int a = 1;
-    int b = 2;
-    Pair p{a, 4.0};
-    int* ptr = &a;
-    int arr[3] = {1, 2, 3};
-    MatrixBox box{{{1, 2, 3}, {4, 5, 6}}, {7, 8, 9}};
-
-    return sizeof(a + b)
-         + sizeof(makeInt())
-         + sizeof(p.x)
-         + sizeof(arr[1])
-         + sizeof(box.data[2])
-         + sizeof(box.matrix[0])
-         + alignof(makeDouble())
-         + alignof(arr[1])
-         + alignof(box.data[2])
-         + alignof(static_cast<short>(b))
-         + alignof(*ptr);
-}
-
-static_assert(test() == 42);  // ✅ Works
-```
+See `tests/test_constexpr_sizeof_alignof_complex_expr_ret0.cpp` for full coverage.
 
 ### ✅ Constexpr Struct Construction
 ```cpp
