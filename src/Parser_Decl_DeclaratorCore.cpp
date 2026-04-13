@@ -642,6 +642,9 @@ ParseResult Parser::parse_type_and_name() {
 		ASTNode decl_node;
 		if (!array_dimensions.empty()) {
 			decl_node = emplace_node<DeclarationNode>(*node, identifier_token, std::move(array_dimensions));
+			if (is_unsized_array) {
+				decl_node.as<DeclarationNode>().set_unsized_array(true);
+			}
 		} else if (is_unsized_array) {
 			// Mark as an unsized array - size will be inferred from initializer
 			decl_node = emplace_node<DeclarationNode>(*node, identifier_token);
