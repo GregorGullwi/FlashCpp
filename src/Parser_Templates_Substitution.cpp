@@ -1845,3 +1845,35 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 
 	return false;
 }
+
+std::vector<ASTNode> Parser::expandPackExpressionArgument(const ASTNode& pattern) {
+	std::vector<const PackParamInfo*> packs_in_expr;
+	for (const auto& pack_info : pack_param_info_) {
+		if (pack_info.pack_size > 0 && exprContainsIdentifier(pattern, pack_info.original_name)) {
+			packs_in_expr.push_back(&pack_info);
+		}
+	}
+
+	if (packs_in_expr.empty()) {
+		return {pattern};
+	}
+
+	size_t pack_size = packs_in_expr[0]->pack_size;
+	for (size_t pack_index = 1; pack_index < packs_in_expr.size(); ++pack_index) {
+		if (packs_in_expr[pack_index]->pack_size != pack_size) {
+			FLASH_LOG(Parser, Error, "Pack expansion contains parameter packs of different lengths");
+			return {pattern};
+		}
+	}
+
+	std::vector<ASTNode> expanded_args;
+	expanded_args.reserve(pack_size);
+	for (size_t i = 0; i < pack_size; ++i) {
+		ASTNode expanded_pattern = pattern;
+		for (const auto* pack_info : packs_in_expr) {
+			expanded_pattern = replacePackIdentifierInExpr(expanded_pattern, pack_info->original_name, i);
+		}
+		expanded_args.push_back(expanded_pattern);
+	}
+	return expanded_args;
+}

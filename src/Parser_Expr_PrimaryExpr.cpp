@@ -3560,39 +3560,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// Check for pack expansion: arg...
 						if (current_token_.value() == "...") {
 							advance();  // consume '...'
-							// Expand the pack using pack_param_info_
-							// This mirrors the pack expansion logic in function call argument parsing
-							std::vector<const PackParamInfo*> packs_in_expr;
-							for (const auto& pack_info : pack_param_info_) {
-								if (pack_info.pack_size > 0 && exprContainsIdentifier(*node, pack_info.original_name)) {
-									packs_in_expr.push_back(&pack_info);
-								}
-							}
-							if (!packs_in_expr.empty()) {
-								// Verify all packs have the same size (C++20 requires this for pack expansion)
-								size_t pack_size = packs_in_expr[0]->pack_size;
-								bool sizes_match = true;
-								for (size_t pi = 1; pi < packs_in_expr.size(); ++pi) {
-									if (packs_in_expr[pi]->pack_size != pack_size) {
-										sizes_match = false;
-										break;
-									}
-								}
-								if (sizes_match) {
-									for (size_t i = 0; i < pack_size; ++i) {
-										ASTNode current_arg = *node;
-										for (const auto* pack_info : packs_in_expr) {
-											current_arg = replacePackIdentifierInExpr(current_arg, pack_info->original_name, i);
-										}
-										args.push_back(current_arg);
-									}
-								} else {
-									// Mismatched pack sizes - just add the unexpanded arg
-									args.push_back(*node);
-								}
-							} else {
-								// No matching pack found - just add the unexpanded arg
-								args.push_back(*node);
+							for (ASTNode expanded_arg : expandPackExpressionArgument(*node)) {
+								args.push_back(std::move(expanded_arg));
 							}
 						} else {
 							args.push_back(*node);
@@ -4454,31 +4423,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (auto arg_node = arg_result.node()) {
 						if (arg_node->is<IdentifierNode>()) {
 							std::string_view pack_name = arg_node->as<IdentifierNode>().name();
-							size_t pack_size = 0;
-
-							// Upper bound for pack size discovery - packs larger than this are unusual
-							// and we stop searching once we hit an unregistered element anyway
-							constexpr size_t kMaxPackSizeProbe = 100;
-							StringBuilder sb;
-							for (size_t i = 0; i < kMaxPackSizeProbe; ++i) {
-								std::string_view element_name = sb
-																	.append(pack_name)
-																	.append("_")
-																	.append(i)
-																	.preview();
-
-								if (gSymbolTable.lookup(element_name).has_value()) {
-									++pack_size;
-								} else {
-									break;
-								}
-
-								sb.reset();
-							}
-							sb.reset();
-
-							if (pack_size > 0) {
-								for (size_t i = 0; i < pack_size; ++i) {
+							if (auto pack_size = get_pack_size(pack_name); pack_size.has_value()) {
+								StringBuilder sb;
+								for (size_t i = 0; i < *pack_size; ++i) {
 									std::string_view element_name = sb
 																		.append(pack_name)
 																		.append("_")
@@ -4492,38 +4439,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								append_single_arg(*arg_node);
 							}
 						} else {
-							std::vector<const PackParamInfo*> packs_in_expr;
-							for (const auto& pack_info : pack_param_info_) {
-								if (pack_info.pack_size > 0 && exprContainsIdentifier(*arg_node, pack_info.original_name)) {
-									packs_in_expr.push_back(&pack_info);
-								}
-							}
-
-							if (!packs_in_expr.empty()) {
-								size_t pack_size = packs_in_expr[0]->pack_size;
-								bool sizes_match = true;
-								for (size_t pi = 1; pi < packs_in_expr.size(); ++pi) {
-									if (packs_in_expr[pi]->pack_size != pack_size) {
-										FLASH_LOG(Parser, Error, "Pack expansion contains parameter packs of different lengths");
-										sizes_match = false;
-										break;
-									}
-								}
-
-								if (sizes_match) {
-									for (size_t i = 0; i < pack_size; ++i) {
-										ASTNode current_arg = *arg_node;
-										for (const auto* pack_info : packs_in_expr) {
-											current_arg = replacePackIdentifierInExpr(current_arg, pack_info->original_name, i);
-										}
-										append_single_arg(current_arg);
-									}
-								} else {
-									append_single_arg(*arg_node);
-								}
-							} else {
-								FLASH_LOG(Parser, Error, "Complex pack expansion: no matching pack parameter found");
-								append_single_arg(*arg_node);
+							std::vector<ASTNode> expanded_args = expandPackExpressionArgument(*arg_node);
+							for (ASTNode& expanded_arg : expanded_args) {
+								append_single_arg(expanded_arg);
 							}
 						}
 					}

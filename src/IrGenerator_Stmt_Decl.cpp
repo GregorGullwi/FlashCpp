@@ -419,6 +419,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			arg_types,
 			ctor,
 			is_ambiguous);
+		if (is_ambiguous) {
+			throw CompileError("Ambiguous constructor call");
+		}
 	};
 	auto is_unresolved_noop_ctor = [](const ConstructorDeclarationNode* ctor) -> bool {
 		if (!ctor || (!ctor->has_template_parameters() && !ctor->has_template_body_position()) ||
@@ -433,22 +436,50 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			}
 			return false;
 		}
+		auto is_template_param_name = [&](std::string_view type_name) {
+			for (const ASTNode& param_node : ctor->template_parameters()) {
+				if (!param_node.is<TemplateParameterNode>()) {
+					continue;
+				}
+				if (param_node.as<TemplateParameterNode>().name() == type_name) {
+					return true;
+				}
+			}
+			for (StringHandle outer_name : ctor->outer_template_param_names()) {
+				if (StringTable::getStringView(outer_name) == type_name) {
+					return true;
+				}
+			}
+			return false;
+		};
 		for (const auto& param : ctor->parameter_nodes()) {
 			if (!param.is<DeclarationNode>()) {
 				continue;
 			}
 			const auto& type_spec = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-			if ((type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::Template) &&
+			if ((type_spec.category() == TypeCategory::UserDefined ||
+				 type_spec.category() == TypeCategory::TypeAlias ||
+				 type_spec.category() == TypeCategory::Template) &&
 				type_spec.type_index().is_valid()) {
 				if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 					std::string_view type_name = StringTable::getStringView(type_info->name());
-					if (!type_name.empty() && type_name.front() == '_') {
+					if (type_info->is_incomplete_instantiation_ || is_template_param_name(type_name)) {
 						return true;
 					}
 				}
+			} else if (is_template_param_name(type_spec.token().value())) {
+				return true;
 			}
 		}
 		return false;
+	};
+	auto register_destructor_if_needed = [this](const DeclarationNode& decl, const TypeInfo* type_info) {
+		if (!type_info || !type_info->struct_info_ || !type_info->struct_info_->hasDestructor()) {
+			return;
+		}
+		registerVariableWithDestructor(
+			std::string(decl.identifier_token().value()),
+			std::string(StringTable::getStringView(type_info->name())));
 	};
 
 		// Check if this is a global variable (declared at global scope)
@@ -1565,6 +1596,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											visitExpressionNode(init_expr.as<ExpressionNode>());
 										}
 									}
+									register_destructor_if_needed(decl, type_info);
 									return;
 								}
 
@@ -2369,6 +2401,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										visitExpressionNode(argument.as<ExpressionNode>());
 									}
 								});
+								register_destructor_if_needed(decl, type_info);
 								return;
 							}
 
@@ -2411,11 +2444,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
 							// Register for destructor if needed
-							if (type_info->struct_info_ && type_info->struct_info_->hasDestructor()) {
-								registerVariableWithDestructor(
-									std::string(decl.identifier_token().value()),
-									std::string(StringTable::getStringView(type_info->name())));
-							}
+							register_destructor_if_needed(decl, type_info);
 						} // end of non-aggregate constructor call block
 					} else if (has_copy_init) {
 							// Generate copy constructor call or converting constructor call

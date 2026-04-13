@@ -761,12 +761,14 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			type_spec.category() != TypeCategory::Template) {
 			return {};
 		}
-		// Try token value first
-		std::string_view name = type_spec.token().value();
-		if (name.empty() && type_spec.type_index().is_valid()) {
+		std::string_view name;
+		if (type_spec.type_index().is_valid()) {
 			if (const TypeInfo* ti = tryGetTypeInfo(type_spec.type_index())) {
 				name = StringTable::getStringView(ti->name());
 			}
+		}
+		if (name.empty()) {
+			name = type_spec.token().value();
 		}
 		return name;
 	};
@@ -801,23 +803,36 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				 param_type_spec.category() == TypeCategory::TypeAlias ||
 				 param_type_spec.category() == TypeCategory::Template)) {
 				// Use the type_name we already resolved above
-				size_t non_variadic = 0;
+				size_t pack_arg_start = 0;
 				size_t pack_size = 0;
 				bool found_pack = false;
+				size_t template_arg_index = 0;
 				for (size_t i = 0; i < template_params.size(); ++i) {
 					if (!template_params[i].is<TemplateParameterNode>())
 						continue;
 					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-					if (!tparam.is_variadic()) {
-						non_variadic++;
+
+					if (tparam.is_variadic()) {
+						size_t remaining_args = template_arg_index < template_args.size()
+												 ? template_args.size() - template_arg_index
+												 : 0;
+						size_t required_after = countRequiredTemplateArgsAfter<InlineVector<ASTNode, 4>, InlineVector<TemplateTypeArg, 4>>(
+							template_params, i + 1);
+						size_t current_pack_size = remaining_args > required_after
+												 ? remaining_args - required_after
+												 : 0;
+						if (tparam.name() == type_name) {
+							pack_arg_start = template_arg_index;
+							pack_size = current_pack_size;
+							found_pack = true;
+							break;
+						}
+						template_arg_index += current_pack_size;
 						continue;
 					}
-					if (tparam.name() == type_name) {
-						pack_size = template_args.size() > non_variadic
-										? template_args.size() - non_variadic
-										: 0;
-						found_pack = true;
-						break;
+
+					if (template_arg_index < template_args.size()) {
+						++template_arg_index;
 					}
 				}
 				if (found_pack) {
@@ -826,7 +841,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					} else {
 						std::string_view orig_name = param_decl.identifier_token().value();
 						for (size_t pi = 0; pi < pack_size; ++pi) {
-							const TemplateTypeArg& elem = template_args[non_variadic + pi];
+							const TemplateTypeArg& elem = template_args[pack_arg_start + pi];
 							TypeCategory elem_type = elem.typeEnum();
 							TypeIndex elem_type_index = elem.type_index;
 							TypeSpecifierNode sub_type(

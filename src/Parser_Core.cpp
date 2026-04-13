@@ -349,22 +349,22 @@ void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<Type
 	}
 
 	const auto& expr = arg_node.as<ExpressionNode>();
-	TypeCategory arg_type = TypeCategory::Int;
+	std::optional<TypeSpecifierNode> arg_type;
 
 	std::visit([&](const auto& inner) {
 		using T = std::decay_t<decltype(inner)>;
 		if constexpr (std::is_same_v<T, BoolLiteralNode>) {
-			arg_type = TypeCategory::Bool;
+			arg_type.emplace(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), Token(), CVQualifier::None);
 		} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
-			arg_type = inner.type();
+			arg_type.emplace(inner.type(), TypeQualifier::None, get_type_size_bits(inner.type()), Token(), CVQualifier::None);
 		} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-			arg_type = TypeCategory::Char;
+			arg_type.emplace(TypeCategory::Char, TypeQualifier::None, get_type_size_bits(TypeCategory::Char), Token(), CVQualifier::None);
 		} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 			auto id_type = lookup_symbol(StringTable::getOrInternStringHandle(inner.name()));
 			if (id_type.has_value()) {
 				if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
 					if (decl->type_node().template is<TypeSpecifierNode>()) {
-						arg_type = decl->type_node().template as<TypeSpecifierNode>().type();
+						arg_type = decl->type_node().template as<TypeSpecifierNode>();
 					}
 				}
 			}
@@ -372,7 +372,10 @@ void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<Type
 	},
 			   expr);
 
-	arg_types_out->emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token(), CVQualifier::None);
+	if (!arg_type.has_value()) {
+		arg_type.emplace(TypeCategory::Invalid, TypeQualifier::None, 0, Token(), CVQualifier::None);
+	}
+	arg_types_out->push_back(*arg_type);
 }
 
 // Helper function to find all local variable declarations in an AST node
