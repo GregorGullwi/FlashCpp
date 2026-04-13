@@ -1,10 +1,33 @@
 # Template Instantiation Identity / Materialization Follow-up Plan
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-13  
+**Last Updated:** 2026-04-14  
 **Context:** Follows the branch fix that made `test_integral_constant_comprehensive_ret100.cpp`, `test_integral_constant_pattern_ret42.cpp`, `test_ratio_less_alias_ret0.cpp`, `test_sfinae_enable_if_ret0.cpp`, and `test_sfinae_same_name_overload_ret0.cpp` pass by preserving dependent non-type template-argument identity in template-instantiation keys.
 
 ## Quick start for next agent
+
+### Latest completed slice (2026-04-14)
+
+**Root-cause fix: template constructor member-initializer list never stored.**
+
+- **Root cause**: `Parser_Templates_Function.cpp` `parse_member_function_template` (lines ~416-448)
+  was skipping the `:member(arg)` initializer list of template constructors (`template<typename T> Ctor(T v) : member(v) {}`)
+  without storing the initializers. The comment "we don't need to parse the expressions for template patterns"
+  was wrong — `instantiateLazyMemberFunction` reads `ctor_decl.member_initializers()` and copies+substitutes
+  them into the instantiated constructor. Because the list was empty the member was always zero-initialised.
+- **Fix**: replaced the skip loop with a full parse-and-store loop (same logic as
+  `Parser_Decl_FunctionOrVar.cpp` / `Parser_FunctionBodies.cpp`): parse each initializer name and
+  argument expression list, classify as delegating / base / member, and call
+  `ctor_ref.add_member_initializer` / `add_base_initializer` / `set_delegating_initializer` accordingly.
+- **Test**: `tests/test_template_ctor_member_init_ret0.cpp` — paren-init and brace-init with single
+  and multi-member template constructors, all returning 0 on success.
+- **Also fixed in this branch** (earlier commits):
+  - Brace-init codegen `materialize_template_ctor` now called unconditionally (not only when
+    `resolution.has_match` is true) — mirrors the direct-init path.
+  - `SemanticAnalysis::tryAnnotateInitListConstructorArgs` now calls
+    `materializeMatchingConstructorTemplate` after `resolve_constructor_overload`, matching the
+    direct-init sema path.
+- **Validation**: `make main CXX=clang++` → clean; `bash ./tests/run_all_tests.sh` → **2080 pass, 135 expected-fail**.
 
 ### Latest completed slice (2026-04-13, third update)
 

@@ -1581,7 +1581,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											// constructors are instantiated even when resolve_constructor_overload
 											// returns has_match=false (which happens because uninstantiated template
 											// parameter types don't match concrete argument types). Mirrors the
-											// direct-init path at ~line 2321.
+											// direct-init path in visitVariableDeclarationNode (direct-init branch).
 											materialize_template_ctor(*type_info, arg_types, matching_ctor);
 											if (matching_ctor) {
 												has_matching_constructor = true;
