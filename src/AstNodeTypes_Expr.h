@@ -571,10 +571,11 @@ public:
 							   std::optional<ASTNode> size_expr,
 							   ChunkedVector<ASTNode, 128, 256> constructor_args,
 							   std::optional<ASTNode> placement_address,
-							   bool has_value_init)
+							   bool has_value_init,
+							   bool is_brace_init)
 		: type_node_(type_node), is_array_(is_array),
 		  size_expr_(size_expr), constructor_args_(std::move(constructor_args)),
-		  has_value_init_(has_value_init) {
+		  has_value_init_(has_value_init), is_brace_init_(is_brace_init) {
 		if (placement_address.has_value()) {
 			placement_args_.push_back(*placement_address);
 		}
@@ -584,14 +585,17 @@ public:
 							   std::optional<ASTNode> size_expr,
 							   ChunkedVector<ASTNode, 128, 256> constructor_args,
 							   InlineVector<ASTNode, 2> placement_args,
-							   bool has_value_init)
+							   bool has_value_init,
+							   bool is_brace_init)
 		: type_node_(type_node), is_array_(is_array),
 		  size_expr_(size_expr), constructor_args_(std::move(constructor_args)),
-		  placement_args_(std::move(placement_args)), has_value_init_(has_value_init) {}
+		  placement_args_(std::move(placement_args)), has_value_init_(has_value_init),
+		  is_brace_init_(is_brace_init) {}
 
 	const ASTNode& type_node() const { return type_node_; }
 	bool is_array() const { return is_array_; }
 	bool has_value_init() const { return has_value_init_; }
+	bool is_brace_init() const { return is_brace_init_; }
 	const std::optional<ASTNode>& size_expr() const { return size_expr_; }
 	const ChunkedVector<ASTNode, 128, 256>& constructor_args() const { return constructor_args_; }
 	// Legacy single-arg accessor (returns first placement arg if present)
@@ -609,6 +613,7 @@ private:
 	ChunkedVector<ASTNode, 128, 256> constructor_args_;	// For new Type(args)
 	InlineVector<ASTNode, 2> placement_args_;  // For new (addr [,extra...]) Type, all placement arguments
 	bool has_value_init_;
+	bool is_brace_init_;
 };
 
 // Delete expression node: delete ptr, delete[] ptr
