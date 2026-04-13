@@ -13,6 +13,7 @@ template<typename T>
 using global_cond_t = ::enable_if_t<(sizeof(T) >= 4), int>;
 
 int main() {
-    global_cond_t<int> x = 42;
-    return x;
+	global_cond_t<int> x = 42;
+	return x;
 }
+
