@@ -2217,6 +2217,22 @@ EvalResult Evaluator::evaluate_new_expression(
 			for (const auto& arg : ctor_args) {
 				args_copy.push_back(arg);
 			}
+			auto try_materialize_aggregate_new = [&]() -> std::optional<EvalResult> {
+				if (struct_info->hasUserDefinedConstructor()) {
+					return std::nullopt;
+				}
+
+				InitializerListNode init_list;
+				for (size_t i = 0; i < ctor_args.size(); ++i) {
+					init_list.add_initializer(ctor_args[i]);
+				}
+				return materialize_aggregate_object_value(
+					struct_info,
+					type_index,
+					init_list,
+					context,
+					mutable_bindings ? mutable_bindings : bindings);
+			};
 			if (mutable_bindings) {
 				const std::unordered_map<std::string_view, EvalResult>* const_bindings_for_match =
 					mutable_bindings;
@@ -2224,7 +2240,15 @@ EvalResult Evaluator::evaluate_new_expression(
 					find_matching_constructor(
 						struct_info, args_copy, context, false, const_bindings_for_match);
 				if (!matching_ctor) {
-					return EvalResult::error("new-expression: no matching constructor found for struct type");
+					auto aggregate_result = try_materialize_aggregate_new();
+					if (!aggregate_result.has_value()) {
+						return EvalResult::error("new-expression: no matching constructor found for struct type");
+					}
+					if (!aggregate_result->success()) {
+						return *aggregate_result;
+					}
+					object_result = std::move(*aggregate_result);
+					goto constexpr_new_struct_materialized;
 				}
 
 				std::vector<EvalResult> evaluated_ctor_args;
@@ -2263,7 +2287,15 @@ EvalResult Evaluator::evaluate_new_expression(
 				auto ctor_result = try_materialize_struct_from_ctor_args(
 					struct_info, type_index, args_copy, context, false, bindings, nullptr, false);
 				if (!ctor_result.has_value()) {
-					return EvalResult::error("new-expression: no matching constructor found for struct type");
+					auto aggregate_result = try_materialize_aggregate_new();
+					if (!aggregate_result.has_value()) {
+						return EvalResult::error("new-expression: no matching constructor found for struct type");
+					}
+					if (!aggregate_result->success()) {
+						return *aggregate_result;
+					}
+					object_result = std::move(*aggregate_result);
+					goto constexpr_new_struct_materialized;
 				}
 				if (!ctor_result->success()) {
 					return *ctor_result;
@@ -2312,6 +2344,7 @@ EvalResult Evaluator::evaluate_new_expression(
 			}
 		}
 
+	constexpr_new_struct_materialized:
 		StringHandle heap_key = context.alloc_heap_slot();
 		context.constexpr_heap[heap_key] = {std::move(object_result), false, false};
 		return EvalResult::from_pointer(heap_key);
