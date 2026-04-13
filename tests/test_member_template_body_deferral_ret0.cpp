@@ -1,25 +1,25 @@
 template <typename T>
 struct Box {
-T value;
+	T value;
 
-Box()
-: value() {}
+	Box()
+		: value() {}
 
-template <typename U>
-Box(const Box<U>& other)
-: value() {
-emplace(static_cast<T>(other.value));
-}
+	template <typename U>
+	int assignFrom(const Box<U>& other) {
+		emplace(static_cast<T>(other.value));
+		return static_cast<int>(value);
+	}
 
-template <typename... Args>
-void emplace(Args&&... args) {
+	template <typename... Args>
+	void emplace(Args&&... args) {
 value = T(args...);
 }
 };
 
 int main() {
-Box<int> src;
-src.value = 7;
-Box<long> dst(src);
-return dst.value == 7 ? 0 : 1;
+	Box<int> src;
+	src.value = 7;
+	Box<long> dst;
+	return dst.assignFrom(src) == 7 ? 0 : 1;
 }

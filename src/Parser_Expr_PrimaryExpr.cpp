@@ -3863,6 +3863,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
 					return ParseResult::success(*result);
 				}
+
+				auto all_overloads = gSymbolTable.lookup_all(identifier_token.value());
+				auto resolution = resolve_overload(all_overloads, arg_types);
+				if (resolution.has_match && !resolution.is_ambiguous) {
+					result = emplace_node<ExpressionNode>(
+						makeCallExprFromNode(*resolution.selected_overload, std::move(args), identifier_token));
+					if (resolution.selected_overload->is<FunctionDeclarationNode>()) {
+						const auto& func_decl = resolution.selected_overload->as<FunctionDeclarationNode>();
+						if (func_decl.has_mangled_name()) {
+							setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
+						}
+					}
+					return ParseResult::success(*result);
+				}
 				// Template instantiation failed - always return error.
 				// In SFINAE context (e.g., requires expression), the caller
 				// (parse_requires_expression) handles errors by marking the
