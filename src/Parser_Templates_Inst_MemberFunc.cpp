@@ -44,29 +44,46 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		return std::nullopt;	 // Can't deduce without arguments
 	}
 
-	// Build template argument list
 	std::vector<TemplateTypeArg> template_args;
+	auto deduction_info = buildDeductionMapFromCallArgs(
+		template_params,
+		func_decl,
+		arg_types,
+		0);
+	if (!deduction_info.has_value()) {
+		return std::nullopt;
+	}
 
-	// Deduce template parameters in order from function arguments
 	size_t arg_index = 0;
 	for (const auto& template_param_node : template_params) {
 		const TemplateParameterNode& param = template_param_node.as<TemplateParameterNode>();
 
 		if (param.kind() == TemplateParameterKind::Template) {
-			// Template template parameter - cannot be deduced from function arguments
-			// Template template parameters must be explicitly specified
 			return std::nullopt;
-		} else if (param.kind() == TemplateParameterKind::Type) {
-			if (arg_index < arg_types.size()) {
-				template_args.push_back(TemplateTypeArg::makeType(arg_types[arg_index].type_index().withCategory(arg_types[arg_index].type())));
-				arg_index++;
-			} else {
-				// Not enough arguments - use first argument type
-				template_args.push_back(TemplateTypeArg::makeType(arg_types[0].type_index().withCategory(arg_types[0].type())));
-			}
+		}
+
+		if (param.kind() != TemplateParameterKind::Type) {
+			return std::nullopt;
+		}
+
+		auto deduced_it = deduction_info->param_name_to_arg.find(param.nameHandle());
+		if (deduced_it != deduction_info->param_name_to_arg.end()) {
+			template_args.push_back(deduced_it->second);
+			continue;
+		}
+
+		while (arg_index < arg_types.size() &&
+			   deduction_info->pre_deduced_arg_indices.count(arg_index)) {
+			++arg_index;
+		}
+
+		if (arg_index < arg_types.size()) {
+			template_args.push_back(TemplateTypeArg::makeType(
+				arg_types[arg_index].type_index().withCategory(arg_types[arg_index].type())));
+			++arg_index;
 		} else {
-			// Non-type parameter - not yet supported
-			return std::nullopt;
+			template_args.push_back(TemplateTypeArg::makeType(
+				arg_types[0].type_index().withCategory(arg_types[0].type())));
 		}
 	}
 
@@ -399,6 +416,57 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
 					if (StringTable::getStringView(outer_binding->param_names[i]) == tn) {
 						return {outer_binding->param_args[i].type_index.withCategory(outer_binding->param_args[i].typeEnum()), &outer_binding->param_args[i]};
+					}
+				}
+			}
+		}
+		if (type_index.category() == TypeCategory::Struct) {
+			const TypeInfo* ti = tryGetTypeInfo(type_index);
+			if (ti && ti->isTemplateInstantiation()) {
+				std::vector<TemplateTypeArg> concrete_args =
+					materializePlaceholderTemplateArgs(*ti, template_params, template_args);
+
+				if (outer_binding) {
+					for (auto& concrete_arg : concrete_args) {
+						if (!concrete_arg.is_dependent || !concrete_arg.dependent_name.isValid()) {
+							continue;
+						}
+
+						std::string_view dep_name =
+							StringTable::getStringView(concrete_arg.dependent_name);
+						for (size_t i = 0;
+							 i < outer_binding->param_names.size() &&
+							 i < outer_binding->param_args.size();
+							 ++i) {
+							if (StringTable::getStringView(outer_binding->param_names[i]) ==
+								dep_name) {
+								concrete_arg = outer_binding->param_args[i];
+								break;
+							}
+						}
+					}
+				}
+
+				const bool all_resolved =
+					!concrete_args.empty() &&
+					std::none_of(
+						concrete_args.begin(),
+						concrete_args.end(),
+						[](const TemplateTypeArg& arg) { return arg.is_dependent; });
+				if (all_resolved) {
+					std::string_view base_template_name =
+						StringTable::getStringView(ti->baseTemplateName());
+					if (!base_template_name.empty()) {
+						try_instantiate_class_template(base_template_name, concrete_args);
+						std::string_view concrete_name =
+							get_instantiated_class_name(base_template_name, concrete_args);
+						auto concrete_it = getTypesByNameMap().find(
+							StringTable::getOrInternStringHandle(concrete_name));
+						if (concrete_it != getTypesByNameMap().end()) {
+							return {
+								concrete_it->second->type_index_.withCategory(TypeCategory::Struct),
+								nullptr};
+						}
 					}
 				}
 			}

@@ -207,6 +207,13 @@ public:
 							}
 
 							if (all_match) {
+								const bool new_is_template =
+									node.is<TemplateFunctionDeclarationNode>();
+								const bool existing_is_template =
+									existing_nodes[i].is<TemplateFunctionDeclarationNode>();
+								if (new_is_template != existing_is_template) {
+									continue;
+								}
 								// Same signature found - replace forward declaration with definition if needed
 								// If the new one has a definition and the existing one doesn't, replace it
 								if (new_func->get_definition().has_value() && !existing_func->get_definition().has_value()) {
