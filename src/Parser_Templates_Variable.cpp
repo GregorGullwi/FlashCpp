@@ -21,8 +21,7 @@ StringHandle Parser::parseRawAliasTargetTemplateId(std::vector<ASTNode>& out_arg
 
 	StringBuilder name_builder;
 	if (peek() == "::"_tok) {
-		name_builder.append("::"sv);
-		advance();
+		advance(); // skip global-scope :: (registry stores names without :: prefix)
 	}
 
 	if (!peek().is_identifier()) {
