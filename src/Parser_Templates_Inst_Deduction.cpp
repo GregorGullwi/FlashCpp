@@ -725,7 +725,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		func_param_to_call_arg_index[i] = call_arg_index++;
 	}
 
-	for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
+	for (size_t i = 0; i < func_params.size(); ++i) {
 		if (!func_params[i].is<DeclarationNode>())
 			continue;
 		size_t concrete_arg_index = func_param_to_call_arg_index[i];
@@ -880,7 +880,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	// NOTE: We no longer gate this on !has_variadic_tparam. When a template has a variadic
 	// type parameter, non-pack function params that directly correspond to non-pack template
 	// params can still be safely pre-deduced; only the pack function param slots are skipped.
-	for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
+	for (size_t i = 0; i < func_params.size(); ++i) {
 		if (!func_params[i].is<DeclarationNode>())
 			continue;
 		const DeclarationNode& fp_decl = func_params[i].as<DeclarationNode>();
