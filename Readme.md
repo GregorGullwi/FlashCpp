@@ -361,4 +361,4 @@ For cross-platform development, compile separately for each target platform.
 **Maintainer**: Gregor Gullwi
 **Twitter/X**: [@GregorGullwi](https://twitter.com/GregorGullwi)
 
-For questions, bug reports, or contributions, please contact the maintainer on Twitter/X or open an issue on GitHub.
+For questions, bug reports, or contributions, please contact me on Twitter/X or open an issue on GitHub.
