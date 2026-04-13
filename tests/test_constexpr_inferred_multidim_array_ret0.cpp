@@ -10,6 +10,12 @@ constexpr int localUnsizedMultidim() {
 
 static_assert(localUnsizedMultidim() == 50);
 
+// Regression: explicitly-sized multidimensional arrays must still work for sizeof(arr[0])
+constexpr int explicitGrid[2][4] = {{1, 2, 3, 4}, {5, 6, 7, 8}};
+static_assert(sizeof(explicitGrid) == sizeof(int) * 8);
+static_assert(sizeof(explicitGrid[0]) == sizeof(int) * 4);
+static_assert(sizeof(explicitGrid) / sizeof(explicitGrid[0]) == 2);
+
 int main() {
 	return 0;
 }
