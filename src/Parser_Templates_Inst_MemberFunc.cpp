@@ -115,23 +115,9 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 		return std::nullopt;
 	}
 
-	auto dummy_return_type = emplace_node<TypeSpecifierNode>(
-		TypeCategory::Void,
-		TypeQualifier::None,
-		0,
-		Token{},
-		CVQualifier::None);
-	auto dummy_decl = emplace_node<DeclarationNode>(dummy_return_type, ctor_decl.name_token());
-	auto [dummy_func_node, dummy_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-		dummy_decl.as<DeclarationNode>(),
-		instantiated_struct_name);
-	for (const auto& param : ctor_decl.parameter_nodes()) {
-		dummy_func_ref.add_parameter_node(param);
-	}
-
 	auto deduction_info = buildDeductionMapFromCallArgs(
 		template_params,
-		dummy_func_ref,
+		ctor_decl.parameter_nodes(),
 		arg_types,
 		0);
 	if (!deduction_info.has_value()) {

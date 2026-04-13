@@ -607,7 +607,7 @@ void Parser::reparse_template_function_body(
 
 std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArgs(
 	const std::vector<ASTNode>& template_params,
-	const FunctionDeclarationNode& func_decl,
+	const std::vector<ASTNode>& func_params,
 	const std::vector<TypeSpecifierNode>& arg_types,
 	int recursion_depth) {
 	CallArgDeductionInfo deduction_info;
@@ -690,7 +690,6 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			   eval_result.as_int() == static_cast<int64_t>(concrete_bound);
 	};
 
-	const auto& func_params = func_decl.parameter_nodes();
 	auto countRequiredFunctionArgsAfter = [&](size_t start_index) {
 		size_t required_args = 0;
 		for (size_t param_index = start_index; param_index < func_params.size(); ++param_index) {
@@ -923,6 +922,18 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	}
 
 	return deduction_info;
+}
+
+std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArgs(
+	const std::vector<ASTNode>& template_params,
+	const FunctionDeclarationNode& func_decl,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	int recursion_depth) {
+	return buildDeductionMapFromCallArgs(
+		template_params,
+		func_decl.parameter_nodes(),
+		arg_types,
+		recursion_depth);
 }
 
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count) {
