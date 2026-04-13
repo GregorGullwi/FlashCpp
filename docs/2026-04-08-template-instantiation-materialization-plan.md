@@ -6,6 +6,49 @@
 
 ## Quick start for next agent
 
+### Latest completed slice (2026-04-13, third update)
+
+Phase 6b: pack-aware deduction extended to non-pack params in variadic templates.
+
+- **Root cause**: `buildDeductionMapFromCallArgs` had an overly-conservative guard
+  (`if (!has_variadic_tparam)`) that skipped all direct-param pre-deduction for templates
+  with any variadic parameter — even non-pack function params whose types directly correspond
+  to non-pack template params.
+- **Effect of the bug**: `template<typename T, typename U, typename... Rest> func(T, U, Rest...)`
+  called as `func<int>(1, 2, 3, 4)` would fail to parse/deduce because U could not be resolved.
+- **Fix applied** (two-part):
+  1. `buildDeductionMapFromCallArgs`: removed the `!has_variadic_tparam` outer guard; replaced
+     it with a per-slot `is_parameter_pack()` skip inside the loop. Non-pack function params
+     are now pre-deduced even when the template has a variadic type parameter.
+  2. `try_instantiate_template_explicit`: now always calls `buildDeductionMapFromCallArgs` when
+     call arg types are available (not only for non-pack templates); uses the resulting
+     `param_name_to_arg` map for all non-variadic template params; positional fallback retained
+     for trailing params after a pack.
+- Added `tests/test_pack_nonpack_mixed_explicit_deduction_ret0.cpp` as a regression test.
+- Validation after this slice:
+  - `make main CXX=clang++`
+  - `bash ./tests/run_all_tests.sh`
+  - `2072` pass, `135` expected-fail
+
+- Fixed `try_instantiate_template_explicit` in `src/Parser_Templates_Inst_Deduction.cpp`:
+  when processing a variadic template parameter and no explicit args remain for the pack
+  (`remaining_args == 0`) but call arg types are available, the pack is now filled from
+  the corresponding function parameter positions in the call arg list.
+- The fix computes `pack_func_param_start` (number of non-pack function params before the
+  variadic pack) and adds call args from that position through
+  `call_args.size() - required_function_args_after_pack` to the pack.
+- `template<typename T, typename... Rest> int count_rest(T, Rest...)` called as
+  `count_rest<int>(1, 2, 3)` now correctly deduces `Rest = {int, int}` and returns 2,
+  instead of treating `Rest` as an empty pack and returning 0.
+- Added `tests/test_explicit_variadic_pack_deduction_ret0.cpp` as a regression test
+  covering: simple T+Rest, two explicit non-pack params, first-of return, empty pack,
+  all-explicit pack.
+- Validation after this slice:
+  - `make main CXX=clang++`
+  - `bash ./tests/run_all_tests.sh test_explicit_variadic_pack_deduction_ret0.cpp test_pack_decltype_simple_ret42.cpp test_variadic_template_pack_before_tail_trailing_return_ret0.cpp test_namespaced_pair_swap_sfinae_ret0.cpp test_explicit_template_defaulted_param_deduction_ret42.cpp test_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp test_global_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp`
+  - `bash ./tests/run_all_tests.sh`
+  - `2071` pass, `135` expected-fail
+
 ### Latest completed slice (2026-04-13)
 
 - Extracted the shared alias-target capture logic into `Parser::parseRawAliasTargetTemplateId(...)`:
@@ -24,11 +67,6 @@
 - Added two new tests:
   - `tests/test_alias_template_global_scope_ret42.cpp` — top-level template alias with `::` target
   - `tests/test_member_alias_template_global_scope_ret42.cpp` — member template alias with `::` target
-- Validation after this slice:
-  - `make main CXX=clang++`
-  - `bash ./tests/run_all_tests.sh test_member_alias_template_ret0.cpp test_namespace_alias_template_default_member_ret42.cpp test_struct_local_alias_static_init_ret0.cpp test_alias_template_const_deferred_ref_ret0.cpp test_alias_template_deferred_return_ret0.cpp test_alias_template_member_type_type_specifier_ret42.cpp test_sfinae_enable_if_t_ret0.cpp test_alias_template_global_scope_ret42.cpp test_member_alias_template_global_scope_ret42.cpp`
-  - `bash ./tests/run_all_tests.sh`
-  - `2068` pass, `134` expected-fail
 
 ### Next recommended slice
 
@@ -39,12 +77,16 @@
      (evaluated args), not `ASTNode` (unevaluated). Either extend the helper to return both,
      or leave this path as-is since it already passes all tests.
 
-2. **Phase 6 — pack-aware explicit deduction:**
-   - `buildDeductionMapFromCallArgs(...)` is currently bypassed for pack-bearing signatures;
-     a pack-aware mapping helper in `src/Parser_Templates_Inst_Deduction.cpp` would let
-     variadic function templates benefit from the same name-based pre-deduction as non-pack ones.
-   - Key files: `src/Parser_Templates_Inst_Deduction.cpp:608-881`, `src/Parser.h:865-869`
-   - This is the highest-impact unfinished work.
+2. **Phase 6 — further pack-aware deduction (mixed explicit + deduced pack elements):**
+   - The implemented fix covers the common case where all explicit args go to non-pack
+     template params and the pack is fully deduced from call args. The remaining open question
+     is whether mixing explicit pack elements with call-deduced pack elements
+     (e.g., `template<typename... Args> foo` called as `foo<int>(1, "hello")` where
+     explicit `int` is the first pack element and `"hello"` is the second) needs support.
+     In standard C++, partial-pack explicit specialization is generally ill-formed, so this
+     is low priority.
+   - Key files: `src/Parser_Templates_Inst_Deduction.cpp` variadic case in
+     `try_instantiate_template_explicit`
 
 3. Re-run this alias cluster before touching any materialization code:
    - `test_member_alias_template_ret0.cpp`
@@ -57,10 +99,10 @@
    - `test_alias_template_global_scope_ret42.cpp`
    - `test_member_alias_template_global_scope_ret42.cpp`
 
-### Current baseline (2026-04-13)
+### Current baseline (2026-04-13, second update)
 
 - Linux: `make main CXX=clang++` compiles cleanly
-- Linux: `bash ./tests/run_all_tests.sh` → 2068 pass, 134 expected-fail
+- Linux: `bash ./tests/run_all_tests.sh` → 2071 pass, 135 expected-fail
 - All key regression tests pass:
   ```bash
   bash ./tests/run_all_tests.sh test_explicit_template_defaulted_param_deduction_ret42.cpp \
@@ -68,7 +110,8 @@
     test_global_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp \
     test_pack_decltype_simple_ret42.cpp \
     test_variadic_template_pack_before_tail_trailing_return_ret0.cpp \
-    test_namespaced_pair_swap_sfinae_ret0.cpp
+    test_namespaced_pair_swap_sfinae_ret0.cpp \
+    test_explicit_variadic_pack_deduction_ret0.cpp
   ```
 
 ### Current work in progress: Phase 2+
@@ -84,6 +127,10 @@ alias detection in `Parser_Decl_TopLevel.cpp` still has its own narrower detecti
 identifiers only, no `::` prefix) because it needs evaluated args, not AST nodes. That path
 works correctly for all current tests.
 
+**Phase 6 status:** substantially complete. The main pack deduction bug (empty pack when
+explicit args fill non-pack params) is now fixed. The remaining edge case (partially-explicit
+packs) is likely out of scope per the C++20 standard.
+
 ### Choose your next task
 
 **Option A: Phase 2 remaining — top-level `using` alias qualified name detection**
@@ -92,12 +139,7 @@ works correctly for all current tests.
   or a separate lightweight helper that returns both
 - Low urgency: all current tests pass without this
 
-**Option B: Phase 6 (pack-aware explicit deduction) — HIGHEST IMPACT**
-- Design a pack-aware mapping helper in `buildDeductionMapFromCallArgs(...)`
-- Currently, pack-bearing signatures fall back to older positional deduction
-- Key files: `src/Parser_Templates_Inst_Deduction.cpp:608-881`, `src/Parser.h:865-869`
-
-**Option C: Fix bugs in `docs/KNOWN_ISSUES.md`**
+**Option B: Fix bugs in `docs/KNOWN_ISSUES.md`**
 - Currently tracked: premature `layout_is_complete` during anonymous union processing
 - Low priority, no user-facing issues currently
 
@@ -106,7 +148,7 @@ works correctly for all current tests.
 ### Important invariants to preserve
 
 1. **Non-pack signatures**: Use name-based pre-deduction map first, then defaults, then overload mismatch
-2. **Pack-bearing signatures**: Use existing positional fallback only
+2. **Pack-bearing signatures with no explicit pack args**: Pack is now deduced from call arg types starting at the function parameter pack position
 3. **Always validate** after changes:
    - Run the key regression tests listed above
    - Run the full test suite
