@@ -419,7 +419,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// Prefer the sema/call-node resolved target before falling back to a lookup.
 	extern SymbolTable gSymbolTable;
 	const FunctionDeclarationNode* inline_always_target = pre_resolved_direct_target;
-	if (!inline_always_target) {
+	if (!inline_always_target && !sema_normalized_current_function_) {
 		auto all_overloads = gSymbolTable.lookup_all(func_name_view);
 		for (const auto& overload : all_overloads) {
 			if (!overload.is<FunctionDeclarationNode>()) {
