@@ -137,6 +137,32 @@ std::optional<size_t> tryGetConstexprTypeAlignment(const TypeSpecifierNode& type
 	return calculate_alignment_from_size(size_in_bytes, aligned_type.category());
 }
 
+std::optional<TypeSpecifierNode> tryGetConstexprSubscriptResultType(const TypeSpecifierNode& base_type) {
+	TypeSpecifierNode result_type = base_type;
+	result_type.set_reference_qualifier(ReferenceQualifier::None);
+
+	if (base_type.is_array()) {
+		const auto& dimensions = base_type.array_dimensions();
+		if (dimensions.empty()) {
+			return std::nullopt;
+		}
+		if (dimensions.size() == 1) {
+			result_type.set_array(false);
+		} else {
+			std::vector<size_t> remaining_dimensions(dimensions.begin() + 1, dimensions.end());
+			result_type.set_array_dimensions(remaining_dimensions);
+		}
+		return result_type;
+	}
+
+	if (base_type.is_pointer()) {
+		result_type.remove_pointer_level();
+		return result_type;
+	}
+
+	return std::nullopt;
+}
+
 // Try to infer an expression type from active constexpr local bindings before
 // falling back to the parser's broader expression-type machinery. This keeps
 // sizeof/alignof working inside bound constexpr function evaluation where the
@@ -234,6 +260,15 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 			member_type.set_reference_qualifier(member_result.member->reference_qualifier);
 		}
 		return member_type;
+	}
+
+	if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+		const auto& array_subscript = std::get<ArraySubscriptNode>(expr);
+		auto base_type_opt = tryGetConstexprBoundExpressionType(array_subscript.array_expr(), context);
+		if (!base_type_opt.has_value()) {
+			return std::nullopt;
+		}
+		return tryGetConstexprSubscriptResultType(*base_type_opt);
 	}
 
 	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
