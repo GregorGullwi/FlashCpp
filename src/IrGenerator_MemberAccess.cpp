@@ -458,13 +458,12 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 					payload.index.size_in_bits = index_result.size_in_bits;
 					payload.index.value = toIrValue(index_result.value);
 
-					unsigned long long elem_type_index = static_cast<unsigned long long>(element_type_index.index());
 					if (context == ExpressionContext::LValueAddress) {
-						return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, TypeIndex{elem_type_index}, PointerDepth{}, ValueStorage::ContainsAddress);
+						return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, element_type_index, PointerDepth{}, ValueStorage::ContainsAddress);
 					}
 
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
-					return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, TypeIndex{elem_type_index}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
 				};
 
 				const DeclarationNode* member_decl_ptr = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
@@ -510,7 +509,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 						if (struct_info) {
 							auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(
-								StringTable::getOrInternStringHandle(std::string(member_name)));
+								StringTable::getOrInternStringHandle(member_name));
 							if (static_member && owner_struct && static_member->is_array) {
 								TypeCategory element_type = static_member->memberType();
 								int element_size_bits = static_cast<int>(static_member->size * 8);
