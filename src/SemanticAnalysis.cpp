@@ -3076,21 +3076,18 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return type_context_.intern(canonicalTypeDescFromStaticMember(*found_static));
 					}
 					// Try member functions — return the return type of the first
-					// overload matching by name.  The call-site (CallExprNode)
+					// overload matching by name. The call-site (CallExprNode)
 					// handles full overload resolution; here we only need the
 					// result type for expressions like &obj.method or simple
 					// non-call member-function references.
-					// TODO: walk base_classes for inherited member functions
-					// (no findMemberFunctionRecursive helper exists yet; other
-					// call sites in OverloadResolution.h manually walk bases).
-					for (const auto& mf : struct_info->member_functions) {
-						if (mf.name == member_name_handle && mf.function_decl.has_value() &&
-							mf.function_decl.is<FunctionDeclarationNode>()) {
-							const auto& func = mf.function_decl.as<FunctionDeclarationNode>();
-							const ASTNode ret_type_node = func.decl_node().type_node();
-							if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
-								return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
-							}
+					auto [member_function, owner_struct] = struct_info->findMemberFunctionRecursive(member_name_handle);
+					(void)owner_struct;
+					if (member_function && member_function->function_decl.has_value() &&
+						member_function->function_decl.is<FunctionDeclarationNode>()) {
+						const auto& func = member_function->function_decl.as<FunctionDeclarationNode>();
+						const ASTNode ret_type_node = func.decl_node().type_node();
+						if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
+							return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
 						}
 					}
 				}

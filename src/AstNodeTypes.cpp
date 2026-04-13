@@ -1741,6 +1741,35 @@ std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::find
 	return {nullptr, nullptr}; // Not found
 }
 
+std::pair<const StructMemberFunction*, const StructTypeInfo*> StructTypeInfo::findMemberFunctionRecursive(StringHandle func_name) const {
+	// Use RecursionGuard to prevent infinite recursion in variadic template patterns
+	RecursionGuard guard(this);
+	if (!guard.isActive()) {
+		return {nullptr, nullptr}; // Cycle or depth limit detected
+	}
+
+	// Name lookup should respect hiding: if this class declares any matching
+	// overloads, do not continue into bases for the same name.
+	if (const StructMemberFunction* member_function = findMemberFunction(func_name)) {
+		return {member_function, this};
+	}
+
+	// Then, check base class member functions.
+	for (const auto& base : base_classes) {
+		const StructTypeInfo* base_info = resolveBaseStructInfo(base);
+		if (!base_info) {
+			continue;
+		}
+
+		auto [base_member_function, owner_struct] = base_info->findMemberFunctionRecursive(func_name);
+		if (base_member_function) {
+			return {base_member_function, owner_struct};
+		}
+	}
+
+	return {nullptr, nullptr}; // Not found
+}
+
 // Build RTTI information for polymorphic classes
 void StructTypeInfo::buildRTTI() {
 	// Only build RTTI for polymorphic classes (those with vtables)
