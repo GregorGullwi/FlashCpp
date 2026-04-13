@@ -90,6 +90,89 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		TypedValue init_value = toTypedValue(init_operands);
 		emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, pointer_var, Token());
 	};
+	auto is_aggregate_for_new_initialization = [](const StructTypeInfo& struct_info) {
+		for (const auto& func : struct_info.member_functions) {
+			if (func.is_constructor &&
+				func.function_decl.is<ConstructorDeclarationNode>() &&
+				!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
+				return false;
+			}
+		}
+		return true;
+	};
+	auto emit_new_aggregate_member_stores = [&](TempVar pointer_var, const StructTypeInfo& struct_info) -> bool {
+		const auto& ctor_args = newExpr.constructor_args();
+		if (ctor_args.empty() ||
+			!is_aggregate_for_new_initialization(struct_info)) {
+			return false;
+		}
+		if (ctor_args.size() > struct_info.members.size()) {
+			throw CompileError("Too many initializers for aggregate type in new-expression");
+		}
+
+		ConstructorCallOp ctor_op;
+		ctor_op.object = pointer_var;
+		ctor_op.is_heap_allocated = true;
+		fillInDefaultConstructorArguments(ctor_op, struct_info);
+		finalizeConstructorCallOp(ctor_op, struct_info, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+
+		for (size_t member_idx = 0; member_idx < ctor_args.size(); ++member_idx) {
+			const ASTNode& argument = ctor_args[member_idx];
+			const StructMember& member = struct_info.members[member_idx];
+			if (!argument.is<ExpressionNode>()) {
+				throw CompileError("Unsupported aggregate new initializer shape for member '" +
+								   std::string(StringTable::getStringView(member.getName())) + "'");
+			}
+
+			ExprResult arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
+			MemberStoreOp store_op;
+			store_op.object = pointer_var;
+			store_op.member_name = member.getName();
+			store_op.offset = static_cast<int>(member.offset);
+			store_op.value = toTypedValue(arg_operands);
+			store_op.struct_type_info = nullptr;
+			store_op.ref_qualifier = CVReferenceQualifier::None;
+			store_op.is_pointer_to_member = true;
+			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), Token()));
+		}
+
+		return true;
+	};
+	auto emit_struct_new_initializer = [&](TempVar pointer_var, const StructTypeInfo& struct_info) {
+		const auto& ctor_args = newExpr.constructor_args();
+		if (ctor_args.empty()) {
+			if (!struct_info.hasAnyConstructor()) {
+				return;
+			}
+
+			ConstructorCallOp ctor_op;
+			ctor_op.object = pointer_var;
+			ctor_op.is_heap_allocated = true;
+			fillInDefaultConstructorArguments(ctor_op, struct_info);
+			finalizeConstructorCallOp(ctor_op, struct_info, Token());
+			ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+			return;
+		}
+
+		if (const ConstructorDeclarationNode* resolved_ctor =
+				resolveCodegenConstructorFromArgs(struct_info, ctor_args)) {
+			ConstructorCallOp ctor_op;
+			ctor_op.object = pointer_var;
+			ctor_op.is_heap_allocated = true;
+			ctor_op.resolved_constructor = resolved_ctor;
+			appendConstructorCallArguments(ctor_op, resolved_ctor, ctor_args, Token());
+			finalizeConstructorCallOp(ctor_op, struct_info, Token());
+			ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+			return;
+		}
+
+		if (emit_new_aggregate_member_stores(pointer_var, struct_info)) {
+			return;
+		}
+
+		throw CompileError("No matching constructor found for new-expression");
+	};
 
 		// Check if this is an array allocation (with or without placement)
 	if (newExpr.is_array()) {
@@ -409,30 +492,14 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		if (type_cat == TypeCategory::Struct) {
 			TypeIndex type_index = type_spec.type_index();
 			if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
-				if (type_info->struct_info_) {
+					if (type_info->struct_info_) {
 						// Check if this is an abstract class
 					if (type_info->struct_info_->is_abstract) {
 						std::cerr << "Error: Cannot instantiate abstract class '" << type_info->name() << "'\n";
 						throw CompileError("Cannot instantiate abstract class");
 					}
 
-					if (type_info->struct_info_->hasAnyConstructor()) {
-							// Generate constructor call on the placement address
-						ConstructorCallOp ctor_op;
-						ctor_op.object = result_var;
-						ctor_op.is_heap_allocated = true;  // Object is at pointer location (placement new provides address)
-						const auto& ctor_args = newExpr.constructor_args();
-						if (newExpr.constructor_args().empty()) {
-							fillInDefaultConstructorArguments(ctor_op, *type_info->struct_info_);
-						} else {
-							const ConstructorDeclarationNode* resolved_ctor =
-								resolveCodegenConstructorFromArgs(*type_info->struct_info_, ctor_args);
-							appendConstructorCallArguments(ctor_op, resolved_ctor, ctor_args, Token());
-						}
-						finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, Token());
-
-						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
-					}
+					emit_struct_new_initializer(result_var, *type_info->struct_info_);
 				}
 			}
 		}
@@ -459,23 +526,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 						throw CompileError("Cannot instantiate abstract class");
 					}
 
-					if (type_info->struct_info_->hasAnyConstructor()) {
-							// Generate constructor call on the newly allocated object
-						ConstructorCallOp ctor_op;
-						ctor_op.object = result_var;
-						ctor_op.is_heap_allocated = true;  // Object is at pointer location (new allocates and returns pointer)
-						const auto& ctor_args = newExpr.constructor_args();
-						if (newExpr.constructor_args().empty()) {
-							fillInDefaultConstructorArguments(ctor_op, *type_info->struct_info_);
-						} else {
-							const ConstructorDeclarationNode* resolved_ctor =
-								resolveCodegenConstructorFromArgs(*type_info->struct_info_, ctor_args);
-							appendConstructorCallArguments(ctor_op, resolved_ctor, ctor_args, Token());
-						}
-						finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, Token());
-
-						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
-					}
+					emit_struct_new_initializer(result_var, *type_info->struct_info_);
 				}
 			}
 		}

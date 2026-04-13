@@ -2217,6 +2217,22 @@ EvalResult Evaluator::evaluate_new_expression(
 			for (const auto& arg : ctor_args) {
 				args_copy.push_back(arg);
 			}
+			auto try_materialize_aggregate_new = [&]() -> std::optional<EvalResult> {
+				if (struct_info->hasUserDefinedConstructor()) {
+					return std::nullopt;
+				}
+
+				InitializerListNode init_list;
+				for (size_t i = 0; i < ctor_args.size(); ++i) {
+					init_list.add_initializer(ctor_args[i]);
+				}
+				return materialize_aggregate_object_value(
+					struct_info,
+					type_index,
+					init_list,
+					context,
+					mutable_bindings ? mutable_bindings : bindings);
+			};
 			if (mutable_bindings) {
 				const std::unordered_map<std::string_view, EvalResult>* const_bindings_for_match =
 					mutable_bindings;
@@ -2224,51 +2240,66 @@ EvalResult Evaluator::evaluate_new_expression(
 					find_matching_constructor(
 						struct_info, args_copy, context, false, const_bindings_for_match);
 				if (!matching_ctor) {
-					return EvalResult::error("new-expression: no matching constructor found for struct type");
-				}
-
-				std::vector<EvalResult> evaluated_ctor_args;
-				evaluated_ctor_args.reserve(ctor_args.size());
-				for (const auto& arg : ctor_args) {
-					auto arg_result = eval_arg(arg);
-					if (!arg_result.success()) {
-						return arg_result;
+					auto aggregate_result = try_materialize_aggregate_new();
+					if (!aggregate_result.has_value()) {
+						return EvalResult::error("new-expression: no matching constructor found for struct type");
 					}
-					evaluated_ctor_args.push_back(std::move(arg_result));
-				}
+					if (!aggregate_result->success()) {
+						return *aggregate_result;
+					}
+					object_result = std::move(*aggregate_result);
+				} else {
+					std::vector<EvalResult> evaluated_ctor_args;
+					evaluated_ctor_args.reserve(ctor_args.size());
+					for (const auto& arg : ctor_args) {
+						auto arg_result = eval_arg(arg);
+						if (!arg_result.success()) {
+							return arg_result;
+						}
+						evaluated_ctor_args.push_back(std::move(arg_result));
+					}
 
-				std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
-				auto bind_result = bind_pre_evaluated_arguments(
-					matching_ctor->parameter_nodes(),
-					evaluated_ctor_args,
-					ctor_param_bindings,
-					context,
-					"Invalid parameter in constexpr struct construction",
-					true);
-				if (!bind_result.success()) {
-					return bind_result;
-				}
+					std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+					auto bind_result = bind_pre_evaluated_arguments(
+						matching_ctor->parameter_nodes(),
+						evaluated_ctor_args,
+						ctor_param_bindings,
+						context,
+						"Invalid parameter in constexpr struct construction",
+						true);
+					if (!bind_result.success()) {
+						return bind_result;
+					}
 
-				auto materialize_result = materialize_members_from_constructor(
-					struct_info,
-					*matching_ctor,
-					ctor_param_bindings,
-					object_result.object_member_bindings,
-					context,
-					false);
-				if (!materialize_result.success()) {
-					return materialize_result;
+					auto materialize_result = materialize_members_from_constructor(
+						struct_info,
+						*matching_ctor,
+						ctor_param_bindings,
+						object_result.object_member_bindings,
+						context,
+						false);
+					if (!materialize_result.success()) {
+						return materialize_result;
+					}
 				}
 			} else {
 				auto ctor_result = try_materialize_struct_from_ctor_args(
 					struct_info, type_index, args_copy, context, false, bindings, nullptr, false);
 				if (!ctor_result.has_value()) {
-					return EvalResult::error("new-expression: no matching constructor found for struct type");
+					auto aggregate_result = try_materialize_aggregate_new();
+					if (!aggregate_result.has_value()) {
+						return EvalResult::error("new-expression: no matching constructor found for struct type");
+					}
+					if (!aggregate_result->success()) {
+						return *aggregate_result;
+					}
+					object_result = std::move(*aggregate_result);
+				} else {
+					if (!ctor_result->success()) {
+						return *ctor_result;
+					}
+					object_result = std::move(*ctor_result);
 				}
-				if (!ctor_result->success()) {
-					return *ctor_result;
-				}
-				object_result = std::move(*ctor_result);
 			}
 		} else {
 			// Default initialization with empty args: new T or new T().
