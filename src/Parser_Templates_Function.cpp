@@ -480,12 +480,26 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						if (is_delegating) {
 							ctor_ref.set_delegating_initializer(std::move(init_args));
 						} else {
+							// Intern the initializer name once for use in both base-class checks below.
+							StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
 							for (const auto& base : struct_node.base_classes()) {
 								if (base.name == init_name) {
 									is_base_init = true;
-									StringHandle base_name_handle = StringTable::getOrInternStringHandle(init_name);
-									ctor_ref.add_base_initializer(base_name_handle, std::move(init_args));
+									ctor_ref.add_base_initializer(init_name_handle, std::move(init_args));
 									break;
+								}
+							}
+
+							// Also check deferred template base classes (e.g., Base<T> in
+							// template<T> struct Derived : Base<T>). Without this, a base-class
+							// initializer like Base(v) is misclassified as a member initializer.
+							if (!is_base_init) {
+								for (const auto& deferred_base : struct_node.deferred_template_base_classes()) {
+									if (deferred_base.base_template_name == init_name_handle) {
+										is_base_init = true;
+										ctor_ref.add_base_initializer(init_name_handle, std::move(init_args));
+										break;
+									}
 								}
 							}
 
