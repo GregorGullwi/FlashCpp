@@ -1477,6 +1477,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 		auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
 
+		auto saved_outer_pack_param_info = std::move(pack_param_info_);
+		pack_param_info_.clear();
+		size_t arg_type_index = 0;
+
 	// Add parameters with concrete types
 		for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
 			const auto& param = func_decl.parameter_nodes()[i];
@@ -1485,6 +1489,68 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 			// Get original parameter type
 				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				if (param_decl.is_parameter_pack()) {
+					size_t pack_start_index = arg_type_index;
+					bool is_forwarding_reference = orig_param_type.is_rvalue_reference();
+					size_t pack_end_index = pack_start_index;
+					if (current_explicit_call_arg_types_ != nullptr) {
+						pack_end_index = current_explicit_call_arg_types_->size();
+						if (pack_end_index >= required_function_args_after_pack) {
+							pack_end_index -= required_function_args_after_pack;
+						} else {
+							pack_end_index = 0;
+						}
+					}
+
+					while (current_explicit_call_arg_types_ != nullptr && arg_type_index < pack_end_index) {
+						const TypeSpecifierNode& arg_type = (*current_explicit_call_arg_types_)[arg_type_index];
+
+						ASTNode param_type = emplace_node<TypeSpecifierNode>(
+							arg_type.type(),
+							arg_type.qualifier(),
+							arg_type.size_in_bits(),
+							Token(), CVQualifier::None);
+						param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
+
+						if (is_forwarding_reference) {
+							if (arg_type.is_lvalue_reference()) {
+								param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
+							} else if (arg_type.is_rvalue_reference()) {
+								param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
+							} else {
+								param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
+							}
+						} else if (orig_param_type.is_lvalue_reference()) {
+							param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
+						} else if (orig_param_type.is_rvalue_reference()) {
+							param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
+						}
+
+						for (const auto& ptr_level : arg_type.pointer_levels()) {
+							param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+						}
+
+						StringBuilder param_name_builder;
+						param_name_builder.append(param_decl.identifier_token().value());
+						param_name_builder.append('_');
+						param_name_builder.append(arg_type_index - pack_start_index);
+						std::string_view param_name = param_name_builder.commit();
+
+						Token param_token(Token::Type::Identifier,
+										  param_name,
+										  param_decl.identifier_token().line(),
+										  param_decl.identifier_token().column(),
+										  param_decl.identifier_token().file_index());
+
+						auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_token);
+						new_func_ref.add_parameter_node(new_param_decl);
+						arg_type_index++;
+					}
+
+					size_t pack_size = arg_type_index - pack_start_index;
+					pack_param_info_.push_back({param_decl.identifier_token().value(), pack_start_index, pack_size});
+					continue;
+				}
 
 			// Substitute template parameters in the type
 				TypeIndex substituted_type_index = substitute_template_parameter(
@@ -1525,6 +1591,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
 				}
 				new_func_ref.add_parameter_node(new_param_decl);
+				if (current_explicit_call_arg_types_ != nullptr &&
+					arg_type_index < current_explicit_call_arg_types_->size()) {
+					arg_type_index++;
+				}
 			}
 		}
 
@@ -1552,8 +1622,16 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 		// preserve_ref_qualifier=true: explicit args carry the user-written ref (e.g. T=int&)
 		// and TypeInfo must reflect it so nested template-arg uses resolve the right specialization.
+			bool saved_has_parameter_packs = has_parameter_packs_;
+			auto saved_pack_param_info = std::move(pack_param_info_);
+			if (!saved_pack_param_info.empty()) {
+				has_parameter_packs_ = true;
+				pack_param_info_ = saved_pack_param_info;
+			}
 			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
 										   /*preserve_ref_qualifier=*/true);
+			has_parameter_packs_ = saved_has_parameter_packs;
+			pack_param_info_ = std::move(saved_outer_pack_param_info);
 		} else {
 		// Copy the function body if it exists (for non-template or already-parsed bodies)
 			auto orig_body = func_decl.get_definition();
@@ -1561,6 +1639,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				new_func_ref.set_definition(
 					substituteTemplateParameters(*orig_body, template_params, template_args));
 			}
+			pack_param_info_ = std::move(saved_outer_pack_param_info);
 		}
 
 		copy_function_properties(new_func_ref, func_decl);
