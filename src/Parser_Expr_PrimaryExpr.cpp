@@ -4388,6 +4388,128 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				return make_call_result(*resolution.selected_overload);
 			};
 
+			auto append_function_call_arg_type = [&](const ASTNode& arg_node, std::vector<TypeSpecifierNode>* arg_types_out) {
+				if (arg_types_out == nullptr || !arg_node.is<ExpressionNode>()) {
+					return;
+				}
+
+				const auto& expr = arg_node.as<ExpressionNode>();
+				TypeCategory arg_type = TypeCategory::Int;
+
+				std::visit([&](const auto& inner) {
+					using T = std::decay_t<decltype(inner)>;
+					if constexpr (std::is_same_v<T, BoolLiteralNode>) {
+						arg_type = TypeCategory::Bool;
+					} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
+						arg_type = inner.type();
+					} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+						arg_type = TypeCategory::Char;
+					} else if constexpr (std::is_same_v<T, IdentifierNode>) {
+						auto id_type = lookup_symbol(StringTable::getOrInternStringHandle(inner.name()));
+						if (id_type.has_value()) {
+							if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
+								if (decl->type_node().template is<TypeSpecifierNode>()) {
+									arg_type = decl->type_node().template as<TypeSpecifierNode>().type();
+								}
+							}
+						}
+					}
+				},
+						   expr);
+
+				arg_types_out->emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token(), CVQualifier::None);
+			};
+
+			auto append_function_call_argument =
+				[&](const ParseResult& arg_result, ChunkedVector<ASTNode>& args_out, std::vector<TypeSpecifierNode>* arg_types_out) -> std::optional<ParseResult> {
+				auto append_single_arg = [&](const ASTNode& node) {
+					args_out.push_back(node);
+					append_function_call_arg_type(node, arg_types_out);
+				};
+
+				if (peek() == "..."_tok) {
+					advance();
+
+					if (auto arg_node = arg_result.node()) {
+						if (arg_node->is<IdentifierNode>()) {
+							std::string_view pack_name = arg_node->as<IdentifierNode>().name();
+							size_t pack_size = 0;
+
+							StringBuilder sb;
+							for (size_t i = 0; i < 100; ++i) {
+								std::string_view element_name = sb
+																	.append(pack_name)
+																	.append("_")
+																	.append(i)
+																	.preview();
+
+								if (gSymbolTable.lookup(element_name).has_value()) {
+									++pack_size;
+								} else {
+									break;
+								}
+
+								sb.reset();
+							}
+							sb.reset();
+
+							if (pack_size > 0) {
+								for (size_t i = 0; i < pack_size; ++i) {
+									std::string_view element_name = sb
+																		.append(pack_name)
+																		.append("_")
+																		.append(i)
+																		.commit();
+
+									Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
+									append_single_arg(emplace_node<ExpressionNode>(createBoundIdentifier(elem_token)));
+								}
+							} else {
+								append_single_arg(*arg_node);
+							}
+						} else {
+							std::vector<const PackParamInfo*> packs_in_expr;
+							for (const auto& pack_info : pack_param_info_) {
+								if (pack_info.pack_size > 0 && exprContainsIdentifier(*arg_node, pack_info.original_name)) {
+									packs_in_expr.push_back(&pack_info);
+								}
+							}
+
+							if (!packs_in_expr.empty()) {
+								size_t pack_size = packs_in_expr[0]->pack_size;
+								bool sizes_match = true;
+								for (size_t pi = 1; pi < packs_in_expr.size(); ++pi) {
+									if (packs_in_expr[pi]->pack_size != pack_size) {
+										FLASH_LOG(Parser, Error, "Pack expansion contains parameter packs of different lengths");
+										sizes_match = false;
+										break;
+									}
+								}
+
+								if (sizes_match) {
+									for (size_t i = 0; i < pack_size; ++i) {
+										ASTNode current_arg = *arg_node;
+										for (const auto* pack_info : packs_in_expr) {
+											current_arg = replacePackIdentifierInExpr(current_arg, pack_info->original_name, i);
+										}
+										append_single_arg(current_arg);
+									}
+								} else {
+									append_single_arg(*arg_node);
+								}
+							} else {
+								FLASH_LOG(Parser, Error, "Complex pack expansion: no matching pack parameter found");
+								append_single_arg(*arg_node);
+							}
+						}
+					}
+				} else if (auto node = arg_result.node()) {
+					append_single_arg(*node);
+				}
+
+				return std::nullopt;
+			};
+
 			// Check if this is a function call or constructor call (forward reference)
 			// Identifier already consumed at line 1621
 			// Skip this check for lambda variables - they should be handled by postfix operator parsing
@@ -4447,39 +4569,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							return argResult;
 						}
 
-						if (auto node = argResult.node()) {
-							args.push_back(*node);
-
-							// Try to deduce the type of this argument
-							// For now, we'll use a simple heuristic
-							if (node->is<ExpressionNode>()) {
-								const auto& expr = node->as<ExpressionNode>();
-								TypeCategory arg_type = TypeCategory::Int;  // Default assumption
-
-								std::visit([&](const auto& inner) {
-									using T = std::decay_t<decltype(inner)>;
-									if constexpr (std::is_same_v<T, BoolLiteralNode>) {
-										arg_type = TypeCategory::Bool;
-									} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
-										arg_type = inner.type();
-									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-										arg_type = TypeCategory::Char;  // const char*
-									} else if constexpr (std::is_same_v<T, IdentifierNode>) {
-										// Look up the identifier's type
-										auto id_type = lookup_symbol(StringTable::getOrInternStringHandle(inner.name()));
-										if (id_type.has_value()) {
-											if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
-												if (decl->type_node().template is<TypeSpecifierNode>()) {
-													arg_type = decl->type_node().template as<TypeSpecifierNode>().type();
-												}
-											}
-										}
-									}
-								},
-										   expr);
-
-								arg_types.emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token(), CVQualifier::None);
-							}
+						if (auto append_error = append_function_call_argument(argResult, args, &arg_types); append_error.has_value()) {
+							return *append_error;
 						}
 
 						if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
@@ -4513,7 +4604,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return ParseResult::success(*result);
 					} else {
 						FLASH_LOG(Parser, Error, "Template instantiation failed or didn't return FunctionDeclarationNode");
-						// Fall through to forward declaration
+
+						if (!found_member_function_in_context && !identifierType.has_value() &&
+							!lookupTypeInCurrentContext(identifier_token.handle())) {
+							auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
+							auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+							gSymbolTable.insertGlobal(identifier_token.value(), forward_decl);
+							identifierType = forward_decl;
+						}
+
+						return unified_resolve_function_call(args);
 					}
 				}
 
@@ -4545,102 +4645,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return argResult;
 					}
 
-					// Check for pack expansion: expr...
-					if (peek() == "..."_tok) {
-						advance(); // consume '...'
-
-						// Pack expansion: need to expand the expression for each pack element
-						if (auto arg_node = argResult.node()) {
-							// Simple case: if the expression is just a single identifier that looks
-							// like a pack parameter, try to expand it
-							if (arg_node->is<IdentifierNode>()) {
-								std::string_view pack_name = arg_node->as<IdentifierNode>().name();
-
-								// Try to find pack_name_0, pack_name_1, etc. in the symbol table
-								size_t pack_size = 0;
-
-								StringBuilder sb;
-								for (size_t i = 0; i < 100; ++i) {  // reasonable limit
-									// Use StringBuilder to create a persistent string
-									std::string_view element_name = sb
-																		.append(pack_name)
-																		.append("_")
-																		.append(i)
-																		.preview();
-
-									if (gSymbolTable.lookup(element_name).has_value()) {
-										++pack_size;
-									} else {
-										break;
-									}
-
-									sb.reset();
-								}
-								sb.reset();
-
-								if (pack_size > 0) {
-									// Add each pack element as a separate argument
-									for (size_t i = 0; i < pack_size; ++i) {
-										// Use StringBuilder to create a persistent string for the token
-										std::string_view element_name = sb
-																			.append(pack_name)
-																			.append("_")
-																			.append(i)
-																			.commit();
-
-										Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
-										auto elem_node = emplace_node<ExpressionNode>(createBoundIdentifier(elem_token));
-										args.push_back(elem_node);
-									}
-								} else {
-									if (auto node = argResult.node()) {
-										args.push_back(*node);
-									}
-								}
-							} else {
-								// Complex expression with pack expansion (e.g., f(args)..., static_cast<T>(args)...)
-								// Collect ALL pack parameters referenced in this expression (multi-pack support).
-								std::vector<const PackParamInfo*> packs_in_expr;
-								for (const auto& pack_info : pack_param_info_) {
-									if (pack_info.pack_size > 0 && exprContainsIdentifier(*arg_node, pack_info.original_name)) {
-										packs_in_expr.push_back(&pack_info);
-									}
-								}
-
-								if (!packs_in_expr.empty()) {
-									// All participating packs must have the same size (C++ requirement).
-									size_t pack_size = packs_in_expr[0]->pack_size;
-									bool sizes_match = true;
-									for (size_t pi = 1; pi < packs_in_expr.size(); ++pi) {
-										if (packs_in_expr[pi]->pack_size != pack_size) {
-											FLASH_LOG(Parser, Error, "Pack expansion contains parameter packs of different lengths");
-											sizes_match = false;
-											break;
-										}
-									}
-
-									if (sizes_match) {
-										for (size_t i = 0; i < pack_size; ++i) {
-											ASTNode current_arg = *arg_node;
-											for (const auto* pack_info : packs_in_expr) {
-												current_arg = replacePackIdentifierInExpr(current_arg, pack_info->original_name, i);
-											}
-											args.push_back(current_arg);
-										}
-									} else {
-										args.push_back(*arg_node);
-									}
-								} else {
-									FLASH_LOG(Parser, Error, "Complex pack expansion: no matching pack parameter found");
-									args.push_back(*arg_node);
-								}
-							}
-						}
-					} else {
-						// Regular argument
-						if (auto node = argResult.node()) {
-							args.push_back(*node);
-						}
+					if (auto append_error = append_function_call_argument(argResult, args, nullptr); append_error.has_value()) {
+						return *append_error;
 					}
 
 					if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
