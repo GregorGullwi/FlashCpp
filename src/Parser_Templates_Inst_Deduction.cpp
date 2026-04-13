@@ -691,12 +691,50 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	};
 
 	const auto& func_params = func_decl.parameter_nodes();
-	for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
+	auto countRequiredFunctionArgsAfter = [&](size_t start_index) {
+		size_t required_args = 0;
+		for (size_t param_index = start_index; param_index < func_params.size(); ++param_index) {
+			if (!func_params[param_index].is<DeclarationNode>()) {
+				continue;
+			}
+			const auto& param_decl = func_params[param_index].as<DeclarationNode>();
+			if (param_decl.is_parameter_pack() || param_decl.has_default_value()) {
+				continue;
+			}
+			++required_args;
+		}
+		return required_args;
+	};
+	std::vector<size_t> func_param_to_call_arg_index(func_params.size(), SIZE_MAX);
+	size_t call_arg_index = 0;
+	for (size_t i = 0; i < func_params.size(); ++i) {
+		if (!func_params[i].is<DeclarationNode>()) {
+			continue;
+		}
+		const DeclarationNode& func_param_decl = func_params[i].as<DeclarationNode>();
+		if (func_param_decl.is_parameter_pack()) {
+			size_t required_after = countRequiredFunctionArgsAfter(i + 1);
+			call_arg_index = arg_types.size() >= required_after
+							   ? arg_types.size() - required_after
+							   : arg_types.size();
+			continue;
+		}
+		if (call_arg_index >= arg_types.size()) {
+			break;
+		}
+		func_param_to_call_arg_index[i] = call_arg_index++;
+	}
+
+	for (size_t i = 0; i < func_params.size(); ++i) {
 		if (!func_params[i].is<DeclarationNode>())
 			continue;
+		size_t concrete_arg_index = func_param_to_call_arg_index[i];
+		if (concrete_arg_index == SIZE_MAX || concrete_arg_index >= arg_types.size()) {
+			continue;
+		}
 		const DeclarationNode& func_param_decl = func_params[i].as<DeclarationNode>();
 		const TypeSpecifierNode& fp_type = func_param_decl.type_node().as<TypeSpecifierNode>();
-		const TypeSpecifierNode& ca_type = arg_types[i];
+		const TypeSpecifierNode& ca_type = arg_types[concrete_arg_index];
 		// If both the function parameter and the call argument are struct template
 		// instantiations of the same base template, match their template args pairwise
 		// to deduce any template parameters that appear as dependent entries.
@@ -777,7 +815,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 				}
 			}
 			if (slot_produced_deduction)
-				pre_deduced_arg_indices.insert(i);
+				pre_deduced_arg_indices.insert(concrete_arg_index);
 		}
 
 		if (func_param_decl.is_array() && ca_type.is_array()) {
@@ -825,7 +863,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 					return std::nullopt;
 				}
 				if (slot_produced_deduction) {
-					pre_deduced_arg_indices.insert(i);
+					pre_deduced_arg_indices.insert(concrete_arg_index);
 				}
 			}
 		}
@@ -842,15 +880,19 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	// NOTE: We no longer gate this on !has_variadic_tparam. When a template has a variadic
 	// type parameter, non-pack function params that directly correspond to non-pack template
 	// params can still be safely pre-deduced; only the pack function param slots are skipped.
-	for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
+	for (size_t i = 0; i < func_params.size(); ++i) {
 		if (!func_params[i].is<DeclarationNode>())
 			continue;
 		const DeclarationNode& fp_decl = func_params[i].as<DeclarationNode>();
 		// Skip parameter packs — their deduction is handled by the main loop.
 		if (fp_decl.is_parameter_pack())
 			continue;
+		size_t concrete_arg_index = func_param_to_call_arg_index[i];
+		if (concrete_arg_index == SIZE_MAX || concrete_arg_index >= arg_types.size()) {
+			continue;
+		}
 		const TypeSpecifierNode& fp_type = fp_decl.type_node().as<TypeSpecifierNode>();
-		const TypeSpecifierNode& ca_type = arg_types[i];
+		const TypeSpecifierNode& ca_type = arg_types[concrete_arg_index];
 
 		// Only handle directly-typed params (pointer_depth 0 covers T, T&, const T&).
 		// Pointer-to-template (T*) cases are handled via substitution elsewhere.
@@ -873,11 +915,11 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		// Deduce: fp_name -> ca_type (call argument type for this parameter slot)
 		TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(ca_type);
 		param_name_to_arg.emplace(fp_name, new_arg);
-		pre_deduced_arg_indices.insert(i);
+		pre_deduced_arg_indices.insert(concrete_arg_index);
 		FLASH_LOG_FORMAT(Templates, Debug,
-						 "[depth={}]: Direct-param pre-deduced type param '{}' = type {} from func param {}",
+						 "[depth={}]: Direct-param pre-deduced type param '{}' = type {} from func param {} / call arg {}",
 						 recursion_depth, StringTable::getStringView(fp_name),
-						 static_cast<int>(ca_type.type()), i);
+						 static_cast<int>(ca_type.type()), i, concrete_arg_index);
 	}
 
 	return deduction_info;
@@ -972,6 +1014,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 	// Build template argument list
 		InlineVector<TemplateTypeArg, 4> template_args;
+		std::vector<size_t> template_param_arg_starts(template_params.size(), SIZE_MAX);
+		std::vector<size_t> template_param_arg_counts(template_params.size(), 0);
 		size_t explicit_idx = 0;	 // Track position in explicit_types
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
 		// Build a name-to-arg deduction map whenever call arg types are available,
@@ -1009,6 +1053,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				continue;
 			}
 			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+			size_t arg_start_index = template_args.size();
 			if (param.kind() == TemplateParameterKind::Template) {
 				if (explicit_idx < explicit_types.size()) {
 					StringHandle tpl_name_handle;
@@ -1025,6 +1070,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					overload_mismatch = true;
 					break;
 				}
+				template_param_arg_starts[i] = arg_start_index;
+				template_param_arg_counts[i] = template_args.size() - arg_start_index;
 			} else if (param.is_variadic()) {
 				size_t remaining_args = explicit_idx < explicit_types.size()
 										   ? explicit_types.size() - explicit_idx
@@ -1074,6 +1121,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 							(*current_explicit_call_arg_types_)[j]));
 					}
 				}
+				template_param_arg_starts[i] = arg_start_index;
+				template_param_arg_counts[i] = template_args.size() - arg_start_index;
 			} else {
 				if (explicit_idx < explicit_types.size()) {
 					template_args.push_back(explicit_types[explicit_idx]);
@@ -1086,6 +1135,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					auto map_it = param_name_to_arg.find(param_handle);
 					if (map_it != param_name_to_arg.end()) {
 						template_args.push_back(map_it->second);
+						template_param_arg_starts[i] = arg_start_index;
+						template_param_arg_counts[i] = template_args.size() - arg_start_index;
 						continue;
 					}
 					if (!param.has_default() &&
@@ -1095,9 +1146,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
 							(*current_explicit_call_arg_types_)[positional_deduced_call_arg_index]));
 						++positional_deduced_call_arg_index;
+						template_param_arg_starts[i] = arg_start_index;
+						template_param_arg_counts[i] = template_args.size() - arg_start_index;
 						continue;
 					}
 					if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
+						template_param_arg_starts[i] = arg_start_index;
+						template_param_arg_counts[i] = template_args.size() - arg_start_index;
 						continue;
 					}
 
@@ -1107,6 +1162,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					overload_mismatch = true;
 					break;
 				}
+				template_param_arg_starts[i] = arg_start_index;
+				template_param_arg_counts[i] = template_args.size() - arg_start_index;
 			}
 		}
 		if (overload_mismatch)
@@ -1461,7 +1518,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// Apply pointer levels and references from original type
 		TypeSpecifierNode& return_type_ref = return_type.as<TypeSpecifierNode>();
 		return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
-		applyTemplateArgIndirection(return_type_ref, orig_return_type, template_params, explicit_types,
+		applyTemplateArgIndirection(return_type_ref, orig_return_type, template_params, template_args,
 									/*propagate_reference_qualifier=*/true);
 		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
 			return_type_ref.add_pointer_level(ptr_level.cv_qualifier);
@@ -1477,6 +1534,144 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 		auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
 
+		auto saved_parent_pack_param_info = std::move(pack_param_info_);
+		pack_param_info_.clear();
+		ScopeGuard restore_outer_pack_param_info([&]() {
+			pack_param_info_ = std::move(saved_parent_pack_param_info);
+		});
+		size_t arg_type_index = 0;
+		struct PackBinding {
+			size_t start_index;
+			size_t count;
+		};
+		auto getPackParameterName = [&](const TypeSpecifierNode& type_spec) -> std::string_view {
+			if (!type_spec.token().value().empty()) {
+				return type_spec.token().value();
+			}
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+				return StringTable::getStringView(type_info->name());
+			}
+			return {};
+		};
+		auto cloneNonVariadicTemplateParam = [&](const TemplateParameterNode& param) {
+			TemplateParameterNode clone = [&]() {
+				switch (param.kind()) {
+					case TemplateParameterKind::Type:
+						return TemplateParameterNode(param.nameHandle(), param.token());
+					case TemplateParameterKind::NonType:
+						return TemplateParameterNode(param.nameHandle(), param.type_node(), param.token());
+					case TemplateParameterKind::Template:
+						return TemplateParameterNode(param.nameHandle(), param.nested_parameters(), param.token());
+				}
+				return TemplateParameterNode(param.nameHandle(), param.token());
+			}();
+			if (param.has_concept_constraint()) {
+				clone.set_concept_constraint(param.concept_constraint());
+			}
+			if (param.has_concept_args()) {
+				clone.set_concept_args(param.concept_args());
+			}
+			if (param.has_default()) {
+				clone.set_default_value(param.default_value());
+			}
+			if (param.has_default_value_position()) {
+				clone.set_default_value_position(param.default_value_position());
+			}
+			clone.set_registered_type_index(param.registered_type_index());
+			return clone;
+		};
+		auto getTemplateParamPackBinding = [&](std::string_view pack_param_name) -> std::optional<PackBinding> {
+			for (size_t template_param_index = 0; template_param_index < template_params.size(); ++template_param_index) {
+				if (!template_params[template_param_index].is<TemplateParameterNode>()) {
+					continue;
+				}
+				const auto& template_param = template_params[template_param_index].as<TemplateParameterNode>();
+				if (template_param.is_variadic() && template_param.name() == pack_param_name) {
+					return PackBinding{
+						template_param_arg_starts[template_param_index],
+						template_param_arg_counts[template_param_index]};
+				}
+			}
+			return std::nullopt;
+		};
+		auto buildPackElementParamName = [&](const DeclarationNode& declaration, size_t pack_element_offset) {
+			StringBuilder param_name_builder;
+			param_name_builder.append(declaration.identifier_token().value());
+			param_name_builder.append('_');
+			param_name_builder.append(pack_element_offset);
+			return param_name_builder.commit();
+		};
+		auto buildSubstitutionForPackElement =
+			[&](std::string_view pack_param_name, size_t pack_element_offset,
+				InlineVector<ASTNode, 4>& subst_params,
+				InlineVector<TemplateTypeArg, 4>& subst_args) -> bool {
+				auto pack_binding = getTemplateParamPackBinding(pack_param_name);
+				if (!pack_binding.has_value() || pack_element_offset >= pack_binding->count) {
+					return false;
+				}
+				size_t template_arg_index = 0;
+				for (size_t template_param_index = 0; template_param_index < template_params.size(); ++template_param_index) {
+					if (!template_params[template_param_index].is<TemplateParameterNode>()) {
+						continue;
+					}
+					const auto& template_param = template_params[template_param_index].as<TemplateParameterNode>();
+					if (template_param.is_variadic()) {
+						if (template_param.name() == pack_param_name) {
+							subst_params.push_back(emplace_node<TemplateParameterNode>(
+								cloneNonVariadicTemplateParam(template_param)));
+							subst_args.push_back(template_args[template_arg_index + pack_element_offset]);
+						}
+						template_arg_index += template_param_arg_counts[template_param_index];
+						continue;
+					}
+					if (template_arg_index >= template_args.size()) {
+						break;
+					}
+					subst_params.push_back(template_params[template_param_index]);
+					subst_args.push_back(template_args[template_arg_index]);
+					++template_arg_index;
+				}
+				return true;
+			};
+		auto buildMaterializedParamType =
+			[&](const TypeSpecifierNode& original_param_type,
+				const InlineVector<ASTNode, 4>& materialized_template_params,
+				const InlineVector<TemplateTypeArg, 4>& materialized_template_args) {
+				TypeIndex substituted_type_index = substitute_template_parameter(
+					original_param_type, materialized_template_params, materialized_template_args);
+				ASTNode param_type = emplace_node<TypeSpecifierNode>(
+					substituted_type_index,
+					get_type_size_bits(substituted_type_index.category()),
+					original_param_type.token(),
+					original_param_type.cv_qualifier(),
+					ReferenceQualifier::None);
+				resolve_dependent_member_alias_local(param_type);
+
+				TypeSpecifierNode& param_type_ref = param_type.as<TypeSpecifierNode>();
+				int resolved_param_size_bits = getTypeSpecSizeBits(param_type_ref);
+				if (resolved_param_size_bits > 0) {
+					param_type_ref.set_size_in_bits(resolved_param_size_bits);
+				}
+				param_type_ref.set_reference_qualifier(original_param_type.reference_qualifier());
+				applyTemplateArgIndirection(
+					param_type_ref,
+					original_param_type,
+					materialized_template_params,
+					materialized_template_args,
+					/*propagate_reference_qualifier=*/true);
+				for (const auto& ptr_level : original_param_type.pointer_levels()) {
+					param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
+				}
+				propagateFunctionSignatureFromTemplateArg(
+					param_type_ref,
+					original_param_type,
+					substituted_type_index,
+					materialized_template_params,
+					materialized_template_args);
+				apply_resolved_alias_metadata_local(param_type_ref);
+				return param_type;
+			};
+
 	// Add parameters with concrete types
 		for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
 			const auto& param = func_decl.parameter_nodes()[i];
@@ -1485,6 +1680,37 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 			// Get original parameter type
 				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				if (param_decl.is_parameter_pack()) {
+					size_t pack_start_index = arg_type_index;
+					std::string_view pack_param_name = getPackParameterName(orig_param_type);
+					auto pack_binding = getTemplateParamPackBinding(pack_param_name);
+					if (pack_binding.has_value()) {
+						for (size_t pack_element_offset = 0; pack_element_offset < pack_binding->count; ++pack_element_offset) {
+							InlineVector<ASTNode, 4> subst_params;
+							InlineVector<TemplateTypeArg, 4> subst_args;
+							if (!buildSubstitutionForPackElement(pack_param_name, pack_element_offset, subst_params, subst_args)) {
+								continue;
+							}
+
+							ASTNode param_type = buildMaterializedParamType(orig_param_type, subst_params, subst_args);
+
+							std::string_view param_name = buildPackElementParamName(param_decl, pack_element_offset);
+
+							Token param_token(Token::Type::Identifier,
+											  param_name,
+											  param_decl.identifier_token().line(),
+											  param_decl.identifier_token().column(),
+											  param_decl.identifier_token().file_index());
+
+							auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_token);
+							new_func_ref.add_parameter_node(new_param_decl);
+							arg_type_index++;
+						}
+					}
+					size_t pack_size = arg_type_index - pack_start_index;
+					pack_param_info_.push_back({param_decl.identifier_token().value(), pack_start_index, pack_size});
+					continue;
+				}
 
 			// Substitute template parameters in the type
 				TypeIndex substituted_type_index = substitute_template_parameter(
@@ -1506,7 +1732,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					param_type_ref.set_size_in_bits(resolved_param_size_bits);
 				}
 				param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
-				applyTemplateArgIndirection(param_type_ref, orig_param_type, template_params, explicit_types,
+				applyTemplateArgIndirection(param_type_ref, orig_param_type, template_params, template_args,
 											/*propagate_reference_qualifier=*/true);
 				for (const auto& ptr_level : orig_param_type.pointer_levels()) {
 					param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
@@ -1525,6 +1751,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
 				}
 				new_func_ref.add_parameter_node(new_param_decl);
+				arg_type_index++;
 			}
 		}
 
@@ -1552,6 +1779,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 		// preserve_ref_qualifier=true: explicit args carry the user-written ref (e.g. T=int&)
 		// and TypeInfo must reflect it so nested template-arg uses resolve the right specialization.
+			bool saved_has_parameter_packs = has_parameter_packs_;
+			ScopeGuard restore_has_parameter_packs([&]() {
+				has_parameter_packs_ = saved_has_parameter_packs;
+			});
+			if (!pack_param_info_.empty()) {
+				has_parameter_packs_ = true;
+			}
 			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
 										   /*preserve_ref_qualifier=*/true);
 		} else {
