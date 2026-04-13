@@ -420,7 +420,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			ctor,
 			is_ambiguous);
 		if (is_ambiguous) {
-			throw CompileError("Ambiguous constructor call");
+			throw CompileError(
+				std::string("Ambiguous constructor call for ") +
+				std::string(StringTable::getStringView(type_info_ref.name())));
 		}
 	};
 	auto is_unresolved_noop_ctor = [](const ConstructorDeclarationNode* ctor) -> bool {

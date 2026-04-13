@@ -755,7 +755,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	auto saved_pack_param_info = std::move(pack_param_info_);
 
 	// Helper to extract the type name from a TypeSpecifierNode, trying token value first, then TypeInfo lookup
-	auto extractTypeNameFromSpec = [&](const TypeSpecifierNode& type_spec) -> std::string_view {
+	auto getTypeName = [&](const TypeSpecifierNode& type_spec) -> std::string_view {
 		if (type_spec.category() != TypeCategory::UserDefined &&
 			type_spec.category() != TypeCategory::TypeAlias &&
 			type_spec.category() != TypeCategory::Template) {
@@ -785,7 +785,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			bool is_pack_param = param_decl.is_parameter_pack();
 
 			// Also detect if type references a variadic template parameter (for cases where is_parameter_pack isn't set)
-			std::string_view type_name = extractTypeNameFromSpec(param_type_spec);
+			std::string_view type_name = getTypeName(param_type_spec);
 			if (!is_pack_param && !type_name.empty()) {
 				for (size_t i = 0; i < template_params.size(); ++i) {
 					if (!template_params[i].is<TemplateParameterNode>())

@@ -4423,9 +4423,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (auto arg_node = arg_result.node()) {
 						if (arg_node->is<IdentifierNode>()) {
 							std::string_view pack_name = arg_node->as<IdentifierNode>().name();
-							if (auto pack_size = get_pack_size(pack_name); pack_size.has_value()) {
+							if (auto identifier_pack_size = get_pack_size(pack_name); identifier_pack_size.has_value()) {
 								StringBuilder sb;
-								for (size_t i = 0; i < *pack_size; ++i) {
+								for (size_t i = 0; i < *identifier_pack_size; ++i) {
 									std::string_view element_name = sb
 																		.append(pack_name)
 																		.append("_")
