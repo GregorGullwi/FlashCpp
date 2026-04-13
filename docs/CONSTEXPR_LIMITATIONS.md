@@ -640,7 +640,7 @@ Array support is still incomplete in more complex cases.
 
 **Known remaining limitations include:**
 
-1. **Inferred array size in richer contexts**: straightforward local inferred-size arrays now work, simple global `sizeof(arr)` and `sizeof(arr) / sizeof(arr[0])` over inferred-size constexpr arrays now work too, and direct-list forms such as `int arr[]{1,2,3}` / `constexpr int arr[]{1,2,3}` now work in straightforward local and global constexpr contexts. Richer parser/evaluator contexts can still fail.
+1. **Inferred array size in richer contexts**: straightforward local inferred-size arrays now work, simple global `sizeof(arr)` and `sizeof(arr) / sizeof(arr[0])` over inferred-size constexpr arrays now work too, direct-list forms such as `int arr[]{1,2,3}` / `constexpr int arr[]{1,2,3}` now work in straightforward local and global constexpr contexts, and nested-brace unsized-first multidimensional forms such as `constexpr int grid[][3] = {{1,2,3},{4,5,6}};` now parse and evaluate in constexpr. Richer parser/evaluator contexts can still fail.
 2. **Range-based for over arrays**: range-based for loops over local arrays now work in constexpr, and over objects with `constexpr begin()`/`end()` methods returning a member array or pointer are now also supported (see dedicated section)
 
 **Guidance for array access:** Prefer explicit array sizes when practical, but straightforward inferred-size local array patterns are now supported too.
@@ -1425,6 +1425,7 @@ struct CaptureExample {
 - `tests/test_constexpr_local_member_assign_ret0.cpp` - Local struct member dot-assignment (`p.a = value`) in constexpr functions
 - `tests/test_constexpr_this_deref_ret0.cpp` - `*this` dereference in constexpr member function bodies (`dot(*this)`, `scale` chaining)
 - `tests/test_constexpr_multidim_array_ret0.cpp` - Multi-dimensional array init, reads, subscript assignment, and brace-elision in constexpr
+- `tests/test_constexpr_inferred_multidim_array_ret0.cpp` - Unsized-first multidimensional array inference with nested-brace init in global/local constexpr contexts
 - `tests/test_constexpr_ternary_struct_ret0.cpp` - Ternary operator returning struct types in constexpr (global and function-returned)
 - `tests/test_constexpr_nested_member_ctor_local_ret0.cpp` - Nested member access on local constructor-initialized objects in constexpr functions
 - `tests/test_constexpr_empty_brace_nodefault_ctor_fail.cpp` - Empty-brace init rejected for non-aggregate types without default constructor (expected failure)
