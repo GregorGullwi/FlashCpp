@@ -113,6 +113,7 @@ std::optional<size_t> tryGetConstexprTypeAlignment(const TypeSpecifierNode& type
 	TypeSpecifierNode aligned_type = type_spec;
 	if (type_spec.is_array()) {
 		aligned_type.set_array_dimensions({});
+		aligned_type.set_size_in_bits(getTypeSpecSizeBits(aligned_type));
 	}
 
 	if (aligned_type.category() == TypeCategory::Struct) {
@@ -152,11 +153,13 @@ std::optional<TypeSpecifierNode> tryGetConstexprSubscriptResultType(const TypeSp
 			std::vector<size_t> remaining_dimensions(dimensions.begin() + 1, dimensions.end());
 			result_type.set_array_dimensions(remaining_dimensions);
 		}
+		result_type.set_size_in_bits(getTypeSpecSizeBits(result_type));
 		return result_type;
 	}
 
 	if (base_type.is_pointer()) {
 		result_type.remove_pointer_level();
+		result_type.set_size_in_bits(getTypeSpecSizeBits(result_type));
 		return result_type;
 	}
 
@@ -328,7 +331,7 @@ void maybe_set_exact_type_from_initializer(EvalResult& result, const ASTNode& in
 }
 
 void maybe_set_binding_result_exact_type(EvalResult& result, const DeclarationNode& decl, const ASTNode* initializer, EvaluationContext& context) {
-	if (!decl.is_array() && decl.type_node().is<TypeSpecifierNode>()) {
+	if (decl.type_node().is<TypeSpecifierNode>()) {
 		const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
 		if (should_preserve_exact_type(type_spec)) {
 			result.set_exact_type(type_spec);
@@ -4619,6 +4622,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						if (!array_result.success()) {
 							return array_result;
 						}
+						maybe_set_binding_result_exact_type(array_result, decl, &init_expr, context);
 						declaration_bindings[var_name] = std::move(array_result);
 						return EvalResult::error("Statement executed (not a return)");
 					}
@@ -4627,6 +4631,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					if (!array_result.success()) {
 						return array_result;
 					}
+					maybe_set_binding_result_exact_type(array_result, decl, &init_expr, context);
 					declaration_bindings[var_name] = std::move(array_result);
 					return EvalResult::error("Statement executed (not a return)");
 				}
