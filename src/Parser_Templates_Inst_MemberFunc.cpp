@@ -100,6 +100,99 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		struct_name, member_name, qualified_name, template_node, template_args, key);
 }
 
+std::optional<ASTNode> Parser::try_instantiate_constructor_template(
+	StringHandle instantiated_struct_name,
+	const ConstructorDeclarationNode& ctor_decl,
+	const std::vector<TypeSpecifierNode>& arg_types) {
+	const auto& template_params = ctor_decl.template_parameters();
+	if (template_params.empty()) {
+		return std::nullopt;
+	}
+
+	auto dummy_return_type = emplace_node<TypeSpecifierNode>(
+		TypeCategory::Void,
+		TypeQualifier::None,
+		0,
+		Token{},
+		CVQualifier::None);
+	auto dummy_decl = emplace_node<DeclarationNode>(dummy_return_type, ctor_decl.name_token());
+	auto [dummy_func_node, dummy_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+		dummy_decl.as<DeclarationNode>(),
+		instantiated_struct_name);
+	for (const auto& param : ctor_decl.parameter_nodes()) {
+		dummy_func_ref.add_parameter_node(param);
+	}
+
+	auto deduction_info = buildDeductionMapFromCallArgs(
+		template_params,
+		dummy_func_ref,
+		arg_types,
+		0);
+	if (!deduction_info.has_value()) {
+		return std::nullopt;
+	}
+
+	InlineVector<TemplateTypeArg, 4> ctor_template_args;
+	size_t arg_index = 0;
+	for (const auto& template_param_node : template_params) {
+		if (!template_param_node.is<TemplateParameterNode>()) {
+			return std::nullopt;
+		}
+		const auto& param = template_param_node.as<TemplateParameterNode>();
+		auto deduced_it = deduction_info->param_name_to_arg.find(param.nameHandle());
+		if (deduced_it != deduction_info->param_name_to_arg.end()) {
+			ctor_template_args.push_back(deduced_it->second);
+			continue;
+		}
+
+		while (arg_index < arg_types.size() &&
+			   deduction_info->pre_deduced_arg_indices.count(arg_index)) {
+			++arg_index;
+		}
+
+		if (param.kind() == TemplateParameterKind::Type && arg_index < arg_types.size()) {
+			ctor_template_args.push_back(TemplateTypeArg::makeType(
+				arg_types[arg_index].type_index().withCategory(arg_types[arg_index].type())));
+			++arg_index;
+			continue;
+		}
+
+		if (!tryAppendDefaultTemplateArg(param, template_params, ctor_template_args)) {
+			return std::nullopt;
+		}
+	}
+
+	LazyMemberFunctionInfo lazy_info;
+	lazy_info.identity.original_member_node = emplace_node<ConstructorDeclarationNode>(ctor_decl);
+	lazy_info.identity.template_owner_name = instantiated_struct_name;
+	lazy_info.identity.instantiated_owner_name = instantiated_struct_name;
+	lazy_info.identity.original_lookup_name = ctor_decl.name();
+	lazy_info.identity.kind = DeferredMemberIdentity::Kind::Constructor;
+	lazy_info.identity.is_const_method = false;
+
+	for (StringHandle outer_name : ctor_decl.outer_template_param_names()) {
+		Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_name), 0, 0, 0);
+		lazy_info.template_params.push_back(emplace_node<TemplateParameterNode>(outer_name, outer_token));
+	}
+	for (const auto& outer_arg : ctor_decl.outer_template_args()) {
+		const std::vector<ASTNode> no_params;
+		const std::vector<TemplateTypeArg> no_args;
+		lazy_info.template_args.push_back(materializeTemplateArg(
+			outer_arg,
+			no_params,
+			no_args,
+			nullptr));
+	}
+	for (const auto& template_param : template_params) {
+		lazy_info.template_params.push_back(template_param);
+	}
+	for (const auto& template_arg : ctor_template_args) {
+		lazy_info.template_args.push_back(template_arg);
+	}
+
+	return instantiateLazyMemberFunction(lazy_info);
+}
+
 // Instantiate member function template with explicit template arguments
 // Example: obj.convert<int>(42)
 std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit(

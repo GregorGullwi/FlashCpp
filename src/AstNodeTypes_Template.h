@@ -454,6 +454,15 @@ public:
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }
 
+	void set_template_parameters(const std::vector<ASTNode>& template_parameters) {
+		template_parameters_ = template_parameters;
+	}
+	void add_template_parameter(ASTNode template_parameter) {
+		template_parameters_.push_back(template_parameter);
+	}
+	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
+	bool has_template_parameters() const { return !template_parameters_.empty(); }
+
 	// Template body position: for member function template constructors whose bodies
 	// are deferred to instantiation time (two-phase lookup, C++ §13.9.2).
 	void set_template_body_position(SaveHandle handle) {
@@ -509,6 +518,7 @@ private:
 	bool is_constexpr_ = false;	// constexpr specifier
 	std::string_view mangled_name_;	// Pre-computed mangled name (points to ChunkedStringAllocator storage)
 	std::optional<ASTNode> requires_clause_;	 // C++20 trailing requires clause
+	std::vector<ASTNode> template_parameters_;
 	bool has_template_body_ = false;
 	SaveHandle template_body_position_handle_;  // Handle to saved position for template body
 	InlineVector<StringHandle, 4> outer_template_param_names_;

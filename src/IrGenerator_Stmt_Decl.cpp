@@ -408,6 +408,86 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		deferred_info.function_node = ASTNode(ctor);
 		deferred_member_functions_.push_back(std::move(deferred_info));
 	};
+	auto materialize_template_ctor = [this](const TypeInfo& type_info_ref, const std::vector<TypeSpecifierNode>& arg_types, const ConstructorDeclarationNode*& ctor) {
+		if (!parser_ || !type_info_ref.getStructInfo()) {
+			return;
+		}
+		if (ctor && ctor->has_template_parameters()) {
+			if (auto instantiated = parser_->try_instantiate_constructor_template(type_info_ref.name(), *ctor, arg_types);
+				instantiated.has_value() && instantiated->is<ConstructorDeclarationNode>()) {
+				ctor = &instantiated->as<ConstructorDeclarationNode>();
+			}
+			return;
+		}
+		if (ctor) {
+			return;
+		}
+		const StructTypeInfo& struct_info = *type_info_ref.getStructInfo();
+		const ConstructorDeclarationNode* instantiated_match = nullptr;
+		for (const auto& member_func : struct_info.member_functions) {
+			if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+				continue;
+			}
+			const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
+			if (!ctor_decl.has_template_parameters()) {
+				continue;
+			}
+			auto instantiated = parser_->try_instantiate_constructor_template(type_info_ref.name(), ctor_decl, arg_types);
+			if (!instantiated.has_value() || !instantiated->is<ConstructorDeclarationNode>()) {
+				continue;
+			}
+			const auto& concrete_ctor = instantiated->as<ConstructorDeclarationNode>();
+			bool matches = arg_types.size() <= concrete_ctor.parameter_nodes().size();
+			for (size_t i = 0; matches && i < arg_types.size(); ++i) {
+				if (!concrete_ctor.parameter_nodes()[i].is<DeclarationNode>()) {
+					matches = false;
+					break;
+				}
+				const auto& param_type = concrete_ctor.parameter_nodes()[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+				if (!can_convert_type(arg_types[i], param_type).is_valid) {
+					matches = false;
+				}
+			}
+			if (!matches) {
+				continue;
+			}
+			instantiated_match = &concrete_ctor;
+			break;
+		}
+		if (instantiated_match) {
+			ctor = instantiated_match;
+		}
+	};
+	auto is_unresolved_noop_ctor = [](const ConstructorDeclarationNode* ctor) -> bool {
+		if (!ctor || (!ctor->has_template_parameters() && !ctor->has_template_body_position()) ||
+			!ctor->member_initializers().empty() || !ctor->base_initializers().empty() ||
+			ctor->delegating_initializer().has_value()) {
+			return false;
+		}
+		if (ctor->get_definition().has_value()) {
+			if (ctor->get_definition()->is<BlockNode>() &&
+				ctor->get_definition()->as<BlockNode>().get_statements().empty()) {
+				return true;
+			}
+			return false;
+		}
+		for (const auto& param : ctor->parameter_nodes()) {
+			if (!param.is<DeclarationNode>()) {
+				continue;
+			}
+			const auto& type_spec = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			if ((type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::Template) &&
+				type_spec.type_index().is_valid()) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+					std::string_view type_name = StringTable::getStringView(type_info->name());
+					if (!type_name.empty() && type_name.front() == '_') {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	};
 
 		// Check if this is a global variable (declared at global scope)
 	bool is_global = (symbol_table.get_current_scope_type() == ScopeType::Global);
@@ -1498,9 +1578,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											if (resolution.is_ambiguous) {
 												throw CompileError("Ambiguous constructor call");
 											}
+											materialize_template_ctor(*type_info, arg_types, matching_ctor);
 											if (resolution.has_match) {
 												has_matching_constructor = true;
 												matching_ctor = resolution.selected_overload;
+												materialize_template_ctor(*type_info, arg_types, matching_ctor);
 											}
 										}
 									}
@@ -1516,6 +1598,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 							if (has_matching_constructor) {
 								prepare_nested_template_ctor(*type_info, matching_ctor);
+								if (is_unresolved_noop_ctor(matching_ctor)) {
+									for (const ASTNode& init_expr : initializers) {
+										if (init_expr.is<ExpressionNode>()) {
+											visitExpressionNode(init_expr.as<ExpressionNode>());
+										}
+									}
+									return;
+								}
 
 								// Generate constructor call with parameters from initializer list
 								ConstructorCallOp ctor_op;
@@ -2233,6 +2323,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											throw CompileError("Ambiguous constructor call");
 										}
 										matching_ctor = resolution.selected_overload;
+										materialize_template_ctor(*type_info, arg_types, matching_ctor);
 									}
 
 									if (!matching_ctor) {
@@ -2311,6 +2402,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								reportNoMatchingConstructor(type_info->name(), "direct initialization", decl.identifier_token());
 							}
 							prepare_nested_template_ctor(*type_info, matching_ctor);
+							if (is_unresolved_noop_ctor(matching_ctor)) {
+								direct_ctor->arguments().visit([&](ASTNode argument) {
+									if (argument.is<ExpressionNode>()) {
+										visitExpressionNode(argument.as<ExpressionNode>());
+									}
+								});
+								return;
+							}
 
 							// Create constructor call with the declared variable as the object
 							ConstructorCallOp ctor_op;

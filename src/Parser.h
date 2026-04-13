@@ -1388,6 +1388,7 @@ public:
 		}
 	}
 	std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
+	std::optional<ASTNode> try_instantiate_constructor_template(StringHandle instantiated_struct_name, const ConstructorDeclarationNode& ctor_decl, const std::vector<TypeSpecifierNode>& arg_types);
 	bool instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name);  // NEW: Instantiate lazy static member on-demand
 private:
 	bool instantiateLazyClassToPhase(StringHandle instantiated_name, ClassInstantiationPhase target_phase);	// Phase 2: Instantiate lazy class to specified phase

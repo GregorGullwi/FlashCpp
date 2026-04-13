@@ -7142,13 +7142,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// because they're needed for object creation
 
 			// EAGER INSTANTIATION PATH (original code)
-			if (ctor_decl.get_definition().has_value()) {
+			if (ctor_decl.get_definition().has_value() || ctor_decl.has_template_body_position() || ctor_decl.has_template_parameters()) {
 				try {
 					// Create a new constructor declaration with substituted body
 					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 						instantiated_name,
 						instantiated_name);
 					setOuterTemplateBindingsFromParams(new_ctor_ref, template_params, template_args_to_use);
+					new_ctor_ref.set_template_parameters(ctor_decl.template_parameters());
+					if (ctor_decl.has_template_body_position()) {
+						new_ctor_ref.set_template_body_position(ctor_decl.template_body_position());
+					}
 
 					// Ensure template_param_order is populated (used by ExpressionSubstitutor later)
 					if (template_param_order.empty()) {
@@ -7164,17 +7168,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					size_t saved_pack_info = pack_param_info_.size();
 					substituteAndCopyParams(ctor_decl.parameter_nodes(), new_ctor_ref, template_params, template_args_to_use);
 
-					// Substitute body AFTER parameters (pack_param_info_ may now be populated)
-					ASTNode substituted_body = substituteTemplateParameters(
-						*ctor_decl.get_definition(),
-						template_params,
-						template_args_to_use);
+					std::optional<ASTNode> substituted_body;
+					if (ctor_decl.get_definition().has_value()) {
+						substituted_body = substituteTemplateParameters(
+							*ctor_decl.get_definition(),
+							template_params,
+							template_args_to_use);
+					}
 
 					// Copy all initializers (member, base, delegating) with template parameter substitution
 					substituteAndCopyInitializers(ctor_decl, new_ctor_ref, template_params, template_args_to_use);
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
-					new_ctor_ref.set_definition(substituted_body);
+					if (substituted_body.has_value()) {
+						new_ctor_ref.set_definition(*substituted_body);
+					}
 					pack_param_info_.resize(saved_pack_info);
 
 					// Add the substituted constructor to the instantiated struct AST node
