@@ -2330,6 +2330,15 @@ EvalResult Evaluator::evaluate_new_expression(
 		auto arg_result = eval_arg(ctor_args[0]);
 		if (!arg_result.success())
 			return arg_result;
+		if (new_expr.is_brace_init()) {
+			TypeCategory source_category = BuiltinListInitNarrowing::effectiveScalarCategory(arg_result);
+			TypeCategory target_category = BuiltinListInitNarrowing::effectiveScalarCategory(type_spec);
+			if (BuiltinListInitNarrowing::isNarrowingConversion(source_category, target_category, arg_result)) {
+				return EvalResult::error(
+					"Narrowing conversion in direct-list-initialization",
+					EvalErrorType::NotConstantExpression);
+			}
+		}
 		// Apply the type conversion to the evaluated value.
 		switch (type_spec.category()) {
 		case TypeCategory::Bool:

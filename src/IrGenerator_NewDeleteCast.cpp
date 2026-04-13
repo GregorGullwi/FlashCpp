@@ -1,5 +1,31 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "BuiltinListInitNarrowing.h"
+
+namespace {
+
+[[noreturn]] void throwNarrowingNewBraceInitCompileError(
+	TypeCategory source,
+	TypeCategory target) {
+	std::string_view source_name = getTypeName(source);
+	if (source_name.empty()) {
+		source_name = "expression";
+	}
+	std::string_view target_name = getTypeName(target);
+	if (target_name.empty()) {
+		target_name = "target type";
+	}
+	throw CompileError(std::string(
+		StringBuilder()
+			.append("Narrowing conversion from '")
+			.append(source_name)
+			.append("' to '")
+			.append(target_name)
+			.append("' in direct-list-initialization")
+			.commit()));
+}
+
+} // namespace
 
 ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 	if (!newExpr.type_node().is<TypeSpecifierNode>()) {
@@ -36,6 +62,30 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		}
 
 		ExprResult init_operands = visitExpressionNode(ctor_args[0].as<ExpressionNode>());
+		if (newExpr.is_brace_init()) {
+			std::optional<ConstExpr::EvalResult> constant_value;
+			ConstExpr::EvaluationContext ctx(symbol_table);
+			if (global_symbol_table_) {
+				ctx.global_symbols = global_symbol_table_;
+			}
+			if (current_struct_name_.isValid()) {
+				auto struct_type_it = getTypesByNameMap().find(current_struct_name_);
+				if (struct_type_it != getTypesByNameMap().end()) {
+					const TypeInfo* struct_type_info = struct_type_it->second;
+					ctx.struct_info = struct_type_info->getStructInfo();
+				}
+			}
+			if (ConstExpr::EvalResult eval_result = ConstExpr::Evaluator::evaluate(ctor_args[0], ctx);
+				eval_result.success()) {
+				constant_value = std::move(eval_result);
+			}
+
+			TypeCategory source_category = BuiltinListInitNarrowing::effectiveScalarCategory(init_operands.category(), init_operands.type_index);
+			TypeCategory target_category = BuiltinListInitNarrowing::effectiveScalarCategory(type_spec.category(), type_spec.type_index());
+			if (BuiltinListInitNarrowing::isNarrowingConversion(source_category, target_category, constant_value)) {
+				throwNarrowingNewBraceInitCompileError(source_category, target_category);
+			}
+		}
 		TypedValue init_value = toTypedValue(init_operands);
 		emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, pointer_var, Token());
 	};
