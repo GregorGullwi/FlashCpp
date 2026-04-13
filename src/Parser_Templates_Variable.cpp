@@ -119,38 +119,44 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 			skip_noop_gnu_qualifiers();
 		}
 
-		if (peek().is_identifier()) {
+		if (peek().is_identifier() || peek() == "::"_tok) {
 			StringBuilder raw_target_name_builder;
-			raw_target_name_builder.append(peek_info().value());
-			advance();
-
-			while (peek() == "::"_tok) {
-				advance();
-				if (peek() == "template"_tok) {
-					advance();
-				}
-				if (!peek().is_identifier()) {
-					break;
-				}
-				raw_target_name_builder.append("::"sv).append(peek_info().value());
+			if (peek() == "::"_tok) {
+				raw_target_name_builder.append("::"sv);
 				advance();
 			}
+			if (peek().is_identifier()) {
+				raw_target_name_builder.append(peek_info().value());
+				advance();
 
-			std::string_view raw_target_name = raw_target_name_builder.commit();
-			if (peek() == "<"_tok) {
-				auto raw_alias_args =
-					parse_explicit_template_arguments(&target_template_arg_nodes);
-				if (raw_alias_args.has_value() &&
-					gTemplateRegistry.lookup_alias_template(raw_target_name).has_value()) {
-					has_deferred_target = true;
-					target_template_name =
-						StringTable::getOrInternStringHandle(raw_target_name);
-					FLASH_LOG_FORMAT(
-						Parser,
-						Debug,
-						"Member template alias '{}' uses deferred alias target '{}'",
-						alias_name,
-						raw_target_name);
+				while (peek() == "::"_tok) {
+					advance();
+					if (peek() == "template"_tok) {
+						advance();
+					}
+					if (!peek().is_identifier()) {
+						break;
+					}
+					raw_target_name_builder.append("::"sv).append(peek_info().value());
+					advance();
+				}
+
+				std::string_view raw_target_name = raw_target_name_builder.commit();
+				if (peek() == "<"_tok) {
+					auto raw_alias_args =
+						parse_explicit_template_arguments(&target_template_arg_nodes);
+					if (raw_alias_args.has_value() &&
+						gTemplateRegistry.lookup_alias_template(raw_target_name).has_value()) {
+						has_deferred_target = true;
+						target_template_name =
+							StringTable::getOrInternStringHandle(raw_target_name);
+						FLASH_LOG_FORMAT(
+							Parser,
+							Debug,
+							"Member template alias '{}' uses deferred alias target '{}'",
+							alias_name,
+							raw_target_name);
+					}
 				}
 			}
 		}

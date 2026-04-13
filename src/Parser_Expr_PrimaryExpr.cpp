@@ -2424,7 +2424,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							concrete_owner_name = StringTable::getStringView(
 								materialized_owner.resolved_type_info->name());
 						}
-						NamespaceHandle full_ns_handle{};
+						NamespaceHandle full_ns_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
 						size_t component_start = 0;
 						while (component_start < concrete_owner_name.size()) {
 							size_t component_end = concrete_owner_name.find("::", component_start);
