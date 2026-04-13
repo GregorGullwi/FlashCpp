@@ -1415,6 +1415,7 @@ public:
 	void set_array(bool is_array, std::optional<size_t> array_size = std::nullopt) {
 		is_array_ = is_array;
 		array_dimensions_.clear();
+		has_unsized_outer_array_dimension_ = false;
 		if (array_size.has_value()) {
 			array_dimensions_.push_back(*array_size);
 		}
@@ -1422,11 +1423,20 @@ public:
 	// Multidimensional array support
 	void add_array_dimension(size_t size) {
 		is_array_ = true;
+		has_unsized_outer_array_dimension_ = false;
 		array_dimensions_.push_back(size);
 	}
 	void set_array_dimensions(const std::vector<size_t>& dims) {
 		is_array_ = !dims.empty();
+		has_unsized_outer_array_dimension_ = false;
 		array_dimensions_ = dims;
+	}
+	bool has_unsized_outer_array_dimension() const { return has_unsized_outer_array_dimension_; }
+	void set_unsized_outer_array_dimension(bool has_unsized_outer_array_dimension) {
+		has_unsized_outer_array_dimension_ = has_unsized_outer_array_dimension;
+		if (has_unsized_outer_array_dimension_) {
+			is_array_ = true;
+		}
 	}
 	// Returns the first (outermost) dimension size for backwards compatibility
 	std::optional<size_t> array_size() const {
@@ -1457,6 +1467,7 @@ public:
 		reference_qualifier_ = other.reference_qualifier_;
 		is_array_ = other.is_array_;
 		array_dimensions_ = other.array_dimensions_;
+		has_unsized_outer_array_dimension_ = other.has_unsized_outer_array_dimension_;
 		function_signature_ = other.function_signature_;
 		// Note: is_pack_expansion_ is NOT copied - it's context-specific during parsing
 		// and shouldn't be propagated during type substitution in template instantiation
@@ -1526,6 +1537,7 @@ private:
 	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;	// Reference qualifier (None, LValue, or RValue)
 	bool is_array_ = false;		// True if this is an array type (T[N] or T[])
 	std::vector<size_t> array_dimensions_;  // Array dimensions (e.g., int[2][3][4] -> {2, 3, 4})
+	bool has_unsized_outer_array_dimension_ = false;	// True for parser-only shapes like T[][N]
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
 	bool is_pack_expansion_ = false;	 // True if this type is followed by ... (pack expansion)
 	std::optional<StringHandle> member_class_name_;	// For pointer-to-member types (int Class::*)

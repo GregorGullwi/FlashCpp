@@ -73,6 +73,21 @@ std::optional<size_t> tryGetConstexprArrayElementCount(
 	const DeclarationNode& decl,
 	const ASTNode& symbol,
 	EvaluationContext& context) {
+	if (decl.type_node().is<TypeSpecifierNode>()) {
+		const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		if (type_spec.is_array() && !type_spec.has_unsized_outer_array_dimension() &&
+			!type_spec.array_dimensions().empty()) {
+			size_t total_count = 1;
+			for (size_t dim_count : type_spec.array_dimensions()) {
+				if (dim_count == 0 || dim_count > std::numeric_limits<size_t>::max() / total_count) {
+					return std::nullopt;
+				}
+				total_count *= dim_count;
+			}
+			return total_count;
+		}
+	}
+
 	const auto& dims = decl.array_dimensions();
 	if (!dims.empty()) {
 		size_t total_count = 1;
@@ -1505,19 +1520,17 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 									size_t element_size = get_typespec_size_bytes(element_type_spec);
 
 									// For multidimensional arrays, calculate sub-array size
-									const auto& dims = decl->array_dimensions();
+									const auto& dims = array_type_spec.array_dimensions();
 									if (dims.size() > 1) {
 										// Calculate size of sub-array: element_size * product of dims[1..]
-										long long sub_array_count = 1;
+										size_t sub_array_count = 1;
 										bool all_evaluated = true;
 										for (size_t i = 1; i < dims.size(); ++i) {
-											auto eval_result = evaluate(dims[i], context);
-											if (eval_result.success() && eval_result.as_int() > 0) {
-												sub_array_count *= eval_result.as_int();
-											} else {
+											if (dims[i] == 0 || dims[i] > std::numeric_limits<size_t>::max() / sub_array_count) {
 												all_evaluated = false;
 												break;
 											}
+											sub_array_count *= dims[i];
 										}
 										if (all_evaluated && element_size > 0) {
 											return EvalResult::from_int(static_cast<long long>(element_size * sub_array_count));

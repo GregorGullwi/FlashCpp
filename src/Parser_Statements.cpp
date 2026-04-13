@@ -1048,6 +1048,30 @@ void Parser::prepareArrayTypeForBraceInitializer(const DeclarationNode& decl_nod
 
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 	const auto& decl_dims = decl_node.array_dimensions();
+	if (decl_node.is_unsized_array()) {
+		if (decl_dims.empty()) {
+			type_specifier.set_array(true, std::nullopt);
+			return;
+		}
+
+		std::vector<size_t> dim_sizes;
+		dim_sizes.reserve(decl_dims.size());
+		bool all_evaluated = true;
+		for (const auto& dim_expr : decl_dims) {
+			auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
+			if (!eval_result.success()) {
+				all_evaluated = false;
+				break;
+			}
+			dim_sizes.push_back(static_cast<size_t>(eval_result.as_int()));
+		}
+		if (all_evaluated) {
+			type_specifier.set_array_dimensions(dim_sizes);
+			type_specifier.set_unsized_outer_array_dimension(true);
+		}
+		return;
+	}
+
 	if (decl_dims.size() > 1) {
 		std::vector<size_t> dim_sizes;
 		dim_sizes.reserve(decl_dims.size());
@@ -1085,7 +1109,56 @@ void Parser::inferUnsizedArraySizeFromInitializer(const DeclarationNode& decl_no
 	}
 
 	const InitializerListNode& init_list = initializer->as<InitializerListNode>();
-	type_specifier.set_array(true, init_list.initializers().size());
+	if (!type_specifier.has_unsized_outer_array_dimension()) {
+		type_specifier.set_array(true, init_list.initializers().size());
+		return;
+	}
+
+	const std::vector<size_t> trailing_dims = type_specifier.array_dimensions();
+	size_t outer_size = 0;
+	if (trailing_dims.empty()) {
+		outer_size = init_list.initializers().size();
+	} else {
+		size_t subarray_flat_count = 1;
+		bool valid_subarray_size = true;
+		for (size_t dim_size : trailing_dims) {
+			if (dim_size == 0 || dim_size > std::numeric_limits<size_t>::max() / subarray_flat_count) {
+				valid_subarray_size = false;
+				break;
+			}
+			subarray_flat_count *= dim_size;
+		}
+
+		if (!valid_subarray_size || subarray_flat_count == 0) {
+			outer_size = init_list.initializers().size();
+		} else {
+			size_t pending_scalar_count = 0;
+			auto flush_scalar_run = [&]() {
+				if (pending_scalar_count == 0) {
+					return;
+				}
+				outer_size += (pending_scalar_count + subarray_flat_count - 1) / subarray_flat_count;
+				pending_scalar_count = 0;
+			};
+
+			for (const auto& element_init : init_list.initializers()) {
+				if (element_init.is<InitializerListNode>()) {
+					flush_scalar_run();
+					outer_size++;
+				} else {
+					pending_scalar_count++;
+				}
+			}
+
+			flush_scalar_run();
+		}
+	}
+
+	std::vector<size_t> inferred_dims;
+	inferred_dims.reserve(trailing_dims.size() + 1);
+	inferred_dims.push_back(outer_size);
+	inferred_dims.insert(inferred_dims.end(), trailing_dims.begin(), trailing_dims.end());
+	type_specifier.set_array_dimensions(inferred_dims);
 }
 
 // Phase 3 Consolidation: Parse copy initialization: TypeCategory var = expr or TypeCategory var = {args}
@@ -1337,7 +1410,11 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// Handle array brace initialization
 	if (type_specifier.is_array()) {
 		// Get the array size if specified
-		std::optional<size_t> array_size = type_specifier.array_size();
+		const bool has_unsized_outer_dimension = type_specifier.has_unsized_outer_array_dimension();
+		std::optional<size_t> array_size;
+		if (!has_unsized_outer_dimension) {
+			array_size = type_specifier.array_size();
+		}
 		size_t element_count = 0;
 		// Once any scalar (non-'{') element has been parsed in a multi-dim list the list is in
 		// fully-flat brace-elision mode. Locking this flag prevents the per-element limit from
@@ -1348,7 +1425,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		// For multi-dimensional arrays, compute the total flattened element count to support
 		// C++20 brace-elision (e.g., int[2][3] = {1,2,3,4,5,6} distributes scalars across rows).
 		std::optional<size_t> flat_total_size;
-		if (type_specifier.array_dimension_count() > 1 && array_size.has_value()) {
+		if (!has_unsized_outer_dimension && type_specifier.array_dimension_count() > 1 && array_size.has_value()) {
 			size_t total = 1;
 			for (size_t d : type_specifier.array_dimensions())
 				total *= d;
@@ -1360,7 +1437,9 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		// array type (int[3]), not a plain scalar.  For single-dimension arrays, clear the
 		// array flag so nested {…} is parsed as a struct (aggregate) initializer.
 		TypeSpecifierNode element_type_spec = type_specifier;
-		if (type_specifier.array_dimension_count() > 1) {
+		if (has_unsized_outer_dimension) {
+			element_type_spec.set_unsized_outer_array_dimension(false);
+		} else if (type_specifier.array_dimension_count() > 1) {
 			// Multi-dimensional: element type has the remaining dimensions
 			std::vector<size_t> elem_dims(
 				type_specifier.array_dimensions().begin() + 1,
