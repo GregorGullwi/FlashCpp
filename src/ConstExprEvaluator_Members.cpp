@@ -5691,7 +5691,7 @@ EvalResult Evaluator::materialize_array_value(
 		if (element_result.object_type_index.is_valid() || element_result.is_array ||
 			element_result.callable_var_decl != nullptr || element_result.callable_lambda != nullptr) {
 			all_scalar_elements = false;
-		} else {
+		} else if (std::get_if<double>(&element_result.value) == nullptr) {
 			array_values.push_back(element_result.as_int());
 		}
 
@@ -5763,11 +5763,8 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 				if (!base_result.array_values.empty() && !isFloatingPointType(elem_type)) {
 					base_result.array_values.push_back(0LL);
 				}
-				// Note: for floating-point arrays, array_values is NOT extended here because
-				// materialize_array_value already populates it via as_int() truncation for float
-				// elements, so its size may be less than array_elements.size() after zero-fill.
-				// This is a pre-existing inconsistency; array subscript access checks
-				// array_elements first and is unaffected.
+				// Floating-point arrays intentionally keep array_values empty because the
+				// legacy int64_t cache cannot preserve IEEE-754 element values.
 				base_result.array_elements.push_back(std::move(zero_elem));
 			}
 		}
