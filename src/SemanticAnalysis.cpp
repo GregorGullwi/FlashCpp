@@ -2186,8 +2186,6 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				normalizeExpression(e.object(), ctx);
 				normalizeExpression(e.member_pointer(), ctx);
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
-				tryAnnotateCallArgConversions(e);
-				tryResolveCallableOperator(e);
 				if (e.has_receiver()) {
 					normalizeExpression(e.receiver(), ctx);
 				}
@@ -2197,6 +2195,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				for (const auto& arg : e.arguments()) {
 					normalizeExpression(arg, ctx);
 				}
+				tryResolveCallableOperator(e);
+				tryAnnotateCallArgConversions(e);
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				tryResolveSubscriptOperator(e);
 				// If sema resolved this subscript to operator[], annotate the index
@@ -3080,8 +3080,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					// handles full overload resolution; here we only need the
 					// result type for expressions like &obj.method or simple
 					// non-call member-function references.
-					auto [member_function, owner_struct] = struct_info->findMemberFunctionRecursive(member_name_handle);
-					(void)owner_struct;
+					auto [member_function, function_owner_struct] = struct_info->findMemberFunctionRecursive(member_name_handle);
+					(void)function_owner_struct;
 					if (member_function && member_function->function_decl.has_value() &&
 						member_function->function_decl.is<FunctionDeclarationNode>()) {
 						const auto& func = member_function->function_decl.as<FunctionDeclarationNode>();
@@ -3448,19 +3448,36 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
-				if (const FunctionDeclarationNode* resolved_callable = getResolvedOpCall(&e)) {
+				auto infer_resolved_call_return_type = [this](const FunctionDeclarationNode* resolved_callable) -> CanonicalTypeId {
+					if (!resolved_callable) {
+						return {};
+					}
 					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
 					if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
 						return canonicalizeType(resolved_return_type.as<TypeSpecifierNode>());
 					}
+					return {};
+				};
+
+				if (const CanonicalTypeId resolved_type_id = infer_resolved_call_return_type(getResolvedOpCall(&e))) {
+					return resolved_type_id;
+				}
+				if (const CanonicalTypeId resolved_type_id = infer_resolved_call_return_type(getResolvedDirectCall(&e))) {
+					return resolved_type_id;
 				}
 
 				tryResolveCallableOperator(e);
-				if (const FunctionDeclarationNode* resolved_callable = getResolvedOpCall(&e)) {
-					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
-					if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
-						return canonicalizeType(resolved_return_type.as<TypeSpecifierNode>());
-					}
+				if (const CanonicalTypeId resolved_type_id = infer_resolved_call_return_type(getResolvedOpCall(&e))) {
+					return resolved_type_id;
+				}
+				if (const CanonicalTypeId resolved_type_id = infer_resolved_call_return_type(getResolvedDirectCall(&e))) {
+					return resolved_type_id;
+				}
+
+				const CallInfo call_info = CallInfo::from(e);
+				if (const CanonicalTypeId resolved_type_id =
+						infer_resolved_call_return_type(resolveCallArgAnnotationTarget(call_info, &e))) {
+					return resolved_type_id;
 				}
 
 				const DeclarationNode& decl = e.callee().declaration();
@@ -4528,8 +4545,9 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 
 	const CanonicalTypeId param_type_id = canonicalizeType(param_type);
 	const CanonicalTypeId arg_type_id = inferExpressionType(arg);
-	if (arg_type_id && canonical_types_match(arg_type_id, param_type_id))
+	if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) {
 		return;
+	}
 
 	if (!tryAnnotateCopyInitConvertingConstructor(arg, param_type_id,
 												  context_description, arg_type_id)) {
@@ -4584,16 +4602,20 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 														   const DeclarationNode& decl,
 														   const ChunkedVector<ASTNode>& arguments,
 														   const FunctionDeclarationNode*& func_decl) {
-	auto searchStructMembers = [&](const StructTypeInfo* si) -> bool {
+	auto searchStructMembers = [&](const StructTypeInfo* si, const auto& self) -> bool {
 		if (!si)
 			return false;
 		const std::string_view func_name = decl.identifier_token().value();
+		bool local_has_name_match = false;
 		for (const auto& mf : si->member_functions) {
 			if (!mf.function_decl.has_value())
 				continue;
 			if (!mf.function_decl.is<FunctionDeclarationNode>())
 				continue;
 			const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
+			if (candidate.decl_node().identifier_token().value() == func_name) {
+				local_has_name_match = true;
+			}
 			if (&candidate.decl_node() == &decl) {
 				func_decl = &candidate;
 				return true;
@@ -4635,6 +4657,17 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 			func_decl = name_match;
 			return true;
 		}
+		if (local_has_name_match) {
+			return false;
+		}
+
+		for (const auto& base_spec : si->base_classes) {
+			if (const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_spec.type_index)) {
+				if (self(base_struct_info, self)) {
+					return true;
+				}
+			}
+		}
 		return false;
 	};
 
@@ -4642,13 +4675,13 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		if (!type_info) {
 			return false;
 		}
-		if (searchStructMembers(type_info->getStructInfo())) {
+		if (searchStructMembers(type_info->getStructInfo(), searchStructMembers)) {
 			return true;
 		}
 		if (type_info->isTemplateInstantiation()) {
 			auto pattern_it = getTypesByNameMap().find(type_info->baseTemplateName());
 			if (pattern_it != getTypesByNameMap().end() &&
-				searchStructMembers(pattern_it->second->getStructInfo())) {
+				searchStructMembers(pattern_it->second->getStructInfo(), searchStructMembers)) {
 				return true;
 			}
 		}
@@ -4695,6 +4728,34 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 
 		return searchHierarchy(searchHierarchy, current_type_info);
 	};
+
+	auto searchReceiverHierarchy = [&]() -> bool {
+		if (!call_info.has_receiver || !call_info.receiver.has_value()) {
+			return false;
+		}
+
+		const CanonicalTypeId receiver_type_id = inferExpressionType(call_info.receiver);
+		if (!receiver_type_id) {
+			return false;
+		}
+
+		const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
+		if (receiver_desc.category() != TypeCategory::Struct &&
+			receiver_desc.category() != TypeCategory::UserDefined) {
+			return false;
+		}
+
+		const StructTypeInfo* receiver_struct_info = tryGetStructTypeInfo(receiver_desc.type_index);
+		if (!receiver_struct_info) {
+			return false;
+		}
+
+		return searchStructMembers(receiver_struct_info, searchStructMembers);
+	};
+
+	if (searchReceiverHierarchy()) {
+		return true;
+	}
 
 	if (!call_info.qualified_name.isValid()) {
 		return searchMemberContextHierarchy();

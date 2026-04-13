@@ -1,25 +1,25 @@
-// Test that sema can infer the type of an inherited non-static member function
-// accessed through a derived-class object. This exercises the sema-owned
-// MemberAccessNode typing path before call-argument conversion annotation.
+// Test that sema can recover an inherited non-static member function through a
+// derived-class receiver and keep the resulting call expression strongly typed
+// enough for a follow-on member access.
+
+struct Box {
+	int value;
+};
 
 struct Base {
-	short value;
-
-	short getValue() const { return value; }
+	Box getValue() const {
+		Box box;
+		box.value = 42;
+		return box;
+	}
 };
 
 struct Derived : Base {
 	int marker;
 };
 
-int takeInt(int value) {
-	return value + 1;
-}
-
 int main() {
 	Derived d;
-	d.value = 41;
 	d.marker = 0;
-	int result = takeInt(d.getValue());
-	return result - 42;
+	return d.getValue().value - 42;
 }
