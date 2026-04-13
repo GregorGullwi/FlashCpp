@@ -1088,6 +1088,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Mixed-type arithmetic following C++ usual arithmetic conversions: float/double vs any → double path; unsigned long long vs signed → unsigned path; bool/char/short/int/long/long long → signed path
 - ✅ Unsigned arithmetic and initialization/binding into unsigned targets wrap at the declared type's width (e.g. `unsigned int` wraps at 32 bits, `unsigned long long` wraps at 64 bits, `unsigned char x = 300` stores `44`, and binding `300` to an `unsigned char` constexpr constructor parameter also stores `44`) when the target type is known
 - ✅ Increment/decrement operators (`++` / `--`) correctly wrap at the declared unsigned type's width (e.g. `unsigned int x = UINT_MAX; x++;` wraps to `0`; `unsigned char x = 255; ++x;` wraps to `0`)
+- ✅ Increment/decrement operators now also work on bound constexpr subscript/member lvalues such as `++arr[i]`, `arr[i]--`, and nested forms that resolve through local bindings
 - ✅ Shift-count validation for arithmetic-produced left operands: e.g. `(1u + 1u) << 40` is correctly rejected because the result of `1u + 1u` is `unsigned int` (32 bits) and 40 ≥ 32
 - ✅ Member array brace-init in constructor initializer lists (e.g., `arr{a, b, c}` for `int arr[3]`) is correctly materialized as an array value in constexpr evaluation
 - ✅ C++ aggregate-init zero-fill for partially-specified and single-element array brace-init: `arr{val}` sets `arr[0]=val` and zero-fills the rest; `arr{1,2,3}` for `int arr[5]` zero-fills elements 3 and 4

@@ -574,6 +574,75 @@ struct BoundWriteTarget {
 	std::string_view root_name;
 };
 
+std::optional<BoundWriteTarget> resolveBoundWriteTarget(
+	const ASTNode& expr,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	EvalResult (*evaluate_index)(
+		const ASTNode&,
+		const std::unordered_map<std::string_view, EvalResult>&,
+		EvaluationContext&),
+	std::optional<EvalResult>& resolve_error) {
+	if (const IdentifierNode* identifier = tryGetIdentifier(expr)) {
+		if (EvalResult* binding = findMutableBindingValue(identifier->name(), bindings, context)) {
+			return BoundWriteTarget{binding, identifier->name()};
+		}
+		return std::nullopt;
+	}
+
+	if (const auto* member_access = tryGetNode<MemberAccessNode>(expr)) {
+		if (member_access->is_arrow()) {
+			return std::nullopt;
+		}
+
+		if (const IdentifierNode* object_id = tryGetIdentifier(member_access->object());
+			object_id && object_id->name() == "this") {
+			if (EvalResult* binding = findMutableBindingValue(member_access->member_name(), bindings, context)) {
+				return BoundWriteTarget{binding, member_access->member_name()};
+			}
+			return std::nullopt;
+		}
+
+		std::optional<BoundWriteTarget> base_target = resolveBoundWriteTarget(
+			member_access->object(), bindings, context, evaluate_index, resolve_error);
+		if (!base_target.has_value() || base_target->slot == nullptr) {
+			return std::nullopt;
+		}
+
+		auto member_it = base_target->slot->object_member_bindings.find(member_access->member_name());
+		if (member_it == base_target->slot->object_member_bindings.end()) {
+			return std::nullopt;
+		}
+		return BoundWriteTarget{&member_it->second, base_target->root_name};
+	}
+
+	if (const auto* subscript = tryGetNode<ArraySubscriptNode>(expr)) {
+		std::optional<BoundWriteTarget> base_target = resolveBoundWriteTarget(
+			subscript->array_expr(), bindings, context, evaluate_index, resolve_error);
+		if (!base_target.has_value() || base_target->slot == nullptr || !base_target->slot->is_array) {
+			return std::nullopt;
+		}
+
+		EvalResult index_result = evaluate_index(subscript->index_expr(), bindings, context);
+		if (!index_result.success()) {
+			resolve_error = index_result;
+			return std::nullopt;
+		}
+
+		long long index = index_result.as_int();
+		if (index < 0 || static_cast<size_t>(index) >= base_target->slot->array_elements.size()) {
+			resolve_error = EvalResult::error("Array index out of bounds in constexpr lvalue write");
+			return std::nullopt;
+		}
+
+		return BoundWriteTarget{
+			&base_target->slot->array_elements[static_cast<size_t>(index)],
+			base_target->root_name};
+	}
+
+	return std::nullopt;
+}
+
 	// Extract the variable/member name for the address-of + array-subscript pattern.
 	// Handles:  &data[i]       → "data" (plain identifier)
 	//           &this->data[i] → "data" (member access via this)
@@ -599,66 +668,8 @@ EvalResult Evaluator::write_value_to_bound_lvalue(
 	std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context) {
 	std::optional<EvalResult> resolve_error;
-	auto resolve_target = [&](const auto& self, const ASTNode& expr) -> std::optional<BoundWriteTarget> {
-		if (const IdentifierNode* identifier = tryGetIdentifier(expr)) {
-			if (EvalResult* binding = findMutableBindingValue(identifier->name(), bindings, context)) {
-				return BoundWriteTarget{binding, identifier->name()};
-			}
-			return std::nullopt;
-		}
-
-		if (const auto* member_access = tryGetNode<MemberAccessNode>(expr)) {
-			if (member_access->is_arrow()) {
-				return std::nullopt;
-			}
-
-			if (const IdentifierNode* object_id = tryGetIdentifier(member_access->object());
-				object_id && object_id->name() == "this") {
-				if (EvalResult* binding = findMutableBindingValue(member_access->member_name(), bindings, context)) {
-					return BoundWriteTarget{binding, member_access->member_name()};
-				}
-				return std::nullopt;
-			}
-
-			std::optional<BoundWriteTarget> base_target = self(self, member_access->object());
-			if (!base_target.has_value() || base_target->slot == nullptr) {
-				return std::nullopt;
-			}
-
-			auto member_it = base_target->slot->object_member_bindings.find(member_access->member_name());
-			if (member_it == base_target->slot->object_member_bindings.end()) {
-				return std::nullopt;
-			}
-			return BoundWriteTarget{&member_it->second, base_target->root_name};
-		}
-
-		if (const auto* subscript = tryGetNode<ArraySubscriptNode>(expr)) {
-			std::optional<BoundWriteTarget> base_target = self(self, subscript->array_expr());
-			if (!base_target.has_value() || base_target->slot == nullptr || !base_target->slot->is_array) {
-				return std::nullopt;
-			}
-
-			EvalResult index_result = evaluate_expression_with_bindings_const(subscript->index_expr(), bindings, context);
-			if (!index_result.success()) {
-				resolve_error = index_result;
-				return std::nullopt;
-			}
-
-			long long index = index_result.as_int();
-			if (index < 0 || static_cast<size_t>(index) >= base_target->slot->array_elements.size()) {
-				resolve_error = EvalResult::error("Array index out of bounds in by-reference init-capture writeback");
-				return std::nullopt;
-			}
-
-			return BoundWriteTarget{
-				&base_target->slot->array_elements[static_cast<size_t>(index)],
-				base_target->root_name};
-		}
-
-		return std::nullopt;
-	};
-
-	std::optional<BoundWriteTarget> target = resolve_target(resolve_target, target_expr);
+	std::optional<BoundWriteTarget> target = resolveBoundWriteTarget(
+		target_expr, bindings, context, evaluate_expression_with_bindings_const, resolve_error);
 	if (!target.has_value() || target->slot == nullptr) {
 		if (resolve_error.has_value()) {
 			return *resolve_error;
@@ -2007,78 +2018,42 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		// Handle increment and decrement operators (they modify bindings)
 		if (op == "++" || op == "--") {
 			const ASTNode& operand = unary_op.get_operand();
-			if (operand.is<ExpressionNode>()) {
-				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
+			std::optional<EvalResult> resolve_error;
+			if (std::optional<BoundWriteTarget> target = resolveBoundWriteTarget(
+					operand, bindings, context, evaluate_expression_with_bindings_const, resolve_error);
+				target.has_value() && target->slot != nullptr) {
+				EvalResult current = *target->slot;
+				if (current.is_indeterminate) {
+					return EvalResult::error(
+						"Read of indeterminate value in constant expression "
+						"(object was default-initialized without an initializer)");
+				}
 
-				// Resolve the target: either a plain identifier or a this->member access.
-				std::string_view var_name;
-				bool is_member_binding = false;
-				if (const auto* id_ptr = std::get_if<IdentifierNode>(&operand_expr)) {
-					var_name = id_ptr->name();
-				} else if (const auto* ma_ptr = std::get_if<MemberAccessNode>(&operand_expr)) {
-					const ASTNode& obj = ma_ptr->object();
-					if (obj.is<ExpressionNode>()) {
-						const ExpressionNode& obj_expr = obj.as<ExpressionNode>();
-						if (const auto* obj_id = std::get_if<IdentifierNode>(&obj_expr)) {
-							if (obj_id->name() == "this") {
-								var_name = ma_ptr->member_name();
-								is_member_binding = true;
-							}
-						}
+				EvalResult one = EvalResult::from_int(1);
+				EvalResult new_value = (op == "++")
+					? apply_binary_op(current, one, "+", &context, &bindings)
+					: apply_binary_op(current, one, "-", &context, &bindings);
+				if (!new_value.success())
+					return new_value;
+
+				if (current.exact_type.has_value() &&
+					is_unsigned_integer_type(current.exact_type->category())) {
+					new_value = EvalResult::from_uint(apply_uint_type_mask(new_value.as_uint_raw(), current.exact_type));
+					new_value.set_exact_type(*current.exact_type);
+				}
+
+				*target->slot = new_value;
+				if (!target->root_name.empty()) {
+					if (EvalResult* root_binding = findMutableBindingValue(target->root_name, bindings, context)) {
+						refreshPointerSnapshotsForBinding(target->root_name, *root_binding, bindings, context);
 					}
 				}
 
-				if (!var_name.empty()) {
-					// Get current value
-					EvalResult* target_binding = nullptr;
-					if (is_member_binding) {
-						auto member_it = bindings.find(var_name);
-						if (member_it != bindings.end()) {
-							target_binding = &member_it->second;
-						}
-					} else {
-						target_binding = findMutableBindingValue(var_name, bindings, context);
-					}
-					if (!target_binding) {
-						return EvalResult::error("Variable not found for increment/decrement: " + std::string(var_name));
-					}
-					EvalResult current = *target_binding;
-
-					// Calculate new value
-					EvalResult one = EvalResult::from_int(1);
-					EvalResult new_value;
-					if (op == "++") {
-						new_value = apply_binary_op(current, one, "+", &context, &bindings);
-					} else {
-						new_value = apply_binary_op(current, one, "-", &context, &bindings);
-					}
-
-					if (!new_value.success())
-						return new_value;
-
-					// Truncate to the declared type of the operand, matching C++
-					// assignment-conversion semantics.  For unsigned types narrower than
-					// 64 bits (e.g. unsigned char, unsigned short, unsigned int) the
-					// stored result must wrap at the declared type's width, regardless
-					// of any integer promotion that happened during the binary arithmetic.
-					if (current.exact_type.has_value() &&
-						is_unsigned_integer_type(current.exact_type->category())) {
-						new_value = EvalResult::from_uint(apply_uint_type_mask(new_value.as_uint_raw(), current.exact_type));
-						new_value.set_exact_type(*current.exact_type);
-					}
-
-					*target_binding = new_value;
-					refreshPointerSnapshotsForBinding(var_name, *target_binding, bindings, context);
-
-					// Return old value for postfix, new value for prefix
-					if (unary_op.is_prefix()) {
-						return new_value;  // Prefix: return new value
-					} else {
-						return current;	// Postfix: return old value
-					}
-				}
+				return unary_op.is_prefix() ? new_value : current;
 			}
-			return EvalResult::error("Operand of increment/decrement must be a variable");
+			if (resolve_error.has_value())
+				return *resolve_error;
+			return EvalResult::error("Operand of increment/decrement must be a modifiable constexpr lvalue");
 		}
 
 		// Handle address-of (&): return a pointer-to-variable result without evaluating the operand.
