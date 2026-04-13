@@ -6,9 +6,29 @@
 
 ## Quick start for next agent
 
-### Latest completed slice (2026-04-13, second update)
+### Latest completed slice (2026-04-13, third update)
 
-Phase 6: pack-aware explicit deduction — **implemented**.
+Phase 6b: pack-aware deduction extended to non-pack params in variadic templates.
+
+- **Root cause**: `buildDeductionMapFromCallArgs` had an overly-conservative guard
+  (`if (!has_variadic_tparam)`) that skipped all direct-param pre-deduction for templates
+  with any variadic parameter — even non-pack function params whose types directly correspond
+  to non-pack template params.
+- **Effect of the bug**: `template<typename T, typename U, typename... Rest> func(T, U, Rest...)`
+  called as `func<int>(1, 2, 3, 4)` would fail to parse/deduce because U could not be resolved.
+- **Fix applied** (two-part):
+  1. `buildDeductionMapFromCallArgs`: removed the `!has_variadic_tparam` outer guard; replaced
+     it with a per-slot `is_parameter_pack()` skip inside the loop. Non-pack function params
+     are now pre-deduced even when the template has a variadic type parameter.
+  2. `try_instantiate_template_explicit`: now always calls `buildDeductionMapFromCallArgs` when
+     call arg types are available (not only for non-pack templates); uses the resulting
+     `param_name_to_arg` map for all non-variadic template params; positional fallback retained
+     for trailing params after a pack.
+- Added `tests/test_pack_nonpack_mixed_explicit_deduction_ret0.cpp` as a regression test.
+- Validation after this slice:
+  - `make main CXX=clang++`
+  - `bash ./tests/run_all_tests.sh`
+  - `2072` pass, `135` expected-fail
 
 - Fixed `try_instantiate_template_explicit` in `src/Parser_Templates_Inst_Deduction.cpp`:
   when processing a variadic template parameter and no explicit args remain for the pack

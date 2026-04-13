@@ -614,15 +614,14 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	auto& param_name_to_arg = deduction_info.param_name_to_arg;
 	auto& pre_deduced_arg_indices = deduction_info.pre_deduced_arg_indices;
 
-	// Build map of template parameter names for O(1) lookup; detect variadic params in same pass
+	// Build map of template parameter names for O(1) lookup; also used by the
+	// direct-param pre-deduction pass below to identify which function-param
+	// types correspond to template type parameters.
 	std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual> tparam_nodes_by_name;
-	bool has_variadic_tparam = false;
 	for (const auto& tparam_node : template_params) {
 		if (tparam_node.is<TemplateParameterNode>()) {
 			const auto& tparam = tparam_node.as<TemplateParameterNode>();
 			tparam_nodes_by_name.emplace(tparam.nameHandle(), &tparam);
-			if (tparam.is_variadic())
-				has_variadic_tparam = true;
 		}
 	}
 
@@ -835,46 +834,50 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	// Handle the case where a function parameter IS directly a non-variadic template type
 	// parameter (e.g., template<typename T> T func(Widget& w, T b) — T is the 2nd param).
 	// Without this, the main loop would naively consume the 1st call argument for T.
-	// IMPORTANT: Skip variadic template parameters — pack deduction is handled by the main
-	// loop and must not be pre-consumed here.
-	// Only apply when none of the template params are variadic (simplest safe guard:
-	// if the template has any pack parameter, skip this pass entirely to avoid
-	// interfering with pack deduction).
-	if (!has_variadic_tparam) {
-		for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
-			if (!func_params[i].is<DeclarationNode>())
-				continue;
-			const TypeSpecifierNode& fp_type =
-				func_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-			const TypeSpecifierNode& ca_type = arg_types[i];
+	// Deduce non-variadic template type parameters directly from function parameter types.
+	// For example, in template<typename T, typename U, typename... Rest> func(T, U, Rest...),
+	// T and U can be pre-deduced from call args 0 and 1 respectively.
+	// IMPORTANT: Skip variadic FUNCTION parameter packs — those are handled by the main
+	// loop's pack-fill path and must not be pre-consumed here.
+	// NOTE: We no longer gate this on !has_variadic_tparam. When a template has a variadic
+	// type parameter, non-pack function params that directly correspond to non-pack template
+	// params can still be safely pre-deduced; only the pack function param slots are skipped.
+	for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
+		if (!func_params[i].is<DeclarationNode>())
+			continue;
+		const DeclarationNode& fp_decl = func_params[i].as<DeclarationNode>();
+		// Skip parameter packs — their deduction is handled by the main loop.
+		if (fp_decl.is_parameter_pack())
+			continue;
+		const TypeSpecifierNode& fp_type = fp_decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& ca_type = arg_types[i];
 
-			// Only handle directly-typed params (pointer_depth 0 covers T, T&, const T&).
-			// Pointer-to-template (T*) cases are handled via substitution elsewhere.
-			// Array declarators use a separate deduction path so T in T(&)[N] binds to the
-			// element type instead of the whole array type.
-			if (fp_type.pointer_depth() != 0 || fp_type.is_array() || func_params[i].as<DeclarationNode>().is_array())
-				continue;
+		// Only handle directly-typed params (pointer_depth 0 covers T, T&, const T&).
+		// Pointer-to-template (T*) cases are handled via substitution elsewhere.
+		// Array declarators use a separate deduction path so T in T(&)[N] binds to the
+		// element type instead of the whole array type.
+		if (fp_type.pointer_depth() != 0 || fp_type.is_array() || fp_decl.is_array())
+			continue;
 
-			TypeIndex fp_idx = fp_type.type_index();
-			const TypeInfo* fp_type_info = tryGetTypeInfo(fp_idx);
-			if (!fp_type_info)
-				continue;
+		TypeIndex fp_idx = fp_type.type_index();
+		const TypeInfo* fp_type_info = tryGetTypeInfo(fp_idx);
+		if (!fp_type_info)
+			continue;
 
-			StringHandle fp_name = fp_type_info->name();
-			if (!tparam_nodes_by_name.count(fp_name))
-				continue;  // not a template parameter
-			if (param_name_to_arg.count(fp_name))
-				continue;  // already deduced
+		StringHandle fp_name = fp_type_info->name();
+		if (!tparam_nodes_by_name.count(fp_name))
+			continue;  // not a template parameter
+		if (param_name_to_arg.count(fp_name))
+			continue;  // already deduced
 
-			// Deduce: fp_name -> ca_type (call argument type for this parameter slot)
-			TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(ca_type);
-			param_name_to_arg.emplace(fp_name, new_arg);
-			pre_deduced_arg_indices.insert(i);
-			FLASH_LOG_FORMAT(Templates, Debug,
-							 "[depth={}]: Direct-param pre-deduced type param '{}' = type {} from func param {}",
-							 recursion_depth, StringTable::getStringView(fp_name),
-							 static_cast<int>(ca_type.type()), i);
-		}
+		// Deduce: fp_name -> ca_type (call argument type for this parameter slot)
+		TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(ca_type);
+		param_name_to_arg.emplace(fp_name, new_arg);
+		pre_deduced_arg_indices.insert(i);
+		FLASH_LOG_FORMAT(Templates, Debug,
+						 "[depth={}]: Direct-param pre-deduced type param '{}' = type {} from func param {}",
+						 recursion_depth, StringTable::getStringView(fp_name),
+						 static_cast<int>(ca_type.type()), i);
 	}
 
 	return deduction_info;
@@ -971,12 +974,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		InlineVector<TemplateTypeArg, 4> template_args;
 		size_t explicit_idx = 0;	 // Track position in explicit_types
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
-		const bool can_use_name_based_explicit_deduction =
-			current_explicit_call_arg_types_ != nullptr &&
-			!has_variadic_pack &&
-			!has_variadic_func_pack;
-		size_t positional_deduced_call_arg_index = SIZE_MAX;
-		if (can_use_name_based_explicit_deduction) {
+		// Build a name-to-arg deduction map whenever call arg types are available,
+		// regardless of whether the template has variadic parameters.
+		// buildDeductionMapFromCallArgs now safely skips parameter-pack function slots,
+		// so non-pack template params (T, U in template<T, U, ...Rest>) are pre-deduced
+		// from the corresponding call argument positions.
+		if (current_explicit_call_arg_types_ != nullptr) {
 			auto deduction_info = buildDeductionMapFromCallArgs(
 				template_params,
 				func_decl,
@@ -986,11 +989,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				continue;
 			}
 			param_name_to_arg = std::move(deduction_info->param_name_to_arg);
-		} else if (current_explicit_call_arg_types_ != nullptr) {
-			// Keep the older positional fallback only for pack-bearing signatures until
-			// there is an explicit pack-aware mapping contract (for example, a helper
-			// that maps function-parameter-pack slots onto template-parameter-pack
-			// elements instead of walking call arguments blindly).
+		}
+		// Positional fallback for trailing non-pack params that appear after a variadic
+		// function-parameter pack (e.g., template<...Rest, T> func(Rest..., T last)).
+		// Such trailing params are not reached by the direct-param pre-deduction above.
+		size_t positional_deduced_call_arg_index = SIZE_MAX;
+		if (current_explicit_call_arg_types_ != nullptr && (has_variadic_pack || has_variadic_func_pack)) {
 			positional_deduced_call_arg_index = 0;
 			if (has_variadic_func_pack &&
 				current_explicit_call_arg_types_->size() >= required_function_args_after_pack) {
@@ -1043,7 +1047,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				// fill the pack from the corresponding function parameter positions.
 				// This handles e.g. count_rest<int>(1, 2, 3) → T=int explicit,
 				// Rest deduced as {int,int} from call args 1 and 2.
-				// current_explicit_call_arg_types_ is non-null inside this block (guard above).
+				// NOTE: current_explicit_call_arg_types_ may be null here — the
+				// deduction-map build block (lines ~980-990) is conditional and does
+				// not guarantee non-null for this later point in the same function.
 				if (remaining_args == 0 && current_explicit_call_arg_types_ != nullptr) {
 					// Find where the function parameter pack starts (i.e. how many
 					// non-pack function params precede it).
@@ -1071,22 +1077,24 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				if (explicit_idx < explicit_types.size()) {
 					template_args.push_back(explicit_types[explicit_idx]);
 					++explicit_idx;
-				} else if (!can_use_name_based_explicit_deduction &&
-						   !param.has_default() &&
-						   current_explicit_call_arg_types_ != nullptr &&
-						   positional_deduced_call_arg_index != SIZE_MAX &&
-						   positional_deduced_call_arg_index < current_explicit_call_arg_types_->size()) {
-					template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
-						(*current_explicit_call_arg_types_)[positional_deduced_call_arg_index]));
-					++positional_deduced_call_arg_index;
 				} else {
+					// No explicit arg left — try name-based deduction (pre-deduced map)
+					// first, then positional fallback for trailing params after a pack,
+					// then default, then overload mismatch.
 					StringHandle param_handle = param.nameHandle();
-					if (can_use_name_based_explicit_deduction) {
-						auto map_it = param_name_to_arg.find(param_handle);
-						if (map_it != param_name_to_arg.end()) {
-							template_args.push_back(map_it->second);
-							continue;
-						}
+					auto map_it = param_name_to_arg.find(param_handle);
+					if (map_it != param_name_to_arg.end()) {
+						template_args.push_back(map_it->second);
+						continue;
+					}
+					if (!param.has_default() &&
+						current_explicit_call_arg_types_ != nullptr &&
+						positional_deduced_call_arg_index != SIZE_MAX &&
+						positional_deduced_call_arg_index < current_explicit_call_arg_types_->size()) {
+						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
+							(*current_explicit_call_arg_types_)[positional_deduced_call_arg_index]));
+						++positional_deduced_call_arg_index;
+						continue;
 					}
 					if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
 						continue;
