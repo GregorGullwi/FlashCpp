@@ -1038,6 +1038,35 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					template_args.push_back(explicit_types[explicit_idx + j]);
 				}
 				explicit_idx += pack_size;
+				// Pack-aware explicit deduction (Phase 6): when there are no explicit
+				// args remaining for this variadic pack and call arg types are available,
+				// fill the pack from the corresponding function parameter positions.
+				// This handles e.g. count_rest<int>(1, 2, 3) → T=int explicit,
+				// Rest deduced as {int,int} from call args 1 and 2.
+				// current_explicit_call_arg_types_ is non-null inside this block (guard above).
+				if (remaining_args == 0 && current_explicit_call_arg_types_ != nullptr) {
+					// Find where the function parameter pack starts (i.e. how many
+					// non-pack function params precede it).
+					size_t pack_func_param_start = 0;
+					for (const auto& fp : func_decl.parameter_nodes()) {
+						if (fp.is<DeclarationNode>() &&
+							fp.as<DeclarationNode>().is_parameter_pack())
+							break;
+						++pack_func_param_start;
+					}
+					// Call args from pack_func_param_start through
+					// (call_args.size() - required_function_args_after_pack) fill the pack.
+					// The underflow guard handles the rare case where required_function_args_after_pack
+					// exceeds the number of available call args (malformed call, caught later).
+					const size_t pack_call_end =
+						current_explicit_call_arg_types_->size() >= required_function_args_after_pack
+							? current_explicit_call_arg_types_->size() - required_function_args_after_pack
+							: 0;
+					for (size_t j = pack_func_param_start; j < pack_call_end; ++j) {
+						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
+							(*current_explicit_call_arg_types_)[j]));
+					}
+				}
 			} else {
 				if (explicit_idx < explicit_types.size()) {
 					template_args.push_back(explicit_types[explicit_idx]);
