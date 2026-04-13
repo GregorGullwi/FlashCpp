@@ -4,6 +4,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
+#include <limits>
 
 // Helper: resolve object type from expression and try to instantiate member function template.
 // Uses get_expression_type() to handle any expression (identifiers, function calls, member access, etc.).
@@ -323,6 +324,17 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is
 			};
 
 			if (checkHasMemberTemplate()) {
+				return ParseResult::error(
+					"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
+					member_name_token);
+			}
+		}
+		if (known_member_func && !instantiated_func.has_value()) {
+			const size_t min_required = countMinRequiredArgs(*known_member_func);
+			const size_t max_accepted = known_member_func->is_variadic()
+				? std::numeric_limits<size_t>::max()
+				: known_member_func->parameter_nodes().size();
+			if (args.size() < min_required || args.size() > max_accepted) {
 				return ParseResult::error(
 					"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
 					member_name_token);

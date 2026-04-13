@@ -3081,13 +3081,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					// result type for expressions like &obj.method or simple
 					// non-call member-function references.
 					const auto member_function_result = struct_info->findMemberFunctionRecursive(member_name_handle);
-					if (const StructMemberFunction* member_function = member_function_result.first;
-						member_function && member_function->function_decl.has_value() &&
-						member_function->function_decl.is<FunctionDeclarationNode>()) {
-						const auto& func = member_function->function_decl.as<FunctionDeclarationNode>();
-						const ASTNode ret_type_node = func.decl_node().type_node();
-						if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
-							return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
+					if (const StructMemberFunction* member_function = member_function_result.first) {
+						if (const FunctionDeclarationNode* func = getCallTargetFunctionCandidate(member_function->function_decl)) {
+							const ASTNode ret_type_node = func->decl_node().type_node();
+							if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
+								return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
+							}
 						}
 					}
 				}
@@ -4602,86 +4601,92 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 														   const DeclarationNode& decl,
 														   const ChunkedVector<ASTNode>& arguments,
 														   const FunctionDeclarationNode*& func_decl) {
-	auto searchStructMembers = [&](const StructTypeInfo* struct_info, const auto& self) -> bool {
-		if (!struct_info)
-			return false;
-		const std::string_view func_name = decl.identifier_token().value();
-		bool has_local_overload_name = false;
-		for (const auto& mf : struct_info->member_functions) {
-			if (!mf.function_decl.has_value())
-				continue;
-			if (!mf.function_decl.is<FunctionDeclarationNode>())
-				continue;
-			const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
-			if (candidate.decl_node().identifier_token().value() == func_name) {
-				has_local_overload_name = true;
+	const StringHandle func_name_handle = decl.identifier_token().handle();
+	auto searchStructMembers = [&](const StructTypeInfo* root_struct_info) -> bool {
+		std::unordered_set<const StructTypeInfo*> visited;
+		auto searchImpl = [&](const StructTypeInfo* struct_info, const auto& self) -> bool {
+			if (!struct_info || !visited.insert(struct_info).second) {
+				return false;
 			}
-			if (&candidate.decl_node() == &decl) {
-				func_decl = &candidate;
+
+			bool has_local_overload_name = false;
+			for (const auto& mf : struct_info->member_functions) {
+				if (mf.name == func_name_handle) {
+					has_local_overload_name = true;
+				}
+				const FunctionDeclarationNode* candidate = getCallTargetFunctionCandidate(mf.function_decl);
+				if (!candidate) {
+					continue;
+				}
+				if (&candidate->decl_node() == &decl) {
+					func_decl = candidate;
+					return true;
+				}
+			}
+			if (call_info.mangled_name.isValid()) {
+				const std::string_view call_mangled = call_info.mangled_name.view();
+				for (const auto& mf : struct_info->member_functions) {
+					const FunctionDeclarationNode* candidate = getCallTargetFunctionCandidate(mf.function_decl);
+					if (!candidate) {
+						continue;
+					}
+					if (candidate->has_mangled_name() &&
+						candidate->mangled_name() == call_mangled) {
+						func_decl = candidate;
+						return true;
+					}
+				}
+			}
+			const FunctionDeclarationNode* name_match = nullptr;
+			bool ambiguous = false;
+			for (const auto& mf : struct_info->member_functions) {
+				if (mf.name != func_name_handle) {
+					continue;
+				}
+				const FunctionDeclarationNode* candidate = getCallTargetFunctionCandidate(mf.function_decl);
+				if (!candidate) {
+					continue;
+				}
+				if (candidate->parameter_nodes().size() == arguments.size()) {
+					if (name_match) {
+						ambiguous = true;
+						break;
+					}
+					name_match = candidate;
+				}
+			}
+			if (name_match && !ambiguous) {
+				func_decl = name_match;
 				return true;
 			}
-		}
-		if (call_info.mangled_name.isValid()) {
-			const std::string_view call_mangled = call_info.mangled_name.view();
-			for (const auto& mf : struct_info->member_functions) {
-				if (!mf.function_decl.has_value())
-					continue;
-				if (!mf.function_decl.is<FunctionDeclarationNode>())
-					continue;
-				const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
-				if (candidate.has_mangled_name() &&
-					candidate.mangled_name() == call_mangled) {
-					func_decl = &candidate;
-					return true;
-				}
+			if (has_local_overload_name) {
+				return false;
 			}
-		}
-		const FunctionDeclarationNode* name_match = nullptr;
-		bool ambiguous = false;
-		for (const auto& mf : struct_info->member_functions) {
-			if (!mf.function_decl.has_value())
-				continue;
-			if (!mf.function_decl.is<FunctionDeclarationNode>())
-				continue;
-			const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
-			if (candidate.decl_node().identifier_token().value() == func_name &&
-				candidate.parameter_nodes().size() == arguments.size()) {
-				if (name_match) {
-					ambiguous = true;
-					break;
-				}
-				name_match = &candidate;
-			}
-		}
-		if (name_match && !ambiguous) {
-			func_decl = name_match;
-			return true;
-		}
-		if (has_local_overload_name) {
-			return false;
-		}
 
-		for (const auto& base_spec : struct_info->base_classes) {
-			if (const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_spec.type_index)) {
-				if (self(base_struct_info, self)) {
-					return true;
+			for (const auto& base_spec : struct_info->base_classes) {
+				if (const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_spec.type_index)) {
+					if (self(base_struct_info, self)) {
+						return true;
+					}
 				}
 			}
-		}
-		return false;
+			return false;
+		};
+
+		return searchImpl(root_struct_info, searchImpl);
 	};
 
 	auto searchTypeMembers = [&](const TypeInfo* type_info) -> bool {
 		if (!type_info) {
 			return false;
 		}
-		if (searchStructMembers(type_info->getStructInfo(), searchStructMembers)) {
+		if (searchStructMembers(type_info->getStructInfo())) {
 			return true;
 		}
 		if (type_info->isTemplateInstantiation()) {
 			auto pattern_it = getTypesByNameMap().find(type_info->baseTemplateName());
 			if (pattern_it != getTypesByNameMap().end() &&
-				searchStructMembers(pattern_it->second->getStructInfo(), searchStructMembers)) {
+				searchStructMembers(pattern_it->second->getStructInfo())) {
 				return true;
 			}
 		}
@@ -4745,12 +4750,13 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 			return false;
 		}
 
-		const StructTypeInfo* receiver_struct_info = tryGetStructTypeInfo(receiver_desc.type_index);
-		if (!receiver_struct_info) {
-			return false;
+		const TypeInfo* receiver_type_info = tryGetTypeInfo(receiver_desc.type_index);
+		if (!receiver_type_info && receiver_desc.category() == TypeCategory::UserDefined) {
+			const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(receiver_desc.type_index);
+			receiver_type_info = resolved_alias.terminal_type_info;
 		}
 
-		return searchStructMembers(receiver_struct_info, searchStructMembers);
+		return searchTypeMembers(receiver_type_info);
 	};
 
 	if (searchReceiverHierarchy()) {
