@@ -39,6 +39,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
+	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 	const auto& template_params = template_func.template_parameters();
 	if (arg_types.empty()) {
 		return std::nullopt;	 // Can't deduce without arguments
