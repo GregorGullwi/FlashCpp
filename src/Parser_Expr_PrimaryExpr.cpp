@@ -3548,7 +3548,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// This is a constructor call - handle it directly here
 				advance();  // consume '('
 
-				// Parse constructor arguments
+				// Parse constructor arguments with pack expansion support
 				ChunkedVector<ASTNode> args;
 				while (!current_token_.kind().is_eof() &&
 					   (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")")) {
@@ -3557,7 +3557,32 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return argResult;
 					}
 					if (auto node = argResult.node()) {
-						args.push_back(*node);
+						// Check for pack expansion: arg...
+						if (current_token_.value() == "...") {
+							advance();  // consume '...'
+							// Expand the pack using pack_param_info_
+							std::vector<const PackParamInfo*> packs_in_expr;
+							for (const auto& pack_info : pack_param_info_) {
+								if (pack_info.pack_size > 0 && exprContainsIdentifier(*node, pack_info.original_name)) {
+									packs_in_expr.push_back(&pack_info);
+								}
+							}
+							if (!packs_in_expr.empty()) {
+								size_t pack_size = packs_in_expr[0]->pack_size;
+								for (size_t i = 0; i < pack_size; ++i) {
+									ASTNode current_arg = *node;
+									for (const auto* pack_info : packs_in_expr) {
+										current_arg = replacePackIdentifierInExpr(current_arg, pack_info->original_name, i);
+									}
+									args.push_back(current_arg);
+								}
+							} else {
+								// No matching pack found - just add the unexpanded arg
+								args.push_back(*node);
+							}
+						} else {
+							args.push_back(*node);
+						}
 					}
 
 					if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
