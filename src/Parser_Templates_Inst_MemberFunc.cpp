@@ -758,6 +758,27 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					*block_result.node(),
 					template_params,
 					template_args);
+				if (outer_binding && !outer_binding->param_names.empty()) {
+					InlineVector<ASTNode, 4> outer_params;
+					InlineVector<TemplateTypeArg, 4> outer_args;
+					for (size_t i = 0;
+						 i < outer_binding->param_names.size() &&
+						 i < outer_binding->param_args.size();
+						 ++i) {
+						Token outer_param_token(
+							Token::Type::Identifier,
+							StringTable::getStringView(outer_binding->param_names[i]),
+							0, 0, 0);
+						outer_params.push_back(emplace_node<TemplateParameterNode>(
+							outer_binding->param_names[i],
+							outer_param_token));
+						outer_args.push_back(outer_binding->param_args[i]);
+					}
+					substituted_body = substituteTemplateParameters(
+						substituted_body,
+						outer_params,
+						outer_args);
+				}
 				new_func_ref.set_definition(substituted_body);
 			}
 		} // current_template_param_names_ restored here

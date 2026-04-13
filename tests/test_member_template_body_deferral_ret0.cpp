@@ -7,12 +7,14 @@ struct Box {
 
 	template <typename U>
 	int assignFrom(const Box<U>& other) {
-		LaterType converted = static_cast<LaterType>(other.value);
-		value = converted;
+		this->emplace(static_cast<T>(other.value));
 		return static_cast<int>(value);
 	}
 
-	using LaterType = T;
+	template <typename... Args>
+	void emplace(Args&&... args) {
+		value = T(args...);
+	}
 };
 
 int main() {
