@@ -854,60 +854,27 @@ ParseResult Parser::parse_template_declaration() {
 			}
 
 			if (has_unresolved_params) {
-				// Rewind and re-parse to extract template name and arguments as AST nodes
+				// Rewind and re-parse to extract template name and arguments as AST nodes.
+				// Use the shared capture helper to skip cv-qualifiers, optional `typename`,
+				// and optional global `::` prefix, then parse the (possibly qualified) name
+				// and any `<template-args>`.
 				restore_token_position(target_type_start_pos);
 
-				// Re-consume leading cv-qualifiers on the alias target before extracting the
-				// dependent template-id. The original parse already recorded these qualifiers
-				// on type_spec, but this deferred-materialization pass still needs to advance
-				// past tokens such as `const remove_reference_t<T>&`.
-				parse_cv_qualifiers();
-				skip_noop_gnu_qualifiers();
+				bool captured_has_template_args = false;
+				target_template_name = parseRawAliasTargetTemplateId(target_template_arg_nodes, captured_has_template_args);
 
-				if (peek() == "typename"_tok) {
-					advance();
-					// Handle cv-qualifiers after typename (e.g., `typename const T::type`)
-					// parse_type_specifier() supports this order (line 455), so mirror it here.
-					parse_cv_qualifiers();
-					skip_noop_gnu_qualifiers();
-				}
+				if (target_template_name.isValid()) {
+					FLASH_LOG(Parser, Debug, "Captured ", target_template_arg_nodes.size(), " unevaluated template argument nodes for deferred instantiation");
 
-				// Parse the template name (possibly namespace-qualified like ns1::vec)
-				if (peek().is_identifier()) {
-					StringBuilder name_builder;
-					name_builder.append(peek_info().value());
-					advance();
-
-					// Handle qualified names (e.g., ns1::vec, std::vector)
-					while (peek() == "::"_tok) {
-						advance();  // consume '::'
-						if (peek() == "template"_tok) {
-							advance();  // consume 'template' disambiguator
-						}
-						if (!peek().is_identifier())
-							break;
-						name_builder.append("::"sv).append(peek_info().value());
-						advance();
-					}
-
-					std::string_view full_name = name_builder.commit();
-					target_template_name = StringTable::getOrInternStringHandle(full_name);
-
-					// Parse template arguments as AST nodes (not evaluated)
-					if (peek() == "<"_tok) {
-						auto template_args_with_nodes = parse_explicit_template_arguments(&target_template_arg_nodes);
-						FLASH_LOG(Parser, Debug, "Captured ", target_template_arg_nodes.size(), " unevaluated template argument nodes for deferred instantiation");
-
-						// Debug: log what we captured
-						for (size_t i = 0; i < target_template_arg_nodes.size(); ++i) {
-							const ASTNode& node = target_template_arg_nodes[i];
-							if (node.is<TypeSpecifierNode>()) {
-								const TypeSpecifierNode& ts = node.as<TypeSpecifierNode>();
-								if (const TypeInfo* type_info = tryGetTypeInfo(ts.type_index())) {
-									std::string_view node_type_name = StringTable::getStringView(type_info->name());
-									FLASH_LOG(Parser, Debug, "  Node[", i, "]: TypeSpecifier, type=", static_cast<int>(ts.type()),
-											  ", type_name='", node_type_name, "'");
-								}
+					// Debug: log what we captured
+					for (size_t i = 0; i < target_template_arg_nodes.size(); ++i) {
+						const ASTNode& node = target_template_arg_nodes[i];
+						if (node.is<TypeSpecifierNode>()) {
+							const TypeSpecifierNode& ts = node.as<TypeSpecifierNode>();
+							if (const TypeInfo* type_info = tryGetTypeInfo(ts.type_index())) {
+								std::string_view node_type_name = StringTable::getStringView(type_info->name());
+								FLASH_LOG(Parser, Debug, "  Node[", i, "]: TypeSpecifier, type=", static_cast<int>(ts.type()),
+										  ", type_name='", node_type_name, "'");
 							}
 						}
 					}

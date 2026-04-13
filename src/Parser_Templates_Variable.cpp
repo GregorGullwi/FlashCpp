@@ -4,6 +4,57 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+// Shared alias-target capture helper implementation.
+// Parses the template-id on the right-hand side of an alias declaration from
+// the current token position.  The caller is responsible for rewinding before
+// calling and, if necessary, for restoring the position afterwards.
+StringHandle Parser::parseRawAliasTargetTemplateId(std::vector<ASTNode>& out_args, bool& out_has_template_args) {
+	out_has_template_args = false;
+
+	parse_cv_qualifiers();
+	skip_noop_gnu_qualifiers();
+	if (peek() == "typename"_tok) {
+		advance();
+		parse_cv_qualifiers();
+		skip_noop_gnu_qualifiers();
+	}
+
+	StringBuilder name_builder;
+	if (peek() == "::"_tok) {
+		name_builder.append("::"sv);
+		advance();
+	}
+
+	if (!peek().is_identifier()) {
+		name_builder.reset();
+		return StringHandle{};
+	}
+
+	name_builder.append(peek_info().value());
+	advance();
+
+	while (peek() == "::"_tok) {
+		advance();
+		if (peek() == "template"_tok) {
+			advance();
+		}
+		if (!peek().is_identifier()) {
+			break;
+		}
+		name_builder.append("::"sv).append(peek_info().value());
+		advance();
+	}
+
+	std::string_view full_name = name_builder.commit();
+
+	if (peek() == "<"_tok) {
+		auto parsed_args = parse_explicit_template_arguments(&out_args);
+		out_has_template_args = parsed_args.has_value();
+	}
+
+	return StringTable::getOrInternStringHandle(full_name);
+}
+
 ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_node, [[maybe_unused]] AccessSpecifier access) {
 	ScopedTokenPosition saved_position(*this);
 
@@ -111,54 +162,19 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 		SaveHandle after_target_pos = save_token_position();
 		restore_token_position(target_type_start_pos);
 
-		parse_cv_qualifiers();
-		skip_noop_gnu_qualifiers();
-		if (peek() == "typename"_tok) {
-			advance();
-			parse_cv_qualifiers();
-			skip_noop_gnu_qualifiers();
-		}
+		bool captured_has_template_args = false;
+		StringHandle captured_name = parseRawAliasTargetTemplateId(target_template_arg_nodes, captured_has_template_args);
 
-		if (peek().is_identifier() || peek() == "::"_tok) {
-			StringBuilder raw_target_name_builder;
-			if (peek() == "::"_tok) {
-				raw_target_name_builder.append("::"sv);
-				advance();
-			}
-			if (peek().is_identifier()) {
-				raw_target_name_builder.append(peek_info().value());
-				advance();
-
-				while (peek() == "::"_tok) {
-					advance();
-					if (peek() == "template"_tok) {
-						advance();
-					}
-					if (!peek().is_identifier()) {
-						break;
-					}
-					raw_target_name_builder.append("::"sv).append(peek_info().value());
-					advance();
-				}
-
-				std::string_view raw_target_name = raw_target_name_builder.commit();
-				if (peek() == "<"_tok) {
-					auto raw_alias_args =
-						parse_explicit_template_arguments(&target_template_arg_nodes);
-					if (raw_alias_args.has_value() &&
-						gTemplateRegistry.lookup_alias_template(raw_target_name).has_value()) {
-						has_deferred_target = true;
-						target_template_name =
-							StringTable::getOrInternStringHandle(raw_target_name);
-						FLASH_LOG_FORMAT(
-							Parser,
-							Debug,
-							"Member template alias '{}' uses deferred alias target '{}'",
-							alias_name,
-							raw_target_name);
-					}
-				}
-			}
+		if (captured_name.isValid() && captured_has_template_args &&
+			gTemplateRegistry.lookup_alias_template(captured_name.view()).has_value()) {
+			has_deferred_target = true;
+			target_template_name = captured_name;
+			FLASH_LOG_FORMAT(
+				Parser,
+				Debug,
+				"Member template alias '{}' uses deferred alias target '{}'",
+				alias_name,
+				captured_name.view());
 		}
 
 		restore_token_position(after_target_pos);
