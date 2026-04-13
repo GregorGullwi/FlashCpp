@@ -1088,6 +1088,21 @@ The `normalizeDependentNonTypeArgs` lambda at `src/Parser_TypeSpecifiers.cpp:961
 
 ~~`TemplateTypeArg::hash()` (`src/TemplateRegistry_Types.h:267-272`) uses `std::hash<StringHandle>` for `dependent_name`, while `ValueArgKey::hash()` (`src/TemplateTypes.h:196-203`) uses `std::hash<uint32_t>` on the raw `.handle` field. The two types are never compared in the same hash map so this is not a correctness bug today, but it is exactly the kind of drift that Phase 1 canonicalization should eliminate.~~ **ADDRESSED in Phase 1 (2026-04-12):** `ValueArgKey` is now an alias for `NonTypeValueIdentity`, which uses `std::hash<StringHandle>{}(dependent_name)` consistently with `TemplateTypeArg::hash()`.
 
+### Codegen calls back into Parser for template constructor materialization
+
+**Added:** 2026-04-13 (PR #1255 review)
+
+The `materialize_template_ctor` lambda at `src/IrGenerator_Stmt_Decl.cpp:411-422` calls `parser_->materializeMatchingConstructorTemplate(...)` during IR generation, triggering template instantiation from the codegen phase. The semantic analysis path at `src/SemanticAnalysis.cpp:4997-5007` does the same work earlier, but the codegen path retains its own materialization as a fallback when sema did not resolve the constructor (e.g. when no `InitializerListNode` annotation was present, or when the brace-init path fell through to arity-based resolution).
+
+This mirrors the existing `prepare_nested_template_ctor` lambda at `src/IrGenerator_Stmt_Decl.cpp:385-409`, which similarly calls back into `parser_->instantiateLazyMemberFunction(...)` from codegen. Both are instances of the same architectural gap: codegen is performing template instantiation that should have been completed before reaching IR generation.
+
+**Additional issues in the current codegen fallback:**
+- The `materialize_template_ctor` lambda captures `is_ambiguous` but never checks it, silently proceeding with `nullptr` instead of throwing an ambiguity error like the sema path does.
+- The `is_unresolved_noop_ctor` lambda uses a fragile `type_name.front() == '_'` heuristic to detect unresolved template parameter placeholders, which can false-positive on user-defined types (e.g. `_MyAllocator`), silently skipping the constructor call.
+- Both `is_unresolved_noop_ctor` early-return sites (brace-init at line ~1562 and direct-init at line ~2366) skip destructor registration, causing resource leaks when the struct has a destructor.
+
+**Long-term fix:** Resolve all constructor templates in semantic analysis before reaching codegen. The sema path already partially does this; the codegen fallback should become unnecessary once sema covers all constructor-call shapes (including arity-based fallback and direct-init syntax). **Relates to Phase 3 and Phase 5.**
+
 ---
 
 ## Phase 6: unify template-parameter-to-function-parameter deduction mapping
