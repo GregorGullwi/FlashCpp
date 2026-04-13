@@ -2248,40 +2248,39 @@ EvalResult Evaluator::evaluate_new_expression(
 						return *aggregate_result;
 					}
 					object_result = std::move(*aggregate_result);
-					goto constexpr_new_struct_materialized;
-				}
-
-				std::vector<EvalResult> evaluated_ctor_args;
-				evaluated_ctor_args.reserve(ctor_args.size());
-				for (const auto& arg : ctor_args) {
-					auto arg_result = eval_arg(arg);
-					if (!arg_result.success()) {
-						return arg_result;
+				} else {
+					std::vector<EvalResult> evaluated_ctor_args;
+					evaluated_ctor_args.reserve(ctor_args.size());
+					for (const auto& arg : ctor_args) {
+						auto arg_result = eval_arg(arg);
+						if (!arg_result.success()) {
+							return arg_result;
+						}
+						evaluated_ctor_args.push_back(std::move(arg_result));
 					}
-					evaluated_ctor_args.push_back(std::move(arg_result));
-				}
 
-				std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
-				auto bind_result = bind_pre_evaluated_arguments(
-					matching_ctor->parameter_nodes(),
-					evaluated_ctor_args,
-					ctor_param_bindings,
-					context,
-					"Invalid parameter in constexpr struct construction",
-					true);
-				if (!bind_result.success()) {
-					return bind_result;
-				}
+					std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+					auto bind_result = bind_pre_evaluated_arguments(
+						matching_ctor->parameter_nodes(),
+						evaluated_ctor_args,
+						ctor_param_bindings,
+						context,
+						"Invalid parameter in constexpr struct construction",
+						true);
+					if (!bind_result.success()) {
+						return bind_result;
+					}
 
-				auto materialize_result = materialize_members_from_constructor(
-					struct_info,
-					*matching_ctor,
-					ctor_param_bindings,
-					object_result.object_member_bindings,
-					context,
-					false);
-				if (!materialize_result.success()) {
-					return materialize_result;
+					auto materialize_result = materialize_members_from_constructor(
+						struct_info,
+						*matching_ctor,
+						ctor_param_bindings,
+						object_result.object_member_bindings,
+						context,
+						false);
+					if (!materialize_result.success()) {
+						return materialize_result;
+					}
 				}
 			} else {
 				auto ctor_result = try_materialize_struct_from_ctor_args(
@@ -2295,12 +2294,12 @@ EvalResult Evaluator::evaluate_new_expression(
 						return *aggregate_result;
 					}
 					object_result = std::move(*aggregate_result);
-					goto constexpr_new_struct_materialized;
+				} else {
+					if (!ctor_result->success()) {
+						return *ctor_result;
+					}
+					object_result = std::move(*ctor_result);
 				}
-				if (!ctor_result->success()) {
-					return *ctor_result;
-				}
-				object_result = std::move(*ctor_result);
 			}
 		} else {
 			// Default initialization with empty args: new T or new T().
@@ -2344,7 +2343,6 @@ EvalResult Evaluator::evaluate_new_expression(
 			}
 		}
 
-	constexpr_new_struct_materialized:
 		StringHandle heap_key = context.alloc_heap_slot();
 		context.constexpr_heap[heap_key] = {std::move(object_result), false, false};
 		return EvalResult::from_pointer(heap_key);

@@ -90,7 +90,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		TypedValue init_value = toTypedValue(init_operands);
 		emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, pointer_var, Token());
 	};
-	auto is_codegen_aggregate_type = [](const StructTypeInfo& struct_info) {
+	auto is_aggregate_for_new_initialization = [](const StructTypeInfo& struct_info) {
 		for (const auto& func : struct_info.member_functions) {
 			if (func.is_constructor &&
 				func.function_decl.is<ConstructorDeclarationNode>() &&
@@ -103,9 +103,11 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 	auto emit_new_aggregate_member_stores = [&](TempVar pointer_var, const StructTypeInfo& struct_info) -> bool {
 		const auto& ctor_args = newExpr.constructor_args();
 		if (ctor_args.empty() ||
-			!is_codegen_aggregate_type(struct_info) ||
-			ctor_args.size() > struct_info.members.size()) {
+			!is_aggregate_for_new_initialization(struct_info)) {
 			return false;
+		}
+		if (ctor_args.size() > struct_info.members.size()) {
+			throw CompileError("Too many initializers for aggregate type in new-expression");
 		}
 
 		ConstructorCallOp ctor_op;
