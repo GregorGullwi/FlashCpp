@@ -5588,7 +5588,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				if (explicit_template_args.has_value() && peek() != "("_tok) {
 					std::optional<ASTNode> instantiated_func =
-						try_instantiate_template_explicit(identifier_token.value(), *explicit_template_args);
+						try_instantiate_template_explicit(identifier_token.value(), *explicit_template_args, SIZE_MAX);
 					if (!instantiated_func.has_value()) {
 						NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
 						if (!current_namespace.isGlobal()) {
@@ -5596,7 +5596,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								current_namespace,
 								identifier_token.handle());
 							std::string_view qualified_name = StringTable::getStringView(qualified_handle);
-							instantiated_func = try_instantiate_template_explicit(qualified_name, *explicit_template_args);
+							instantiated_func = try_instantiate_template_explicit(qualified_name, *explicit_template_args, SIZE_MAX);
 						}
 					}
 					if (instantiated_func.has_value()) {
