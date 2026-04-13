@@ -421,7 +421,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				}
 			}
 		}
-		if (type_index.category() == TypeCategory::Struct) {
+		if (type_index.category() == TypeCategory::Struct ||
+			type_index.category() == TypeCategory::UserDefined) {
 			const TypeInfo* ti = tryGetTypeInfo(type_index);
 			if (ti && ti->isTemplateInstantiation()) {
 				std::vector<TemplateTypeArg> concrete_args =
