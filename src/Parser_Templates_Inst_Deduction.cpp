@@ -1477,12 +1477,27 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 		auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
 
-		auto saved_outer_pack_param_info = std::move(pack_param_info_);
+		auto saved_parent_pack_param_info = std::move(pack_param_info_);
 		pack_param_info_.clear();
 		ScopeGuard restore_outer_pack_param_info([&]() {
-			pack_param_info_ = std::move(saved_outer_pack_param_info);
+			pack_param_info_ = std::move(saved_parent_pack_param_info);
 		});
 		size_t arg_type_index = 0;
+		auto applyPackReferenceQualifier =
+			[&](TypeSpecifierNode& target_param_type, const TypeSpecifierNode& original_param_type,
+				const TypeSpecifierNode& call_arg_type, bool is_forwarding_reference) {
+				if (is_forwarding_reference) {
+					if (call_arg_type.is_lvalue_reference()) {
+						target_param_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+					} else {
+						target_param_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+					}
+				} else if (original_param_type.is_lvalue_reference()) {
+					target_param_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+				} else if (original_param_type.is_rvalue_reference()) {
+					target_param_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+				}
+			};
 
 	// Add parameters with concrete types
 		for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
@@ -1514,20 +1529,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 							arg_type.size_in_bits(),
 							Token(), CVQualifier::None);
 						param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
-
-						if (is_forwarding_reference) {
-							if (arg_type.is_lvalue_reference()) {
-								param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
-							} else if (arg_type.is_rvalue_reference()) {
-								param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
-							} else {
-								param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
-							}
-						} else if (orig_param_type.is_lvalue_reference()) {
-							param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
-						} else if (orig_param_type.is_rvalue_reference()) {
-							param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
-						}
+						applyPackReferenceQualifier(param_type.as<TypeSpecifierNode>(), orig_param_type, arg_type, is_forwarding_reference);
 
 						for (const auto& ptr_level : arg_type.pointer_levels()) {
 							param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
@@ -1629,10 +1631,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			ScopeGuard restore_has_parameter_packs([&]() {
 				has_parameter_packs_ = saved_has_parameter_packs;
 			});
-			auto saved_pack_param_info = std::move(pack_param_info_);
-			if (!saved_pack_param_info.empty()) {
+			auto pack_param_info_for_reparse = std::move(pack_param_info_);
+			if (!pack_param_info_for_reparse.empty()) {
 				has_parameter_packs_ = true;
-				pack_param_info_ = saved_pack_param_info;
+				pack_param_info_ = pack_param_info_for_reparse;
 			}
 			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
 										   /*preserve_ref_qualifier=*/true);
