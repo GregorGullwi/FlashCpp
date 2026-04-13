@@ -238,7 +238,10 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 				return &concrete_ctor;
 			}
 		}
-		return preferred_ctor;
+		// Instantiation failed or the instantiated ctor doesn't match call arguments.
+		// Return nullptr so callers fall back to arity-based resolution instead of
+		// forwarding an uninstantiated template constructor.
+		return nullptr;
 	}
 
 	const ConstructorDeclarationNode* instantiated_match = nullptr;

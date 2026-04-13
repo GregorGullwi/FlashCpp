@@ -370,6 +370,41 @@ void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<Type
 				}
 			}
 			arg_type = TypeSpecifierNode(TypeCategory::Invalid, TypeQualifier::None, 0, Token(), CVQualifier::None);
+		} else if constexpr (std::is_same_v<T, StaticCastNode> ||
+							 std::is_same_v<T, ConstCastNode> ||
+							 std::is_same_v<T, ReinterpretCastNode> ||
+							 std::is_same_v<T, DynamicCastNode>) {
+			// The target type of a cast is directly available and exact.
+			if (inner.target_type().template is<TypeSpecifierNode>()) {
+				arg_type = inner.target_type().template as<TypeSpecifierNode>();
+			}
+		} else if constexpr (std::is_same_v<T, CallExprNode>) {
+			// Use the return type of the resolved callee function.
+			if (const FunctionDeclarationNode* func_decl = inner.callee().function_declaration_or_null()) {
+				const ASTNode& ret_node = func_decl->decl_node().type_node();
+				if (ret_node.template is<TypeSpecifierNode>()) {
+					arg_type = ret_node.template as<TypeSpecifierNode>();
+					return;
+				}
+			}
+			arg_type = TypeSpecifierNode(TypeCategory::Invalid, TypeQualifier::None, 0, Token(), CVQualifier::None);
+		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			// For logical-not, deduce Bool; for arithmetic/bitwise unary ops, recurse on the
+			// operand; for dereferencing or address-of, fall through to the Invalid default.
+			if (inner.op() == "!") {
+				arg_type = TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), Token(), CVQualifier::None);
+			} else if (inner.op() != "*" && inner.op() != "&") {
+				// For +, -, ~, prefix ++/--, post ++/--, the result type matches the operand.
+				std::vector<TypeSpecifierNode> operand_types;
+				appendFunctionCallArgType(inner.get_operand(), &operand_types);
+				if (!operand_types.empty()) {
+					arg_type = operand_types.front();
+					return;
+				}
+				arg_type = TypeSpecifierNode(TypeCategory::Invalid, TypeQualifier::None, 0, Token(), CVQualifier::None);
+			} else {
+				arg_type = TypeSpecifierNode(TypeCategory::Invalid, TypeQualifier::None, 0, Token(), CVQualifier::None);
+			}
 		}
 	},
 			   expr);

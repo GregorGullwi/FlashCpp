@@ -1023,7 +1023,37 @@ std::optional<ASTNode> Parser::parse_direct_initialization() {
 		}
 
 		if (auto arg_node = arg_result.node()) {
-			init_list_ref.add_initializer(*arg_node);
+			// Handle pack expansion: arg...
+			if (current_token_.value() == "...") {
+				advance();  // consume '...'
+				// Mirror append_function_call_argument: use identifier-pack path for simple
+				// packs (correctly handles zero-size packs), expression-pack path for complex.
+				if (arg_node->is<ExpressionNode>()) {
+					if (const auto* id = std::get_if<IdentifierNode>(&arg_node->as<ExpressionNode>())) {
+						std::string_view pack_name = id->name();
+						if (auto pack_sz = get_pack_size(pack_name); pack_sz.has_value()) {
+							StringBuilder sb;
+							for (size_t i = 0; i < *pack_sz; ++i) {
+								std::string_view elem = sb.append(pack_name).append("_").append(i).commit();
+								Token t(Token::Type::Identifier, elem, 0, 0, 0);
+								init_list_ref.add_initializer(emplace_node<ExpressionNode>(createBoundIdentifier(t)));
+							}
+						} else {
+							init_list_ref.add_initializer(*arg_node);
+						}
+					} else {
+						for (ASTNode expanded : expandPackExpressionArgument(*arg_node)) {
+							init_list_ref.add_initializer(expanded);
+						}
+					}
+				} else {
+					for (ASTNode expanded : expandPackExpressionArgument(*arg_node)) {
+						init_list_ref.add_initializer(expanded);
+					}
+				}
+			} else {
+				init_list_ref.add_initializer(*arg_node);
+			}
 		}
 
 		// Check for comma (more arguments) or closing paren
