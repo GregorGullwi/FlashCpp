@@ -965,7 +965,7 @@ Basic constexpr lambdas work, including:
 - Multi-statement bodies
 - Simple member reads / constexpr member calls through `this` / `*this` capture
 - Straightforward mutable by-reference local updates
-- Straightforward by-reference init-capture alias updates, including simple identifier, member, and array-element aliases
+- Straightforward by-reference init-capture alias updates, including simple identifier, member, array-element, and dereferenced-pointer aliases
 - Straightforward mutable shared-object updates through `[this]`
 - Straightforward mutable copy-local updates through `[*this]`
 - Straightforward mutable closure-local state persistence for by-value/init captures across repeated calls to the same lambda object
@@ -1068,7 +1068,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Literal expressions in initializers (e.g., `x(val * 2)`)
 - ✅ Unary `-` and `+` operators
 - ✅ Constexpr member function calls, including multi-statement bodies with `if`, `for`, `while`, and `switch`
-- ✅ Constexpr lambdas with explicit captures, default captures, current supported `this` / `*this` shapes, and straightforward by-reference init-capture subobject aliases
+- ✅ Constexpr lambdas with explicit captures, default captures, current supported `this` / `*this` shapes, and straightforward by-reference init-capture subobject aliases (including `*ptr`)
 - ✅ Multi-statement constexpr free functions (`return`, local vars, `if`, `for`, `while`, `switch`)
 - ✅ Multi-statement constexpr lambdas and callable/operator() bodies in supported shapes
 - ✅ Nested member access (e.g., `obj.inner.value`)
@@ -1186,7 +1186,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ **Dynamic allocation in constexpr (`new` / `delete`)** *(Implemented)* — See the section above.
 - ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond:
   - straightforward by-reference locals
-  - straightforward identifier-based by-reference init-capture aliases
+  - straightforward identifier-based and dereferenced-pointer by-reference init-capture aliases
   - straightforward `[this]` / `[*this]` mutation behavior
   - straightforward repeated-call mutable closure-local state
   - straightforward returned closure-object state transfer

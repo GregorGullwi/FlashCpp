@@ -583,10 +583,92 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 		const std::unordered_map<std::string_view, EvalResult>&,
 		EvaluationContext&),
 	std::optional<EvalResult>& resolve_error) {
+	auto ensureMutableArrayElements = [](EvalResult& array_value) {
+		if (!array_value.array_elements.empty() || array_value.array_values.empty()) {
+			return;
+		}
+		array_value.array_elements.reserve(array_value.array_values.size());
+		for (int64_t element_value : array_value.array_values) {
+			array_value.array_elements.push_back(EvalResult::from_int(element_value));
+		}
+	};
+
 	if (const IdentifierNode* identifier = tryGetIdentifier(expr)) {
 		if (EvalResult* binding = findMutableBindingValue(identifier->name(), bindings, context)) {
 			return BoundWriteTarget{binding, identifier->name()};
 		}
+		return std::nullopt;
+	}
+
+	if (const auto* unary_op = tryGetNode<UnaryOperatorNode>(expr)) {
+		if (unary_op->op() != "*") {
+			return std::nullopt;
+		}
+
+		EvalResult pointer_result = evaluate_index_expression(unary_op->get_operand(), bindings, context);
+		if (!pointer_result.success()) {
+			resolve_error = pointer_result;
+			return std::nullopt;
+		}
+		if (!pointer_result.pointer_to_var.isValid()) {
+			return std::nullopt;
+		}
+
+		if (!context.constexpr_heap.empty()) {
+			StringHandle heap_key = pointer_result.pointer_to_var;
+			auto heap_it = context.constexpr_heap.find(heap_key);
+			if (heap_it != context.constexpr_heap.end()) {
+				if (heap_it->second.freed) {
+					resolve_error = EvalResult::error("Use after free in constant expression");
+					return std::nullopt;
+				}
+
+				EvalResult& heap_value = heap_it->second.value;
+				if (heap_value.is_array) {
+					if (pointer_result.pointer_offset < 0) {
+						resolve_error = EvalResult::error("Negative pointer offset in dereference");
+						return std::nullopt;
+					}
+					ensureMutableArrayElements(heap_value);
+					size_t index = static_cast<size_t>(pointer_result.pointer_offset);
+					if (index >= heap_value.array_elements.size()) {
+						resolve_error = EvalResult::error("Array index out of bounds in constant expression");
+						return std::nullopt;
+					}
+					return BoundWriteTarget{&heap_value.array_elements[index], {}};
+				}
+				if (pointer_result.pointer_offset != 0) {
+					resolve_error = EvalResult::error("Cannot dereference pointer with non-zero offset on non-array variable '" +
+													  std::string(StringTable::getStringView(pointer_result.pointer_to_var)) + "'");
+					return std::nullopt;
+				}
+				return BoundWriteTarget{&heap_value, {}};
+			}
+		}
+
+		std::string_view pointed_name = StringTable::getStringView(pointer_result.pointer_to_var);
+		if (EvalResult* binding = findMutableBindingValue(pointed_name, bindings, context)) {
+			if (binding->is_array) {
+				if (pointer_result.pointer_offset < 0) {
+					resolve_error = EvalResult::error("Negative pointer offset in dereference");
+					return std::nullopt;
+				}
+				ensureMutableArrayElements(*binding);
+				size_t index = static_cast<size_t>(pointer_result.pointer_offset);
+				if (index >= binding->array_elements.size()) {
+					resolve_error = EvalResult::error("Array index out of bounds in constant expression");
+					return std::nullopt;
+				}
+				return BoundWriteTarget{&binding->array_elements[index], pointed_name};
+			}
+			if (pointer_result.pointer_offset != 0) {
+				resolve_error = EvalResult::error("Cannot dereference pointer with non-zero offset on non-array variable '" +
+												  std::string(pointed_name) + "'");
+				return std::nullopt;
+			}
+			return BoundWriteTarget{binding, pointed_name};
+		}
+
 		return std::nullopt;
 	}
 
