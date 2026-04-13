@@ -62,8 +62,8 @@ StringHandle Parser::parseRawAliasTargetTemplateId(
 }
 
 StringHandle Parser::parseRawAliasTargetTemplateId(std::vector<ASTNode>& out_args, bool& out_has_template_args) {
-	std::vector<TemplateTypeArg> ignored_concrete_args;
-	return parseRawAliasTargetTemplateId(out_args, ignored_concrete_args, out_has_template_args);
+	std::vector<TemplateTypeArg> unused_concrete_args;
+	return parseRawAliasTargetTemplateId(out_args, unused_concrete_args, out_has_template_args);
 }
 
 ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_node, [[maybe_unused]] AccessSpecifier access) {

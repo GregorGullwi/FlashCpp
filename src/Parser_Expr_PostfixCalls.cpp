@@ -304,7 +304,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is
 
 		if (object_struct_name.has_value() && !in_sfinae_context_ &&
 			!known_member_func && !instantiated_func.has_value()) {
-			auto has_member_template = [&]() {
+			auto checkHasMemberTemplate = [&]() {
 				StringBuilder qualified_name_sb;
 				qualified_name_sb.append(*object_struct_name).append("::").append(member_name_token.value());
 				if (gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle(qualified_name_sb.commit())).has_value()) {
@@ -322,7 +322,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is
 					StringTable::getOrInternStringHandle(base_qualified_name_sb.commit())).has_value();
 			};
 
-			if (has_member_template()) {
+			if (checkHasMemberTemplate()) {
 				return ParseResult::error(
 					"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
 					member_name_token);
