@@ -951,7 +951,7 @@ static_assert(f() == 42);  // ✅ Supported
 The following patterns are supported:
 - Scalar `new T(args)` / `new T()` / `new T` and `delete p`
 - Array `new T[n]` and `delete[] p`
-- Struct/class allocation with constructor: `new MyStruct(args)` and `delete p`
+- Struct/class allocation with constructor or straightforward aggregate arguments: `new MyStruct(args)`, `new Pair{1, 2}`, `new Pair(1, 2)`, and `delete p`
 - Dereference assignment through pointer: `*p = value`
 - Subscript assignment on heap array: `arr[i] = value`
 - Arrow member access on heap struct: `p->member`
@@ -972,7 +972,8 @@ The following patterns are supported:
    **Follow-up items for indeterminate-value tracking:**
    - **Compound assignment through pointer dereference may bypass validation** — The `validateConstexprRead()` check is placed on the `dereference_constexpr_pointer` and `deref_pointer_with_bindings` read paths. The identifier-based compound-assignment handler in `evaluate_expression_with_bindings` (`src/ConstExprEvaluator.h`) reads the current value directly from the bindings map (`it->second`) without checking `is_indeterminate`. In practice, `*p += 5` goes through `evaluate_unary_operator` → `dereference_constexpr_pointer` → `validateConstexprRead()` which catches the indeterminate read. However, if a future code path adds direct heap compound-assignment support, the identifier-based handler would need an `is_indeterminate` check on the target value before calling `apply_binary_op`. **TODO:** Add a defensive `is_indeterminate` check in the compound-assignment handler for completeness.
    - ✅ **Non-array `new T{}` / `new T{args}` brace-init syntax now parses correctly** — The parser now treats brace-init for scalar/class `new` the same way it already handled parenthesized constructor arguments and array brace-init. This means value-initializing forms such as `new int{}` and constructor calls such as `new Point{3, 4}` now set `has_value_init=true`, consume the full braced argument list, and flow through the existing constexpr `new` evaluation paths.
-   - ⚠️ **`new T{args}` and `new T(args)` produce identical AST — brace-init vs paren-init distinction is lost** — Both `new T(args)` (direct-initialization) and `new T{args}` (list-initialization) create a `NewExpressionNode` with the same `has_value_init=true` and the same `constructor_args`. The `NewExpressionNode` class has no field (e.g. `InitKind` enum) to distinguish the two forms. In standard C++20, these have different semantics: brace-init forbids narrowing conversions and triggers aggregate initialization for types without user-declared constructors, while paren-init allows narrowing and requires a matching constructor (prior to C++20 paren-init for aggregates). For the currently supported use cases (scalars and structs with constructors), the distinction is irrelevant — both forms resolve to the same constructor call. This is a pre-existing limitation that also affects non-`new` brace-init elsewhere in the parser. **TODO:** Add an `is_brace_init` flag (or `InitKind` enum) to `NewExpressionNode` so downstream passes can enforce narrowing-conversion diagnostics and aggregate-init rules correctly. The same distinction should be propagated to the non-`new` initialization paths for full standards compliance.
+   - ✅ **Scalar `new T{arg}` now preserves direct-list-init narrowing rules** — `NewExpressionNode` now records whether the initializer used braces or parentheses, so `new T{arg}` no longer collapses to the same form as `new T(arg)`. For scalar/fundamental `new`, constexpr evaluation and runtime codegen now reject narrowing conversions in the brace form while continuing to allow the paren form's normal conversion rules. Covered by `tests/test_constexpr_new_scalar_brace_narrowing_fail.cpp` and `tests/test_constexpr_new_scalar_paren_narrowing_ret0.cpp`.
+   - ⚠️ **Full brace-init vs paren-init semantics for `new` are still incomplete for richer type forms** — Straightforward aggregate heap construction with explicit scalar member arguments (for example `new Pair{1, 2}` / `new Pair(1, 2)`) now works in constexpr evaluation and runtime codegen, but downstream handling still does not fully model every semantic difference between `new T{args}` and `new T(args)` for richer nested aggregate cases and other list-initialization-only diagnostics. This is also a pre-existing limitation outside `new`. **TODO:** Extend the preserved init-kind through the remaining initialization/codegen paths so aggregate-init rules and other list-initialization-only diagnostics are enforced uniformly.
 
 ### ⚠️ Constexpr Lambdas Have Remaining Capture Limits
 
@@ -1433,6 +1434,8 @@ struct CaptureExample {
 - `tests/test_constexpr_struct_runtime_assign_ret0.cpp` - Struct return from constexpr functions (incl. sub-word structs)
 - `tests/test_constexpr_const_char_ptr_ret0.cpp` - `const char*` / string-literal support in constexpr
 - `tests/test_constexpr_new_delete_ret0.cpp` - Constexpr `new`/`delete` (scalar, array, struct, loops)
+- `tests/test_constexpr_new_scalar_brace_narrowing_fail.cpp` - Scalar `new T{arg}` rejects narrowing in direct-list-init form
+- `tests/test_constexpr_new_scalar_paren_narrowing_ret0.cpp` - Scalar `new T(arg)` still uses normal paren-init conversions
 - `tests/test_constexpr_new_leak_fail.cpp` - Constexpr heap leak detection (expected failure)
 - `tests/test_constexpr_new_array_toolarge_fail.cpp` - Constexpr array size limit (expected failure)
 - `tests/test_constexpr_short_circuit_ret0.cpp` - Short-circuit `&&`/`||` in constexpr

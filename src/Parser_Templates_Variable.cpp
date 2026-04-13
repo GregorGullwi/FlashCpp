@@ -4,6 +4,56 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+// Shared alias-target capture helper implementation.
+// Parses the template-id on the right-hand side of an alias declaration from
+// the current token position.  The caller is responsible for rewinding before
+// calling and, if necessary, for restoring the position afterwards.
+StringHandle Parser::parseRawAliasTargetTemplateId(std::vector<ASTNode>& out_args, bool& out_has_template_args) {
+	out_has_template_args = false;
+
+	parse_cv_qualifiers();
+	skip_noop_gnu_qualifiers();
+	if (peek() == "typename"_tok) {
+		advance();
+		parse_cv_qualifiers();
+		skip_noop_gnu_qualifiers();
+	}
+
+	StringBuilder name_builder;
+	if (peek() == "::"_tok) {
+		advance(); // skip global-scope :: (registry stores names without :: prefix)
+	}
+
+	if (!peek().is_identifier()) {
+		name_builder.reset();
+		return StringHandle{};
+	}
+
+	name_builder.append(peek_info().value());
+	advance();
+
+	while (peek() == "::"_tok) {
+		advance();
+		if (peek() == "template"_tok) {
+			advance();
+		}
+		if (!peek().is_identifier()) {
+			break;
+		}
+		name_builder.append("::"sv).append(peek_info().value());
+		advance();
+	}
+
+	std::string_view full_name = name_builder.commit();
+
+	if (peek() == "<"_tok) {
+		auto parsed_args = parse_explicit_template_arguments(&out_args);
+		out_has_template_args = parsed_args.has_value();
+	}
+
+	return StringTable::getOrInternStringHandle(full_name);
+}
+
 ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_node, [[maybe_unused]] AccessSpecifier access) {
 	ScopedTokenPosition saved_position(*this);
 

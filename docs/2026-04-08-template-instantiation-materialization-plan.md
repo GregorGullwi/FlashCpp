@@ -1,38 +1,52 @@
 # Template Instantiation Identity / Materialization Follow-up Plan
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-12  
+**Last Updated:** 2026-04-13  
 **Context:** Follows the branch fix that made `test_integral_constant_comprehensive_ret100.cpp`, `test_integral_constant_pattern_ret42.cpp`, `test_ratio_less_alias_ret0.cpp`, `test_sfinae_enable_if_ret0.cpp`, and `test_sfinae_same_name_overload_ret0.cpp` pass by preserving dependent non-type template-argument identity in template-instantiation keys.
 
 ## Quick start for next agent
 
-### Latest completed slice (2026-04-12)
+### Latest completed slice (2026-04-13)
 
-- kept the Phase 2 work scoped to member alias-template materialization:
-  - `src/Parser_Templates_Variable.cpp` now preserves deferred alias-template
-    targets for member template aliases instead of always storing them as eager
-    `TemplateAliasNode`s
-  - `src/Parser_Templates_Inst_Substitution.cpp` now follows qualified
-    member-alias targets when materializing member alias templates, but only for
-    `Struct::alias_t<...>`-style aliases so the broader top-level alias paths
-    stay unchanged
-- validation after this slice:
+- Extracted the shared alias-target capture logic into `Parser::parseRawAliasTargetTemplateId(...)`:
+  - Declared in `src/Parser.h` (near the other alias-materialization helpers)
+  - Implemented in `src/Parser_Templates_Variable.cpp` (before `parse_member_template_alias`)
+  - The helper skips cv-qualifiers, optional `typename`, and optional global `::` prefix,
+    then parses a possibly-qualified identifier and any `<template-args>`.
+  - Returns the interned name handle; populates `out_args`; sets `out_has_template_args`.
+- Replaced the duplicated capture blocks in both callers with one call to the helper:
+  - `src/Parser_Templates_Class.cpp` — `parse_class_or_alias_template`, deferred-alias path
+  - `src/Parser_Templates_Variable.cpp` — `parse_member_template_alias`, deferred-alias path
+- New capability: the Class version now correctly handles global-scope alias targets
+  (patterns like `template<typename T> using Foo = ::enable_if_t<B, T>`) because the
+  helper handles the leading `::` whereas the old Class code only entered capture when
+  `peek().is_identifier()` was true.
+- Added two new tests:
+  - `tests/test_alias_template_global_scope_ret42.cpp` — top-level template alias with `::` target
+  - `tests/test_member_alias_template_global_scope_ret42.cpp` — member template alias with `::` target
+- Validation after this slice:
   - `make main CXX=clang++`
-  - `bash ./tests/run_all_tests.sh test_member_alias_template_ret0.cpp test_namespace_alias_template_default_member_ret42.cpp test_struct_local_alias_static_init_ret0.cpp test_alias_template_const_deferred_ref_ret0.cpp test_alias_template_deferred_return_ret0.cpp test_alias_template_member_type_type_specifier_ret42.cpp test_sfinae_enable_if_t_ret0.cpp`
+  - `bash ./tests/run_all_tests.sh test_member_alias_template_ret0.cpp test_namespace_alias_template_default_member_ret42.cpp test_struct_local_alias_static_init_ret0.cpp test_alias_template_const_deferred_ref_ret0.cpp test_alias_template_deferred_return_ret0.cpp test_alias_template_member_type_type_specifier_ret42.cpp test_sfinae_enable_if_t_ret0.cpp test_alias_template_global_scope_ret42.cpp test_member_alias_template_global_scope_ret42.cpp`
   - `bash ./tests/run_all_tests.sh`
-  - `2061` pass, `134` expected-fail
+  - `2068` pass, `134` expected-fail
 
 ### Next recommended slice
 
-1. Continue Phase 2 by extracting the raw alias-target capture/resolution logic
-   into one helper shared by:
-   - `src/Parser_Templates_Class.cpp`
-   - `src/Parser_Templates_Variable.cpp`
-   - the top-level/member `using` alias paths
-2. Keep the qualified-expression follow-up (`Struct::alias_t<...>::member`)
-   separate for now. The parser still needs an explicit concrete-owner/static-
-   member contract there before widening that path.
-3. Re-run this focused alias cluster before touching the materialization code:
+1. **Phase 2 follow-up — top-level `using` alias in `Parser_Decl_TopLevel.cpp`:**
+   - The capture block at lines ~843-855 only handles a bare identifier (no qualified names,
+     no `::` prefix). `parseRawAliasTargetTemplateId` could replace it — but note the downstream
+     `resolveAliasTemplateInstantiation(name, evaluated_args)` call needs `TemplateTypeArg`
+     (evaluated args), not `ASTNode` (unevaluated). Either extend the helper to return both,
+     or leave this path as-is since it already passes all tests.
+
+2. **Phase 6 — pack-aware explicit deduction:**
+   - `buildDeductionMapFromCallArgs(...)` is currently bypassed for pack-bearing signatures;
+     a pack-aware mapping helper in `src/Parser_Templates_Inst_Deduction.cpp` would let
+     variadic function templates benefit from the same name-based pre-deduction as non-pack ones.
+   - Key files: `src/Parser_Templates_Inst_Deduction.cpp:608-881`, `src/Parser.h:865-869`
+   - This is the highest-impact unfinished work.
+
+3. Re-run this alias cluster before touching any materialization code:
    - `test_member_alias_template_ret0.cpp`
    - `test_namespace_alias_template_default_member_ret42.cpp`
    - `test_struct_local_alias_static_init_ret0.cpp`
@@ -40,11 +54,13 @@
    - `test_alias_template_deferred_return_ret0.cpp`
    - `test_alias_template_member_type_type_specifier_ret42.cpp`
    - `test_sfinae_enable_if_t_ret0.cpp`
+   - `test_alias_template_global_scope_ret42.cpp`
+   - `test_member_alias_template_global_scope_ret42.cpp`
 
-### Current baseline (2026-04-12)
+### Current baseline (2026-04-13)
 
 - Linux: `make main CXX=clang++` compiles cleanly
-- Linux: `bash ./tests/run_all_tests.sh` → 2061 pass, 134 expected-fail
+- Linux: `bash ./tests/run_all_tests.sh` → 2068 pass, 134 expected-fail
 - All key regression tests pass:
   ```bash
   bash ./tests/run_all_tests.sh test_explicit_template_defaulted_param_deduction_ret42.cpp \
@@ -62,18 +78,21 @@
 **Phase 1 follow-up (optional, not required for Phase 2):**
 - Remove redundant `TemplateTypeArg` storage fields once a broader caller migration is worthwhile
 
-**Phase 2 status:** started, but still narrow. Member template aliases now keep
-their deferred alias-template targets; the broader alias-target capture /
-resolution logic is still duplicated elsewhere.
+**Phase 2 status:** substantially complete. `parseRawAliasTargetTemplateId` is now the single
+shared capture helper for both class-level and member template aliases. The top-level `using`
+alias detection in `Parser_Decl_TopLevel.cpp` still has its own narrower detection (bare
+identifiers only, no `::` prefix) because it needs evaluated args, not AST nodes. That path
+works correctly for all current tests.
 
 ### Choose your next task
 
-**Option A: Start Phase 2 (centralize alias-template materialization)**
-- Add shared helper for alias-template resolution
-- Consolidate top-level `using`, struct-local `using`, and type-specifier alias handling
-- Key files: `src/Parser_Decl_TopLevel.cpp`, `src/Parser_Decl_TypedefUsing.cpp`, `src/Parser_TypeSpecifiers.cpp`
+**Option A: Phase 2 remaining — top-level `using` alias qualified name detection**
+- `Parser_Decl_TopLevel.cpp` lines ~843-855: extend to handle `ns::alias_t<T>` targets
+- Would need `parseRawAliasTargetTemplateId` to also return evaluated `TemplateTypeArg` values,
+  or a separate lightweight helper that returns both
+- Low urgency: all current tests pass without this
 
-**Option B: Continue Phase 6 (pack-aware explicit deduction)**
+**Option B: Phase 6 (pack-aware explicit deduction) — HIGHEST IMPACT**
 - Design a pack-aware mapping helper in `buildDeductionMapFromCallArgs(...)`
 - Currently, pack-bearing signatures fall back to older positional deduction
 - Key files: `src/Parser_Templates_Inst_Deduction.cpp:608-881`, `src/Parser.h:865-869`

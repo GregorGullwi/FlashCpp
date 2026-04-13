@@ -2,7 +2,7 @@
 
 **⚠️ IMPORTANT: This compiler is under heavy development and NOT ready for production use!**
 
-Flash C++ Compiler is a modern C++20 compiler front-end focused on fast compilation and optimized code generation. This project is currently in active development and should be considered experimental. Many C++20 features are missing or incomplete.
+Flash C++ Compiler is a modern C++20 compiler front-end focused on fast compilation and optimized code generation. This project is currently in active development and should be considered experimental. Many C++20 features are missing or incomplete. **Developed with extensive use of LLM tooling for iteration and exploration**
 
 ---
 
@@ -361,4 +361,4 @@ For cross-platform development, compile separately for each target platform.
 **Maintainer**: Gregor Gullwi
 **Twitter/X**: [@GregorGullwi](https://twitter.com/GregorGullwi)
 
-For questions, bug reports, or contributions, please contact the maintainer on Twitter/X or open an issue on GitHub.
+For questions, bug reports, or contributions, please contact me on Twitter/X or open an issue on GitHub.

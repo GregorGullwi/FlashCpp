@@ -246,6 +246,8 @@ std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified
 // Re-parse an alias target from the current token position and capture the base
 // template-id as unevaluated AST nodes for deferred alias materialization.
 // - out_target_template_name receives the qualified template name on success.
+//   A leading global `::` is skipped because registry lookups normalize names
+//   without that prefix.
 // - out_target_template_arg_nodes receives the parsed template argument AST nodes.
 // - consume_dependent_member_suffix controls whether trailing dependent members
 //   like `::type` are consumed after the base template-id is captured.
@@ -284,7 +286,6 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 	}
 
 	if (peek() == "::"_tok) {
-		target_name_builder.append("::"sv);
 		advance();
 	}
 	if (!peek().is_identifier()) {

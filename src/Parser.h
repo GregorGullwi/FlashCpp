@@ -1442,6 +1442,16 @@ private:
 		std::string_view alias_template_name,
 		const std::vector<TemplateTypeArg>& template_args);
 	bool resolveAliasTemplateInstantiation(TypeSpecifierNode& type_spec);
+	// Shared alias-target capture helper: parses the template-id that forms the
+	// right-hand side of an alias declaration from the current token position.
+	// Skips leading cv-qualifiers, optional `typename`, and an optional global
+	// `::` prefix, then parses a possibly-qualified identifier followed by any
+	// `<template-args>`.  Populates `out_args` with the parsed argument nodes
+	// and sets `out_has_template_args` to true when a `<...>` argument list was
+	// present (even if empty).  Returns an interned handle for the parsed name
+	// (invalid handle if no identifier is found).
+	// Does NOT restore the token position; callers must save/restore if needed.
+	StringHandle parseRawAliasTargetTemplateId(std::vector<ASTNode>& out_args, bool& out_has_template_args);
 
 		// Template name extraction helpers - extract base template names from mangled/instantiated names
 	std::string_view extract_base_template_name(std::string_view mangled_name);	// Extract by searching for underscores left-to-right

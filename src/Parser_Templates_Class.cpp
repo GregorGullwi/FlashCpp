@@ -854,7 +854,10 @@ ParseResult Parser::parse_template_declaration() {
 			}
 
 			if (has_unresolved_params) {
-				// Rewind and re-parse to extract template name and arguments as AST nodes
+				// Rewind and re-parse to extract template name and arguments as AST nodes.
+				// Use the shared capture helper to skip cv-qualifiers, optional `typename`,
+				// and optional global `::` prefix, then parse the (possibly qualified) name
+				// and any `<template-args>`.
 				restore_token_position(target_type_start_pos);
 				if (parseDeferredAliasTargetTemplateId(
 						target_template_name,
