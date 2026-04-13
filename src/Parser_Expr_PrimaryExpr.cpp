@@ -3566,8 +3566,30 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// Check for pack expansion: arg...
 						if (current_token_.value() == "...") {
 							advance();  // consume '...'
-							for (ASTNode expanded_arg : expandPackExpressionArgument(*node)) {
-								args.push_back(std::move(expanded_arg));
+							// Mirror append_function_call_argument: use identifier-pack path for
+							// simple packs (correctly handles zero-size packs), expression-pack
+							// path for complex expressions.
+							bool added = false;
+							if (node->is<ExpressionNode>()) {
+								if (const auto* id = std::get_if<IdentifierNode>(&node->as<ExpressionNode>())) {
+									std::string_view pack_name = id->name();
+									if (auto pack_sz = get_pack_size(pack_name); pack_sz.has_value()) {
+										StringBuilder sb;
+										for (size_t i = 0; i < *pack_sz; ++i) {
+											std::string_view elem = sb.append(pack_name).append("_").append(i).commit();
+											Token t(Token::Type::Identifier, elem, 0, 0, 0);
+											args.push_back(emplace_node<ExpressionNode>(createBoundIdentifier(t)));
+										}
+									} else {
+										args.push_back(*node);
+									}
+									added = true;
+								}
+							}
+							if (!added) {
+								for (ASTNode expanded_arg : expandPackExpressionArgument(*node)) {
+									args.push_back(std::move(expanded_arg));
+								}
 							}
 						} else {
 							args.push_back(*node);
