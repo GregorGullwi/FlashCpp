@@ -3533,6 +3533,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				result = function_call_node;
 				return ParseResult::success(*result);
 			} else if (identifierType.has_value()) {
+				if (template_args.has_value() && !template_args->empty() && identifierType->is<FunctionDeclarationNode>()) {
+					if (const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType)) {
+						result = emplace_node<ExpressionNode>(IdentifierNode(decl_ptr->identifier_token()));
+						return ParseResult::success(*result);
+					}
+				}
 				// Just a qualified identifier reference (e.g., Namespace::globalValue)
 				result = emplace_node<ExpressionNode>(qual_id);
 				return ParseResult::success(*result);
@@ -5575,6 +5581,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							if (!template_name_to_use.empty() && template_name_to_use != identifier_token.value())
 								var_call_vt3.set_qualified_name(template_name_to_use);
 							result = emplace_node<ExpressionNode>(std::move(var_call_vt3));
+							return ParseResult::success(*result);
+						}
+					}
+				}
+
+				if (explicit_template_args.has_value() && peek() != "("_tok) {
+					std::optional<ASTNode> instantiated_func =
+						try_instantiate_template_explicit(identifier_token.value(), *explicit_template_args);
+					if (!instantiated_func.has_value()) {
+						NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+						if (!current_namespace.isGlobal()) {
+							StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+								current_namespace,
+								identifier_token.handle());
+							std::string_view qualified_name = StringTable::getStringView(qualified_handle);
+							instantiated_func = try_instantiate_template_explicit(qualified_name, *explicit_template_args);
+						}
+					}
+					if (instantiated_func.has_value()) {
+						if (const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func)) {
+							result = emplace_node<ExpressionNode>(IdentifierNode(decl_ptr->identifier_token()));
 							return ParseResult::success(*result);
 						}
 					}
