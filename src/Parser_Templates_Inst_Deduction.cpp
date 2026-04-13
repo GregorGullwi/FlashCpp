@@ -1631,10 +1631,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			ScopeGuard restore_has_parameter_packs([&]() {
 				has_parameter_packs_ = saved_has_parameter_packs;
 			});
-			auto pack_param_info_for_reparse = std::move(pack_param_info_);
-			if (!pack_param_info_for_reparse.empty()) {
+			if (!pack_param_info_.empty()) {
 				has_parameter_packs_ = true;
-				pack_param_info_ = pack_param_info_for_reparse;
 			}
 			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
 										   /*preserve_ref_qualifier=*/true);

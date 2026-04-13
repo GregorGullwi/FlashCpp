@@ -1,6 +1,6 @@
 template<typename... Args>
 int sum_pack_count(Args... args) {
-	return static_cast<int>(sizeof...(Args)) + static_cast<int>(sizeof...(args)) - static_cast<int>(sizeof...(Args));
+	return static_cast<int>(sizeof...(Args));
 }
 
 template<typename T, typename... Rest>
