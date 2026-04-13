@@ -73,7 +73,7 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 - Designated initializers: Full support
 - Auto type deduction: Basic patterns working
 - Structured bindings: `auto [a, b] = expr;`
-- Using declarations and aliases: Full support
+- Using declarations and aliases: Full support (namespace-level; member using-declarations for inheritance not yet supported — see Known Issues)
 - Enum classes: Full support
 - constinit variables: Full support (global and local static)
 - consteval functions and immediate-invocation enforcement: Full support
@@ -449,3 +449,46 @@ int main() {
 ```
 
 **Fix**: Verify that `parse_enum_declaration` passes the correct anonymous namespace handle to `add_enum_type`. Add tests for anonymous namespace enum ADL.
+
+### Member using-declarations for inherited names not supported
+
+**Severity**: Medium (conformance issue, affects idiomatic C++ inheritance patterns)
+
+C++ [namespace.udecl]/1 allows a using-declaration inside a derived class to re-introduce
+hidden base-class members:
+
+```cpp
+struct Base {
+    int getValue(int x) const { return x; }
+};
+
+struct Derived : Base {
+    using Base::getValue;        // un-hides Base::getValue(int)
+    int getValue() const { return 42; }
+};
+
+int main() {
+    Derived d;
+    d.getValue();   // OK — calls Derived::getValue()
+    d.getValue(10); // OK — calls Base::getValue(int) via using-declaration
+}
+```
+
+FlashCpp currently parses `using X::Y;` inside a struct body and registers the member name
+in the struct parsing context (`imported_members`), but this path is designed for dependent
+template base classes (e.g., `using std::__is_integer<_Tp>::__value;`). It does **not**:
+
+- Resolve `Base` as a base class of the enclosing struct
+- Copy or alias the base-class member function overloads into the derived class's member
+  function list
+- Interact with the name-hiding logic in `StructTypeInfo::findMemberFunctionRecursive` or
+  `searchStructMembers` to allow hidden overloads to become visible again
+
+Without this, derived classes that use `using Base::foo;` to bring base overloads into scope
+will not have those overloads available for overload resolution.
+
+**Fix**: When parsing `using Base::member;` inside a struct body where `Base` is a known base
+class, copy the matching base-class `StructMemberFunction` entries into the derived struct's
+`member_functions` list (or add a separate `using_imported_members` list consulted during
+lookup). Update `findMemberFunctionRecursive` and `searchStructMembers` to include
+using-imported members before applying the name-hiding early-return.
