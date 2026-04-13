@@ -583,7 +583,7 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 		const std::unordered_map<std::string_view, EvalResult>&,
 		EvaluationContext&),
 	std::optional<EvalResult>& resolve_error) {
-	auto ensureMutableArrayElements = [](EvalResult& array_value) {
+	auto expandArrayElements = [](EvalResult& array_value) {
 		if (!array_value.array_elements.empty() || array_value.array_values.empty()) {
 			return;
 		}
@@ -609,7 +609,7 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 		if (offset < 0) {
 			return failNegativePointerOffset();
 		}
-		ensureMutableArrayElements(array_value);
+		expandArrayElements(array_value);
 		size_t index = static_cast<size_t>(offset);
 		if (index >= array_value.array_elements.size()) {
 			return failArrayIndexOutOfBounds();
