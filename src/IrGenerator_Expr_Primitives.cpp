@@ -1477,7 +1477,8 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 							return emitQualifiedGlobalLoad(type_node, decl_node.is_array(), resolved->storage_name);
 						}
 						if (resolved->symbol.is<FunctionDeclarationNode>()) {
-							return makeExprResult(nativeTypeIndex(TypeCategory::Function), SizeInBits{64}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
+							StringHandle func_name = resolved->storage_name.isValid() ? resolved->storage_name : StringTable::getOrInternStringHandle(qualifiedIdNode.name());
+							return makeExprResult(nativeTypeIndex(TypeCategory::Function), SizeInBits{64}, IrOperand{func_name}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 						break;
 					case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::StaticMember:

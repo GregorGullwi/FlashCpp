@@ -2752,15 +2752,18 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 	resolved.symbol = *symbol;
 	resolved.is_global = true;
 
+	const DeclarationNode* decl_ptr = nullptr;
 	if (symbol->is<DeclarationNode>()) {
-		const auto& decl = symbol->as<DeclarationNode>();
-		resolved.storage_name = decl.has_mangled_name()
-									? decl.mangled_name_handle()
-									: gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, name_handle);
+		decl_ptr = &symbol->as<DeclarationNode>();
 	} else if (symbol->is<VariableDeclarationNode>()) {
-		const auto& decl = symbol->as<VariableDeclarationNode>().declaration_node().as<DeclarationNode>();
-		resolved.storage_name = decl.has_mangled_name()
-									? decl.mangled_name_handle()
+		decl_ptr = &symbol->as<VariableDeclarationNode>().declaration_node().as<DeclarationNode>();
+	} else if (symbol->is<FunctionDeclarationNode>()) {
+		decl_ptr = &symbol->as<FunctionDeclarationNode>().decl_node();
+	}
+
+	if (decl_ptr) {
+		resolved.storage_name = decl_ptr->has_mangled_name()
+									? decl_ptr->mangled_name_handle()
 									: gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, name_handle);
 	}
 
