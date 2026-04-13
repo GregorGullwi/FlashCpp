@@ -1130,6 +1130,93 @@ The `normalizeDependentNonTypeArgs` lambda at `src/Parser_TypeSpecifiers.cpp:961
 
 ~~`TemplateTypeArg::hash()` (`src/TemplateRegistry_Types.h:267-272`) uses `std::hash<StringHandle>` for `dependent_name`, while `ValueArgKey::hash()` (`src/TemplateTypes.h:196-203`) uses `std::hash<uint32_t>` on the raw `.handle` field. The two types are never compared in the same hash map so this is not a correctness bug today, but it is exactly the kind of drift that Phase 1 canonicalization should eliminate.~~ **ADDRESSED in Phase 1 (2026-04-12):** `ValueArgKey` is now an alias for `NonTypeValueIdentity`, which uses `std::hash<StringHandle>{}(dependent_name)` consistently with `TemplateTypeArg::hash()`.
 
+### Codegen calls back into Parser for template constructor materialization
+
+**Added:** 2026-04-13 (PR #1255 review)
+
+The `materialize_template_ctor` lambda at `src/IrGenerator_Stmt_Decl.cpp:411-422` calls `parser_->materializeMatchingConstructorTemplate(...)` during IR generation, triggering template instantiation from the codegen phase. The semantic analysis path at `src/SemanticAnalysis.cpp:4997-5007` does the same work earlier, but the codegen path retains its own materialization as a fallback when sema did not resolve the constructor (e.g. when no `InitializerListNode` annotation was present, or when the brace-init path fell through to arity-based resolution).
+
+This mirrors the existing `prepare_nested_template_ctor` lambda at `src/IrGenerator_Stmt_Decl.cpp:385-409`, which similarly calls back into `parser_->instantiateLazyMemberFunction(...)` from codegen. Both are instances of the same architectural gap: codegen is performing template instantiation that should have been completed before reaching IR generation.
+
+**Additional issues in the current codegen fallback:**
+- The `materialize_template_ctor` lambda captures `is_ambiguous` but never checks it, silently proceeding with `nullptr` instead of throwing an ambiguity error like the sema path does.
+- The `is_unresolved_noop_ctor` lambda uses a fragile `type_name.front() == '_'` heuristic to detect unresolved template parameter placeholders, which can false-positive on user-defined types (e.g. `_MyAllocator`), silently skipping the constructor call.
+- Both `is_unresolved_noop_ctor` early-return sites (brace-init at line ~1562 and direct-init at line ~2366) skip destructor registration, causing resource leaks when the struct has a destructor.
+
+**Long-term fix:** Resolve all constructor templates in semantic analysis before reaching codegen. The sema path already partially does this; the codegen fallback should become unnecessary once sema covers all constructor-call shapes (including arity-based fallback and direct-init syntax). **Relates to Phase 3 and Phase 5.**
+
+### `appendFunctionCallArgType` lacks full type deduction for complex expressions
+
+**Added:** 2026-04-13 (PR #1255 review)
+
+`Parser::appendFunctionCallArgType()` at `src/Parser_Core.cpp:346-378` produces best-effort `TypeSpecifierNode` entries for function-call overload resolution and template argument deduction. It handles `BoolLiteralNode`, `NumericLiteralNode`, `StringLiteralNode`, and `IdentifierNode` (which correctly copies the full `TypeSpecifierNode` including `type_index` from the declaration). However, all other expression types (`CallExprNode`, `BinaryOperatorNode`, `MemberAccessNode`, casts, etc.) fall through to the `TypeCategory::Int` default at line 352.
+
+This is not a regression — the old inline code it replaced (deleted lines ~4456-4481 in `src/Parser_Expr_PrimaryExpr.cpp`) had the same limitation, only handling the same four expression types and defaulting to `Int` for everything else. The function is currently only used in the template-function-call path where `arg_types` feed `buildDeductionMapFromCallArgs` for template argument deduction rather than full overload resolution, so the impact is limited.
+
+**Follow-up:** Extend `appendFunctionCallArgType` to handle compound expressions by computing their result type (e.g., propagating the return type of a `CallExprNode`, the result type of a `BinaryOperatorNode`, etc.). This would improve deduction accuracy for calls like `foo(bar() + 1)` where the argument type should be deduced from the expression's result rather than defaulting to `int`. **Relates to Phase 6.**
+
+### Brace-init codegen path guards `materialize_template_ctor` behind `resolution.has_match`
+
+**Added:** 2026-04-13 (PR #1255 review — active bug)
+
+In `src/IrGenerator_Stmt_Decl.cpp`, the brace-init codegen path at ~line 1579 only calls `materialize_template_ctor` when `resolution.has_match` is true. The direct-init codegen path at ~line 2321 calls `materialize_template_ctor` unconditionally (even when `matching_ctor` is null). When the only matching constructor is a template constructor (e.g. `template<typename T> Foo(T)`), `resolve_constructor_overload` returns `has_match=false` because the uninstantiated template parameter types don't match concrete argument types. The direct-init path compensates by passing the null `matching_ctor` to `materialize_template_ctor`, which searches all template constructors and instantiates the matching one. The brace-init path never reaches `materialize_template_ctor`, falling through to arity-based resolution which finds the template ctor by arity but does not instantiate it.
+
+**Fix:** Restructure the brace-init resolution block so that `materialize_template_ctor` is called regardless of whether `resolve_constructor_overload` found a match, mirroring the direct-init pattern. **Relates to Phase 3 and Phase 5.**
+
+### Sema `tryAnnotateInitListConstructorArgs` missing `materializeMatchingConstructorTemplate` call
+
+**Added:** 2026-04-13 (PR #1255 review — active bug)
+
+The PR added `materializeMatchingConstructorTemplate` to `tryAnnotateConstructorCallArgConversions` at `src/SemanticAnalysis.cpp:4998-5007` (for direct-init / explicit constructor calls), but the corresponding sema function for brace-init (`tryAnnotateInitListConstructorArgs`) was not updated with the same call. Template constructors are resolved and annotated in sema for direct-init but not for brace-init. The codegen brace-init path then falls back to arity-based resolution or the `is_unresolved_noop_ctor` heuristic instead of getting a properly sema-resolved constructor annotation.
+
+**Fix:** Add a `materializeMatchingConstructorTemplate` call to `tryAnnotateInitListConstructorArgs` after `resolve_constructor_overload`, using the same pattern as `tryAnnotateConstructorCallArgConversions`. **Relates to Phase 3 and Phase 5.**
+
+### `is_unresolved_noop_ctor` early return skips stack allocation but registers destructor
+
+**Added:** 2026-04-13 (PR #1255 review — investigate)
+
+The `is_unresolved_noop_ctor` early-return paths at `src/IrGenerator_Stmt_Decl.cpp` (brace-init ~line 1595 and direct-init ~line 2400) skip the `ConstructorCallOp` emission that normally handles stack allocation for struct variables, but still call `register_destructor_if_needed`. This means the variable is never allocated on the stack, yet a destructor call is registered. Currently this is safe because the two regression tests (`test_template_ctor_noop_dtor_direct_init_ret42.cpp` and `test_template_ctor_noop_dtor_list_init_ret42.cpp`) use destructors that only modify a global variable and never dereference `this`. For types whose destructors access member data, this would be undefined behavior.
+
+**Follow-up:** The noop path should either emit a proper stack allocation (without the constructor call) before registering the destructor, or the long-term fix is to resolve all template constructors in sema so the noop path is never reached. **Relates to Phase 3 and Phase 5.**
+
+### `materializeMatchingConstructorTemplate` returns original uninstantiated ctor on failure
+
+**Added:** 2026-04-13 (PR #1255 review — investigate)
+
+In `src/Parser_Templates_Inst_MemberFunc.cpp:221-235`, when `preferred_ctor` has template parameters but `try_instantiate_constructor_template` fails or the instantiated ctor doesn't match call arguments, the function returns `preferred_ctor` (the original uninstantiated template). Downstream code may then use an uninstantiated template constructor for codegen. For empty-body constructors this is handled by `is_unresolved_noop_ctor`, but for non-empty-body constructors that fail instantiation, the returned uninstantiated ctor could cause issues. The function silently returns an unusable ctor instead of signaling failure.
+
+**Follow-up:** Consider returning `nullptr` instead of `preferred_ctor` when instantiation fails, so callers can fall through to arity-based resolution or report a proper error. **Relates to Phase 3.**
+
+### `try_instantiate_constructor_template` creates persistent dummy AST nodes
+
+**Added:** 2026-04-13 (PR #1255 review — investigate)
+
+`try_instantiate_constructor_template` at `src/Parser_Templates_Inst_MemberFunc.cpp:103-194` creates dummy `TypeSpecifierNode`, `DeclarationNode`, and `FunctionDeclarationNode` nodes solely to call `buildDeductionMapFromCallArgs`. These nodes are allocated via `emplace_node` and persist in the AST node pool for the lifetime of compilation. If `materializeMatchingConstructorTemplate` iterates many template constructors (~line 238-262), this could create significant node churn.
+
+**Follow-up:** Add a `buildDeductionMapFromCallArgs` overload that accepts parameter nodes directly without requiring a `FunctionDeclarationNode` wrapper, or use a lightweight temporary allocation strategy. **Relates to Phase 6.**
+
+### `try_instantiate_member_function_template` fallback to `arg_types[0]` is suspicious
+
+**Added:** 2026-04-13 (PR #1255 review — pre-existing)
+
+At `src/Parser_Templates_Inst_MemberFunc.cpp:85-88`, when a template parameter can't be deduced (no deduction map entry and no remaining call args), the code falls back to `arg_types[0]`. This is pre-existing behavior preserved from the old code (not introduced by this PR). While guarded by the earlier `if (arg_types.empty()) return std::nullopt` check at line 44, defaulting to the first argument's type for an unrelated template parameter is semantically incorrect per C++ template argument deduction rules.
+
+**Follow-up:** This should return `std::nullopt` (deduction failure) instead of silently using the wrong type. **Relates to Phase 6.**
+
+### Constructor call pack expansion duplicates logic and misses identifier-pack path
+
+**Added:** 2026-04-13 (PR #1255 review)
+
+The constructor argument parsing path at `src/Parser_Expr_PrimaryExpr.cpp` (the "Parse constructor arguments with pack expansion support" section, around line 3561) handles `arg...` pack expansion by calling `expandPackExpressionArgument(*node)` directly. This only covers `pack_param_info_`-based expansion (complex expression packs like `static_cast<T>(args)...`).
+
+The function call argument path uses the `append_function_call_argument` lambda (around line 4413) which handles **both** expansion strategies:
+1. **Simple identifier packs:** checks `get_pack_size(pack_name)` and expands `pack_name_0`, `pack_name_1`, etc. via symbol-table lookup
+2. **Complex expression packs:** calls `expandPackExpressionArgument(*arg_node)` via `pack_param_info_`
+
+The constructor path is missing strategy (1). If a constructor call has a simple pack identifier argument like `Foo(args...)` where `args` is expanded via the `args_0`, `args_1` naming convention (rather than via `pack_param_info_`), the constructor path will fall through to `expandPackExpressionArgument` which only checks `pack_param_info_` and returns the unexpanded node if no match is found.
+
+**Follow-up:** Extract the pack expansion logic from `append_function_call_argument` into a shared `Parser` member method (similar to how `appendFunctionCallArgType` was extracted to `Parser_Core.cpp`) and reuse it from both the constructor argument path and the function call argument path. This would eliminate the duplication and ensure both paths handle all pack expansion strategies consistently. **Relates to Phase 6.**
+
 ---
 
 ## Phase 6: unify template-parameter-to-function-parameter deduction mapping

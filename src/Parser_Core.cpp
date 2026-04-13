@@ -243,6 +243,140 @@ std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified
 	return components;
 }
 
+// Re-parse an alias target from the current token position and capture the base
+// template-id as unevaluated AST nodes for deferred alias materialization.
+// - out_target_template_name receives the qualified template name on success.
+//   A leading global `::` is skipped because registry lookups normalize names
+//   without that prefix.
+// - out_target_template_arg_nodes receives the parsed template argument AST nodes.
+// - consume_dependent_member_suffix controls whether trailing dependent members
+//   like `::type` are consumed after the base template-id is captured.
+// Returns true only when a full template-id was captured successfully.
+bool Parser::parseDeferredAliasTargetTemplateId(
+	StringHandle& out_target_template_name,
+	std::vector<ASTNode>& out_target_template_arg_nodes,
+	bool consume_dependent_member_suffix) {
+	out_target_template_name = StringHandle{};
+	out_target_template_arg_nodes.clear();
+
+	SaveHandle start_pos = save_token_position();
+	StringBuilder target_name_builder;
+	auto restore_on_failure = [&]() {
+		restore_token_position(start_pos);
+		discard_saved_token(start_pos);
+		target_name_builder.reset();
+		out_target_template_name = StringHandle{};
+		out_target_template_arg_nodes.clear();
+		return false;
+	};
+
+	parse_cv_qualifiers();
+	skip_noop_gnu_qualifiers();
+	if (peek() == "typename"_tok) {
+		advance();
+		parse_cv_qualifiers();
+		skip_noop_gnu_qualifiers();
+	}
+
+	// Accept either `Name<...>` or `::qualified::Name<...>` spellings here.
+	// A leading `::` is validated again below because it must still be followed
+	// by an identifier for this to form a template-id we can capture.
+	if (!(peek().is_identifier() || peek() == "::"_tok)) {
+		return restore_on_failure();
+	}
+
+	if (peek() == "::"_tok) {
+		advance();
+	}
+	if (!peek().is_identifier()) {
+		return restore_on_failure();
+	}
+
+	target_name_builder.append(peek_info().value());
+	advance();
+
+	while (peek() == "::"_tok) {
+		advance();
+		if (peek() == "template"_tok) {
+			advance();
+		}
+		if (!peek().is_identifier()) {
+			break;
+		}
+		target_name_builder.append("::"sv).append(peek_info().value());
+		advance();
+	}
+
+	if (peek() != "<"_tok) {
+		return restore_on_failure();
+	}
+
+	out_target_template_name = StringTable::getOrInternStringHandle(target_name_builder.commit());
+	auto parsed_template_args = parse_explicit_template_arguments(&out_target_template_arg_nodes);
+	if (!parsed_template_args.has_value()) {
+		return restore_on_failure();
+	}
+
+	if (consume_dependent_member_suffix) {
+		while (peek() == "::"_tok) {
+			advance();
+			if (peek() == "template"_tok) {
+				advance();
+			}
+			if (peek_info().type() != Token::Type::Identifier) {
+				break;
+			}
+			advance();
+			if (peek() == "<"_tok) {
+				auto ignored_member_args = parse_explicit_template_arguments();
+				if (!ignored_member_args.has_value()) {
+					break;
+				}
+			}
+		}
+	}
+
+	discard_saved_token(start_pos);
+	return true;
+}
+
+// Deduce and append a best-effort argument type for function-call overload
+// resolution. When arg_types_out is null, this becomes a no-op so the same
+// argument-collection path can be reused for calls that do not need type data.
+void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<TypeSpecifierNode>* arg_types_out) {
+	if (arg_types_out == nullptr || !arg_node.is<ExpressionNode>()) {
+		return;
+	}
+
+	const auto& expr = arg_node.as<ExpressionNode>();
+	TypeSpecifierNode arg_type(TypeCategory::Int, TypeQualifier::None, get_type_size_bits(TypeCategory::Int), Token(), CVQualifier::None);
+
+	std::visit([&](const auto& inner) {
+		using T = std::decay_t<decltype(inner)>;
+		if constexpr (std::is_same_v<T, BoolLiteralNode>) {
+			arg_type = TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), Token(), CVQualifier::None);
+		} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
+			arg_type = TypeSpecifierNode(inner.type(), TypeQualifier::None, get_type_size_bits(inner.type()), Token(), CVQualifier::None);
+		} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+			arg_type = TypeSpecifierNode(TypeCategory::Char, TypeQualifier::None, get_type_size_bits(TypeCategory::Char), Token(), CVQualifier::None);
+		} else if constexpr (std::is_same_v<T, IdentifierNode>) {
+			auto id_type = lookup_symbol(StringTable::getOrInternStringHandle(inner.name()));
+			if (id_type.has_value()) {
+				if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
+					if (decl->type_node().template is<TypeSpecifierNode>()) {
+						arg_type = decl->type_node().template as<TypeSpecifierNode>();
+						return;
+					}
+				}
+			}
+			arg_type = TypeSpecifierNode(TypeCategory::Invalid, TypeQualifier::None, 0, Token(), CVQualifier::None);
+		}
+	},
+			   expr);
+
+	arg_types_out->push_back(arg_type);
+}
+
 // Helper function to find all local variable declarations in an AST node
 void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<StringHandle>& var_names) {
 	RebindStaticMemberAst::visitAST(node, [&var_names](const ASTNode& current) {

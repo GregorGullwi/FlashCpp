@@ -3522,15 +3522,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// Parse all delayed function bodies using unified helper (Phase 5)
 	for (auto& delayed : delayed_function_bodies_) {
 		// Member function templates (e.g., template<typename U> ClassName(U arg) {...})
-		// inside non-template classes must NOT have their bodies parsed now.
-		// Per C++ §13.9.2 (two-phase lookup), a member function template is only
-		// instantiated when referenced in a context that requires a definition.
-		// Save the body position on the declaration node for later instantiation.
-		//
-		// For template classes, member function template bodies ARE parsed here because
-		// they form part of the class template definition and will be re-parsed during
-		// each class template instantiation.
-		if (delayed.is_member_function_template && !parsing_template_class_) {
+		// must always defer body parsing until instantiation. Parsing them while the
+		// surrounding class template still has unbound parameters incorrectly forces
+		// lookup and deduction in a non-instantiated context.
+		if (delayed.is_member_function_template) {
 			if (delayed.is_constructor && delayed.ctor_node) {
 				delayed.ctor_node->set_template_body_position(delayed.body_start);
 			} else if (delayed.func_node) {

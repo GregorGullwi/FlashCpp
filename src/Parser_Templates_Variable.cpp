@@ -160,20 +160,18 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	{
 		SaveHandle after_target_pos = save_token_position();
 		restore_token_position(target_type_start_pos);
-
-		bool captured_has_template_args = false;
-		StringHandle captured_name = parseRawAliasTargetTemplateId(target_template_arg_nodes, captured_has_template_args);
-
-		if (captured_name.isValid() && captured_has_template_args &&
-			gTemplateRegistry.lookup_alias_template(captured_name.view()).has_value()) {
+		if (parseDeferredAliasTargetTemplateId(
+				target_template_name,
+				target_template_arg_nodes,
+				false) &&
+			gTemplateRegistry.lookup_alias_template(target_template_name).has_value()) {
 			has_deferred_target = true;
-			target_template_name = captured_name;
 			FLASH_LOG_FORMAT(
 				Parser,
 				Debug,
 				"Member template alias '{}' uses deferred alias target '{}'",
 				alias_name,
-				captured_name.view());
+				StringTable::getStringView(target_template_name));
 		}
 
 		restore_token_position(after_target_pos);

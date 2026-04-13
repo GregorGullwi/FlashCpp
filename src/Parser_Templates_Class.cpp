@@ -859,14 +859,12 @@ ParseResult Parser::parse_template_declaration() {
 				// and optional global `::` prefix, then parse the (possibly qualified) name
 				// and any `<template-args>`.
 				restore_token_position(target_type_start_pos);
-
-				bool captured_has_template_args = false;
-				target_template_name = parseRawAliasTargetTemplateId(target_template_arg_nodes, captured_has_template_args);
-
-				if (target_template_name.isValid()) {
+				if (parseDeferredAliasTargetTemplateId(
+						target_template_name,
+						target_template_arg_nodes,
+						true)) {
 					FLASH_LOG(Parser, Debug, "Captured ", target_template_arg_nodes.size(), " unevaluated template argument nodes for deferred instantiation");
 
-					// Debug: log what we captured
 					for (size_t i = 0; i < target_template_arg_nodes.size(); ++i) {
 						const ASTNode& node = target_template_arg_nodes[i];
 						if (node.is<TypeSpecifierNode>()) {
@@ -875,26 +873,6 @@ ParseResult Parser::parse_template_declaration() {
 								std::string_view node_type_name = StringTable::getStringView(type_info->name());
 								FLASH_LOG(Parser, Debug, "  Node[", i, "]: TypeSpecifier, type=", static_cast<int>(ts.type()),
 										  ", type_name='", node_type_name, "'");
-							}
-						}
-					}
-
-					// Consume any dependent member suffix (e.g. ::type) so the alias
-					// declaration can continue after we have captured the base template
-					// name and its argument AST nodes for deferred instantiation.
-					while (peek() == "::"_tok) {
-						advance();
-						if (peek() == "template"_tok) {
-							advance();
-						}
-						if (peek_info().type() != Token::Type::Identifier) {
-							break;
-						}
-						advance();
-						if (peek() == "<"_tok) {
-							auto ignored_member_args = parse_explicit_template_arguments();
-							if (!ignored_member_args.has_value()) {
-								break;
 							}
 						}
 					}

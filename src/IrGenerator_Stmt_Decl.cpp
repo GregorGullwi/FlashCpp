@@ -408,6 +408,81 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		deferred_info.function_node = ASTNode(ctor);
 		deferred_member_functions_.push_back(std::move(deferred_info));
 	};
+	auto materialize_template_ctor = [this](const TypeInfo& type_info_ref, const std::vector<TypeSpecifierNode>& arg_types, const ConstructorDeclarationNode*& ctor) {
+		if (!parser_ || !type_info_ref.getStructInfo()) {
+			return;
+		}
+		bool is_ambiguous = false;
+		ctor = parser_->materializeMatchingConstructorTemplate(
+			type_info_ref.name(),
+			*type_info_ref.getStructInfo(),
+			arg_types,
+			ctor,
+			is_ambiguous);
+		if (is_ambiguous) {
+			throw CompileError(
+				std::string("Ambiguous constructor call for ") +
+				std::string(StringTable::getStringView(type_info_ref.name())));
+		}
+	};
+	auto is_unresolved_noop_ctor = [](const ConstructorDeclarationNode* ctor) -> bool {
+		if (!ctor || (!ctor->has_template_parameters() && !ctor->has_template_body_position()) ||
+			!ctor->member_initializers().empty() || !ctor->base_initializers().empty() ||
+			ctor->delegating_initializer().has_value()) {
+			return false;
+		}
+		if (ctor->get_definition().has_value()) {
+			if (ctor->get_definition()->is<BlockNode>() &&
+				ctor->get_definition()->as<BlockNode>().get_statements().empty()) {
+				return true;
+			}
+			return false;
+		}
+		auto is_template_param_name = [&](std::string_view type_name) {
+			for (const ASTNode& param_node : ctor->template_parameters()) {
+				if (!param_node.is<TemplateParameterNode>()) {
+					continue;
+				}
+				if (param_node.as<TemplateParameterNode>().name() == type_name) {
+					return true;
+				}
+			}
+			for (StringHandle outer_name : ctor->outer_template_param_names()) {
+				if (StringTable::getStringView(outer_name) == type_name) {
+					return true;
+				}
+			}
+			return false;
+		};
+		for (const auto& param : ctor->parameter_nodes()) {
+			if (!param.is<DeclarationNode>()) {
+				continue;
+			}
+			const auto& type_spec = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			if ((type_spec.category() == TypeCategory::UserDefined ||
+				 type_spec.category() == TypeCategory::TypeAlias ||
+				 type_spec.category() == TypeCategory::Template) &&
+				type_spec.type_index().is_valid()) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+					std::string_view type_name = StringTable::getStringView(type_info->name());
+					if (type_info->is_incomplete_instantiation_ || is_template_param_name(type_name)) {
+						return true;
+					}
+				}
+			} else if (is_template_param_name(type_spec.token().value())) {
+				return true;
+			}
+		}
+		return false;
+	};
+	auto register_destructor_if_needed = [this](const DeclarationNode& decl, const TypeInfo* type_info) {
+		if (!type_info || !type_info->struct_info_ || !type_info->struct_info_->hasDestructor()) {
+			return;
+		}
+		registerVariableWithDestructor(
+			std::string(decl.identifier_token().value()),
+			std::string(StringTable::getStringView(type_info->name())));
+	};
 
 		// Check if this is a global variable (declared at global scope)
 	bool is_global = (symbol_table.get_current_scope_type() == ScopeType::Global);
@@ -1501,6 +1576,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											if (resolution.has_match) {
 												has_matching_constructor = true;
 												matching_ctor = resolution.selected_overload;
+												materialize_template_ctor(*type_info, arg_types, matching_ctor);
 											}
 										}
 									}
@@ -1516,6 +1592,15 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 							if (has_matching_constructor) {
 								prepare_nested_template_ctor(*type_info, matching_ctor);
+								if (is_unresolved_noop_ctor(matching_ctor)) {
+									for (const ASTNode& init_expr : initializers) {
+										if (init_expr.is<ExpressionNode>()) {
+											visitExpressionNode(init_expr.as<ExpressionNode>());
+										}
+									}
+									register_destructor_if_needed(decl, type_info);
+									return;
+								}
 
 								// Generate constructor call with parameters from initializer list
 								ConstructorCallOp ctor_op;
@@ -2233,6 +2318,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											throw CompileError("Ambiguous constructor call");
 										}
 										matching_ctor = resolution.selected_overload;
+										materialize_template_ctor(*type_info, arg_types, matching_ctor);
 									}
 
 									if (!matching_ctor) {
@@ -2311,6 +2397,15 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								reportNoMatchingConstructor(type_info->name(), "direct initialization", decl.identifier_token());
 							}
 							prepare_nested_template_ctor(*type_info, matching_ctor);
+							if (is_unresolved_noop_ctor(matching_ctor)) {
+								direct_ctor->arguments().visit([&](ASTNode argument) {
+									if (argument.is<ExpressionNode>()) {
+										visitExpressionNode(argument.as<ExpressionNode>());
+									}
+								});
+								register_destructor_if_needed(decl, type_info);
+								return;
+							}
 
 							// Create constructor call with the declared variable as the object
 							ConstructorCallOp ctor_op;
@@ -2351,11 +2446,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
 							// Register for destructor if needed
-							if (type_info->struct_info_ && type_info->struct_info_->hasDestructor()) {
-								registerVariableWithDestructor(
-									std::string(decl.identifier_token().value()),
-									std::string(StringTable::getStringView(type_info->name())));
-							}
+							register_destructor_if_needed(decl, type_info);
 						} // end of non-aggregate constructor call block
 					} else if (has_copy_init) {
 							// Generate copy constructor call or converting constructor call

@@ -392,6 +392,9 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				for (const auto& param : header.params.parameters) {
 					ctor_ref.add_parameter_node(param);
 				}
+				for (const auto& template_param : template_params) {
+					ctor_ref.add_template_parameter(template_param);
+				}
 
 				// Enter scope for initializer list parsing
 				FlashCpp::SymbolTableScope ctor_scope(ScopeType::Function);
