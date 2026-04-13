@@ -114,32 +114,12 @@ Common non-type operands for `sizeof` and `alignof` now work in constexpr evalua
 - binary expressions such as `a + b`
 - constexpr function calls such as `makeInt()`
 - member access such as `obj.member`
+- array subscripts such as `arr[1]`, `obj.data[2]`, and `matrix[0]`
 - ternary expressions such as `cond ? a : b`
 - cast expressions such as `static_cast<short>(x)`
 - dereference expressions such as `*ptr`
 
-```cpp
-struct Pair { int x; double y; };
-
-constexpr int makeInt() { return 42; }
-constexpr double makeDouble() { return 3.5; }
-
-constexpr int test() {
-    int a = 1;
-    int b = 2;
-    Pair p{a, 4.0};
-    int* ptr = &a;
-
-    return sizeof(a + b)
-         + sizeof(makeInt())
-         + sizeof(p.x)
-         + alignof(makeDouble())
-         + alignof(static_cast<short>(b))
-         + alignof(*ptr);
-}
-
-static_assert(test() == 26);  // ✅ Works
-```
+See `tests/test_constexpr_sizeof_alignof_complex_expr_ret0.cpp` for full coverage.
 
 ### ✅ Constexpr Struct Construction
 ```cpp
