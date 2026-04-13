@@ -1050,14 +1050,15 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				// NOTE: current_explicit_call_arg_types_ may be null here — the
 				// deduction-map build block (lines ~980-990) is conditional and does
 				// not guarantee non-null for this later point in the same function.
-				if (remaining_args == 0 && current_explicit_call_arg_types_ != nullptr) {
-					// Find where the function parameter pack starts (i.e. how many
-					// non-pack function params precede it).
+				if (remaining_args == 0 &&
+					current_explicit_call_arg_types_ != nullptr &&
+					has_variadic_func_pack) {
 					size_t pack_func_param_start = 0;
 					for (const auto& fp : func_decl.parameter_nodes()) {
 						if (fp.is<DeclarationNode>() &&
-							fp.as<DeclarationNode>().is_parameter_pack())
+							fp.as<DeclarationNode>().is_parameter_pack()) {
 							break;
+						}
 						++pack_func_param_start;
 					}
 					// Call args from pack_func_param_start through

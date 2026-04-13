@@ -744,7 +744,7 @@ ASTNode Parser::substituteTemplateParameters(
 			// Fallback: if count_pack_elements returns 0 (scope may have been exited),
 			// try to calculate from template_params/template_args by finding the variadic parameter
 			bool found_variadic = false;
-			if (num_pack_elements == 0 && !template_args.empty()) {
+			if (num_pack_elements == 0) {
 				// The pack_name is the function parameter name (e.g., "rest")
 				// We need to find the corresponding variadic template parameter (e.g., "Rest")
 				// The mapping: function param type uses the template param name
