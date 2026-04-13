@@ -72,6 +72,9 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 			continue;
 
 		const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+		if (candidate.has_template_body_position()) {
+			continue;
+		}
 		if (match) {
 			return nullptr;
 		}
@@ -296,6 +299,33 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is
 						FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
 					}
 				}
+			}
+		}
+
+		if (object_struct_name.has_value() && !in_sfinae_context_ &&
+			!known_member_func && !instantiated_func.has_value()) {
+			auto has_member_template = [&]() {
+				StringBuilder qualified_name_sb;
+				qualified_name_sb.append(*object_struct_name).append("::").append(member_name_token.value());
+				if (gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle(qualified_name_sb.commit())).has_value()) {
+					return true;
+				}
+
+				std::string_view base_name = extractBaseTemplateName(*object_struct_name);
+				if (base_name.empty()) {
+					return false;
+				}
+
+				StringBuilder base_qualified_name_sb;
+				base_qualified_name_sb.append(base_name).append("::").append(member_name_token.value());
+				return gTemplateRegistry.lookupTemplate(
+					StringTable::getOrInternStringHandle(base_qualified_name_sb.commit())).has_value();
+			};
+
+			if (has_member_template()) {
+				return ParseResult::error(
+					"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
+					member_name_token);
 			}
 		}
 

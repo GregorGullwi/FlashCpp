@@ -843,13 +843,17 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					{
 						SaveHandle after_type_pos = save_token_position();
 						restore_token_position(alias_target_start);
-						if (peek().is_identifier()) {
-							std::string_view raw_type_name = peek_info().value();
-							advance();
-							auto raw_template_args = parse_explicit_template_arguments();
-							if (raw_template_args.has_value() &&
-								gTemplateRegistry.lookup_alias_template(raw_type_name).has_value()) {
-								raw_alias_template_use.emplace(raw_type_name, std::move(*raw_template_args));
+						std::vector<ASTNode> raw_template_arg_nodes;
+						std::vector<TemplateTypeArg> raw_template_args;
+						bool has_template_args = false;
+						StringHandle raw_type_name = parseRawAliasTargetTemplateId(
+							raw_template_arg_nodes,
+							raw_template_args,
+							has_template_args);
+						if (has_template_args && raw_type_name.isValid()) {
+							std::string_view raw_type_name_view = StringTable::getStringView(raw_type_name);
+							if (gTemplateRegistry.lookup_alias_template(raw_type_name_view).has_value()) {
+								raw_alias_template_use.emplace(raw_type_name_view, std::move(raw_template_args));
 							}
 						}
 						restore_token_position(after_type_pos);

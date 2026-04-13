@@ -83,8 +83,14 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 				arg_types[arg_index].type_index().withCategory(arg_types[arg_index].type())));
 			++arg_index;
 		} else {
-			template_args.push_back(TemplateTypeArg::makeType(
-				arg_types[0].type_index().withCategory(arg_types[0].type())));
+			InlineVector<TemplateTypeArg, 4> default_args;
+			for (const auto& existing_arg : template_args) {
+				default_args.push_back(existing_arg);
+			}
+			if (!tryAppendDefaultTemplateArg(param, template_params, default_args)) {
+				return std::nullopt;
+			}
+			template_args.push_back(default_args.back());
 		}
 	}
 

@@ -8,8 +8,12 @@
 // Parses the template-id on the right-hand side of an alias declaration from
 // the current token position.  The caller is responsible for rewinding before
 // calling and, if necessary, for restoring the position afterwards.
-StringHandle Parser::parseRawAliasTargetTemplateId(std::vector<ASTNode>& out_args, bool& out_has_template_args) {
+StringHandle Parser::parseRawAliasTargetTemplateId(
+	std::vector<ASTNode>& out_args,
+	std::vector<TemplateTypeArg>& out_concrete_args,
+	bool& out_has_template_args) {
 	out_has_template_args = false;
+	out_concrete_args.clear();
 
 	parse_cv_qualifiers();
 	skip_noop_gnu_qualifiers();
@@ -49,9 +53,17 @@ StringHandle Parser::parseRawAliasTargetTemplateId(std::vector<ASTNode>& out_arg
 	if (peek() == "<"_tok) {
 		auto parsed_args = parse_explicit_template_arguments(&out_args);
 		out_has_template_args = parsed_args.has_value();
+		if (parsed_args.has_value()) {
+			out_concrete_args = std::move(*parsed_args);
+		}
 	}
 
 	return StringTable::getOrInternStringHandle(full_name);
+}
+
+StringHandle Parser::parseRawAliasTargetTemplateId(std::vector<ASTNode>& out_args, bool& out_has_template_args) {
+	std::vector<TemplateTypeArg> ignored_concrete_args;
+	return parseRawAliasTargetTemplateId(out_args, ignored_concrete_args, out_has_template_args);
 }
 
 ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_node, [[maybe_unused]] AccessSpecifier access) {
