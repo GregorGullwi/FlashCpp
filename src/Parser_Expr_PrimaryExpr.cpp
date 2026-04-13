@@ -3561,6 +3561,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						if (current_token_.value() == "...") {
 							advance();  // consume '...'
 							// Expand the pack using pack_param_info_
+							// This mirrors the pack expansion logic in function call argument parsing
 							std::vector<const PackParamInfo*> packs_in_expr;
 							for (const auto& pack_info : pack_param_info_) {
 								if (pack_info.pack_size > 0 && exprContainsIdentifier(*node, pack_info.original_name)) {
@@ -3568,13 +3569,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								}
 							}
 							if (!packs_in_expr.empty()) {
+								// Verify all packs have the same size (C++20 requires this for pack expansion)
 								size_t pack_size = packs_in_expr[0]->pack_size;
-								for (size_t i = 0; i < pack_size; ++i) {
-									ASTNode current_arg = *node;
-									for (const auto* pack_info : packs_in_expr) {
-										current_arg = replacePackIdentifierInExpr(current_arg, pack_info->original_name, i);
+								bool sizes_match = true;
+								for (size_t pi = 1; pi < packs_in_expr.size(); ++pi) {
+									if (packs_in_expr[pi]->pack_size != pack_size) {
+										sizes_match = false;
+										break;
 									}
-									args.push_back(current_arg);
+								}
+								if (sizes_match) {
+									for (size_t i = 0; i < pack_size; ++i) {
+										ASTNode current_arg = *node;
+										for (const auto* pack_info : packs_in_expr) {
+											current_arg = replacePackIdentifierInExpr(current_arg, pack_info->original_name, i);
+										}
+										args.push_back(current_arg);
+									}
+								} else {
+									// Mismatched pack sizes - just add the unexpanded arg
+									args.push_back(*node);
 								}
 							} else {
 								// No matching pack found - just add the unexpanded arg
@@ -4474,8 +4488,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							std::string_view pack_name = arg_node->as<IdentifierNode>().name();
 							size_t pack_size = 0;
 
+							// Upper bound for pack size discovery - packs larger than this are unusual
+							// and we stop searching once we hit an unregistered element anyway
+							constexpr size_t kMaxPackSizeProbe = 100;
 							StringBuilder sb;
-							for (size_t i = 0; i < 100; ++i) {
+							for (size_t i = 0; i < kMaxPackSizeProbe; ++i) {
 								std::string_view element_name = sb
 																	.append(pack_name)
 																	.append("_")

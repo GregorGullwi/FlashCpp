@@ -587,9 +587,25 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 	}
 
-	// Save and clear pack_param_info_ for this instantiation
+	// Save pack_param_info_ for this instantiation (move leaves it in a valid empty state)
 	auto saved_pack_param_info = std::move(pack_param_info_);
-	pack_param_info_.clear();
+
+	// Helper to extract the type name from a TypeSpecifierNode, trying token value first, then TypeInfo lookup
+	auto extractTypeNameFromSpec = [&](const TypeSpecifierNode& type_spec) -> std::string_view {
+		if (type_spec.category() != TypeCategory::UserDefined &&
+			type_spec.category() != TypeCategory::TypeAlias &&
+			type_spec.category() != TypeCategory::Template) {
+			return {};
+		}
+		// Try token value first
+		std::string_view name = type_spec.token().value();
+		if (name.empty() && type_spec.type_index().is_valid()) {
+			if (const TypeInfo* ti = tryGetTypeInfo(type_spec.type_index())) {
+				name = StringTable::getStringView(ti->name());
+			}
+		}
+		return name;
+	};
 
 	// Copy and substitute parameters
 	for (const auto& param : func_decl.parameter_nodes()) {
@@ -603,27 +619,15 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			bool is_pack_param = param_decl.is_parameter_pack();
 
 			// Also detect if type references a variadic template parameter (for cases where is_parameter_pack isn't set)
-			std::string_view type_name;
-			if (param_type_spec.category() == TypeCategory::UserDefined ||
-				param_type_spec.category() == TypeCategory::TypeAlias ||
-				param_type_spec.category() == TypeCategory::Template) {
-				// Try token value first
-				type_name = param_type_spec.token().value();
-				// If empty, try to look up the type name from the type_index
-				if (type_name.empty() && param_type_spec.type_index().is_valid()) {
-					if (const TypeInfo* ti = tryGetTypeInfo(param_type_spec.type_index())) {
-						type_name = StringTable::getStringView(ti->name());
-					}
-				}
-				if (!is_pack_param && !type_name.empty()) {
-					for (size_t i = 0; i < template_params.size(); ++i) {
-						if (!template_params[i].is<TemplateParameterNode>())
-							continue;
-						const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-						if (tparam.is_variadic() && tparam.name() == type_name) {
-							is_pack_param = true;
-							break;
-						}
+			std::string_view type_name = extractTypeNameFromSpec(param_type_spec);
+			if (!is_pack_param && !type_name.empty()) {
+				for (size_t i = 0; i < template_params.size(); ++i) {
+					if (!template_params[i].is<TemplateParameterNode>())
+						continue;
+					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+					if (tparam.is_variadic() && tparam.name() == type_name) {
+						is_pack_param = true;
+						break;
 					}
 				}
 			}
