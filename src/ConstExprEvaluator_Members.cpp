@@ -578,7 +578,7 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 	const ASTNode& expr,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context,
-	EvalResult (*evaluate_expression)(
+	EvalResult (*evaluate_index_expression)(
 		const ASTNode&,
 		const std::unordered_map<std::string_view, EvalResult>&,
 		EvaluationContext&),
@@ -604,7 +604,7 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 		}
 
 		std::optional<BoundWriteTarget> base_target = resolveBoundWriteTarget(
-			member_access->object(), bindings, context, evaluate_expression, resolve_error);
+			member_access->object(), bindings, context, evaluate_index_expression, resolve_error);
 		if (!base_target.has_value() || base_target->slot == nullptr) {
 			return std::nullopt;
 		}
@@ -618,12 +618,12 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 
 	if (const auto* subscript = tryGetNode<ArraySubscriptNode>(expr)) {
 		std::optional<BoundWriteTarget> base_target = resolveBoundWriteTarget(
-			subscript->array_expr(), bindings, context, evaluate_expression, resolve_error);
+			subscript->array_expr(), bindings, context, evaluate_index_expression, resolve_error);
 		if (!base_target.has_value() || base_target->slot == nullptr || !base_target->slot->is_array) {
 			return std::nullopt;
 		}
 
-		EvalResult index_result = evaluate_expression(subscript->index_expr(), bindings, context);
+		EvalResult index_result = evaluate_index_expression(subscript->index_expr(), bindings, context);
 		if (!index_result.success()) {
 			resolve_error = index_result;
 			return std::nullopt;
@@ -2026,7 +2026,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				if (current.is_indeterminate) {
 					return EvalResult::error(
 						"Read of indeterminate value in constant expression "
-						"(object was default-initialized without an initializer)");
+						"(uninitialized object)");
 				}
 
 				EvalResult one = EvalResult::from_int(1);
