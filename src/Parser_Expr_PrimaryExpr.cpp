@@ -2415,12 +2415,32 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// Check if followed by :: for member access (Template<T>::member)
 					if (!instantiated_name.empty() && current_token_.value() == "::") {
-					// Build the full namespace path including the instantiated template name
-					// For "my_ns::Wrapper<int>::value", we want namespace path "my_ns::Wrapper_int" and name="value"
-					// Build namespace path from the original namespace handle plus the instantiated template name
-						NamespaceHandle base_ns = qual_id.namespace_handle();
-						StringHandle instantiated_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
-						NamespaceHandle full_ns_handle = gNamespaceRegistry.getOrCreateNamespace(base_ns, instantiated_name_handle);
+					// Build the owner scope from the concrete materialized owner, not the
+					// original qualifier chain. This keeps struct-local alias templates
+					// like `Outer::alias_t<...>::member` anchored to the resolved target
+					// type instead of incorrectly nesting the target under `Outer`.
+						std::string_view concrete_owner_name = instantiated_name;
+						if (materialized_owner.resolved_type_info != nullptr) {
+							concrete_owner_name = StringTable::getStringView(
+								materialized_owner.resolved_type_info->name());
+						}
+						NamespaceHandle full_ns_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
+						size_t component_start = 0;
+						while (component_start < concrete_owner_name.size()) {
+							size_t component_end = concrete_owner_name.find("::", component_start);
+							std::string_view component = component_end == std::string_view::npos
+								? concrete_owner_name.substr(component_start)
+								: concrete_owner_name.substr(component_start, component_end - component_start);
+							if (!component.empty()) {
+								full_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+									full_ns_handle,
+									StringTable::getOrInternStringHandle(component));
+							}
+							if (component_end == std::string_view::npos) {
+								break;
+							}
+							component_start = component_end + 2;
+						}
 
 					// Parse the :: and the member name
 						advance(); // consume ::

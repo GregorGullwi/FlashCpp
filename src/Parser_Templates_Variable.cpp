@@ -92,6 +92,8 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	}
 	advance(); // consume '='
 
+	SaveHandle target_type_start_pos = save_token_position();
+
 	// Parse the target type
 	ParseResult type_result = parse_type_specifier();
 	if (type_result.is_error()) {
@@ -102,17 +104,89 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 	consume_pointer_ref_modifiers(type_spec);
 
+	bool has_deferred_target = false;
+	StringHandle target_template_name;
+	std::vector<ASTNode> target_template_arg_nodes;
+	{
+		SaveHandle after_target_pos = save_token_position();
+		restore_token_position(target_type_start_pos);
+
+		parse_cv_qualifiers();
+		skip_noop_gnu_qualifiers();
+		if (peek() == "typename"_tok) {
+			advance();
+			parse_cv_qualifiers();
+			skip_noop_gnu_qualifiers();
+		}
+
+		if (peek().is_identifier() || peek() == "::"_tok) {
+			StringBuilder raw_target_name_builder;
+			if (peek() == "::"_tok) {
+				raw_target_name_builder.append("::"sv);
+				advance();
+			}
+			if (peek().is_identifier()) {
+				raw_target_name_builder.append(peek_info().value());
+				advance();
+
+				while (peek() == "::"_tok) {
+					advance();
+					if (peek() == "template"_tok) {
+						advance();
+					}
+					if (!peek().is_identifier()) {
+						break;
+					}
+					raw_target_name_builder.append("::"sv).append(peek_info().value());
+					advance();
+				}
+
+				std::string_view raw_target_name = raw_target_name_builder.commit();
+				if (peek() == "<"_tok) {
+					auto raw_alias_args =
+						parse_explicit_template_arguments(&target_template_arg_nodes);
+					if (raw_alias_args.has_value() &&
+						gTemplateRegistry.lookup_alias_template(raw_target_name).has_value()) {
+						has_deferred_target = true;
+						target_template_name =
+							StringTable::getOrInternStringHandle(raw_target_name);
+						FLASH_LOG_FORMAT(
+							Parser,
+							Debug,
+							"Member template alias '{}' uses deferred alias target '{}'",
+							alias_name,
+							raw_target_name);
+					}
+				}
+			}
+		}
+
+		restore_token_position(after_target_pos);
+	}
+
 	// Expect semicolon
 	if (!consume(";"_tok)) {
 		return ParseResult::error("Expected ';' after member template alias declaration", current_token_);
 	}
 
 	// Create TemplateAliasNode
-	auto alias_node = emplace_node<TemplateAliasNode>(
-		std::move(template_params),
-		std::move(template_param_names),
-		StringTable::getOrInternStringHandle(alias_name),
-		type_result.node().value());
+	auto alias_name_handle = StringTable::getOrInternStringHandle(alias_name);
+	ASTNode alias_node;
+	if (has_deferred_target && target_template_name.isValid()) {
+		alias_node = emplace_node<TemplateAliasNode>(
+			std::move(template_params),
+			std::move(template_param_names),
+			alias_name_handle,
+			type_result.node().value(),
+			target_template_name,
+			std::move(target_template_arg_nodes));
+	} else {
+		alias_node = emplace_node<TemplateAliasNode>(
+			std::move(template_params),
+			std::move(template_param_names),
+			alias_name_handle,
+			type_result.node().value());
+	}
 
 	// Register the alias template with qualified name (ClassName::AliasName)
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(
