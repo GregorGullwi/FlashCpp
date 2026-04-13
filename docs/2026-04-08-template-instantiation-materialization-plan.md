@@ -1103,6 +1103,16 @@ This mirrors the existing `prepare_nested_template_ctor` lambda at `src/IrGenera
 
 **Long-term fix:** Resolve all constructor templates in semantic analysis before reaching codegen. The sema path already partially does this; the codegen fallback should become unnecessary once sema covers all constructor-call shapes (including arity-based fallback and direct-init syntax). **Relates to Phase 3 and Phase 5.**
 
+### `appendFunctionCallArgType` lacks full type deduction for complex expressions
+
+**Added:** 2026-04-13 (PR #1255 review)
+
+`Parser::appendFunctionCallArgType()` at `src/Parser_Core.cpp:346-378` produces best-effort `TypeSpecifierNode` entries for function-call overload resolution and template argument deduction. It handles `BoolLiteralNode`, `NumericLiteralNode`, `StringLiteralNode`, and `IdentifierNode` (which correctly copies the full `TypeSpecifierNode` including `type_index` from the declaration). However, all other expression types (`CallExprNode`, `BinaryOperatorNode`, `MemberAccessNode`, casts, etc.) fall through to the `TypeCategory::Int` default at line 352.
+
+This is not a regression — the old inline code it replaced (deleted lines ~4456-4481 in `src/Parser_Expr_PrimaryExpr.cpp`) had the same limitation, only handling the same four expression types and defaulting to `Int` for everything else. The function is currently only used in the template-function-call path where `arg_types` feed `buildDeductionMapFromCallArgs` for template argument deduction rather than full overload resolution, so the impact is limited.
+
+**Follow-up:** Extend `appendFunctionCallArgType` to handle compound expressions by computing their result type (e.g., propagating the return type of a `CallExprNode`, the result type of a `BinaryOperatorNode`, etc.). This would improve deduction accuracy for calls like `foo(bar() + 1)` where the argument type should be deduced from the expression's result rather than defaulting to `int`. **Relates to Phase 6.**
+
 ---
 
 ## Phase 6: unify template-parameter-to-function-parameter deduction mapping
