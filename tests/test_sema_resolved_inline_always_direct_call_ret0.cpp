@@ -1,5 +1,6 @@
 // Test: sema-normalized direct calls to pure-expression template instantiations
-// should use sema-owned resolved targets instead of codegen name lookups.
+// should use sema-owned resolved targets and avoid falling back to symbol-table
+// lookup in codegen.
 
 template <typename T>
 int addTwo(T value) {
