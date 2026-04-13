@@ -751,7 +751,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 	}
 
-	// Save and clear pack_param_info_ so this instantiation can rebuild the active pack state.
+	// Save and reset pack_param_info_ so this instantiation can rebuild its local pack state.
 	auto saved_pack_param_info = std::move(pack_param_info_);
 
 	// Helper to extract the type name from a TypeSpecifierNode, trying token value first, then TypeInfo lookup
@@ -1074,7 +1074,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
 
-	// Restore pack_param_info_
+	// Restore the outer scope's pack_param_info_ after completing this instantiation.
 	pack_param_info_ = std::move(saved_pack_param_info);
 
 	return new_func_node;
