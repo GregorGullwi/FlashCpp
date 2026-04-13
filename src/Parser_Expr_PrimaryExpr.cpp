@@ -3569,6 +3569,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							// Mirror append_function_call_argument: use identifier-pack path for
 							// simple packs (correctly handles zero-size packs), expression-pack
 							// path for complex expressions.
+							bool added = false;
 							if (node->is<ExpressionNode>()) {
 								if (const auto* id = std::get_if<IdentifierNode>(&node->as<ExpressionNode>())) {
 									std::string_view pack_name = id->name();
@@ -3582,12 +3583,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									} else {
 										args.push_back(*node);
 									}
-								} else {
-									for (ASTNode expanded_arg : expandPackExpressionArgument(*node)) {
-										args.push_back(std::move(expanded_arg));
-									}
+									added = true;
 								}
-							} else {
+							}
+							if (!added) {
 								for (ASTNode expanded_arg : expandPackExpressionArgument(*node)) {
 									args.push_back(std::move(expanded_arg));
 								}

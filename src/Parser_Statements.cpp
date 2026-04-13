@@ -1028,6 +1028,7 @@ std::optional<ASTNode> Parser::parse_direct_initialization() {
 				advance();  // consume '...'
 				// Mirror append_function_call_argument: use identifier-pack path for simple
 				// packs (correctly handles zero-size packs), expression-pack path for complex.
+				bool added = false;
 				if (arg_node->is<ExpressionNode>()) {
 					if (const auto* id = std::get_if<IdentifierNode>(&arg_node->as<ExpressionNode>())) {
 						std::string_view pack_name = id->name();
@@ -1041,12 +1042,10 @@ std::optional<ASTNode> Parser::parse_direct_initialization() {
 						} else {
 							init_list_ref.add_initializer(*arg_node);
 						}
-					} else {
-						for (ASTNode expanded : expandPackExpressionArgument(*arg_node)) {
-							init_list_ref.add_initializer(expanded);
-						}
+						added = true;
 					}
-				} else {
+				}
+				if (!added) {
 					for (ASTNode expanded : expandPackExpressionArgument(*arg_node)) {
 						init_list_ref.add_initializer(expanded);
 					}
