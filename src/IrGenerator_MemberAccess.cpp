@@ -51,6 +51,37 @@ static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNo
 	return calculate_alignment_from_size(size_in_bytes, aligned_category);
 }
 
+static size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& decl) {
+	if (decl.type_node().is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& type_node = decl.type_node().as<TypeSpecifierNode>();
+		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
+			return type_node.array_dimension_count();
+		}
+	}
+	return decl.array_dimension_count();
+}
+
+static std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) {
+	if (decl.type_node().is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& type_node = decl.type_node().as<TypeSpecifierNode>();
+		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
+			return type_node.array_dimensions();
+		}
+	}
+
+	std::vector<size_t> dim_sizes;
+	dim_sizes.reserve(decl.array_dimension_count());
+	ConstExpr::EvaluationContext ctx(gSymbolTable);
+	for (const auto& dim_expr : decl.array_dimensions()) {
+		auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+		if (!eval_result.success() || eval_result.as_int() <= 0) {
+			return {};
+		}
+		dim_sizes.push_back(static_cast<size_t>(eval_result.as_int()));
+	}
+	return dim_sizes;
+}
+
 AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript) {
 	MultiDimMemberArrayAccess result;
 	std::vector<ASTNode> indices_reversed;
@@ -177,7 +208,7 @@ AstToIr::MultiDimArrayAccess AstToIr::collectMultiDimArrayIndices(const ArraySub
 		}
 
 		result.is_valid = (result.base_decl != nullptr) &&
-						  (result.base_decl->array_dimension_count() == result.indices.size()) &&
+						  (getEffectiveArrayDimensionCountForCodegen(*result.base_decl) == result.indices.size()) &&
 						  (result.indices.size() > 1); // Only valid for multidimensional
 	}
 
@@ -347,18 +378,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			}
 
 			// Get all dimension sizes
-			std::vector<size_t> dim_sizes;
-			const auto& dims = multi_dim.base_decl->array_dimensions();
-			for (const auto& dim_expr : dims) {
-				ConstExpr::EvaluationContext ctx(symbol_table);
-				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-				if (eval_result.success() && eval_result.as_int() > 0) {
-					dim_sizes.push_back(static_cast<size_t>(eval_result.as_int()));
-				} else {
-					// Can't evaluate dimension at compile time, fall back to regular handling
-					break;
-				}
-			}
+			std::vector<size_t> dim_sizes = getEffectiveArrayDimensionsForCodegen(*multi_dim.base_decl);
 
 			if (dim_sizes.size() == multi_dim.indices.size()) {
 				// All dimensions evaluated successfully, compute flat index
