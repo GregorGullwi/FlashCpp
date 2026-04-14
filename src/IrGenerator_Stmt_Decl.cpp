@@ -988,7 +988,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							.append(" argument(s)"sv)
 							.commit()));
 					}
-						// Fallback: zero-initialize for default constructor or failed eval
+						// Fallback: zero-initialize aggregate/default-construction cases that
+						// do not have a missing user-declared constructor diagnostic above.
 					op.is_initialized = true;
 					op.init_data.resize(si ? toSizeT(si->sizeInBytes()) : element_size, 0);
 				}
