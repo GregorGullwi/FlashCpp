@@ -843,25 +843,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	}
 
 	if (const FunctionDeclarationNode* resolved_function = call_expr.callee().function_declaration_or_null()) {
-		if (!resolved_function->is_constexpr() && !resolved_function->is_consteval() &&
-			context.storage_duration != ConstExpr::StorageDuration::Static) {
-			return EvalResult::error("Function in constant expression must be constexpr or consteval: " + std::string(func_name),
-									 EvalErrorType::NotConstantExpression);
-		}
-
-		const auto& definition = resolved_function->get_definition();
-		if (!definition.has_value()) {
-			return EvalResult::error("Constexpr function has no body: " + std::string(func_name));
-		}
-
-		const auto& arguments = call_expr.arguments();
-		const size_t parameter_count = resolved_function->parameter_nodes().size();
-		const size_t min_required = countMinRequiredArgs(*resolved_function);
-		if (arguments.size() < min_required || arguments.size() > parameter_count) {
-			return EvalResult::error("Function argument count mismatch in constant expression");
-		}
-
-		return evaluate_function_call_with_bindings(*resolved_function, arguments, bindings, context);
+		return evaluate_resolved_function_call(*resolved_function, call_expr.arguments(), context, &bindings);
 	}
 
 	auto symbol_opt = lookup_function_symbol(call_expr, func_name, *context.symbols);
