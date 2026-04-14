@@ -12,5 +12,8 @@ struct IsNothrowInvocableR
 	: SelectInvokeTraits<Callable, Args...>::template IsNothrowInvocableR<Rx> {};
 
 int main() {
+	IsNothrowInvocableR<int, void, float> instance;
+	(void)instance;
 	return 42;
 }
+
