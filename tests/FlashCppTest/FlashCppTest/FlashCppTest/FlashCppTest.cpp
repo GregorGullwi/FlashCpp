@@ -19,6 +19,7 @@
 #include <cctype>
 #include <typeindex>
 #include <sstream>
+#include <memory>
 #include <span>
 #include <cstdio>
 #include <fstream>
@@ -176,6 +177,43 @@ TEST_CASE("InlineVector provides contiguous span storage after spilling past inl
 
 	span[2] = 25;
 	CHECK(values[2] == 25);
+}
+
+TEST_CASE("InlineVector clears inline-held references immediately") {
+	auto value = std::make_shared<int>(42);
+	InlineVector<std::shared_ptr<int>, 2> values;
+	values.push_back(value);
+	values.push_back(value);
+
+	CHECK(value.use_count() == 3);
+
+	values.pop_back();
+	CHECK(value.use_count() == 2);
+
+	values.clear();
+	CHECK(value.use_count() == 1);
+}
+
+TEST_CASE("InlineVector preserves self-referential values when spilling to heap") {
+	InlineVector<std::string, 2> appended_values;
+	appended_values.push_back("alpha");
+	appended_values.push_back("beta");
+	appended_values.push_back(appended_values[0]);
+
+	CHECK(appended_values.size() == 3);
+	CHECK(appended_values[0] == "alpha");
+	CHECK(appended_values[1] == "beta");
+	CHECK(appended_values[2] == "alpha");
+
+	InlineVector<std::string, 2> inserted_values;
+	inserted_values.push_back("left");
+	inserted_values.push_back("right");
+	inserted_values.insert(inserted_values.begin() + 1, inserted_values[0]);
+
+	CHECK(inserted_values.size() == 3);
+	CHECK(inserted_values[0] == "left");
+	CHECK(inserted_values[1] == "left");
+	CHECK(inserted_values[2] == "right");
 }
 
 TEST_CASE("Dependent and non-dependent type args produce different hashes") {

@@ -15,8 +15,10 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <initializer_list>
 #include <iterator>
+#include <memory>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -85,14 +87,39 @@ public:
 		return std::vector<T>(begin(), end());
 	}
 
-	InlineVector(const InlineVector&) = default;
-	InlineVector(InlineVector&&) noexcept = default;
-	InlineVector& operator=(const InlineVector&) = default;
-	InlineVector& operator=(InlineVector&&) noexcept = default;
+	InlineVector(const InlineVector& other) {
+		copyFrom(other);
+	}
+
+	InlineVector(InlineVector&& other) {
+		moveFrom(std::move(other));
+	}
+
+	InlineVector& operator=(const InlineVector& other) {
+		if (this != &other) {
+			resetStorage();
+			copyFrom(other);
+		}
+		return *this;
+	}
+
+	InlineVector& operator=(InlineVector&& other) {
+		if (this != &other) {
+			resetStorage();
+			moveFrom(std::move(other));
+		}
+		return *this;
+	}
 
 	void push_back(const T& value) {
 		if (using_inline_storage_ && inline_count_ < N) {
 			inline_data_[inline_count_++] = value;
+			return;
+		}
+		if (referencesActiveInlineStorage(value)) {
+			T copied_value = value;
+			ensureHeapStorage(size() + 1);
+			heap_data_.push_back(std::move(copied_value));
 			return;
 		}
 		ensureHeapStorage(size() + 1);
@@ -104,8 +131,9 @@ public:
 			inline_data_[inline_count_++] = std::move(value);
 			return;
 		}
+		T moved_value = std::move(value);
 		ensureHeapStorage(size() + 1);
-		heap_data_.push_back(std::move(value));
+		heap_data_.push_back(std::move(moved_value));
 	}
 
 	template <typename... Args>
@@ -133,14 +161,11 @@ public:
 			return;
 		}
 		--inline_count_;
+		inline_data_[inline_count_] = T{};
 	}
 
-	void clear() noexcept {
-		if (using_inline_storage_) {
-			inline_count_ = 0;
-			return;
-		}
-		heap_data_.clear();
+	void clear() {
+		resetStorage();
 	}
 
 	void reserve(size_t capacity) {
@@ -234,6 +259,12 @@ public:
 			return begin() + idx;
 		}
 
+		if (referencesActiveInlineStorage(value)) {
+			T copied_value = value;
+			ensureHeapStorage(size() + 1);
+			heap_data_.insert(heap_data_.begin() + static_cast<typename std::vector<T>::difference_type>(idx), std::move(copied_value));
+			return begin() + idx;
+		}
 		ensureHeapStorage(size() + 1);
 		heap_data_.insert(heap_data_.begin() + static_cast<typename std::vector<T>::difference_type>(idx), value);
 		return begin() + idx;
@@ -286,6 +317,32 @@ public:
 private:
 	static_assert(N <= 255, "InlineVector: N must be <= 255 (inline_count_ is uint8_t)");
 
+	[[nodiscard]] bool referencesActiveInlineStorage(const T& value) const noexcept {
+		if (!using_inline_storage_) {
+			return false;
+		}
+		std::less<const T*> less;
+		const T* value_ptr = std::addressof(value);
+		const T* inline_begin = inline_data_.data();
+		const T* inline_end = inline_begin + inline_count_;
+		return !less(value_ptr, inline_begin) && less(value_ptr, inline_end);
+	}
+
+	void resetInlineStorage() {
+		for (size_t i = 0; i < inline_count_; ++i) {
+			inline_data_[i] = T{};
+		}
+		inline_count_ = 0;
+	}
+
+	void resetStorage() {
+		if (using_inline_storage_) {
+			resetInlineStorage();
+			return;
+		}
+		heap_data_.clear();
+	}
+
 	void ensureHeapStorage(size_t capacity) {
 		if (!using_inline_storage_) {
 			heap_data_.reserve(capacity);
@@ -301,9 +358,34 @@ private:
 		using_inline_storage_ = false;
 	}
 
-	void assignFromVector(const std::vector<T>& vec) {
-		heap_data_.clear();
+	void copyFrom(const InlineVector& other) {
+		using_inline_storage_ = other.using_inline_storage_;
 		inline_count_ = 0;
+		if (!using_inline_storage_) {
+			heap_data_ = other.heap_data_;
+			return;
+		}
+		assert(other.inline_count_ <= inline_data_.size() && "InlineVector inline storage overflow");
+		std::copy_n(other.inline_data_.begin(), other.inline_count_, inline_data_.begin());
+		inline_count_ = other.inline_count_;
+	}
+
+	void moveFrom(InlineVector&& other) {
+		using_inline_storage_ = other.using_inline_storage_;
+		inline_count_ = 0;
+		if (!using_inline_storage_) {
+			heap_data_ = std::move(other.heap_data_);
+			other.heap_data_.clear();
+			return;
+		}
+		assert(other.inline_count_ <= inline_data_.size() && "InlineVector inline storage overflow");
+		std::move(other.inline_data_.begin(), other.inline_data_.begin() + other.inline_count_, inline_data_.begin());
+		inline_count_ = other.inline_count_;
+		other.resetInlineStorage();
+	}
+
+	void assignFromVector(const std::vector<T>& vec) {
+		resetStorage();
 		using_inline_storage_ = vec.size() <= N;
 		if (!using_inline_storage_) {
 			heap_data_ = vec;
@@ -315,8 +397,7 @@ private:
 	}
 
 	void assignFromVector(std::vector<T>&& vec) {
-		heap_data_.clear();
-		inline_count_ = 0;
+		resetStorage();
 		using_inline_storage_ = vec.size() <= N;
 		if (!using_inline_storage_) {
 			heap_data_ = std::move(vec);
