@@ -153,14 +153,14 @@ public:
 	}
 
 	[[nodiscard]] T* data() noexcept {
-		if (!using_inline_storage_ && !heap_data_.empty()) {
+		if (!using_inline_storage_) {
 			return heap_data_.data();
 		}
 		return inline_data_.data();
 	}
 
 	[[nodiscard]] const T* data() const noexcept {
-		if (!using_inline_storage_ && !heap_data_.empty()) {
+		if (!using_inline_storage_) {
 			return heap_data_.data();
 		}
 		return inline_data_.data();
@@ -216,11 +216,11 @@ public:
 	using const_iterator = const T*;
 
 	iterator begin() noexcept { return data(); }
-	iterator end() noexcept { return data() + size(); }
+	iterator end() noexcept { return size() == 0 ? begin() : begin() + static_cast<std::ptrdiff_t>(size()); }
 	const_iterator begin() const noexcept { return data(); }
-	const_iterator end() const noexcept { return data() + size(); }
+	const_iterator end() const noexcept { return size() == 0 ? begin() : begin() + static_cast<std::ptrdiff_t>(size()); }
 	const_iterator cbegin() const noexcept { return data(); }
-	const_iterator cend() const noexcept { return data() + size(); }
+	const_iterator cend() const noexcept { return size() == 0 ? cbegin() : cbegin() + static_cast<std::ptrdiff_t>(size()); }
 
 	iterator insert_at(size_t idx, const T& value) {
 		assert(idx <= size() && "Insert position out of bounds in InlineVector::insert_at");
@@ -291,23 +291,20 @@ private:
 			return;
 		}
 
-		std::vector<T> new_storage;
-		new_storage.reserve(capacity);
+		heap_data_.reserve(capacity);
 		for (size_t i = 0; i < inline_count_; ++i) {
-			new_storage.push_back(std::move(inline_data_[i]));
+			heap_data_.push_back(std::move(inline_data_[i]));
 		}
-		heap_data_ = std::move(new_storage);
 		inline_count_ = 0;
 		using_inline_storage_ = false;
 	}
 
 	void assignFromVector(const std::vector<T>& vec) {
 		heap_data_.clear();
-		using_inline_storage_ = true;
 		inline_count_ = 0;
-		if (vec.size() > N) {
+		using_inline_storage_ = vec.size() <= N;
+		if (!using_inline_storage_) {
 			heap_data_ = vec;
-			using_inline_storage_ = false;
 			return;
 		}
 		for (const auto& item : vec) {
@@ -317,11 +314,10 @@ private:
 
 	void assignFromVector(std::vector<T>&& vec) {
 		heap_data_.clear();
-		using_inline_storage_ = true;
 		inline_count_ = 0;
-		if (vec.size() > N) {
+		using_inline_storage_ = vec.size() <= N;
+		if (!using_inline_storage_) {
 			heap_data_ = std::move(vec);
-			using_inline_storage_ = false;
 			return;
 		}
 		for (auto& item : vec) {
