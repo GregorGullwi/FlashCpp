@@ -5745,7 +5745,7 @@ EvalResult Evaluator::materialize_array_value(
 	const InitializerListNode& init_list,
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* bindings) {
-	auto count_brace_elision_scalar_clauses_for_type = [&](TypeIndex type_index, const auto& self) -> size_t {
+	auto count_brace_elision_scalar_clauses_for_type = [&](TypeIndex type_index, const auto& recurse) -> size_t {
 		const TypeInfo* type_info = tryGetTypeInfo(type_index);
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		if (!struct_info || struct_info->hasUserDefinedConstructor()) {
@@ -5764,7 +5764,7 @@ EvalResult Evaluator::materialize_array_value(
 			const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
 			const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
 			if (member_struct_info && !member_struct_info->hasUserDefinedConstructor()) {
-				member_clause_count *= self(member.type_index, self);
+				member_clause_count *= recurse(member.type_index, recurse);
 			}
 			clause_count += member_clause_count;
 		}
@@ -5818,19 +5818,28 @@ EvalResult Evaluator::materialize_array_value(
 				element_result = materialize_struct_array_element(element.as<InitializerListNode>());
 				cursor++;
 			} else {
-				InitializerListNode element_init_list;
-				size_t consumed = 0;
-				while (cursor < initializers.size() &&
-					   consumed < brace_elision_scalar_clause_count &&
-					   !initializers[cursor].is<InitializerListNode>()) {
-					element_init_list.add_initializer(initializers[cursor]);
+				EvalResult direct_element_result = bindings
+					? evaluate_expression_with_bindings_const(element, *bindings, context)
+					: evaluate(element, context);
+				if (direct_element_result.success() &&
+					direct_element_result.object_type_index == element_type_index) {
+					element_result = std::move(direct_element_result);
 					cursor++;
-					consumed++;
+				} else {
+					InitializerListNode element_init_list;
+					size_t consumed = 0;
+					while (consumed < brace_elision_scalar_clause_count &&
+						   cursor < initializers.size() &&
+						   !initializers[cursor].is<InitializerListNode>()) {
+						element_init_list.add_initializer(initializers[cursor]);
+						cursor++;
+						consumed++;
+					}
+					if (consumed == 0) {
+						return EvalResult::error("Expected initializer for struct array element");
+					}
+					element_result = materialize_struct_array_element(element_init_list);
 				}
-				if (consumed == 0) {
-					return EvalResult::error("Expected initializer for struct array element");
-				}
-				element_result = materialize_struct_array_element(element_init_list);
 			}
 		} else if (element.is<InitializerListNode>()) {
 			// Nested array element (e.g., each row of int[2][3]): recurse with same element type.

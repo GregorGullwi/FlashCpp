@@ -2106,11 +2106,9 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			// C++ aggregate brace elision for array members:
 			// Allow flat initialization like `S s = {1,2,3,4,5,6};` where first members are arrays.
 			// Values are consumed recursively for the current array member before moving to next member.
-			// Note: brace elision for arrays of aggregate (struct) element types is not yet supported.
-			// For struct-element arrays, the user must provide nested braces (e.g., {{1,2},{3,4}}).
-			// This avoids incorrectly consuming too few flat initializers when each element requires
-			// multiple scalar sub-initializers.
-			auto count_brace_elision_scalar_clauses_for_type = [&](TypeIndex element_type_index, const auto& self) -> size_t {
+			// For aggregate struct elements, consume the recursive scalar-clause count so a following
+			// member still starts at the right initializer after flat brace elision.
+			auto count_brace_elision_scalar_clauses_for_type = [&](TypeIndex element_type_index, const auto& recurse) -> size_t {
 				const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index);
 				const StructTypeInfo* element_struct_info = element_type_info ? element_type_info->getStructInfo() : nullptr;
 				if (!element_struct_info || element_struct_info->hasUserDefinedConstructor()) {
@@ -2128,7 +2126,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					if (const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index)) {
 						if (const StructTypeInfo* member_struct_info = member_type_info->getStructInfo();
 							member_struct_info && !member_struct_info->hasUserDefinedConstructor()) {
-							member_clause_count *= self(member.type_index, self);
+							member_clause_count *= recurse(member.type_index, recurse);
 						}
 					}
 					clause_count += member_clause_count;
