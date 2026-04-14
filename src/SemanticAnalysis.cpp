@@ -2917,6 +2917,38 @@ CanonicalTypeId SemanticAnalysis::lookupLocalType(StringHandle name) const {
 	return {};
 }
 
+CanonicalTypeId SemanticAnalysis::inferResolvedSymbolType(const ASTNode& symbol) {
+	const DeclarationNode* decl = nullptr;
+	if (symbol.is<DeclarationNode>()) {
+		decl = &symbol.as<DeclarationNode>();
+	} else if (symbol.is<VariableDeclarationNode>()) {
+		decl = &symbol.as<VariableDeclarationNode>().declaration();
+	}
+
+	if (decl) {
+		const ASTNode type_node = decl->type_node();
+		if (!type_node.has_value() || !type_node.is<TypeSpecifierNode>()) {
+			return {};
+		}
+
+		TypeSpecifierNode type = type_node.as<TypeSpecifierNode>();
+		if (decl->is_array()) {
+			type.add_pointer_level();
+		}
+		return canonicalizeType(type);
+	}
+
+	if (symbol.is<FunctionDeclarationNode>()) {
+		const auto& func = symbol.as<FunctionDeclarationNode>();
+		const ASTNode ret_type_node = func.decl_node().type_node();
+		if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
+			return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
+		}
+	}
+
+	return {};
+}
+
 // --- Expression type inference ---
 
 CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
@@ -2944,38 +2976,6 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (local_id)
 					return local_id;
 
-				auto infer_symbol_type = [&](const ASTNode& symbol) -> CanonicalTypeId {
-					const DeclarationNode* decl = nullptr;
-					if (symbol.is<DeclarationNode>()) {
-						decl = &symbol.as<DeclarationNode>();
-					} else if (symbol.is<VariableDeclarationNode>()) {
-						decl = &symbol.as<VariableDeclarationNode>().declaration();
-					}
-
-					if (decl) {
-						const ASTNode type_node = decl->type_node();
-						if (!type_node.has_value() || !type_node.is<TypeSpecifierNode>()) {
-							return {};
-						}
-
-						TypeSpecifierNode type = type_node.as<TypeSpecifierNode>();
-						if (decl->is_array()) {
-							type.add_pointer_level();
-						}
-						return canonicalizeType(type);
-					}
-
-					if (symbol.is<FunctionDeclarationNode>()) {
-						const auto& func = symbol.as<FunctionDeclarationNode>();
-						const ASTNode ret_type_node = func.decl_node().type_node();
-						if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
-							return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
-						}
-					}
-
-					return {};
-				};
-
 				auto lookup_bound_symbol = [&]() -> std::optional<ASTNode> {
 					if (e.resolved_name().isValid()) {
 						auto resolved_symbol = symbols_.lookup(e.resolved_name());
@@ -2987,7 +2987,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				};
 
 				if (auto symbol = lookup_bound_symbol(); symbol.has_value()) {
-					if (const CanonicalTypeId symbol_type_id = infer_symbol_type(*symbol)) {
+					if (const CanonicalTypeId symbol_type_id = inferResolvedSymbolType(*symbol)) {
 						return symbol_type_id;
 					}
 				}
@@ -3358,33 +3358,37 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
-				NamespaceHandle ns_handle = e.namespace_handle();
-				if (!ns_handle.isGlobal()) {
-					std::string_view owner_name = gNamespaceRegistry.getName(ns_handle);
-					auto owner_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(owner_name));
-					if (owner_it == getTypesByNameMap().end() && gNamespaceRegistry.getDepth(ns_handle) > 1) {
-						std::string_view full_qualified_name = gNamespaceRegistry.getQualifiedName(ns_handle);
-						owner_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(full_qualified_name));
-					}
+				auto resolved = getResolvedQualifiedIdentifier(&e);
+				if (!resolved.has_value()) {
+					resolved = tryResolveQualifiedIdentifier(e);
+				}
+				if (resolved.has_value()) {
+					switch (resolved->kind) {
+						case ResolvedQualifiedIdentifierInfo::Kind::Symbol:
+							return inferResolvedSymbolType(resolved->symbol);
+						case ResolvedQualifiedIdentifierInfo::Kind::StaticMember:
+							return canonicalizeType(resolved->type);
+						case ResolvedQualifiedIdentifierInfo::Kind::EnumConstant: {
+							NamespaceHandle ns_handle = e.namespace_handle();
+							if (!ns_handle.isGlobal()) {
+								std::string_view owner_name = gNamespaceRegistry.getName(ns_handle);
+								auto owner_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(owner_name));
+								if (owner_it == getTypesByNameMap().end() && gNamespaceRegistry.getDepth(ns_handle) > 1) {
+									std::string_view full_qualified_name = gNamespaceRegistry.getQualifiedName(ns_handle);
+									owner_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(full_qualified_name));
+								}
 
-					if (owner_it != getTypesByNameMap().end()) {
-						if (owner_it->second->isStruct()) {
-							const StructTypeInfo* struct_info = owner_it->second->getStructInfo();
-							if (struct_info) {
-								const StringHandle member_name_handle = e.nameHandle();
-								parser_.instantiateLazyStaticMember(struct_info->name, member_name_handle);
-								const auto static_member_result = struct_info->findStaticMemberRecursive(member_name_handle);
-								const StructStaticMember* static_member = static_member_result.first;
-								if (static_member) {
-									return type_context_.intern(canonicalTypeDescFromStaticMember(*static_member));
+								if (owner_it != getTypesByNameMap().end() && owner_it->second->isEnum()) {
+									CanonicalTypeDesc desc;
+									desc.type_index = nativeTypeIndex(TypeCategory::Enum);
+									desc.type_index = owner_it->second->type_index_;
+									return type_context_.intern(desc);
 								}
 							}
-						} else if (owner_it->second->isEnum()) {
-							CanonicalTypeDesc desc;
-							desc.type_index = nativeTypeIndex(TypeCategory::Enum);
-							desc.type_index = owner_it->second->type_index_;
-							return type_context_.intern(desc);
+							return {};
 						}
+						default:
+							break;
 					}
 				}
 				return {};
