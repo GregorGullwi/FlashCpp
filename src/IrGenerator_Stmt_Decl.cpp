@@ -1366,28 +1366,41 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		// For arrays, calculate total element count (product of all dimensions for multidimensional arrays)
 	size_t array_count = 0;
 	if (decl.is_array()) {
-		const auto& dims = decl.array_dimensions();
-		if (!dims.empty()) {
-				// Calculate total element count as product of all dimensions
+		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
 			array_count = 1;
-			for (const auto& dim_expr : dims) {
-				ConstExpr::EvaluationContext ctx(symbol_table);
-				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+			for (size_t dim_size : type_node.array_dimensions()) {
+				if (dim_size == 0) {
+					array_count = 0;
+					break;
+				}
+				array_count *= dim_size;
+			}
+		} else {
+			const auto& dims = decl.array_dimensions();
+			if (!dims.empty()) {
+					// Calculate total element count as product of all dimensions
+				array_count = 1;
+				for (const auto& dim_expr : dims) {
+					ConstExpr::EvaluationContext ctx(symbol_table);
+					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 
-				if (eval_result.success()) {
-					long long dim_size = eval_result.as_int();
-					if (dim_size > 0) {
-						array_count *= static_cast<size_t>(dim_size);
+					if (eval_result.success()) {
+						long long dim_size = eval_result.as_int();
+						if (dim_size > 0) {
+							array_count *= static_cast<size_t>(dim_size);
+						} else {
+							array_count = 0;
+							break;
+						}
 					} else {
 						array_count = 0;
 						break;
 					}
-				} else {
-					array_count = 0;
-					break;
 				}
 			}
+		}
 
+		if (array_count > 0) {
 				// Add element type, size, and count as operands
 			operands.emplace_back(type_node.type());	 // element type
 			operands.emplace_back(size_in_bits);		 // element size
