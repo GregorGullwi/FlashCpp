@@ -4605,6 +4605,21 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 														   const ChunkedVector<ASTNode>& arguments,
 														   const FunctionDeclarationNode*& func_decl) {
 	const StringHandle func_name_handle = decl.identifier_token().handle();
+	auto resolveStructOwnerType = [&](const TypeInfo* type_info) -> const TypeInfo* {
+		constexpr size_t kMaxAliasDepth = 100;
+		for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasDepth; ++alias_depth) {
+			if (type_info->getStructInfo()) {
+				return type_info;
+			}
+			const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
+			if (!underlying || underlying == type_info) {
+				break;
+			}
+			type_info = underlying;
+		}
+		return nullptr;
+	};
+
 	auto searchStructMembers = [&](const StructTypeInfo* root_struct_info) -> bool {
 		std::unordered_set<const StructTypeInfo*> visited;
 		auto searchImpl = [&](const StructTypeInfo* struct_info, const auto& self) -> bool {
@@ -4776,6 +4791,16 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		return false;
 
 	const std::string_view struct_name_sv = qname.substr(0, scope_sep);
+	std::vector<const TypeInfo*> fuzzy_owner_candidates;
+	auto addUniqueOwnerCandidate = [&](const TypeInfo* type_info) {
+		type_info = resolveStructOwnerType(type_info);
+		if (!type_info) {
+			return;
+		}
+		if (std::find(fuzzy_owner_candidates.begin(), fuzzy_owner_candidates.end(), type_info) == fuzzy_owner_candidates.end()) {
+			fuzzy_owner_candidates.push_back(type_info);
+		}
+	};
 	auto resolveQualifiedOwnerType = [&](std::string_view owner_name) -> const TypeInfo* {
 		auto resolve_type_info = [&](StringHandle handle) -> const TypeInfo* {
 			auto it = getTypesByNameMap().find(handle);
@@ -4801,19 +4826,7 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 			type_info = resolve_type_info(StringTable::getOrInternStringHandle(owner_name));
 		}
 
-		constexpr size_t kMaxAliasDepth = 100;
-		for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasDepth; ++alias_depth) {
-			if (type_info->getStructInfo()) {
-				return type_info;
-			}
-			const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
-			if (!underlying || underlying == type_info) {
-				break;
-			}
-			type_info = underlying;
-		}
-
-		return nullptr;
+		return resolveStructOwnerType(type_info);
 	};
 
 	if (!member_context_stack_.empty()) {
@@ -4840,23 +4853,32 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		if (registered_name == struct_name_sv ||
 			(ti->isTemplateInstantiation() &&
 			 StringTable::getStringView(ti->baseTemplateName()) == struct_name_sv)) {
-			if (searchTypeMembers(ti))
-				return true;
+			addUniqueOwnerCandidate(ti);
 		} else if (registered_name.size() > struct_name_sv.size() + 1) {
 			const size_t prefix_end = registered_name.size() - struct_name_sv.size();
 			if (registered_name.substr(prefix_end) == struct_name_sv &&
 				(registered_name[prefix_end - 1] == ':' ||
 				 registered_name[prefix_end - 1] == '<')) {
-				if (searchTypeMembers(ti))
-					return true;
+				addUniqueOwnerCandidate(ti);
 			}
 		}
 		if (registered_name.size() > struct_name_sv.size() &&
 			registered_name[struct_name_sv.size()] == '<' &&
 			registered_name.starts_with(struct_name_sv)) {
-			if (searchTypeMembers(ti))
-				return true;
+			addUniqueOwnerCandidate(ti);
 		}
+	}
+
+	if (fuzzy_owner_candidates.size() == 1) {
+		return searchTypeMembers(fuzzy_owner_candidates.front());
+	}
+	if (fuzzy_owner_candidates.size() > 1) {
+		FLASH_LOG(Templates, Debug,
+				  "SemanticAnalysis: ambiguous qualified call owner '",
+				  struct_name_sv,
+				  "' matched ",
+				  fuzzy_owner_candidates.size(),
+				  " struct candidates during sema call recovery");
 	}
 
 	return false;
