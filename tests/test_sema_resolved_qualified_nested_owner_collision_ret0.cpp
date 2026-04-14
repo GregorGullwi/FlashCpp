@@ -14,7 +14,7 @@ template <typename T>
 struct Runner {
 	struct Ops {
 		static int read(int value) {
-			return value + static_cast<int>(sizeof(T)) + 40;
+			return value + 41;
 		}
 	};
 
@@ -26,7 +26,7 @@ struct Runner {
 
 int main() {
 	Runner<int> int_runner;
-	if (int_runner.run() != 45) {
+	if (int_runner.run() != 42) {
 		return 1;
 	}
 

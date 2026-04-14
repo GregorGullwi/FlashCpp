@@ -337,6 +337,12 @@ Post-review fixes applied to the MemberAccessNode fallback paths:
   already-interned types.
 - `tests/test_inherited_static_member_sema_ret0.cpp`: regression test for
   inherited static member access via dot notation on a derived-class object.
+- `tryRecoverCallDeclFromStructMembers()` now resolves qualified owner types
+  sema-first and treats multi-match fuzzy owner scans as ambiguous instead of
+  picking an arbitrary struct candidate from `getTypesByNameMap()`
+- `tests/test_sema_resolved_qualified_nested_owner_collision_ret0.cpp`:
+  regression test for nested qualified-owner recovery staying on the enclosing
+  type instead of drifting to a broader same-name match
 
 ### Workstream 1: make post-parse AST legality explicit
 
