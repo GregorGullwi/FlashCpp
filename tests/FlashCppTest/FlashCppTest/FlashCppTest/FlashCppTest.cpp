@@ -214,6 +214,20 @@ TEST_CASE("InlineVector preserves self-referential values when spilling to heap"
 	CHECK(inserted_values[0] == "left");
 	CHECK(inserted_values[1] == "left");
 	CHECK(inserted_values[2] == "right");
+
+	// Regression: insert_at inline path must copy value before shifting
+	// when value references an element at or after the insertion index.
+	InlineVector<std::string, 4> inline_insert;
+	inline_insert.push_back("A");
+	inline_insert.push_back("B");
+	inline_insert.push_back("C");
+	inline_insert.insert(inline_insert.begin(), inline_insert[2]); // insert "C" at front
+
+	CHECK(inline_insert.size() == 4);
+	CHECK(inline_insert[0] == "C");
+	CHECK(inline_insert[1] == "A");
+	CHECK(inline_insert[2] == "B");
+	CHECK(inline_insert[3] == "C");
 }
 
 TEST_CASE("Dependent and non-dependent type args produce different hashes") {

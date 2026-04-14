@@ -252,10 +252,11 @@ public:
 	iterator insert_at(size_t idx, const T& value) {
 		assert(idx <= size() && "Insert position out of bounds in InlineVector::insert_at");
 		if (using_inline_storage_ && inline_count_ < N) {
+			T copied_value = value;
 			for (size_t i = inline_count_; i > idx; --i) {
 				inline_data_[i] = std::move(inline_data_[i - 1]);
 			}
-			inline_data_[idx] = value;
+			inline_data_[idx] = std::move(copied_value);
 			++inline_count_;
 			return begin() + idx;
 		}
