@@ -883,6 +883,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				const TypeInfo& ti = getTypeInfo(type_node.type_index());
 				const StructTypeInfo* si = ti.getStructInfo();
 				bool ctor_evaluated = false;
+				bool missing_ctor_for_nonaggregate = false;
 				if (si) {
 						// Try the constexpr evaluator first — handles all member types
 						// (int, float, double, nested structs) correctly via packStructEvalResultIntoInitData.
@@ -926,6 +927,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						FLASH_LOG_FORMAT(Codegen, Debug, "Falling back to arity-based constructor resolution for {}", StringTable::getStringView(si->name));
 						auto arity_resolution = resolve_constructor_overload_arity(*si, ctor_call.arguments().size(), true);
 						matching_ctor = arity_resolution.selected_overload;
+					}
+					if (!matching_ctor && si->hasUserDefinedConstructor()) {
+						missing_ctor_for_nonaggregate = true;
 					}
 					if (matching_ctor) {
 						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
@@ -975,6 +979,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					}
 				}
 				if (!ctor_evaluated) {
+					if (missing_ctor_for_nonaggregate) {
+						throw CompileError(
+							"No matching constructor for '" +
+							std::string(StringTable::getStringView(si->name)) +
+							"' with " + std::to_string(ctor_call.arguments().size()) +
+							" argument(s)");
+					}
 						// Fallback: zero-initialize for default constructor or failed eval
 					op.is_initialized = true;
 					op.init_data.resize(si ? toSizeT(si->sizeInBytes()) : element_size, 0);
