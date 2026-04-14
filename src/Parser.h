@@ -869,6 +869,11 @@ private:
 	// signatures; pack-aware remapping needs an explicit contract first.
 	std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const std::vector<ASTNode>& template_params,
+		const std::vector<ASTNode>& func_params,
+		const std::vector<TypeSpecifierNode>& arg_types,
+		int recursion_depth);
+	std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
+		const std::vector<ASTNode>& template_params,
 		const FunctionDeclarationNode& func_decl,
 		const std::vector<TypeSpecifierNode>& arg_types,
 		int recursion_depth);

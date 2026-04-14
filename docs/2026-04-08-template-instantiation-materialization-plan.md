@@ -6,6 +6,33 @@
 
 ## Quick start for next agent
 
+### Latest completed slice (2026-04-13, audit update)
+
+**Post-PR #1255 follow-up audit completed; constructor-template deduction churn removed.**
+
+- Re-audited the remaining PR #1255 follow-up items against `HEAD`:
+  - already fixed: alias-resolution duplication, dead `ExpressionSubstitutor.cpp`
+    branches, placeholder-arg extraction, dependent non-type normalization
+    extraction, compound `appendFunctionCallArgType`, constructor pack expansion,
+    `materializeMatchingConstructorTemplate(nullptr)` failure handling, brace-init
+    constructor materialization, and the `try_instantiate_member_function_template`
+    fallback bug
+  - still valid: the `is_unresolved_noop_ctor` fallback still registers
+    destructors for objects whose members were never initialized, and the Phase 4
+    string heuristics in `Parser_Templates_Inst_Deduction.cpp` still need an
+    explicit placeholder-state model
+- **Refactor** (`src/Parser.h`, `src/Parser_Templates_Inst_Deduction.cpp`,
+  `src/Parser_Templates_Inst_MemberFunc.cpp`):
+  - added a `buildDeductionMapFromCallArgs(...)` overload that consumes function
+    parameter nodes directly
+  - `try_instantiate_constructor_template(...)` now reuses
+    `ctor_decl.parameter_nodes()` instead of allocating persistent dummy
+    `TypeSpecifierNode` / `DeclarationNode` / `FunctionDeclarationNode` wrappers
+    solely to call the deduction helper
+- **Validation**: `make main CXX=clang++` → clean;
+  `bash ./tests/run_all_tests.sh` baseline before changes → **2087 pass,
+  137 expected-fail**
+
 ### Latest completed slice (2026-04-13, fourth update)
 
 **Reviewer-identified open items from PR #1255 resolved.**
@@ -50,7 +77,6 @@
 - **Still open** (not addressed in this slice):
   - `is_unresolved_noop_ctor` stack-allocation / destructor mismatch (investigate;
     safe for existing tests because no test destructor dereferences `this`)
-  - `try_instantiate_constructor_template` dummy AST node churn (Phase 6)
 
 ### Latest completed slice (2026-04-14)
 
@@ -90,11 +116,12 @@
     - already fixed: dead `ExpressionSubstitutor.cpp` branch, brace-init
       constructor materialization in sema/codegen, `is_ambiguous` handling,
       `_`-name heuristic in `is_unresolved_noop_ctor`
-    - still open: `appendFunctionCallArgType` compound-expression typing,
-      `is_unresolved_noop_ctor` destructor/stack-allocation mismatch,
+    - still open at that point: `appendFunctionCallArgType`
+      compound-expression typing, `is_unresolved_noop_ctor`
+      destructor/stack-allocation mismatch,
       `materializeMatchingConstructorTemplate` returning the uninstantiated
-      ctor on failure, constructor-template dummy AST churn, constructor-call
-      simple identifier-pack expansion
+      ctor on failure, constructor-template dummy AST churn,
+      constructor-call simple identifier-pack expansion
   - **Validation**: `make main CXX=clang++`; focused regressions for the new
     alias/member-template tests plus existing alias tests; `bash ./tests/run_all_tests.sh`
     → **2082 pass, 136 expected-fail**.
@@ -223,9 +250,8 @@ packs) is likely out of scope per the C++20 standard.
 - Low priority, no user-facing issues currently
 
 **Option B: Continue PR #1255 follow-up bug cleanup**
-- `appendFunctionCallArgType` still defaults many compound expressions to `int`
-- constructor-call parsing still lacks the simple identifier-pack expansion path
-- `materializeMatchingConstructorTemplate` / noop-ctor fallback still have failure-mode cleanup to tighten
+- `is_unresolved_noop_ctor` still leaves objects uninitialized before destructor registration
+- Phase 4 still relies on placeholder-name string heuristics in `Parser_Templates_Inst_Deduction.cpp`
 
 **Note:** The "early instantiation without arg_types" gap was investigated on 2026-04-12 and found to NOT be a bug. See detailed notes below.
 
@@ -1275,9 +1301,9 @@ Note: `VariableDeclOp` IS emitted at line 1461 (brace-init) and line 2015 (direc
 
 **Added:** 2026-04-13 (PR #1255 review — investigate)
 
-`try_instantiate_constructor_template` at `src/Parser_Templates_Inst_MemberFunc.cpp:103-194` creates dummy `TypeSpecifierNode`, `DeclarationNode`, and `FunctionDeclarationNode` nodes solely to call `buildDeductionMapFromCallArgs`. These nodes are allocated via `emplace_node` and persist in the AST node pool for the lifetime of compilation. If `materializeMatchingConstructorTemplate` iterates many template constructors (~line 238-262), this could create significant node churn.
+~~`try_instantiate_constructor_template` at `src/Parser_Templates_Inst_MemberFunc.cpp:103-194` creates dummy `TypeSpecifierNode`, `DeclarationNode`, and `FunctionDeclarationNode` nodes solely to call `buildDeductionMapFromCallArgs`. These nodes are allocated via `emplace_node` and persist in the AST node pool for the lifetime of compilation. If `materializeMatchingConstructorTemplate` iterates many template constructors (~line 238-262), this could create significant node churn.~~
 
-**Follow-up:** Add a `buildDeductionMapFromCallArgs` overload that accepts parameter nodes directly without requiring a `FunctionDeclarationNode` wrapper, or use a lightweight temporary allocation strategy. **Relates to Phase 6.**
+**FIXED (2026-04-13, audit update):** `buildDeductionMapFromCallArgs(...)` now has an overload that accepts function parameter nodes directly, and `try_instantiate_constructor_template(...)` reuses `ctor_decl.parameter_nodes()` instead of allocating persistent dummy wrapper nodes. **Relates to Phase 6.**
 
 ### `try_instantiate_member_function_template` fallback to `arg_types[0]` is suspicious
 
