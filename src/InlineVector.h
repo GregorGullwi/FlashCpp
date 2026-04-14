@@ -344,7 +344,6 @@ private:
 
 	void ensureHeapStorage(size_t capacity) {
 		if (!using_inline_storage_) {
-			heap_data_.reserve(capacity);
 			return;
 		}
 
