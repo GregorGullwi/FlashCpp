@@ -2224,6 +2224,7 @@ static EvalResult make_local_default_init(const TypeSpecifierNode& type_spec, Ev
 			return EvalResult::error("Default-initialized local array is missing dimensions in constexpr evaluation");
 		}
 
+		// Container result; the actual element state is stored in array_elements below.
 		EvalResult array_result = EvalResult::from_int(0LL);
 		array_result.is_array = true;
 		array_result.is_indeterminate = false;
@@ -2280,6 +2281,7 @@ static EvalResult make_local_default_init(const TypeSpecifierNode& type_spec, Ev
 			return *ctor_result;
 		}
 
+		// Container result; the actual object state is stored in object_member_bindings below.
 		EvalResult object_result = EvalResult::from_int(0LL);
 		object_result.object_type_index = type_spec.type_index();
 		object_result.is_indeterminate = false;
@@ -4914,7 +4916,9 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			return EvalResult::error("Statement executed (not a return)");
 		}
 
-		// Fallback: set to 0 when no type information is available.
+		// Defensive fallback for declarations without a TypeSpecifierNode.  These do not
+		// carry enough type information to preserve indeterminate/default-init semantics,
+		// so keep the legacy zero result instead of inventing a partial type model here.
 		EvalResult default_result = EvalResult::from_int(0);
 		declaration_bindings[var_name] = std::move(default_result);
 		return EvalResult::error("Statement executed (not a return)");
