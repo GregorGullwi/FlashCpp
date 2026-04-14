@@ -3315,39 +3315,22 @@ EvalResult Evaluator::evaluate_callable_object(
 		// Build object member bindings from the full constructor materialization path.
 		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
 		const auto& ctor_args = ctor_call.arguments();
-		const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
-		if (!matching_ctor) {
-			matching_ctor =
-				find_matching_constructor(struct_info, ctor_args, context, false, outer_bindings);
-		}
-		if (!matching_ctor) {
+		auto ctor_result = try_materialize_struct_from_ctor_args(
+			struct_info,
+			type_spec.type_index(),
+			ctor_args,
+			context,
+			false,
+			outer_bindings,
+			ctor_call.resolved_constructor(),
+			false);
+		if (!ctor_result.has_value()) {
 			return EvalResult::error("No matching constructor found for callable object");
 		}
-
-		std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
-		const auto& ctor_params = matching_ctor->parameter_nodes();
-		auto ctor_bind_result = bind_evaluated_arguments(
-			ctor_params,
-			ctor_args,
-			ctor_param_bindings,
-			context,
-			"Invalid parameter node in callable object constructor",
-			outer_bindings,
-			true);
-		if (!ctor_bind_result.success()) {
-			return ctor_bind_result;
+		if (!ctor_result->success()) {
+			return *ctor_result;
 		}
-
-		auto member_bind_result = materialize_members_from_constructor(
-			struct_info,
-			*matching_ctor,
-			ctor_param_bindings,
-			evaluation_bindings,
-			context,
-			false);
-		if (!member_bind_result.success()) {
-			return member_bind_result;
-		}
+		evaluation_bindings = std::move(ctor_result->object_member_bindings);
 
 		const auto& parameters = call_operator->parameter_nodes();
 		auto call_bind_result = bind_evaluated_arguments(

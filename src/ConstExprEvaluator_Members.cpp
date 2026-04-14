@@ -6501,6 +6501,8 @@ std::optional<EvalResult> Evaluator::try_materialize_struct_from_ctor_args(
 		return materialize_result;
 	}
 
+	// Callers that return this value directly rely on the helper preserving the object type.
+	assert(object_result.object_type_index == type_index);
 	return object_result;
 }
 
