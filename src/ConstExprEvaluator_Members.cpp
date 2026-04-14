@@ -5641,6 +5641,13 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 	if (!struct_info) {
 		return EvalResult::error("Aggregate object is not a struct");
 	}
+	if (struct_info->hasUserDefinedConstructor()) {
+		return EvalResult::error(std::string(StringBuilder()
+			.append("Type '"sv)
+			.append(StringTable::getStringView(struct_info->getName()))
+			.append("' has user-defined constructors and is not an aggregate"sv)
+			.commit()));
+	}
 
 	EvalResult object_result = EvalResult::from_int(0);
 	object_result.object_type_index = type_index;
@@ -5696,6 +5703,15 @@ EvalResult Evaluator::materialize_constructor_object_value(
 	// No matching constructor found - try aggregate initialization if arguments are provided.
 	// This handles cases like Pt{3, 7} where Pt is an aggregate with no user-defined constructors.
 	if (ctor_call.arguments().size() > 0) {
+		if (struct_info->hasUserDefinedConstructor()) {
+			return EvalResult::error(std::string(StringBuilder()
+				.append("No matching constructor for '"sv)
+				.append(StringTable::getStringView(struct_info->getName()))
+				.append("' with "sv)
+				.append(std::to_string(ctor_call.arguments().size()))
+				.append(" argument(s) in constexpr evaluation"sv)
+				.commit()));
+		}
 		// Convert arguments to InitializerListNode for aggregate initialization
 		InitializerListNode init_list;
 		for (size_t i = 0; i < ctor_call.arguments().size(); ++i) {
@@ -5726,12 +5742,29 @@ EvalResult Evaluator::materialize_array_value(
 			(is_struct_type(element_type_index.category()))) {
 			if (const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index);
 				const StructTypeInfo* element_struct_info = element_type_info ? element_type_info->getStructInfo() : nullptr) {
-				element_result = materialize_aggregate_object_value(
-					element_struct_info,
-					element_type_index,
-					element.as<InitializerListNode>(),
-					context,
-					bindings);
+				const InitializerListNode& element_init_list = element.as<InitializerListNode>();
+				ChunkedVector<ASTNode> ctor_args;
+				for (const auto& arg : element_init_list.initializers()) {
+					ctor_args.push_back(arg);
+				}
+				if (auto ctor_result = try_materialize_struct_from_ctor_args(
+						element_struct_info,
+						element_type_index,
+						ctor_args,
+						context,
+						false,
+						bindings,
+						nullptr,
+						false)) {
+					element_result = std::move(*ctor_result);
+				} else {
+					element_result = materialize_aggregate_object_value(
+						element_struct_info,
+						element_type_index,
+						element_init_list,
+						context,
+						bindings);
+				}
 			} else {
 				element_result = EvalResult::error("Array element type is not a struct");
 			}
@@ -5991,6 +6024,21 @@ EvalResult materialize_member_initializer_value(
 		if (is_struct_type(member_info.type_index.category())) {
 			if (const TypeInfo* member_type_info = tryGetTypeInfo(member_info.type_index);
 				const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr) {
+				ChunkedVector<ASTNode> ctor_args;
+				for (const auto& arg : init_list.initializers()) {
+					ctor_args.push_back(arg);
+				}
+				if (auto ctor_result = Evaluator::try_materialize_struct_from_ctor_args(
+						member_struct_info,
+						member_info.type_index,
+						ctor_args,
+						context,
+						false,
+						nullptr,
+						nullptr,
+						false)) {
+					return std::move(*ctor_result);
+				}
 				return Evaluator::materialize_aggregate_object_value(
 					member_struct_info,
 					member_info.type_index,
@@ -6046,12 +6094,28 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 				// so that nested struct init (e.g. Outer{{40}}) works with or without bindings.
 				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
 				if (const StructTypeInfo* member_struct_info = member_type_info->getStructInfo()) {
-					val = Evaluator::materialize_aggregate_object_value(
-						member_struct_info,
-						member_info->type_index,
-						member_init_list,
-						context,
-						evaluation_bindings);
+					ChunkedVector<ASTNode> ctor_args;
+					for (const auto& arg : member_init_list.initializers()) {
+						ctor_args.push_back(arg);
+					}
+					if (auto ctor_result = Evaluator::try_materialize_struct_from_ctor_args(
+							member_struct_info,
+							member_info->type_index,
+							ctor_args,
+							context,
+							false,
+							evaluation_bindings,
+							nullptr,
+							false)) {
+						val = std::move(*ctor_result);
+					} else {
+						val = Evaluator::materialize_aggregate_object_value(
+							member_struct_info,
+							member_info->type_index,
+							member_init_list,
+							context,
+							evaluation_bindings);
+					}
 				} else {
 					val = EvalResult::error("Member struct type not found for nested brace-init");
 				}
@@ -6141,8 +6205,24 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 			} else if (is_struct_type(member_info->type_index.category())) {
 				if (const TypeInfo* member_type_info = tryGetTypeInfo(member_info->type_index);
 					const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr) {
-					member_result = materialize_aggregate_object_value(
-						member_struct_info, member_info->type_index, init_list, context, &ctor_param_bindings);
+					ChunkedVector<ASTNode> ctor_args;
+					for (const auto& arg : init_list.initializers()) {
+						ctor_args.push_back(arg);
+					}
+					if (auto ctor_result = try_materialize_struct_from_ctor_args(
+							member_struct_info,
+							member_info->type_index,
+							ctor_args,
+							context,
+							false,
+							&ctor_param_bindings,
+							nullptr,
+							false)) {
+						member_result = std::move(*ctor_result);
+					} else {
+						member_result = materialize_aggregate_object_value(
+							member_struct_info, member_info->type_index, init_list, context, &ctor_param_bindings);
+					}
 				} else {
 					member_result = EvalResult::error("Member struct type not found for brace-init");
 				}
