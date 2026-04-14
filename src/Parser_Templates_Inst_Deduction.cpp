@@ -1964,6 +1964,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 	InlineVector<TemplateTypeArg, 4> template_args;
 	std::vector<TypeCategory> deduced_type_args;
 	size_t next_deduced_type_arg = 0;
+	std::vector<TemplateTypeArg> deduced_value_args;
+	size_t next_deduced_value_arg = 0;
 	const auto& param_name_to_arg = deduction_info.param_name_to_arg;
 	const auto& pre_deduced_arg_indices = deduction_info.pre_deduced_arg_indices;
 	size_t arg_index = 0;
@@ -2012,7 +2014,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 			template_args.push_back(TemplateTypeArg::makeTemplate(inner_template_name));
 			const auto& stored_args = type_info->templateArgs();
 			for (const auto& stored_arg : stored_args) {
-				if (!stored_arg.is_value) {
+				if (stored_arg.is_value) {
+					deduced_value_args.push_back(stored_arg);
+				} else {
 					deduced_type_args.push_back(stored_arg.typeEnum());
 				}
 			}
@@ -2067,6 +2071,10 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 			continue;
 		}
 		if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
+			continue;
+		}
+		if (next_deduced_value_arg < deduced_value_args.size()) {
+			template_args.push_back(deduced_value_args[next_deduced_value_arg++]);
 			continue;
 		}
 
