@@ -47,5 +47,7 @@ int main() {
 		return 1;
 	if (grid[1][0] != 4 || grid[1][1] != 5 || grid[1][2] != 6)
 		return 2;
+	if (mat_sum() != 21 || mat_assign() != 15 || mat_brace_elide() != 0)
+		return 3;
 	return 0;
 }

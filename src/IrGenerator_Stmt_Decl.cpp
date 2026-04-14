@@ -727,9 +727,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 						} else {
 							for (int64_t child_value : current.array_values) {
-								if (element_index >= total_elements) {
-									return;
-								}
 								writeRawValueAtOffset(
 									init_data,
 									element_index * element_size,
