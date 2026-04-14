@@ -2201,6 +2201,113 @@ static EvalResult make_default_init(const TypeSpecifierNode& type_spec) {
 	return r;
 }
 
+static TypeSpecifierNode make_member_type_spec(const StructMember& member) {
+	TypeSpecifierNode type_spec(
+		member.type_index,
+		TypeQualifier::None,
+		SizeInBits{static_cast<int>(member.size * 8)},
+		Token{},
+		CVQualifier::None);
+	type_spec.set_reference_qualifier(member.reference_qualifier);
+	type_spec.add_pointer_levels(member.pointer_depth);
+	type_spec.set_array_dimensions(member.array_dimensions);
+	if (member.function_signature.has_value()) {
+		type_spec.set_function_signature(*member.function_signature);
+	}
+	return type_spec;
+}
+
+static EvalResult make_local_default_init(const TypeSpecifierNode& type_spec, EvaluationContext& context) {
+	if (type_spec.is_array()) {
+		const std::vector<size_t>& dims = type_spec.array_dimensions();
+		if (dims.empty()) {
+			return EvalResult::error("Default-initialized local array is missing dimensions in constexpr evaluation");
+		}
+
+		EvalResult array_result = EvalResult::from_int(0LL);
+		array_result.is_array = true;
+		array_result.is_indeterminate = false;
+		array_result.set_exact_type(type_spec);
+
+		TypeSpecifierNode element_type = type_spec;
+		if (dims.size() <= 1) {
+			element_type.set_array_dimensions({});
+		} else {
+			element_type.set_array_dimensions(std::vector<size_t>(dims.begin() + 1, dims.end()));
+		}
+
+		array_result.array_elements.reserve(dims[0]);
+		for (size_t i = 0; i < dims[0]; ++i) {
+			EvalResult element_result = make_local_default_init(element_type, context);
+			if (!element_result.success()) {
+				return element_result;
+			}
+			array_result.is_indeterminate = array_result.is_indeterminate || element_result.is_indeterminate;
+			array_result.array_elements.push_back(std::move(element_result));
+		}
+
+		return array_result;
+	}
+
+	if (is_struct_type(type_spec.category())) {
+		const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+		if (!type_info) {
+			return EvalResult::error("Invalid struct type in constexpr local default initialization");
+		}
+
+		const StructTypeInfo* struct_info = type_info->getStructInfo();
+		if (!struct_info) {
+			return EvalResult::error("Struct type info not found in constexpr local default initialization");
+		}
+
+		if (struct_info->hasUserDefinedConstructor()) {
+			ChunkedVector<ASTNode> empty_args;
+			auto ctor_result = Evaluator::try_materialize_struct_from_ctor_args(
+				struct_info,
+				type_spec.type_index(),
+				empty_args,
+				context,
+				true,
+				nullptr,
+				nullptr,
+				false);
+			if (!ctor_result.has_value()) {
+				return EvalResult::error(
+					"No matching default constructor for '" +
+					std::string(StringTable::getStringView(struct_info->getName())) +
+					"' in constexpr evaluation");
+			}
+			return *ctor_result;
+		}
+
+		EvalResult object_result = EvalResult::from_int(0LL);
+		object_result.object_type_index = type_spec.type_index();
+		object_result.is_indeterminate = false;
+		object_result.set_exact_type(type_spec);
+
+		for (const auto& member : struct_info->members) {
+			std::string_view member_name = StringTable::getStringView(member.getName());
+			EvalResult member_result;
+			if (member.default_initializer.has_value()) {
+				member_result = Evaluator::evaluate(*member.default_initializer, context);
+			} else {
+				member_result = make_local_default_init(make_member_type_spec(member), context);
+			}
+			if (!member_result.success()) {
+				return member_result;
+			}
+			object_result.is_indeterminate = object_result.is_indeterminate || member_result.is_indeterminate;
+			object_result.object_member_bindings[member_name] = std::move(member_result);
+		}
+
+		return object_result;
+	}
+
+	EvalResult result = EvalResult::indeterminate();
+	result.set_exact_type(type_spec);
+	return result;
+}
+
 EvalResult Evaluator::evaluate_with_optional_bindings(
 	const ASTNode& expr_node,
 	EvaluationContext& context,
@@ -4790,58 +4897,25 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			if (is_struct_type(type_spec.category())) {
 				const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
 				if (const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
-					TypeIndex type_index = type_spec.type_index();
-					EvalResult object_result = EvalResult::from_int(0LL);
-					object_result.object_type_index = type_index;
-
-					ChunkedVector<ASTNode> empty_args;
-					const ConstructorDeclarationNode* default_ctor =
-						find_matching_constructor(
-							struct_info,
-							empty_args,
-							context,
-							struct_info->hasUserDefinedConstructor(),
-							nullptr);
-
-					if (default_ctor) {
-						std::unordered_map<std::string_view, EvalResult> empty_bindings;
-						auto materialize_result = materialize_members_from_constructor(
-							struct_info, *default_ctor, empty_bindings,
-							object_result.object_member_bindings, context, false);
-						if (!materialize_result.success()) {
-							return materialize_result;
-						}
-						declaration_bindings[var_name] = std::move(object_result);
-						return EvalResult::error("Statement executed (not a return)");
+					EvalResult default_result = make_local_default_init(type_spec, context);
+					if (!default_result.success()) {
+						return default_result;
 					}
-					if (struct_info->hasUserDefinedConstructor()) {
-						return EvalResult::error(
-							"No matching default constructor for '" +
-							std::string(StringTable::getStringView(struct_info->getName())) +
-							"' in constexpr evaluation");
-					}
-
-					for (const auto& member : struct_info->members) {
-						std::string_view mname = StringTable::getStringView(member.getName());
-						if (member.default_initializer.has_value()) {
-							auto def_result = evaluate(*member.default_initializer, context);
-							if (!def_result.success()) {
-								return def_result;
-							}
-							object_result.object_member_bindings[mname] = std::move(def_result);
-						} else {
-							object_result.object_member_bindings[mname] = EvalResult::from_int(0LL);
-						}
-					}
-					declaration_bindings[var_name] = std::move(object_result);
+					declaration_bindings[var_name] = std::move(default_result);
 					return EvalResult::error("Statement executed (not a return)");
 				}
 			}
+
+			EvalResult default_result = make_local_default_init(type_spec, context);
+			if (!default_result.success()) {
+				return default_result;
+			}
+			declaration_bindings[var_name] = std::move(default_result);
+			return EvalResult::error("Statement executed (not a return)");
 		}
-		// Fallback: set to 0
+
+		// Fallback: set to 0 when no type information is available.
 		EvalResult default_result = EvalResult::from_int(0);
-		maybe_set_binding_result_exact_type(default_result, decl, nullptr, context);
-		apply_uint_init_narrowing(default_result);
 		declaration_bindings[var_name] = std::move(default_result);
 		return EvalResult::error("Statement executed (not a return)");
 	}

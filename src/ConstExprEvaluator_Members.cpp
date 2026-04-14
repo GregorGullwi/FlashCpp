@@ -77,6 +77,19 @@ std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult&
 	return std::nullopt;
 }
 
+EvalResult read_bound_identifier_value(const EvalResult& bound_value, std::string_view name) {
+	if (bound_value.is_array) {
+		if (!bound_value.array_origin_var.isValid()) {
+			EvalResult tagged = bound_value;
+			tagged.array_origin_var = StringTable::getOrInternStringHandle(name);
+			return tagged;
+		}
+		return bound_value;
+	}
+
+	return validateConstexprRead(bound_value);
+}
+
 int normalize_shift_width(int width_bits) {
 	return (width_bits > 0 && width_bits <= kDefaultShiftWidthBits) ? width_bits : kDefaultShiftWidthBits;
 }
@@ -1703,13 +1716,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		// Fast path: pre-resolved Local bindings are always in the bindings map
 		if (id.binding() == IdentifierBinding::Local) {
 			if (const EvalResult* bound_value = findBindingValue(id.name(), bindings, context)) {
-				// Tag array results with their binding key so `array + N` can decay to a pointer.
-				if (bound_value->is_array && !bound_value->array_origin_var.isValid()) {
-					EvalResult tagged = *bound_value;
-					tagged.array_origin_var = StringTable::getOrInternStringHandle(id.name());
-					return tagged;
-				}
-				return *bound_value;
+				return read_bound_identifier_value(*bound_value, id.name());
 			}
 			// fall through to existing logic as safety net
 		}
@@ -1718,13 +1725,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 
 		// Check if it's a bound parameter
 		if (const EvalResult* bound_value = findBindingValue(name, bindings, context)) {
-			// Tag array results with their binding key so `array + N` can decay to a pointer.
-			if (bound_value->is_array && !bound_value->array_origin_var.isValid()) {
-				EvalResult tagged = *bound_value;
-				tagged.array_origin_var = StringTable::getOrInternStringHandle(name);
-				return tagged;
-			}
-			return *bound_value;	 // Return the bound value
+			return read_bound_identifier_value(*bound_value, name);
 		}
 
 		// Not a parameter, evaluate normally
@@ -2330,13 +2331,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		// Fast path: pre-resolved Local bindings are always in the bindings map
 		if (id.binding() == IdentifierBinding::Local) {
 			if (const EvalResult* bound_value = findBindingValue(id.name(), bindings, context)) {
-				// Tag array results with their binding key so `array + N` can decay to a pointer.
-				if (bound_value->is_array && !bound_value->array_origin_var.isValid()) {
-					EvalResult tagged = *bound_value;
-					tagged.array_origin_var = StringTable::getOrInternStringHandle(id.name());
-					return tagged;
-				}
-				return *bound_value;
+				return read_bound_identifier_value(*bound_value, id.name());
 			}
 			// fall through to existing logic as safety net
 		}
@@ -2345,13 +2340,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 
 		// Check if it's a bound parameter
 		if (const EvalResult* bound_value = findBindingValue(name, bindings, context)) {
-			// Tag array results with their binding key so `array + N` can decay to a pointer.
-			if (bound_value->is_array && !bound_value->array_origin_var.isValid()) {
-				EvalResult tagged = *bound_value;
-				tagged.array_origin_var = StringTable::getOrInternStringHandle(name);
-				return tagged;
-			}
-			return *bound_value;	 // Return the bound value
+			return read_bound_identifier_value(*bound_value, name);
 		}
 
 		// Not a parameter, evaluate normally
