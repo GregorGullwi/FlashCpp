@@ -46,6 +46,37 @@ parses and compiles correctly.
 recognise `W<Args>` as a valid primary expression when `W` is a template-template
 parameter, so it fails before it can resolve the `::` scope qualifier.
 
+## Function-template body reparse loses ODR-used TTP value substitution
+
+**Repro:**
+```cpp
+template <typename T, int N>
+struct Array {
+	T data;
+	static constexpr int size = N;
+};
+
+template <template <typename, int> class C, typename T, int N>
+int useMixed(C<T, N>& c) {
+	return c.data + C<T, N>::size;
+}
+
+int main() {
+	Array<int, 3> a{4};
+	return useMixed(a) - 7;
+}
+```
+**Symptom:** After fixing deduction of the inner non-type argument, the direct
+call now compiles but links with an undefined reference to the instantiated
+`useMixed(Array<int,3>&)`.
+**Impact:** The deduction bug is fixed, but ODR-using a function template body
+that re-instantiates a template-template parameter with a deduced non-type inner
+argument still fails at link time.
+**Observed cause:** During function-body reparse, `N` is recovered as a concrete
+non-type template argument, but the body is still dropped (`inline_always` with
+no definition). The `C<T, N>::size` expression path is therefore not preserved
+through instantiation, so codegen never emits the instantiated function body.
+
 
 
 **Repro:**
