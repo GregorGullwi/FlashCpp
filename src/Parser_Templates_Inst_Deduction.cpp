@@ -1955,6 +1955,128 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	return std::nullopt;
 }
 
+std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCall(
+	const std::vector<ASTNode>& template_params,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	const CallArgDeductionInfo& deduction_info,
+	size_t function_pack_arg_start,
+	int recursion_depth) {
+	InlineVector<TemplateTypeArg, 4> template_args;
+	std::vector<TypeCategory> deduced_type_args;
+	size_t next_deduced_type_arg = 0;
+	const auto& param_name_to_arg = deduction_info.param_name_to_arg;
+	const auto& pre_deduced_arg_indices = deduction_info.pre_deduced_arg_indices;
+	size_t arg_index = 0;
+
+	const auto skipPreDeducedArgs = [&]() {
+		while (arg_index < arg_types.size() && pre_deduced_arg_indices.count(arg_index)) {
+			++arg_index;
+		}
+	};
+
+	for (const auto& template_param_node : template_params) {
+		const TemplateParameterNode& param = template_param_node.as<TemplateParameterNode>();
+
+		if (param.kind() == TemplateParameterKind::Template) {
+			skipPreDeducedArgs();
+			if (arg_index >= arg_types.size()) {
+				FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Not enough arguments to deduce template template parameter");
+				return std::nullopt;
+			}
+
+			const TypeSpecifierNode& arg_type = arg_types[arg_index];
+			if (arg_type.category() != TypeCategory::Struct) {
+				FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template template parameter requires struct argument, got type ", static_cast<int>(arg_type.type()));
+				return std::nullopt;
+			}
+
+			TypeIndex type_index = arg_type.type_index();
+			const TypeInfo* type_info = tryGetTypeInfo(type_index);
+			if (type_info == nullptr) {
+				FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Invalid type index ", static_cast<int>(type_index.index()));
+				return std::nullopt;
+			}
+			if (!type_info->isTemplateInstantiation()) {
+				std::string_view type_name = StringTable::getStringView(type_info->name());
+				FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Type '", type_name, "' is not a template instantiation");
+				return std::nullopt;
+			}
+
+			StringHandle inner_template_name = type_info->baseTemplateName();
+			auto template_check = gTemplateRegistry.lookupTemplate(inner_template_name);
+			if (!template_check.has_value()) {
+				FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template '", inner_template_name, "' not found");
+				return std::nullopt;
+			}
+
+			template_args.push_back(TemplateTypeArg::makeTemplate(inner_template_name));
+			const auto& stored_args = type_info->templateArgs();
+			for (const auto& stored_arg : stored_args) {
+				if (!stored_arg.is_value) {
+					deduced_type_args.push_back(stored_arg.typeEnum());
+				}
+			}
+			++arg_index;
+			continue;
+		}
+
+		if (param.kind() == TemplateParameterKind::Type) {
+			if (param.is_variadic()) {
+				if (function_pack_arg_start != SIZE_MAX) {
+					arg_index = function_pack_arg_start;
+				}
+				while (arg_index < arg_types.size()) {
+					if (pre_deduced_arg_indices.count(arg_index)) {
+						++arg_index;
+						continue;
+					}
+					template_args.push_back(TemplateTypeArg::makeTypeSpecifier(arg_types[arg_index]));
+					++arg_index;
+				}
+				continue;
+			}
+
+			StringHandle param_handle = StringTable::getOrInternStringHandle(param.name());
+			auto map_it = param_name_to_arg.find(param_handle);
+			if (map_it != param_name_to_arg.end()) {
+				template_args.push_back(map_it->second);
+				continue;
+			}
+			if (next_deduced_type_arg < deduced_type_args.size()) {
+				TypeCategory deduced_type = deduced_type_args[next_deduced_type_arg++];
+				template_args.push_back(TemplateTypeArg::makeType(nativeTypeIndex(deduced_type)));
+				continue;
+			}
+
+			skipPreDeducedArgs();
+			if (arg_index < arg_types.size()) {
+				template_args.push_back(TemplateTypeArg::makeTypeSpecifier(arg_types[arg_index]));
+				++arg_index;
+				continue;
+			}
+			if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
+				continue;
+			}
+			return std::nullopt;
+		}
+
+		StringHandle param_handle = StringTable::getOrInternStringHandle(param.name());
+		auto map_it = param_name_to_arg.find(param_handle);
+		if (map_it != param_name_to_arg.end()) {
+			template_args.push_back(map_it->second);
+			continue;
+		}
+		if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
+			continue;
+		}
+
+		FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Non-type parameter not supported in deduction");
+		return std::nullopt;
+	}
+
+	return template_args;
+}
+
 // Helper function: Try to instantiate a specific template node
 // This contains the core instantiation logic extracted from try_instantiate_template
 // Returns nullopt if instantiation fails (for SFINAE)
@@ -2020,8 +2142,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Build template argument list
-	InlineVector<TemplateTypeArg, 4> template_args;
-	std::vector<TypeCategory> deduced_type_args;	 // For types extracted from instantiated names
 	size_t function_pack_arg_start = SIZE_MAX;
 	if (has_function_parameter_pack) {
 		size_t params_before_pack = 0;
@@ -2042,140 +2162,16 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	if (!deduction_info.has_value()) {
 		return std::nullopt;
 	}
-	const auto& param_name_to_arg = deduction_info->param_name_to_arg;
-	const auto& pre_deduced_arg_indices = deduction_info->pre_deduced_arg_indices;
-
-	// Deduce template parameters in order from function arguments
-	// For template<typename T, typename U> T func(T a, U b):
-	//   - T is deduced from first argument
-	//   - U is deduced from second argument
-	size_t arg_index = 0;
-	for (const auto& template_param_node : template_params) {
-		const TemplateParameterNode& param = template_param_node.as<TemplateParameterNode>();
-
-		if (param.kind() == TemplateParameterKind::Template) {
-			// Template template parameter - deduce from argument type
-			// Skip any arg slots fully consumed by the pre-deduction pass
-			while (arg_index < arg_types.size() && pre_deduced_arg_indices.count(arg_index))
-				arg_index++;
-			if (arg_index < arg_types.size()) {
-				const TypeSpecifierNode& arg_type = arg_types[arg_index];
-
-				// Template template parameters can only be deduced from struct types
-				if (arg_type.category() == TypeCategory::Struct) {
-					// Get the struct name (e.g., "Vector_int")
-					TypeIndex type_index = arg_type.type_index();
-					if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
-
-						// Phase 6: Use TypeInfo::isTemplateInstantiation() to check if this is a template instantiation
-						// and baseTemplateName() to get the template name without parsing
-						if (type_info->isTemplateInstantiation()) {
-							// Get the base template name directly from TypeInfo metadata
-							StringHandle inner_template_name = type_info->baseTemplateName();
-
-							// Check if this template exists
-							auto template_check = gTemplateRegistry.lookupTemplate(inner_template_name);
-							if (template_check.has_value()) {
-								template_args.push_back(TemplateTypeArg::makeTemplate(inner_template_name));
-
-								// For hash-based naming, type arguments can be retrieved from TypeInfo::templateArgs()
-								// instead of parsing the name string
-								const auto& stored_args = type_info->templateArgs();
-								for (const auto& stored_arg : stored_args) {
-									if (!stored_arg.is_value) {
-										deduced_type_args.push_back(stored_arg.typeEnum());
-									}
-								}
-
-								arg_index++;
-							} else {
-								FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template '", inner_template_name, "' not found");
-
-								return std::nullopt;
-							}
-						} else {
-							// Not a template instantiation - cannot deduce template template parameter
-							std::string_view type_name = StringTable::getStringView(type_info->name());
-							FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Type '", type_name, "' is not a template instantiation");
-
-							return std::nullopt;
-						}
-					} else {
-						FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Invalid type index ", static_cast<int>(type_index.index()));
-
-						return std::nullopt;
-					}
-				} else {
-					FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template template parameter requires struct argument, got type ", static_cast<int>(arg_type.type()));
-
-					return std::nullopt;
-				}
-			} else {
-				FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Not enough arguments to deduce template template parameter");
-
-				return std::nullopt;
-			}
-		} else if (param.kind() == TemplateParameterKind::Type) {
-			// Type parameter - check if it's variadic (parameter pack)
-			if (param.is_variadic()) {
-				if (function_pack_arg_start != SIZE_MAX) {
-					arg_index = function_pack_arg_start;
-				}
-				// Deduce all remaining argument types for this parameter pack,
-				// skipping any slots already consumed by the pre-deduction pass.
-				while (arg_index < arg_types.size()) {
-					if (pre_deduced_arg_indices.count(arg_index)) {
-						arg_index++;
-						continue;
-					}
-					// Store full TypeSpecifierNode to preserve reference info for perfect forwarding
-					template_args.push_back(TemplateTypeArg::makeTypeSpecifier(arg_types[arg_index]));
-					arg_index++;
-				}
-
-				// Note: If no arguments remain, the pack is empty (which is valid)
-			} else {
-				// Non-variadic type parameter — check pre-deduction map first
-				StringHandle param_handle = StringTable::getOrInternStringHandle(param.name());
-				auto map_it = param_name_to_arg.find(param_handle);
-				if (map_it != param_name_to_arg.end()) {
-					template_args.push_back(map_it->second);
-				} else if (!deduced_type_args.empty()) {
-					TypeCategory deduced_type = deduced_type_args[0];
-					template_args.push_back(TemplateTypeArg::makeType(nativeTypeIndex(deduced_type)));
-					deduced_type_args.erase(deduced_type_args.begin());
-				} else {
-					// Skip any arg slots fully consumed by the pre-deduction pass
-					while (arg_index < arg_types.size() && pre_deduced_arg_indices.count(arg_index))
-						arg_index++;
-					if (arg_index < arg_types.size()) {
-						// Store full TypeSpecifierNode to preserve reference info for perfect forwarding
-						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(arg_types[arg_index]));
-						arg_index++;
-					} else if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
-						continue;
-					} else {
-						// Not enough arguments to deduce all template parameters and no default
-						return std::nullopt;
-					}
-				}
-			}
-		} else {
-			// Non-type parameter — check pre-deduction map first
-			StringHandle param_handle = StringTable::getOrInternStringHandle(param.name());
-			auto map_it = param_name_to_arg.find(param_handle);
-			if (map_it != param_name_to_arg.end()) {
-				template_args.push_back(map_it->second);
-			} else if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
-				continue;
-			} else {
-				// No default value and can't deduce - fail
-				FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Non-type parameter not supported in deduction");
-
-				return std::nullopt;
-			}
-		}
+	auto deduced_template_args = deduceTemplateArgsFromCall(
+		template_params,
+		arg_types,
+		*deduction_info,
+		function_pack_arg_start,
+		recursion_depth);
+	if (!deduced_template_args.has_value()) {
+		return std::nullopt;
 	}
+	InlineVector<TemplateTypeArg, 4> template_args = std::move(*deduced_template_args);
 	// template_args is already std::vector<TemplateTypeArg> — no conversion needed.
 
 	// Step 2: Check if we already have this instantiation

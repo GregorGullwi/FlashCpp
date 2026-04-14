@@ -281,14 +281,17 @@ struct SubstitutionParamMap {
 	bool empty() const { return param_map.empty(); }
 };
 
-// Build a SubstitutionParamMap from a params container and a template_args vector.
+// Build a SubstitutionParamMap from a params container and a template_args container.
 // The params container must support operator[] and size() with ASTNode elements
 // (works with both InlineVector<ASTNode, 4> and std::vector<ASTNode>).
-template <typename ParamsContainer>
+// The arg container must support operator[] and size()
+// (works with std::vector<TemplateTypeArg> and std::span<const TemplateTypeArg>).
+template <typename ParamsContainer, typename ArgContainer>
 inline SubstitutionParamMap buildSubstitutionParamMap(
 	const ParamsContainer& template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	const ArgContainer& template_args) {
 	SubstitutionParamMap result;
+	result.param_order.reserve(std::min(template_params.size(), template_args.size()));
 	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 		if (!template_params[i].template is<TemplateParameterNode>()) {
 			continue;
@@ -298,6 +301,21 @@ inline SubstitutionParamMap buildSubstitutionParamMap(
 		result.param_order.push_back(param.name());
 	}
 	return result;
+}
+
+template <typename ParamsContainer>
+inline std::vector<std::string_view> buildTemplateParamNames(
+	const ParamsContainer& template_params) {
+	std::vector<std::string_view> param_names;
+	param_names.reserve(template_params.size());
+	for (const auto& template_param_node : template_params) {
+		if (!template_param_node.template is<TemplateParameterNode>()) {
+			continue;
+		}
+		param_names.push_back(
+			template_param_node.template as<TemplateParameterNode>().name());
+	}
+	return param_names;
 }
 
 // Convert a successful ConstExpr::EvalResult into a TemplateTypeArg for non-type
@@ -900,6 +918,30 @@ private:
 		const TemplateParameterNode& param,
 		const std::vector<ASTNode>& template_params,
 		InlineVector<TemplateTypeArg, 4>& template_args);
+	ASTNode substituteNonTypeDefaultExpression(
+		const ASTNode& default_node,
+		const std::vector<ASTNode>& template_params,
+		std::span<const TemplateTypeArg> template_args);
+	ASTNode substituteNonTypeDefaultExpression(
+		const ASTNode& default_node,
+		const InlineVector<ASTNode, 4>& template_params,
+		std::span<const TemplateTypeArg> template_args);
+	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
+		const ASTNode& default_node,
+		const std::vector<ASTNode>& template_params,
+		std::span<const TemplateTypeArg> template_args,
+		std::span<const std::string_view> template_param_names);
+	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
+		const ASTNode& default_node,
+		const InlineVector<ASTNode, 4>& template_params,
+		std::span<const TemplateTypeArg> template_args,
+		std::span<const std::string_view> template_param_names);
+	std::optional<InlineVector<TemplateTypeArg, 4>> deduceTemplateArgsFromCall(
+		const std::vector<ASTNode>& template_params,
+		const std::vector<TypeSpecifierNode>& arg_types,
+		const CallArgDeductionInfo& deduction_info,
+		size_t function_pack_arg_start,
+		int recursion_depth);
 	// Shared pre-deduction helper for matching function-parameter slots to call-argument
 	// types. The explicit-template-argument path must only rely on this map for non-pack
 	// signatures; pack-aware remapping needs an explicit contract first.

@@ -1188,23 +1188,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return true;
 	};
 
-	auto substituteNonTypeDefaultExpression = [&](const ASTNode& default_node,
-												 const InlineVector<ASTNode, 4>& params,
-												 const std::vector<TemplateTypeArg>& current_args) -> ASTNode {
-		if (!default_node.is<ExpressionNode>() || current_args.empty()) {
-			return default_node;
-		}
-
-		auto sub_map = buildSubstitutionParamMap(params, current_args);
-
-		if (sub_map.empty()) {
-			return default_node;
-		}
-
-		ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
-		return substitutor.substitute(default_node);
-	};
-
 	// Helper lambda to resolve a deferred bitfield width from non-type template parameters
 	auto resolve_bitfield_width = [&](
 									  const StructMemberDecl& member_decl,
@@ -1527,7 +1510,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
 					// Handle non-type template parameter defaults like is_arithmetic<T>::value
 					size_t size_before = filled_args_for_pattern_match.size();
-					ASTNode substituted_default_node = substituteNonTypeDefaultExpression(default_node, primary_params, filled_args_for_pattern_match);
+					ASTNode substituted_default_node = substituteNonTypeDefaultExpression(
+						default_node,
+						primary_params,
+						filled_args_for_pattern_match);
 					const ASTNode& expr_source = substituted_default_node.is<ExpressionNode>() ? substituted_default_node : default_node;
 					const ExpressionNode& expr = expr_source.as<ExpressionNode>();
 
@@ -3527,24 +3513,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const ASTNode& default_node = param.default_value();
 			FLASH_LOG(Templates, Debug, "Processing non-type param default, is_expression=", default_node.is<ExpressionNode>());
 
-			// Build parameter substitution map for already-filled template arguments
-			// This allows the default expression to reference earlier template parameters
-			std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-			std::vector<std::string_view> template_param_order;
-			for (size_t j = 0; j < i && j < template_params.size() && j < filled_template_args.size(); ++j) {
-				if (template_params[j].is<TemplateParameterNode>()) {
-					const TemplateParameterNode& earlier_param = template_params[j].as<TemplateParameterNode>();
-					param_map[earlier_param.name()] = filled_template_args[j];
-					template_param_order.push_back(earlier_param.name());
-					FLASH_LOG(Templates, Debug, "Added param '", earlier_param.name(), "' to substitution map for default evaluation");
-				}
-			}
-
 			// Substitute template parameters in the default expression
 			ASTNode substituted_default_node = default_node;
-			if (!param_map.empty() && default_node.is<ExpressionNode>()) {
-				ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
-				substituted_default_node = substitutor.substitute(default_node);
+			if (!filled_template_args.empty() && default_node.is<ExpressionNode>()) {
+				substituted_default_node = substituteNonTypeDefaultExpression(
+					default_node,
+					template_params,
+					filled_template_args);
 				FLASH_LOG(Templates, Debug, "Substituted template parameters in non-type default expression");
 			}
 
