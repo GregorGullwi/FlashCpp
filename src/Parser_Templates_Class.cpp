@@ -1381,7 +1381,7 @@ ParseResult Parser::parse_template_declaration() {
 					std::string_view base_class_name = base_class_name_builder.commit();
 					std::vector<ASTNode> template_arg_nodes;
 					std::optional<std::vector<TemplateTypeArg>> base_template_args_opt;
-					std::vector<StringHandle> member_type_chain;
+					std::vector<QualifiedTypeMemberAccess> member_type_chain;
 					std::optional<Token> member_name_token;
 
 					// Check if this is a template base class (e.g., Base<T>)
@@ -1435,11 +1435,12 @@ ParseResult Parser::parse_template_declaration() {
 								resolveBaseClassMemberTypeChain(base_class_name, member_type_chain);
 							if (resolved_type == nullptr) {
 								std::string_view unresolved_base_name = base_class_name;
-								for (StringHandle member_name : member_type_chain) {
+								for (const QualifiedTypeMemberAccess& member_access : member_type_chain) {
 									unresolved_base_name = StringBuilder()
 										.append(unresolved_base_name)
 										.append("::")
-										.append(StringTable::getStringView(member_name))
+										.append(StringTable::getStringView(member_access.member_name))
+										.append(member_access.has_template_arguments ? "<...>" : "")
 										.commit();
 								}
 								return ParseResult::error("Base class '" + std::string(unresolved_base_name) + "' not found", member_name_token.value_or(base_name_token));

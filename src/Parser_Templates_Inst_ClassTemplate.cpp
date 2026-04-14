@@ -12,6 +12,152 @@
 
 static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
+// The std::string_view keys point at parser-owned/interned template parameter names that outlive
+// each transient substitution map built during instantiation; these maps mirror the existing
+// name-substitution containers used throughout template instantiation, while packs stay keyed by
+// StringHandle because pack lookup already operates on interned handles.
+using TemplateArgSubstitutionMap = std::unordered_map<std::string_view, TemplateTypeArg>;
+using TemplateArgPackSubstitutionMap =
+	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>;
+
+static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type) {
+	TemplateTypeArg arg;
+	arg.is_value = true;
+	arg.value = value;
+	arg.type_index = nativeTypeIndex(type);
+	return arg;
+}
+
+// Resolve any stored template arguments on a deferred base member-type chain after a class
+// template's substitution maps are available.
+// Returns std::nullopt when any pack expansion or concrete member argument cannot be resolved.
+// The substitution maps only need to remain valid for the duration of this call.
+// `substitute_expression` must accept `const ASTNode&` and return a substituted `ASTNode`.
+// `evaluate_constant_expression` must accept `const ASTNode&` and return
+// `std::optional<Parser::ConstantValue>` for non-type template arguments.
+template <typename SubstituteExpressionFn, typename EvaluateConstantExpressionFn>
+static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBaseMemberTypeChain(
+	const std::vector<QualifiedTypeMemberAccess>& member_type_chain,
+	const TemplateArgSubstitutionMap& name_substitution_map,
+	const TemplateArgPackSubstitutionMap& pack_substitution_map,
+	SubstituteExpressionFn&& substitute_expression,
+	EvaluateConstantExpressionFn&& evaluate_constant_expression) {
+	std::vector<QualifiedTypeMemberAccess> resolved_member_chain;
+	resolved_member_chain.reserve(member_type_chain.size());
+
+	for (const QualifiedTypeMemberAccess& member_access : member_type_chain) {
+		QualifiedTypeMemberAccess resolved_member;
+		resolved_member.member_name = member_access.member_name;
+		resolved_member.has_template_arguments = member_access.has_template_arguments;
+		if (member_access.has_template_arguments) {
+			resolved_member.template_arguments = std::make_shared<std::vector<TemplateTypeArg>>();
+			resolved_member.template_arguments->reserve(member_access.template_argument_infos.size());
+			for (const auto& member_arg_info : member_access.template_argument_infos) {
+				if (member_arg_info.is_pack) {
+					auto try_expand = [&](StringHandle pack_name) -> bool {
+						auto it = pack_substitution_map.find(pack_name);
+						if (it != pack_substitution_map.end()) {
+							resolved_member.template_arguments->insert(
+								resolved_member.template_arguments->end(),
+								it->second.begin(),
+								it->second.end());
+							return true;
+						}
+						return false;
+					};
+
+					bool expanded = false;
+					if (member_arg_info.node.is<ExpressionNode>()) {
+						const ExpressionNode& expr = member_arg_info.node.as<ExpressionNode>();
+						if (const auto* template_parameter_reference = std::get_if<TemplateParameterReferenceNode>(&expr)) {
+							expanded = try_expand(template_parameter_reference->param_name());
+						} else if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
+							expanded = try_expand(StringTable::getOrInternStringHandle(identifier->name()));
+						}
+					} else if (member_arg_info.node.is<TypeSpecifierNode>()) {
+						TypeIndex idx = member_arg_info.node.as<TypeSpecifierNode>().type_index();
+						if (idx.is_valid()) {
+							if (const TypeInfo* idx_ti = tryGetTypeInfo(idx)) {
+								expanded = try_expand(idx_ti->name_);
+							}
+						}
+					}
+
+					if (!expanded) {
+						return std::nullopt;
+					}
+					continue;
+				}
+
+				bool member_arg_resolved = false;
+				if (member_arg_info.node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& ts = member_arg_info.node.as<TypeSpecifierNode>();
+					if (is_struct_type(ts.category()) && ts.type_index().is_valid()) {
+						if (const TypeInfo* ts_ti = tryGetTypeInfo(ts.type_index())) {
+							auto type_subst_it = name_substitution_map.find(StringTable::getStringView(ts_ti->name()));
+							if (type_subst_it != name_substitution_map.end()) {
+								TemplateTypeArg resolved_type_arg = type_subst_it->second;
+								resolved_type_arg.pointer_depth = ts.pointer_depth();
+								resolved_type_arg.ref_qualifier = ts.reference_qualifier();
+								resolved_type_arg.cv_qualifier = ts.cv_qualifier();
+								resolved_member.template_arguments->push_back(resolved_type_arg);
+								member_arg_resolved = true;
+							}
+						}
+					}
+					if (!member_arg_resolved) {
+						resolved_member.template_arguments->emplace_back(ts);
+						member_arg_resolved = true;
+					}
+				} else if (member_arg_info.node.is<ExpressionNode>()) {
+					const ExpressionNode& expr = member_arg_info.node.as<ExpressionNode>();
+					if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+						std::string_view pname = std::get<TemplateParameterReferenceNode>(expr).param_name().view();
+						auto it = name_substitution_map.find(pname);
+						if (it != name_substitution_map.end()) {
+							resolved_member.template_arguments->push_back(it->second);
+							member_arg_resolved = true;
+						}
+					} else if (std::holds_alternative<IdentifierNode>(expr)) {
+						std::string_view iname = std::get<IdentifierNode>(expr).name();
+						auto ident_subst_it = name_substitution_map.find(iname);
+						if (ident_subst_it != name_substitution_map.end()) {
+							resolved_member.template_arguments->push_back(ident_subst_it->second);
+							member_arg_resolved = true;
+						} else {
+							StringHandle type_name_handle = StringTable::getOrInternStringHandle(iname);
+							auto type_it = getTypesByNameMap().find(type_name_handle);
+							if (type_it != getTypesByNameMap().end()) {
+								TemplateTypeArg resolved_type_arg;
+								resolved_type_arg.type_index = type_it->second->type_index_.withCategory(type_it->second->typeEnum());
+								resolved_member.template_arguments->push_back(resolved_type_arg);
+								member_arg_resolved = true;
+							}
+						}
+					}
+
+					if (!member_arg_resolved) {
+						const ASTNode substituted_expr = substitute_expression(member_arg_info.node);
+						if (auto evaluated_value = evaluate_constant_expression(substituted_expr)) {
+							resolved_member.template_arguments->push_back(
+								makeDeferredBaseValueArg(evaluated_value->value, evaluated_value->type));
+							member_arg_resolved = true;
+						}
+					}
+				}
+
+				if (!member_arg_resolved) {
+					return std::nullopt;
+				}
+			}
+		}
+
+		resolved_member_chain.push_back(std::move(resolved_member));
+	}
+
+	return resolved_member_chain;
+}
+
 // Compute the canonical instantiated lookup name for a member function.
 // For conversion operators (operator with an identifier suffix, e.g. "operator value_type"),
 // the substituted return type gives the canonical name (e.g. "operator int").
@@ -2120,14 +2266,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::string_view final_base_name = base_inst_name;
 					const TypeInfo* final_base_type = nullptr;
 					if (!deferred_base.member_type_chain.empty()) {
+						auto resolved_member_chain = resolveDeferredBaseMemberTypeChain(
+							deferred_base.member_type_chain,
+							spec_name_subst_map,
+							spec_pack_subst_map,
+							[&](const ASTNode& node) {
+								return substituteTemplateParameters(node, template_params, template_args);
+							},
+							[&](const ASTNode& node) {
+								return try_evaluate_constant_expression(node);
+							});
+						if (!resolved_member_chain.has_value()) {
+							FLASH_LOG(Templates, Warning, "Could not resolve member template args for deferred base '", base_tpl_name, "' - skipping");
+							continue;
+						}
 						final_base_type =
-							resolveBaseClassMemberTypeChain(base_inst_name, deferred_base.member_type_chain);
+							resolveBaseClassMemberTypeChain(base_inst_name, *resolved_member_chain);
 						if (final_base_type == nullptr) {
 							StringBuilder unresolved_base_builder;
 							unresolved_base_builder.append(base_inst_name);
-							for (StringHandle member_name : deferred_base.member_type_chain) {
+							for (const QualifiedTypeMemberAccess& member_access : *resolved_member_chain) {
 								unresolved_base_builder.append("::");
-								unresolved_base_builder.append(StringTable::getStringView(member_name));
+								unresolved_base_builder.append(StringTable::getStringView(member_access.member_name));
+								if (member_access.has_template_arguments) {
+									unresolved_base_builder.append("<...>");
+								}
 							}
 							FLASH_LOG(Templates, Warning, "Deferred template base alias not found after instantiation: '",
 									  unresolved_base_builder.commit(), "'");
@@ -4506,14 +4669,38 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			std::string_view final_base_name = base_template_name;
 			if (!deferred_base.member_type_chain.empty()) {
+				ensure_substitution_maps();
+				ExpressionSubstitutor member_template_arg_substitutor(
+					name_substitution_map,
+					pack_substitution_map,
+					*this,
+					template_param_order);
+				auto resolved_member_chain = resolveDeferredBaseMemberTypeChain(
+					deferred_base.member_type_chain,
+					name_substitution_map,
+					pack_substitution_map,
+					[&](const ASTNode& node) {
+						return member_template_arg_substitutor.substitute(node);
+					},
+					[&](const ASTNode& node) {
+						return try_evaluate_constant_expression(node);
+					});
+				if (!resolved_member_chain.has_value()) {
+					FLASH_LOG(Templates, Debug, "Deferred template base member args not fully resolved for '",
+							  StringTable::getStringView(deferred_base.base_template_name), "'");
+					continue;
+				}
 				const TypeInfo* resolved_type =
-					resolveBaseClassMemberTypeChain(base_template_name, deferred_base.member_type_chain);
+					resolveBaseClassMemberTypeChain(base_template_name, *resolved_member_chain);
 				if (resolved_type == nullptr) {
 					StringBuilder unresolved_base_builder;
 					unresolved_base_builder.append(base_template_name);
-					for (StringHandle member_name : deferred_base.member_type_chain) {
+					for (const QualifiedTypeMemberAccess& member_access : *resolved_member_chain) {
 						unresolved_base_builder.append("::");
-						unresolved_base_builder.append(StringTable::getStringView(member_name));
+						unresolved_base_builder.append(StringTable::getStringView(member_access.member_name));
+						if (member_access.has_template_arguments) {
+							unresolved_base_builder.append("<...>");
+						}
 					}
 					std::string_view unresolved_base_name = unresolved_base_builder.commit();
 					FLASH_LOG(Templates, Debug, "Deferred template base alias not found: ",

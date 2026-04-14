@@ -928,17 +928,24 @@ struct TemplateArgumentNodeInfo {
 	bool is_dependent = false;
 };
 
+struct QualifiedTypeMemberAccess {
+	StringHandle member_name;
+	std::shared_ptr<std::vector<TemplateTypeArg>> template_arguments;
+	std::vector<TemplateArgumentNodeInfo> template_argument_infos;
+	bool has_template_arguments = false;
+};
+
 struct DeferredTemplateBaseClassSpecifier {
 	StringHandle base_template_name;
 	std::vector<TemplateArgumentNodeInfo> template_arguments;
-	std::vector<StringHandle> member_type_chain; // e.g., ::type::type
+	std::vector<QualifiedTypeMemberAccess> member_type_chain; // e.g., ::type::template rebind<U>::other
 	AccessSpecifier access;
 	bool is_virtual;
 	bool is_pack_expansion = false; // e.g., Base<Args>...
 
 	DeferredTemplateBaseClassSpecifier(StringHandle name,
 									   std::vector<TemplateArgumentNodeInfo> args,
-									   std::vector<StringHandle> member_chain,
+									   std::vector<QualifiedTypeMemberAccess> member_chain,
 									   AccessSpecifier acc,
 									   bool virt,
 									   bool pack_expansion = false)
@@ -958,8 +965,11 @@ struct FunctionSignature {
 	std::vector<TypeIndex> parameter_type_indices;
 	Linkage linkage = Linkage::None;			 // C vs C++ linkage
 	std::optional<std::string> class_name;	   // For member function pointers
+	CallingConvention calling_convention = CallingConvention::Default;
 	bool is_const = false;					   // For const member functions
 	bool is_volatile = false;				  // For volatile member functions
+	ReferenceQualifier function_reference_qualifier = ReferenceQualifier::None;
+	bool is_noexcept = false;
 
 	// Accessor helpers
 	TypeCategory returnType() const { return return_type_index.category(); }

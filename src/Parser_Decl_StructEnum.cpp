@@ -407,9 +407,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						auto post_info = *post_info_opt;
 						if (!post_info.member_type_chain.empty()) {
 							StringBuilder member_chain_builder;
-							for (StringHandle member_name : post_info.member_type_chain) {
+							for (const QualifiedTypeMemberAccess& member_access : post_info.member_type_chain) {
 								member_chain_builder.append("::");
-								member_chain_builder.append(StringTable::getStringView(member_name));
+								member_chain_builder.append(StringTable::getStringView(member_access.member_name));
+								if (member_access.has_template_arguments) {
+									member_chain_builder.append("<...>");
+								}
 							}
 							std::string_view member_chain = member_chain_builder.commit();
 							FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}{}", full_name, member_chain);
@@ -521,9 +524,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				auto post_info = *post_info_opt;
 				if (!post_info.member_type_chain.empty()) {
 					StringBuilder member_chain_builder;
-					for (StringHandle member_name : post_info.member_type_chain) {
+					for (const QualifiedTypeMemberAccess& member_access : post_info.member_type_chain) {
 						member_chain_builder.append("::");
-						member_chain_builder.append(StringTable::getStringView(member_name));
+						member_chain_builder.append(StringTable::getStringView(member_access.member_name));
+						if (member_access.has_template_arguments) {
+							member_chain_builder.append("<...>");
+						}
 					}
 					std::string_view member_chain = member_chain_builder.commit();
 					FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}{}", base_class_name, member_chain);
@@ -676,11 +682,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						resolveBaseClassMemberTypeChain(base_class_name, post_info.member_type_chain);
 					if (resolved_type == nullptr) {
 						std::string_view unresolved_base_name = base_class_name;
-						for (StringHandle member_name : post_info.member_type_chain) {
+						for (const QualifiedTypeMemberAccess& member_access : post_info.member_type_chain) {
 							unresolved_base_name = StringBuilder()
 								.append(unresolved_base_name)
 								.append("::")
-								.append(StringTable::getStringView(member_name))
+								.append(StringTable::getStringView(member_access.member_name))
+								.append(member_access.has_template_arguments ? "<...>" : "")
 								.commit();
 						}
 						return ParseResult::error(

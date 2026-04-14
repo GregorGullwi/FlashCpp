@@ -267,7 +267,7 @@ struct QualifiedIdParseResult {
 // Result of consuming ::member type access and ... pack expansion after template arguments
 // in a base class specifier. Shared across all base class parsing sites.
 struct BaseClassPostTemplateInfo {
-	std::vector<StringHandle> member_type_chain;
+	std::vector<QualifiedTypeMemberAccess> member_type_chain;
 	std::optional<Token> member_name_token;
 	bool is_pack_expansion = false;
 };
@@ -1825,6 +1825,7 @@ private:	 // Resume private methods
 	bool skip_asm_suffix(std::optional<std::string_view>* asm_symbol_name = nullptr); // Skip declaration-suffix __asm("...") / __asm__("...")
 	void parse_variable_declarator_suffixes(DeclarationNode& decl);
 	void skip_noexcept_specifier();				// Skip noexcept or noexcept(expr) specifier
+	bool parse_noexcept_value();				// Parse noexcept or noexcept(expr), returning evaluated bool
 	void skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals);	   // Skip all trailing specifiers after function parameters (stops before 'requires')
 	void skip_trailing_requires_clause();		  // Parse and discard trailing requires clause (if present)
 	std::optional<ASTNode> parse_trailing_requires_clause();	 // Parse trailing requires clause, return RequiresClauseNode
@@ -1891,7 +1892,7 @@ private:	 // Resume private methods
 	std::optional<BaseClassPostTemplateInfo> consume_base_class_qualifiers_after_template_args();
 	const TypeInfo* resolveBaseClassMemberTypeChain(
 		std::string_view base_class_name,
-		const std::vector<StringHandle>& member_type_chain);
+		const std::vector<QualifiedTypeMemberAccess>& member_type_chain);
 
 		// Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
 		// Shared across all base class deferral sites.
