@@ -599,7 +599,7 @@ std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_a
 	// the new current_token_ for the member name.
 	while (peek() == "::"_tok) {
 		advance(); // consume ::, now current_token_ is the token after ::
-		if (current_token_.value() == "template") {
+		if (current_token_.kind() == "template"_tok) {
 			advance(); // consume optional template disambiguator
 		}
 		if (!current_token_.kind().is_identifier()) {

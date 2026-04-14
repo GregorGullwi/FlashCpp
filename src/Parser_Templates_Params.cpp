@@ -5,6 +5,33 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+// Parse noexcept or noexcept(expr) specifier and return the evaluated boolean value.
+// Assumes the 'noexcept' token has already been consumed by the caller.
+// - Bare 'noexcept' (no parens) → returns true.
+// - 'noexcept(expr)' → tries to parse and evaluate expr as a constant expression.
+//   If expr evaluates to 0/false, returns false. Otherwise (including dependent
+//   expressions that cannot be evaluated), returns true conservatively.
+bool Parser::parse_noexcept_value() {
+	if (peek() != "("_tok) {
+		// bare noexcept (no parens) is noexcept(true)
+		return true;
+	}
+	// noexcept(expr) — try to evaluate; default to true for dependent exprs
+	SaveHandle noexcept_expr_pos = save_token_position();
+	advance(); // consume '('
+	auto noexcept_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+	if (!noexcept_expr_result.is_error() && noexcept_expr_result.node().has_value() && peek() == ")"_tok) {
+		advance(); // consume ')'
+		discard_saved_token(noexcept_expr_pos);
+		auto eval = try_evaluate_constant_expression(*noexcept_expr_result.node());
+		return !eval.has_value() || eval->value != 0;
+	}
+	// Expression parsing failed — fall back to skipping balanced parens
+	restore_token_position(noexcept_expr_pos);
+	skip_balanced_parens();
+	return true; // dependent — assume true
+}
+
 ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_params) {
 	// Save the current template parameter names so we can restore them later.
 	// This allows nested template declarations to have their own parameter scope.
@@ -1410,11 +1437,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								sig_function_ref_qualifier = ReferenceQualifier::RValueReference;
 								advance();
 							} else if (peek() == "noexcept"_tok) {
-								sig_is_noexcept = true;
 								advance(); // consume 'noexcept'
-								if (peek() == "("_tok) {
-									skip_balanced_parens();
-								}
+								sig_is_noexcept = parse_noexcept_value();
 							} else {
 								break;
 							}
@@ -1512,11 +1536,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						}
 					}
 					if (peek() == "noexcept"_tok) {
-						func_sig.is_noexcept = true;
-						advance();
-						if (peek() == "("_tok) {
-							skip_balanced_parens();
-						}
+						advance(); // consume 'noexcept'
+						func_sig.is_noexcept = parse_noexcept_value();
 					}
 					type_node.set_function_signature(func_sig);
 

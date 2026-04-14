@@ -2136,7 +2136,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::vector<QualifiedTypeMemberAccess> resolved_member_chain;
 						resolved_member_chain.reserve(deferred_base.member_type_chain.size());
 						for (const QualifiedTypeMemberAccess& member_access : deferred_base.member_type_chain) {
-							QualifiedTypeMemberAccess resolved_member = member_access;
+							QualifiedTypeMemberAccess resolved_member;
+							resolved_member.member_name = member_access.member_name;
+							resolved_member.has_template_arguments = member_access.has_template_arguments;
 							if (member_access.has_template_arguments) {
 								resolved_member.template_arguments = std::make_shared<std::vector<TemplateTypeArg>>();
 								resolved_member.template_arguments->reserve(member_access.template_argument_infos.size());
@@ -4680,7 +4682,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				resolved_member_chain.reserve(deferred_base.member_type_chain.size());
 				bool unresolved_member_arg = false;
 				for (const QualifiedTypeMemberAccess& member_access : deferred_base.member_type_chain) {
-					QualifiedTypeMemberAccess resolved_member = member_access;
+					QualifiedTypeMemberAccess resolved_member;
+					resolved_member.member_name = member_access.member_name;
+					resolved_member.has_template_arguments = member_access.has_template_arguments;
 					if (member_access.has_template_arguments) {
 						resolved_member.template_arguments = std::make_shared<std::vector<TemplateTypeArg>>();
 						resolved_member.template_arguments->reserve(member_access.template_argument_infos.size());
