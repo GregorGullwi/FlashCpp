@@ -530,37 +530,62 @@ ParseResult Parser::parse_template_template_parameter_form() {
 	};
 
 	// Handle type parameters: typename or class
+	// BUT only when not followed by 'identifier ::' which indicates a dependent type
+	// used as the type of a non-type parameter (e.g. 'typename T::type N') per C++20 [temp.param].
 	if (peek().is_keyword()) {
 		std::string_view keyword = peek_info().value();
 
 		if (keyword == "typename" || keyword == "class") {
+			SaveHandle keyword_save = save_token_position();
 			Token keyword_token = peek_info();
-			advance(); // consume 'typename' or 'class'
+			advance(); // tentatively consume 'typename' or 'class'
 
-			bool is_variadic = consumeOptionalEllipsis();
-			consumeOptionalName();
-
-			// Create a type parameter node with an empty name (form only)
-			auto param_node = emplace_node<TemplateParameterNode>(StringHandle(), keyword_token);
-
-			if (is_variadic) {
-				param_node.as<TemplateParameterNode>().set_variadic(true);
+			// Look ahead: 'identifier ::' means this is a dependent type specifier
+			// (e.g. 'typename T::type N') — a non-type parameter. Fall through in that case.
+			bool is_dependent_type = false;
+			if (peek().is_identifier()) {
+				SaveHandle lookahead = save_token_position();
+				advance(); // tentatively consume identifier
+				is_dependent_type = (peek() == "::"_tok);
+				restore_token_position(lookahead);
 			}
 
-			return saved_position.success(param_node);
+			if (!is_dependent_type) {
+				discard_saved_token(keyword_save);
+				bool is_variadic = consumeOptionalEllipsis();
+				consumeOptionalName();
+
+				// Create a type parameter node with an empty name (form only)
+				auto param_node = emplace_node<TemplateParameterNode>(StringHandle(), keyword_token);
+
+				if (is_variadic) {
+					param_node.as<TemplateParameterNode>().set_variadic(true);
+				}
+
+				return saved_position.success(param_node);
+			}
+
+			// Dependent type: restore to before 'typename'/'class' and fall through
+			// to parse_type_specifier() which handles 'typename T::type'.
+			restore_token_position(keyword_save);
 		}
 	}
 
 	// Handle non-type parameters: int N, bool B, auto V, size_t S, etc.
-	// C++20 [temp.param] permits template-template parameter parameter-lists to
-	// contain non-type template parameters.
+	// Also handles dependent types: typename T::type N (C++20 [temp.param]).
 	auto type_result = parse_type_specifier();
 	if (!type_result.is_error() && type_result.node().has_value()) {
 		bool is_variadic = consumeOptionalEllipsis();
-		consumeOptionalName();
+
+		// Use the type specifier's token as the anchor; switch to the name token if present.
+		Token anchor_token = type_result.node()->as<TypeSpecifierNode>().token();
+		if (peek().is_identifier()) {
+			anchor_token = peek_info();
+			advance(); // consume optional name
+		}
 
 		// Create a non-type parameter node with an empty name (form only)
-		auto param_node = emplace_node<TemplateParameterNode>(StringHandle(), *type_result.node(), current_token_);
+		auto param_node = emplace_node<TemplateParameterNode>(StringHandle(), *type_result.node(), anchor_token);
 
 		if (is_variadic) {
 			param_node.as<TemplateParameterNode>().set_variadic(true);
