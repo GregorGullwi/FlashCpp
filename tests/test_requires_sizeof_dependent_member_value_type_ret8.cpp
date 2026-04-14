@@ -1,25 +1,41 @@
 template <typename T>
+struct identity {
+	using type = T;
+};
+
+template <typename Prefix, template <typename> class Wrap, typename T>
 struct holder {
-	using value_type = T;
+	using value_type = typename Wrap<T>::type;
 };
 
-template <template <typename...> class Holder, typename... Args>
+template <template <typename, template <typename> class, typename> class Holder,
+		  typename Prefix,
+		  template <typename> class Wrap,
+		  typename T>
 concept HasSizedValueType = requires {
-	typename Holder<Args...>;
-	requires sizeof(typename Holder<Args...>::value_type) == sizeof(long long);
+	typename Holder<Prefix, Wrap, T>;
+	requires sizeof(typename Holder<Prefix, Wrap, T>::value_type) == sizeof(long long);
 };
 
-template <typename Default, template <typename...> class Holder, typename... Args>
+template <typename Default,
+		  template <typename, template <typename> class, typename> class Holder,
+		  typename Prefix,
+		  template <typename> class Wrap,
+		  typename T>
 struct detector {
 	static constexpr int value = 1;
 };
 
-template <typename Default, template <typename...> class Holder, typename... Args>
-	requires HasSizedValueType<Holder, Args...>
-struct detector<Default, Holder, Args...> {
+template <typename Default,
+		  template <typename, template <typename> class, typename> class Holder,
+		  typename Prefix,
+		  template <typename> class Wrap,
+		  typename T>
+	requires HasSizedValueType<Holder, Prefix, Wrap, T>
+struct detector<Default, Holder, Prefix, Wrap, T> {
 	static constexpr int value = 8;
 };
 
 int main() {
-	return detector<int, holder, long long>::value;
+	return detector<int, holder, char, identity, long long>::value;
 }
