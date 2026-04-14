@@ -244,11 +244,10 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 			result.instantiated_name = StringTable::getStringView(
 				registry_hit->as<StructDeclarationNode>().name());
 		} else {
+			// get_instantiated_class_name always returns a non-empty mangled name,
+			// so no further fallback is needed.
 			result.instantiated_name =
 				get_instantiated_class_name(template_name, template_args);
-			if (result.instantiated_name.empty()) {
-				result.instantiated_name = template_name_to_instantiate;
-			}
 		}
 	}
 
