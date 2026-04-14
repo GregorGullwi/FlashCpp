@@ -19,29 +19,68 @@ non-type argument chain.
 **Phase:** This is the exact kind of bug that Phase 2 alias-template
 materialization consolidation is intended to fix.
 
-## Template-template parameters reject mixed parameter kinds
+## Template-template parameter function deduction drops non-type (value) inner args
 
 **Repro:**
 ```cpp
 template <typename T, int N>
-struct wrap {
-	using type = T;
+struct Array { T data; static constexpr int size = N; };
+
+template <template <typename, int> class C, typename T, int N>
+void use_mixed(C<T, N>& c) { (void)c; }
+
+int main() {
+	Array<int, 3> a;
+	use_mixed(a);  // error: Failed to instantiate template function
+}
+```
+**Symptom:** Compilation fails with `error: Failed to instantiate template function` /
+`Non-type parameter not supported in deduction`.
+**Impact:** Template functions whose template-template parameter has non-type
+inner parameters cannot be called via argument deduction.  Struct-only usage
+(e.g. `probe<Array>`) and explicit struct instantiation inside TTP bodies work
+correctly.
+**Root cause:** In `Parser_Templates_Inst_Deduction.cpp`, when a
+`TemplateParameterKind::Template` parameter is deduced from a struct argument
+the code only forwards type args (`!stored_arg.is_value`) into `deduced_type_args`
+(lines 2013–2018).  Value args (`stored_arg.is_value`, e.g. the `N=3` in
+`Array<int,3>`) are silently discarded.  When the deduction loop then reaches
+the outer non-type parameter `N` it finds no entry in `param_name_to_arg` and
+no deduced value to draw from, so it logs "Non-type parameter not supported in
+deduction" and returns `std::nullopt`.
+**Fix sketch:** Alongside `deduced_type_args` maintain a parallel
+`deduced_value_args` list populated from `is_value` stored args, and consume
+from it when the outer loop processes a `TemplateParameterKind::NonType`
+parameter.
+
+## Static constexpr member initializer fails when accessing a member via TTP instantiation
+
+**Repro:**
+```cpp
+template <typename T>
+struct box { static constexpr int id = sizeof(T); };
+
+template <template <typename> class W>
+struct probe {
+    static constexpr int sz = W<int>::id;  // error: Failed to parse initializer expression
 };
 
-template <template <typename, int> class W>
-struct probe {};
+int main() { return probe<box>::sz - 4; }
 ```
-**Symptom:** Parsing fails with:
-`error: Expected 'typename' or 'class' in template template parameter form`
-at the non-type parameter position.
-**Impact:** This rejects standard C++20 template-template parameter forms that
-mix type and non-type parameters, which makes it harder to express or test
-real-world template APIs.
-**Standards note:** C++20 permits template-template parameter parameter-lists to
-contain non-type template parameters; restricting them to only `typename`/`class`
-is non-conforming.
+**Symptom:** Parsing fails with `error: Failed to parse initializer expression`
+when a `static constexpr` member initializer in a template struct directly
+instantiates a template-template parameter with explicit arguments and then
+accesses a member via `::`.
+**Impact:** Accessing static members (constants, type aliases) of an on-the-spot
+TTP instantiation (`W<int>::id`) in a `static constexpr` initializer is
+rejected.  Workaround: introduce an intermediate `using` alias
+(`using inner = W<int>;`) and reference that instead (`inner::id`), which
+parses and compiles correctly.
+**Root cause:** The parser's static-member initializer expression path does not
+recognise `W<Args>` as a valid primary expression when `W` is a template-template
+parameter, so it fails before it can resolve the `::` scope qualifier.
 
-## Parser rejects valid dependent `sizeof(type-id)` in nested requirements
+
 
 **Repro:**
 ```cpp
