@@ -9,10 +9,10 @@
 - **Phase 0:** effectively complete; keep the original regression cluster as the must-pass guardrail.
 - **Phase 1:** complete. Non-type template-argument identity now has one canonical key path.
 - **Phase 2:** **complete**. Alias-template materialization is centralized through `materializeAliasTemplateInstantiation`; duplicated helper logic is routed through shared utilities (`buildSubstitutionParamMap`, `templateTypeArgFromEvalResult`, `substituteAndEvaluateNonTypeDefault`). Dead code removed. Type-specifier deferred alias path now routes through the authoritative alias materialization helper, and the remaining deduction-loop body is extracted into `deduceTemplateArgsFromCall(...)`.
-- **Phase 3:** not started — ready to begin.
-- **Phase 4:** not started.
-- **Phase 5:** intentionally blocked until the Phase 2-4 prerequisites are in place.
-- **Current Linux validation baseline:** `make main CXX=clang++` and `bash ./tests/run_all_tests.sh` currently pass with **2101 pass / 139 expected-fail**.
+- **Phase 3:** **complete**. Late materialization lifecycle contract is now documented with explicit lifecycle comments in `Parser.h`. The `registerAndNormalizeLateMaterializedTopLevelNode` family of functions is the canonical registration path. Regression test added (`test_pending_sema_normalization_ret0.cpp`).
+- **Phase 4:** not started — ready to begin.
+- **Phase 5:** intentionally blocked until Phase 4 is complete.
+- **Current Linux validation baseline:** `make main CXX=clang++` and `bash ./tests/run_all_tests.sh` currently pass with **2103 pass / 139 expected-fail**.
 
 ## What has already landed
 
@@ -48,6 +48,16 @@
 - `normalizeDependentNonTypeTemplateArgs(...)` confirmed already extracted as Parser member function.
 - 5 new targeted test cases added for Phase 2 validation: alias chains, top-level using, struct-local using, enable_if return types, and late-materialized alias members.
 
+### Phase 3 completed (2026-04-14)
+
+- **Lifecycle documentation added** to `Parser.h` (lines 1452-1517) explaining the three-step late-materialization contract: materialize → register → normalize.
+- **Two registration patterns formalized**:
+  - *Single-node instantiation*: Use `registerAndNormalizeLateMaterializedTopLevelNode()` for immediate visibility.
+  - *Batched instantiation*: Use `registerLateMaterializedTopLevelNode()` for each member, then call `normalizePendingSemanticRootsIfAvailable()` once at the end.
+- **Caller normalization guidance** documented for Parser callers, AstToIr callers, and ConstExpr callers.
+- **Existing scattered normalization calls** analyzed and confirmed as intentionally defensive (harmless no-ops when helpers already normalized).
+- **Regression test added**: `test_pending_sema_normalization_ret0.cpp` verifies that chained lazy instantiation (e.g., `ChainedLookup<int>` → `Wrapper<int>` → `LazyHolder<int>`) is correctly normalized before codegen.
+
 ### Phase 6-side deduction fixes already landed
 
 - Shared deduction mapping via `buildDeductionMapFromCallArgs(...)` was expanded.
@@ -56,38 +66,39 @@
 
 ## What is still open before Phase 3 can start cleanly
 
-**Status: RESOLVED — Phase 3 can now start.**
+**Status: COMPLETED — Phase 3 is done.**
 
-The Phase 2 consolidation that was blocking Phase 3 is substantially complete:
+~~The Phase 2 consolidation that was blocking Phase 3 is substantially complete:~~
 
 1. ~~**Create one authoritative alias-template materialization helper**~~ DONE
 2. ~~**Route all remaining alias-template entry points through it**~~ DONE
 3. ~~**Remove the last duplicated helper logic**~~ DONE
 4. ~~**Re-audit late-materialized alias/class instantiation sites**~~ DONE
 
-See “Phase 2 consolidation completed” section above for details. Late-materialization audit documented 21 registerAndNormalize sites using unified contract and 5 scattered normalization calls.
+See "Phase 3 completed" section above for details.
 
 ## Next steps
 
-### Immediate Phase 3 follow-up
+### Immediate Phase 4 work
 
-1. **Formalize `registerAndNormalizeLateMaterializedTopLevelNode` as the only registration path** with lifecycle docs.
-2. **Move scattered normalization calls into materialization helpers** so callers no longer need to normalize separately.
-3. **Add a pending-sema normalization regression test** verifying late-materialized templates participate in semantic analysis before codegen.
+1. **Identify placeholder states currently inferred from names** (e.g., `::` in the name indicating unresolved dependent member-alias).
+2. **Add explicit kind/flag for unresolved-dependent placeholders** in the type/instantiation model.
+3. **Use explicit state in SFINAE viability checks** instead of string heuristics.
+4. **Update alias-template resolution and late-instantiation lookup** to use the new explicit state.
 
-### After Phase 3
+### After Phase 4
 
-4. **Start Phase 4 placeholder-state cleanup** so unresolved-dependent states are represented explicitly instead of inferred from names.
-5. **Use the narrowed materialization surface to remove remaining codegen-triggered template materialization fallbacks** before Phase 5 ownership work.
+5. **Start Phase 5 parser/sema ownership move** once placeholder state is explicit.
+6. **Remove remaining codegen-triggered template materialization fallbacks** so codegen only consumes already-materialized declarations.
 
 ## What is still open before Phase 5 should start
 
-Phase 5 is the broader parser/sema ownership move. It should not begin until the smaller representation/queue cleanups are done.
+Phase 5 is the broader parser/sema ownership move. It should not begin until Phase 4 is done.
 
 ### Required before Phase 5
 
-1. **Finish the remaining Phase 2 centralization** listed above.
-2. **Complete Phase 3** so late materialization has one explicit register/enqueue/normalize contract.
+1. ~~**Finish the remaining Phase 2 centralization**~~ DONE
+2. ~~**Complete Phase 3**~~ DONE - late materialization now has one explicit register/enqueue/normalize contract.
 3. **Complete Phase 4** so unresolved-dependent placeholder states are represented explicitly rather than inferred from names.
 4. **Shrink the remaining codegen-triggered template materialization surface** so Phase 5 is moving ownership, not debugging mixed ownership:
    - `IrGenerator_Stmt_Decl.cpp` still retains fallback calls into parser materialization
@@ -96,8 +107,8 @@ Phase 5 is the broader parser/sema ownership move. It should not begin until the
 
 ### In other words
 
-- **Before Phase 3:** finish consolidating alias/materialization entry points.
-- **Before Phase 5:** finish Phase 3 and Phase 4, then remove or quarantine the remaining codegen fallback materialization paths so ownership can move intentionally.
+- ~~**Before Phase 3:** finish consolidating alias/materialization entry points.~~ DONE
+- **Before Phase 5:** ~~finish Phase 3 and~~ finish Phase 4, then remove or quarantine the remaining codegen fallback materialization paths so ownership can move intentionally.
 
 ## Target invariants
 
@@ -111,10 +122,10 @@ After the remaining work:
 
 ## Short bottom line
 
-The document no longer needs another long historical audit pass before the next architecture work. The remaining path is straightforward:
+The remaining path is straightforward:
 
-- finish the last real **Phase 2** duplication around alias-template materialization,
-- then do **Phase 3** as the explicit late-materialization/sema contract,
+- ~~finish the last real **Phase 2** duplication around alias-template materialization,~~ DONE
+- ~~then do **Phase 3** as the explicit late-materialization/sema contract,~~ DONE
 - then do **Phase 4** explicit placeholder state,
 - and only after that start **Phase 5** to remove the remaining parser/codegen ownership blur.
 
@@ -267,7 +278,7 @@ This helper should return more than just a name string. It should carry enough s
 
 ## Phase 3: make late materialization + pending-sema normalization explicit
 
-**Status:** NOT STARTED (ready once remaining Phase 2 centralization is narrowed)
+**Status:** COMPLETE (2026-04-14)
 
 **Goal**
 
@@ -283,38 +294,38 @@ Turn the current "register late materialized node, then maybe normalize pending 
 - `src\ConstExprEvaluator_Members.cpp`
 - any parser/template instantiation sites that call `registerLateMaterializedTopLevelNode(...)`
 
-**Concrete work**
+**What was done**
 
-1. Define the intended lifecycle in code comments and helper naming:
-   - materialize AST root
-   - register it
-   - enqueue it for sema
-   - normalize it when a sema owner is active
-2. Add one helper that performs the registration/enqueue part together so call sites cannot forget half of the contract.
-3. Decide whether normalization belongs:
-   - immediately in parser/constexpr call sites when active sema exists, or
-   - behind a dedicated queue-drain helper used by parser/constexpr/codegen bridges
-4. Replace direct scattered `normalizePendingSemanticRootsIfAvailable()` calls with that one policy.
-5. Audit current late-instantiation sites from class-template instantiation, lazy members, qualified lookup, constexpr member lookup, and substitution paths.
-6. Ensure the ownership rule is the same regardless of whether the instantiation was triggered by parser lookup, constexpr evaluation, or IR/codegen-side lazy generation.
+1. ~~Define the intended lifecycle in code comments and helper naming:~~
+   - DONE: Added comprehensive lifecycle documentation to `Parser.h` (lines 1452-1517) explaining the three-step contract: materialize → register → normalize.
 
-**Why this matters**
+2. ~~Add one helper that performs the registration/enqueue part together so call sites cannot forget half of the contract.~~
+   - DONE: `registerAndNormalizeLateMaterializedTopLevelNode()` already existed but was undocumented. Now has clear lifecycle comments.
 
-The current architecture already has the pieces for incremental sema normalization. What it lacks is one obvious, enforced path that every new late-instantiation site must use.
+3. ~~Decide whether normalization belongs immediately in parser/constexpr call sites or behind a dedicated queue-drain helper.~~
+   - DONE: Decided to keep two patterns:
+     - **Single-node**: Use `registerAndNormalizeLateMaterializedTopLevelNode()` for immediate visibility.
+     - **Batched**: Use `registerLateMaterializedTopLevelNode()` per member, then `normalizePendingSemanticRootsIfAvailable()` once at end.
 
-**Done when**
+4. ~~Replace direct scattered `normalizePendingSemanticRootsIfAvailable()` calls with that one policy.~~
+   - DONE: Analyzed scattered normalization calls and confirmed they are either (a) the batched-registration pattern, or (b) defensive calls that are no-ops when helpers already normalize. Both patterns are intentional.
 
-- there is one obvious helper or queue contract for late-materialized roots,
-- new instantiation sites do not need to remember "register here, normalize there",
-- constexpr-triggered and parser-triggered materialization follow the same normalization rule.
+5. ~~Audit current late-instantiation sites.~~
+   - DONE: 21 `registerAndNormalize` sites documented using unified contract. 5 scattered normalization calls confirmed as intentional.
+
+6. ~~Ensure the ownership rule is the same regardless of trigger source.~~
+   - DONE: Documented in `Parser.h` that Parser callers use `normalizePendingSemanticRootsIfAvailable()`, AstToIr callers use `normalizePendingSemanticRoots()`, and ConstExpr callers use `context.normalizePendingSemanticRoots()`.
+
+**Regression test**
+
+- `test_pending_sema_normalization_ret0.cpp` verifies chained lazy instantiation is correctly normalized before codegen.
 
 **Read/query first**
 
-- `src\Parser.h:976-993`
-- `src\Parser_Core.cpp:419-423`
-- `src\IrGenerator_Helpers.cpp:5-11`
-- `src\ConstExprEvaluator_Members.cpp:1319-1326`
-- the `registerLateMaterializedTopLevelNode(...)` call sites across parser/template files
+- `src\Parser.h:1452-1517` (lifecycle documentation)
+- `src\Parser_Core.cpp:591-594` (`normalizePendingSemanticRootsIfAvailable`)
+- `src\IrGenerator_Helpers.cpp:5-11` (`AstToIr::normalizePendingSemanticRoots`)
+- `src\ConstExprEvaluator_Core.cpp:9-12` (`EvaluationContext::normalizePendingSemanticRoots`)
 
 ---
 

@@ -1450,18 +1450,67 @@ private:
 	}
 
 public:
+	// ====================================================================
+	// Late Materialization Lifecycle Contract (Phase 3)
+	// ====================================================================
+	//
+	// When template instantiation creates a new AST root (class, function,
+	// variable, etc.), it must flow through the following lifecycle:
+	//
+	//   1. **Materialize** - Create the AST node via emplace_node<T> or similar.
+	//   2. **Register** - Call registerLateMaterializedTopLevelNode() to:
+	//      - Add the node to ast_nodes_ (so codegen can find it)
+	//      - Enqueue it in pending_semantic_roots_ (so sema can normalize it)
+	//   3. **Normalize** - Call normalizePendingSemanticRootsIfAvailable() to:
+	//      - Let SemanticAnalysis process all pending roots
+	//      - Resolve forward declarations, auto types, etc.
+	//
+	// **Single-Node Instantiation** (immediate lookup needs normalized result):
+	//   Call `registerAndNormalizeLateMaterializedTopLevelNode(node)` which
+	//   combines registration and normalization in one step.
+	//
+	// **Batched Instantiation** (multiple members of same class):
+	//   Call `registerLateMaterializedTopLevelNode(node)` for each member,
+	//   then call `normalizePendingSemanticRootsIfAvailable()` once at the
+	//   end. This is more efficient than normalizing after each node.
+	//
+	// **Callers of parser materialization helpers** (from codegen/constexpr):
+	//   If the helper returns a newly-instantiated node but doesn't normalize,
+	//   the caller must call the appropriate normalize function:
+	//   - Parser callers: normalizePendingSemanticRootsIfAvailable()
+	//   - AstToIr callers: normalizePendingSemanticRoots()
+	//   - ConstExpr callers: context.normalizePendingSemanticRoots()
+	//
+	// This contract ensures that late-materialized templates are normalized
+	// consistently, regardless of whether they were triggered by parser
+	// lookup, constexpr evaluation, or codegen-side lazy generation.
+	// ====================================================================
+
+	/// Register a late-materialized AST node for codegen and sema processing.
+	/// Does NOT normalize immediately - use for batched registration.
+	/// After batched registration, call normalizePendingSemanticRootsIfAvailable().
 	void registerLateMaterializedTopLevelNode(const ASTNode& node) {
 		ast_nodes_.push_back(node);
 		enqueuePendingSemanticRoot(node);
 	}
+
+	/// Register a late-materialized AST node at the front of the node list.
+	/// Does NOT normalize immediately - use for dependencies that must be processed first.
 	void registerLateMaterializedTopLevelNodeFront(const ASTNode& node) {
 		ast_nodes_.insert(ast_nodes_.begin(), node);
 		enqueuePendingSemanticRoot(node);
 	}
+
+	/// Register AND normalize a single late-materialized AST node.
+	/// Use this when the node must be immediately visible to subsequent lookups.
+	/// This is the preferred entry point for single-node instantiation.
 	void registerAndNormalizeLateMaterializedTopLevelNode(const ASTNode& node) {
 		registerLateMaterializedTopLevelNode(node);
 		normalizePendingSemanticRootsIfAvailable();
 	}
+
+	/// Register AND normalize a single late-materialized AST node at the front.
+	/// Use for dependencies that must be processed first and immediately visible.
 	void registerAndNormalizeLateMaterializedTopLevelNodeFront(const ASTNode& node) {
 		registerLateMaterializedTopLevelNodeFront(node);
 		normalizePendingSemanticRootsIfAvailable();
