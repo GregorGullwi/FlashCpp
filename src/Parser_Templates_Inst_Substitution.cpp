@@ -63,12 +63,12 @@ std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefaultImpl(
 	eval_ctx.sema = parser.getActiveSemanticAnalysis();
 	eval_ctx.template_args = template_args;
 	eval_ctx.template_param_names.reserve(template_params.size());
-	for (const auto& template_param_node : template_params) {
-		if (!template_param_node.template is<TemplateParameterNode>()) {
+	for (const ASTNode& template_param_node : template_params) {
+		if (!template_param_node.is<TemplateParameterNode>()) {
 			continue;
 		}
 		eval_ctx.template_param_names.push_back(
-			template_param_node.template as<TemplateParameterNode>().name());
+			template_param_node.as<TemplateParameterNode>().name());
 	}
 
 	auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
