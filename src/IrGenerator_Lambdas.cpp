@@ -291,9 +291,6 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 							// Init-capture: evaluate the initializer expression and store it
 						const ASTNode& init_node = *capture.initializer();
 						const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
-						ExprResult init_result = visitExpressionNode(init_expr);
-
-						IrOperand init_value = init_result.value;
 
 							// For init-capture by reference [&y = x], we need to store the address of x
 						if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
@@ -301,10 +298,14 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 								init_expr,
 								visitExpressionNode(init_expr, ExpressionContext::LValueAddress),
 								lambda.lambda_token());
+							if (!std::holds_alternative<TempVar>(address_result.value) &&
+								!std::holds_alternative<StringHandle>(address_result.value)) {
+								continue;
+							}
 
 								// Store the address in the closure member
 							MemberStoreOp member_store;
-							member_store.value.setType(init_result.typeEnum());
+							member_store.value.setType(member->memberType());
 							member_store.value.size_in_bits = SizeInBits{64}; // pointer size
 							member_store.value.value = toIrValue(address_result.value);
 							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
@@ -314,6 +315,8 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 							member_store.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 						} else {
+							ExprResult init_result = visitExpressionNode(init_expr);
+							IrOperand init_value = init_result.value;
 								// Init-capture by value [x = expr] - store the value directly
 							MemberStoreOp member_store;
 							member_store.value.setType(member->type_index.category());
