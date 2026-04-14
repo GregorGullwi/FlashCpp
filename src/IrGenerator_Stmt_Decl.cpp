@@ -713,6 +713,45 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				}
 			}
 		};
+		auto packNativeArrayEvalResultIntoInitData =
+			[&](std::vector<char>& init_data, const ConstExpr::EvalResult& array_result, TypeCategory element_type, size_t total_elements, size_t element_size) {
+				size_t element_index = 0;
+				auto pack_level = [&](const auto& self, const ConstExpr::EvalResult& current) -> void {
+					if (current.is_array) {
+						if (!current.array_elements.empty()) {
+							for (const auto& child : current.array_elements) {
+								self(self, child);
+							}
+						} else {
+							for (int64_t child_value : current.array_values) {
+								if (element_size == 0 || element_index >= total_elements) {
+									return;
+								}
+								writeRawValueAtOffset(
+									init_data,
+									element_index * element_size,
+									element_size,
+									evalResultMemberToRaw(ConstExpr::EvalResult::from_int(child_value), element_type));
+								element_index++;
+							}
+						}
+						return;
+					}
+
+					if (element_size == 0 || element_index >= total_elements) {
+						return;
+					}
+
+					writeRawValueAtOffset(
+						init_data,
+						element_index * element_size,
+						element_size,
+						evalResultMemberToRaw(current, element_type));
+					element_index++;
+				};
+
+				pack_level(pack_level, array_result);
+			};
 		auto resolveGlobalRelocTarget = [&](std::string_view name) -> StringHandle {
 			StringHandle simple_name_handle = StringTable::getOrInternStringHandle(name);
 			auto it = global_variable_names_.find(simple_name_handle);
@@ -871,9 +910,28 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 					}
 					if (!handled_as_struct_array) {
-						for (const auto& elem_init : initializers) {
-							unsigned long long value = evalToValue(elem_init, type_node.type());
-							appendValueAsBytes(op.init_data, value, element_size);
+						bool packed_as_constexpr_array = false;
+						if (type_node.is_array() && !type_node.array_dimensions().empty()) {
+							auto constexpr_ctx = makeStaticStorageEvalContext();
+							auto array_result = ConstExpr::Evaluator::materialize_array_value_with_spec(
+								type_node,
+								init_list,
+								constexpr_ctx,
+								nullptr);
+							if (array_result.success()) {
+								op.init_data.assign(op.element_count * element_size, 0);
+								packNativeArrayEvalResultIntoInitData(op.init_data, array_result, type_node.type(), op.element_count, element_size);
+								packed_as_constexpr_array = true;
+							} else if (shouldRejectStaticStorageEvalFailure(array_result.error_type)) {
+								throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
+												   "' initializer is not a constant expression: " + array_result.error_message);
+							}
+						}
+						if (!packed_as_constexpr_array) {
+							for (const auto& elem_init : initializers) {
+								unsigned long long value = evalToValue(elem_init, type_node.type());
+								appendValueAsBytes(op.init_data, value, element_size);
+							}
 						}
 					}
 				}

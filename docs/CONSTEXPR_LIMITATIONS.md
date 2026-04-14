@@ -514,13 +514,17 @@ struct Container {
 
 ### ✅ Multi-Dimensional Arrays in Constexpr (NEW)
 
-Multi-dimensional array initialization and element access are now supported in constexpr:
+Multi-dimensional array initialization, element access, and global runtime materialization are now supported in constexpr:
 
 ```cpp
 // Global constexpr 2D array with nested-brace init
 constexpr int grid[2][3] = {{1,2,3},{4,5,6}};
 static_assert(grid[0][0] == 1);  // ✅ Works
 static_assert(grid[1][2] == 6);  // ✅ Works
+
+int main() {
+    return grid[0][0] == 1 && grid[1][2] == 6 ? 0 : 1;  // ✅ Runtime values also match
+}
 
 // In constexpr functions: init, loop reads, and element assignment
 constexpr int mat_sum() {
@@ -641,7 +645,7 @@ Array support is still incomplete in more complex cases.
 
 **Known remaining limitations include:**
 
-1. **Inferred array size in richer contexts**: straightforward local inferred-size arrays now work, simple global `sizeof(arr)` and `sizeof(arr) / sizeof(arr[0])` over inferred-size constexpr arrays now work too, direct-list forms such as `int arr[]{1,2,3}` / `constexpr int arr[]{1,2,3}` now work in straightforward local and global constexpr contexts, nested-brace unsized-first multidimensional forms such as `constexpr int grid[][3] = {{1,2,3},{4,5,6}};` now parse and evaluate in constexpr (including 3D forms like `int cube[][2][3]` and partial inner init like `int sparse[][3] = {{1},{2}}`), and flat brace-elision for unsized-first multidimensional arrays (e.g., `int arr[][3] = {1,2,3,4,5,6}`) now works end-to-end in constexpr plus runtime codegen. Mixed brace/scalar init (e.g., `int arr[][3] = {1,2,3,{4,5,6}}`) is parsed and the outer dimension is inferred correctly, but richer parser/evaluator contexts can still fail.
+1. **Inferred array size in richer contexts**: straightforward local inferred-size arrays now work, simple global `sizeof(arr)` and `sizeof(arr) / sizeof(arr[0])` over inferred-size constexpr arrays now work too, direct-list forms such as `int arr[]{1,2,3}` / `constexpr int arr[]{1,2,3}` now work in straightforward local and global constexpr contexts, nested-brace unsized-first multidimensional forms such as `constexpr int grid[][3] = {{1,2,3},{4,5,6}};` now work end-to-end in constexpr plus runtime codegen (including 3D forms like `int cube[][2][3]` and partial inner init like `int sparse[][3] = {{1},{2}}`), and flat brace-elision for unsized-first multidimensional arrays (e.g., `int arr[][3] = {1,2,3,4,5,6}`) also works end-to-end in constexpr plus runtime codegen. Mixed brace/scalar init (e.g., `int arr[][3] = {1,2,3,{4,5,6}}`) is parsed and the outer dimension is inferred correctly, but richer parser/evaluator contexts can still fail.
 2. **Range-based for over arrays**: range-based for loops over local arrays now work in constexpr, and over objects with `constexpr begin()`/`end()` methods returning a member array or pointer are now also supported (see dedicated section)
 
 **Guidance for array access:** Prefer explicit array sizes when practical, but straightforward inferred-size local array patterns are now supported too.
@@ -1107,7 +1111,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ **`*this` dereference in constexpr member function bodies** *(Implemented)* — `*this` can now be evaluated as an expression inside a constexpr member function, producing an object `EvalResult` with the current member state. Enables passing the current object to another member function (e.g., `dot(*this)`), or using it as an argument in nested calls.
 - ✅ **Default constructor invocation for uninitialized local struct variables in constexpr functions** *(Implemented)* — Declaring a local struct variable without an explicit initializer (e.g., `Counter c;`) now invokes the default constructor, including constructors with a body. Both member-initializer-list and constructor-body styles work. Aggregate / implicit-default-constructor cases now preserve default-initialization semantics instead of silently zero-filling: members without default member initializers remain indeterminate, while default member initializers are still applied. Non-aggregate types with user-declared constructors still correctly require a matching default constructor.
 - ✅ **Void mutating member function calls on local constexpr structs** *(Implemented)* — Calling a `void`-returning non-const member function on a local struct variable (e.g., `c.increment()`) now correctly mutates the local object and writes the updated member values back. Repeated calls accumulate correctly, and parameterized void methods (e.g., `c.add(5)`) also work.
-- ✅ **Multi-dimensional array initialization and element access** *(Implemented)* — `int arr[M][N] = {{…},{…}}` nested-brace init, `arr[i][j]` reads in loops, `arr[i][j] = v` subscript assignment, scalar brace-elision (`{v}` seeds `[0][0]`, zero-fills the rest per C++20), `{0}` zero-init, and fully-flattened brace-elision (`{1,2,3,4,5,6}` for `int[2][3]`) are all supported at global constexpr scope and inside constexpr function bodies. User-defined constructors are now correctly preferred over aggregate initialization when both are available.
+- ✅ **Multi-dimensional array initialization and element access** *(Implemented)* — `int arr[M][N] = {{…},{…}}` nested-brace init now works end-to-end for both constexpr evaluation and emitted global runtime data, `arr[i][j]` reads in loops, `arr[i][j] = v` subscript assignment, scalar brace-elision (`{v}` seeds `[0][0]`, zero-fills the rest per C++20), `{0}` zero-init, and fully-flattened brace-elision (`{1,2,3,4,5,6}` for `int[2][3]`) are all supported at global constexpr scope and inside constexpr function bodies. User-defined constructors are now correctly preferred over aggregate initialization when both are available.
 - ✅ **Aggregate initialization inside constexpr functions uses local bindings** *(Implemented)* — Aggregate structs (no user-defined constructor) can now be initialized with brace-init inside constexpr function bodies using local variables or function parameters as arguments (e.g., `Pt p{a, b}` where `a` and `b` are in scope).
 - ✅ **Ternary operator returning struct types** *(Implemented)* — `constexpr Pt p = (cond ? Pt{3,7} : Pt{1,2})` now works at global scope and inside constexpr functions. Struct-typed `ConstructorCallNode` expressions are routed through `materialize_constructor_object_value` (with aggregate-init fallback), and the member resolution path gained a generic expression fallback for initializers that aren't constructor calls or initializer lists. See "Ternary Struct Initializer Error Propagation" in the limitations section for the remaining edge case.
 - ✅ **Nested member access on local constructor-initialized objects** *(Implemented)* — `o.inner.x` now works inside constexpr function bodies when `o` is a local variable constructed via a user-defined constructor (e.g., `Outer o(3, 7)` where `Outer::inner` is of a struct type). Root cause: `parse_direct_initialization` stores block-scope `Type o(a, b)` as `InitializerListNode{a, b}`, which previously triggered the aggregate-init path. The fix adds a constructor-detection step in `evaluate_statement_with_bindings`: if a matching user-defined constructor exists for the struct type, the constructor evaluation path (`bind_evaluated_arguments` + `materialize_members_from_constructor`) is used, producing correctly-typed member EvalResults that the bindings-aware nested-member-access path can traverse.
@@ -1423,8 +1427,8 @@ struct CaptureExample {
 - `tests/test_constexpr_struct_ctor_in_body_ret0.cpp` - Struct constructor calls inside constexpr function bodies (return struct, local struct usage)
 - `tests/test_constexpr_local_member_assign_ret0.cpp` - Local struct member dot-assignment (`p.a = value`) in constexpr functions
 - `tests/test_constexpr_this_deref_ret0.cpp` - `*this` dereference in constexpr member function bodies (`dot(*this)`, `scale` chaining)
-- `tests/test_constexpr_multidim_array_ret0.cpp` - Multi-dimensional array init, reads, subscript assignment, and brace-elision in constexpr
-- `tests/test_constexpr_inferred_multidim_array_ret0.cpp` - Unsized-first multidimensional array inference with nested-brace init in global/local constexpr contexts
+- `tests/test_constexpr_multidim_array_ret0.cpp` - Multi-dimensional array init, reads, subscript assignment, brace-elision, and global nested-brace runtime materialization in constexpr
+- `tests/test_constexpr_inferred_multidim_array_ret0.cpp` - Unsized-first multidimensional array inference with nested-brace init in global/local constexpr contexts, including runtime materialization
 - `tests/test_constexpr_ternary_struct_ret0.cpp` - Ternary operator returning struct types in constexpr (global and function-returned)
 - `tests/test_constexpr_nested_member_ctor_local_ret0.cpp` - Nested member access on local constructor-initialized objects in constexpr functions
 - `tests/test_constexpr_empty_brace_nodefault_ctor_fail.cpp` - Empty-brace init rejected for non-aggregate types without default constructor (expected failure)
