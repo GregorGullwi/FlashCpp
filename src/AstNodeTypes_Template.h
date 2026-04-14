@@ -832,7 +832,7 @@ public:
 
 	void add_deferred_template_base_class(StringHandle base_template_name,
 										  std::vector<TemplateArgumentNodeInfo> args,
-										  std::vector<StringHandle> member_type_chain,
+										  std::vector<QualifiedTypeMemberAccess> member_type_chain,
 										  AccessSpecifier access,
 										  bool is_virtual = false,
 										  bool is_pack_expansion = false) {

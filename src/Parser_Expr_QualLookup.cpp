@@ -599,14 +599,32 @@ std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_a
 	// the new current_token_ for the member name.
 	while (peek() == "::"_tok) {
 		advance(); // consume ::, now current_token_ is the token after ::
-		if (current_token_.kind().is_identifier()) {
-			info.member_type_chain.push_back(current_token_.handle());
-			info.member_name_token = current_token_;
-			advance(); // consume member name
-		} else {
+		if (current_token_.value() == "template") {
+			advance(); // consume optional template disambiguator
+		}
+		if (!current_token_.kind().is_identifier()) {
 			// '::' not followed by identifier is a parse error
 			return std::nullopt;
 		}
+
+		QualifiedTypeMemberAccess member_access;
+		member_access.member_name = current_token_.handle();
+		info.member_name_token = current_token_;
+		advance(); // consume member name
+
+		if (peek() == "<"_tok) {
+			std::vector<ASTNode> member_template_arg_nodes;
+			auto member_template_args = parse_explicit_template_arguments(&member_template_arg_nodes);
+			if (!member_template_args.has_value()) {
+				return std::nullopt;
+			}
+			member_access.has_template_arguments = true;
+			member_access.template_arguments = *member_template_args;
+			member_access.template_argument_infos =
+				build_template_arg_infos(member_access.template_arguments, member_template_arg_nodes);
+		}
+
+		info.member_type_chain.push_back(std::move(member_access));
 	}
 
 	// Pack expansion '...' must be consumed AFTER ::member (handles both
@@ -621,25 +639,92 @@ std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_a
 
 const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 	std::string_view base_class_name,
-	const std::vector<StringHandle>& member_type_chain) {
+	const std::vector<QualifiedTypeMemberAccess>& member_type_chain) {
 	if (member_type_chain.empty()) {
 		return findTypeByName(StringTable::getOrInternStringHandle(base_class_name));
 	}
 
+	auto hasRegisteredMemberTemplate = [](std::string_view qualified_name) {
+		return gTemplateRegistry.lookup_alias_template(qualified_name).has_value() ||
+			   gTemplateRegistry.lookupTemplate(qualified_name).has_value();
+	};
+	auto buildQualifiedMemberName = [](std::string_view owner_name, StringHandle member_name_handle) {
+		return StringBuilder()
+			.append(owner_name)
+			.append("::")
+			.append(StringTable::getStringView(member_name_handle))
+			.commit();
+	};
+
 	const TypeInfo* resolved_type = nullptr;
 	std::string_view current_base_name = base_class_name;
-	for (StringHandle member_name_handle : member_type_chain) {
-		std::string_view member_name = StringTable::getStringView(member_name_handle);
+	for (const QualifiedTypeMemberAccess& member_access : member_type_chain) {
+		std::string_view member_name = StringTable::getStringView(member_access.member_name);
+		if (member_access.has_template_arguments) {
+			std::string_view qualified_member_template_name =
+				buildQualifiedMemberName(current_base_name, member_access.member_name);
+			if (!hasRegisteredMemberTemplate(qualified_member_template_name)) {
+				StringHandle current_base_handle =
+					StringTable::getOrInternStringHandle(current_base_name);
+				auto current_base_it = getTypesByNameMap().find(current_base_handle);
+				if (current_base_it != getTypesByNameMap().end() && current_base_it->second != nullptr) {
+					if (auto pattern_name_opt = gTemplateRegistry.get_instantiation_pattern(current_base_handle);
+						pattern_name_opt.has_value()) {
+						std::string_view pattern_member_name =
+							StringBuilder()
+								.append(*pattern_name_opt)
+								.append("::")
+								.append(member_name)
+								.commit();
+						if (hasRegisteredMemberTemplate(pattern_member_name)) {
+							qualified_member_template_name = pattern_member_name;
+						}
+					}
+
+					if (!hasRegisteredMemberTemplate(qualified_member_template_name) &&
+						current_base_it->second->isTemplateInstantiation()) {
+						std::string_view primary_member_name =
+							StringBuilder()
+								.append(StringTable::getStringView(current_base_it->second->baseTemplateName()))
+								.append("::")
+								.append(member_name)
+								.commit();
+						if (hasRegisteredMemberTemplate(primary_member_name)) {
+							qualified_member_template_name = primary_member_name;
+						}
+					}
+				}
+			}
+
+			if (!hasRegisteredMemberTemplate(qualified_member_template_name)) {
+				return nullptr;
+			}
+
+			AliasTemplateMaterializationResult materialized_member =
+				materializeTemplateInstantiationForLookup(
+					qualified_member_template_name,
+					member_access.template_arguments);
+			if (materialized_member.instantiated_name.empty()) {
+				return nullptr;
+			}
+
+			resolved_type = materialized_member.resolved_type_info;
+			if (resolved_type == nullptr) {
+				resolved_type = findTypeByName(
+					StringTable::getOrInternStringHandle(materialized_member.instantiated_name));
+			}
+			if (resolved_type == nullptr) {
+				return nullptr;
+			}
+			current_base_name = StringTable::getStringView(resolved_type->name());
+			continue;
+		}
+
 		StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
-			StringBuilder()
-				.append(current_base_name)
-				.append("::")
-				.append(member_name)
-				.commit());
+			buildQualifiedMemberName(current_base_name, member_access.member_name));
 
 		auto alias_it = getTypesByNameMap().find(qualified_member_handle);
-		resolved_type =
-			alias_it != getTypesByNameMap().end() ? alias_it->second : nullptr;
+		resolved_type = alias_it != getTypesByNameMap().end() ? alias_it->second : nullptr;
 		if (resolved_type == nullptr) {
 			resolved_type = lookup_inherited_type_alias(current_base_name, member_name);
 		}
@@ -983,14 +1068,16 @@ TypeIndex Parser::substitute_template_parameter(
 			return qualified_member_type;
 		}
 
-		std::vector<StringHandle> member_type_chain;
+		std::vector<QualifiedTypeMemberAccess> member_type_chain;
 		while (!member_chain.empty()) {
 			size_t next_separator = member_chain.find("::");
 			std::string_view member_name = member_chain.substr(0, next_separator);
 			if (size_t template_pos = member_name.find('<'); template_pos != std::string_view::npos) {
 				member_name = member_name.substr(0, template_pos);
 			}
-			member_type_chain.push_back(StringTable::getOrInternStringHandle(member_name));
+			QualifiedTypeMemberAccess member_access;
+			member_access.member_name = StringTable::getOrInternStringHandle(member_name);
+			member_type_chain.push_back(std::move(member_access));
 			if (next_separator == std::string_view::npos) {
 				break;
 			}

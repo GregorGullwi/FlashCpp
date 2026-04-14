@@ -1273,6 +1273,18 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			}
 		}
 
+		CallingConvention direct_function_calling_convention = CallingConvention::Default;
+		if (peek().is_identifier()) {
+			SaveHandle calling_convention_pos = save_token_position();
+			direct_function_calling_convention = parse_calling_convention();
+			if (direct_function_calling_convention == CallingConvention::Default || peek() != "("_tok) {
+				restore_token_position(calling_convention_pos);
+				direct_function_calling_convention = CallingConvention::Default;
+			} else {
+				discard_saved_token(calling_convention_pos);
+			}
+		}
+
 		// Check for pointer-to-array syntax: T(*)[] or T(*)[N]
 		// AND function pointer/reference syntax: T(&)() or T(*)() or T(&&)()
 		// This is the syntax used for pointer-to-array types and function types in template arguments
@@ -1285,7 +1297,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// Skip optional calling convention before ptr-operator, consistent with
 			// parse_declarator() and parse_type_and_name() which call parse_calling_convention()
 			// at the same position. Handles patterns like: _Ret (__cdecl _Arg0::*)(_Types...)
-			parse_calling_convention();
+			CallingConvention paren_calling_convention = parse_calling_convention();
 
 			// Detect what's inside: *, &, &&, or _Class::* (member pointer)
 			bool is_ptr = false;
@@ -1382,6 +1394,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// For function references: _Res(&)(_ArgTypes...) noexcept
 						bool sig_is_const = false;
 						bool sig_is_volatile = false;
+						ReferenceQualifier sig_function_ref_qualifier = ReferenceQualifier::None;
+						bool sig_is_noexcept = false;
 						while (!peek().is_eof()) {
 							if ((is_member_ptr) && peek() == "const"_tok) {
 								sig_is_const = true;
@@ -1389,9 +1403,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							} else if ((is_member_ptr) && peek() == "volatile"_tok) {
 								sig_is_volatile = true;
 								advance();
-							} else if (is_member_ptr && (peek() == "&"_tok || peek() == "&&"_tok)) {
+							} else if (is_member_ptr && peek() == "&"_tok) {
+								sig_function_ref_qualifier = ReferenceQualifier::LValueReference;
+								advance();
+							} else if (is_member_ptr && peek() == "&&"_tok) {
+								sig_function_ref_qualifier = ReferenceQualifier::RValueReference;
 								advance();
 							} else if (peek() == "noexcept"_tok) {
+								sig_is_noexcept = true;
 								advance(); // consume 'noexcept'
 								if (peek() == "("_tok) {
 									skip_balanced_parens();
@@ -1409,8 +1428,11 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						func_sig.return_pointer_depth = static_cast<int>(type_node.pointer_depth());
 						func_sig.return_reference_qualifier = type_node.reference_qualifier();
 						func_sig.parameter_type_indices = std::move(param_types);
+						func_sig.calling_convention = paren_calling_convention;
 						func_sig.is_const = sig_is_const;
 						func_sig.is_volatile = sig_is_volatile;
+						func_sig.function_reference_qualifier = sig_function_ref_qualifier;
+						func_sig.is_noexcept = sig_is_noexcept;
 
 						if (is_member_ptr) {
 							type_node.set_type_index(nativeTypeIndex(TypeCategory::MemberFunctionPointer));
@@ -1471,10 +1493,32 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					func_sig.return_pointer_depth = static_cast<int>(type_node.pointer_depth());
 					func_sig.return_reference_qualifier = type_node.reference_qualifier();
 					func_sig.parameter_type_indices = std::move(func_param_types);
+					func_sig.calling_convention = direct_function_calling_convention;
+					while (!peek().is_eof()) {
+						if (peek() == "const"_tok) {
+							func_sig.is_const = true;
+							advance();
+						} else if (peek() == "volatile"_tok) {
+							func_sig.is_volatile = true;
+							advance();
+						} else if (peek() == "&"_tok) {
+							func_sig.function_reference_qualifier = ReferenceQualifier::LValueReference;
+							advance();
+						} else if (peek() == "&&"_tok) {
+							func_sig.function_reference_qualifier = ReferenceQualifier::RValueReference;
+							advance();
+						} else {
+							break;
+						}
+					}
+					if (peek() == "noexcept"_tok) {
+						func_sig.is_noexcept = true;
+						advance();
+						if (peek() == "("_tok) {
+							skip_balanced_parens();
+						}
+					}
 					type_node.set_function_signature(func_sig);
-
-					// Consume trailing noexcept or noexcept(expr) if present
-					skip_noexcept_specifier();
 
 					discard_saved_token(func_type_saved_pos);
 					discard_saved_token(paren_saved_pos);

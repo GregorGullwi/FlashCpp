@@ -441,7 +441,12 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						}
 
 						advance(); // consume '(' or '{'
-						TokenKind close_kind = is_paren ? ")"_tok : "}"_tok;
+						TokenKind close_kind{};
+						if (is_paren) {
+							close_kind = ")"_tok;
+						} else {
+							close_kind = "}"_tok;
+						}
 
 						// Parse arguments so they can be substituted at instantiation time
 						std::vector<ASTNode> init_args;
