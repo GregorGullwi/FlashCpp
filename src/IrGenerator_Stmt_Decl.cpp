@@ -713,10 +713,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				}
 			}
 		};
-		auto packNativeArrayEvalResultIntoInitData =
+		auto packArrayResultIntoInitData =
 			[&](std::vector<char>& init_data, const ConstExpr::EvalResult& array_result, TypeCategory element_type, size_t total_elements, size_t element_size) {
 				size_t element_index = 0;
-				auto pack_level = [&](const auto& self, const ConstExpr::EvalResult& current) -> void {
+				auto packLevel = [&](const auto& self, const ConstExpr::EvalResult& current) -> void {
+					if (element_size == 0 || element_index >= total_elements) {
+						return;
+					}
 					if (current.is_array) {
 						if (!current.array_elements.empty()) {
 							for (const auto& child : current.array_elements) {
@@ -724,7 +727,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 						} else {
 							for (int64_t child_value : current.array_values) {
-								if (element_size == 0 || element_index >= total_elements) {
+								if (element_index >= total_elements) {
 									return;
 								}
 								writeRawValueAtOffset(
@@ -738,10 +741,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						return;
 					}
 
-					if (element_size == 0 || element_index >= total_elements) {
-						return;
-					}
-
 					writeRawValueAtOffset(
 						init_data,
 						element_index * element_size,
@@ -750,7 +749,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					element_index++;
 				};
 
-				pack_level(pack_level, array_result);
+				packLevel(packLevel, array_result);
 			};
 		auto resolveGlobalRelocTarget = [&](std::string_view name) -> StringHandle {
 			StringHandle simple_name_handle = StringTable::getOrInternStringHandle(name);
@@ -926,7 +925,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								nullptr);
 							if (array_result.success()) {
 								op.init_data.assign(op.element_count * element_size, 0);
-								packNativeArrayEvalResultIntoInitData(op.init_data, array_result, type_node.type(), op.element_count, element_size);
+								packArrayResultIntoInitData(op.init_data, array_result, type_node.type(), op.element_count, element_size);
 								packed_as_constexpr_array = true;
 							} else if (shouldRejectStaticStorageEvalFailure(array_result.error_type)) {
 								throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
