@@ -322,10 +322,10 @@ Turn the current "register late materialized node, then maybe normalize pending 
 
 **Read/query first**
 
-- `src\Parser.h:1452-1517` (lifecycle documentation)
-- `src\Parser_Core.cpp:591-594` (`normalizePendingSemanticRootsIfAvailable`)
-- `src\IrGenerator_Helpers.cpp:5-11` (`AstToIr::normalizePendingSemanticRoots`)
-- `src\ConstExprEvaluator_Core.cpp:9-12` (`EvaluationContext::normalizePendingSemanticRoots`)
+- `src/Parser.h:1452-1517` (lifecycle documentation)
+- `src/Parser_Core.cpp:591-594` (`normalizePendingSemanticRootsIfAvailable`)
+- `src/IrGenerator_Helpers.cpp:5-11` (`AstToIr::normalizePendingSemanticRoots`)
+- `src/ConstExprEvaluator_Core.cpp:9-12` (`EvaluationContext::normalizePendingSemanticRoots`)
 
 ---
 
