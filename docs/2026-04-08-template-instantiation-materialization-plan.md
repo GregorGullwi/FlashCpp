@@ -6,35 +6,44 @@
 
 ## Quick start for next agent
 
-### Latest completed slice (2026-04-14, noop-ctor audit update)
+### Latest completed slice (2026-04-14, proper sema fix: lazy ctor body scope)
 
-**Post-PR #1255 follow-up audit re-run against `HEAD`; noop-ctor destructor UB fixed.**
+**Root-cause fix: lazy template constructor body re-parse now uses struct member scope.**
 
-- Re-validated the PR #1255 follow-up list against the current branch:
-  - already fixed: alias-resolution duplication, dead `ExpressionSubstitutor.cpp`
-    branches, placeholder-arg extraction, dependent non-type normalization
-    extraction, constructor-template dummy AST churn, brace-init sema/codegen
-    materialization gaps, `materializeMatchingConstructorTemplate(nullptr)`
-    failure handling, constructor pack expansion, `appendFunctionCallArgType`
-    compound-expression typing, and the
-    `try_instantiate_member_function_template` fallback bug
-  - still open after this slice: Phase 4 still uses an unresolved-dependent-member
-    string heuristic in `Parser_Templates_Inst_Deduction.cpp`
-- **Fix** (`src/IrGenerator_Stmt_Decl.cpp`):
-  - `is_unresolved_noop_ctor` still triggered when lazy template-constructor
-    materialization failed to re-parse member access in the deferred body, and
-    the fallback registered destructors for stack objects whose members were
-    never initialized
-  - added `zero_initialize_noop_ctor_object(...)` so both direct-init and
-    brace-init noop paths zero-fill the allocated object (including base
-    subobjects) before destructor registration
+- **Root cause** (`src/Parser_Templates_Lazy.cpp:204-237`):
+  The deferred-body re-parse path for **template constructors** used a bare
+  `gSymbolTable.enter_scope(ScopeType::Function)` without setting up the struct
+  member context. This meant struct members (e.g. `data` in `data = (int)v;`)
+  were invisible during body parsing, causing "Missing identifier" errors and
+  `parse_function_body` failures. The regular lazy member-function path (line ~595)
+  already used `FunctionParsingScopeGuard` with full struct context — constructors
+  simply weren't getting the same treatment.
+- **Fix**: replaced the bare scope with `FunctionParsingScopeGuard` that calls
+  `setup_member_function_context()` (injects `this`, registers member functions and
+  data members in scope). Falls back to bare scope only when the struct type isn't
+  found in `gTypesByNameMap`.
+- **Effect on codegen**:
+  - `is_unresolved_noop_ctor` and `zero_initialize_noop_ctor_object` in
+    `IrGenerator_Stmt_Decl.cpp` are no longer triggered for the common template-ctor
+    case — the constructor is properly materialized with a parsed body, so codegen
+    receives a fully-resolved `ConstructorCallOp` from sema.
+  - These codegen safety nets remain as fallbacks for edge cases (e.g., constructor
+    templates where the struct type is somehow not registered, or when sema can't
+    infer argument types). Phase 5 aims to remove them entirely.
 - **Tests**:
-  - `tests/test_template_ctor_noop_zero_init_direct_ret20.cpp`
-  - `tests/test_template_ctor_noop_zero_init_list_ret30.cpp`
+  - `tests/test_template_ctor_body_member_access_direct_ret27.cpp` — direct-init, body writes member
+  - `tests/test_template_ctor_body_member_access_list_ret41.cpp` — list-init, body writes member
+  - `tests/test_template_ctor_body_this_access_ret42.cpp` — multi-member access in body
 - **Validation**:
   - `make main CXX=clang++`
-  - `bash ./tests/run_all_tests.sh test_template_ctor_noop_zero_init_direct_ret20.cpp test_template_ctor_noop_zero_init_list_ret30.cpp test_template_ctor_noop_dtor_direct_init_ret42.cpp test_template_ctor_noop_dtor_list_init_ret42.cpp`
-  - `bash ./tests/run_all_tests.sh` → **2089 pass, 139 expected-fail**
+  - `bash ./tests/run_all_tests.sh` → **2091 pass, 139 expected-fail** (0 regressions)
+
+### Previous slice (2026-04-14, noop-ctor audit update)
+
+**Post-PR #1255 follow-up audit re-run against `HEAD`; noop-ctor destructor UB fixed (bandaid).**
+
+- Zero-initialized the noop-ctor stack object before destructor registration as a
+  safety net. This was superseded by the proper scope fix above.
 
 ### Latest completed slice (2026-04-13, audit update)
 
@@ -1283,6 +1292,8 @@ This mirrors the existing `prepare_nested_template_ctor` lambda at `src/IrGenera
 - The `is_unresolved_noop_ctor` lambda uses a fragile `type_name.front() == '_'` heuristic to detect unresolved template parameter placeholders, which can false-positive on user-defined types (e.g. `_MyAllocator`), silently skipping the constructor call.
 - Both `is_unresolved_noop_ctor` early-return sites (brace-init at line ~1562 and direct-init at line ~2366) skip destructor registration, causing resource leaks when the struct has a destructor.
 
+**Partial fix (2026-04-14, proper sema fix):** The primary root cause — lazy template constructor bodies not having struct member scope during re-parse — is now fixed in `Parser_Templates_Lazy.cpp`. The `is_unresolved_noop_ctor` codegen fallback is no longer triggered for the common template-ctor case. The codegen fallback paths remain as defensive code; Phase 5 should eliminate them entirely by ensuring sema normalizes all function bodies.
+
 **Long-term fix:** Resolve all constructor templates in semantic analysis before reaching codegen. The sema path already partially does this; the codegen fallback should become unnecessary once sema covers all constructor-call shapes (including arity-based fallback and direct-init syntax). **Relates to Phase 3 and Phase 5.**
 
 ### `appendFunctionCallArgType` lacks full type deduction for complex expressions
@@ -1319,7 +1330,9 @@ Note: `VariableDeclOp` IS emitted at line 1461 (brace-init) and line 2015 (direc
 
 Follow-up: The noop path should zero-initialize the allocated stack object before registering the destructor, or the long-term fix is to resolve all template constructors in sema so the noop path is never reached.~~
 
-**FIXED (2026-04-14, audit update):** both noop-ctor early-return paths now zero-fill the allocated object (including base subobjects via recursive member stores) before registering the destructor. Regression tests: `tests/test_template_ctor_noop_zero_init_direct_ret20.cpp` and `tests/test_template_ctor_noop_zero_init_list_ret30.cpp`. The remaining architectural gap is that codegen can still reach the noop fallback when lazy constructor-body instantiation fails; Phase 3 / Phase 5 should still eliminate that fallback entirely.
+**FIXED (2026-04-14, audit update):** both noop-ctor early-return paths now zero-fill the allocated object (including base subobjects via recursive member stores) before registering the destructor.
+
+**SUPERSEDED (2026-04-14, proper sema fix):** The root cause — missing struct member scope during lazy template constructor body re-parse — is now fixed in `Parser_Templates_Lazy.cpp`. Template constructor bodies are properly parsed with `FunctionParsingScopeGuard`, so `is_unresolved_noop_ctor` is no longer triggered for the common case. The zero-fill safety net and the noop fallback remain as defensive code for edge cases but should be removed in Phase 5 when all codegen fallback materialization is eliminated.
 
 ### `materializeMatchingConstructorTemplate` returns original uninstantiated ctor on failure
 
