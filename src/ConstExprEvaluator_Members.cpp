@@ -843,7 +843,9 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	}
 
 	if (const FunctionDeclarationNode* resolved_function = call_expr.callee().function_declaration_or_null()) {
-		return evaluate_resolved_function_call(*resolved_function, call_expr.arguments(), context, &bindings);
+		if (resolved_function->is_static() || !context.struct_info) {
+			return evaluate_resolved_function_call(*resolved_function, call_expr.arguments(), context, &bindings);
+		}
 	}
 
 	auto symbol_opt = lookup_function_symbol(call_expr, func_name, *context.symbols);

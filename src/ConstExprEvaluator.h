@@ -762,7 +762,7 @@ private:
 		const FunctionDeclarationNode& func_decl,
 		const ChunkedVector<ASTNode>& arguments,
 		EvaluationContext& context,
-		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
+		const std::unordered_map<std::string_view, EvalResult>* outer_bindings);
 	enum class FunctionCallTemplateBindingLoadMode {
 		IfContextEmpty,
 		ForceCurrentStructIfAvailable,

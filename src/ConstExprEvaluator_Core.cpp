@@ -1773,7 +1773,7 @@ EvalResult Evaluator::evaluate_resolved_function_call(
 	const FunctionDeclarationNode& func_decl,
 	const ChunkedVector<ASTNode>& arguments,
 	EvaluationContext& context,
-	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings /*no default*/) {
 	std::string_view func_name = func_decl.decl_node().identifier_token().value();
 	if (!func_decl.is_constexpr() && !func_decl.is_consteval() &&
 		context.storage_duration != ConstExpr::StorageDuration::Static) {
@@ -3892,7 +3892,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	}
 
 	if (const FunctionDeclarationNode* resolved_function = call_expr.callee().function_declaration_or_null()) {
-		return evaluate_resolved_function_call(*resolved_function, call_expr.arguments(), context);
+		return evaluate_resolved_function_call(*resolved_function, call_expr.arguments(), context, nullptr);
 	}
 
 	// Special handling for std::__is_complete_or_unbounded
