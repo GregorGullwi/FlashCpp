@@ -4605,6 +4605,7 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 														   const ChunkedVector<ASTNode>& arguments,
 														   const FunctionDeclarationNode*& func_decl) {
 	const StringHandle func_name_handle = decl.identifier_token().handle();
+	// Peel alias layers until we either reach a concrete struct owner or give up.
 	auto resolveStructOwnerType = [&](const TypeInfo* type_info) -> const TypeInfo* {
 		constexpr size_t kMaxAliasDepth = 100;
 		for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasDepth; ++alias_depth) {
@@ -4791,13 +4792,16 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		return false;
 
 	const std::string_view struct_name_sv = qname.substr(0, scope_sep);
+	// Collect fuzzy owner matches so sema can refuse ambiguous recovery instead
+	// of picking an arbitrary same-suffix struct from the type registry.
 	std::vector<const TypeInfo*> fuzzy_owner_candidates;
+	std::unordered_set<const TypeInfo*> fuzzy_owner_candidate_set;
 	auto addUniqueOwnerCandidate = [&](const TypeInfo* type_info) {
 		type_info = resolveStructOwnerType(type_info);
 		if (!type_info) {
 			return;
 		}
-		if (std::find(fuzzy_owner_candidates.begin(), fuzzy_owner_candidates.end(), type_info) == fuzzy_owner_candidates.end()) {
+		if (fuzzy_owner_candidate_set.insert(type_info).second) {
 			fuzzy_owner_candidates.push_back(type_info);
 		}
 	};
