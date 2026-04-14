@@ -91,7 +91,7 @@ public:
 		copyFrom(other);
 	}
 
-	InlineVector(InlineVector&& other) {
+	InlineVector(InlineVector&& other) noexcept(std::is_nothrow_move_assignable_v<T> && std::is_nothrow_default_constructible_v<T>) {
 		moveFrom(std::move(other));
 	}
 
@@ -103,7 +103,7 @@ public:
 		return *this;
 	}
 
-	InlineVector& operator=(InlineVector&& other) {
+	InlineVector& operator=(InlineVector&& other) noexcept(std::is_nothrow_move_assignable_v<T> && std::is_nothrow_default_constructible_v<T>) {
 		if (this != &other) {
 			resetStorage();
 			moveFrom(std::move(other));
@@ -369,7 +369,7 @@ private:
 		inline_count_ = other.inline_count_;
 	}
 
-	void moveFrom(InlineVector&& other) {
+	void moveFrom(InlineVector&& other) noexcept(std::is_nothrow_move_assignable_v<T> && std::is_nothrow_default_constructible_v<T>) {
 		using_inline_storage_ = other.using_inline_storage_;
 		inline_count_ = 0;
 		if (!using_inline_storage_) {
