@@ -12,6 +12,10 @@
 
 static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
+// The std::string_view keys point at parser-owned/interned template parameter names that outlive
+// each transient substitution map built during instantiation; these maps mirror the existing
+// name-substitution containers used throughout template instantiation, while packs stay keyed by
+// StringHandle because pack lookup already operates on interned handles.
 using TemplateArgSubstitutionMap = std::unordered_map<std::string_view, TemplateTypeArg>;
 using TemplateArgPackSubstitutionMap =
 	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>;
@@ -24,6 +28,13 @@ static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type
 	return arg;
 }
 
+// Resolve any stored template arguments on a deferred base member-type chain after a class
+// template's substitution maps are available.
+// Returns std::nullopt when any pack expansion or concrete member argument cannot be resolved.
+// The substitution maps only need to remain valid for the duration of this call.
+// `substitute_expression` must accept `const ASTNode&` and return a substituted `ASTNode`.
+// `evaluate_constant_expression` must accept `const ASTNode&` and return
+// `std::optional<Parser::ConstantValue>` for non-type template arguments.
 template <typename SubstituteExpressionFn, typename EvaluateConstantExpressionFn>
 static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBaseMemberTypeChain(
 	const std::vector<QualifiedTypeMemberAccess>& member_type_chain,
@@ -83,13 +94,13 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 					const TypeSpecifierNode& ts = member_arg_info.node.as<TypeSpecifierNode>();
 					if (is_struct_type(ts.category()) && ts.type_index().is_valid()) {
 						if (const TypeInfo* ts_ti = tryGetTypeInfo(ts.type_index())) {
-							auto it = name_substitution_map.find(StringTable::getStringView(ts_ti->name()));
-							if (it != name_substitution_map.end()) {
-								TemplateTypeArg arg = it->second;
-								arg.pointer_depth = ts.pointer_depth();
-								arg.ref_qualifier = ts.reference_qualifier();
-								arg.cv_qualifier = ts.cv_qualifier();
-								resolved_member.template_arguments->push_back(arg);
+							auto type_subst_it = name_substitution_map.find(StringTable::getStringView(ts_ti->name()));
+							if (type_subst_it != name_substitution_map.end()) {
+								TemplateTypeArg resolved_type_arg = type_subst_it->second;
+								resolved_type_arg.pointer_depth = ts.pointer_depth();
+								resolved_type_arg.ref_qualifier = ts.reference_qualifier();
+								resolved_type_arg.cv_qualifier = ts.cv_qualifier();
+								resolved_member.template_arguments->push_back(resolved_type_arg);
 								member_arg_resolved = true;
 							}
 						}
@@ -109,17 +120,17 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 						}
 					} else if (std::holds_alternative<IdentifierNode>(expr)) {
 						std::string_view iname = std::get<IdentifierNode>(expr).name();
-						auto sit = name_substitution_map.find(iname);
-						if (sit != name_substitution_map.end()) {
-							resolved_member.template_arguments->push_back(sit->second);
+						auto ident_subst_it = name_substitution_map.find(iname);
+						if (ident_subst_it != name_substitution_map.end()) {
+							resolved_member.template_arguments->push_back(ident_subst_it->second);
 							member_arg_resolved = true;
 						} else {
-							StringHandle handle = StringTable::getOrInternStringHandle(iname);
-							auto type_it = getTypesByNameMap().find(handle);
+							StringHandle type_name_handle = StringTable::getOrInternStringHandle(iname);
+							auto type_it = getTypesByNameMap().find(type_name_handle);
 							if (type_it != getTypesByNameMap().end()) {
-								TemplateTypeArg arg;
-								arg.type_index = type_it->second->type_index_.withCategory(type_it->second->typeEnum());
-								resolved_member.template_arguments->push_back(arg);
+								TemplateTypeArg resolved_type_arg;
+								resolved_type_arg.type_index = type_it->second->type_index_.withCategory(type_it->second->typeEnum());
+								resolved_member.template_arguments->push_back(resolved_type_arg);
 								member_arg_resolved = true;
 							}
 						}
