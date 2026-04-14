@@ -290,15 +290,16 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 					if (capture.has_initializer()) {
 							// Init-capture: evaluate the initializer expression and store it
 						const ASTNode& init_node = *capture.initializer();
-						ExprResult init_result = visitExpressionNode(init_node.as<ExpressionNode>());
+						const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+						ExprResult init_result = visitExpressionNode(init_expr);
 
 						IrOperand init_value = init_result.value;
 
 							// For init-capture by reference [&y = x], we need to store the address of x
 						if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 							ExprResult address_result = materializeAddressResult(
-								init_node.as<ExpressionNode>(),
-								visitExpressionNode(init_node.as<ExpressionNode>(), ExpressionContext::LValueAddress),
+								init_expr,
+								visitExpressionNode(init_expr, ExpressionContext::LValueAddress),
 								lambda.lambda_token());
 
 								// Store the address in the closure member
