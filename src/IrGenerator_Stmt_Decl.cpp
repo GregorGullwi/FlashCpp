@@ -821,19 +821,26 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 			// Check if this is an array and get element count (product of all dimensions for multidimensional)
 		if (decl.is_array() || type_node.is_array()) {
-			const auto& dims = decl.array_dimensions();
-			if (!dims.empty()) {
-					// Calculate total element count as product of all dimensions
+			if (type_node.is_array() && !type_node.array_dimensions().empty()) {
 				op.element_count = 1;
-				for (const auto& dim_expr : dims) {
-					ConstExpr::EvaluationContext ctx(gSymbolTable);
-					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-					if (eval_result.success() && eval_result.as_int() > 0) {
-						op.element_count *= static_cast<size_t>(eval_result.as_int());
-					}
+				for (size_t dim_size : type_node.array_dimensions()) {
+					op.element_count *= dim_size;
 				}
-			} else if (type_node.array_size().has_value()) {
-				op.element_count = *type_node.array_size();
+			} else {
+				const auto& dims = decl.array_dimensions();
+				if (!dims.empty()) {
+						// Calculate total element count as product of all dimensions
+					op.element_count = 1;
+					for (const auto& dim_expr : dims) {
+						ConstExpr::EvaluationContext ctx(gSymbolTable);
+						auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+						if (eval_result.success() && eval_result.as_int() > 0) {
+							op.element_count *= static_cast<size_t>(eval_result.as_int());
+						}
+					}
+				} else if (type_node.array_size().has_value()) {
+					op.element_count = *type_node.array_size();
+				}
 			}
 		}
 
@@ -881,7 +888,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					}
 				} else {
 						// Array initialization: each element is a separate value
-					op.element_count = initializers.size();
 						// Check if this is an array of structs (elements may be InitializerListNodes)
 					bool handled_as_struct_array = false;
 					if ((is_struct_type(type_node.category()))) {
