@@ -10,9 +10,9 @@
 - **Phase 1:** complete. Non-type template-argument identity now has one canonical key path.
 - **Phase 2:** **complete**. Alias-template materialization is centralized through `materializeAliasTemplateInstantiation`; duplicated helper logic is routed through shared utilities (`buildSubstitutionParamMap`, `templateTypeArgFromEvalResult`, `substituteAndEvaluateNonTypeDefault`). Dead code removed. Type-specifier deferred alias path now routes through the authoritative alias materialization helper, and the remaining deduction-loop body is extracted into `deduceTemplateArgsFromCall(...)`.
 - **Phase 3:** **complete**. Late materialization lifecycle contract is now documented with explicit lifecycle comments in `Parser.h`. The `registerAndNormalizeLateMaterializedTopLevelNode` family of functions is the canonical registration path. Regression test added (`test_pending_sema_normalization_ret0.cpp`).
-- **Phase 4:** not started — ready to begin.
-- **Phase 5:** intentionally blocked until Phase 4 is complete.
-- **Current Linux validation baseline:** `make main CXX=clang++` and `bash ./tests/run_all_tests.sh` currently pass with **2103 pass / 139 expected-fail**.
+- **Phase 4:** **complete**. Unresolved dependent placeholder states are now represented by the `DependentPlaceholderKind` enum on `TypeInfo`, replacing string-level `name.find("::")` heuristics at all critical consumption sites (SFINAE viability, constexpr sizeof, expression substitution, alias resolution).
+- **Phase 5:** intentionally blocked until Phase 4 is complete. **Now ready to begin.**
+- **Current Linux validation baseline:** `make main CXX=clang++` and `bash ./tests/run_all_tests.sh` currently pass with **2109 pass / 140 expected-fail**.
 
 ## What has already landed
 
@@ -58,6 +58,19 @@
 - **Existing scattered normalization calls** analyzed and confirmed as intentionally defensive (harmless no-ops when helpers already normalized).
 - **Regression test added**: `test_pending_sema_normalization_ret0.cpp` verifies that chained lazy instantiation (e.g., `ChainedLookup<int>` → `Wrapper<int>` → `LazyHolder<int>`) is correctly normalized before codegen.
 
+### Phase 4 completed (2026-04-14)
+
+- **`DependentPlaceholderKind` enum added** to `AstNodeTypes_DeclNodes.h` with `None`, `DependentArgs`, and `DependentMemberType` values.
+- **`placeholder_kind_` field** added to `TypeInfo` with `isDependentMemberType()` and `isDependentPlaceholder()` accessors.
+- **6 placeholder creation sites updated** to stamp the correct kind at creation time.
+- **5 consumption sites updated** to use the explicit flag instead of `name.find("::")`:
+  - SFINAE viability check in `Parser_Templates_Inst_Deduction.cpp`
+  - Constexpr sizeof in `TemplateRegistry_Lazy.h`
+  - Alias materialization in `ExpressionSubstitutor.cpp`
+  - Alias deferred-instantiation classification in `Parser_Templates_Class.cpp` (2 checks)
+- **~15 legitimate `find("::")` usages audited and preserved** as structural scope/namespace parsing.
+- **4 regression tests added**: `test_sfinae_dependent_member_ret0.cpp`, `test_dependent_alias_chain_placeholder_ret42.cpp`, `test_sizeof_dependent_member_type_ret8.cpp`, `test_placeholder_kind_mixed_types_ret100.cpp`.
+
 ### Phase 6-side deduction fixes already landed
 
 - Shared deduction mapping via `buildDeductionMapFromCallArgs(...)` was expanded.
@@ -79,27 +92,33 @@ See "Phase 3 completed" section above for details.
 
 ## Next steps
 
-### Immediate Phase 4 work
+### Phase 4 work — DONE
 
-1. **Identify placeholder states currently inferred from names** (e.g., `::` in the name indicating unresolved dependent member-alias).
-2. **Add explicit kind/flag for unresolved-dependent placeholders** in the type/instantiation model.
-3. **Use explicit state in SFINAE viability checks** instead of string heuristics.
-4. **Update alias-template resolution and late-instantiation lookup** to use the new explicit state.
+~~1. **Identify placeholder states currently inferred from names** (e.g., `::` in the name indicating unresolved dependent member-alias).~~
+~~2. **Add explicit kind/flag for unresolved-dependent placeholders** in the type/instantiation model.~~
+~~3. **Use explicit state in SFINAE viability checks** instead of string heuristics.~~
+~~4. **Update alias-template resolution and late-instantiation lookup** to use the new explicit state.~~
 
-### After Phase 4
+### Immediate next steps (Phase 5 and beyond)
 
-5. **Start Phase 5 parser/sema ownership move** once placeholder state is explicit.
-6. **Remove remaining codegen-triggered template materialization fallbacks** so codegen only consumes already-materialized declarations.
+1. **Start Phase 5 parser/sema ownership move** — placeholder state is now explicit, so sema can branch on `DependentPlaceholderKind` instead of parsing names.
+2. **Remove remaining codegen-triggered template materialization fallbacks** so codegen only consumes already-materialized declarations:
+   - `IrGenerator_Stmt_Decl.cpp` still retains `materialize_template_ctor` and `is_unresolved_noop_ctor` fallbacks
+   - `prepare_nested_template_ctor` lambda still calls back into `parser_->instantiateLazyMemberFunction(...)` from codegen
+   - These should become unnecessary once sema covers all constructor-call shapes
+3. **Extend `DependentPlaceholderKind` if needed** — if Phase 5 discovers additional placeholder categories (e.g., dependent function pointers, dependent array element types), extend the enum rather than adding new string heuristics.
+4. **Consider removing remaining legitimate `find("::")` structural splits** in favor of a pre-computed `QualifiedIdentifier` stored on the TypeInfo, so the name never needs to be re-parsed for scope components. This is optional but would further improve maintainability.
+5. **Phase 6: unify template-parameter-to-function-parameter deduction mapping** — the positional `deduced_call_arg_index` counter in `try_instantiate_template_explicit` should be replaced with a proper pre-deduction pass.
 
 ## What is still open before Phase 5 should start
 
-Phase 5 is the broader parser/sema ownership move. It should not begin until Phase 4 is done.
+Phase 5 is the broader parser/sema ownership move. ~~It should not begin until Phase 4 is done.~~ **Phase 4 is now complete — Phase 5 can begin.**
 
 ### Required before Phase 5
 
 1. ~~**Finish the remaining Phase 2 centralization**~~ DONE
 2. ~~**Complete Phase 3**~~ DONE - late materialization now has one explicit register/enqueue/normalize contract.
-3. **Complete Phase 4** so unresolved-dependent placeholder states are represented explicitly rather than inferred from names.
+3. ~~**Complete Phase 4**~~ DONE - `DependentPlaceholderKind` enum replaces string heuristics for placeholder detection.
 4. **Shrink the remaining codegen-triggered template materialization surface** so Phase 5 is moving ownership, not debugging mixed ownership:
    - `IrGenerator_Stmt_Decl.cpp` still retains fallback calls into parser materialization
    - sema still does not cover every constructor-call shape under one enforced invariant
@@ -108,17 +127,17 @@ Phase 5 is the broader parser/sema ownership move. It should not begin until Pha
 ### In other words
 
 - ~~**Before Phase 3:** finish consolidating alias/materialization entry points.~~ DONE
-- **Before Phase 5:** ~~finish Phase 3 and~~ finish Phase 4, then remove or quarantine the remaining codegen fallback materialization paths so ownership can move intentionally.
+- ~~**Before Phase 5:** finish Phase 3 and finish Phase 4,~~ DONE — then remove or quarantine the remaining codegen fallback materialization paths so ownership can move intentionally.
 
 ## Target invariants
 
 After the remaining work:
 
-1. A non-type template argument has **one canonical identity model** from parser capture through registry lookup and instantiated-name generation.
-2. Alias-template uses are materialized through **one authoritative helper**, not hand-reimplemented at each parser entry point.
-3. Any late-materialized AST root that becomes visible to sema, constexpr, or codegen goes through **one explicit registration + normalization path**.
-4. Unresolved dependent placeholders are identified by **typed state**, not by best-effort name inspection.
-5. Codegen only consumes already-materialized constructor declarations; it does not decide when template constructors get instantiated.
+1. A non-type template argument has **one canonical identity model** from parser capture through registry lookup and instantiated-name generation. ✅ DONE (Phase 1)
+2. Alias-template uses are materialized through **one authoritative helper**, not hand-reimplemented at each parser entry point. ✅ DONE (Phase 2)
+3. Any late-materialized AST root that becomes visible to sema, constexpr, or codegen goes through **one explicit registration + normalization path**. ✅ DONE (Phase 3)
+4. Unresolved dependent placeholders are identified by **typed state**, not by best-effort name inspection. ✅ DONE (Phase 4)
+5. Codegen only consumes already-materialized constructor declarations; it does not decide when template constructors get instantiated. **TODO (Phase 5)**
 
 ## Short bottom line
 
@@ -126,8 +145,8 @@ The remaining path is straightforward:
 
 - ~~finish the last real **Phase 2** duplication around alias-template materialization,~~ DONE
 - ~~then do **Phase 3** as the explicit late-materialization/sema contract,~~ DONE
-- then do **Phase 4** explicit placeholder state,
-- and only after that start **Phase 5** to remove the remaining parser/codegen ownership blur.
+- ~~then do **Phase 4** explicit placeholder state,~~ DONE
+- and only after that start **Phase 5** to remove the remaining parser/codegen ownership blur. **← READY TO START**
 
 ---
 
@@ -331,7 +350,7 @@ Turn the current "register late materialized node, then maybe normalize pending 
 
 ## Phase 4: replace unresolved-placeholder heuristics with explicit state
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (2026-04-14)
 
 **Goal**
 
@@ -339,33 +358,72 @@ Stop detecting important dependent placeholder cases by combining incomplete-ins
 
 **Primary files**
 
+- `src\AstNodeTypes_DeclNodes.h`
+- `src\Parser_TypeSpecifiers.cpp`
+- `src\Parser_Templates_Inst_ClassTemplate.cpp`
 - `src\Parser_Templates_Inst_Deduction.cpp`
-- `src\TypeInfo*` / template-registry carrier types that currently model placeholder state
-- any alias/late-instantiation code that creates dependent placeholder types
+- `src\TemplateRegistry_Lazy.h`
+- `src\ExpressionSubstitutor.cpp`
+- `src\Parser_Templates_Class.cpp`
 
-**Concrete work**
+**What was done**
 
-1. Identify the exact placeholder states that currently surface as "incomplete instantiation with a `::` in the name".
-2. Add an explicit kind/flag for unresolved dependent member-alias placeholders or equivalent unresolved-dependent materialization states.
-3. Use that explicit state in SFINAE viability checks.
-4. Audit whether the same explicit state should also guide alias-template resolution, late instantiation lookup, and constexpr member lookup.
-5. Remove or narrow the current string heuristic once the explicit state is available everywhere it is needed.
+1. ~~Identify the exact placeholder states that currently surface as "incomplete instantiation with a `::` in the name".~~
+   DONE: Audited all `find("::")` call sites across the codebase (50+ occurrences). Classified them into two categories: (A) true placeholder/dependent-state heuristics that should use explicit flags, and (B) legitimate scope/namespace parsing that should remain as string operations.
 
-**Done when**
+2. ~~Add an explicit kind/flag for unresolved dependent member-alias placeholders or equivalent unresolved-dependent materialization states.~~
+   DONE: Added `DependentPlaceholderKind` enum to `AstNodeTypes_DeclNodes.h` with three values:
+   - `None` — not a dependent placeholder
+   - `DependentArgs` — template instantiation with dependent args but no member access (e.g., `vector<T>`)
+   - `DependentMemberType` — dependent qualified member-type placeholder (e.g., `enable_if<B>::type`, `Op<T>::value_type`)
 
-- SFINAE viability checks do not need to infer unresolved dependent state from names,
-- placeholder categories are visible in the type/instantiation model itself,
-- future dependent-alias bugs are easier to reason about from debugger/log output.
+   Added `placeholder_kind_` field to `TypeInfo` and convenience accessors `isDependentMemberType()` and `isDependentPlaceholder()`.
 
-**Read/query first**
+3. ~~Use that explicit state in SFINAE viability checks.~~
+   DONE: `Parser_Templates_Inst_Deduction.cpp` SFINAE check now uses `rt_info->isDependentMemberType()` instead of `StringTable::getStringView(rt_info->name()).find("::")`.
 
-- `src\Parser_Templates_Inst_Deduction.cpp:2175-2190`
+4. ~~Audit whether the same explicit state should also guide alias-template resolution, late instantiation lookup, and constexpr member lookup.~~
+   DONE: Updated 5 additional consumption sites:
+   - `TemplateRegistry_Lazy.h` — constexpr sizeof dependent member-type resolution
+   - `ExpressionSubstitutor.cpp` — dependent alias target materialization strategy
+   - `Parser_Templates_Class.cpp` — alias target deferred-instantiation classification (2 checks)
+   - `Parser_Expr_QualLookup.cpp` — analyzed; outer `find("::")` is structural (needed to split `base::member`), inner `is_incomplete_instantiation_` already explicit — no change needed
+
+5. ~~Remove or narrow the current string heuristic once the explicit state is available everywhere it is needed.~~
+   DONE: All 6 placeholder creation sites now stamp `DependentPlaceholderKind`:
+   - `Parser_Templates_Inst_ClassTemplate.cpp:697` → `DependentArgs`
+   - `Parser_TypeSpecifiers.cpp:883` → `DependentMemberType`
+   - `Parser_TypeSpecifiers.cpp:1019` → `DependentMemberType`
+   - `Parser_TypeSpecifiers.cpp:1307` → `DependentMemberType`
+   - `Parser_TypeSpecifiers.cpp:1675` → `DependentMemberType`
+   - `Parser_TypeSpecifiers.cpp:2233` → `DependentArgs`
+
+**Remaining `find("::")` call sites — intentionally preserved**
+
+The following `find("::")` usages were audited and confirmed as **legitimate scope/namespace parsing** that should remain as string operations:
+- `ExpressionSubstitutor.cpp:819` — function name scope splitting for dependent qualified calls
+- `Parser_Expr_QualLookup.cpp:1077` — structural name splitting into `base` + `member`
+- `OverloadResolution.h:1315` — nested class name matching fallback
+- `LazyMemberResolver.h:175` — namespace walk scope control
+- `Parser_Templates_Lazy.cpp:23,293` — ctor/dtor name normalization
+- `IrGenerator_Call_Direct.cpp:822,850` — namespace path recovery
+- `Parser_Templates_Inst_ClassTemplate.cpp:1098,1805,3891,7970` — namespace extraction
+- All `IrGenerator_*.cpp` sites — codegen name mangling
+- `ObjFileWriter.h`, `ElfFileWriter_GlobalRTTI.cpp` — binary format output
+- `NameMangling.h` — name mangling scope splitting
+
+**Regression tests added**
+
+- `test_sfinae_dependent_member_ret0.cpp` — SFINAE elimination with `enable_if<is_integral<T>::value>::type`
+- `test_dependent_alias_chain_placeholder_ret42.cpp` — alias chain through dependent member types
+- `test_sizeof_dependent_member_type_ret8.cpp` — constexpr sizeof with dependent type parameters
+- `test_placeholder_kind_mixed_types_ret100.cpp` — mixed placeholder kinds with various native type sizes
 
 ---
 
 ## Phase 5: only then consider the larger parser/sema ownership move
 
-**Status:** BLOCKED on Phase 2-4 completion and on shrinking the remaining codegen fallback surface
+**Status:** UNBLOCKED — Phases 1-4 are all complete. Ready to begin once the remaining codegen fallback surface is shrunk.
 
 **Goal**
 
