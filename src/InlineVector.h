@@ -142,8 +142,9 @@ public:
 			inline_data_[inline_count_++] = T(std::forward<Args>(args)...);
 			return;
 		}
+		T value(std::forward<Args>(args)...);
 		ensureHeapStorage(size() + 1);
-		heap_data_.emplace_back(std::forward<Args>(args)...);
+		heap_data_.push_back(std::move(value));
 	}
 
 	[[nodiscard]] size_t size() const noexcept {
