@@ -2015,7 +2015,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 			const auto& stored_args = type_info->templateArgs();
 			for (const auto& stored_arg : stored_args) {
 				if (stored_arg.is_value) {
-					deduced_value_args.push_back(stored_arg);
+					deduced_value_args.push_back(TemplateTypeArg::makeValue(
+						stored_arg.intValue(),
+						stored_arg.typeEnum()));
 				} else {
 					deduced_type_args.push_back(stored_arg.typeEnum());
 				}
