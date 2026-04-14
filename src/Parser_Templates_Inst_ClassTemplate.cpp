@@ -127,19 +127,7 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 
 					if (!member_arg_resolved) {
 						const ASTNode substituted_expr = substitute_expression(member_arg_info.node);
-						if (std::holds_alternative<NumericLiteralNode>(expr)) {
-							const NumericLiteralNode& num_lit = std::get<NumericLiteralNode>(expr);
-							NumericLiteralValue value = num_lit.value();
-							int64_t int_value = std::holds_alternative<unsigned long long>(value)
-								? static_cast<int64_t>(std::get<unsigned long long>(value))
-								: static_cast<int64_t>(std::get<double>(value));
-							resolved_member.template_arguments->push_back(makeDeferredBaseValueArg(int_value, num_lit.type()));
-							member_arg_resolved = true;
-						} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
-							resolved_member.template_arguments->push_back(
-								makeDeferredBaseValueArg(bool_literal->value() ? 1 : 0, TypeCategory::Bool));
-							member_arg_resolved = true;
-						} else if (auto evaluated_value = evaluate_constant_expression(substituted_expr)) {
+						if (auto evaluated_value = evaluate_constant_expression(substituted_expr)) {
 							resolved_member.template_arguments->push_back(
 								makeDeferredBaseValueArg(evaluated_value->value, evaluated_value->type));
 							member_arg_resolved = true;
