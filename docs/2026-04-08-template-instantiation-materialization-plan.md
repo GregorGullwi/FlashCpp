@@ -1,916 +1,105 @@
 # Template Instantiation Identity / Materialization Follow-up Plan
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-13  
+**Last Updated:** 2026-04-14  
 **Context:** Follows the branch fix that made `test_integral_constant_comprehensive_ret100.cpp`, `test_integral_constant_pattern_ret42.cpp`, `test_ratio_less_alias_ret0.cpp`, `test_sfinae_enable_if_ret0.cpp`, and `test_sfinae_same_name_overload_ret0.cpp` pass by preserving dependent non-type template-argument identity in template-instantiation keys.
 
-## Quick start for next agent
+## Current snapshot
 
-### Latest completed slice (2026-04-13, audit update)
+- **Phase 0:** effectively complete; keep the original regression cluster as the must-pass guardrail.
+- **Phase 1:** complete. Non-type template-argument identity now has one canonical key path.
+- **Phase 2:** **partially complete**. Several alias/materialization bugs are fixed, but there is still no single authoritative alias-template materialization service.
+- **Phase 3:** not started.
+- **Phase 4:** not started.
+- **Phase 5:** intentionally blocked until the Phase 2-4 prerequisites are in place.
+- **Current Linux validation baseline:** `make main CXX=clang++` and `bash ./tests/run_all_tests.sh` currently pass with **2092 pass / 139 expected-fail**.
 
-**Post-PR #1255 follow-up audit completed; constructor-template deduction churn removed.**
+## What has already landed
 
-- Re-audited the remaining PR #1255 follow-up items against `HEAD`:
-  - already fixed: alias-resolution duplication, dead `ExpressionSubstitutor.cpp`
-    branches, placeholder-arg extraction, dependent non-type normalization
-    extraction, compound `appendFunctionCallArgType`, constructor pack expansion,
-    `materializeMatchingConstructorTemplate(nullptr)` failure handling, brace-init
-    constructor materialization, and the `try_instantiate_member_function_template`
-    fallback bug
-  - still valid: the `is_unresolved_noop_ctor` fallback still registers
-    destructors for objects whose members were never initialized, and the Phase 4
-    string heuristics in `Parser_Templates_Inst_Deduction.cpp` still need an
-    explicit placeholder-state model
-- **Refactor** (`src/Parser.h`, `src/Parser_Templates_Inst_Deduction.cpp`,
-  `src/Parser_Templates_Inst_MemberFunc.cpp`):
-  - added a `buildDeductionMapFromCallArgs(...)` overload that consumes function
-    parameter nodes directly
-  - `try_instantiate_constructor_template(...)` now reuses
-    `ctor_decl.parameter_nodes()` instead of allocating persistent dummy
-    `TypeSpecifierNode` / `DeclarationNode` / `FunctionDeclarationNode` wrappers
-    solely to call the deduction helper
-- **Validation**: `make main CXX=clang++` → clean;
-  `bash ./tests/run_all_tests.sh` baseline before changes → **2087 pass,
-  137 expected-fail**
+### Phase 1 completed
 
-### Latest completed slice (2026-04-13, fourth update)
+- `NonTypeValueIdentity` is now the canonical value-identity carrier used by `ValueArgKey`.
+- Hashing, equality, stringification, and instantiation-key generation now project from the same non-type identity path.
+- The original dependent-vs-concrete non-type template-argument collision is fixed.
 
-**Reviewer-identified open items from PR #1255 resolved.**
+### Phase 2-adjacent cleanup completed
 
-- **`parse_direct_initialization()` pack expansion fix** (`src/Parser_Statements.cpp`):
-  - `Pair p(args...)` in a template function body was silently ignored because
-    `parse_direct_initialization()` had no handling for `...` after each argument.
-    The `args` expression parsed fine but the `...` was not consumed, causing
-    `consume(")")` to fail and the whole declaration to be re-tried as an expression
-    (which also failed), leaving the template body uninstantiated.
-  - Fix: added a `current_token_.value() == "..."` check after `parse_expression` in
-    the argument loop; for simple identifier packs the `get_pack_size` path expands
-    `args` → `args_0, args_1, …`; for complex expression packs `expandPackExpressionArgument`
-    is called. Mirrors `append_function_call_argument` exactly.
-  - Same strategy applied to the constructor expression path at
-    `src/Parser_Expr_PrimaryExpr.cpp:3565` to correctly handle zero-size packs
-    (previously `expandPackExpressionArgument` returned the unexpanded node for
-    zero-size packs because `pack_size == 0` is excluded from `packs_in_expr`).
-  - **Test**: `tests/test_ctor_direct_init_pack_ret0.cpp`
+- Alias target capture is partially centralized via `parseRawAliasTargetTemplateId(...)`.
+- Qualified/global alias-template targets are handled more consistently.
+- Constructor-template deduction no longer creates persistent dummy AST wrappers.
+- `materializeMatchingConstructorTemplate(...)` now returns `nullptr` on failure instead of forwarding an unusable template ctor.
+- Direct-init and constructor-expression pack expansion now mirror the ordinary function-call path.
+- `try_instantiate_member_function_template(...)` no longer falls back to `arg_types[0]` for undeduced parameters.
 
-- **`materializeMatchingConstructorTemplate` return nullptr on failure** (`src/Parser_Templates_Inst_MemberFunc.cpp`):
-  - When `preferred_ctor` has template parameters but `try_instantiate_constructor_template`
-    fails or the instantiated ctor doesn't match call arguments, the function now
-    returns `nullptr` instead of the uninstantiated template ctor, so callers fall
-    back to arity-based resolution instead of forwarding an unusable ctor to codegen.
-  - **Test**: `tests/test_template_ctor_nullptr_ret0.cpp`
+### Constructor-materialization fixes already landed
 
-- **`appendFunctionCallArgType` compound-expression typing** (`src/Parser_Core.cpp`):
-  - `StaticCastNode`, `ConstCastNode`, `ReinterpretCastNode`, `DynamicCastNode`:
-    extract the target type directly from `inner.target_type()`.
-  - `CallExprNode` with a resolved callee: use the function's declared return type
-    via `func_decl->decl_node().type_node()`.
-  - `UnaryOperatorNode`: propagate the operand type for arithmetic/bitwise ops;
-    deduce `Bool` for `!`; fall through to `Invalid` for `*`/`&`.
-  - Previously all these cases defaulted to `TypeCategory::Int`, causing mis-deduction
-    of template parameters when these expressions appeared as call arguments.
-  - **Test**: `tests/test_template_deduction_cast_ret0.cpp`
+- Template constructor member-initializer lists are parsed and stored.
+- `SemanticAnalysis::tryAnnotateInitListConstructorArgs(...)` now performs template-constructor materialization, matching the constructor-call sema path.
+- Lazy template constructor body re-parse now uses full member-function context (`FunctionParsingScopeGuard`), so common template constructors no longer fall through to the old noop codegen safety net.
 
-- **Validation**: `make main CXX=clang++` → clean;
-  `bash ./tests/run_all_tests.sh` → **2085 pass, 137 expected-fail** (no regressions).
+### Phase 6-side deduction fixes already landed
 
-- **Still open** (not addressed in this slice):
-  - `is_unresolved_noop_ctor` stack-allocation / destructor mismatch (investigate;
-    safe for existing tests because no test destructor dereferences `this`)
+- Shared deduction mapping via `buildDeductionMapFromCallArgs(...)` was expanded.
+- Variadic/non-variadic mixed deduction improved in the explicit-template path.
+- `appendFunctionCallArgType(...)` now handles several compound expression forms that previously defaulted to `int`.
 
-### Latest completed slice (2026-04-14)
+## What is still open before Phase 3 can start cleanly
 
-**Root-cause fix: template constructor member-initializer list never stored.**
+Phase 3 is about making late materialization + pending-sema normalization an explicit contract. To start that work without re-baking parser duplication into the new queue/contract, the remaining **Phase 2 consolidation** should be narrowed first:
 
-- **Root cause**: `Parser_Templates_Function.cpp` `parse_member_function_template` (lines ~416-448)
-  was skipping the `:member(arg)` initializer list of template constructors (`template<typename T> Ctor(T v) : member(v) {}`)
-  without storing the initializers. The comment "we don't need to parse the expressions for template patterns"
-  was wrong — `instantiateLazyMemberFunction` reads `ctor_decl.member_initializers()` and copies+substitutes
-  them into the instantiated constructor. Because the list was empty the member was always zero-initialised.
-- **Fix**: replaced the skip loop with a full parse-and-store loop (same logic as
-  `Parser_Decl_FunctionOrVar.cpp` / `Parser_FunctionBodies.cpp`): parse each initializer name and
-  argument expression list, classify as delegating / base / member, and call
-  `ctor_ref.add_member_initializer` / `add_base_initializer` / `set_delegating_initializer` accordingly.
-- **Test**: `tests/test_template_ctor_member_init_ret0.cpp` — paren-init and brace-init with single
-  and multi-member template constructors, all returning 0 on success.
-- **Also fixed in this branch** (earlier commits):
-  - Brace-init codegen `materialize_template_ctor` now called unconditionally (not only when
-    `resolution.has_match` is true) — mirrors the direct-init path.
-  - `SemanticAnalysis::tryAnnotateInitListConstructorArgs` now calls
-    `materializeMatchingConstructorTemplate` after `resolve_constructor_overload`, matching the
-    direct-init sema path.
-- **Validation**: `make main CXX=clang++` → clean; `bash ./tests/run_all_tests.sh` → **2080 pass, 135 expected-fail**.
-- **Additional audit/fixes after PR #1255 review follow-up pass:**
-  - Top-level `using` alias detection in `Parser_Decl_TopLevel.cpp` now reuses
-    `parseRawAliasTargetTemplateId(...)` with evaluated template args, so
-    qualified/global alias-template targets like
-    `using X = meta::enable_if_t<true, int>;` and
-    `using Y = ::meta::enable_if_t<true, int>;` are recognized and resolved.
-  - `try_instantiate_member_function_template(...)` no longer falls back to
-    `arg_types[0]` for undeduced template parameters. It now uses a default
-    template argument when present and otherwise fails deduction.
-  - Added regressions:
-    - `tests/test_top_level_using_qualified_alias_template_target_ret0.cpp`
-    - `tests/test_member_function_template_undeduced_param_fail.cpp`
-  - Re-audited the PR #1255 review list:
-    - already fixed: dead `ExpressionSubstitutor.cpp` branch, brace-init
-      constructor materialization in sema/codegen, `is_ambiguous` handling,
-      `_`-name heuristic in `is_unresolved_noop_ctor`
-    - still open at that point: `appendFunctionCallArgType`
-      compound-expression typing, `is_unresolved_noop_ctor`
-      destructor/stack-allocation mismatch,
-      `materializeMatchingConstructorTemplate` returning the uninstantiated
-      ctor on failure, constructor-template dummy AST churn,
-      constructor-call simple identifier-pack expansion
-  - **Validation**: `make main CXX=clang++`; focused regressions for the new
-    alias/member-template tests plus existing alias tests; `bash ./tests/run_all_tests.sh`
-    → **2082 pass, 136 expected-fail**.
+1. **Create one authoritative alias-template materialization helper**
+   - input: alias template identity + args + use-site context
+   - output: structured resolved/materialized result, not just a name string
+2. **Route all remaining alias-template entry points through it**
+   - top-level `using`
+   - struct-local `using` / typedef
+   - general type-specifier alias handling
+   - substitution / `ExpressionSubstitutor.cpp` paths
+3. **Remove the last duplicated helper logic around alias materialization / placeholder argument handling**
+   - `ExpressionSubstitutor.cpp` dead fallback / duplicated name-resolution path
+   - duplicated substitution+evaluation patterns
+   - `materialize_placeholder_args` extraction if it is still needed to support the shared path
+4. **Re-audit late-materialized alias/class instantiation sites** so Phase 3 can convert them to one registration/enqueue contract instead of preserving today’s special cases.
 
-### Latest completed slice (2026-04-13, third update)
+**Practical read:** the constructor side is far enough along now; the remaining blocker before Phase 3 is mostly alias/materialization centralization, not another constructor bug.
 
-Phase 6b: pack-aware deduction extended to non-pack params in variadic templates.
+## What is still open before Phase 5 should start
 
-- **Root cause**: `buildDeductionMapFromCallArgs` had an overly-conservative guard
-  (`if (!has_variadic_tparam)`) that skipped all direct-param pre-deduction for templates
-  with any variadic parameter — even non-pack function params whose types directly correspond
-  to non-pack template params.
-- **Effect of the bug**: `template<typename T, typename U, typename... Rest> func(T, U, Rest...)`
-  called as `func<int>(1, 2, 3, 4)` would fail to parse/deduce because U could not be resolved.
-- **Fix applied** (two-part):
-  1. `buildDeductionMapFromCallArgs`: removed the `!has_variadic_tparam` outer guard; replaced
-     it with a per-slot `is_parameter_pack()` skip inside the loop. Non-pack function params
-     are now pre-deduced even when the template has a variadic type parameter.
-  2. `try_instantiate_template_explicit`: now always calls `buildDeductionMapFromCallArgs` when
-     call arg types are available (not only for non-pack templates); uses the resulting
-     `param_name_to_arg` map for all non-variadic template params; positional fallback retained
-     for trailing params after a pack.
-- Added `tests/test_pack_nonpack_mixed_explicit_deduction_ret0.cpp` as a regression test.
-- Validation after this slice:
-  - `make main CXX=clang++`
-  - `bash ./tests/run_all_tests.sh`
-  - `2072` pass, `135` expected-fail
+Phase 5 is the broader parser/sema ownership move. It should not begin until the smaller representation/queue cleanups are done.
 
-- Fixed `try_instantiate_template_explicit` in `src/Parser_Templates_Inst_Deduction.cpp`:
-  when processing a variadic template parameter and no explicit args remain for the pack
-  (`remaining_args == 0`) but call arg types are available, the pack is now filled from
-  the corresponding function parameter positions in the call arg list.
-- The fix computes `pack_func_param_start` (number of non-pack function params before the
-  variadic pack) and adds call args from that position through
-  `call_args.size() - required_function_args_after_pack` to the pack.
-- `template<typename T, typename... Rest> int count_rest(T, Rest...)` called as
-  `count_rest<int>(1, 2, 3)` now correctly deduces `Rest = {int, int}` and returns 2,
-  instead of treating `Rest` as an empty pack and returning 0.
-- Added `tests/test_explicit_variadic_pack_deduction_ret0.cpp` as a regression test
-  covering: simple T+Rest, two explicit non-pack params, first-of return, empty pack,
-  all-explicit pack.
-- Validation after this slice:
-  - `make main CXX=clang++`
-  - `bash ./tests/run_all_tests.sh test_explicit_variadic_pack_deduction_ret0.cpp test_pack_decltype_simple_ret42.cpp test_variadic_template_pack_before_tail_trailing_return_ret0.cpp test_namespaced_pair_swap_sfinae_ret0.cpp test_explicit_template_defaulted_param_deduction_ret42.cpp test_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp test_global_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp`
-  - `bash ./tests/run_all_tests.sh`
-  - `2071` pass, `135` expected-fail
+### Required before Phase 5
 
-### Latest completed slice (2026-04-13)
+1. **Finish the remaining Phase 2 centralization** listed above.
+2. **Complete Phase 3** so late materialization has one explicit register/enqueue/normalize contract.
+3. **Complete Phase 4** so unresolved-dependent placeholder states are represented explicitly rather than inferred from names.
+4. **Shrink the remaining codegen-triggered template materialization surface** so Phase 5 is moving ownership, not debugging mixed ownership:
+   - `IrGenerator_Stmt_Decl.cpp` still retains fallback calls into parser materialization
+   - sema still does not cover every constructor-call shape under one enforced invariant
+   - codegen-side lazy-instantiation bridges still exist as safety nets
 
-- Extracted the shared alias-target capture logic into `Parser::parseRawAliasTargetTemplateId(...)`:
-  - Declared in `src/Parser.h` (near the other alias-materialization helpers)
-  - Implemented in `src/Parser_Templates_Variable.cpp` (before `parse_member_template_alias`)
-  - The helper skips cv-qualifiers, optional `typename`, and optional global `::` prefix,
-    then parses a possibly-qualified identifier and any `<template-args>`.
-  - Returns the interned name handle; populates `out_args`; sets `out_has_template_args`.
-- Replaced the duplicated capture blocks in both callers with one call to the helper:
-  - `src/Parser_Templates_Class.cpp` — `parse_class_or_alias_template`, deferred-alias path
-  - `src/Parser_Templates_Variable.cpp` — `parse_member_template_alias`, deferred-alias path
-- New capability: the Class version now correctly handles global-scope alias targets
-  (patterns like `template<typename T> using Foo = ::enable_if_t<B, T>`) because the
-  helper handles the leading `::` whereas the old Class code only entered capture when
-  `peek().is_identifier()` was true.
-- Added two new tests:
-  - `tests/test_alias_template_global_scope_ret42.cpp` — top-level template alias with `::` target
-  - `tests/test_member_alias_template_global_scope_ret42.cpp` — member template alias with `::` target
+### In other words
 
-### Next recommended slice
-
-1. **Phase 6 — further pack-aware deduction (mixed explicit + deduced pack elements):**
-   - The implemented fix covers the common case where all explicit args go to non-pack
-     template params and the pack is fully deduced from call args. The remaining open question
-     is whether mixing explicit pack elements with call-deduced pack elements
-     (e.g., `template<typename... Args> foo` called as `foo<int>(1, "hello")` where
-     explicit `int` is the first pack element and `"hello"` is the second) needs support.
-     In standard C++, partial-pack explicit specialization is generally ill-formed, so this
-     is low priority.
-   - Key files: `src/Parser_Templates_Inst_Deduction.cpp` variadic case in
-     `try_instantiate_template_explicit`
-
-2. Re-run this alias cluster before touching any materialization code:
-   - `test_member_alias_template_ret0.cpp`
-   - `test_namespace_alias_template_default_member_ret42.cpp`
-   - `test_struct_local_alias_static_init_ret0.cpp`
-   - `test_alias_template_const_deferred_ref_ret0.cpp`
-   - `test_alias_template_deferred_return_ret0.cpp`
-   - `test_alias_template_member_type_type_specifier_ret42.cpp`
-   - `test_sfinae_enable_if_t_ret0.cpp`
-   - `test_alias_template_global_scope_ret42.cpp`
-   - `test_member_alias_template_global_scope_ret42.cpp`
-
-### Current baseline (2026-04-13, second update)
-
-- Linux: `make main CXX=clang++` compiles cleanly
-- Linux: `bash ./tests/run_all_tests.sh` → 2082 pass, 136 expected-fail
-- All key regression tests pass:
-  ```bash
-  bash ./tests/run_all_tests.sh test_explicit_template_defaulted_param_deduction_ret42.cpp \
-    test_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp \
-    test_global_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp \
-    test_pack_decltype_simple_ret42.cpp \
-    test_variadic_template_pack_before_tail_trailing_return_ret0.cpp \
-    test_namespaced_pair_swap_sfinae_ret0.cpp \
-    test_explicit_variadic_pack_deduction_ret0.cpp
-  ```
-
-### Current work in progress: Phase 2+
-
-**Phase 1 status:** complete. `NonTypeValueIdentity` is now the canonical non-type value carrier and the remaining hash/string entry points route through it.
-
-**Phase 1 follow-up (optional, not required for Phase 2):**
-- Remove redundant `TemplateTypeArg` storage fields once a broader caller migration is worthwhile
-
-**Phase 2 status:** substantially complete. `parseRawAliasTargetTemplateId` is now the single
-shared capture helper for both class-level and member template aliases. The top-level `using`
-alias detection in `Parser_Decl_TopLevel.cpp` now also uses the shared helper and handles
-qualified/global alias-template targets by collecting both unevaluated and evaluated args.
-
-**Phase 6 status:** substantially complete. The main pack deduction bug (empty pack when
-explicit args fill non-pack params) is now fixed. The remaining edge case (partially-explicit
-packs) is likely out of scope per the C++20 standard.
-
-### Choose your next task
-
-**Option A: Fix bugs in `docs/KNOWN_ISSUES.md`**
-- Currently tracked: premature `layout_is_complete` during anonymous union processing
-- Low priority, no user-facing issues currently
-
-**Option B: Continue PR #1255 follow-up bug cleanup**
-- `is_unresolved_noop_ctor` still leaves objects uninitialized before destructor registration
-- Phase 4 still relies on placeholder-name string heuristics in `Parser_Templates_Inst_Deduction.cpp`
-
-**Note:** The "early instantiation without arg_types" gap was investigated on 2026-04-12 and found to NOT be a bug. See detailed notes below.
-
-### Important invariants to preserve
-
-1. **Non-pack signatures**: Use name-based pre-deduction map first, then defaults, then overload mismatch
-2. **Pack-bearing signatures with no explicit pack args**: Pack is now deduced from call arg types starting at the function parameter pack position
-3. **Always validate** after changes:
-   - Run the key regression tests listed above
-   - Run the full test suite
-
----
-
-## Next agent starting point (detailed)
-
-### Do this next
-
-1. Keep Phase 6 narrow: the remaining gap is still pack-bearing explicit
-   deduction. `buildDeductionMapFromCallArgs(...)` now reaches the qualified
-   explicit-call sites for non-pack signatures too, but template-parameter packs
-   and function-parameter packs must stay on the older positional fallback until
-   there is an explicit pack-aware mapping contract.
-2. If you touch `try_instantiate_template_explicit(...)` again, preserve the
-   current split:
-   - non-pack explicit deduction: name-based pre-deduction map first, then
-     defaults, then overload mismatch
-   - pack-bearing explicit deduction: existing positional fallback only
-3. Before widening Phase 6, reproduce both sides of the split:
-   - `test_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp`
-   - `test_global_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp`
-   - `test_explicit_template_defaulted_param_deduction_ret42.cpp`
-   - `test_pack_decltype_simple_ret42.cpp`
-   - `test_variadic_template_pack_before_tail_trailing_return_ret0.cpp`
-   - `test_namespaced_pair_swap_sfinae_ret0.cpp`
-4. If you continue Phase 6 after that, the next worthwhile slice is designing a
-   pack-aware mapping helper rather than widening the current name-based remap
-   in place.
-5. **~~Known gap — early instantiation without arg_types~~ (INVESTIGATED: NOT A BUG)**:
-   The early `try_instantiate_template_explicit(name, *template_args)` call at
-   `src/Parser_Expr_PrimaryExpr.cpp:2405` does fire and can succeed for function
-   templates, BUT it does not cause issues because:
-   - The early instantiation uses `explicit_args + defaults` as template args
-   - The later instantiation uses `explicit_args + deduced_from_call_args`
-   - These produce DIFFERENT instantiation keys (e.g., `func<T, int>` vs `func<T, Marker>`)
-   - The later path creates a separate instantiation with the correctly deduced args
-   - The call expression uses the later instantiation, not the early one
-   This was verified by debug tracing on 2026-04-12. The warning message at line 2411
-   ("Parsed template arguments but instantiation failed") appears but is benign.
-
-### Latest completed slice
-
-  - threaded explicit call-argument types through the remaining qualified
-    explicit-template call paths in:
-    - `src/Parser_Expr_PrimaryExpr.cpp`
-    - `src/Parser_Expr_PostfixCalls.cpp`
-  - kept the non-call qualified-id/template-reference paths unchanged because
-    they still do not have call-argument types available at that stage
-  - added:
-    - `tests/test_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp`
-    - `tests/test_global_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp`
-  - validation after this slice:
-    - `make main CXX=clang++`
-    - `bash ./tests/run_all_tests.sh test_explicit_template_defaulted_param_deduction_ret42.cpp test_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp test_global_namespace_qualified_explicit_template_defaulted_param_deduction_ret42.cpp test_pack_decltype_simple_ret42.cpp test_variadic_template_pack_before_tail_trailing_return_ret0.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
-    - `bash ./tests/run_all_tests.sh`
-    - 2045 pass, 132 expected-fail
-
-### Previous completed slice
-
-  - tightened `try_instantiate_template_explicit(...)` so the shared
-    `buildDeductionMapFromCallArgs(...)` helper is the only explicit-deduction
-    path for signatures without template/function parameter packs
-  - kept the older positional explicit-deduction fallback only for pack-bearing
-    signatures, matching the Phase 6 guardrail that broader remapping needs an
-    explicit pack-aware contract first
-  - clarified the shared helper contract in `src/Parser.h` so future follow-up
-    work does not accidentally reuse the non-pack path for pack-bearing
-    signatures
-  - validation after this slice:
-    - `make main CXX=clang++`
-    - `bash ./tests/run_all_tests.sh test_explicit_template_defaulted_param_deduction_ret42.cpp test_pack_decltype_simple_ret42.cpp test_variadic_template_pack_before_tail_trailing_return_ret0.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
-    - `bash ./tests/run_all_tests.sh`
-    - 2038 pass, 132 expected-fail
-
-### Previous next-agent notes
-
-1. Keep `materializePrimaryTemplateOwnerForLookup(...)` itself
-   registration-free. The new
-   `materializePrimaryTemplateOwnerForConstructorLookup(...)` wrapper in
-   `src/Parser_Expr_PrimaryExpr.cpp` stays constructor-style only. The older
-   qualified-id functional-cast fix now reuses it locally, but only for
-   non-dependent `ns::Template<Args>()` temporaries.
-2. If you extend the older qualified-id path further, keep the new branch local
-   to constructor-style parsing and continue skipping dependent template-arg
-   cases until there is an explicit placeholder/deferred contract for
-   `ns::Template<T>()`.
-3. Reproduce the qualified-id constructor cluster before touching that code:
-   - `test_namespace_template_default_functional_cast_ret42.cpp`
-   - `test_namespace_alias_template_default_functional_cast_ret42.cpp`
-   - `test_nested_namespace_template_default_functional_cast_ret42.cpp`
-   - `test_namespaced_pair_swap_sfinae_ret0.cpp`
-4. Continue Phase 6 from the new stable baseline: keep the name-based
-   `buildDeductionMapFromCallArgs(...)` path for explicit deduction only when
-   there is no template-parameter pack and no function-parameter pack. Any
-   broader remap for pack-bearing signatures needs an explicit pack-aware
-   mapping contract first.
-
-### Previous completed slice
-
-  - extracted the duplicated template functional-style cast parsing/building
-    into `Parser::parseMaterializedTemplateFunctionalCast(...)` in:
-    - `src/Parser.h`
-    - `src/Parser_Expr_PrimaryExpr.cpp`
-  - fixed the older qualified-id branch in
-    `src/Parser_Expr_PrimaryExpr.cpp` so non-dependent
-    `ns::Template<Args>()` expressions no longer fall through into the generic
-    qualified-id call path; when class/alias owner materialization succeeds,
-    the parser now builds a constructor-style temporary directly
-  - deliberately kept that older qualified-id fix local and narrow:
-    - still uses `materializePrimaryTemplateOwnerForConstructorLookup(...)`
-      only from the constructor-style branch
-    - still skips dependent explicit template arguments
-    - still leaves `materializePrimaryTemplateOwnerForLookup(...)`
-      registration-free
-  - added:
-    - `tests/test_namespace_template_default_functional_cast_ret42.cpp`
-    - `tests/test_namespace_alias_template_default_functional_cast_ret42.cpp`
-    - `tests/test_nested_namespace_template_default_functional_cast_ret42.cpp`
-  - validation after this slice:
-    - `.\build_flashcpp.bat`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_default_functional_cast_ret42.cpp test_late_member_body_class_template_functional_style_ret42.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_namespace_template_default_functional_cast_ret42.cpp test_template_default_functional_cast_ret42.cpp test_namespace_template_default_member_ret42.cpp test_nested_namespace_template_default_member_ret42.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_namespace_template_default_functional_cast_ret42.cpp test_namespace_alias_template_default_functional_cast_ret42.cpp test_nested_namespace_template_default_functional_cast_ret42.cpp test_template_default_functional_cast_ret42.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
-    - 2061 pass, 131 expected-fail
-
-### Older completed slices
-
-  - extracted shared explicit/implicit pre-deduction into
-    `Parser::buildDeductionMapFromCallArgs(...)` in:
-    - `src/Parser.h`
-    - `src/Parser_Templates_Inst_Deduction.cpp`
-  - switched `try_instantiate_template_explicit(...)` to consult that
-    name-based map before defaults for the stable non-pack case, fixing the
-    `deduced_call_arg_index` bug where defaulted-but-deducible parameters could
-    incorrectly fall back to their defaults
-  - added:
-    - `tests/test_explicit_template_defaulted_param_deduction_ret42.cpp`
-  - narrowed the new explicit-deduction remap back to the stable cases only:
-    signatures with template/function parameter packs now stay on the older
-    positional fallback until a pack-aware mapping is designed, which restores:
-    - `tests/test_variadic_template_pack_before_tail_trailing_return_ret0.cpp`
-  - extracted the parser-owned constructor-style registration contract into
-    `materializePrimaryTemplateOwnerForConstructorLookup(...)` and switched only
-    the three already-safe constructor-style exits in
-    `src/Parser_Expr_PrimaryExpr.cpp` to use it
-  - important non-merged finding:
-    - `ns::Template<Args>()` still flows through the older qualified-id call
-      path rather than the newer constructor-style exits; a scratch regression
-      in that shape still bottoms out in codegen with
-      `struct type info not found for type_index=0`
-  - validation after this slice:
-    - `.\build_flashcpp.bat`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_explicit_template_defaulted_param_deduction_ret42.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_variadic_template_pack_before_tail_trailing_return_ret0.cpp test_explicit_template_defaulted_param_deduction_ret42.cpp test_namespaced_pair_swap_sfinae_ret0.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_default_functional_cast_ret42.cpp test_namespace_template_default_member_ret42.cpp test_nested_namespace_template_default_member_ret42.cpp test_late_member_body_class_template_functional_style_ret42.cpp test_method_on_temporary_ret0.cpp test_namespaced_pair_swap_sfinae_ret0.cpp test_explicit_template_defaulted_param_deduction_ret42.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
-    - 2058 pass, 131 expected-fail
-
-  - added an explicit parser-owned
-    `registerAndNormalizeLateMaterializedTopLevelNode(...)` step to the
-    namespace-qualified brace-init path in
-    `src/Parser_Expr_PrimaryExpr.cpp` right after
-    `materializePrimaryTemplateOwnerForLookup(...)`, so the
-    `ns::Template<Args>{...}` branch normalizes freshly materialized class
-    templates before building its `ConstructorCallNode`
-  - deliberately left the older `qual_id`-based owner-materialization exit in
-    `src/Parser_Expr_PrimaryExpr.cpp` registration-free after confirming that
-    adding the same step there still regresses:
-    - `test_namespaced_pair_swap_sfinae_ret0.cpp`
-  - validation after this slice:
-    - `make main CXX=clang++`
-    - `bash ./tests/run_all_tests.sh test_namespaced_pair_swap_sfinae_ret0.cpp test_template_static_member_initializer_nested_constexpr_member_call_ret42.cpp test_method_on_temporary_ret0.cpp test_late_member_body_class_template_functional_style_ret42.cpp test_template_default_functional_cast_ret42.cpp test_namespace_template_default_member_ret42.cpp test_nested_namespace_template_default_member_ret42.cpp`
-    - `bash ./tests/run_all_tests.sh`
-    - 2027 pass, 131 expected-fail
-  - switched the remaining parser-owned single-node class-template
-    materialization exits that were still using bare
-    `registerLateMaterializedTopLevelNode(...)` in:
-    - `src/Parser_Statements.cpp`
-    - `src/Parser_Templates_Class.cpp`
-    - `src/Parser_Templates_Inst_ClassTemplate.cpp`
-    - `src/Parser_Templates_Inst_Substitution.cpp`
-    - `src/Parser.h`
-  - kept `materializePrimaryTemplateOwnerForLookup(...)` registration-free after
-    confirming that moving registration/normalization into the helper itself
-    regressed:
-    - `test_namespaced_pair_swap_sfinae_ret0.cpp`
-    - `test_template_static_member_initializer_nested_constexpr_member_call_ret42.cpp`
-  - moved the parser-owned late-materialization step in
-    `src/Parser_Expr_PrimaryExpr.cpp` to the two functional-style cast exits
-    instead, using `registerAndNormalizeLateMaterializedTopLevelNode(...)`
-    directly on the returned `instantiated_struct_node`
-  - validation after this slice:
-    - `make main CXX=clang++`
-    - `bash ./tests/run_all_tests.sh test_namespaced_pair_swap_sfinae_ret0.cpp test_template_static_member_initializer_nested_constexpr_member_call_ret42.cpp test_method_on_temporary_ret0.cpp test_late_member_body_class_template_functional_style_ret42.cpp test_template_default_functional_cast_ret42.cpp test_template_dependent_placeholder_base_ret0.cpp test_extern_template_ret0.cpp test_extern_template_ns_qualified_ret0.cpp test_explicit_template_nontype_ret5.cpp test_qualified_base_nested_member_alias_ret42.cpp test_qualified_base_full_spec_alias_chain_ret42.cpp test_identifier_binding_template_member_outofline_implicit_member_ret42.cpp`
-    - `bash ./tests/run_all_tests.sh`
-    - 2025 pass, 131 expected-fail
-  - added `Parser::registerAndNormalizeLateMaterializedTopLevelNode(...)` and
-    `Parser::registerAndNormalizeLateMaterializedTopLevelNodeFront(...)` in
-    `src/Parser.h` so late AST-root registration can explicitly drain pending
-    semantic roots in the same parser-owned step
-  - switched the targeted lazy/member-function/deduction/type-specifier exits
-    called out above to the new helper in:
-    - `src/Parser_Templates_Lazy.cpp`
-    - `src/Parser_Templates_Inst_MemberFunc.cpp`
-    - `src/Parser_Templates_Inst_Deduction.cpp`
-    - `src/Parser_Templates_Inst_Substitution.cpp`
-    - `src/Parser_TypeSpecifiers.cpp`
-  - kept the full-specialization member replay in
-    `src/Parser_Templates_Inst_Substitution.cpp` batched, but added one shared
-    `normalizePendingSemanticRootsIfAvailable()` drain after the constructor /
-    destructor / method registration loop so the queue is normalized once per
-    specialization replay instead of depending on outer callers
-  - validation after this slice:
-    - `make main CXX=clang++`
-    - `bash ./tests/run_all_tests.sh member_func_template_call_ret3.cpp template_member_access_ret42.cpp test_template_default_member_lookup_ret42.cpp test_identifier_binding_template_member_outofline_implicit_member_ret42.cpp test_template_spec_outofline_default_arg_ret42.cpp test_template_lazy_static_member_implicit_this_fail.cpp`
-    - `bash ./tests/run_all_tests.sh`
-    - 2006 pass, 128 expected-fail
-  - replaced the last manual class-template constructor materialization branch
-    in `src/ExpressionSubstitutor.cpp` with
-    `materializeTemplateInstantiationForLookup(...)`, so the substitution layer
-    no longer keeps its own `try_instantiate_class_template(...)` +
-    type-map-recovery path for explicit template constructor calls
-  - switched that constructor path to use the resolved `TypeInfo`’s registered
-    type index/category instead of raw `type_index_` access
-  - removed the dead `ExpressionSubstitutor::ensureTemplateInstantiated(...)`
-    declaration/definition because it had no remaining call sites after the
-    shared helper migration
-  - Validation after this slice:
-    - `make main CXX=clang++`
-    - `bash ./tests/run_all_tests.sh test_template_ctor_ret0.cpp test_partial_spec_template_ctor_ret0.cpp test_ool_template_ctor_ret5.cpp test_ool_template_ctor_brace_init_ret10.cpp test_decltype_base_with_substitution_ret42.cpp`
-    - `bash ./tests/run_all_tests.sh`
-    - 2004 pass, 128 expected-fail
-  - removed the last two unqualified `Template<Args>::member` fallback branches
-    in `src/Parser_Expr_PrimaryExpr.cpp`, so the primary-expression parser no
-    longer rebuilds instantiated owners by hand after the shared helper runs
-  - switched out-of-line `ClassName<Args>::member` owner recovery in
-    `src/Parser_Decl_FunctionOrVar.cpp` to
-    `materializePrimaryTemplateOwnerForLookup(...)` instead of open-coding
-    `get_instantiated_class_name(...)` plus namespace/type-map fallback
-  - added `tests/test_template_spec_outofline_default_arg_ret42.cpp` to cover
-    an out-of-line specialization that only binds when owner recovery completes
-    the defaulted class-template argument
-  - fixed the previously tracked template-object construction regression by
-    constexpr-folding substituted non-static default member initializers during
-    top-level class-template instantiation, so `sizeof(U)`-driven initializers
-    survive both named-object and temporary construction
-  - replaced the two remaining namespace-qualified
-    `src/Parser_Expr_PrimaryExpr.cpp` replay branches with the shared
-    parser-owned `materializePrimaryTemplateOwnerForLookup(...)` helper so both
-    the direct `ns::Template<Args>::member` path and the older explicit
-    qualified-id flow stop rebuilding instantiated owners by hand
-  - added:
-    - `tests/test_template_object_default_member_init_sizeof_ret84.cpp`
-    - `tests/test_namespace_template_default_member_ret42.cpp`
-    - `tests/test_nested_namespace_template_default_member_ret42.cpp`
-    - `tests/test_template_spec_outofline_default_arg_ret42.cpp`
-  - Validation after this slice:
-    - `.\build_flashcpp.bat`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_spec_outofline_default_arg_ret42.cpp test_template_spec_outofline_ret42.cpp test_identifier_binding_template_member_outofline_implicit_member_ret42.cpp test_template_member_outofline_mixed_order_bindings_ret42.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_object_default_member_init_sizeof_ret84.cpp test_template_nested_default_member_init_sizeof_ret42.cpp test_template_nested_default_member_init_nttp_ret42.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_namespace_template_default_member_ret42.cpp test_namespace_alias_template_default_member_ret42.cpp test_template_alias_member_qualifier_compose_ret0.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_namespace_template_default_member_ret42.cpp test_nested_namespace_template_default_member_ret42.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
-    - 2008 pass, 125 expected-fail
-  - replaced three remaining `src/Parser_Expr_PrimaryExpr.cpp` owner/name
-    recovery branches with the shared parser-owned
-    `materializePrimaryTemplateOwnerForLookup(...)` helper so explicit
-    `Template<Args>::member` parsing (qualified and unqualified) and
-    template functional-style casts no longer hand-fill default arguments and
-    rebuild instantiated owner names independently
-  - added:
-    - `tests/test_namespace_alias_template_default_member_ret42.cpp`
-    - `tests/test_template_default_member_lookup_ret42.cpp`
-    - `tests/test_template_default_functional_cast_ret42.cpp`
-  - Validation after this slice:
-    - `.\build_flashcpp.bat`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_namespace_alias_template_default_member_ret42.cpp test_template_alias_member_qualifier_compose_ret0.cpp test_template_default_qualified_arg_order_ret42.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_default_member_lookup_ret42.cpp test_namespace_alias_template_default_member_ret42.cpp test_template_alias_member_qualifier_compose_ret0.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_default_functional_cast_ret42.cpp test_template_default_member_lookup_ret42.cpp test_namespace_alias_template_default_member_ret42.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
-    - 2002 pass, 125 expected-fail
-  - reran the previously reported alias/array crash cluster and confirmed it is
-    no longer live on the branch; the current materialization baseline already
-    compiles and runs those regressions cleanly
-  - extracted shared late `TypeInfo::templateArgs()` rebinding in
-    `src/ExpressionSubstitutor.cpp` so qualified-identifier replay and late
-    type substitution now use the same dependent-name / surviving-type-name
-    substitution path instead of maintaining two copies
-  - switched `Template<Args>::member(...)` owner resolution in
-    `src/Parser_Expr_BinaryPrecedence.cpp` to
-    `materializeTemplateInstantiationForLookup(...)` instead of the old
-    `try_instantiate_class_template(...)` + `get_instantiated_class_name(...)`
-    pair
-  - removed the redundant eager class-template instantiation in
-    `src/Parser_Expr_PostfixCalls.cpp` before
-    `parse_template_brace_initialization(...)`, leaving the shared brace-init
-    helper as the only owner-materialization path there
-  - Validation after this slice:
-    - `.\build_flashcpp.bat`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_alias_funcptr_ret0.cpp test_template_alias_member_qualifier_compose_ret0.cpp test_template_type_alias_array_member_brace_init_ret0.cpp test_template_type_alias_array_member_extra_outer_args_ret0.cpp test_template_type_alias_array_member_substring_name_ret0.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_struct_local_alias_static_init_ret0.cpp test_alias_template_nested_member_value_ret42.cpp test_nested_template_instantiation_ret42.cpp test_member_template_default_value_substitution_ret0.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 member_func_template_call_ret3.cpp template_member_access_ret42.cpp test_phase3_decltype_context_ret42.cpp test_explicit_condition_ret42.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_alias_template_brace_init_ret42.cpp test_template_brace_init_ret42.cpp test_template_brace_init_userdefined_ret3.cpp template_template_brace_init_ret0.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
-    - 2000 pass, 125 expected-fail
-  - fixed the alias-metadata regression in the shared concrete-owner/member
-    resolver by preferring an exact published `InstantiatedOwner::member` entry
-    before walking a chained member lookup, which preserves array extents,
-    function signatures, and qualifier-composition aliases
-  - collapsed the ordinary placeholder and template-template placeholder paths
-    in `substitute_template_parameter(...)` onto the same
-    parser-owned concrete-owner/member-chain materialization helper instead of
-    open-coding instantiation, registry fallback, instantiated-name recovery,
-    and chain replay twice
-  - centralized the remaining placeholder-arg fallback for cases that still
-    encode a dependent template parameter as a struct-typed placeholder whose
-    type name matches the parameter name, so that rebinding logic now lives in
-    one local helper instead of a one-off loop in the template-template branch
-  - switched `src/ExpressionSubstitutor.cpp` explicit member-template owner
-    recovery to `materializeTemplateInstantiationForLookup(...)` instead of
-    calling `try_instantiate_class_template(...)` plus
-    `get_instantiated_class_name(...)` directly
-  - Validation after this slice:
-    - `.\build_flashcpp.bat`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_template_template_alias_chain_ret42.cpp test_template_template_full_spec_alias_chain_ret42.cpp test_alias_template_brace_init_ret42.cpp test_template_alias_funcptr_ret0.cpp test_template_alias_member_qualifier_compose_ret0.cpp test_template_type_alias_array_member_brace_init_ret0.cpp test_template_type_alias_array_member_extra_outer_args_ret0.cpp test_template_type_alias_array_member_substring_name_ret0.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 member_func_template_call_ret3.cpp test_nested_template_instantiation_ret42.cpp test_identifier_binding_template_member_outofline_implicit_member_ret42.cpp test_member_function_template_in_partial_spec_ret0.cpp test_member_template_func_in_specialization_ret0.cpp test_member_template_default_value_substitution_ret0.cpp`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
-    - 2000 pass, 125 expected-fail
-  - taught unqualified template brace initialization to recognize alias
-    templates as first-class materialization candidates instead of falling
-    through with `Missing semicolon` at `Alias<T>{...}`
-  - switched `parse_template_brace_initialization(...)` onto
-    `materializeTemplateInstantiationForLookup(...)` so alias templates,
-    registry fallback, and resolved `TypeInfo` lookup use the same parser-owned
-    path as the other materialization hardening work
-  - extended dependent template-parameter placeholders in
-    `src/Parser_TypeSpecifiers.cpp` to preserve chained member access like
-    `TT<T>::type::type` instead of truncating after the first `::type`
-  - taught `substitute_template_parameter(...)` to replay those preserved
-    member chains against the concrete instantiation, including
-    template-template parameters
-  - replaced the remaining incomplete-base fallback in
-    `validate_and_add_base_class(...)` with
-    `materializeTemplateInstantiationForLookup(...)` so base lookup no longer
-    hand-rolls another instantiation / lookup path
-  - added:
-    - `tests/test_alias_template_brace_init_ret42.cpp`
-    - `tests/test_template_template_alias_chain_ret42.cpp`
-    - `tests/test_template_template_full_spec_alias_chain_ret42.cpp`
-  - Validation after this slice:
-    - `.\build_flashcpp.bat`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_alias_template_brace_init_ret42.cpp test_template_template_alias_chain_ret42.cpp test_template_template_full_spec_alias_chain_ret42.cpp test_qualified_base_nested_member_alias_ret42.cpp test_qualified_base_full_spec_alias_chain_ret42.cpp`
-  - taught base-class post-template parsing / deferral to keep the full
-    member-type chain after template arguments (for patterns like
-    `Base<T>::type::type`) instead of only remembering one trailing `::member`
-  - updated immediate and deferred base-class resolution to walk those chained
-    member-type suffixes through one parser-owned helper in
-    `src/Parser_Expr_QualLookup.cpp`, preserving instantiated-owner lookup
-    names while the chain is resolved
-  - refreshed exact/full-specialization alias publication so sibling aliases
-    like `type = selected;` can bind to the concrete
-    `InstantiatedOwner::selected` entry instead of keeping a stale
-    declaration-site alias target
-  - added:
-    - `tests/test_qualified_base_nested_member_alias_ret42.cpp`
-    - `tests/test_qualified_base_full_spec_alias_chain_ret42.cpp`
-  - Validation after this slice:
-    - `.\build_flashcpp.bat`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
-    - 1996 pass, 125 expected-fail
-  - extracted the deduction-time `materialize_placeholder_args` logic from
-    `src/Parser_Templates_Inst_Deduction.cpp` into the reusable
-    `Parser::materializePlaceholderTemplateArgs(...)` helper in `src/Parser.h`
-    so dependent non-type placeholder materialization now lives behind one
-    parser-owned utility instead of a 100+ line local lambda
-  - added `Parser::materializeInstantiatedMemberAliasTarget(...)` in
-    `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser.h` and reused it
-    from the primary, partial-specialization, and full-specialization alias
-    registration paths
-  - updated the full-specialization alias publication path to refresh existing
-    qualified alias entries in place instead of silently keeping stale
-    placeholder-backed registrations
-  - Validation after this slice:
-    - `.\build_flashcpp.bat`
-    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
-    - 1994 pass, 125 expected-fail
-  - added `Parser::materializeTemplateInstantiationForLookup` in
-    `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser.h` so parser-owned
-    materialization now covers alias templates, ordinary template instantiations,
-    registry fallback, and pending-sema normalization behind one helper
-  - switched the remaining `ExpressionSubstitutor.cpp` template-name recovery sites
-    to that helper instead of open-coded
-    `instantiate_and_register_base_template(...)` /
-    `get_instantiated_class_name(...)` fallback logic
-  - hardened instantiated class-template type-alias registration in
-    `src/Parser_Templates_Inst_ClassTemplate.cpp` so dependent
-    `Base$placeholder::member` alias targets are materialized against the current
-    concrete template arguments and pinned under qualified owner names
-  - extended the struct-local alias consumer path in `src/ExpressionSubstitutor.cpp`
-    so nested alias uses like `holder<B>::selected::value` rematerialize the
-    deferred alias target before constexpr/static-member normalization
-  - added `tests/test_alias_template_nested_member_value_ret42.cpp` to cover nested
-    deferred alias/member consumption inside an instantiated class template
-  - introduced `Parser::AliasTemplateMaterializationResult` in
-    `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser.h` so deferred alias-template
-    materialization keeps both the instantiated base name and any resolved concrete `TypeInfo`
-  - switched the deferred alias path in `src/Parser_TypeSpecifiers.cpp` to use that structured
-    helper for template-parsing and implicit/explicit member-alias cases instead of the older
-    open-coded alias-chain/class-instantiation fallback
-  - consolidated deferred alias member lookup / placeholder creation in
-    `src/Parser_TypeSpecifiers.cpp` onto one local finalization path and normalized pending
-    semantic roots before consuming the materialized result
-  - added `tests/test_alias_template_deferred_return_ret0.cpp` to cover deferred alias-template
-    materialization in a template return type (`choose_value_t<B>`)
-- Validation after this slice: `make main CXX=clang++` and `bash tests/run_all_tests.sh` —
-  1949 pass, 0 fail.
-### Earlier completed work on this branch
-
-- Completed in this slice:
-  - reused `resolveAliasTemplateInstantiation(...)` from `src/Parser_Templates_Inst_Substitution.cpp`
-    in `src/Parser_TypeSpecifiers.cpp` for ordinary deferred alias-template type parsing when we
-    are outside template instantiation and the alias target is not an implicit `::member` alias
-  - collapsed the duplicated ordinary alias-template member-resolution tail in
-    `src/Parser_TypeSpecifiers.cpp` onto one local finalization path
-  - kept the legacy deferred fallback for template-instantiation/member-alias cases so
-    `enable_if_t`/SFINAE placeholder behavior still matches the pre-refactor path
-  - added `tests/test_alias_template_chain_type_specifier_ret42.cpp`
-  - added `tests/test_alias_template_member_type_type_specifier_ret42.cpp`
-  - fixed the struct-local type alias static-initializer bug by teaching `ExpressionSubstitutor`
-    to resolve `QualifiedIdentifierNode` namespaces like `constant_type` through the current
-    instantiated owner type before falling back to template-name parsing
-  - threaded the current instantiated owner type name into the static-member substitution paths in
-    `Parser_Templates_Inst_ClassTemplate.cpp` and `Parser_Templates_Lazy.cpp`
-  - added `tests/test_struct_local_alias_static_init_ret0.cpp`
-  - Fixed hash drift in `ValueArgKey::hash()` (`src/TemplateTypes.h:200`): changed
-    `std::hash<uint32_t>{}(dependent_name.handle)` to `std::hash<StringHandle>{}(dependent_name)`
-    so both `TemplateTypeArg::hash()` and `ValueArgKey::hash()` use the same hash strategy for
-    dependent names (Phase 1 canonicalization).
-  - added `tests/test_toplevel_alias_chain_nontype_ret42.cpp` — covers top-level `using` alias
-    chain with bool/int non-type template arguments (`bool_constant<true/false>` accessed through
-    `true_type`/`false_type` aliases and `cond_val<B>`).
-  - removed the fixed struct-local alias static-init issue from `docs/KNOWN_ISSUES.md`
-- Validation: `make main CXX=clang++` and `bash tests/run_all_tests.sh` — 1948 pass, 0 fail.
-- Recommended next steps (priority order):
-  1. Extend the shared alias-template helper path to template-instantiation and implicit-member
-     deferred aliases (`enable_if_t`, `typename alias<...>::type`) without regressing the existing
-     placeholder/member lookup semantics.
-  2. Collapse the remaining alias/class instantiation fallback logic in `ExpressionSubstitutor.cpp`
-     onto the same structured helper result instead of open-coded name recovery.
-  3. Continue Phase 1: extract `materialize_placeholder_args` lambda
-     (`src/Parser_Templates_Inst_Deduction.cpp:2059-2178`) to a `Parser` member function (template
-     on `ParamContainer`/`ArgContainer` like the existing `resolveBaseInitializerNameForTemplateArgs`).
-
----
-
-## Executive summary
-
-The immediate regression is fixed, but the compiler still spreads template-instantiation identity and alias-template materialization across too many parser-owned paths.
-
-The main architectural problem is no longer just "dependent `B` collided with concrete `false`". The broader issue is that the same logical fact is represented in several partially overlapping ways:
-
-- `TemplateTypeArg` stores value/template/dependency state directly in `src\TemplateRegistry_Types.h:170-183`
-- `TemplateInstantiationKey` stores a second value-identity model in `src\TemplateTypes.h:185-240`
-- alias-template materialization is reimplemented in several parser entry points instead of one authoritative helper
-- late materialized roots are normalized through an ad-hoc queue/flush contract rather than a single explicit work model
-
-The next cleanup should therefore happen in this order:
-
-1. **Canonicalize non-type template-argument identity**
-2. **Centralize alias-template materialization and alias-chain resolution**
-3. **Make late materialization and pending-sema normalization one explicit contract**
-4. **Replace placeholder-name heuristics with explicit unresolved-dependent states**
-
-This is intentionally narrower than a full "move all template instantiation into sema" rewrite. It is the smallest architectural slice that removes the class of bug we just fixed while improving the parser/sema boundary for future work.
-
----
-
-## Current branch status
-
-### What is already better
-
-- Dependent non-type arguments now keep distinct identity in `TemplateInstantiationKey`, so declaration-time placeholders do not collide with concrete values like `false`.
-- Top-level and non-top-level alias registrations now materialize alias-template-backed types more consistently.
-- SFINAE return-type viability is stricter when a dependent `::type` placeholder survives alias resolution.
-- The original five metaprogramming regressions are passing again.
-
-### What is still structurally weak
-
-#### 1. Non-type template-argument identity is still split across two layers
-
-`TemplateTypeArg` still mixes these concerns directly:
-
-- value-vs-type-vs-template-template
-- concrete value storage
-- dependency tagging
-- dependent-name storage
-
-Relevant code:
-
-- `src\TemplateRegistry_Types.h:170-183`
-- `src\TemplateRegistry_Types.h:348-365`
-- `src\TemplateRegistry_Types.h:483-565`
-
-Then `TemplateInstantiationKey` re-encodes part of the same concept separately via `ValueArgKey`:
-
-- `src\TemplateTypes.h:185-240`
-- `src\TemplateTypes.h:245-265`
-- `src\TemplateRegistry_Types.h:699-721`
-
-That fixed the immediate collision, but it still means identity is partly owned by `TemplateTypeArg` and partly by the key-building layer.
-
-#### 2. Alias-template materialization is duplicated
-
-The same broad job shows up in multiple places:
-
-- parse a raw alias-template-id use
-- substitute alias parameters into target template arguments
-- evaluate non-type argument expressions when concrete
-- follow alias chains
-- instantiate the final class template
-- register late materialized structs
-- rewrite the resulting `TypeSpecifierNode`
-
-Relevant code:
-
-- `src\Parser_Decl_TopLevel.cpp:827-1071`
-- `src\Parser_Decl_TypedefUsing.cpp:410-434`
-- `src\Parser_TypeSpecifiers.cpp:995-1235`
-- `src\Parser_Templates_Inst_Substitution.cpp:19-180`
-
-This is the clearest place where one bug can require touching several parser files.
-
-#### 3. Late materialization is still parser-driven and normalized opportunistically
-
-There is already useful infrastructure:
-
-- pending semantic roots in `src\Parser.h:976-993`
-- parser-to-sema bridge in `src\Parser_Core.cpp:419-423`
-- IR-side bridge in `src\IrGenerator_Helpers.cpp:5-11`
-
-But the actual call pattern is still scattered:
-
-- template/class instantiation sites call `registerLateMaterializedTopLevelNode(...)` from many parser files
-- some sites also call `normalizePendingSemanticRootsIfAvailable()`
-- constexpr lazy-member lookup can instantiate members on demand and then flush pending roots immediately (`src\ConstExprEvaluator_Members.cpp:1319-1326`)
-
-That works, but it is still too easy for a new instantiation path to forget one part of the contract.
-
-#### 4. Some viability checks still infer semantics from names instead of explicit state
-
-The current SFINAE guard in `src\Parser_Templates_Inst_Deduction.cpp:2175-2190` is an improvement, but it still detects one important unresolved case through:
-
-- incomplete-instantiation state
-- plus a string-level `::` name heuristic
-
-That is a useful stopgap, not a final representation.
-
----
+- **Before Phase 3:** finish consolidating alias/materialization entry points.
+- **Before Phase 5:** finish Phase 3 and Phase 4, then remove or quarantine the remaining codegen fallback materialization paths so ownership can move intentionally.
 
 ## Target invariants
 
-After this follow-up work:
+After the remaining work:
 
 1. A non-type template argument has **one canonical identity model** from parser capture through registry lookup and instantiated-name generation.
 2. Alias-template uses are materialized through **one authoritative helper**, not hand-reimplemented at each parser entry point.
 3. Any late-materialized AST root that becomes visible to sema, constexpr, or codegen goes through **one explicit registration + normalization path**.
 4. Unresolved dependent placeholders are identified by **typed state**, not by best-effort name inspection.
+5. Codegen only consumes already-materialized constructor declarations; it does not decide when template constructors get instantiated.
 
----
+## Short bottom line
 
-## Recommended data-model direction
+The document no longer needs another long historical audit pass before the next architecture work. The remaining path is straightforward:
 
-I do **not** recommend only replacing `is_dependent + dependent_name` with `std::optional<StringHandle>`.
-
-That would remove one invalid state, but it would still be too weak for the real architectural need. The plan should instead move toward something closer to:
-
-```cpp
-struct DependentValueIdentity {
-	StringHandle name;
-};
-
-struct TemplateValueArg {
-	TypeCategory category;
-	std::variant<int64_t, DependentValueIdentity> payload;
-};
-```
-
-The exact final type can differ, but the important design rule is:
-
-- **dependency identity should be carried as a first-class payload**
-- **key building should consume that payload directly**
-- **stringification/hash/equality should all project from the same carrier**
-
-That gives the cleanup we wanted from `std::optional`, but in a form that can actually become authoritative.
-
----
-
-## Design questions raised during branch work
-
-### Q: Is there any point in keeping both `TypeInfo::TemplateArgInfo` and `TemplateTypeArg`?
-
-**Short answer:** yes **for now**, but not in their current blurry form.
-
-`TemplateTypeArg` is still the richer working representation:
-
-- deduction/matching state
-- dependent-vs-concrete identity
-- pack/template-template/member-pointer metadata
-- parser/substitution-time manipulation
-
-`TypeInfo::TemplateArgInfo` is the lighter persistent representation owned by instantiated `TypeInfo` entries and their instantiation contexts:
-
-- compact storage on `TypeInfo`
-- fewer dependencies from core type records into template-matching logic
-- easier persistence of type-owned template environments for later constexpr/codegen/sema lookups
-
-So they are **not fully equivalent today**, even if they overlap heavily.
-
-What *does not* make sense long-term is letting both evolve as peer representations with duplicated semantics. The better direction is:
-
-1. keep a **canonical template-argument identity carrier**
-2. let `TemplateTypeArg` stay a rich working/adaptation layer if needed
-3. make `TemplateArgInfo` either:
-   - a compact serialized/persistent projection of that canonical carrier, or
-   - disappear entirely if the canonical carrier is cheap enough to store directly
-
-In other words: **keeping two layers can make sense; keeping two independently authoritative models does not**.
-
-### Q: Does it make sense to keep all `add_type_alias_copy()` overloads?
-
-**Short answer:** not really in their current form.
-
-The overload set is convenient, but it is also bug-prone because alias canonicalization behavior can diverge depending on which overload the caller happened to use. That already showed up in this branch work: the primitive-target fix had to be applied in the `alias_type_spec`-carrying path specifically.
-
-There is still a legitimate distinction between:
-
-- "register an alias from a known canonical target type"
-- "register an alias while preserving the source alias type-specifier surface"
-
-But that should probably be expressed through **one authoritative implementation** with explicit inputs, not multiple overload bodies that can drift. A better shape would be:
-
-- one core helper or builder taking:
-  - alias name
-  - canonical source type/index
-  - fallback size
-  - optional alias type specifier
-- plus, at most, tiny forwarding wrappers if they add no behavior
-
-So the architectural answer is: **keep the semantic distinction, but collapse the overload behavior behind one implementation**.
+- finish the last real **Phase 2** duplication around alias-template materialization,
+- then do **Phase 3** as the explicit late-materialization/sema contract,
+- then do **Phase 4** explicit placeholder state,
+- and only after that start **Phase 5** to remove the remaining parser/codegen ownership blur.
 
 ---
 
@@ -1010,6 +199,8 @@ The recent regression proved that name/key generation is the last point where di
 
 ## Phase 2: centralize alias-template materialization
 
+**Status:** PARTIALLY COMPLETE (targeted fixes landed; authoritative helper still missing)
+
 **Goal**
 
 Make alias-template use resolution one parser-owned service instead of a behavior repeated in top-level using, struct-local using, type-specifier parsing, and substitution helpers.
@@ -1058,6 +249,8 @@ This helper should return more than just a name string. It should carry enough s
 ---
 
 ## Phase 3: make late materialization + pending-sema normalization explicit
+
+**Status:** NOT STARTED (ready once remaining Phase 2 centralization is narrowed)
 
 **Goal**
 
@@ -1110,6 +303,8 @@ The current architecture already has the pieces for incremental sema normalizati
 
 ## Phase 4: replace unresolved-placeholder heuristics with explicit state
 
+**Status:** NOT STARTED
+
 **Goal**
 
 Stop detecting important dependent placeholder cases by combining incomplete-instantiation state with string-level name inspection.
@@ -1141,6 +336,8 @@ Stop detecting important dependent placeholder cases by combining incomplete-ins
 ---
 
 ## Phase 5: only then consider the larger parser/sema ownership move
+
+**Status:** BLOCKED on Phase 2-4 completion and on shrinking the remaining codegen fallback surface
 
 **Goal**
 
@@ -1253,6 +450,8 @@ This mirrors the existing `prepare_nested_template_ctor` lambda at `src/IrGenera
 - The `is_unresolved_noop_ctor` lambda uses a fragile `type_name.front() == '_'` heuristic to detect unresolved template parameter placeholders, which can false-positive on user-defined types (e.g. `_MyAllocator`), silently skipping the constructor call.
 - Both `is_unresolved_noop_ctor` early-return sites (brace-init at line ~1562 and direct-init at line ~2366) skip destructor registration, causing resource leaks when the struct has a destructor.
 
+**Partial fix (2026-04-14, proper sema fix):** The primary root cause — lazy template constructor bodies not having struct member scope during re-parse — is now fixed in `Parser_Templates_Lazy.cpp`. The `is_unresolved_noop_ctor` codegen fallback is no longer triggered for the common template-ctor case. The codegen fallback paths remain as defensive code; Phase 5 should eliminate them entirely by ensuring sema normalizes all function bodies.
+
 **Long-term fix:** Resolve all constructor templates in semantic analysis before reaching codegen. The sema path already partially does this; the codegen fallback should become unnecessary once sema covers all constructor-call shapes (including arity-based fallback and direct-init syntax). **Relates to Phase 3 and Phase 5.**
 
 ### `appendFunctionCallArgType` lacks full type deduction for complex expressions
@@ -1279,15 +478,19 @@ This is not a regression — the old inline code it replaced (deleted lines ~445
 
 **FIXED (2026-04-14 slice):** `SemanticAnalysis::tryAnnotateInitListConstructorArgs` now calls `materializeMatchingConstructorTemplate` after `resolve_constructor_overload`, matching the direct-init sema path.
 
-### `is_unresolved_noop_ctor` early return skips stack allocation but registers destructor
+### `is_unresolved_noop_ctor` early return leaves object uninitialized before destructor registration
 
 **Added:** 2026-04-13 (PR #1255 review — investigate)
 
-The `is_unresolved_noop_ctor` early-return paths at `src/IrGenerator_Stmt_Decl.cpp` (brace-init ~line 1595 and direct-init ~line 2400) skip the `ConstructorCallOp` emission that normally handles stack allocation for struct variables, but still call `register_destructor_if_needed`. This means the variable is never allocated on the stack, yet a destructor call is registered. Currently this is safe because the two regression tests (`test_template_ctor_noop_dtor_direct_init_ret42.cpp` and `test_template_ctor_noop_dtor_list_init_ret42.cpp`) use destructors that only modify a global variable and never dereference `this`. For types whose destructors access member data, this would be undefined behavior.
+~~The `is_unresolved_noop_ctor` early-return paths at `src/IrGenerator_Stmt_Decl.cpp` (brace-init ~line 1595 and direct-init ~line 2400) skip the `ConstructorCallOp` emission that normally handles stack allocation for struct variables, but still call `register_destructor_if_needed`. This means the variable is never allocated on the stack, yet a destructor call is registered. Currently this is safe because the two regression tests (`test_template_ctor_noop_dtor_direct_init_ret42.cpp` and `test_template_ctor_noop_dtor_list_init_ret42.cpp`) use destructors that only modify a global variable and never dereference `this`. For types whose destructors access member data, this would be undefined behavior.
 
 Note: `VariableDeclOp` IS emitted at line 1461 (brace-init) and line 2015 (direct-init), both before the `is_unresolved_noop_ctor` check. So the stack space is allocated. The risk is that member data is uninitialized (not zero-initialized) when the destructor runs, which is UB for destructors that access members.
 
-**Follow-up:** The noop path should zero-initialize the allocated stack object before registering the destructor, or the long-term fix is to resolve all template constructors in sema so the noop path is never reached. **Relates to Phase 3 and Phase 5.**
+Follow-up: The noop path should zero-initialize the allocated stack object before registering the destructor, or the long-term fix is to resolve all template constructors in sema so the noop path is never reached.~~
+
+**FIXED (2026-04-14, audit update):** both noop-ctor early-return paths now zero-fill the allocated object (including base subobjects via recursive member stores) before registering the destructor.
+
+**SUPERSEDED (2026-04-14, proper sema fix):** The root cause — missing struct member scope during lazy template constructor body re-parse — is now fixed in `Parser_Templates_Lazy.cpp`. Template constructor bodies are properly parsed with `FunctionParsingScopeGuard`, so `is_unresolved_noop_ctor` is no longer triggered for the common case. The zero-fill safety net and the noop fallback remain as defensive code for edge cases but should be removed in Phase 5 when all codegen fallback materialization is eliminated.
 
 ### `materializeMatchingConstructorTemplate` returns original uninstantiated ctor on failure
 

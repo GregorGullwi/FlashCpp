@@ -212,26 +212,51 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			}
 			registerTypeParamsInScope(param_names, lazy_info.template_args, template_scope, true);
 
+			// When re-parsing a deferred template constructor body with concrete types,
+			// we're no longer in a dependent template context.
+			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
+			parsing_template_depth_ = 0;
+
 			SaveHandle current_pos = save_token_position();
 			restore_lexer_position_only(ctor_decl.template_body_position());
-			gSymbolTable.enter_scope(ScopeType::Function);
-			for (const auto& param : new_ctor_ref.parameter_nodes()) {
-				if (param.is<DeclarationNode>()) {
-					const auto& param_decl = param.as<DeclarationNode>();
-					gSymbolTable.insert(param_decl.identifier_token().value(), param);
-				}
-			}
 
-			{
+			auto parse_ctor_body_with_current_context = [&]() {
 				FlashCpp::ScopedState guard_subs(template_param_substitutions_);
 				populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
-				auto block_result = parse_function_body(true /* is_ctor_or_dtor: constructor */);  // handles function-try-blocks
+				auto block_result = parse_function_body(true /* is_ctor_or_dtor: constructor */);
 				if (!block_result.is_error() && block_result.node().has_value()) {
 					body_to_substitute = block_result.node();
 				}
+			};
+
+			// Use FunctionParsingScopeGuard with full member-function context so
+			// that struct members and 'this' are visible during body re-parse.
+			// This mirrors the regular member function lazy path (line ~595).
+			if (auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
+				struct_it != getTypesByNameMap().end()) {
+				FlashCpp::FunctionParsingScopeGuard func_guard(
+					*this,
+					true,
+					true,
+					nullptr,
+					lazy_info.identity.instantiated_owner_name,
+					struct_it->second->type_index_,
+					new_ctor_ref.parameter_nodes(),
+					nullptr);
+				parse_ctor_body_with_current_context();
+			} else {
+				// Struct type not found in gTypesByNameMap — this can happen for
+				// forward-declared types or types whose registration was deferred.
+				// Fall back to a bare function scope without member context;
+				// member-access in the body will fail, but this matches the
+				// pre-fix behavior and avoids a crash.
+				FLASH_LOG(Templates, Warning, "Lazy ctor body: struct type not found for ",
+						  lazy_info.identity.instantiated_owner_name, ", using bare scope");
+				FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
+				register_parameters_in_scope(new_ctor_ref.parameter_nodes());
+				parse_ctor_body_with_current_context();
 			}
 
-			gSymbolTable.exit_scope();
 			restore_lexer_position_only(current_pos);
 			discard_saved_token(current_pos);
 		}
