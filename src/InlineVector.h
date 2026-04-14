@@ -164,7 +164,7 @@ public:
 		inline_data_[inline_count_] = T{};
 	}
 
-	void clear() {
+	void clear() noexcept(noexcept(std::declval<T&>() = T{})) {
 		resetStorage();
 	}
 
@@ -321,11 +321,10 @@ private:
 		if (!using_inline_storage_) {
 			return false;
 		}
-		std::less<const T*> less;
-		const T* value_ptr = std::addressof(value);
-		const T* inline_begin = inline_data_.data();
-		const T* inline_end = inline_begin + inline_count_;
-		return !less(value_ptr, inline_begin) && less(value_ptr, inline_end);
+		const auto value_address = reinterpret_cast<std::uintptr_t>(std::addressof(value));
+		const auto inline_begin = reinterpret_cast<std::uintptr_t>(inline_data_.data());
+		const auto inline_end = inline_begin + inline_count_ * sizeof(T);
+		return value_address >= inline_begin && value_address < inline_end;
 	}
 
 	void resetInlineStorage() {
@@ -375,7 +374,6 @@ private:
 		inline_count_ = 0;
 		if (!using_inline_storage_) {
 			heap_data_ = std::move(other.heap_data_);
-			other.heap_data_.clear();
 			return;
 		}
 		assert(other.inline_count_ <= inline_data_.size() && "InlineVector inline storage overflow");
