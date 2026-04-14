@@ -29,7 +29,7 @@ ASTNode substituteNonTypeDefaultExpressionImpl(
 	Parser& parser,
 	const ASTNode& default_node,
 	const ParamContainer& template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	if (!default_node.is<ExpressionNode>() || template_args.empty()) {
 		return default_node;
 	}
@@ -48,7 +48,8 @@ std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefaultImpl(
 	Parser& parser,
 	const ASTNode& default_node,
 	const ParamContainer& template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args,
+	std::span<const std::string_view> template_param_names) {
 	ASTNode substituted_default_node = substituteNonTypeDefaultExpressionImpl(
 		parser,
 		default_node,
@@ -61,15 +62,10 @@ std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefaultImpl(
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 	eval_ctx.parser = &parser;
 	eval_ctx.sema = parser.getActiveSemanticAnalysis();
-	eval_ctx.template_args = template_args;
-	eval_ctx.template_param_names.reserve(template_params.size());
-	for (const ASTNode& template_param_node : template_params) {
-		if (!template_param_node.is<TemplateParameterNode>()) {
-			continue;
-		}
-		eval_ctx.template_param_names.push_back(
-			template_param_node.as<TemplateParameterNode>().name());
-	}
+	eval_ctx.template_args.assign(template_args.begin(), template_args.end());
+	eval_ctx.template_param_names.assign(
+		template_param_names.begin(),
+		template_param_names.end());
 
 	auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
 	if (!eval_result.success()) {
@@ -84,7 +80,7 @@ std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefaultImpl(
 ASTNode Parser::substituteNonTypeDefaultExpression(
 	const ASTNode& default_node,
 	const std::vector<ASTNode>& template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	return substituteNonTypeDefaultExpressionImpl(
 		*this,
 		default_node,
@@ -95,7 +91,7 @@ ASTNode Parser::substituteNonTypeDefaultExpression(
 ASTNode Parser::substituteNonTypeDefaultExpression(
 	const ASTNode& default_node,
 	const InlineVector<ASTNode, 4>& template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	return substituteNonTypeDefaultExpressionImpl(
 		*this,
 		default_node,
@@ -106,23 +102,27 @@ ASTNode Parser::substituteNonTypeDefaultExpression(
 std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
 	const ASTNode& default_node,
 	const std::vector<ASTNode>& template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args,
+	std::span<const std::string_view> template_param_names) {
 	return substituteAndEvaluateNonTypeDefaultImpl(
 		*this,
 		default_node,
 		template_params,
-		template_args);
+		template_args,
+		template_param_names);
 }
 
 std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
 	const ASTNode& default_node,
 	const InlineVector<ASTNode, 4>& template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args,
+	std::span<const std::string_view> template_param_names) {
 	return substituteAndEvaluateNonTypeDefaultImpl(
 		*this,
 		default_node,
 		template_params,
-		template_args);
+		template_args,
+		template_param_names);
 }
 
 std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
@@ -540,6 +540,8 @@ std::string_view Parser::instantiate_and_register_base_template(
 		if (primary_template_opt.has_value() && primary_template_opt->is<TemplateClassDeclarationNode>()) {
 			const TemplateClassDeclarationNode& primary_template = primary_template_opt->as<TemplateClassDeclarationNode>();
 			const auto& primary_params = primary_template.template_parameters();
+			const std::vector<std::string_view> primary_param_names =
+				buildTemplateParamNames(primary_params);
 
 			// Fill in defaults for missing arguments
 			std::vector<TemplateTypeArg> filled_args = template_args;
@@ -569,13 +571,13 @@ std::string_view Parser::instantiate_and_register_base_template(
 					}
 					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
 				} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
-					std::vector<TemplateTypeArg> prior_template_args(
-						filled_args.begin(),
-						filled_args.begin() + std::min(i, filled_args.size()));
 					if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
 							default_node,
 							primary_params,
-							prior_template_args);
+							std::span<const TemplateTypeArg>(
+								filled_args.data(),
+								std::min(i, filled_args.size())),
+							primary_param_names);
 						evaluated_default.has_value()) {
 						filled_args.push_back(*evaluated_default);
 						FLASH_LOG(Templates, Debug, "Filled in default non-type argument for param ", i);

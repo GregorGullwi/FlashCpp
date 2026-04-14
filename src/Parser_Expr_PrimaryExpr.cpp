@@ -808,6 +808,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 		std::vector<TemplateTypeArg> completed_args = template_args;
 		const auto& template_params =
 			template_entry->as<TemplateClassDeclarationNode>().template_parameters();
+		const std::vector<std::string_view> template_param_names =
+			buildTemplateParamNames(template_params);
 		for (size_t param_idx = completed_args.size(); param_idx < template_params.size(); ++param_idx) {
 			if (!template_params[param_idx].is<TemplateParameterNode>()) {
 				continue;
@@ -839,13 +841,13 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 				}
 			} else if (param.kind() == TemplateParameterKind::NonType &&
 					   default_node.is<ExpressionNode>()) {
-				std::vector<TemplateTypeArg> prior_template_args(
-					completed_args.begin(),
-					completed_args.begin() + std::min(param_idx, completed_args.size()));
 				if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
 						default_node,
 						template_params,
-						prior_template_args);
+						std::span<const TemplateTypeArg>(
+							completed_args.data(),
+							std::min(param_idx, completed_args.size())),
+						template_param_names);
 					evaluated_default.has_value()) {
 					completed_args.push_back(*evaluated_default);
 				}

@@ -1963,6 +1963,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 	int recursion_depth) {
 	InlineVector<TemplateTypeArg, 4> template_args;
 	std::vector<TypeCategory> deduced_type_args;
+	size_t next_deduced_type_arg = 0;
 	const auto& param_name_to_arg = deduction_info.param_name_to_arg;
 	const auto& pre_deduced_arg_indices = deduction_info.pre_deduced_arg_indices;
 	size_t arg_index = 0;
@@ -2041,10 +2042,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 				template_args.push_back(map_it->second);
 				continue;
 			}
-			if (!deduced_type_args.empty()) {
-				TypeCategory deduced_type = deduced_type_args.front();
+			if (next_deduced_type_arg < deduced_type_args.size()) {
+				TypeCategory deduced_type = deduced_type_args[next_deduced_type_arg++];
 				template_args.push_back(TemplateTypeArg::makeType(nativeTypeIndex(deduced_type)));
-				deduced_type_args.erase(deduced_type_args.begin());
 				continue;
 			}
 

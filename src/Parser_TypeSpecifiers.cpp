@@ -1443,6 +1443,8 @@ ParseResult Parser::parse_type_specifier() {
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 					const auto& template_class = template_opt->as<TemplateClassDeclarationNode>();
 					const auto& template_params = template_class.template_parameters();
+					const std::vector<std::string_view> template_param_names =
+						buildTemplateParamNames(template_params);
 
 					// Fill in defaults for missing parameters
 					for (size_t i = filled_template_args.size(); i < template_params.size(); ++i) {
@@ -1465,13 +1467,13 @@ ParseResult Parser::parse_type_specifier() {
 								filled_template_args.push_back(TemplateTypeArg(substituted_default_node.as<TypeSpecifierNode>()));
 							}
 						} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
-							std::vector<TemplateTypeArg> prior_template_args(
-								filled_template_args.begin(),
-								filled_template_args.begin() + std::min(i, filled_template_args.size()));
 							if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
 									default_node,
 									template_params,
-									prior_template_args);
+									std::span<const TemplateTypeArg>(
+										filled_template_args.data(),
+										std::min(i, filled_template_args.size())),
+									template_param_names);
 								evaluated_default.has_value()) {
 								filled_template_args.push_back(*evaluated_default);
 							}
@@ -2145,6 +2147,8 @@ ParseResult Parser::parse_type_specifier() {
 				// Fill in default template arguments to get the actual instantiated name
 				// Helper lambda to build instantiated template name suffix
 				std::vector<TemplateTypeArg> filled_template_args;
+				const std::vector<std::string_view> template_param_names =
+					buildTemplateParamNames(template_params);
 				for (size_t i = 0; i < template_params.size(); ++i) {
 					if (!template_params[i].is<TemplateParameterNode>()) {
 						FLASH_LOG_FORMAT(Templates, Error, "Template parameter {} is not a TemplateParameterNode", i);
@@ -2165,13 +2169,13 @@ ParseResult Parser::parse_type_specifier() {
 							filled_template_args.push_back(TemplateTypeArg(substituted_default_node.as<TypeSpecifierNode>()));
 						}
 					} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
-						std::vector<TemplateTypeArg> prior_template_args(
-							filled_template_args.begin(),
-							filled_template_args.begin() + std::min(i, filled_template_args.size()));
 						if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
 								default_node,
 								template_params,
-								prior_template_args);
+								std::span<const TemplateTypeArg>(
+									filled_template_args.data(),
+									std::min(i, filled_template_args.size())),
+								template_param_names);
 							evaluated_default.has_value()) {
 							filled_template_args.push_back(*evaluated_default);
 						}
