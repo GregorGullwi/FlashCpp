@@ -894,6 +894,84 @@ inline std::optional<long long> evaluateConstraintExpression(
 					}
 				}
 
+				auto sizeFromConcreteTemplateArg = [](const TemplateTypeArg& concrete_arg) -> std::optional<long long> {
+					if (const TypeInfo* concrete_ti = tryGetTypeInfo(concrete_arg.type_index)) {
+						long long size = static_cast<long long>(toSizeT(concrete_ti->sizeInBytes()));
+						if (size > 0) {
+							return size;
+						}
+					}
+
+					long long size = static_cast<long long>(get_type_size_bits(concrete_arg.category()) / 8);
+					if (size > 0) {
+						return size;
+					}
+					return std::nullopt;
+				};
+
+				auto resolvePrimaryTemplateMemberAliasSize =
+					[&](std::string_view template_name,
+						std::string_view member_name,
+						std::span<const TemplateTypeArg> concrete_member_args) -> std::optional<long long> {
+					auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+					if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
+						return std::nullopt;
+					}
+
+					const auto& primary_template =
+						template_opt->as<TemplateClassDeclarationNode>();
+					const auto& primary_params = primary_template.template_parameters();
+					const auto& type_aliases =
+						primary_template.class_decl_node().type_aliases();
+
+					for (const auto& type_alias : type_aliases) {
+						if (StringTable::getStringView(type_alias.alias_name) != member_name ||
+							!type_alias.type_node.is<TypeSpecifierNode>()) {
+							continue;
+						}
+
+						const auto& alias_type_spec =
+							type_alias.type_node.as<TypeSpecifierNode>();
+
+						if (alias_type_spec.pointer_depth() == 0 &&
+							alias_type_spec.reference_qualifier() == ReferenceQualifier::None &&
+							!alias_type_spec.is_array()) {
+							std::string_view alias_target_name =
+								alias_type_spec.token().value();
+							for (size_t param_index = 0;
+								 param_index < primary_params.size() &&
+								 param_index < concrete_member_args.size();
+								 ++param_index) {
+								if (!primary_params[param_index].is<TemplateParameterNode>()) {
+									continue;
+								}
+
+								const auto& template_param =
+									primary_params[param_index].as<TemplateParameterNode>();
+								if (template_param.kind() != TemplateParameterKind::Type ||
+									template_param.name() != alias_target_name) {
+									continue;
+								}
+
+								return sizeFromConcreteTemplateArg(
+									concrete_member_args[param_index]);
+							}
+						}
+
+						if (const TypeInfo* alias_type_info =
+								tryGetTypeInfo(alias_type_spec.type_index());
+							alias_type_info && alias_type_info->hasStoredSize()) {
+							long long size =
+								static_cast<long long>(toSizeT(alias_type_info->sizeInBytes()));
+							if (size > 0) {
+								return size;
+							}
+						}
+					}
+
+					return std::nullopt;
+				};
+
 				// Check if this is a placeholder for a dependent nested type like "Op<...>::type"
 				// These are created during parsing as placeholders for template-dependent types
 				// Phase 4: use explicit placeholder_kind_ instead of string heuristic
@@ -935,32 +1013,35 @@ inline std::optional<long long> evaluateConstraintExpression(
 
 								// Now we need to get the instantiated type's member
 								// For HasType<int>::type, we need to get the type alias from HasType<int>
+								InlineVector<TemplateTypeArg, 4> concrete_member_args;
 
 								// Look for the pack argument to get the template argument
 								for (size_t j = i + 1; j < template_args.size(); ++j) {
 									const auto& pack_arg = template_args[j];
 									if (!pack_arg.is_template_template_arg && !pack_arg.is_value) {
+										concrete_member_args.push_back(pack_arg);
 										// Found a type argument - this is what we instantiate the template with
 										FLASH_LOG(Templates, Debug, "  Pack arg type_index=", pack_arg.type_index, ", base_type=", static_cast<int>(pack_arg.typeEnum()));
+									}
+								}
 
-										// For member "type", we need to look up HasType<T>::type which equals T
-										// For HasType, the using type = T; means ::type is the template argument
-										if (member_part == "type") {
-											// For a simple type alias like HasType<T>::type = T,
-											// return the size of the template argument
-											if (const TypeInfo* pack_arg_ti = tryGetTypeInfo(pack_arg.type_index)) {
-												long long size = static_cast<long long>(toSizeT(pack_arg_ti->sizeInBytes()));
-												FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::type) = ", size);
-												return size;
-											}
-											// For built-in types without type_index
-											long long size = static_cast<long long>(get_type_size_bits(pack_arg.category()) / 8);
-											if (size > 0) {
-												FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::type) = ", size, " (from base_type)");
-												return size;
-											}
-										}
-										break;
+								if (std::optional<long long> alias_size =
+										resolvePrimaryTemplateMemberAliasSize(
+											template_name,
+											member_part,
+											concrete_member_args);
+									alias_size.has_value()) {
+									FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::", member_part, ") = ", *alias_size);
+									return *alias_size;
+								}
+
+								if (member_part == "type" && !concrete_member_args.empty()) {
+									if (std::optional<long long> size =
+											sizeFromConcreteTemplateArg(
+												concrete_member_args.front());
+										size.has_value()) {
+										FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::type) = ", *size);
+										return *size;
 									}
 								}
 							}
