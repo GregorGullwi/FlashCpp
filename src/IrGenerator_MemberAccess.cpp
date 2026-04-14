@@ -53,7 +53,8 @@ static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNo
 
 static size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& decl) {
 	if (decl.type_node().is<TypeSpecifierNode>()) {
-		const TypeSpecifierNode& type_node = decl.type_node().as<TypeSpecifierNode>();
+		const ASTNode decl_type_node = decl.type_node();
+		const TypeSpecifierNode& type_node = decl_type_node.as<TypeSpecifierNode>();
 		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
 			return type_node.array_dimension_count();
 		}
@@ -63,7 +64,8 @@ static size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& d
 
 static std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) {
 	if (decl.type_node().is<TypeSpecifierNode>()) {
-		const TypeSpecifierNode& type_node = decl.type_node().as<TypeSpecifierNode>();
+		const ASTNode decl_type_node = decl.type_node();
+		const TypeSpecifierNode& type_node = decl_type_node.as<TypeSpecifierNode>();
 		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
 			return type_node.array_dimensions();
 		}
