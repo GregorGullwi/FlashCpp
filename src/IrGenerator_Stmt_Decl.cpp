@@ -1366,28 +1366,41 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		// For arrays, calculate total element count (product of all dimensions for multidimensional arrays)
 	size_t array_count = 0;
 	if (decl.is_array()) {
-		const auto& dims = decl.array_dimensions();
-		if (!dims.empty()) {
-				// Calculate total element count as product of all dimensions
+		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
 			array_count = 1;
-			for (const auto& dim_expr : dims) {
-				ConstExpr::EvaluationContext ctx(symbol_table);
-				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+			for (size_t dim_size : type_node.array_dimensions()) {
+				if (dim_size == 0) {
+					array_count = 0;
+					break;
+				}
+				array_count *= dim_size;
+			}
+		} else {
+			const auto& dims = decl.array_dimensions();
+			if (!dims.empty()) {
+					// Calculate total element count as product of all dimensions
+				array_count = 1;
+				for (const auto& dim_expr : dims) {
+					ConstExpr::EvaluationContext ctx(symbol_table);
+					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 
-				if (eval_result.success()) {
-					long long dim_size = eval_result.as_int();
-					if (dim_size > 0) {
-						array_count *= static_cast<size_t>(dim_size);
+					if (eval_result.success()) {
+						long long dim_size = eval_result.as_int();
+						if (dim_size > 0) {
+							array_count *= static_cast<size_t>(dim_size);
+						} else {
+							array_count = 0;
+							break;
+						}
 					} else {
 						array_count = 0;
 						break;
 					}
-				} else {
-					array_count = 0;
-					break;
 				}
 			}
+		}
 
+		if (array_count > 0) {
 				// Add element type, size, and count as operands
 			operands.emplace_back(type_node.type());	 // element type
 			operands.emplace_back(size_in_bits);		 // element size
@@ -2101,6 +2114,21 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		if (init_node.is<InitializerListNode>()) {
 			const InitializerListNode& init_list = init_node.as<InitializerListNode>();
 			const auto& initializers = init_list.initializers();
+			auto resolveArrayElementSizeBits = [&]() -> int {
+				TypeSpecifierNode element_type = type_node;
+				element_type.set_array_dimensions({});
+				element_type.set_unsized_outer_array_dimension(false);
+				int bits = getTypeSpecSizeBits(element_type);
+				if (bits > 0) {
+					return bits;
+				}
+				if (type_node.category() == TypeCategory::Struct) {
+					if (const StructTypeInfo* si = tryGetStructTypeInfo(type_node.type_index())) {
+						return static_cast<int>(si->sizeInBits().value);
+					}
+				}
+				return get_type_size_bits(type_node.category());
+			};
 
 				// For struct element types, look up the struct info once
 			const StructTypeInfo* struct_info_ptr = nullptr;
@@ -2110,7 +2138,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				}
 			}
 			if (!struct_info_ptr && type_node.array_dimension_count() > 1) {
-				const size_t element_size_bytes = static_cast<size_t>(size_in_bits / 8);
+				const int element_size_bits = resolveArrayElementSizeBits();
+				if (element_size_bits <= 0 || (element_size_bits % 8) != 0) {
+					throw InternalError("Failed to resolve local multidimensional array element size");
+				}
+				const size_t element_size_bytes = static_cast<size_t>(element_size_bits / 8);
 				if (element_size_bytes > 0 && array_count > std::numeric_limits<size_t>::max() / element_size_bytes)
 					throw InternalError("Local array initializer size overflow");
 				StructMember array_member(
