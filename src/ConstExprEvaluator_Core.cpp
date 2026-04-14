@@ -1769,6 +1769,38 @@ const FunctionDeclarationNode* Evaluator::resolve_function_call_decl(const CallE
 	return nullptr;
 }
 
+EvalResult Evaluator::evaluate_resolved_function_call(
+	const FunctionDeclarationNode& func_decl,
+	const ChunkedVector<ASTNode>& arguments,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings /*no default*/) {
+	std::string_view func_name = func_decl.decl_node().identifier_token().value();
+	if (!func_decl.is_constexpr() && !func_decl.is_consteval() &&
+		context.storage_duration != ConstExpr::StorageDuration::Static) {
+		return EvalResult::error(
+			"Function in constant expression must be constexpr or consteval: " + std::string(func_name),
+			EvalErrorType::NotConstantExpression);
+	}
+
+	const auto& definition = func_decl.get_definition();
+	if (!definition.has_value()) {
+		return EvalResult::error("Constexpr function has no body: " + std::string(func_name));
+	}
+
+	const size_t parameter_count = func_decl.parameter_nodes().size();
+	const size_t min_required = countMinRequiredArgs(func_decl);
+	if (arguments.size() < min_required || arguments.size() > parameter_count) {
+		return EvalResult::error("Function argument count mismatch in constant expression");
+	}
+
+	if (outer_bindings) {
+		return evaluate_function_call_with_bindings(func_decl, arguments, *outer_bindings, context);
+	}
+
+	std::unordered_map<std::string_view, EvalResult> empty_bindings;
+	return evaluate_function_call_with_template_context(func_decl, arguments, empty_bindings, context);
+}
+
 bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationContext& context) {
 	if (context.current_depth >= context.max_recursion_depth) {
 		return false;
@@ -3857,6 +3889,10 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 
 	if (auto current_struct_result = tryEvaluateCurrentStructStaticMemberFunction()) {
 		return *current_struct_result;
+	}
+
+	if (const FunctionDeclarationNode* resolved_function = call_expr.callee().function_declaration_or_null()) {
+		return evaluate_resolved_function_call(*resolved_function, call_expr.arguments(), context, nullptr);
 	}
 
 	// Special handling for std::__is_complete_or_unbounded

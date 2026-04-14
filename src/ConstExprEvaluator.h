@@ -758,6 +758,11 @@ private:
 	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const CallExprNode& call_expr, EvaluationContext& context);
 
 	static EvalResult evaluate_function_call(const CallExprNode& call_expr, EvaluationContext& context);
+	static EvalResult evaluate_resolved_function_call(
+		const FunctionDeclarationNode& func_decl,
+		const ChunkedVector<ASTNode>& arguments,
+		EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* outer_bindings);
 	enum class FunctionCallTemplateBindingLoadMode {
 		IfContextEmpty,
 		ForceCurrentStructIfAvailable,
