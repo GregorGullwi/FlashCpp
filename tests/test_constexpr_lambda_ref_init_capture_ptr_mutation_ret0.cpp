@@ -22,5 +22,7 @@ static_assert(ptr_ref_init_capture_mutation_result() == 84);
 static_assert(ptr_ref_init_capture_repeated_calls_result() == 130);
 
 int main() {
+	if (ptr_ref_init_capture_mutation_result() != 84) return 1;
+	if (ptr_ref_init_capture_repeated_calls_result() != 130) return 2;
 	return 0;
 }
