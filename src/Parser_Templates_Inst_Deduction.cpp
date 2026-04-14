@@ -2071,11 +2071,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 			template_args.push_back(map_it->second);
 			continue;
 		}
-		if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
-			continue;
-		}
 		if (next_deduced_value_arg < deduced_value_args.size()) {
 			template_args.push_back(deduced_value_args[next_deduced_value_arg++]);
+			continue;
+		}
+		if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
 			continue;
 		}
 
