@@ -2106,23 +2106,41 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			// C++ aggregate brace elision for array members:
 			// Allow flat initialization like `S s = {1,2,3,4,5,6};` where first members are arrays.
 			// Values are consumed recursively for the current array member before moving to next member.
-			// Note: brace elision for arrays of aggregate (struct) element types is not yet supported.
-			// For struct-element arrays, the user must provide nested braces (e.g., {{1,2},{3,4}}).
-			// This avoids incorrectly consuming too few flat initializers when each element requires
-			// multiple scalar sub-initializers.
-			bool element_is_aggregate = false;
-			if (const TypeInfo* elem_info = tryGetTypeInfo(target_member.type_index)) {
-				if (elem_info->struct_info_ && !elem_info->struct_info_->members.empty()) {
-					element_is_aggregate = true;
+			// For aggregate struct elements, consume the recursive scalar-clause count so a following
+			// member still starts at the right initializer after flat brace elision.
+			auto count_brace_elision_scalar_clauses_for_type = [&](TypeIndex element_type_index, const auto& recurse) -> size_t {
+				const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index);
+				const StructTypeInfo* element_struct_info = element_type_info ? element_type_info->getStructInfo() : nullptr;
+				if (!element_struct_info || element_struct_info->hasUserDefinedConstructor()) {
+					return 1;
 				}
-			}
-			if (target_member.is_array && !target_member.array_dimensions.empty() && peek() != "{"_tok && !element_is_aggregate) {
+
+				size_t clause_count = 0;
+				for (const auto& member : element_struct_info->members) {
+					size_t member_clause_count = member.is_array ? std::accumulate(
+						member.array_dimensions.begin(),
+						member.array_dimensions.end(),
+						size_t{1},
+						std::multiplies<size_t>())
+						: size_t{1};
+					if (const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index)) {
+						if (const StructTypeInfo* member_struct_info = member_type_info->getStructInfo();
+							member_struct_info && !member_struct_info->hasUserDefinedConstructor()) {
+							member_clause_count *= recurse(member.type_index, recurse);
+						}
+					}
+					clause_count += member_clause_count;
+				}
+				return clause_count > 0 ? clause_count : 1;
+			};
+			if (target_member.is_array && !target_member.array_dimensions.empty() && peek() != "{"_tok) {
 				auto [nested_init_list_node, nested_init_list_ref] = create_node_ref(InitializerListNode());
 				size_t element_limit = std::accumulate(
 					target_member.array_dimensions.begin(),
 					target_member.array_dimensions.end(),
 					size_t{1},
 					std::multiplies<size_t>());
+				element_limit *= count_brace_elision_scalar_clauses_for_type(target_member.type_index, count_brace_elision_scalar_clauses_for_type);
 				size_t element_count = 0;
 
 				while (element_count < element_limit && peek() != "}"_tok) {

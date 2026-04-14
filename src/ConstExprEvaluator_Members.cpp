@@ -5745,42 +5745,101 @@ EvalResult Evaluator::materialize_array_value(
 	const InitializerListNode& init_list,
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* bindings) {
+	auto count_brace_elision_scalar_clauses_for_type = [&](TypeIndex type_index, const auto& recurse) -> size_t {
+		const TypeInfo* type_info = tryGetTypeInfo(type_index);
+		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+		if (!struct_info || struct_info->hasUserDefinedConstructor()) {
+			return 1;
+		}
+
+		size_t clause_count = 0;
+		for (const auto& member : struct_info->members) {
+			size_t member_clause_count = member.is_array
+											? std::accumulate(
+												  member.array_dimensions.begin(),
+												  member.array_dimensions.end(),
+												  size_t{1},
+												  std::multiplies<size_t>())
+											: size_t{1};
+			const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+			const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
+			if (member_struct_info && !member_struct_info->hasUserDefinedConstructor()) {
+				member_clause_count *= recurse(member.type_index, recurse);
+			}
+			clause_count += member_clause_count;
+		}
+		return clause_count > 0 ? clause_count : 1;
+	};
+	auto materialize_struct_array_element = [&](const InitializerListNode& element_init_list) -> EvalResult {
+		const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index);
+		const StructTypeInfo* element_struct_info = element_type_info ? element_type_info->getStructInfo() : nullptr;
+		if (!element_struct_info) {
+			return EvalResult::error("Array element type is not a struct");
+		}
+
+		ChunkedVector<ASTNode> ctor_args;
+		for (const auto& arg : element_init_list.initializers()) {
+			ctor_args.push_back(arg);
+		}
+		if (auto ctor_result = try_materialize_struct_from_ctor_args(
+				element_struct_info,
+				element_type_index,
+				ctor_args,
+				context,
+				false,
+				bindings,
+				nullptr,
+				false)) {
+			return std::move(*ctor_result);
+		}
+		return materialize_aggregate_object_value(
+			element_struct_info,
+			element_type_index,
+			element_init_list,
+			context,
+			bindings);
+	};
+
 	std::vector<EvalResult> array_elements;
 	array_elements.reserve(init_list.initializers().size());
 	std::vector<int64_t> array_values;
 	bool all_scalar_elements = true;
 
-	for (const auto& element : init_list.initializers()) {
+	const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index);
+	const StructTypeInfo* element_struct_info = element_type_info ? element_type_info->getStructInfo() : nullptr;
+	const size_t brace_elision_scalar_clause_count =
+		element_struct_info ? count_brace_elision_scalar_clauses_for_type(element_type_index, count_brace_elision_scalar_clauses_for_type) : 1;
+	const auto& initializers = init_list.initializers();
+	for (size_t cursor = 0; cursor < initializers.size();) {
+		const ASTNode& element = initializers[cursor];
 		EvalResult element_result;
-		if (element.is<InitializerListNode>() &&
-			(is_struct_type(element_type_index.category()))) {
-			if (const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index);
-				const StructTypeInfo* element_struct_info = element_type_info ? element_type_info->getStructInfo() : nullptr) {
-				const InitializerListNode& element_init_list = element.as<InitializerListNode>();
-				ChunkedVector<ASTNode> ctor_args;
-				for (const auto& arg : element_init_list.initializers()) {
-					ctor_args.push_back(arg);
-				}
-				if (auto ctor_result = try_materialize_struct_from_ctor_args(
-						element_struct_info,
-						element_type_index,
-						ctor_args,
-						context,
-						false,
-						bindings,
-						nullptr,
-						false)) {
-					element_result = std::move(*ctor_result);
-				} else {
-					element_result = materialize_aggregate_object_value(
-						element_struct_info,
-						element_type_index,
-						element_init_list,
-						context,
-						bindings);
-				}
+		if (element_struct_info) {
+			if (element.is<InitializerListNode>()) {
+				element_result = materialize_struct_array_element(element.as<InitializerListNode>());
+				cursor++;
 			} else {
-				element_result = EvalResult::error("Array element type is not a struct");
+				EvalResult direct_element_result = bindings
+					? evaluate_expression_with_bindings_const(element, *bindings, context)
+					: evaluate(element, context);
+				if (direct_element_result.success() &&
+					direct_element_result.object_type_index == element_type_index) {
+					element_result = std::move(direct_element_result);
+					cursor++;
+				} else {
+					InitializerListNode element_init_list;
+					size_t consumed = 0;
+					while (consumed < brace_elision_scalar_clause_count &&
+						   cursor < initializers.size() &&
+						   !initializers[cursor].is<InitializerListNode>()) {
+						element_init_list.add_initializer(initializers[cursor]);
+						cursor++;
+						consumed++;
+					}
+					if (consumed == 0) {
+						return EvalResult::error("Expected initializer for struct array element");
+					}
+					element_result = materialize_struct_array_element(element_init_list);
+				}
 			}
 		} else if (element.is<InitializerListNode>()) {
 			// Nested array element (e.g., each row of int[2][3]): recurse with same element type.
@@ -5788,10 +5847,13 @@ EvalResult Evaluator::materialize_array_value(
 				element_type_index,
 				element.as<InitializerListNode>(),
 				context, bindings);
+			cursor++;
 		} else if (bindings) {
 			element_result = evaluate_expression_with_bindings_const(element, *bindings, context);
+			cursor++;
 		} else {
 			element_result = evaluate(element, context);
+			cursor++;
 		}
 
 		if (!element_result.success()) {
@@ -5863,7 +5925,31 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 			}
 			while (base_result.array_elements.size() < declared_size) {
 				EvalResult zero_elem;
-				if (isFloatingPointType(elem_type)) {
+				if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
+					InitializerListNode empty_init_list;
+					ChunkedVector<ASTNode> ctor_args;
+					if (auto ctor_result = try_materialize_struct_from_ctor_args(
+							struct_info,
+							type_spec.type_index(),
+							ctor_args,
+							context,
+							false,
+							bindings,
+							nullptr,
+							false)) {
+						zero_elem = std::move(*ctor_result);
+					} else {
+						zero_elem = materialize_aggregate_object_value(
+							struct_info,
+							type_spec.type_index(),
+							empty_init_list,
+							context,
+							bindings);
+					}
+					if (!zero_elem.success()) {
+						return zero_elem;
+					}
+				} else if (isFloatingPointType(elem_type)) {
 					zero_elem = EvalResult::from_double(0.0);
 				} else if (isUnsignedIntegralType(elem_type)) {
 					zero_elem = EvalResult::from_uint(0ULL);
@@ -6819,6 +6905,16 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		}
 
 		const InitializerListNode& init_list = initializer_opt->as<InitializerListNode>();
+		if (type_spec_opt) {
+			EvalResult materialized = materialize_array_value_with_spec(*type_spec_opt, init_list, context, nullptr);
+			if (!materialized.success()) {
+				return materialized;
+			}
+			if (index >= materialized.array_elements.size()) {
+				return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(materialized.array_elements.size()) + ")");
+			}
+			return materialized.array_elements[index];
+		}
 		if (auto materialized_row = tryMaterializeMultidimArrayRow(type_spec_opt, init_list, index, context)) {
 			return *materialized_row;
 		}
@@ -6916,55 +7012,18 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		return EvalResult::error("Constexpr array has no initializer");
 	}
 
-	// The initializer should be an InitializerListNode for arrays
-	if (initializer->is<InitializerListNode>()) {
-		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
-		const auto& type_node = var_decl.declaration().type_node();
-
-		if (type_node.is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-			if (type_spec.array_dimension_count() > 1) {
-				EvalResult materialized = materialize_array_value_with_spec(type_spec, init_list, context, nullptr);
-				if (!materialized.success()) {
-					return materialized;
-				}
-				if (index >= materialized.array_elements.size()) {
-					return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(materialized.array_elements.size()) + ")");
-				}
-				return materialized.array_elements[index];
-			}
+	if (initializer->is<InitializerListNode>() && var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+		bool element_is_struct_object =
+			var_decl.declaration().array_dimensions().size() == 1 &&
+			tryGetStructTypeInfo(type_spec.type_index()) != nullptr;
+		if (auto materialized_result = evaluate_array_initializer(
+				initializer,
+				type_spec.type_index(),
+				element_is_struct_object,
+				&type_spec)) {
+			return *materialized_result;
 		}
-
-		const auto& elements = init_list.initializers();
-
-		if (index >= elements.size()) {
-			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
-		}
-
-		// Handle nested array row (multi-dimensional array element is an InitializerListNode).
-		const ASTNode& elem = elements[index];
-		if (elem.is<InitializerListNode>()) {
-			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-				bool element_is_struct_object =
-					var_decl.declaration().array_dimensions().size() == 1 &&
-					tryGetStructTypeInfo(type_spec.type_index()) != nullptr;
-				if (element_is_struct_object) {
-					if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
-						return materialize_aggregate_object_value(
-							struct_info,
-							type_spec.type_index(),
-							elem.as<InitializerListNode>(),
-							context);
-					}
-				}
-				return materialize_array_value(type_spec.type_index(),
-											   elem.as<InitializerListNode>(), context, nullptr);
-			}
-			return materialize_array_value(TypeIndex{}, elem.as<InitializerListNode>(), context, nullptr);
-		}
-
-		return evaluate(elem, context);
 	}
 
 	return EvalResult::error("Array variable is not initialized with an array initializer");

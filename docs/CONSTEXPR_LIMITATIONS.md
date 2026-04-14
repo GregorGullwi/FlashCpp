@@ -625,6 +625,7 @@ Several array-related constexpr forms are supported in simple/supported shapes:
 - member-array subscripts such as `box.data[1]`, including straightforward local aggregate object cases inside constexpr functions
 - member-array brace-init in constructor initializer lists such as `arr{a, b, c}` with full C++ zero-fill for partial/single-element init
 - local variable as array subscript inside constexpr member functions such as `int idx = 1; return arr[idx];`
+- flat brace-elision for one-dimensional arrays of aggregate struct elements such as `Item items[] = {40, 2}` and aggregate members such as `Holder h = {40, 2, 7}`
 
 ```cpp
 struct Container {
@@ -1119,6 +1120,7 @@ Potential areas for enhancement (in order of complexity):
 - ⚠️ Inferred array size parsing in richer contexts beyond the currently supported straightforward cases — straightforward copy-init and direct-list forms such as `int arr[] = {1,2,3}` and `int arr[]{1,2,3}` now work in current local/global constexpr paths, and simple global `sizeof(arr)` plus `sizeof(arr) / sizeof(arr[0])` on inferred-size constexpr arrays are supported.
 - ⚠️ Fold expressions / pack expansions require template instantiation context
 - ✅ Range-based for loops over objects with `constexpr begin()`/`end()` member functions are now supported. The iterator methods must return a member array (which the evaluator iterates) or a pointer (`&data[0]` / `&data[N]` style). Template structs with `constexpr begin()`/`end()` are also supported. Nested range-for loops and `break`/`continue` work correctly inside these loops.
+- ✅ Flat brace-elision for one-dimensional arrays of aggregate struct elements now works in constexpr evaluation, both for standalone arrays like `Item items[] = {40, 2}` and for aggregate members like `Holder h = {40, 2, 7}` where a following scalar initializes the next member after the array.
 - ✅ **Bitwise compound assignments (`&=`, `|=`, `^=`, `<<=`, `>>=`) in constexpr function bodies** *(Implemented)* — All five operators now work correctly in constexpr function bodies, including inside loops and XOR-swap idioms.
   - ✅ **Compound assignments now apply unsigned type-width truncation** *(Implemented)* — The `apply_op_to` lambda now truncates results to the declared unsigned type's width using `apply_uint_type_mask`, matching the behavior of the `++`/`--` handler. For example, `unsigned char x = 200; x += 100;` now correctly wraps to 44. This applies to all compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`).
 - ⚠️ Unsigned wrapping arithmetic: when the declared type cannot be determined (e.g. some template-dependent expressions), the result may fall back to 64-bit storage. Direct identifiers, literals, casts, and most common arithmetic chains all produce correctly-widthed results.
