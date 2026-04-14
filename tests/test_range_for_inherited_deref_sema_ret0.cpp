@@ -5,6 +5,10 @@ struct DerefBase {
 	int operator*() {
 		return 14;
 	}
+
+	int operator*() const {
+		return 21;
+	}
 };
 
 struct Iter : DerefBase {
@@ -34,11 +38,32 @@ struct Numbers {
 	}
 };
 
+struct ConstNumbers {
+	Iter begin() const {
+		Iter it;
+		it.index = 0;
+		return it;
+	}
+
+	Iter end() const {
+		Iter it;
+		it.index = 2;
+		return it;
+	}
+};
+
 int main() {
 	Numbers numbers;
 	int sum = 0;
 	for (int value : numbers) {
 		sum += value;
 	}
-	return sum == 42 ? 0 : 1;
+
+	const ConstNumbers const_numbers;
+	int const_sum = 0;
+	for (int value : const_numbers) {
+		const_sum += value;
+	}
+
+	return (sum == 42 && const_sum == 42) ? 0 : 1;
 }
