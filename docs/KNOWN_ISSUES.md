@@ -107,3 +107,35 @@ dependent qualified type are rejected, which forced the regression for
 dependent-member `sizeof` constraints into a more indirect shape.
 **Standards note:** `sizeof(type-id)` is valid in a nested requirement, and the
 dependent `type-id` above is well-formed C++20 syntax.
+
+## Inherited member access inside inherited dereference operators can crash at runtime
+
+**Repro:**
+```cpp
+struct DerefBase {
+	int* ptr;
+	int& operator*() { return *ptr; }
+};
+
+struct Iter : DerefBase {
+	Iter& operator++() { ++ptr; return *this; }
+	bool operator!=(Iter other) const { return ptr != other.ptr; }
+};
+
+int main() {
+	int values[1] = {42};
+	Iter it;
+	it.ptr = values;
+	int x = *it;
+	return x - 42;
+}
+```
+**Symptom:** Compilation succeeds, but the generated program segfaults when an
+inherited `operator*` implementation dereferences a base-class data member.
+**Impact:** Iterator-like types that inherit their dereference operator from a
+base class are not safe when that operator body reads inherited state, even
+though simpler inherited `operator*` bodies (for example, returning a constant)
+work.
+**Root cause:** Still under investigation. The failure appears in the
+member-function/codegen path for inherited dereference operators rather than in
+the new sema pre-resolution step.

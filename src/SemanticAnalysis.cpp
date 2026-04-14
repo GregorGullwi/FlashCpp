@@ -79,30 +79,55 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const 
 		return nullptr;
 	}
 
-	const FunctionDeclarationNode* fallback = nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.operator_kind != OverloadableOperator::Multiply ||
-			!member_func.function_decl.is<FunctionDeclarationNode>()) {
-			continue;
+	std::unordered_set<const StructTypeInfo*> visited;
+	auto findOperator = [&](const StructTypeInfo* current_struct, const auto& self) -> const FunctionDeclarationNode* {
+		if (!current_struct || !visited.insert(current_struct).second) {
+			return nullptr;
 		}
 
-		const auto& func = member_func.function_decl.as<FunctionDeclarationNode>();
-		if (!func.parameter_nodes().empty()) {
-			continue;
+		const FunctionDeclarationNode* fallback = nullptr;
+		bool has_local_dereference = false;
+		for (const auto& member_func : current_struct->member_functions) {
+			if (member_func.operator_kind != OverloadableOperator::Multiply ||
+				!member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+
+			const auto& func = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (!func.parameter_nodes().empty()) {
+				continue;
+			}
+
+			has_local_dereference = true;
+			if (prefer_const && member_func.is_const()) {
+				return &func;
+			}
+			if (!prefer_const && !member_func.is_const()) {
+				return &func;
+			}
+			if (!fallback) {
+				fallback = &func;
+			}
 		}
 
-		if (prefer_const && member_func.is_const()) {
-			return &func;
+		if (has_local_dereference) {
+			return fallback;
 		}
-		if (!prefer_const && !member_func.is_const()) {
-			return &func;
-		}
-		if (!fallback) {
-			fallback = &func;
-		}
-	}
 
-	return fallback;
+		for (const auto& base_spec : current_struct->base_classes) {
+			const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_spec.type_index);
+			if (!base_struct_info) {
+				continue;
+			}
+			if (const FunctionDeclarationNode* base_match = self(base_struct_info, self)) {
+				return base_match;
+			}
+		}
+
+		return nullptr;
+	};
+
+	return findOperator(struct_info, findOperator);
 }
 
 const ConstructorDeclarationNode* resolveUniqueArityConstructor(const StructTypeInfo& struct_info, size_t argument_count) {
