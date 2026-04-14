@@ -1472,7 +1472,7 @@ ParseResult Parser::parse_type_specifier() {
 									template_params,
 									std::span<const TemplateTypeArg>(
 										filled_template_args.data(),
-										std::min(i, filled_template_args.size())),
+										filled_template_args.size()),
 									template_param_names);
 								evaluated_default.has_value()) {
 								filled_template_args.push_back(*evaluated_default);
@@ -2174,7 +2174,7 @@ ParseResult Parser::parse_type_specifier() {
 								template_params,
 								std::span<const TemplateTypeArg>(
 									filled_template_args.data(),
-									std::min(i, filled_template_args.size())),
+									filled_template_args.size()),
 								template_param_names);
 							evaluated_default.has_value()) {
 							filled_template_args.push_back(*evaluated_default);

@@ -576,7 +576,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 							primary_params,
 							std::span<const TemplateTypeArg>(
 								filled_args.data(),
-								std::min(i, filled_args.size())),
+								filled_args.size()),
 							primary_param_names);
 						evaluated_default.has_value()) {
 						filled_args.push_back(*evaluated_default);

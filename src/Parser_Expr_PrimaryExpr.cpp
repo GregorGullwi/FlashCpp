@@ -846,7 +846,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 						template_params,
 						std::span<const TemplateTypeArg>(
 							completed_args.data(),
-							std::min(param_idx, completed_args.size())),
+							completed_args.size()),
 						template_param_names);
 					evaluated_default.has_value()) {
 					completed_args.push_back(*evaluated_default);
