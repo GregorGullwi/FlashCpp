@@ -6157,8 +6157,24 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 			} else if (is_struct_type(member_info->type_index.category())) {
 				if (const TypeInfo* member_type_info = tryGetTypeInfo(member_info->type_index);
 					const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr) {
-					member_result = materialize_aggregate_object_value(
-						member_struct_info, member_info->type_index, init_list, context, &ctor_param_bindings);
+					ChunkedVector<ASTNode> ctor_args;
+					for (const auto& arg : init_list.initializers()) {
+						ctor_args.push_back(arg);
+					}
+					if (auto ctor_result = try_materialize_struct_from_ctor_args(
+							member_struct_info,
+							member_info->type_index,
+							ctor_args,
+							context,
+							false,
+							&ctor_param_bindings,
+							nullptr,
+							false)) {
+						member_result = std::move(*ctor_result);
+					} else {
+						member_result = materialize_aggregate_object_value(
+							member_struct_info, member_info->type_index, init_list, context, &ctor_param_bindings);
+					}
 				} else {
 					member_result = EvalResult::error("Member struct type not found for brace-init");
 				}
