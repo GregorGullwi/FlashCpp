@@ -1774,7 +1774,7 @@ EvalResult Evaluator::evaluate_resolved_function_call(
 	const ChunkedVector<ASTNode>& arguments,
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
-	std::string_view func_name = func_decl.identifier_token().value();
+	std::string_view func_name = func_decl.decl_node().identifier_token().value();
 	if (!func_decl.is_constexpr() && !func_decl.is_consteval() &&
 		context.storage_duration != ConstExpr::StorageDuration::Static) {
 		return EvalResult::error(
