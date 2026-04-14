@@ -483,6 +483,34 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			std::string(decl.identifier_token().value()),
 			std::string(StringTable::getStringView(type_info->name())));
 	};
+	auto zero_initialize_noop_ctor_object = [this](const DeclarationNode& decl, const TypeInfo* type_info) {
+		if (!type_info || !type_info->struct_info_) {
+			return;
+		}
+		auto zero_fill_subobject = [this, &decl](auto&& self, const StructTypeInfo& struct_info, int base_offset) -> void {
+			for (const auto& base : struct_info.base_classes) {
+				if (base.is_virtual || !base.type_index.is_valid()) {
+					continue;
+				}
+				if (const StructTypeInfo* base_struct = tryGetStructTypeInfo(base.type_index)) {
+					self(self, *base_struct, base_offset + static_cast<int>(base.offset));
+				}
+			}
+			emitRecursiveZeroFill(struct_info, decl.identifier_token().handle(), base_offset, decl.identifier_token());
+		};
+		zero_fill_subobject(zero_fill_subobject, *type_info->struct_info_, 0);
+		for (const auto& virtual_base : type_info->struct_info_->virtual_bases) {
+			if (!virtual_base.type_index.is_valid()) {
+				continue;
+			}
+			if (const StructTypeInfo* virtual_base_struct = tryGetStructTypeInfo(virtual_base.type_index)) {
+				zero_fill_subobject(
+					zero_fill_subobject,
+					*virtual_base_struct,
+					static_cast<int>(virtual_base.offset));
+			}
+		}
+	};
 
 		// Check if this is a global variable (declared at global scope)
 	bool is_global = (symbol_table.get_current_scope_type() == ScopeType::Global);
@@ -1603,6 +1631,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											visitExpressionNode(init_expr.as<ExpressionNode>());
 										}
 									}
+									zero_initialize_noop_ctor_object(decl, type_info);
 									register_destructor_if_needed(decl, type_info);
 									return;
 								}
@@ -2408,6 +2437,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										visitExpressionNode(argument.as<ExpressionNode>());
 									}
 								});
+								zero_initialize_noop_ctor_object(decl, type_info);
 								register_destructor_if_needed(decl, type_info);
 								return;
 							}

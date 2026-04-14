@@ -1,10 +1,40 @@
 # Template Instantiation Identity / Materialization Follow-up Plan
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-13  
+**Last Updated:** 2026-04-14  
 **Context:** Follows the branch fix that made `test_integral_constant_comprehensive_ret100.cpp`, `test_integral_constant_pattern_ret42.cpp`, `test_ratio_less_alias_ret0.cpp`, `test_sfinae_enable_if_ret0.cpp`, and `test_sfinae_same_name_overload_ret0.cpp` pass by preserving dependent non-type template-argument identity in template-instantiation keys.
 
 ## Quick start for next agent
+
+### Latest completed slice (2026-04-14, noop-ctor audit update)
+
+**Post-PR #1255 follow-up audit re-run against `HEAD`; noop-ctor destructor UB fixed.**
+
+- Re-validated the PR #1255 follow-up list against the current branch:
+  - already fixed: alias-resolution duplication, dead `ExpressionSubstitutor.cpp`
+    branches, placeholder-arg extraction, dependent non-type normalization
+    extraction, constructor-template dummy AST churn, brace-init sema/codegen
+    materialization gaps, `materializeMatchingConstructorTemplate(nullptr)`
+    failure handling, constructor pack expansion, `appendFunctionCallArgType`
+    compound-expression typing, and the
+    `try_instantiate_member_function_template` fallback bug
+  - still open after this slice: Phase 4 still uses an unresolved-dependent-member
+    string heuristic in `Parser_Templates_Inst_Deduction.cpp`
+- **Fix** (`src/IrGenerator_Stmt_Decl.cpp`):
+  - `is_unresolved_noop_ctor` still triggered when lazy template-constructor
+    materialization failed to re-parse member access in the deferred body, and
+    the fallback registered destructors for stack objects whose members were
+    never initialized
+  - added `zero_initialize_noop_ctor_object(...)` so both direct-init and
+    brace-init noop paths zero-fill the allocated object (including base
+    subobjects) before destructor registration
+- **Tests**:
+  - `tests/test_template_ctor_noop_zero_init_direct_ret20.cpp`
+  - `tests/test_template_ctor_noop_zero_init_list_ret30.cpp`
+- **Validation**:
+  - `make main CXX=clang++`
+  - `bash ./tests/run_all_tests.sh test_template_ctor_noop_zero_init_direct_ret20.cpp test_template_ctor_noop_zero_init_list_ret30.cpp test_template_ctor_noop_dtor_direct_init_ret42.cpp test_template_ctor_noop_dtor_list_init_ret42.cpp`
+  - `bash ./tests/run_all_tests.sh` → **2089 pass, 139 expected-fail**
 
 ### Latest completed slice (2026-04-13, audit update)
 
@@ -17,10 +47,10 @@
     `materializeMatchingConstructorTemplate(nullptr)` failure handling, brace-init
     constructor materialization, and the `try_instantiate_member_function_template`
     fallback bug
-  - still valid: the `is_unresolved_noop_ctor` fallback still registers
-    destructors for objects whose members were never initialized, and the Phase 4
-    string heuristics in `Parser_Templates_Inst_Deduction.cpp` still need an
-    explicit placeholder-state model
+  - still valid at that point: the `is_unresolved_noop_ctor` fallback still
+    registered destructors for objects whose members were never initialized, and
+    the Phase 4 string heuristics in `Parser_Templates_Inst_Deduction.cpp`
+    still needed an explicit placeholder-state model
 - **Refactor** (`src/Parser.h`, `src/Parser_Templates_Inst_Deduction.cpp`,
   `src/Parser_Templates_Inst_MemberFunc.cpp`):
   - added a `buildDeductionMapFromCallArgs(...)` overload that consumes function
@@ -1279,15 +1309,17 @@ This is not a regression — the old inline code it replaced (deleted lines ~445
 
 **FIXED (2026-04-14 slice):** `SemanticAnalysis::tryAnnotateInitListConstructorArgs` now calls `materializeMatchingConstructorTemplate` after `resolve_constructor_overload`, matching the direct-init sema path.
 
-### `is_unresolved_noop_ctor` early return skips stack allocation but registers destructor
+### `is_unresolved_noop_ctor` early return leaves object uninitialized before destructor registration
 
 **Added:** 2026-04-13 (PR #1255 review — investigate)
 
-The `is_unresolved_noop_ctor` early-return paths at `src/IrGenerator_Stmt_Decl.cpp` (brace-init ~line 1595 and direct-init ~line 2400) skip the `ConstructorCallOp` emission that normally handles stack allocation for struct variables, but still call `register_destructor_if_needed`. This means the variable is never allocated on the stack, yet a destructor call is registered. Currently this is safe because the two regression tests (`test_template_ctor_noop_dtor_direct_init_ret42.cpp` and `test_template_ctor_noop_dtor_list_init_ret42.cpp`) use destructors that only modify a global variable and never dereference `this`. For types whose destructors access member data, this would be undefined behavior.
+~~The `is_unresolved_noop_ctor` early-return paths at `src/IrGenerator_Stmt_Decl.cpp` (brace-init ~line 1595 and direct-init ~line 2400) skip the `ConstructorCallOp` emission that normally handles stack allocation for struct variables, but still call `register_destructor_if_needed`. This means the variable is never allocated on the stack, yet a destructor call is registered. Currently this is safe because the two regression tests (`test_template_ctor_noop_dtor_direct_init_ret42.cpp` and `test_template_ctor_noop_dtor_list_init_ret42.cpp`) use destructors that only modify a global variable and never dereference `this`. For types whose destructors access member data, this would be undefined behavior.
 
 Note: `VariableDeclOp` IS emitted at line 1461 (brace-init) and line 2015 (direct-init), both before the `is_unresolved_noop_ctor` check. So the stack space is allocated. The risk is that member data is uninitialized (not zero-initialized) when the destructor runs, which is UB for destructors that access members.
 
-**Follow-up:** The noop path should zero-initialize the allocated stack object before registering the destructor, or the long-term fix is to resolve all template constructors in sema so the noop path is never reached. **Relates to Phase 3 and Phase 5.**
+Follow-up: The noop path should zero-initialize the allocated stack object before registering the destructor, or the long-term fix is to resolve all template constructors in sema so the noop path is never reached.~~
+
+**FIXED (2026-04-14, audit update):** both noop-ctor early-return paths now zero-fill the allocated object (including base subobjects via recursive member stores) before registering the destructor. Regression tests: `tests/test_template_ctor_noop_zero_init_direct_ret20.cpp` and `tests/test_template_ctor_noop_zero_init_list_ret30.cpp`. The remaining architectural gap is that codegen can still reach the noop fallback when lazy constructor-body instantiation fails; Phase 3 / Phase 5 should still eliminate that fallback entirely.
 
 ### `materializeMatchingConstructorTemplate` returns original uninstantiated ctor on failure
 
