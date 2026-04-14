@@ -342,7 +342,6 @@ private:
 			return;
 		}
 		heap_data_.clear();
-		heap_data_.shrink_to_fit();
 		using_inline_storage_ = true;
 	}
 
