@@ -619,9 +619,9 @@ std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_a
 				return std::nullopt;
 			}
 			member_access.has_template_arguments = true;
-			member_access.template_arguments = *member_template_args;
+			member_access.template_arguments = std::make_shared<std::vector<TemplateTypeArg>>(std::move(member_template_args).value());
 			member_access.template_argument_infos =
-				build_template_arg_infos(member_access.template_arguments, member_template_arg_nodes);
+				build_template_arg_infos(*member_access.template_arguments, member_template_arg_nodes);
 		}
 
 		info.member_type_chain.push_back(std::move(member_access));
@@ -703,7 +703,7 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 			AliasTemplateMaterializationResult materialized_member =
 				materializeTemplateInstantiationForLookup(
 					qualified_member_template_name,
-					member_access.template_arguments);
+					*member_access.template_arguments);
 			if (materialized_member.instantiated_name.empty()) {
 				return nullptr;
 			}

@@ -2138,14 +2138,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						for (const QualifiedTypeMemberAccess& member_access : deferred_base.member_type_chain) {
 							QualifiedTypeMemberAccess resolved_member = member_access;
 							if (member_access.has_template_arguments) {
-								resolved_member.template_arguments.clear();
+								resolved_member.template_arguments = std::make_shared<std::vector<TemplateTypeArg>>();
+								resolved_member.template_arguments->reserve(member_access.template_argument_infos.size());
 								for (const auto& member_arg_info : member_access.template_argument_infos) {
 									if (member_arg_info.is_pack) {
 										auto try_expand = [&](StringHandle pack_name) -> bool {
 											auto it = spec_pack_subst_map.find(pack_name);
 											if (it != spec_pack_subst_map.end()) {
-												resolved_member.template_arguments.insert(
-													resolved_member.template_arguments.end(),
+												resolved_member.template_arguments->insert(
+													resolved_member.template_arguments->end(),
 													it->second.begin(),
 													it->second.end());
 												return true;
@@ -2188,13 +2189,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 													a.pointer_depth = ts.pointer_depth();
 													a.ref_qualifier = ts.reference_qualifier();
 													a.cv_qualifier = ts.cv_qualifier();
-													resolved_member.template_arguments.push_back(a);
+													resolved_member.template_arguments->push_back(a);
 													member_arg_resolved = true;
 												}
 											}
 										}
 										if (!member_arg_resolved) {
-											resolved_member.template_arguments.emplace_back(ts);
+											resolved_member.template_arguments->emplace_back(ts);
 											member_arg_resolved = true;
 										}
 									} else if (member_arg_info.node.is<ExpressionNode>()) {
@@ -2203,14 +2204,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											std::string_view pname = std::get<TemplateParameterReferenceNode>(expr).param_name().view();
 											auto it = spec_name_subst_map.find(pname);
 											if (it != spec_name_subst_map.end()) {
-												resolved_member.template_arguments.push_back(it->second);
+												resolved_member.template_arguments->push_back(it->second);
 												member_arg_resolved = true;
 											}
 										} else if (std::holds_alternative<IdentifierNode>(expr)) {
 											std::string_view iname = std::get<IdentifierNode>(expr).name();
 											auto sit = spec_name_subst_map.find(iname);
 											if (sit != spec_name_subst_map.end()) {
-												resolved_member.template_arguments.push_back(sit->second);
+												resolved_member.template_arguments->push_back(sit->second);
 												member_arg_resolved = true;
 											} else {
 												StringHandle h = StringTable::getOrInternStringHandle(iname);
@@ -2218,7 +2219,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 												if (type_it != getTypesByNameMap().end()) {
 													TemplateTypeArg a;
 													a.type_index = type_it->second->type_index_.withCategory(type_it->second->typeEnum());
-													resolved_member.template_arguments.push_back(a);
+													resolved_member.template_arguments->push_back(a);
 													member_arg_resolved = true;
 												}
 											}
@@ -2239,10 +2240,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 												int64_t int_val = std::holds_alternative<unsigned long long>(nv)
 													? static_cast<int64_t>(std::get<unsigned long long>(nv))
 													: static_cast<int64_t>(std::get<double>(nv));
-												resolved_member.template_arguments.push_back(makeValueArg(int_val, num_lit.type()));
+												resolved_member.template_arguments->push_back(makeValueArg(int_val, num_lit.type()));
 												member_arg_resolved = true;
 											} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
-												resolved_member.template_arguments.push_back(makeValueArg(bool_literal->value() ? 1 : 0, TypeCategory::Bool));
+												resolved_member.template_arguments->push_back(makeValueArg(bool_literal->value() ? 1 : 0, TypeCategory::Bool));
 												member_arg_resolved = true;
 											} else {
 												ASTNode substituted_expr = substituteTemplateParameters(
@@ -2251,7 +2252,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 													template_args);
 												auto evaluated_value = try_evaluate_constant_expression(substituted_expr);
 												if (evaluated_value.has_value()) {
-													resolved_member.template_arguments.push_back(
+													resolved_member.template_arguments->push_back(
 														makeValueArg(evaluated_value->value, evaluated_value->type));
 													member_arg_resolved = true;
 												}
@@ -4681,14 +4682,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const QualifiedTypeMemberAccess& member_access : deferred_base.member_type_chain) {
 					QualifiedTypeMemberAccess resolved_member = member_access;
 					if (member_access.has_template_arguments) {
-						resolved_member.template_arguments.clear();
+						resolved_member.template_arguments = std::make_shared<std::vector<TemplateTypeArg>>();
+						resolved_member.template_arguments->reserve(member_access.template_argument_infos.size());
 						for (const auto& member_arg_info : member_access.template_argument_infos) {
 							if (member_arg_info.is_pack) {
 								auto try_expand = [&](StringHandle pack_name) -> bool {
 									auto it = pack_substitution_map.find(pack_name);
 									if (it != pack_substitution_map.end()) {
-										resolved_member.template_arguments.insert(
-											resolved_member.template_arguments.end(),
+										resolved_member.template_arguments->insert(
+											resolved_member.template_arguments->end(),
 											it->second.begin(),
 											it->second.end());
 										return true;
@@ -4731,13 +4733,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											a.pointer_depth = ts.pointer_depth();
 											a.ref_qualifier = ts.reference_qualifier();
 											a.cv_qualifier = ts.cv_qualifier();
-											resolved_member.template_arguments.push_back(a);
+											resolved_member.template_arguments->push_back(a);
 											member_arg_resolved = true;
 										}
 									}
 								}
 								if (!member_arg_resolved) {
-									resolved_member.template_arguments.emplace_back(ts);
+									resolved_member.template_arguments->emplace_back(ts);
 									member_arg_resolved = true;
 								}
 							} else if (member_arg_info.node.is<ExpressionNode>()) {
@@ -4746,14 +4748,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									std::string_view pname = std::get<TemplateParameterReferenceNode>(expr).param_name().view();
 									auto it = name_substitution_map.find(pname);
 									if (it != name_substitution_map.end()) {
-										resolved_member.template_arguments.push_back(it->second);
+										resolved_member.template_arguments->push_back(it->second);
 										member_arg_resolved = true;
 									}
 								} else if (std::holds_alternative<IdentifierNode>(expr)) {
 									std::string_view iname = std::get<IdentifierNode>(expr).name();
 									auto sit = name_substitution_map.find(iname);
 									if (sit != name_substitution_map.end()) {
-										resolved_member.template_arguments.push_back(sit->second);
+										resolved_member.template_arguments->push_back(sit->second);
 										member_arg_resolved = true;
 									} else {
 										StringHandle h = StringTable::getOrInternStringHandle(iname);
@@ -4761,7 +4763,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										if (type_it != getTypesByNameMap().end()) {
 											TemplateTypeArg a;
 											a.type_index = type_it->second->type_index_.withCategory(type_it->second->typeEnum());
-											resolved_member.template_arguments.push_back(a);
+											resolved_member.template_arguments->push_back(a);
 											member_arg_resolved = true;
 										}
 									}
@@ -4776,7 +4778,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									ASTNode substituted_node = substitutor.substitute(member_arg_info.node);
 									if (auto value = try_evaluate_constant_expression(substituted_node)) {
 										TemplateTypeArg val_arg(value->value, value->type);
-										resolved_member.template_arguments.push_back(val_arg);
+										resolved_member.template_arguments->push_back(val_arg);
 										member_arg_resolved = true;
 									}
 								}

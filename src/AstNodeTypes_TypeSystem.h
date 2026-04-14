@@ -930,7 +930,7 @@ struct TemplateArgumentNodeInfo {
 
 struct QualifiedTypeMemberAccess {
 	StringHandle member_name;
-	std::vector<TemplateTypeArg> template_arguments;
+	std::shared_ptr<std::vector<TemplateTypeArg>> template_arguments;
 	std::vector<TemplateArgumentNodeInfo> template_argument_infos;
 	bool has_template_arguments = false;
 };
