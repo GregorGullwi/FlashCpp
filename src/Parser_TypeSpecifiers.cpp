@@ -1465,27 +1465,15 @@ ParseResult Parser::parse_type_specifier() {
 								filled_template_args.push_back(TemplateTypeArg(substituted_default_node.as<TypeSpecifierNode>()));
 							}
 						} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
-							std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-							std::vector<std::string_view> template_param_order;
-							for (size_t filled_idx = 0; filled_idx < i && filled_idx < filled_template_args.size(); ++filled_idx) {
-								if (!template_params[filled_idx].is<TemplateParameterNode>()) {
-									continue;
-								}
-								const TemplateParameterNode& earlier_param = template_params[filled_idx].as<TemplateParameterNode>();
-								param_map[earlier_param.name()] = filled_template_args[filled_idx];
-								template_param_order.push_back(earlier_param.name());
-							}
-
-							ASTNode substituted_default_node = default_node;
-							if (!param_map.empty()) {
-								ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
-								substituted_default_node = substitutor.substitute(default_node);
-							}
-
-							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-							auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
-							if (eval_result.success()) {
-								filled_template_args.push_back(templateTypeArgFromEvalResult(eval_result));
+							std::vector<TemplateTypeArg> prior_template_args(
+								filled_template_args.begin(),
+								filled_template_args.begin() + std::min(i, filled_template_args.size()));
+							if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
+									default_node,
+									template_params,
+									prior_template_args);
+								evaluated_default.has_value()) {
+								filled_template_args.push_back(*evaluated_default);
 							}
 						}
 					}
@@ -2177,27 +2165,15 @@ ParseResult Parser::parse_type_specifier() {
 							filled_template_args.push_back(TemplateTypeArg(substituted_default_node.as<TypeSpecifierNode>()));
 						}
 					} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
-						std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-						std::vector<std::string_view> template_param_order;
-						for (size_t filled_idx = 0; filled_idx < i && filled_idx < filled_template_args.size(); ++filled_idx) {
-							if (!template_params[filled_idx].is<TemplateParameterNode>()) {
-								continue;
-							}
-							const TemplateParameterNode& earlier_param = template_params[filled_idx].as<TemplateParameterNode>();
-							param_map[earlier_param.name()] = filled_template_args[filled_idx];
-							template_param_order.push_back(earlier_param.name());
-						}
-
-						ASTNode substituted_default_node = default_node;
-						if (!param_map.empty()) {
-							ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
-							substituted_default_node = substitutor.substitute(default_node);
-						}
-
-						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-						auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
-						if (eval_result.success()) {
-							filled_template_args.push_back(templateTypeArgFromEvalResult(eval_result));
+						std::vector<TemplateTypeArg> prior_template_args(
+							filled_template_args.begin(),
+							filled_template_args.begin() + std::min(i, filled_template_args.size()));
+						if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
+								default_node,
+								template_params,
+								prior_template_args);
+							evaluated_default.has_value()) {
+							filled_template_args.push_back(*evaluated_default);
 						}
 					}
 				}

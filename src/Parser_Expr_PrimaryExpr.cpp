@@ -839,40 +839,15 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 				}
 			} else if (param.kind() == TemplateParameterKind::NonType &&
 					   default_node.is<ExpressionNode>()) {
-				std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-				std::vector<std::string_view> template_param_order;
-				for (size_t filled_idx = 0;
-					 filled_idx < param_idx && filled_idx < completed_args.size();
-					 ++filled_idx) {
-					if (!template_params[filled_idx].is<TemplateParameterNode>()) {
-						continue;
-					}
-					const TemplateParameterNode& earlier_param =
-						template_params[filled_idx].as<TemplateParameterNode>();
-					param_map[earlier_param.name()] = completed_args[filled_idx];
-					template_param_order.push_back(earlier_param.name());
-				}
-
-				ASTNode substituted_default_node = default_node;
-				if (!param_map.empty()) {
-					ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
-					substituted_default_node = substitutor.substitute(default_node);
-				}
-
-				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-				eval_ctx.parser = this;
-				eval_ctx.sema = getActiveSemanticAnalysis();
-				eval_ctx.template_args = completed_args;
-				eval_ctx.template_param_names.reserve(template_params.size());
-				for (const auto& tp : template_params) {
-					if (tp.is<TemplateParameterNode>()) {
-						eval_ctx.template_param_names.push_back(
-							tp.as<TemplateParameterNode>().name());
-					}
-				}
-				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
-				if (eval_result.success()) {
-					completed_args.push_back(templateTypeArgFromEvalResult(eval_result));
+				std::vector<TemplateTypeArg> prior_template_args(
+					completed_args.begin(),
+					completed_args.begin() + std::min(param_idx, completed_args.size()));
+				if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
+						default_node,
+						template_params,
+						prior_template_args);
+					evaluated_default.has_value()) {
+					completed_args.push_back(*evaluated_default);
 				}
 			}
 		}

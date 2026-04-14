@@ -22,6 +22,109 @@ TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_
 	return TemplateTypeArg(eval_result.as_int());
 }
 
+namespace {
+
+template <typename ParamContainer>
+ASTNode substituteNonTypeDefaultExpressionImpl(
+	Parser& parser,
+	const ASTNode& default_node,
+	const ParamContainer& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	if (!default_node.is<ExpressionNode>() || template_args.empty()) {
+		return default_node;
+	}
+
+	auto sub_map = buildSubstitutionParamMap(template_params, template_args);
+	if (sub_map.empty()) {
+		return default_node;
+	}
+
+	ExpressionSubstitutor substitutor(sub_map.param_map, parser, sub_map.param_order);
+	return substitutor.substitute(default_node);
+}
+
+template <typename ParamContainer>
+std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefaultImpl(
+	Parser& parser,
+	const ASTNode& default_node,
+	const ParamContainer& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	ASTNode substituted_default_node = substituteNonTypeDefaultExpressionImpl(
+		parser,
+		default_node,
+		template_params,
+		template_args);
+	if (!substituted_default_node.is<ExpressionNode>()) {
+		return std::nullopt;
+	}
+
+	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+	eval_ctx.parser = &parser;
+	eval_ctx.sema = parser.getActiveSemanticAnalysis();
+	eval_ctx.template_args = template_args;
+	eval_ctx.template_param_names.reserve(template_params.size());
+	for (const auto& template_param_node : template_params) {
+		if (!template_param_node.template is<TemplateParameterNode>()) {
+			continue;
+		}
+		eval_ctx.template_param_names.push_back(
+			template_param_node.template as<TemplateParameterNode>().name());
+	}
+
+	auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
+	if (!eval_result.success()) {
+		return std::nullopt;
+	}
+
+	return templateTypeArgFromEvalResult(eval_result);
+}
+
+}  // namespace
+
+ASTNode Parser::substituteNonTypeDefaultExpression(
+	const ASTNode& default_node,
+	const std::vector<ASTNode>& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	return substituteNonTypeDefaultExpressionImpl(
+		*this,
+		default_node,
+		template_params,
+		template_args);
+}
+
+ASTNode Parser::substituteNonTypeDefaultExpression(
+	const ASTNode& default_node,
+	const InlineVector<ASTNode, 4>& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	return substituteNonTypeDefaultExpressionImpl(
+		*this,
+		default_node,
+		template_params,
+		template_args);
+}
+
+std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
+	const ASTNode& default_node,
+	const std::vector<ASTNode>& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	return substituteAndEvaluateNonTypeDefaultImpl(
+		*this,
+		default_node,
+		template_params,
+		template_args);
+}
+
+std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
+	const ASTNode& default_node,
+	const InlineVector<ASTNode, 4>& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	return substituteAndEvaluateNonTypeDefaultImpl(
+		*this,
+		default_node,
+		template_params,
+		template_args);
+}
+
 std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
 	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
 		template_name = template_name.substr(last_colon + 2);
@@ -466,27 +569,15 @@ std::string_view Parser::instantiate_and_register_base_template(
 					}
 					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
 				} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
-					std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-					std::vector<std::string_view> template_param_order;
-					for (size_t filled_idx = 0; filled_idx < i && filled_idx < filled_args.size(); ++filled_idx) {
-						if (!primary_params[filled_idx].is<TemplateParameterNode>()) {
-							continue;
-						}
-						const TemplateParameterNode& earlier_param = primary_params[filled_idx].as<TemplateParameterNode>();
-						param_map[earlier_param.name()] = filled_args[filled_idx];
-						template_param_order.push_back(earlier_param.name());
-					}
-
-					ASTNode substituted_default_node = default_node;
-					if (!param_map.empty()) {
-						ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
-						substituted_default_node = substitutor.substitute(default_node);
-					}
-
-					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-					auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
-					if (eval_result.success()) {
-						filled_args.push_back(templateTypeArgFromEvalResult(eval_result));
+					std::vector<TemplateTypeArg> prior_template_args(
+						filled_args.begin(),
+						filled_args.begin() + std::min(i, filled_args.size()));
+					if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
+							default_node,
+							primary_params,
+							prior_template_args);
+						evaluated_default.has_value()) {
+						filled_args.push_back(*evaluated_default);
 						FLASH_LOG(Templates, Debug, "Filled in default non-type argument for param ", i);
 					}
 				}

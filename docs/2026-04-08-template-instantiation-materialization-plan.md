@@ -8,7 +8,7 @@
 
 - **Phase 0:** effectively complete; keep the original regression cluster as the must-pass guardrail.
 - **Phase 1:** complete. Non-type template-argument identity now has one canonical key path.
-- **Phase 2:** **substantially complete**. Alias-template materialization is centralized through `materializeAliasTemplateInstantiation`; duplicated helper logic has been extracted into shared utilities (`buildSubstitutionParamMap`, `templateTypeArgFromEvalResult`). Dead code removed. Type-specifier deferred alias path now routes through the authoritative alias materialization helper. Remaining: deduction-loop extraction is deferred (non-blocking).
+- **Phase 2:** **complete**. Alias-template materialization is centralized through `materializeAliasTemplateInstantiation`; duplicated helper logic is routed through shared utilities (`buildSubstitutionParamMap`, `templateTypeArgFromEvalResult`, `substituteAndEvaluateNonTypeDefault`). Dead code removed. Type-specifier deferred alias path now routes through the authoritative alias materialization helper, and the remaining deduction-loop body is extracted into `deduceTemplateArgsFromCall(...)`.
 - **Phase 3:** not started — ready to begin.
 - **Phase 4:** not started.
 - **Phase 5:** intentionally blocked until the Phase 2-4 prerequisites are in place.
@@ -41,6 +41,8 @@
 
 - `buildSubstitutionParamMap(...)` shared helper extracts the duplicated param_map + ExpressionSubstitutor construction pattern from 5+ call sites.
 - `templateTypeArgFromEvalResult(...)` consolidates the `ConstExpr::EvalResult` → `TemplateTypeArg` conversion that was duplicated at 6+ sites.
+- `substituteAndEvaluateNonTypeDefault(...)` now centralizes the remaining substitution + constexpr evaluation path for dependent non-type default arguments across alias/type-specifier/materialization entry points.
+- `deduceTemplateArgsFromCall(...)` now owns the previously inlined deduction loop from `try_instantiate_single_template(...)`.
 - Dead fallback code removed from `materializeTemplateInstantiationForLookup(...)` where `get_instantiated_class_name` always returned non-empty.
 - Type-specifier deferred alias path now routes directly through `materializeAliasTemplateInstantiation(...)` instead of the generic `materializeTemplateInstantiationForLookup(...)`.
 - `normalizeDependentNonTypeTemplateArgs(...)` confirmed already extracted as Parser member function.
@@ -65,12 +67,18 @@ The Phase 2 consolidation that was blocking Phase 3 is substantially complete:
 
 See “Phase 2 consolidation completed” section above for details. Late-materialization audit documented 21 registerAndNormalize sites using unified contract and 5 scattered normalization calls.
 
-## Next steps for Phase 3
+## Next steps
 
-1. **Formalize `registerAndNormalizeLateMaterializedTopLevelNode` as the only registration path** with lifecycle docs
-2. **Move scattered normalization calls into materialization helpers** so callers don't need to normalize separately
-3. **Add pending-sema normalization test** verifying late-materialized templates participate in semantic analysis
-4. **Extract deduction-loop body** from `try_instantiate_single_template` (deferred from Phase 2, non-blocking)
+### Immediate Phase 3 follow-up
+
+1. **Formalize `registerAndNormalizeLateMaterializedTopLevelNode` as the only registration path** with lifecycle docs.
+2. **Move scattered normalization calls into materialization helpers** so callers no longer need to normalize separately.
+3. **Add a pending-sema normalization regression test** verifying late-materialized templates participate in semantic analysis before codegen.
+
+### After Phase 3
+
+4. **Start Phase 4 placeholder-state cleanup** so unresolved-dependent states are represented explicitly instead of inferred from names.
+5. **Use the narrowed materialization surface to remove remaining codegen-triggered template materialization fallbacks** before Phase 5 ownership work.
 
 ## What is still open before Phase 5 should start
 
@@ -208,7 +216,7 @@ The recent regression proved that name/key generation is the last point where di
 
 ## Phase 2: centralize alias-template materialization
 
-**Status:** PARTIALLY COMPLETE (targeted fixes landed; authoritative helper still missing)
+**Status:** COMPLETE (authoritative helper and the remaining Phase 2 helper extractions have landed)
 
 **Goal**
 
@@ -432,11 +440,11 @@ At `src/ExpressionSubstitutor.cpp:744` and `src/ExpressionSubstitutor.cpp:1170`,
 
 ### Expression substitution duplication across instantiation sites
 
-`src/Parser_Templates_Inst_ClassTemplate.cpp:441-454` duplicates the `ExpressionSubstitutor` + `ConstExpr::Evaluator::evaluate` dispatch pattern that appears at 9+ other sites in this PR. Extract a shared helper (e.g. `TemplateTypeArg fromEvalResult(const ConstExpr::EvalResult&)` plus a `substituteAndEvaluateNonTypeDefault` wrapper). **Relates to Phase 2.**
+~~`src/Parser_Templates_Inst_ClassTemplate.cpp:441-454` duplicates the `ExpressionSubstitutor` + `ConstExpr::Evaluator::evaluate` dispatch pattern that appears at 9+ other sites in this PR. Extract a shared helper (e.g. `TemplateTypeArg fromEvalResult(const ConstExpr::EvalResult&)` plus a `substituteAndEvaluateNonTypeDefault` wrapper).~~ **ADDRESSED in Phase 2 follow-up (2026-04-14):** `substituteAndEvaluateNonTypeDefault(...)` now owns the shared substitution + constexpr-evaluation path for dependent non-type defaults, and the remaining call sites now delegate to it.
 
 ### Extract `materialize_placeholder_args` from deduction
 
-The `materialize_placeholder_args` lambda at `src/Parser_Templates_Inst_Deduction.cpp:2059-2178` is ~120 lines. It should be a dedicated `Parser` member function for readability and testability. **Relates to Phase 2 / Phase 3.**
+~~The `materialize_placeholder_args` lambda at `src/Parser_Templates_Inst_Deduction.cpp:2059-2178` is ~120 lines. It should be a dedicated `Parser` member function for readability and testability.~~ **ADDRESSED in Phase 2 follow-up (2026-04-14):** the deduction loop is now extracted into `deduceTemplateArgsFromCall(...)`. **Relates to Phase 2 / Phase 3.**
 
 ### Extract `normalizeDependentNonTypeArgs` from `parse_type_specifier`
 

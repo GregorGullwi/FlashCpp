@@ -900,6 +900,28 @@ private:
 		const TemplateParameterNode& param,
 		const std::vector<ASTNode>& template_params,
 		InlineVector<TemplateTypeArg, 4>& template_args);
+	ASTNode substituteNonTypeDefaultExpression(
+		const ASTNode& default_node,
+		const std::vector<ASTNode>& template_params,
+		const std::vector<TemplateTypeArg>& template_args);
+	ASTNode substituteNonTypeDefaultExpression(
+		const ASTNode& default_node,
+		const InlineVector<ASTNode, 4>& template_params,
+		const std::vector<TemplateTypeArg>& template_args);
+	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
+		const ASTNode& default_node,
+		const std::vector<ASTNode>& template_params,
+		const std::vector<TemplateTypeArg>& template_args);
+	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
+		const ASTNode& default_node,
+		const InlineVector<ASTNode, 4>& template_params,
+		const std::vector<TemplateTypeArg>& template_args);
+	std::optional<InlineVector<TemplateTypeArg, 4>> deduceTemplateArgsFromCall(
+		const std::vector<ASTNode>& template_params,
+		const std::vector<TypeSpecifierNode>& arg_types,
+		const CallArgDeductionInfo& deduction_info,
+		size_t function_pack_arg_start,
+		int recursion_depth);
 	// Shared pre-deduction helper for matching function-parameter slots to call-argument
 	// types. The explicit-template-argument path must only rely on this map for non-pack
 	// signatures; pack-aware remapping needs an explicit contract first.
