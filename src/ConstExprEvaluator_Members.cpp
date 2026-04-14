@@ -87,6 +87,20 @@ EvalResult read_bound_identifier_value(const EvalResult& bound_value, std::strin
 		return bound_value;
 	}
 
+	// For struct containers, the container-level is_indeterminate flag may be stale
+	// after individual member assignments (e.g., `S s; s.x = 42; return s;`).
+	// Perform a deep check: only reject if any individual member is still indeterminate.
+	if (bound_value.is_indeterminate && bound_value.object_type_index.is_valid() &&
+		!bound_value.object_member_bindings.empty()) {
+		for (const auto& [_, member_val] : bound_value.object_member_bindings) {
+			if (member_val.is_indeterminate) {
+				return validateConstexprRead(member_val);
+			}
+		}
+		// All members are determinate — the container flag is stale, allow the read.
+		return bound_value;
+	}
+
 	return validateConstexprRead(bound_value);
 }
 
@@ -1964,6 +1978,17 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							return rhs_result;
 						auto result = apply_op_to(member_it->second, rhs_result);
 						if (result.success()) {
+							// Recalculate the container's is_indeterminate flag after the member write
+							// so that whole-struct reads (e.g., `return s;`) are not incorrectly rejected.
+							if (obj_binding->is_indeterminate) {
+								obj_binding->is_indeterminate = false;
+								for (const auto& [_, mv] : obj_binding->object_member_bindings) {
+									if (mv.is_indeterminate) {
+										obj_binding->is_indeterminate = true;
+										break;
+									}
+								}
+							}
 							refreshPointerSnapshotsForBinding(obj_id->name(), *obj_binding, bindings, context);
 						}
 						return result;
