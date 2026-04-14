@@ -309,7 +309,8 @@ private:
 			heap_data_ = vec;
 			return;
 		}
-		std::copy(vec.begin(), vec.end(), inline_data_.data());
+		assert(vec.size() <= inline_data_.size() && "InlineVector inline storage overflow");
+		std::copy_n(vec.begin(), vec.size(), inline_data_.data());
 		inline_count_ = static_cast<uint8_t>(vec.size());
 	}
 
@@ -321,6 +322,7 @@ private:
 			heap_data_ = std::move(vec);
 			return;
 		}
+		assert(vec.size() <= inline_data_.size() && "InlineVector inline storage overflow");
 		std::move(vec.begin(), vec.end(), inline_data_.data());
 		inline_count_ = static_cast<uint8_t>(vec.size());
 	}
