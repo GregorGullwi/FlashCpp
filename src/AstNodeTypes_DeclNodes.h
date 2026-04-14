@@ -506,6 +506,10 @@ struct StructTypeInfo {
 	// Returns a pair of the static member and the StructTypeInfo that defines it
 	std::pair<const StructStaticMember*, const StructTypeInfo*> findStaticMemberRecursive(StringHandle member_name) const;
 
+	// Find member function recursively through base classes.
+	// Returns a pair of the first matching overload and the StructTypeInfo that defines it.
+	std::pair<const StructMemberFunction*, const StructTypeInfo*> findMemberFunctionRecursive(StringHandle func_name) const;
+
 	void set_custom_alignment(size_t align) {
 		custom_alignment = align;
 	}

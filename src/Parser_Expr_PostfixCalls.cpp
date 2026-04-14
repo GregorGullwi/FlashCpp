@@ -4,6 +4,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
+#include <limits>
 
 // Helper: resolve object type from expression and try to instantiate member function template.
 // Uses get_expression_type() to handle any expression (identifiers, function calls, member access, etc.).
@@ -326,6 +327,63 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is
 				return ParseResult::error(
 					"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
 					member_name_token);
+			}
+		}
+		if (known_member_func && !instantiated_func.has_value()) {
+			const size_t min_required = countMinRequiredArgs(*known_member_func);
+			const size_t max_accepted = known_member_func->is_variadic()
+				? std::numeric_limits<size_t>::max()
+				: known_member_func->parameter_nodes().size();
+			if (args.size() < min_required || args.size() > max_accepted) {
+				return ParseResult::error(
+					"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
+					member_name_token);
+			}
+		}
+
+		// C++ [class.member.lookup]/1: when the derived class declares ANY overload
+		// of the same name, all base-class overloads are hidden.  The single-match
+		// arity check above handles the case where tryResolveConcreteMemberFunction
+		// found exactly one concrete overload.  This block handles the multi-overload
+		// case (2+ local overloads cause tryResolveConcreteMemberFunction to return
+		// nullptr).  If the derived class owns the name but no local overload accepts
+		// the argument count, the call is ill-formed.
+		if (!known_member_func && !instantiated_func.has_value() &&
+			!explicit_template_args.has_value() && object_struct_name.has_value() &&
+			!in_sfinae_context_) {
+			if (auto type_opt = get_expression_type(*result); type_opt.has_value() &&
+														  is_struct_type(type_opt->category())) {
+				TypeIndex type_idx = type_opt->type_index();
+				const TypeInfo* type_info = tryGetTypeInfo(type_idx);
+				const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+				if (struct_info) {
+					StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name_token.value());
+					bool has_any_local_overload = false;
+					bool has_arity_match = false;
+					for (const auto& mf : struct_info->member_functions) {
+						if (mf.is_constructor || mf.is_destructor)
+							continue;
+						if (mf.getName() != member_name_handle)
+							continue;
+						has_any_local_overload = true;
+						// Check if this overload accepts the argument count
+						if (const auto* candidate = get_function_decl_node(mf.function_decl)) {
+							const size_t min_req = countMinRequiredArgs(*candidate);
+							const size_t max_acc = candidate->is_variadic()
+								? std::numeric_limits<size_t>::max()
+								: candidate->parameter_nodes().size();
+							if (args.size() >= min_req && args.size() <= max_acc) {
+								has_arity_match = true;
+								break;
+							}
+						}
+					}
+					if (has_any_local_overload && !has_arity_match) {
+						return ParseResult::error(
+							"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
+							member_name_token);
+					}
+				}
 			}
 		}
 
