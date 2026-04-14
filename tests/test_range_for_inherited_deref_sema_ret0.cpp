@@ -65,5 +65,9 @@ int main() {
 		const_sum += value;
 	}
 
-	return (sum == 42 && const_sum == 42) ? 0 : 1;
+	if (sum != 42)
+		return 1;
+	if (const_sum != 28)
+		return 2;
+	return 0;
 }

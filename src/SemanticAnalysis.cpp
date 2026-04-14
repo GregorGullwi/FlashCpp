@@ -1330,7 +1330,10 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 				const TypeSpecifierNode& begin_return_type = adl_begin_decl.decl_node().type_node().as<TypeSpecifierNode>();
 				const FunctionDeclarationNode* dereference_func = nullptr;
 				if (begin_return_type.pointer_depth() == 0) {
-					dereference_func = getRangeIteratorDereferenceFunctionForSema(begin_return_type, range_type->is_const());
+					// C++20 [stmt.ranged] materializes the iterator as
+					// `auto __begin = begin-expr;`, so top-level cv/ref from the
+					// begin-expression does not make the iterator object const.
+					dereference_func = getRangeIteratorDereferenceFunctionForSema(begin_return_type, false);
 				}
 				mutable_stmt.set_resolved_dereference_function(dereference_func);
 				return normalizeRangedForLoopDecl(original_var_decl, *range_type, begin_return_type, dereference_func);
@@ -1351,10 +1354,12 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	mutable_stmt.set_resolved_member_end_function(&end_func_decl);
 	mutable_stmt.set_resolved_begin_is_const(begin_func->is_const());
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-	const bool prefer_const_deref = range_type->is_const() || begin_func->is_const();
 	const FunctionDeclarationNode* dereference_func = nullptr;
 	if (begin_return_type.pointer_depth() == 0) {
-		dereference_func = getRangeIteratorDereferenceFunctionForSema(begin_return_type, prefer_const_deref);
+		// C++20 [stmt.ranged] lowers to `auto __begin = range.begin();`, so the
+		// iterator object used for `*__begin` is not made const by a const range
+		// object or const-qualified begin() member function.
+		dereference_func = getRangeIteratorDereferenceFunctionForSema(begin_return_type, false);
 	}
 	mutable_stmt.set_resolved_dereference_function(dereference_func);
 	return normalizeRangedForLoopDecl(original_var_decl, *range_type, begin_return_type, dereference_func);
