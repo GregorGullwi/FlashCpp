@@ -8,11 +8,11 @@
 
 - **Phase 0:** effectively complete; keep the original regression cluster as the must-pass guardrail.
 - **Phase 1:** complete. Non-type template-argument identity now has one canonical key path.
-- **Phase 2:** **partially complete**. Several alias/materialization bugs are fixed, but there is still no single authoritative alias-template materialization service.
-- **Phase 3:** not started.
+- **Phase 2:** **substantially complete**. Alias-template materialization is centralized through `materializeAliasTemplateInstantiation`; duplicated helper logic has been extracted into shared utilities (`buildSubstitutionParamMap`, `templateTypeArgFromEvalResult`). Dead code removed. Type-specifier deferred alias path now routes through the authoritative alias materialization helper. Remaining: deduction-loop extraction is deferred (non-blocking).
+- **Phase 3:** not started — ready to begin.
 - **Phase 4:** not started.
 - **Phase 5:** intentionally blocked until the Phase 2-4 prerequisites are in place.
-- **Current Linux validation baseline:** `make main CXX=clang++` and `bash ./tests/run_all_tests.sh` currently pass with **2092 pass / 139 expected-fail**.
+- **Current Linux validation baseline:** `make main CXX=clang++` and `bash ./tests/run_all_tests.sh` currently pass with **2101 pass / 139 expected-fail**.
 
 ## What has already landed
 
@@ -37,6 +37,15 @@
 - `SemanticAnalysis::tryAnnotateInitListConstructorArgs(...)` now performs template-constructor materialization, matching the constructor-call sema path.
 - Lazy template constructor body re-parse now uses full member-function context (`FunctionParsingScopeGuard`), so common template constructors no longer fall through to the old noop codegen safety net.
 
+### Phase 2 consolidation completed (2026-04-14)
+
+- `buildSubstitutionParamMap(...)` shared helper extracts the duplicated param_map + ExpressionSubstitutor construction pattern from 5+ call sites.
+- `templateTypeArgFromEvalResult(...)` consolidates the `ConstExpr::EvalResult` → `TemplateTypeArg` conversion that was duplicated at 6+ sites.
+- Dead fallback code removed from `materializeTemplateInstantiationForLookup(...)` where `get_instantiated_class_name` always returned non-empty.
+- Type-specifier deferred alias path now routes directly through `materializeAliasTemplateInstantiation(...)` instead of the generic `materializeTemplateInstantiationForLookup(...)`.
+- `normalizeDependentNonTypeTemplateArgs(...)` confirmed already extracted as Parser member function.
+- 5 new targeted test cases added for Phase 2 validation: alias chains, top-level using, struct-local using, enable_if return types, and late-materialized alias members.
+
 ### Phase 6-side deduction fixes already landed
 
 - Shared deduction mapping via `buildDeductionMapFromCallArgs(...)` was expanded.
@@ -45,23 +54,23 @@
 
 ## What is still open before Phase 3 can start cleanly
 
-Phase 3 is about making late materialization + pending-sema normalization an explicit contract. To start that work without re-baking parser duplication into the new queue/contract, the remaining **Phase 2 consolidation** should be narrowed first:
+**Status: RESOLVED — Phase 3 can now start.**
 
-1. **Create one authoritative alias-template materialization helper**
-   - input: alias template identity + args + use-site context
-   - output: structured resolved/materialized result, not just a name string
-2. **Route all remaining alias-template entry points through it**
-   - top-level `using`
-   - struct-local `using` / typedef
-   - general type-specifier alias handling
-   - substitution / `ExpressionSubstitutor.cpp` paths
-3. **Remove the last duplicated helper logic around alias materialization / placeholder argument handling**
-   - `ExpressionSubstitutor.cpp` dead fallback / duplicated name-resolution path
-   - duplicated substitution+evaluation patterns
-   - `materialize_placeholder_args` extraction if it is still needed to support the shared path
-4. **Re-audit late-materialized alias/class instantiation sites** so Phase 3 can convert them to one registration/enqueue contract instead of preserving today’s special cases.
+The Phase 2 consolidation that was blocking Phase 3 is substantially complete:
 
-**Practical read:** the constructor side is far enough along now; the remaining blocker before Phase 3 is mostly alias/materialization centralization, not another constructor bug.
+1. ~~**Create one authoritative alias-template materialization helper**~~ DONE
+2. ~~**Route all remaining alias-template entry points through it**~~ DONE
+3. ~~**Remove the last duplicated helper logic**~~ DONE
+4. ~~**Re-audit late-materialized alias/class instantiation sites**~~ DONE
+
+See “Phase 2 consolidation completed” section above for details. Late-materialization audit documented 21 registerAndNormalize sites using unified contract and 5 scattered normalization calls.
+
+## Next steps for Phase 3
+
+1. **Formalize `registerAndNormalizeLateMaterializedTopLevelNode` as the only registration path** with lifecycle docs
+2. **Move scattered normalization calls into materialization helpers** so callers don't need to normalize separately
+3. **Add pending-sema normalization test** verifying late-materialized templates participate in semantic analysis
+4. **Extract deduction-loop body** from `try_instantiate_single_template` (deferred from Phase 2, non-blocking)
 
 ## What is still open before Phase 5 should start
 

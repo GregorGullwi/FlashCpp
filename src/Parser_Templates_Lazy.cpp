@@ -930,18 +930,10 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 		if (!was_substituted) {
 			// Use ExpressionSubstitutor for general template parameter substitution
-			std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-			std::vector<std::string_view> template_param_order;
-			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-				if (template_params[i].is<TemplateParameterNode>()) {
-					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-					param_map[param.name()] = template_args[i];
-					template_param_order.push_back(param.name());
-				}
-			}
+			auto sub_map = buildSubstitutionParamMap(template_params, template_args);
 
-			if (!param_map.empty()) {
-				ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
+			if (!sub_map.empty()) {
+				ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
 				substitutor.setCurrentOwnerTypeName(struct_info->getName());
 				substituted_initializer = substitutor.substitute(lazy_info.initializer.value());
 				FLASH_LOG(Templates, Debug, "Applied general template parameter substitution to lazy static member initializer");

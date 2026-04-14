@@ -1125,8 +1125,17 @@ ParseResult Parser::parse_type_specifier() {
 					if (alias_node.is_deferred()) {
 						FLASH_LOG(Parser, Debug, "Using deferred instantiation for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
 
+						// Route directly through the alias-specific materialization path
+						// since we already know this is an alias template.
 						AliasTemplateMaterializationResult materialized_alias =
-							materializeTemplateInstantiationForLookup(type_name, *template_args);
+							materializeAliasTemplateInstantiation(type_name, *template_args);
+						if (!materialized_alias.instantiated_name.empty()) {
+							normalizePendingSemanticRootsIfAvailable();
+							if (materialized_alias.resolved_type_info == nullptr) {
+								materialized_alias.resolved_type_info =
+									findTypeByName(StringTable::getOrInternStringHandle(materialized_alias.instantiated_name));
+							}
+						}
 						if (std::optional<ParseResult> finalized_alias =
 								finalizeInstantiatedAliasType(
 									materialized_alias.instantiated_name,
@@ -1476,18 +1485,7 @@ ParseResult Parser::parse_type_specifier() {
 							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 							auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
 							if (eval_result.success()) {
-								if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
-									filled_template_args.push_back(TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool));
-								} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
-									TypeCategory value_category = eval_result.exact_type.has_value()
-										? eval_result.exact_type->category()
-										: TypeCategory::UnsignedLongLong;
-									filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category));
-								} else if (eval_result.exact_type.has_value()) {
-									filled_template_args.push_back(TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category()));
-								} else {
-									filled_template_args.push_back(TemplateTypeArg(eval_result.as_int()));
-								}
+								filled_template_args.push_back(templateTypeArgFromEvalResult(eval_result));
 							}
 						}
 					}
@@ -2199,18 +2197,7 @@ ParseResult Parser::parse_type_specifier() {
 						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 						auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
 						if (eval_result.success()) {
-							if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
-								filled_template_args.push_back(TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool));
-							} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
-								TypeCategory value_category = eval_result.exact_type.has_value()
-									? eval_result.exact_type->category()
-									: TypeCategory::UnsignedLongLong;
-								filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category));
-							} else if (eval_result.exact_type.has_value()) {
-								filled_template_args.push_back(TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category()));
-							} else {
-								filled_template_args.push_back(TemplateTypeArg(eval_result.as_int()));
-							}
+							filled_template_args.push_back(templateTypeArgFromEvalResult(eval_result));
 						}
 					}
 				}

@@ -6,6 +6,22 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_result) {
+	if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
+		return TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool);
+	}
+	if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
+		TypeCategory value_category = eval_result.exact_type.has_value()
+			? eval_result.exact_type->category()
+			: TypeCategory::UnsignedLongLong;
+		return TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category);
+	}
+	if (eval_result.exact_type.has_value()) {
+		return TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category());
+	}
+	return TemplateTypeArg(eval_result.as_int());
+}
+
 std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
 	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
 		template_name = template_name.substr(last_colon + 2);
@@ -86,19 +102,7 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 	auto eval_result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
 	if (eval_result.success()) {
-		if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
-			return TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool);
-		}
-		if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
-			TypeCategory value_category = eval_result.exact_type.has_value()
-				? eval_result.exact_type->category()
-				: TypeCategory::UnsignedLongLong;
-			return TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category);
-		}
-		if (eval_result.exact_type.has_value()) {
-			return TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category());
-		}
-		return TemplateTypeArg(eval_result.as_int());
+		return templateTypeArgFromEvalResult(eval_result);
 	}
 
 	if (const auto* qual_id = std::get_if<QualifiedIdentifierNode>(&arg_expr)) {
@@ -244,11 +248,10 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 			result.instantiated_name = StringTable::getStringView(
 				registry_hit->as<StructDeclarationNode>().name());
 		} else {
+			// get_instantiated_class_name always returns a non-empty mangled name,
+			// so no further fallback is needed.
 			result.instantiated_name =
 				get_instantiated_class_name(template_name, template_args);
-			if (result.instantiated_name.empty()) {
-				result.instantiated_name = template_name_to_instantiate;
-			}
 		}
 	}
 
@@ -483,18 +486,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 					auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
 					if (eval_result.success()) {
-						if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
-							filled_args.emplace_back(*bool_value ? 1LL : 0LL, TypeCategory::Bool);
-						} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
-							TypeCategory value_category = eval_result.exact_type.has_value()
-								? eval_result.exact_type->category()
-								: TypeCategory::UnsignedLongLong;
-							filled_args.emplace_back(static_cast<int64_t>(*uint_value), value_category);
-						} else if (eval_result.exact_type.has_value()) {
-							filled_args.emplace_back(eval_result.as_int(), eval_result.exact_type->category());
-						} else {
-							filled_args.emplace_back(eval_result.as_int());
-						}
+						filled_args.push_back(templateTypeArgFromEvalResult(eval_result));
 						FLASH_LOG(Templates, Debug, "Filled in default non-type argument for param ", i);
 					}
 				}
@@ -981,19 +973,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					return std::nullopt;
 				}
 
-				if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
-					return TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool);
-				}
-				if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
-					TypeCategory value_category = eval_result.exact_type.has_value()
-						? eval_result.exact_type->category()
-						: TypeCategory::UnsignedLongLong;
-					return TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category);
-				}
-				if (eval_result.exact_type.has_value()) {
-					return TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category());
-				}
-				return TemplateTypeArg(eval_result.as_int());
+				return templateTypeArgFromEvalResult(eval_result);
 			}
 
 			FLASH_LOG(Templates, Error, "Unsupported variable template parameter kind for default argument on '",
