@@ -8,11 +8,13 @@ struct Array {
 };
 
 template <template <typename, int> class C, typename T, int N>
-int useMixed(C<T, N>& c) {
-	return c.data + C<T, N>::size;
-}
+int useMixed(C<T, N>& c);
+
+template <typename T>
+concept CanUseMixed = requires(T& value) {
+	useMixed(value);
+};
 
 int main() {
-	Array<int, 3> a{4};
-	return useMixed(a) - 7;
+	return CanUseMixed<Array<int, 3>> ? 0 : 1;
 }

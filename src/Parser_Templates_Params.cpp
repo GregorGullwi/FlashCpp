@@ -1122,6 +1122,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// This enables variable templates inside function templates to work correctly:
 						// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
 							bool substituted_type_param = false;
+							bool substituted_value_param = false;
 							bool finished_parsing = false;  // Track if we consumed '>' and should break
 							std::string_view param_name_to_check;
 
@@ -1166,11 +1167,39 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 											advance();
 										}
 										break;  // Break from the for loop
+									} else if (subst.is_value_param && subst.param_name == param_name_to_check) {
+										FLASH_LOG(Templates, Debug, "Found value substitution for parameter '",
+												  param_name_to_check, "' -> ", subst.value);
+
+										TemplateTypeArg substituted_arg = TemplateTypeArg::makeValue(
+											subst.value,
+											subst.value_type);
+
+										if (peek() == "..."_tok) {
+											advance(); // consume '...'
+											substituted_arg.is_pack = true;
+											FLASH_LOG(Templates, Debug, "Marked substituted value as pack expansion");
+										}
+
+										template_args.push_back(substituted_arg);
+										discard_saved_token(arg_saved_pos);
+										substituted_value_param = true;
+
+										if (peek() == ">>"_tok) {
+											split_right_shift_token();
+										}
+										if (peek() == ">"_tok) {
+											advance();
+											finished_parsing = true;
+										} else if (peek() == ","_tok) {
+											advance();
+										}
+										break;
 									}
 								}
 							}
 
-							if (substituted_type_param) {
+							if (substituted_type_param || substituted_value_param) {
 								if (finished_parsing) {
 									break;  // Break from the outer while loop - we're done
 								}
@@ -1658,6 +1687,19 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		TemplateTypeArg arg(type_node);
 		arg.is_pack = is_pack_expansion;
 		arg.member_pointer_kind = member_pointer_kind;
+		if (in_sfinae_context_ &&
+			(type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias)) {
+			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_node.token().value());
+			for (const auto& subst : template_param_substitutions_) {
+				if (subst.is_value_param && subst.param_name == type_name_handle) {
+					FLASH_LOG(Templates, Debug, "Resolved non-type template argument from substitution: ",
+							  type_node.token().value(), " -> ", subst.value);
+					arg = TemplateTypeArg::makeValue(subst.value, subst.value_type);
+					arg.is_pack = is_pack_expansion;
+					break;
+				}
+			}
+		}
 
 		// Check if this type is dependent (contains template parameters)
 		// A type is dependent if:
@@ -1667,7 +1709,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// 3. It's a UserDefined type with type_index=0 (placeholder)
 		FLASH_LOG_FORMAT(Templates, Debug, "Checking dependency for template argument: type={}, type_index={}, in_sfinae_context={}",
 						 static_cast<int>(type_node.type()), type_node.type_index(), in_sfinae_context_);
-		if (type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias || type_node.category() == TypeCategory::Template) {
+		if (!arg.is_value &&
+			(type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias || type_node.category() == TypeCategory::Template)) {
 			// BUGFIX: Use the original token value instead of looking up via type_index
 			// When template parameters are parsed, they may have type_index=0 (void),
 			// which causes incorrect dependency checks. The token value is always correct.
