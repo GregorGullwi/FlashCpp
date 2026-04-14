@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <iterator>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -292,9 +293,10 @@ private:
 		}
 
 		heap_data_.reserve(capacity);
-		for (size_t i = 0; i < inline_count_; ++i) {
-			heap_data_.push_back(std::move(inline_data_[i]));
-		}
+		heap_data_.insert(
+			heap_data_.end(),
+			std::make_move_iterator(inline_data_.begin()),
+			std::make_move_iterator(inline_data_.begin() + inline_count_));
 		inline_count_ = 0;
 		using_inline_storage_ = false;
 	}
@@ -307,9 +309,8 @@ private:
 			heap_data_ = vec;
 			return;
 		}
-		for (const auto& item : vec) {
-			inline_data_[inline_count_++] = item;
-		}
+		std::copy(vec.begin(), vec.end(), inline_data_.data());
+		inline_count_ = static_cast<uint8_t>(vec.size());
 	}
 
 	void assignFromVector(std::vector<T>&& vec) {
@@ -320,9 +321,8 @@ private:
 			heap_data_ = std::move(vec);
 			return;
 		}
-		for (auto& item : vec) {
-			inline_data_[inline_count_++] = std::move(item);
-		}
+		std::move(vec.begin(), vec.end(), inline_data_.data());
+		inline_count_ = static_cast<uint8_t>(vec.size());
 	}
 
 	std::array<T, N> inline_data_{};
