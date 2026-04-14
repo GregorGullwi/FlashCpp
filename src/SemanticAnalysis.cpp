@@ -3380,7 +3380,6 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 
 								if (owner_it != getTypesByNameMap().end() && owner_it->second->isEnum()) {
 									CanonicalTypeDesc desc;
-									desc.type_index = nativeTypeIndex(TypeCategory::Enum);
 									desc.type_index = owner_it->second->type_index_;
 									return type_context_.intern(desc);
 								}
