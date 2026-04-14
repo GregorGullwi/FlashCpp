@@ -5642,10 +5642,11 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 		return EvalResult::error("Aggregate object is not a struct");
 	}
 	if (struct_info->hasUserDefinedConstructor()) {
-		return EvalResult::error(
-			"Type '" +
-			std::string(StringTable::getStringView(struct_info->getName())) +
-			"' has user-defined constructors and is not an aggregate");
+		return EvalResult::error(std::string(StringBuilder()
+			.append("Type '"sv)
+			.append(StringTable::getStringView(struct_info->getName()))
+			.append("' has user-defined constructors and is not an aggregate"sv)
+			.commit()));
 	}
 
 	EvalResult object_result = EvalResult::from_int(0);
@@ -5703,11 +5704,13 @@ EvalResult Evaluator::materialize_constructor_object_value(
 	// This handles cases like Pt{3, 7} where Pt is an aggregate with no user-defined constructors.
 	if (ctor_call.arguments().size() > 0) {
 		if (struct_info->hasUserDefinedConstructor()) {
-			return EvalResult::error(
-				"No matching constructor for '" +
-				std::string(StringTable::getStringView(struct_info->getName())) +
-				"' with " + std::to_string(ctor_call.arguments().size()) +
-				" argument(s) in constexpr evaluation");
+			return EvalResult::error(std::string(StringBuilder()
+				.append("No matching constructor for '"sv)
+				.append(StringTable::getStringView(struct_info->getName()))
+				.append("' with "sv)
+				.append(std::to_string(ctor_call.arguments().size()))
+				.append(" argument(s) in constexpr evaluation"sv)
+				.commit()));
 		}
 		// Convert arguments to InitializerListNode for aggregate initialization
 		InitializerListNode init_list;

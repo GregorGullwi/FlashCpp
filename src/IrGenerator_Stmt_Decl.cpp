@@ -980,11 +980,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				}
 				if (!ctor_evaluated) {
 					if (missing_ctor_for_nonaggregate) {
-						throw CompileError(
-							"No matching constructor for '" +
-							std::string(StringTable::getStringView(si->name)) +
-							"' with " + std::to_string(ctor_call.arguments().size()) +
-							" argument(s)");
+						throw CompileError(std::string(StringBuilder()
+							.append("No matching constructor for '"sv)
+							.append(StringTable::getStringView(si->name))
+							.append("' with "sv)
+							.append(std::to_string(ctor_call.arguments().size()))
+							.append(" argument(s)"sv)
+							.commit()));
 					}
 						// Fallback: zero-initialize for default constructor or failed eval
 					op.is_initialized = true;
