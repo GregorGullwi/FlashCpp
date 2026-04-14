@@ -1182,18 +1182,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return false;
 		}
 
-		if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
-			out_args.push_back(TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool));
-		} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
-			TypeCategory value_category = eval_result.exact_type.has_value()
-				? eval_result.exact_type->category()
-				: TypeCategory::UnsignedLongLong;
-			out_args.push_back(TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category));
-		} else if (eval_result.exact_type.has_value()) {
-			out_args.push_back(TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category()));
-		} else {
-			out_args.push_back(TemplateTypeArg(eval_result.as_int()));
-		}
+		out_args.push_back(templateTypeArgFromEvalResult(eval_result));
 
 		FLASH_LOG(Templates, Debug, "Evaluated ", log_context, " via ConstExprEvaluator: ", eval_result.as_int());
 		return true;

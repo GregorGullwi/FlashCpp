@@ -1485,18 +1485,7 @@ ParseResult Parser::parse_type_specifier() {
 							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 							auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
 							if (eval_result.success()) {
-								if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
-									filled_template_args.push_back(TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool));
-								} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
-									TypeCategory value_category = eval_result.exact_type.has_value()
-										? eval_result.exact_type->category()
-										: TypeCategory::UnsignedLongLong;
-									filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category));
-								} else if (eval_result.exact_type.has_value()) {
-									filled_template_args.push_back(TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category()));
-								} else {
-									filled_template_args.push_back(TemplateTypeArg(eval_result.as_int()));
-								}
+								filled_template_args.push_back(templateTypeArgFromEvalResult(eval_result));
 							}
 						}
 					}
@@ -2208,18 +2197,7 @@ ParseResult Parser::parse_type_specifier() {
 						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 						auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
 						if (eval_result.success()) {
-							if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
-								filled_template_args.push_back(TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool));
-							} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
-								TypeCategory value_category = eval_result.exact_type.has_value()
-									? eval_result.exact_type->category()
-									: TypeCategory::UnsignedLongLong;
-								filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category));
-							} else if (eval_result.exact_type.has_value()) {
-								filled_template_args.push_back(TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category()));
-							} else {
-								filled_template_args.push_back(TemplateTypeArg(eval_result.as_int()));
-							}
+							filled_template_args.push_back(templateTypeArgFromEvalResult(eval_result));
 						}
 					}
 				}

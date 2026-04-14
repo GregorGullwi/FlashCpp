@@ -38,6 +38,7 @@ using namespace std::literals::string_view_literals;
 
 namespace ConstExpr {
 class Evaluator;
+struct EvalResult;
 }
 
 class SemanticAnalysis;
@@ -298,6 +299,13 @@ inline SubstitutionParamMap buildSubstitutionParamMap(
 	}
 	return result;
 }
+
+// Convert a successful ConstExpr::EvalResult into a TemplateTypeArg for non-type
+// template arguments.  This consolidates the bool/ull/int dispatch that was
+// previously duplicated at every default-argument and alias-materialization site.
+// Declared here (not in TemplateRegistry_Types.h) to avoid a dependency on
+// ConstExprEvaluator.h from the template-registry header.
+TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_result);
 
 class Parser {
 	// Friend classes that need access to private members
