@@ -583,10 +583,92 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 		const std::unordered_map<std::string_view, EvalResult>&,
 		EvaluationContext&),
 	std::optional<EvalResult>& resolve_error) {
+	auto expandArrayElements = [](EvalResult& array_value) {
+		if (!array_value.array_elements.empty() || array_value.array_values.empty()) {
+			return;
+		}
+		array_value.array_elements.reserve(array_value.array_values.size());
+		for (int64_t element_value : array_value.array_values) {
+			array_value.array_elements.push_back(EvalResult::from_int(element_value));
+		}
+	};
+	auto failNegativePointerOffset = [&]() -> std::optional<BoundWriteTarget> {
+		resolve_error = EvalResult::error("Negative pointer offset in dereference");
+		return std::nullopt;
+	};
+	auto failArrayIndexOutOfBounds = [&]() -> std::optional<BoundWriteTarget> {
+		resolve_error = EvalResult::error("Array index out of bounds in constant expression");
+		return std::nullopt;
+	};
+	auto failNonArrayOffset = [&](std::string_view var_name) -> std::optional<BoundWriteTarget> {
+		resolve_error = EvalResult::error("Cannot dereference pointer with non-zero offset on non-array variable '" +
+										  std::string(var_name) + "'");
+		return std::nullopt;
+	};
+	auto tryResolveArrayPointerTarget = [&](EvalResult& array_value, std::string_view root_name, int64_t offset) -> std::optional<BoundWriteTarget> {
+		if (offset < 0) {
+			return failNegativePointerOffset();
+		}
+		expandArrayElements(array_value);
+		size_t index = static_cast<size_t>(offset);
+		if (index >= array_value.array_elements.size()) {
+			return failArrayIndexOutOfBounds();
+		}
+		return BoundWriteTarget{&array_value.array_elements[index], root_name};
+	};
+
 	if (const IdentifierNode* identifier = tryGetIdentifier(expr)) {
 		if (EvalResult* binding = findMutableBindingValue(identifier->name(), bindings, context)) {
 			return BoundWriteTarget{binding, identifier->name()};
 		}
+		return std::nullopt;
+	}
+
+	if (const auto* unary_op = tryGetNode<UnaryOperatorNode>(expr)) {
+		if (unary_op->op() != "*") {
+			return std::nullopt;
+		}
+
+		EvalResult pointer_result = evaluate_index_expression(unary_op->get_operand(), bindings, context);
+		if (!pointer_result.success()) {
+			resolve_error = pointer_result;
+			return std::nullopt;
+		}
+		if (!pointer_result.pointer_to_var.isValid()) {
+			return std::nullopt;
+		}
+
+		if (!context.constexpr_heap.empty()) {
+			StringHandle heap_key = pointer_result.pointer_to_var;
+			auto heap_it = context.constexpr_heap.find(heap_key);
+			if (heap_it != context.constexpr_heap.end()) {
+				if (heap_it->second.freed) {
+					resolve_error = EvalResult::error("Use after free in constant expression");
+					return std::nullopt;
+				}
+
+				EvalResult& heap_value = heap_it->second.value;
+				if (heap_value.is_array) {
+					return tryResolveArrayPointerTarget(heap_value, {}, pointer_result.pointer_offset);
+				}
+				if (pointer_result.pointer_offset != 0) {
+					return failNonArrayOffset(StringTable::getStringView(pointer_result.pointer_to_var));
+				}
+				return BoundWriteTarget{&heap_value, {}};
+			}
+		}
+
+		std::string_view pointed_name = StringTable::getStringView(pointer_result.pointer_to_var);
+		if (EvalResult* binding = findMutableBindingValue(pointed_name, bindings, context)) {
+			if (binding->is_array) {
+				return tryResolveArrayPointerTarget(*binding, pointed_name, pointer_result.pointer_offset);
+			}
+			if (pointer_result.pointer_offset != 0) {
+				return failNonArrayOffset(pointed_name);
+			}
+			return BoundWriteTarget{binding, pointed_name};
+		}
+
 		return std::nullopt;
 	}
 
