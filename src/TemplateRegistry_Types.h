@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include <optional>
 #include <algorithm>
+#include <iterator>
 #include <span>
 
 // SaveHandle type for parser save/restore operations
@@ -803,10 +804,10 @@ inline TemplateTypeArg materializeTemplateArg(
 		// For dependent NTTP expressions (e.g., sizeof(T)), evaluate with concrete args.
 		// Only attempted when a non-null evaluator callback is provided.
 		if constexpr (!std::is_null_pointer_v<std::decay_t<EvalFn>>) {
-			// Copy to contiguous storage so we can form std::span (InlineVector is non-contiguous).
-			std::vector<ASTNode> params_vec(template_params.begin(), template_params.end());
-			std::vector<TemplateTypeArg> args_vec(template_args.begin(), template_args.end());
-			if (auto evaluated = eval_dependent_expr(*arg_info.dependent_expr, std::span<const ASTNode>{params_vec}, std::span<const TemplateTypeArg>{args_vec})) {
+			if (auto evaluated = eval_dependent_expr(
+					*arg_info.dependent_expr,
+					std::span<const ASTNode>(std::data(template_params), std::size(template_params)),
+					std::span<const TemplateTypeArg>(std::data(template_args), std::size(template_args)))) {
 				concrete_arg.value = *evaluated;
 				concrete_arg.is_dependent = false;
 				concrete_arg.dependent_expr = std::nullopt;

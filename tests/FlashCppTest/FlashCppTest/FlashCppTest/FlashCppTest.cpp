@@ -11,6 +11,7 @@
 #include "IrGenerator.h"
 #include "IRConverter.h"
 #include "ChunkedAnyVector.h"
+#include "InlineVector.h"
 #include "TemplateRegistry.h"  // Includes ConceptRegistry as well
 #include "InstantiationQueue.h"
 #include <string>
@@ -18,6 +19,7 @@
 #include <cctype>
 #include <typeindex>
 #include <sstream>
+#include <span>
 #include <cstdio>
 #include <fstream>
 #include <stdexcept>
@@ -154,6 +156,26 @@ TEST_CASE("ChunkedVector") {
 	});
 
 	CHECK(count == 2);
+}
+
+TEST_CASE("InlineVector provides contiguous span storage after spilling past inline capacity") {
+	InlineVector<int, 2> values;
+	values.push_back(10);
+	values.push_back(20);
+	values.push_back(30);
+	values.insert(values.begin() + 1, 15);
+
+	std::span<int> span = values;
+	CHECK(span.size() == 4);
+	CHECK(span.data() == values.data());
+	CHECK(span[0] == 10);
+	CHECK(span[1] == 15);
+	CHECK(span[2] == 20);
+	CHECK(span[3] == 30);
+	CHECK(span.data() + 3 == &values[3]);
+
+	span[2] = 25;
+	CHECK(values[2] == 25);
 }
 
 TEST_CASE("Dependent and non-dependent type args produce different hashes") {
