@@ -1148,10 +1148,10 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					StringTable::getStringView(resolved_name_handle);
 				if (const TypeInfo* direct_alias_target_info =
 						tryGetTypeInfo(alias_info->type_index_)) {
-					std::string_view direct_alias_target_name =
-						StringTable::getStringView(direct_alias_target_info->name());
-					if (direct_alias_target_name.find("::") != std::string_view::npos) {
-						materialization_target_name = direct_alias_target_name;
+					// Phase 4: use explicit placeholder flag instead of string heuristic
+					if (direct_alias_target_info->isDependentMemberType()) {
+						materialization_target_name =
+							StringTable::getStringView(direct_alias_target_info->name());
 					}
 				}
 				size_t member_sep = materialization_target_name.rfind("::");

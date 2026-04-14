@@ -695,6 +695,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeInfo& type_info = add_empty_type_entry();
 				type_info.fallback_size_bits_ = 0;
 				type_info.is_incomplete_instantiation_ = true;
+				type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 				type_info.name_ = inst_handle;
 				auto template_args_info = convertToTemplateArgInfo(template_args);
 				InlineVector<StringHandle, 4> placeholder_param_names;

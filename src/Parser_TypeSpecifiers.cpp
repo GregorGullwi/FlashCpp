@@ -881,6 +881,7 @@ ParseResult Parser::parse_type_specifier() {
 					placeholder_type.fallback_size_bits_ = 0;
 					placeholder_type.name_ = type_handle;
 					placeholder_type.is_incomplete_instantiation_ = true;
+					placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
 					getTypesByNameMap()[type_handle] = &placeholder_type;
 					type_idx = placeholder_type.type_index_;
 				} else {
@@ -1017,6 +1018,7 @@ ParseResult Parser::parse_type_specifier() {
 							placeholder_type.fallback_size_bits_ = 0;
 							placeholder_type.name_ = qualified_member_handle;
 							placeholder_type.is_incomplete_instantiation_ = true;
+							placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
 							getTypesByNameMap()[qualified_member_handle] = &placeholder_type;
 							return placeholder_type;
 						}
@@ -1305,6 +1307,7 @@ ParseResult Parser::parse_type_specifier() {
 							placeholder_type.fallback_size_bits_ = 0;
 							placeholder_type.name_ = type_handle;
 							placeholder_type.is_incomplete_instantiation_ = true;
+							placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
 							placeholder_type.setTemplateInstantiationInfo(
 								QualifiedIdentifier::fromQualifiedName(type_name, gSymbolTable.get_current_namespace_handle()),
 								convertToTemplateArgInfo(*template_args));
@@ -1668,11 +1671,12 @@ ParseResult Parser::parse_type_specifier() {
 						[&](std::optional<StringHandle> dependent_member_template_base,
 							std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> dependent_member_template_args) -> ParseResult {
 						FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
-						auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
+						auto type_name_handle = StringTable::getOrInternStringHandle(qualified_type_name);
 						TypeInfo& type_info = add_empty_type_entry();
 						type_info.fallback_size_bits_ = 0; // Unknown size for dependent type
-						type_info.name_ = type_idx;
+						type_info.name_ = type_name_handle;
 						type_info.is_incomplete_instantiation_ = true;
+						type_info.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
 						if (dependent_member_template_base.has_value() && dependent_member_template_args.has_value()) {
 							type_info.setTemplateInstantiationInfo(
 								QualifiedIdentifier::fromQualifiedName(
@@ -1702,7 +1706,7 @@ ParseResult Parser::parse_type_specifier() {
 									base_ctx->parent);
 							}
 						}
-						getTypesByNameMap()[type_idx] = &type_info;
+						getTypesByNameMap()[type_name_handle] = &type_info;
 
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
 							type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
@@ -2231,6 +2235,7 @@ ParseResult Parser::parse_type_specifier() {
 						type_info.fallback_size_bits_ = 0; // Unknown size for dependent type
 						type_info.name_ = type_name_handle;
 						type_info.is_incomplete_instantiation_ = true;
+						type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 						getTypesByNameMap()[type_name_handle] = &type_info;
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
 							type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));

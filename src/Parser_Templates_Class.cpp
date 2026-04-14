@@ -796,7 +796,8 @@ ParseResult Parser::parse_template_declaration() {
 				const TypeInfo* base_type_info = base_type_it->second;
 				return base_type_info->is_incomplete_instantiation_ || base_type_info->isTemplateInstantiation();
 			};
-			if (ti.is_incomplete_instantiation_ && type_name.find("::") == std::string_view::npos) {
+			// Phase 4: use explicit placeholder kind instead of string heuristic for "::"
+			if (ti.is_incomplete_instantiation_ && !ti.isDependentMemberType()) {
 				has_unresolved_params = true;
 				FLASH_LOG(Parser, Debug, "Alias target type '", StringTable::getStringView(ti.name()), "' has unresolved parameters - using deferred instantiation");
 			} else if (has_unresolved_member_base()) {
@@ -805,11 +806,11 @@ ParseResult Parser::parse_template_declaration() {
 			}
 			// Phase 6: Use TypeInfo::isTemplateInstantiation() instead of parsing $
 			// Check if this is a template instantiation (hash-based naming)
-			// But NOT if the name already contains :: (which means ::type was already resolved)
+			// But NOT if it's a dependent member type (which means ::type was already resolved)
 			else if (ti.isTemplateInstantiation()) {
-				// Only treat as deferred if there's NO :: in the name
-				// If there's ::type or similar, the type has already been resolved to a member type
-				if (type_name.find("::") == std::string_view::npos) {
+				// Only treat as deferred if it's NOT a dependent member type
+				// If it's a member type, the type has already been resolved to a member type
+				if (!ti.isDependentMemberType()) {
 					// Use the stored base template name instead of parsing the $
 					std::string_view template_name_part = StringTable::getStringView(ti.baseTemplateName());
 					auto template_opt = gTemplateRegistry.lookupTemplate(template_name_part);
