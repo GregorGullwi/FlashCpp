@@ -439,18 +439,9 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 	instantiateDeferredStaticInitializerCalls(*initializer, parser, struct_info);
 
 	if (initializer->is<ExpressionNode>()) {
-		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-		std::vector<std::string_view> template_param_order;
-		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-			if (!template_params[i].is<TemplateParameterNode>()) {
-				continue;
-			}
-			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-			param_map[param.name()] = template_args[i];
-			template_param_order.push_back(param.name());
-		}
-		if (!param_map.empty()) {
-			ExpressionSubstitutor substitutor(param_map, *parser, template_param_order);
+		auto sub_map = buildSubstitutionParamMap(template_params, template_args);
+		if (!sub_map.empty()) {
+			ExpressionSubstitutor substitutor(sub_map.param_map, *parser, sub_map.param_order);
 			substitutor.setCurrentOwnerTypeName(struct_info->getName());
 			initializer = substitutor.substitute(initializer.value());
 		}
@@ -1215,22 +1206,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return default_node;
 		}
 
-		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-		std::vector<std::string_view> template_param_order;
-		for (size_t i = 0; i < params.size() && i < current_args.size(); ++i) {
-			if (!params[i].is<TemplateParameterNode>()) {
-				continue;
-			}
-			const TemplateParameterNode& template_param = params[i].as<TemplateParameterNode>();
-			param_map[template_param.name()] = current_args[i];
-			template_param_order.push_back(template_param.name());
-		}
+		auto sub_map = buildSubstitutionParamMap(params, current_args);
 
-		if (param_map.empty()) {
+		if (sub_map.empty()) {
 			return default_node;
 		}
 
-		ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
+		ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
 		return substitutor.substitute(default_node);
 	};
 
@@ -2836,19 +2818,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::optional<ASTNode> substituted_initializer = static_member.initializer;
 					if (static_member.initializer.has_value()) {
 						// Build parameter substitution map and preserve parameter order
-						std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-						std::vector<std::string_view> template_param_order;
-						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-							if (template_params[i].is<TemplateParameterNode>()) {
-								const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-								param_map[param.name()] = template_args[i];
-								template_param_order.push_back(param.name());
-							}
-						}
+						auto sub_map = buildSubstitutionParamMap(template_params, template_args);
 
 						// Use ExpressionSubstitutor to substitute template parameters in the initializer
-						if (!param_map.empty()) {
-							ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
+						if (!sub_map.empty()) {
+							ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
 							substitutor.setCurrentOwnerTypeName(struct_info->getName());
 							substituted_initializer = substitutor.substitute(static_member.initializer.value());
 							FLASH_LOG(Templates, Debug, "Substituted template parameters in static member initializer");
@@ -3348,17 +3322,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				FLASH_LOG(Templates, Debug, "Re-evaluating deferred static_assert during template instantiation");
 
 				// Build template parameter name to type mapping for substitution
-				std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-				std::vector<std::string_view> template_param_order;
-				for (size_t i = 0; i < template_params.size() && i < template_args_for_pattern.size(); ++i) {
-					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-					// param.name() already returns string_view
-					param_map[param.name()] = template_args_for_pattern[i];
-					template_param_order.push_back(param.name());
-				}
+				auto sub_map = buildSubstitutionParamMap(template_params, template_args_for_pattern);
 
 				// Create substitution context with template parameter mappings
-				ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
+				ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
 
 				// Substitute template parameters in the condition expression
 				ASTNode substituted_expr = substitutor.substitute(deferred_assert.condition_expr);

@@ -271,6 +271,34 @@ struct BaseClassPostTemplateInfo {
 	bool is_pack_expansion = false;
 };
 
+// Result of building a template parameter-to-argument substitution map.
+// Used by ExpressionSubstitutor and other template instantiation sites.
+struct SubstitutionParamMap {
+	std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+	std::vector<std::string_view> param_order;
+
+	bool empty() const { return param_map.empty(); }
+};
+
+// Build a SubstitutionParamMap from a params container and a template_args vector.
+// The params container must support operator[] and size() with ASTNode elements
+// (works with both InlineVector<ASTNode, 4> and std::vector<ASTNode>).
+template <typename ParamsContainer>
+inline SubstitutionParamMap buildSubstitutionParamMap(
+	const ParamsContainer& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	SubstitutionParamMap result;
+	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+		if (!template_params[i].template is<TemplateParameterNode>()) {
+			continue;
+		}
+		const TemplateParameterNode& param = template_params[i].template as<TemplateParameterNode>();
+		result.param_map[param.name()] = template_args[i];
+		result.param_order.push_back(param.name());
+	}
+	return result;
+}
+
 class Parser {
 	// Friend classes that need access to private members
 	friend class ExpressionSubstitutor;
