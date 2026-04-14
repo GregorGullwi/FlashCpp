@@ -2824,12 +2824,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			 rt.category() == TypeCategory::Template) &&
 			rt.type_index().is_valid()) {
 			if (const TypeInfo* rt_info = tryGetTypeInfo(rt.type_index())) {
-				if (rt_info->is_incomplete_instantiation_) {
-					std::string_view unresolved_name = StringTable::getStringView(rt_info->name());
-					if (unresolved_name.find("::") != std::string_view::npos) {
-						FLASH_LOG(Templates, Debug, "SFINAE: unresolved dependent member alias remains after resolution: ", unresolved_name);
-						return std::nullopt;
-					}
+				if (rt_info->is_incomplete_instantiation_ && rt_info->isDependentMemberType()) {
+					FLASH_LOG(Templates, Debug, "SFINAE: unresolved dependent member alias remains after resolution: ", StringTable::getStringView(rt_info->name()));
+					return std::nullopt;
 				}
 			}
 		}

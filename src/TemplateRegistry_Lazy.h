@@ -896,7 +896,8 @@ inline std::optional<long long> evaluateConstraintExpression(
 
 				// Check if this is a placeholder for a dependent nested type like "Op<...>::type"
 				// These are created during parsing as placeholders for template-dependent types
-				if (full_type_name.find("::") != std::string_view::npos) {
+				// Phase 4: use explicit placeholder_kind_ instead of string heuristic
+				if (const TypeInfo* full_ti = tryGetTypeInfo(type_idx); full_ti && full_ti->isDependentMemberType()) {
 					// This looks like a nested type access - try to resolve it
 					// Format: "Op<...>::type" or similar
 					size_t scope_pos = full_type_name.find("::");

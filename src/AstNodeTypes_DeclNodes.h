@@ -885,6 +885,26 @@ struct QualifiedIdentifier {
 	}
 };
 
+// Phase 4: Explicit placeholder kind replaces string-level heuristics (e.g., name.find("::"))
+// for detecting dependent placeholder categories.  Every TypeInfo created as a
+// dependent placeholder stamps one of these values so that SFINAE viability checks,
+// alias resolution, expression substitution, and lazy member lookup can branch on
+// typed state instead of inspecting the name for "::".
+enum class DependentPlaceholderKind : uint8_t {
+	// Not a dependent placeholder — either a fully materialized type or not
+	// an incomplete instantiation at all.
+	None = 0,
+
+	// A template instantiation whose arguments are dependent (e.g., vector<T>)
+	// but which does NOT involve a nested member access.
+	DependentArgs,
+
+	// A dependent qualified member-type placeholder (e.g., enable_if<B>::type,
+	// Op<T>::value_type).  The name contains "::" because it encodes
+	// "Base::member", but that should be tested via this flag, not string ops.
+	DependentMemberType,
+};
+
 struct TypeInfo {
 	TypeInfo() = default;
 	TypeInfo(StringHandle name, TypeIndex idx, int fallback_size_bits)
@@ -898,6 +918,9 @@ struct TypeInfo {
 
 	// True if this type was created with unresolved template args (set directly at placeholder creation sites)
 	bool is_incomplete_instantiation_ = false;
+
+	// Phase 4: explicit placeholder classification — replaces string heuristics.
+	DependentPlaceholderKind placeholder_kind_ = DependentPlaceholderKind::None;
 
 	// True if this TypeInfo entry was registered via register_type_alias (typedef / using alias)
 	bool is_type_alias_ = false;
@@ -1071,6 +1094,10 @@ struct TypeInfo {
 	bool needsTypeIndex() const { return needs_type_index(category()); }
 	bool isTemplatePlaceholder() const { return category() == TypeCategory::Template; }
 	bool isTypeAlias() const { return is_type_alias_; }
+
+	// Phase 4: explicit placeholder queries (replace string heuristics like name.find("::"))
+	bool isDependentMemberType() const { return placeholder_kind_ == DependentPlaceholderKind::DependentMemberType; }
+	bool isDependentPlaceholder() const { return placeholder_kind_ != DependentPlaceholderKind::None; }
 };
 
 // Returned by add_user_type / add_function_type / add_struct_type / add_enum_type /
