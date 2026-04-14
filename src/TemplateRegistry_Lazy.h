@@ -894,40 +894,6 @@ inline std::optional<long long> evaluateConstraintExpression(
 					}
 				}
 
-				auto sizeFromConcreteTemplateArg = [](const TemplateTypeArg& concrete_arg) -> std::optional<long long> {
-					if (concrete_arg.pointer_depth > 0 ||
-						concrete_arg.function_signature.has_value() ||
-						concrete_arg.category() == TypeCategory::FunctionPointer ||
-						concrete_arg.category() == TypeCategory::MemberFunctionPointer ||
-						concrete_arg.category() == TypeCategory::MemberObjectPointer) {
-						return 8;
-					}
-
-					long long size = 0;
-					if (const TypeInfo* concrete_ti = tryGetTypeInfo(concrete_arg.type_index)) {
-						if (const StructTypeInfo* struct_info = concrete_ti->getStructInfo();
-							struct_info && !struct_info->hasCompleteObjectLayout()) {
-							return std::nullopt;
-						}
-						size = static_cast<long long>(toSizeT(concrete_ti->sizeInBytes()));
-					}
-
-					if (size == 0) {
-						size = static_cast<long long>(get_type_size_bits(concrete_arg.category()) / 8);
-					}
-					if (size <= 0) {
-						return std::nullopt;
-					}
-
-					if (concrete_arg.is_array) {
-						if (!concrete_arg.array_size.has_value()) {
-							return std::nullopt;
-						}
-						size *= static_cast<long long>(*concrete_arg.array_size);
-					}
-					return size;
-				};
-
 				auto findConstraintArgByName = [&](std::string_view param_name) -> const TemplateTypeArg* {
 					for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
 						if (template_param_names[i] == param_name) {
@@ -963,176 +929,195 @@ inline std::optional<long long> evaluateConstraintExpression(
 					return concrete_args;
 				};
 
-				auto applyTypeSpecSizeAdjustments =
-					[](const TypeSpecifierNode& type_spec, long long base_size) -> std::optional<long long> {
-					if (type_spec.has_function_signature() && type_spec.pointer_depth() == 0) {
-						return std::nullopt;
-					}
-					if (type_spec.pointer_depth() > 0 ||
-						type_spec.type() == TypeCategory::FunctionPointer ||
-						type_spec.type() == TypeCategory::MemberFunctionPointer ||
-						type_spec.type() == TypeCategory::MemberObjectPointer) {
-						return 8;
-					}
-					if (type_spec.is_array()) {
-						if (type_spec.array_dimensions().empty()) {
-							if (auto single_dim = type_spec.array_size(); single_dim.has_value()) {
-								base_size *= static_cast<long long>(*single_dim);
-							} else {
-								return std::nullopt;
-							}
-						} else {
-							for (size_t dim : type_spec.array_dimensions()) {
-								base_size *= static_cast<long long>(dim);
-							}
-						}
-					}
-					return base_size;
-				};
+				struct MemberAliasSizeResolver {
+					enum { kMaxDepth = 64 };
+					int depth_ = 0;
 
-				auto resolveConcreteTypeMemberAliasSize =
-					[&](const TemplateTypeArg& concrete_base_arg,
-						std::string_view member_name) -> std::optional<long long> {
-					if (concrete_base_arg.is_value ||
-						concrete_base_arg.is_template_template_arg ||
-						!concrete_base_arg.type_index.is_valid()) {
-						return std::nullopt;
-					}
-
-					const TypeInfo* concrete_base_info =
-						tryGetTypeInfo(concrete_base_arg.type_index);
-					if (!concrete_base_info) {
-						return std::nullopt;
-					}
-
-					StringHandle qualified_member_handle =
-						StringTable::getOrInternStringHandle(
-							StringBuilder()
-								.append(concrete_base_info->name())
-								.append("::")
-								.append(member_name)
-								.commit());
-					auto member_it = getTypesByNameMap().find(qualified_member_handle);
-					if (member_it == getTypesByNameMap().end() || member_it->second == nullptr) {
-						return std::nullopt;
-					}
-
-					TypeSpecifierNode member_spec(
-						member_it->second->registeredTypeIndex().withCategory(member_it->second->typeEnum()),
-						member_it->second->hasStoredSize() ? member_it->second->sizeInBits().value : 0,
-						Token(),
-						CVQualifier::None,
-						ReferenceQualifier::None);
-					int size_bits = getTypeSpecSizeBits(member_spec);
-					if (size_bits <= 0 && member_it->second->hasStoredSize()) {
-						size_bits = member_it->second->sizeInBits().value;
-					}
-					return size_bits > 0
-						? std::optional<long long>(static_cast<long long>(size_bits / 8))
-						: std::nullopt;
-				};
-
-				std::function<std::optional<long long>(
-					std::string_view,
-					std::string_view,
-					std::span<const TemplateTypeArg>)> resolvePrimaryTemplateMemberAliasSize;
-
-				std::function<std::optional<long long>(
-					const TypeSpecifierNode&,
-					std::span<const ASTNode>,
-					std::span<const TemplateTypeArg>)> resolveAliasTypeSpecSize;
-
-				resolveAliasTypeSpecSize =
-					[&](const TypeSpecifierNode& alias_type_spec,
-						std::span<const ASTNode> primary_params,
-						std::span<const TemplateTypeArg> concrete_member_args) -> std::optional<long long> {
-					auto findConcreteArgByName =
-						[&](std::string_view param_name) -> const TemplateTypeArg* {
-						for (size_t i = 0; i < primary_params.size() &&
-								i < concrete_member_args.size();
-							 ++i) {
-							if (!primary_params[i].is<TemplateParameterNode>()) {
-								continue;
-							}
-							const auto& param =
-								primary_params[i].as<TemplateParameterNode>();
-							if (param.name() == param_name) {
-								return &concrete_member_args[i];
-							}
-						}
-						return nullptr;
+					struct DepthGuard {
+						int& depth_ref;
+						DepthGuard(int& depth) : depth_ref(depth) { ++depth_ref; }
+						~DepthGuard() { --depth_ref; }
 					};
 
-					auto tryResolveBoundTemplateParam =
-						[&](std::string_view candidate_name) -> std::optional<long long> {
-						const TemplateTypeArg* concrete_arg =
-							findConcreteArgByName(candidate_name);
-						if (!concrete_arg ||
-							concrete_arg->is_value ||
-							concrete_arg->is_template_template_arg) {
+					static std::optional<long long> sizeFromConcreteTemplateArg(
+						const TemplateTypeArg& concrete_arg) {
+						if (concrete_arg.pointer_depth > 0 ||
+							concrete_arg.function_signature.has_value() ||
+							concrete_arg.category() == TypeCategory::FunctionPointer ||
+							concrete_arg.category() == TypeCategory::MemberFunctionPointer ||
+							concrete_arg.category() == TypeCategory::MemberObjectPointer) {
+							return 8;
+						}
+
+						long long size = 0;
+						if (const TypeInfo* concrete_ti = tryGetTypeInfo(concrete_arg.type_index)) {
+							if (const StructTypeInfo* struct_info = concrete_ti->getStructInfo();
+								struct_info && !struct_info->hasCompleteObjectLayout()) {
+								return std::nullopt;
+							}
+							size = static_cast<long long>(toSizeT(concrete_ti->sizeInBytes()));
+						}
+
+						if (size == 0) {
+							size = static_cast<long long>(get_type_size_bits(concrete_arg.category()) / 8);
+						}
+						if (size <= 0) {
 							return std::nullopt;
 						}
 
-						if (std::optional<long long> base_size =
-								sizeFromConcreteTemplateArg(*concrete_arg);
-							base_size.has_value()) {
-							return applyTypeSpecSizeAdjustments(alias_type_spec, *base_size);
+						if (concrete_arg.is_array) {
+							if (!concrete_arg.array_size.has_value()) {
+								return std::nullopt;
+							}
+							size *= static_cast<long long>(*concrete_arg.array_size);
 						}
-						return std::nullopt;
-					};
+						return size;
+					}
 
-					if (alias_type_spec.type_index().is_valid()) {
-						if (const TypeInfo* alias_type_info =
-								tryGetTypeInfo(alias_type_spec.type_index())) {
-							if (std::optional<long long> bound_param_size =
-									tryResolveBoundTemplateParam(
-										StringTable::getStringView(alias_type_info->name()));
-								bound_param_size.has_value()) {
-								return bound_param_size;
+					static std::optional<long long> applyTypeSpecSizeAdjustments(
+						const TypeSpecifierNode& type_spec, long long base_size) {
+						if (type_spec.has_function_signature() && type_spec.pointer_depth() == 0) {
+							return std::nullopt;
+						}
+						if (type_spec.pointer_depth() > 0 ||
+							type_spec.type() == TypeCategory::FunctionPointer ||
+							type_spec.type() == TypeCategory::MemberFunctionPointer ||
+							type_spec.type() == TypeCategory::MemberObjectPointer) {
+							return 8;
+						}
+						if (type_spec.is_array()) {
+							if (type_spec.array_dimensions().empty()) {
+								if (auto single_dim = type_spec.array_size(); single_dim.has_value()) {
+									base_size *= static_cast<long long>(*single_dim);
+								} else {
+									return std::nullopt;
+								}
+							} else {
+								for (size_t dim : type_spec.array_dimensions()) {
+									base_size *= static_cast<long long>(dim);
+								}
+							}
+						}
+						return base_size;
+					}
+
+					static std::optional<long long> resolveConcreteTypeMemberAliasSize(
+						const TemplateTypeArg& concrete_base_arg,
+						std::string_view member_name) {
+						if (concrete_base_arg.is_value ||
+							concrete_base_arg.is_template_template_arg ||
+							!concrete_base_arg.type_index.is_valid()) {
+							return std::nullopt;
+						}
+
+						const TypeInfo* concrete_base_info =
+							tryGetTypeInfo(concrete_base_arg.type_index);
+						if (!concrete_base_info) {
+							return std::nullopt;
+						}
+
+						StringHandle qualified_member_handle =
+							StringTable::getOrInternStringHandle(
+								StringBuilder()
+									.append(concrete_base_info->name())
+									.append("::")
+									.append(member_name)
+									.commit());
+						auto member_it = getTypesByNameMap().find(qualified_member_handle);
+						if (member_it == getTypesByNameMap().end() || member_it->second == nullptr) {
+							return std::nullopt;
+						}
+
+						TypeSpecifierNode member_spec(
+							member_it->second->registeredTypeIndex().withCategory(member_it->second->typeEnum()),
+							member_it->second->hasStoredSize() ? member_it->second->sizeInBits().value : 0,
+							Token(),
+							CVQualifier::None,
+							ReferenceQualifier::None);
+						int size_bits = getTypeSpecSizeBits(member_spec);
+						if (size_bits <= 0 && member_it->second->hasStoredSize()) {
+							size_bits = member_it->second->sizeInBits().value;
+						}
+						return size_bits > 0
+							? std::optional<long long>(static_cast<long long>(size_bits / 8))
+							: std::nullopt;
+					}
+
+					std::optional<long long> resolveAliasTypeSpecSize(
+						const TypeSpecifierNode& alias_type_spec,
+						std::span<const ASTNode> primary_params,
+						std::span<const TemplateTypeArg> concrete_member_args) {
+						if (depth_ >= kMaxDepth) return std::nullopt;
+						DepthGuard guard{depth_};
+
+						auto findConcreteArgByName =
+							[&](std::string_view param_name) -> const TemplateTypeArg* {
+							for (size_t i = 0; i < primary_params.size() &&
+									i < concrete_member_args.size();
+								 ++i) {
+								if (!primary_params[i].is<TemplateParameterNode>()) {
+									continue;
+								}
+								const auto& param =
+									primary_params[i].as<TemplateParameterNode>();
+								if (param.name() == param_name) {
+									return &concrete_member_args[i];
+								}
+							}
+							return nullptr;
+						};
+
+						auto tryResolveBoundTemplateParam =
+							[&](std::string_view candidate_name) -> std::optional<long long> {
+							const TemplateTypeArg* concrete_arg =
+								findConcreteArgByName(candidate_name);
+							if (!concrete_arg ||
+								concrete_arg->is_value ||
+								concrete_arg->is_template_template_arg) {
+								return std::nullopt;
 							}
 
-							if (alias_type_info->isDependentMemberType()) {
-								std::string_view qualified_alias_name =
-									StringTable::getStringView(alias_type_info->name());
-								size_t member_sep =
-									qualified_alias_name.rfind("::");
-								if (member_sep != std::string_view::npos) {
-									std::string_view dependent_member_name =
-										qualified_alias_name.substr(member_sep + 2);
-									std::vector<TemplateTypeArg> nested_args;
-									if (alias_type_info->isTemplateInstantiation()) {
-										nested_args = materializeTemplateArgs(
-											*alias_type_info,
-											primary_params,
-											concrete_member_args);
-									}
+							if (std::optional<long long> base_size =
+									sizeFromConcreteTemplateArg(*concrete_arg);
+								base_size.has_value()) {
+								return applyTypeSpecSizeAdjustments(alias_type_spec, *base_size);
+							}
+							return std::nullopt;
+						};
 
-									std::string_view nested_template_name =
-										StringTable::getStringView(
-											alias_type_info->baseTemplateName());
-									if (!nested_template_name.empty()) {
-										if (std::optional<long long> nested_alias_size =
-												resolvePrimaryTemplateMemberAliasSize(
-													nested_template_name,
-													dependent_member_name,
-													nested_args);
-											nested_alias_size.has_value()) {
-											return applyTypeSpecSizeAdjustments(
-												alias_type_spec,
-												*nested_alias_size);
+						if (alias_type_spec.type_index().is_valid()) {
+							if (const TypeInfo* alias_type_info =
+									tryGetTypeInfo(alias_type_spec.type_index())) {
+								if (std::optional<long long> bound_param_size =
+										tryResolveBoundTemplateParam(
+											StringTable::getStringView(alias_type_info->name()));
+									bound_param_size.has_value()) {
+									return bound_param_size;
+								}
+
+								if (alias_type_info->isDependentMemberType()) {
+									std::string_view qualified_alias_name =
+										StringTable::getStringView(alias_type_info->name());
+									size_t member_sep =
+										qualified_alias_name.rfind("::");
+									if (member_sep != std::string_view::npos) {
+										std::string_view dependent_member_name =
+											qualified_alias_name.substr(member_sep + 2);
+										std::vector<TemplateTypeArg> nested_args;
+										if (alias_type_info->isTemplateInstantiation()) {
+											nested_args = materializeTemplateArgs(
+												*alias_type_info,
+												primary_params,
+												concrete_member_args);
 										}
-									}
 
-									if (!nested_template_name.empty()) {
-										if (const TemplateTypeArg* nested_template_arg =
-												findConcreteArgByName(
-													nested_template_name);
-											nested_template_arg &&
-											nested_template_arg->is_template_template_arg &&
-											nested_template_arg->template_name_handle.isValid()) {
+										std::string_view nested_template_name =
+											StringTable::getStringView(
+												alias_type_info->baseTemplateName());
+										if (!nested_template_name.empty()) {
 											if (std::optional<long long> nested_alias_size =
 													resolvePrimaryTemplateMemberAliasSize(
-														nested_template_arg->template_name_handle.view(),
+														nested_template_name,
 														dependent_member_name,
 														nested_args);
 												nested_alias_size.has_value()) {
@@ -1141,73 +1126,96 @@ inline std::optional<long long> evaluateConstraintExpression(
 													*nested_alias_size);
 											}
 										}
-									}
 
-									std::string_view base_candidate =
-										qualified_alias_name.substr(0, member_sep);
-									if (size_t angle_pos = base_candidate.find("<");
-										angle_pos != std::string_view::npos) {
-										base_candidate =
-											base_candidate.substr(0, angle_pos);
-									}
-									if (const TemplateTypeArg* concrete_base_arg =
-											findConcreteArgByName(base_candidate)) {
-										if (std::optional<long long> concrete_member_size =
-												resolveConcreteTypeMemberAliasSize(
-													*concrete_base_arg,
-													dependent_member_name);
-											concrete_member_size.has_value()) {
-											return applyTypeSpecSizeAdjustments(
-												alias_type_spec,
-												*concrete_member_size);
+										if (!nested_template_name.empty()) {
+											if (const TemplateTypeArg* nested_template_arg =
+													findConcreteArgByName(
+														nested_template_name);
+												nested_template_arg &&
+												nested_template_arg->is_template_template_arg &&
+												nested_template_arg->template_name_handle.isValid()) {
+												if (std::optional<long long> nested_alias_size =
+														resolvePrimaryTemplateMemberAliasSize(
+															nested_template_arg->template_name_handle.view(),
+															dependent_member_name,
+															nested_args);
+													nested_alias_size.has_value()) {
+													return applyTypeSpecSizeAdjustments(
+														alias_type_spec,
+														*nested_alias_size);
+												}
+											}
+										}
+
+										std::string_view base_candidate =
+											qualified_alias_name.substr(0, member_sep);
+										if (size_t angle_pos = base_candidate.find("<");
+											angle_pos != std::string_view::npos) {
+											base_candidate =
+												base_candidate.substr(0, angle_pos);
+										}
+										if (const TemplateTypeArg* concrete_base_arg =
+												findConcreteArgByName(base_candidate)) {
+											if (std::optional<long long> concrete_member_size =
+													resolveConcreteTypeMemberAliasSize(
+														*concrete_base_arg,
+														dependent_member_name);
+												concrete_member_size.has_value()) {
+												return applyTypeSpecSizeAdjustments(
+													alias_type_spec,
+													*concrete_member_size);
+											}
 										}
 									}
 								}
 							}
 						}
-					}
 
-					if (std::optional<long long> bound_param_size =
-							tryResolveBoundTemplateParam(alias_type_spec.token().value());
-						bound_param_size.has_value()) {
-						return bound_param_size;
-					}
-
-					int size_bits = getTypeSpecSizeBits(alias_type_spec);
-					return size_bits > 0
-						? std::optional<long long>(static_cast<long long>(size_bits / 8))
-						: std::nullopt;
-				};
-
-				resolvePrimaryTemplateMemberAliasSize =
-					[&](std::string_view template_name,
-						std::string_view member_name,
-						std::span<const TemplateTypeArg> concrete_member_args) -> std::optional<long long> {
-					auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
-					if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
-						return std::nullopt;
-					}
-
-					const auto& primary_template =
-						template_opt->as<TemplateClassDeclarationNode>();
-					const auto& primary_params =
-						primary_template.template_parameters();
-					const auto& type_aliases =
-						primary_template.class_decl_node().type_aliases();
-
-					for (const auto& type_alias : type_aliases) {
-						if (StringTable::getStringView(type_alias.alias_name) != member_name ||
-							!type_alias.type_node.is<TypeSpecifierNode>()) {
-							continue;
+						if (std::optional<long long> bound_param_size =
+								tryResolveBoundTemplateParam(alias_type_spec.token().value());
+							bound_param_size.has_value()) {
+							return bound_param_size;
 						}
 
-						return resolveAliasTypeSpecSize(
-							type_alias.type_node.as<TypeSpecifierNode>(),
-							primary_params,
-							concrete_member_args);
+						int size_bits = getTypeSpecSizeBits(alias_type_spec);
+						return size_bits > 0
+							? std::optional<long long>(static_cast<long long>(size_bits / 8))
+							: std::nullopt;
 					}
 
-					return std::nullopt;
+					std::optional<long long> resolvePrimaryTemplateMemberAliasSize(
+						std::string_view template_name,
+						std::string_view member_name,
+						std::span<const TemplateTypeArg> concrete_member_args) {
+						if (depth_ >= kMaxDepth) return std::nullopt;
+						DepthGuard guard{depth_};
+
+						auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+						if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
+							return std::nullopt;
+						}
+
+						const auto& primary_template =
+							template_opt->as<TemplateClassDeclarationNode>();
+						const auto& primary_params =
+							primary_template.template_parameters();
+						const auto& type_aliases =
+							primary_template.class_decl_node().type_aliases();
+
+						for (const auto& type_alias : type_aliases) {
+							if (StringTable::getStringView(type_alias.alias_name) != member_name ||
+								!type_alias.type_node.is<TypeSpecifierNode>()) {
+								continue;
+							}
+
+							return resolveAliasTypeSpecSize(
+								type_alias.type_node.as<TypeSpecifierNode>(),
+								primary_params,
+								concrete_member_args);
+						}
+
+						return std::nullopt;
+					}
 				};
 
 				// Check if this is a placeholder for a dependent nested type like "Op<...>::type"
@@ -1224,6 +1232,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 				}
 
 				if (dependent_member_info != nullptr) {
+					MemberAliasSizeResolver resolver;
 					full_type_name = StringTable::getStringView(dependent_member_info->name());
 					size_t scope_pos = full_type_name.rfind("::");
 					if (scope_pos != std::string_view::npos) {
@@ -1243,7 +1252,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 
 						if (!template_name.empty()) {
 							if (std::optional<long long> alias_size =
-									resolvePrimaryTemplateMemberAliasSize(
+									resolver.resolvePrimaryTemplateMemberAliasSize(
 										template_name,
 										member_part,
 										concrete_member_args);
@@ -1265,7 +1274,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 							if (bound_base_arg->is_template_template_arg &&
 								bound_base_arg->template_name_handle.isValid()) {
 								if (std::optional<long long> alias_size =
-										resolvePrimaryTemplateMemberAliasSize(
+										resolver.resolvePrimaryTemplateMemberAliasSize(
 											bound_base_arg->template_name_handle.view(),
 											member_part,
 											concrete_member_args);
@@ -1274,7 +1283,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 									return *alias_size;
 								}
 							} else if (std::optional<long long> concrete_member_size =
-									resolveConcreteTypeMemberAliasSize(
+									MemberAliasSizeResolver::resolveConcreteTypeMemberAliasSize(
 										*bound_base_arg,
 										member_part);
 								concrete_member_size.has_value()) {
