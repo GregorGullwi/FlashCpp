@@ -816,31 +816,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			}
 			return 0;
 		};
-		auto materializeStructInitForStaticStorage = [&](const StructTypeInfo& target_struct_info, TypeIndex target_type_index, const InitializerListNode& target_init_list) -> ConstExpr::EvalResult {
-			auto ctx = makeStaticStorageEvalContext();
-			ChunkedVector<ASTNode> ctor_args;
-			for (const ASTNode& arg : target_init_list.initializers()) {
-				ctor_args.push_back(arg);
-			}
-			if (auto ctor_result = ConstExpr::Evaluator::try_materialize_struct_from_ctor_args(
-					&target_struct_info,
-					target_type_index,
-					ctor_args,
-					ctx,
-					false,
-					nullptr,
-					nullptr,
-					false)) {
-				return std::move(*ctor_result);
-			}
-			return ConstExpr::Evaluator::materialize_aggregate_object_value(
-				&target_struct_info,
-				target_type_index,
-				target_init_list,
-				ctx,
-				nullptr);
-		};
-
 			// Check if this is an array and get element count (product of all dimensions for multidimensional)
 		if (decl.is_array() || type_node.is_array()) {
 			if (type_node.is_array() && !type_node.array_dimensions().empty()) {
@@ -897,10 +872,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
 					const StructTypeInfo* struct_info_ptr = type_info ? type_info->getStructInfo() : nullptr;
 					if (struct_info_ptr) {
-						auto object_result = materializeStructInitForStaticStorage(
+						auto constexpr_ctx = makeStaticStorageEvalContext();
+						auto object_result = materializeStructInitializerForStaticStorage(
 							*struct_info_ptr,
 							type_node.type_index(),
-							init_list);
+							init_list,
+							constexpr_ctx);
 						if (object_result.success()) {
 							op.init_data.resize(toSizeT(struct_info_ptr->sizeInBytes()), 0);
 							packStructEvalResultIntoInitData(
@@ -945,10 +922,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
 								const ASTNode& elem_init = initializers[elem_i];
 								if (elem_init.is<InitializerListNode>()) {
-									auto element_result = materializeStructInitForStaticStorage(
+									auto constexpr_ctx = makeStaticStorageEvalContext();
+									auto element_result = materializeStructInitializerForStaticStorage(
 										*elem_struct,
 										type_node.type_index(),
-										elem_init.as<InitializerListNode>());
+										elem_init.as<InitializerListNode>(),
+										constexpr_ctx);
 									if (element_result.success()) {
 										packStructEvalResultIntoInitData(
 											packStructEvalResultIntoInitData,

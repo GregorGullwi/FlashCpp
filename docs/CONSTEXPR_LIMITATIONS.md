@@ -1140,9 +1140,12 @@ Potential areas for enhancement (in order of complexity):
   FlashCpp now correctly rejects direct brace-init variable declarations that sema
   normalizes to `ConstructorCallNode` when no matching constructor exists
   (including alias / user-defined spellings of struct types), instead of silently
-  falling back to aggregate member initialization. Remaining fallback risk still
-  exists in lower constexpr/codegen paths that materialize aggregate objects
-  directly. The `IsAggregate` type trait (`src/TypeTraitEvaluator.h:251-275`)
+  falling back to aggregate member initialization. Straightforward static/global
+  nested brace-init that must route through constructors now also preserves the
+  constructor materialization in emitted runtime data, but remaining fallback
+  risk still exists in richer lower constexpr/codegen paths that materialize
+  aggregate objects directly. The `IsAggregate` type trait
+  (`src/TypeTraitEvaluator.h:251-275`)
   already correctly detects non-aggregate types (checking `!ctor.is_implicit()`),
   but this detection is not yet enforced uniformly across every initialization
   pipeline. **TODO:** Extend the same rejection consistently across the remaining
@@ -1179,6 +1182,8 @@ Potential areas for enhancement (in order of complexity):
   ```
 
   This is covered by `tests/test_constexpr_return_braced_init_ctor_ret0.cpp`, which now checks both the `static_assert` path and the runtime value of the emitted global `constexpr` object.
+
+  - ✅ **Global/static nested brace-init now preserves constructor semantics for non-aggregate subobjects** *(Implemented)* — Static-storage packing no longer assumes every nested `InitializerListNode` for a struct member is aggregate-init. For cases like `constexpr Outer g = {{1, 2}, 3};` where `Outer::inner` has a user-declared constructor, the codegen path now re-materializes the nested object through `try_materialize_struct_from_ctor_args` / aggregate fallback and then packs the resulting member bindings into emitted bytes. This keeps runtime global/static data aligned with the compile-time constexpr object model instead of writing zeroed or aggregate-mapped bytes. Covered by `tests/test_constexpr_global_nested_nonaggregate_brace_runtime_ret0.cpp`.
 
   - ✅ **Floating-point constexpr arrays no longer truncate through `array_values`** *(Implemented)* — The evaluator now keeps `float` / `double` array elements exclusively in `array_elements`, so initializer-list materialization and normalized-byte reconstruction preserve IEEE-754 values instead of routing them through `as_int()`. The remaining legacy `array_values` emission fallback in static-storage codegen now also routes through `evalResultMemberToRaw(...)` for consistency. Covered by `tests/test_constexpr_static_member_double_array_runtime_ret0.cpp` plus the existing array-member/runtime constexpr coverage.
 

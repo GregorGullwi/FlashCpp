@@ -560,29 +560,40 @@ void AstToIr::generateStaticMemberDeclarations() {
 
 		return false;
 	};
-	auto materializeStructInitForStaticStorage = [&](const StructTypeInfo& target_struct_info, TypeIndex target_type_index, const InitializerListNode& target_init_list, const StructTypeInfo* context_struct_info) -> ConstExpr::EvalResult {
-		ConstExpr::EvaluationContext ctx = makeStaticMemberEvalContext(context_struct_info);
-		ChunkedVector<ASTNode> ctor_args;
-		for (const ASTNode& arg : target_init_list.initializers()) {
-			ctor_args.push_back(arg);
+	auto evalAggregateLeafToRaw = [&](const ASTNode& leaf_expr, TypeCategory target_type, const StructTypeInfo* context_struct_info) -> unsigned long long {
+		unsigned long long leaf_value = 0;
+		if (evaluate_static_initializer(leaf_expr, leaf_value, context_struct_info)) {
+			auto evalFloatingLeaf = [&]() -> std::optional<ConstExpr::EvalResult> {
+				if (target_type != TypeCategory::Float &&
+					target_type != TypeCategory::Double &&
+					target_type != TypeCategory::LongDouble) {
+					return std::nullopt;
+				}
+				ConstExpr::EvaluationContext ctx = makeStaticMemberEvalContext(context_struct_info);
+				auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
+				if (!eval_result.success()) {
+					return std::nullopt;
+				}
+				return eval_result;
+			};
+			if (target_type == TypeCategory::Float) {
+				if (auto eval_result = evalFloatingLeaf()) {
+					float f = static_cast<float>(eval_result->as_double());
+					uint32_t f_bits;
+					std::memcpy(&f_bits, &f, sizeof(float));
+					return f_bits;
+				}
+			} else if (target_type == TypeCategory::Double || target_type == TypeCategory::LongDouble) {
+				if (auto eval_result = evalFloatingLeaf()) {
+					double d = eval_result->as_double();
+					unsigned long long bits;
+					std::memcpy(&bits, &d, sizeof(double));
+					return bits;
+				}
+			}
+			return leaf_value;
 		}
-		if (auto ctor_result = ConstExpr::Evaluator::try_materialize_struct_from_ctor_args(
-				&target_struct_info,
-				target_type_index,
-				ctor_args,
-				ctx,
-				false,
-				nullptr,
-				nullptr,
-				false)) {
-			return std::move(*ctor_result);
-		}
-		return ConstExpr::Evaluator::materialize_aggregate_object_value(
-			&target_struct_info,
-			target_type_index,
-			target_init_list,
-			ctx,
-			nullptr);
+		return 0;
 	};
 
 	auto hasUnsubstitutedTemplateDependency = [&](const ASTNode& initializer, const StructTypeInfo* owner_struct) -> bool {
@@ -817,13 +828,27 @@ void AstToIr::generateStaticMemberDeclarations() {
 										}
 										std::vector<char> element_bytes(element_size, 0);
 										if (node.is<InitializerListNode>()) {
-											ConstExpr::EvalResult object_result = materializeStructInitForStaticStorage(
+											ConstExpr::EvaluationContext element_ctx = makeStaticMemberEvalContext(struct_info);
+											ConstExpr::EvalResult object_result = materializeStructInitializerForStaticStorage(
 												*static_struct_info,
 												static_member.type_index,
 												node.as<InitializerListNode>(),
-												struct_info);
+												element_ctx);
 											if (!object_result.success()) {
-												throw CompileError("Expected constexpr struct initializer for array element");
+												auto eval_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) {
+													return evalAggregateLeafToRaw(leaf_expr, target_type, struct_info);
+												};
+												fillAggregateInitData(
+													element_bytes,
+													*static_struct_info,
+													node.as<InitializerListNode>(),
+													eval_leaf);
+												std::copy(
+													element_bytes.begin(),
+													element_bytes.end(),
+													op.init_data.begin() + static_cast<std::ptrdiff_t>(base_offset + element_index * element_size));
+												element_index++;
+												continue;
 											}
 											packStructEvalResultIntoInitData(
 												packStructEvalResultIntoInitData,
@@ -892,13 +917,24 @@ void AstToIr::generateStaticMemberDeclarations() {
 									  ", members=", static_struct_info->members.size(),
 									  ", type_index=", static_member.type_index.index());
 							op.init_data.resize(toSizeT(static_struct_info->sizeInBytes()), 0);
-							ConstExpr::EvalResult object_result = materializeStructInitForStaticStorage(
+							ConstExpr::EvaluationContext object_ctx = makeStaticMemberEvalContext(struct_info);
+							ConstExpr::EvalResult object_result = materializeStructInitializerForStaticStorage(
 								*static_struct_info,
 								static_member.type_index,
 								static_member.initializer->as<InitializerListNode>(),
-								struct_info);
+								object_ctx);
 							if (!object_result.success()) {
-								throw CompileError("Expected constexpr struct initializer for static member");
+								auto eval_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) {
+									return evalAggregateLeafToRaw(leaf_expr, target_type, struct_info);
+								};
+								fillAggregateInitData(
+									op.init_data,
+									*static_struct_info,
+									static_member.initializer->as<InitializerListNode>(),
+									eval_leaf);
+								FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "' (", op.init_data.size(), " bytes)");
+								write_back_constant_bytes();
+								continue;
 							}
 							packStructEvalResultIntoInitData(
 								packStructEvalResultIntoInitData,

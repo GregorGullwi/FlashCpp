@@ -569,6 +569,38 @@ private:
 		}
 	}
 
+	// Materialize a struct initializer for static/global storage emission.
+	// Tries constructor-based materialization first so non-aggregate types keep
+	// C++20 constructor semantics; if no matching constructor exists, falls back
+	// to aggregate materialization for true aggregates.
+	ConstExpr::EvalResult materializeStructInitializerForStaticStorage(
+		const StructTypeInfo& target_struct_info,
+		TypeIndex target_type_index,
+		const InitializerListNode& target_init_list,
+		ConstExpr::EvaluationContext& evaluation_context) {
+		ChunkedVector<ASTNode> ctor_args;
+		for (const ASTNode& arg : target_init_list.initializers()) {
+			ctor_args.push_back(arg);
+		}
+		if (auto ctor_result = ConstExpr::Evaluator::try_materialize_struct_from_ctor_args(
+				&target_struct_info,
+				target_type_index,
+				ctor_args,
+				evaluation_context,
+				false,
+				nullptr,
+				nullptr,
+				false)) {
+			return std::move(*ctor_result);
+		}
+		return ConstExpr::Evaluator::materialize_aggregate_object_value(
+			&target_struct_info,
+			target_type_index,
+			target_init_list,
+			evaluation_context,
+			nullptr);
+	}
+
 	// Recursively zero-initialize all scalar leaf members of a struct.
 	// For sub-members that are themselves structs (> 64 bits), recurse instead of
 	// emitting a single MemberStore with 0ULL (which would only zero the first 8 bytes).
