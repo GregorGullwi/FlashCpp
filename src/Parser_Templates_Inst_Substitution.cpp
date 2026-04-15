@@ -208,6 +208,20 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		return templateTypeArgFromEvalResult(eval_result);
 	}
 
+	std::vector<std::string_view> template_param_names_sv;
+	template_param_names_sv.reserve(param_names.size());
+	for (StringHandle param_name : param_names) {
+		template_param_names_sv.push_back(StringTable::getStringView(param_name));
+	}
+
+	if (auto substituted_eval = substituteAndEvaluateNonTypeDefault(
+			arg_node,
+			template_parameters,
+			std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
+			std::span<const std::string_view>(template_param_names_sv.data(), template_param_names_sv.size()))) {
+		return *substituted_eval;
+	}
+
 	if (const auto* qual_id = std::get_if<QualifiedIdentifierNode>(&arg_expr)) {
 		return TemplateTypeArg::makeDependentValue(
 			StringTable::getOrInternStringHandle(qual_id->full_name()),
