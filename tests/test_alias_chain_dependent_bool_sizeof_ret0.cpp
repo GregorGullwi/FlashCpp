@@ -19,10 +19,16 @@ struct is_integral<int> {
 	static constexpr bool value = true;
 };
 
+template<>
+struct is_integral<long long> {
+	static constexpr bool value = true;
+};
+
 template<typename T>
 using require_integral = enable_if_t<is_integral<T>::value, T>;
 
 int main() {
 	require_integral<int> x = 1;
-	return sizeof(x) == sizeof(int) ? 0 : 1;
+	require_integral<long long> y = 2;
+	return sizeof(x) == sizeof(int) && sizeof(y) == sizeof(long long) ? 0 : 1;
 }
