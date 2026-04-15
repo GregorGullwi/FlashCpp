@@ -28,9 +28,9 @@ requires sizeof(typename pair_wrapper<T>::first) == sizeof(typename pair_wrapper
 
 int main() {
 // Both concepts must be satisfied
-bool a = has_sized_value_type<int>;
-bool b = has_sized_value_type<long long>;
-bool c = has_matching_pair<int>;
-bool d = has_matching_pair<double>;
-return (a && b && c && d) ? 0 : 1;
+	if (!has_sized_value_type<int>) return 1;
+	if (!has_sized_value_type<long long>) return 2;
+	if (!has_matching_pair<int>) return 3;
+	if (!has_matching_pair<double>) return 4;
+	return 0;
 }
