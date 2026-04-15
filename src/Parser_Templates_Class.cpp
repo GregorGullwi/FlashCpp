@@ -187,6 +187,7 @@ ParseResult Parser::parse_template_declaration() {
 	// This allows them to be used in the function body or class members
 	FlashCpp::TemplateParameterScope template_scope;
 	InlineVector<StringHandle, 4> template_param_names;
+	InlineVector<TemplateParameterKind, 4> template_param_kinds;
 	bool has_packs = false;	// Track if any parameter is a pack
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
@@ -194,6 +195,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Add ALL template parameters to the name list (Type, NonType, and Template)
 			// This allows them to be recognized when referenced in the template body
 			template_param_names.push_back(tparam.nameHandle());	 // string_view from Token
+			template_param_kinds.push_back(tparam.kind());
 
 			// Check if this is a parameter pack
 			has_packs |= tparam.is_variadic();
@@ -217,6 +219,7 @@ ParseResult Parser::parse_template_declaration() {
 	// This includes variable template detection below which needs to recognize template params
 	// like _Int in return types: typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&
 	current_template_param_names_ = template_param_names;
+	current_template_param_kinds_ = template_param_kinds;
 	FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
 
 	// Check if this is a nested template (member function template of a class template)
@@ -228,6 +231,7 @@ ParseResult Parser::parse_template_declaration() {
 		// were set above and would normally be cleaned up at end-of-function (~line 3805).
 		auto cleanup_template_state = [this, saved_has_packs]() {
 			current_template_param_names_.clear();
+			current_template_param_kinds_.clear();
 			has_parameter_packs_ = saved_has_packs;
 		};
 
@@ -614,6 +618,7 @@ ParseResult Parser::parse_template_declaration() {
 		if (constraint_result.is_error()) {
 			// Clean up template parameter context before returning
 			current_template_param_names_.clear();
+			current_template_param_kinds_.clear();
 			return constraint_result;
 		}
 
@@ -738,6 +743,7 @@ ParseResult Parser::parse_template_declaration() {
 		// Clean up template parameter context before returning
 		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
 		current_template_param_names_.clear();
+		current_template_param_kinds_.clear();
 
 		return saved_position.success(concept_node);
 	} else if (is_alias_template) {
@@ -924,6 +930,7 @@ ParseResult Parser::parse_template_declaration() {
 		// Clean up template parameter context before returning
 		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
 		current_template_param_names_.clear();
+		current_template_param_kinds_.clear();
 
 		return saved_position.success(alias_node);
 	} else if (is_variable_template) {
@@ -1140,6 +1147,7 @@ ParseResult Parser::parse_template_declaration() {
 		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
 		// to avoid breaking template argument resolution in subsequent code
 		current_template_param_names_.clear();
+		current_template_param_kinds_.clear();
 
 		return saved_position.success(template_var_node);
 	} else if (is_class_template) {
@@ -2493,9 +2501,11 @@ ParseResult Parser::parse_template_declaration() {
 				// Set up template parameter names if this is a template member
 				const bool has_template_params = !delayed.template_param_names.empty();
 				FlashCpp::ScopedState guard_delay_param_names(current_template_param_names_, has_template_params);
+				FlashCpp::ScopedState guard_delay_param_kinds(current_template_param_kinds_, has_template_params);
 				std::optional<FlashCpp::TemplateDepthGuard> guard_delay_ptb;
 				if (has_template_params) {
 					current_template_param_names_ = delayed.template_param_names;
+					current_template_param_kinds_.clear();
 					guard_delay_ptb.emplace(parsing_template_depth_);
 				}
 
@@ -3930,13 +3940,16 @@ ParseResult Parser::parse_template_declaration() {
 
 		// Set template parameter context for current_template_param_names_
 		InlineVector<StringHandle, 4> template_param_names_for_body;
+		InlineVector<TemplateParameterKind, 4> template_param_kinds_for_body;
 		for (const auto& param : template_params) {
 			if (param.is<TemplateParameterNode>()) {
 				const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 				template_param_names_for_body.push_back(tparam.nameHandle());
+				template_param_kinds_for_body.push_back(tparam.kind());
 			}
 		}
 		current_template_param_names_ = std::move(template_param_names_for_body);
+		current_template_param_kinds_ = std::move(template_param_kinds_for_body);
 
 		// Parse class template
 		// Save scope/stack state before try block so we can restore on exception

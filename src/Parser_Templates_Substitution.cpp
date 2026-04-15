@@ -202,7 +202,8 @@ ASTNode Parser::substituteTemplateParameters(
 			if (arg_index >= template_args.size()) {
 				break;
 			}
-			param_map.emplace(tparam.name(), template_args[arg_index]);
+			TemplateTypeArg arg_to_insert = enrichTemplateArgForParameter(tparam, template_args[arg_index]);
+			param_map.emplace(tparam.name(), arg_to_insert);
 			++arg_index;
 		}
 

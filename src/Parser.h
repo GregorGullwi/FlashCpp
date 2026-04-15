@@ -281,6 +281,26 @@ struct SubstitutionParamMap {
 	bool empty() const { return param_map.empty(); }
 };
 
+inline TemplateTypeArg enrichTemplateArgForParameter(
+	const TemplateParameterNode& param,
+	TemplateTypeArg arg) {
+	if (param.kind() != TemplateParameterKind::Template) {
+		return arg;
+	}
+	arg.is_template_template_arg = true;
+	if (!arg.template_name_handle.isValid()) {
+		if (arg.type_index.is_valid()) {
+			if (const TypeInfo* ti = tryGetTypeInfo(arg.type_index)) {
+				arg.template_name_handle = ti->name_;
+			}
+		}
+		if (!arg.template_name_handle.isValid() && arg.dependent_name.isValid()) {
+			arg.template_name_handle = arg.dependent_name;
+		}
+	}
+	return arg;
+}
+
 // Build a SubstitutionParamMap from a params container and a template_args container.
 // The params container must support operator[] and size() with ASTNode elements
 // (works with both InlineVector<ASTNode, 4> and std::vector<ASTNode>).
@@ -297,7 +317,8 @@ inline SubstitutionParamMap buildSubstitutionParamMap(
 			continue;
 		}
 		const TemplateParameterNode& param = template_params[i].template as<TemplateParameterNode>();
-		result.param_map[param.name()] = template_args[i];
+		TemplateTypeArg arg_to_insert = enrichTemplateArgForParameter(param, template_args[i]);
+		result.param_map[param.name()] = arg_to_insert;
 		result.param_order.push_back(param.name());
 	}
 	return result;
@@ -527,6 +548,7 @@ private:
 	// Track when an inline namespace declaration was prefixed with 'inline'
 	bool pending_inline_namespace_ = false;
 	InlineVector<StringHandle, 4> current_template_param_names_;	 // Names of current template parameters - from Token storage
+	InlineVector<TemplateParameterKind, 4> current_template_param_kinds_;
 
 		// Template parameter substitution for deferred template body parsing
 		// Maps template parameter names to their substituted values (for non-type AND type parameters)
@@ -1978,6 +2000,15 @@ private:	 // Resume private methods
 	// declared array bounds into the provided type specifier so overload resolution and
 	// template deduction can observe the real extent information.
 	void applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpecifierNode& arg_type_node) const;
+
+	// Check if a template name is a template-template parameter in the current template context
+	bool isTemplateTemplateParameter(StringHandle template_name_handle) const;
+
+	// Build an interned placeholder name for TTP instantiation.
+	StringHandle buildTTPPlaceholderName(std::string_view ttp_name, const std::vector<TemplateTypeArg>& template_args);
+
+	// Create a QualifiedIdentifierNode for a TTP-qualified expression like W<int>::id
+	ParseResult buildTTPQualifiedIdentifier(StringHandle ttp_placeholder_name);
 
 	// Overload for qualified lookups with vector of strings
 	std::optional<ASTNode> lookup_symbol_qualified(const std::vector<StringType<>>& namespaces, std::string_view identifier) const {

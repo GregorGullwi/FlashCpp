@@ -3,9 +3,89 @@
 #include "Parser.h"
 #include "TemplateInstantiationHelper.h"
 #include "Log.h"
+#include <charconv>
 #include <limits>
 
 namespace {
+
+bool parseUnsignedDecimal(std::string_view text, uint64_t& value) {
+	auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
+	return ec == std::errc{} && ptr == text.data() + text.size();
+}
+
+bool parseSignedDecimal(std::string_view text, int64_t& value) {
+	auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
+	return ec == std::errc{} && ptr == text.data() + text.size();
+}
+
+bool decodeTTPPlaceholderArg(std::string_view encoded_arg, TemplateTypeArg& decoded_arg) {
+	if (encoded_arg.empty()) {
+		return false;
+	}
+
+	if (encoded_arg.front() == 'p') {
+		uint64_t raw_handle = 0;
+		if (!parseUnsignedDecimal(encoded_arg.substr(1), raw_handle) ||
+			raw_handle > std::numeric_limits<uint32_t>::max()) {
+			return false;
+		}
+		StringHandle handle;
+		handle.handle = static_cast<uint32_t>(raw_handle);
+		if (!handle.isValid()) {
+			return false;
+		}
+		decoded_arg = TemplateTypeArg::makeTemplate(handle);
+		return true;
+	}
+
+	if (encoded_arg.front() != 't' && encoded_arg.front() != 'v') {
+		return false;
+	}
+
+	size_t colon = encoded_arg.find(':', 1);
+	if (colon == std::string_view::npos) {
+		return false;
+	}
+
+	uint64_t raw_category = 0;
+	if (!parseUnsignedDecimal(encoded_arg.substr(1, colon - 1), raw_category) ||
+		raw_category > std::numeric_limits<uint8_t>::max()) {
+		return false;
+	}
+	TypeCategory category = static_cast<TypeCategory>(static_cast<uint8_t>(raw_category));
+
+	if (encoded_arg.front() == 'v') {
+		int64_t value = 0;
+		if (!parseSignedDecimal(encoded_arg.substr(colon + 1), value)) {
+			return false;
+		}
+		decoded_arg = TemplateTypeArg(value, category);
+		return true;
+	}
+
+	uint64_t raw_index = 0;
+	if (!parseUnsignedDecimal(encoded_arg.substr(colon + 1), raw_index) ||
+		raw_index > std::numeric_limits<uint32_t>::max()) {
+		return false;
+	}
+
+	if (is_builtin_type(category)) {
+		TypeIndex builtin_index = nativeTypeIndex(category);
+		// Builtin categories are encoded with their canonical native TypeIndex slot so
+		// placeholder names remain unambiguous across parse/substitution. Reject
+		// mismatches here to avoid silently materializing the wrong builtin type.
+		if (!builtin_index.is_valid() || builtin_index.index() != raw_index) {
+			return false;
+		}
+		decoded_arg.type_index = builtin_index;
+		decoded_arg.setCategory(category);
+		return true;
+	}
+
+	decoded_arg.type_index = TypeIndex{static_cast<uint32_t>(raw_index), category};
+	decoded_arg.setCategory(category);
+	return true;
+}
 
 int computeTypeSizeInBits(TypeIndex type_index) {
 	int size_in_bits = get_type_size_bits(type_index.category());
@@ -991,7 +1071,22 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 	if (it != param_map_.end()) {
 		const TemplateTypeArg& arg = it->second;
 		FLASH_LOG(Templates, Debug, "  Found template parameter substitution: ", id.name(),
-				  " -> type=", (int)arg.typeEnum(), ", type_index=", arg.type_index, ", is_value=", arg.is_value);
+				  " -> type=", (int)arg.typeEnum(), ", type_index=", arg.type_index, ", is_value=", arg.is_value,
+				  ", is_template_template_arg=", arg.is_template_template_arg);
+
+		// Handle template-template parameters
+		// When W is a TTP bound to "box", we need to return an identifier for "box"
+		// so that later processing (e.g., W<int>::member) can resolve correctly
+		if (arg.is_template_template_arg && arg.template_name_handle.isValid()) {
+			std::string_view concrete_template_name = StringTable::getStringView(arg.template_name_handle);
+			FLASH_LOG(Templates, Debug, "  Template-template parameter, substituting with template name: ", concrete_template_name);
+
+			// Create an identifier for the concrete template
+			Token concrete_token(Token::Type::Identifier, concrete_template_name, 0, 0, 0);
+			IdentifierNode& concrete_id = gChunkedAnyStorage.emplace_back<IdentifierNode>(concrete_token);
+			ExpressionNode& expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(concrete_id);
+			return ASTNode(&expr);
+		}
 
 		// Handle non-type template parameters (values)
 		if (arg.is_value) {
@@ -1065,6 +1160,75 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 
 	// Get the namespace name (e.g., "R1_T")
 	std::string_view ns_name = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
+
+	// Check for TTP placeholder names (e.g., "W$0" where W is a template-template parameter
+	// and $0 encodes the template arguments). These are created when parsing expressions
+	// like W<int>::id where W is a TTP. The placeholder name encodes: TTP_name$type_index
+	{
+		size_t dollar_pos = ns_name.find('$');
+		if (dollar_pos != std::string_view::npos && dollar_pos > 0) {
+			std::string_view ttp_name = ns_name.substr(0, dollar_pos);
+			std::string_view encoded_args = ns_name.substr(dollar_pos + 1);
+
+			// Check if ttp_name is a template-template parameter in our substitution map
+			auto ttp_it = param_map_.find(ttp_name);
+			if (ttp_it != param_map_.end() && ttp_it->second.is_template_template_arg) {
+				const TemplateTypeArg& ttp_arg = ttp_it->second;
+				FLASH_LOG(Templates, Debug, "  Detected TTP placeholder '", ns_name,
+						  "' - TTP '", ttp_name, "' maps to template '",
+						  StringTable::getStringView(ttp_arg.template_name_handle), "'");
+
+				// Get the concrete template name
+				std::string_view concrete_template_name = StringTable::getStringView(ttp_arg.template_name_handle);
+
+				// Parse the encoded args - format uses ';' separators and explicit value/type markers.
+				std::vector<TemplateTypeArg> instantiation_args;
+				std::string_view remaining = encoded_args;
+				while (!remaining.empty()) {
+					size_t separator = remaining.find(';');
+					std::string_view arg_str = (separator != std::string_view::npos)
+						? remaining.substr(0, separator)
+						: remaining;
+					TemplateTypeArg decoded_arg;
+					if (!decodeTTPPlaceholderArg(arg_str, decoded_arg)) {
+						FLASH_LOG(Templates, Warning, "  Failed to parse TTP arg encoding: '", arg_str, "'");
+						break;
+					}
+
+					instantiation_args.push_back(decoded_arg);
+
+					if (separator != std::string_view::npos) {
+						remaining = remaining.substr(separator + 1);
+					} else {
+						break;
+					}
+				}
+
+				// Now instantiate the concrete template with the parsed args
+				if (!instantiation_args.empty()) {
+					Parser::AliasTemplateMaterializationResult materialized_type =
+						parser_.materializeTemplateInstantiationForLookup(concrete_template_name, instantiation_args);
+					if (!materialized_type.instantiated_name.empty()) {
+						StringHandle instantiated_name_handle =
+							StringTable::getOrInternStringHandle(materialized_type.instantiated_name);
+
+						// Create a new QualifiedIdentifierNode with the instantiated type as namespace
+						NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+							NamespaceRegistry::GLOBAL_NAMESPACE,
+							instantiated_name_handle);
+
+						QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+							new_ns_handle,
+							qual_id.identifier_token());
+						FLASH_LOG(Templates, Debug, "  Substituted TTP: ", ns_name, "::", qual_id.name(), " -> ",
+								  materialized_type.instantiated_name, "::", qual_id.name());
+						ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
+						return ASTNode(&new_expr);
+					}
+				}
+			}
+		}
+	}
 
 	// Check if the entire namespace name is a template parameter (e.g., _R1::num where _R1 is typename _R1)
 	// This handles patterns like _R1::num where _R1 is substituted with a concrete struct type
