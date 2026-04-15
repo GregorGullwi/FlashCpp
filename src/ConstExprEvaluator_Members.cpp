@@ -6490,9 +6490,16 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	saved_local_bindings = context.local_bindings;
 	const StructTypeInfo* saved_struct_info = context.struct_info;
 	TypeIndex saved_struct_type_index = context.struct_type_index;
+	auto restoreCtorBodyContext = [&]() {
+		context.local_bindings = saved_local_bindings;
+		context.struct_info = saved_struct_info;
+		context.struct_type_index = saved_struct_type_index;
+	};
 	context.local_bindings = &ctor_local_bindings;
 	context.struct_info = struct_info;
-	if (struct_info && struct_info->own_type_index_.has_value()) {
+	if (ctor_decl.owning_type_index().is_valid()) {
+		context.struct_type_index = ctor_decl.owning_type_index();
+	} else if (struct_info && struct_info->own_type_index_.has_value()) {
 		context.struct_type_index = *struct_info->own_type_index_;
 	}
 
@@ -6500,21 +6507,15 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	for (const auto& ctor_stmt : ctor_body.get_statements()) {
 		auto stmt_result = evaluate_statement_with_bindings(ctor_stmt, ctor_body_bindings, context);
 		if (stmt_result.success()) {
-			context.local_bindings = saved_local_bindings;
-			context.struct_info = saved_struct_info;
-			context.struct_type_index = saved_struct_type_index;
+			restoreCtorBodyContext();
 			break;
 		}
 		if (stmt_result.error_message != "Statement executed (not a return)") {
-			context.local_bindings = saved_local_bindings;
-			context.struct_info = saved_struct_info;
-			context.struct_type_index = saved_struct_type_index;
+			restoreCtorBodyContext();
 			return stmt_result;
 		}
 	}
-	context.local_bindings = saved_local_bindings;
-	context.struct_info = saved_struct_info;
-	context.struct_type_index = saved_struct_type_index;
+	restoreCtorBodyContext();
 
 	for (const auto& member : struct_info->members) {
 		std::string_view member_name = StringTable::getStringView(member.getName());
