@@ -2179,6 +2179,13 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				normalizeExpression(e.get_lhs(), ctx);
 				normalizeExpression(e.get_rhs(), ctx);
 			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+				// Resolve unary * on struct operands to operator*() before
+				// normalizing children, matching the ArraySubscriptNode pattern.
+				// This ensures inferExpressionType sees the resolved return type
+				// when parent expressions query the type of *structExpr.
+				if (e.op() == "*") {
+					tryResolveUnaryDereferenceOperator(e);
+				}
 				// C++20 [expr.unary.op]/9: the operand of ! is contextually
 				// converted to bool.
 				if (e.op() == "!") {
@@ -2190,9 +2197,6 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					tryAnnotateUnaryOperandPromotion(e);
 				}
 				normalizeExpression(e.get_operand(), ctx);
-				if (e.op() == "*") {
-					tryResolveUnaryDereferenceOperator(e);
-				}
 			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 				// C++20 [expr.cond]/1: the condition is contextually converted to bool.
 				tryAnnotateContextualBool(e.condition());
