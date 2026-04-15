@@ -66,15 +66,44 @@ int main() {
 	return useMixed(a) - 7;
 }
 ```
-**Symptom:** After fixing deduction of the inner non-type argument, the direct
-call now compiles but links with an undefined reference to the instantiated
-`useMixed(Array<int,3>&)`.
-**Impact:** The deduction bug is fixed, but ODR-using a function template body
-that re-instantiates a template-template parameter with a deduced non-type inner
-argument still fails at link time.
-**Observed cause:** During function-body reparse, `N` is recovered as a concrete
-non-type template argument, but the body is still dropped (`inline_always` with
-no definition). The `C<T, N>::size` expression path is therefore not preserved
-through instantiation, so codegen never emits the instantiated function body.
 
+**Symptom:** Parsing fails with:
+`error: Expected type or expression after 'sizeof('`
+at the end of the dependent `type-id`.
+**Impact:** Valid C++20 nested requirements that use `sizeof(type-id)` on a
+dependent qualified type are rejected, which forced the regression for
+dependent-member `sizeof` constraints into a more indirect shape.
+**Standards note:** `sizeof(type-id)` is valid in a nested requirement, and the
+dependent `type-id` above is well-formed C++20 syntax.
 
+## Inherited member access inside inherited dereference operators can crash at runtime
+
+**Repro:**
+```cpp
+struct DerefBase {
+	int* ptr;
+	int& operator*() { return *ptr; }
+};
+
+struct Iter : DerefBase {
+	Iter& operator++() { ++ptr; return *this; }
+	bool operator!=(Iter other) const { return ptr != other.ptr; }
+};
+
+int main() {
+	int values[1] = {42};
+	Iter it;
+	it.ptr = values;
+	int x = *it;
+	return x - 42;
+}
+```
+**Symptom:** Compilation succeeds, but the generated program segfaults when an
+inherited `operator*` implementation dereferences a base-class data member.
+**Impact:** Iterator-like types that inherit their dereference operator from a
+base class are not safe when that operator body reads inherited state, even
+though simpler inherited `operator*` bodies (for example, returning a constant)
+work.
+**Root cause:** Still under investigation. The failure appears in the
+member-function/codegen path for inherited dereference operators rather than in
+the new sema pre-resolution step.

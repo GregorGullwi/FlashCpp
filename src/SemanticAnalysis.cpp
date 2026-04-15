@@ -79,30 +79,55 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const 
 		return nullptr;
 	}
 
-	const FunctionDeclarationNode* fallback = nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.operator_kind != OverloadableOperator::Multiply ||
-			!member_func.function_decl.is<FunctionDeclarationNode>()) {
-			continue;
+	std::unordered_set<const StructTypeInfo*> visited;
+	auto findOperator = [&](const StructTypeInfo* current_struct, const auto& self) -> const FunctionDeclarationNode* {
+		if (!current_struct || !visited.insert(current_struct).second) {
+			return nullptr;
 		}
 
-		const auto& func = member_func.function_decl.as<FunctionDeclarationNode>();
-		if (!func.parameter_nodes().empty()) {
-			continue;
+		const FunctionDeclarationNode* fallback = nullptr;
+		bool has_local_dereference = false;
+		for (const auto& member_func : current_struct->member_functions) {
+			if (member_func.operator_kind != OverloadableOperator::Multiply ||
+				!member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+
+			const auto& func = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (!func.parameter_nodes().empty()) {
+				continue;
+			}
+
+			has_local_dereference = true;
+			if (prefer_const && member_func.is_const()) {
+				return &func;
+			}
+			if (!prefer_const && !member_func.is_const()) {
+				return &func;
+			}
+			if (!fallback) {
+				fallback = &func;
+			}
 		}
 
-		if (prefer_const && member_func.is_const()) {
-			return &func;
+		if (has_local_dereference) {
+			return fallback;
 		}
-		if (!prefer_const && !member_func.is_const()) {
-			return &func;
-		}
-		if (!fallback) {
-			fallback = &func;
-		}
-	}
 
-	return fallback;
+		for (const auto& base_spec : current_struct->base_classes) {
+			const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_spec.type_index);
+			if (!base_struct_info) {
+				continue;
+			}
+			if (const FunctionDeclarationNode* base_match = self(base_struct_info, self)) {
+				return base_match;
+			}
+		}
+
+		return nullptr;
+	};
+
+	return findOperator(struct_info, findOperator);
 }
 
 const ConstructorDeclarationNode* resolveUniqueArityConstructor(const StructTypeInfo& struct_info, size_t argument_count) {
@@ -1305,7 +1330,10 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 				const TypeSpecifierNode& begin_return_type = adl_begin_decl.decl_node().type_node().as<TypeSpecifierNode>();
 				const FunctionDeclarationNode* dereference_func = nullptr;
 				if (begin_return_type.pointer_depth() == 0) {
-					dereference_func = getRangeIteratorDereferenceFunctionForSema(begin_return_type, range_type->is_const());
+					// C++20 [stmt.ranged] materializes the iterator as
+					// `auto __begin = begin-expr;`, so top-level cv/ref from the
+					// begin-expression does not make the iterator object const.
+					dereference_func = getRangeIteratorDereferenceFunctionForSema(begin_return_type, false);
 				}
 				mutable_stmt.set_resolved_dereference_function(dereference_func);
 				return normalizeRangedForLoopDecl(original_var_decl, *range_type, begin_return_type, dereference_func);
@@ -1326,10 +1354,12 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	mutable_stmt.set_resolved_member_end_function(&end_func_decl);
 	mutable_stmt.set_resolved_begin_is_const(begin_func->is_const());
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-	const bool prefer_const_deref = range_type->is_const() || begin_func->is_const();
 	const FunctionDeclarationNode* dereference_func = nullptr;
 	if (begin_return_type.pointer_depth() == 0) {
-		dereference_func = getRangeIteratorDereferenceFunctionForSema(begin_return_type, prefer_const_deref);
+		// C++20 [stmt.ranged] lowers to `auto __begin = range.begin();`, so the
+		// iterator object used for `*__begin` is not made const by a const range
+		// object or const-qualified begin() member function.
+		dereference_func = getRangeIteratorDereferenceFunctionForSema(begin_return_type, false);
 	}
 	mutable_stmt.set_resolved_dereference_function(dereference_func);
 	return normalizeRangedForLoopDecl(original_var_decl, *range_type, begin_return_type, dereference_func);
