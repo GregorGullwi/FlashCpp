@@ -125,6 +125,56 @@ ASTNode makeRebuiltPointerToMemberAccessNode(
 		member_access.is_arrow());
 }
 
+template <typename Visitor>
+bool visitExprContainsIdentifierNode(const ASTNode& expr, Visitor&& visitor) {
+	if (expr.is<ExpressionNode>()) {
+		return std::visit(visitor, expr.as<ExpressionNode>());
+	}
+
+#define FLASHCPP_VISIT_EXPR_NODE(NodeType) \
+	if (expr.is<NodeType>()) { \
+		return visitor(expr.as<NodeType>()); \
+	}
+
+	FLASHCPP_VISIT_EXPR_NODE(IdentifierNode);
+	FLASHCPP_VISIT_EXPR_NODE(QualifiedIdentifierNode);
+	FLASHCPP_VISIT_EXPR_NODE(StringLiteralNode);
+	FLASHCPP_VISIT_EXPR_NODE(NumericLiteralNode);
+	FLASHCPP_VISIT_EXPR_NODE(BoolLiteralNode);
+	FLASHCPP_VISIT_EXPR_NODE(BinaryOperatorNode);
+	FLASHCPP_VISIT_EXPR_NODE(UnaryOperatorNode);
+	FLASHCPP_VISIT_EXPR_NODE(TernaryOperatorNode);
+	FLASHCPP_VISIT_EXPR_NODE(ConstructorCallNode);
+	FLASHCPP_VISIT_EXPR_NODE(MemberAccessNode);
+	FLASHCPP_VISIT_EXPR_NODE(PointerToMemberAccessNode);
+	FLASHCPP_VISIT_EXPR_NODE(ArraySubscriptNode);
+	FLASHCPP_VISIT_EXPR_NODE(SizeofExprNode);
+	FLASHCPP_VISIT_EXPR_NODE(SizeofPackNode);
+	FLASHCPP_VISIT_EXPR_NODE(AlignofExprNode);
+	FLASHCPP_VISIT_EXPR_NODE(OffsetofExprNode);
+	FLASHCPP_VISIT_EXPR_NODE(TypeTraitExprNode);
+	FLASHCPP_VISIT_EXPR_NODE(NewExpressionNode);
+	FLASHCPP_VISIT_EXPR_NODE(DeleteExpressionNode);
+	FLASHCPP_VISIT_EXPR_NODE(StaticCastNode);
+	FLASHCPP_VISIT_EXPR_NODE(DynamicCastNode);
+	FLASHCPP_VISIT_EXPR_NODE(ConstCastNode);
+	FLASHCPP_VISIT_EXPR_NODE(ReinterpretCastNode);
+	FLASHCPP_VISIT_EXPR_NODE(TypeidNode);
+	FLASHCPP_VISIT_EXPR_NODE(LambdaExpressionNode);
+	FLASHCPP_VISIT_EXPR_NODE(TemplateParameterReferenceNode);
+	FLASHCPP_VISIT_EXPR_NODE(FoldExpressionNode);
+	FLASHCPP_VISIT_EXPR_NODE(PackExpansionExprNode);
+	FLASHCPP_VISIT_EXPR_NODE(PseudoDestructorCallNode);
+	FLASHCPP_VISIT_EXPR_NODE(NoexceptExprNode);
+	FLASHCPP_VISIT_EXPR_NODE(InitializerListConstructionNode);
+	FLASHCPP_VISIT_EXPR_NODE(ThrowExpressionNode);
+	FLASHCPP_VISIT_EXPR_NODE(CallExprNode);
+
+#undef FLASHCPP_VISIT_EXPR_NODE
+
+	return false;
+}
+
 }
 
 ASTNode Parser::substituteTemplateParameters(
@@ -1834,7 +1884,6 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 	if (!expr.has_value() || pack_name.empty())
 		return false;
 
-	// Search a list of argument nodes.
 	auto argsContain = [&](const auto& args) -> bool {
 		for (const auto& arg : args)
 			if (exprContainsIdentifier(arg, pack_name))
@@ -1842,11 +1891,7 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 		return false;
 	};
 
-	if (expr.is<IdentifierNode>())
-		return expr.as<IdentifierNode>().name() == pack_name;
-
-	if (expr.is<CallExprNode>()) {
-		const CallExprNode& call = expr.as<CallExprNode>();
+	auto callContains = [&](const CallExprNode& call) -> bool {
 		if (call.has_receiver() && exprContainsIdentifier(call.receiver(), pack_name))
 			return true;
 		if (argsContain(call.arguments()))
@@ -1857,83 +1902,50 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 					return true;
 		}
 		return false;
-	}
+	};
 
-	if (expr.is<SizeofExprNode>()) {
-		const SizeofExprNode& sizeof_expr = expr.as<SizeofExprNode>();
-		return !sizeof_expr.is_type() && exprContainsIdentifier(sizeof_expr.type_or_expr(), pack_name);
-	}
-
-	if (expr.is<AlignofExprNode>()) {
-		const AlignofExprNode& alignof_expr = expr.as<AlignofExprNode>();
-		return !alignof_expr.is_type() && exprContainsIdentifier(alignof_expr.type_or_expr(), pack_name);
-	}
-
-	if (expr.is<TypeidNode>()) {
-		const TypeidNode& typeid_expr = expr.as<TypeidNode>();
-		return !typeid_expr.is_type() && exprContainsIdentifier(typeid_expr.operand(), pack_name);
-	}
-
-	if (expr.is<NoexceptExprNode>()) {
-		return exprContainsIdentifier(expr.as<NoexceptExprNode>().expr(), pack_name);
-	}
-
-	if (expr.is<ExpressionNode>()) {
-		return std::visit([&](const auto& node) -> bool {
-			using T = std::decay_t<decltype(node)>;
-			if constexpr (std::is_same_v<T, IdentifierNode>) {
-				return node.name() == pack_name;
-			} else if constexpr (std::is_same_v<T, CallExprNode>) {
-				if (node.has_receiver() && exprContainsIdentifier(node.receiver(), pack_name))
-					return true;
-				if (argsContain(node.arguments()))
-					return true;
-				if (node.has_template_arguments()) {
-					for (const auto& ta : node.template_arguments())
-						if (exprContainsIdentifier(ta, pack_name))
-							return true;
-				}
-				return false;
-			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
-				return argsContain(node.arguments());
-			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
-				return exprContainsIdentifier(node.get_lhs(), pack_name) ||
-					   exprContainsIdentifier(node.get_rhs(), pack_name);
-			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-				return exprContainsIdentifier(node.get_operand(), pack_name);
-			} else if constexpr (std::is_same_v<T, StaticCastNode> ||
-								 std::is_same_v<T, DynamicCastNode> ||
-								 std::is_same_v<T, ConstCastNode> ||
-								 std::is_same_v<T, ReinterpretCastNode>) {
-				return exprContainsIdentifier(node.expr(), pack_name);
-			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
-				return !node.is_type() && exprContainsIdentifier(node.type_or_expr(), pack_name);
-			} else if constexpr (std::is_same_v<T, AlignofExprNode>) {
-				return !node.is_type() && exprContainsIdentifier(node.type_or_expr(), pack_name);
-			} else if constexpr (std::is_same_v<T, TypeidNode>) {
-				return !node.is_type() && exprContainsIdentifier(node.operand(), pack_name);
-			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
-				return exprContainsIdentifier(node.expr(), pack_name);
-			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
-				return exprContainsIdentifier(node.condition(), pack_name) ||
-					   exprContainsIdentifier(node.true_expr(), pack_name) ||
-					   exprContainsIdentifier(node.false_expr(), pack_name);
-			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-				return exprContainsIdentifier(node.object(), pack_name);
-			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
-				return exprContainsIdentifier(node.object(), pack_name) ||
-					   exprContainsIdentifier(node.member_pointer(), pack_name);
-			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-				return exprContainsIdentifier(node.array_expr(), pack_name) ||
-					   exprContainsIdentifier(node.index_expr(), pack_name);
-			} else {
-				return false;
-			}
-		},
-						  expr.as<ExpressionNode>());
-	}
-
-	return false;
+	return visitExprContainsIdentifierNode(expr, [&](const auto& node) -> bool {
+		using T = std::decay_t<decltype(node)>;
+		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			return node.name() == pack_name;
+		} else if constexpr (std::is_same_v<T, CallExprNode>) {
+			return callContains(node);
+		} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+			return argsContain(node.arguments());
+		} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+			return exprContainsIdentifier(node.get_lhs(), pack_name) ||
+				   exprContainsIdentifier(node.get_rhs(), pack_name);
+		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			return exprContainsIdentifier(node.get_operand(), pack_name);
+		} else if constexpr (std::is_same_v<T, StaticCastNode> ||
+							 std::is_same_v<T, DynamicCastNode> ||
+							 std::is_same_v<T, ConstCastNode> ||
+							 std::is_same_v<T, ReinterpretCastNode>) {
+			return exprContainsIdentifier(node.expr(), pack_name);
+		} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
+			return !node.is_type() && exprContainsIdentifier(node.type_or_expr(), pack_name);
+		} else if constexpr (std::is_same_v<T, AlignofExprNode>) {
+			return !node.is_type() && exprContainsIdentifier(node.type_or_expr(), pack_name);
+		} else if constexpr (std::is_same_v<T, TypeidNode>) {
+			return !node.is_type() && exprContainsIdentifier(node.operand(), pack_name);
+		} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
+			return exprContainsIdentifier(node.expr(), pack_name);
+		} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+			return exprContainsIdentifier(node.condition(), pack_name) ||
+				   exprContainsIdentifier(node.true_expr(), pack_name) ||
+				   exprContainsIdentifier(node.false_expr(), pack_name);
+		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			return exprContainsIdentifier(node.object(), pack_name);
+		} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
+			return exprContainsIdentifier(node.object(), pack_name) ||
+				   exprContainsIdentifier(node.member_pointer(), pack_name);
+		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+			return exprContainsIdentifier(node.array_expr(), pack_name) ||
+				   exprContainsIdentifier(node.index_expr(), pack_name);
+		} else {
+			return false;
+		}
+	});
 }
 
 std::vector<ASTNode> Parser::expandPackExpressionArgument(const ASTNode& pattern) {
