@@ -125,6 +125,10 @@ ASTNode makeRebuiltPointerToMemberAccessNode(
 		member_access.is_arrow());
 }
 
+template <typename T>
+inline constexpr bool AlwaysFalseExprContainsIdentifierNode = false;
+
+// Dispatches both ExpressionNode variants and legacy standalone expression wrappers to the same visitor.
 template <typename Visitor>
 bool visitExprContainsIdentifierNode(const ASTNode& expr, Visitor&& visitor) {
 	if (expr.is<ExpressionNode>()) {
@@ -1942,8 +1946,25 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 			return exprContainsIdentifier(node.array_expr(), pack_name) ||
 				   exprContainsIdentifier(node.index_expr(), pack_name);
-		} else {
+		} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode> ||
+							 std::is_same_v<T, StringLiteralNode> ||
+							 std::is_same_v<T, NumericLiteralNode> ||
+							 std::is_same_v<T, BoolLiteralNode> ||
+							 std::is_same_v<T, SizeofPackNode> ||
+							 std::is_same_v<T, OffsetofExprNode> ||
+							 std::is_same_v<T, TypeTraitExprNode> ||
+							 std::is_same_v<T, NewExpressionNode> ||
+							 std::is_same_v<T, DeleteExpressionNode> ||
+							 std::is_same_v<T, LambdaExpressionNode> ||
+							 std::is_same_v<T, TemplateParameterReferenceNode> ||
+							 std::is_same_v<T, FoldExpressionNode> ||
+							 std::is_same_v<T, PackExpansionExprNode> ||
+							 std::is_same_v<T, PseudoDestructorCallNode> ||
+							 std::is_same_v<T, InitializerListConstructionNode> ||
+							 std::is_same_v<T, ThrowExpressionNode>) {
 			return false;
+		} else {
+			static_assert(AlwaysFalseExprContainsIdentifierNode<T>, "Unhandled exprContainsIdentifier node type");
 		}
 	});
 }
