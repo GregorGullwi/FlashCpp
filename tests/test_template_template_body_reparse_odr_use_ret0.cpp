@@ -1,14 +1,13 @@
 // Regression: function-template body reparse must preserve template-template
 // substitutions for ODR-used non-type arguments inside the body.
+// A const-ref binding to C<T,N>::size ODR-uses the value, which exercises the
+// substitution path that was previously lost during body reparse.
 
 template <typename T, int N>
 struct Array {
 	T data;
 	static constexpr int size = N;
 };
-
-template <template <typename, int> class C, typename T, int N>
-int useMixed(C<T, N>& c);
 
 template <template <typename, int> class C, typename T, int N>
 int useMixed(C<T, N>& c) {
