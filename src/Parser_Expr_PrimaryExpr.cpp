@@ -41,7 +41,8 @@ bool Parser::isTemplateTemplateParameter(StringHandle template_name_handle) cons
 		return *param_kind == TemplateParameterKind::Template;
 	}
 	// A missing kind may still mean the name is active in a names-only context.
-	if (std::find(currentTemplateParamNames().begin(), currentTemplateParamNames().end(), template_name_handle) != currentTemplateParamNames().end()) {
+	const auto& current_template_param_names = currentTemplateParamNames();
+	if (std::find(current_template_param_names.begin(), current_template_param_names.end(), template_name_handle) != current_template_param_names.end()) {
 		if (const TypeInfo* type_info = findTypeByName(template_name_handle)) {
 			return type_info->type_index_.category() == TypeCategory::Template;
 		}

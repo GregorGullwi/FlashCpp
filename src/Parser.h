@@ -593,7 +593,7 @@ private:
 				if (i < kinds.size()) {
 					return kinds[i];
 				}
-				return std::nullopt;
+				break;
 			}
 			return std::nullopt;
 		}
