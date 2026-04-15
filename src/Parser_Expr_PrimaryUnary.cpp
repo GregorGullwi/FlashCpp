@@ -565,6 +565,13 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		} else {
 			// Try to parse as a type first
 			SaveHandle saved_pos = save_token_position();
+
+			// If 'typename' is explicit, the user has unambiguously written a type-id.
+			// In that case we must trust parse_type_specifier and must NOT fall through to
+			// expression parsing (which would fail for dependent types like
+			// sizeof(typename holder<char, identity, T>::value_type)).
+			bool has_typename_keyword = (peek() == "typename"_tok);
+
 			ParseResult type_result = parse_type_specifier();
 
 			// If we successfully parsed a type, check for pointer/reference declarators
@@ -579,25 +586,31 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 				if (peek() == ")"_tok) {
 					is_complete_type = true;
 
-					// Reject unresolved qualified names (e.g., Foo::val) that the type parser
-					// consumed as a qualified type name placeholder (UserDefined, size 0).
-					// When the token is a known struct name but the result is UserDefined (not Struct),
-					// parse_type_specifier consumed Foo::member as a single identifier and failed to
-					// resolve it as a type.  Fall through to expression parsing so sizeof can
-					// look up the struct member via QualifiedIdentifierNode.
-					if (type_spec.category() == TypeCategory::UserDefined && type_spec.size_in_bits() == 0 &&
-						type_spec.token().type() == Token::Type::Identifier) {
-						StringHandle tok_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
-						auto struct_it = getTypesByNameMap().find(tok_handle);
-						if (struct_it != getTypesByNameMap().end() && struct_it->second->isStruct()) {
-							is_complete_type = false;
-						} else {
-							// If the identifier is a known variable in the symbol table (not a type),
-							// fall through to expression parsing so sizeof yields the variable's type
-							// size (C++20 [basic.scope.pdecl] point-of-declaration semantics).
-							auto sym_opt = gSymbolTable.lookup(tok_handle);
-							if (sym_opt.has_value() && sym_opt->is<VariableDeclarationNode>()) {
+					// When 'typename' was explicitly written, the programmer has stated this
+					// is a type-id (C++20 [temp.res]/2).  Skip the heuristic that would
+					// otherwise fall through to expression parsing for dependent qualified types
+					// such as sizeof(typename Foo<T>::type) where Foo<T>::type is unresolved.
+					if (!has_typename_keyword) {
+						// Reject unresolved qualified names (e.g., Foo::val) that the type parser
+						// consumed as a qualified type name placeholder (UserDefined, size 0).
+						// When the token is a known struct name but the result is UserDefined (not Struct),
+						// parse_type_specifier consumed Foo::member as a single identifier and failed to
+						// resolve it as a type.  Fall through to expression parsing so sizeof can
+						// look up the struct member via QualifiedIdentifierNode.
+						if (type_spec.category() == TypeCategory::UserDefined && type_spec.size_in_bits() == 0 &&
+							type_spec.token().type() == Token::Type::Identifier) {
+							StringHandle tok_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
+							auto struct_it = getTypesByNameMap().find(tok_handle);
+							if (struct_it != getTypesByNameMap().end() && struct_it->second->isStruct()) {
 								is_complete_type = false;
+							} else {
+								// If the identifier is a known variable in the symbol table (not a type),
+								// fall through to expression parsing so sizeof yields the variable's type
+								// size (C++20 [basic.scope.pdecl] point-of-declaration semantics).
+								auto sym_opt = gSymbolTable.lookup(tok_handle);
+								if (sym_opt.has_value() && sym_opt->is<VariableDeclarationNode>()) {
+									is_complete_type = false;
+								}
 							}
 						}
 					}
