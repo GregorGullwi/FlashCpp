@@ -2179,6 +2179,13 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				normalizeExpression(e.get_lhs(), ctx);
 				normalizeExpression(e.get_rhs(), ctx);
 			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+				// Resolve unary * on struct operands to operator*() before
+				// normalizing children, matching the ArraySubscriptNode pattern.
+				// This ensures inferExpressionType sees the resolved return type
+				// when parent expressions query the type of *structExpr.
+				if (e.op() == "*") {
+					tryResolveUnaryDereferenceOperator(e);
+				}
 				// C++20 [expr.unary.op]/9: the operand of ! is contextually
 				// converted to bool.
 				if (e.op() == "!") {
@@ -2650,6 +2657,11 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const void* k
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const CallExprNode* key) const {
 	return getResolvedOpCall(static_cast<const void*>(key));
+}
+
+const FunctionDeclarationNode* SemanticAnalysis::getResolvedUnaryDereferenceOperator(const UnaryOperatorNode* key) const {
+	auto it = op_unary_deref_table_.find(key);
+	return it != op_unary_deref_table_.end() ? it->second : nullptr;
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedDirectCall(const void* key) const {
@@ -3204,6 +3216,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return type_context_.intern(result_desc);
 				}
 				if (op == "*") {
+					if (const FunctionDeclarationNode* resolved_deref = getResolvedUnaryDereferenceOperator(&e)) {
+						const ASTNode resolved_return_type = resolved_deref->decl_node().type_node();
+						if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
+							return canonicalizeType(resolved_return_type.as<TypeSpecifierNode>());
+						}
+						return {};
+					}
 					const CanonicalTypeId operand_id = inferExpressionType(e.get_operand());
 					if (!operand_id)
 						return {};
@@ -4397,6 +4416,37 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 
 void SemanticAnalysis::tryResolveCallableOperator(const CallExprNode& call_node) {
 	tryResolveCallableOperatorImpl(CallInfo::from(call_node), &call_node);
+}
+
+void SemanticAnalysis::tryResolveUnaryDereferenceOperator(const UnaryOperatorNode& unary_node) {
+	if (unary_node.op() != "*") {
+		return;
+	}
+
+	const CanonicalTypeId object_type_id = inferExpressionType(unary_node.get_operand());
+	if (!object_type_id) {
+		op_unary_deref_table_.erase(&unary_node);
+		return;
+	}
+
+	const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
+	if (object_desc.category() != TypeCategory::Struct ||
+		!object_desc.pointer_levels.empty() ||
+		!object_desc.array_dimensions.empty()) {
+		op_unary_deref_table_.erase(&unary_node);
+		return;
+	}
+
+	TypeSpecifierNode object_type = materializeTypeSpecifier(object_desc);
+	const FunctionDeclarationNode* best_match =
+		getRangeIteratorDereferenceFunctionForSema(object_type, object_desc.base_cv == CVQualifier::Const);
+	if (!best_match) {
+		op_unary_deref_table_.erase(&unary_node);
+		return;
+	}
+
+	op_unary_deref_table_[&unary_node] = best_match;
+	stats_.op_calls_resolved++;
 }
 
 void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& subscript_node) {

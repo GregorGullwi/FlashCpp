@@ -4628,6 +4628,27 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 	// so preserve deleted special-member diagnostics here for handled lvalue forms.
 	diagnoseDeletedMetadataAssignment();
 
+	auto applyArrayDecayForPointerStore = [&](TypedValue& value_tv) {
+		if (!lhs_operands.pointer_depth.is_pointer()) {
+			return;
+		}
+		const auto* rhs_name = std::get_if<StringHandle>(&rhs_operands.value);
+		if (!rhs_name) {
+			return;
+		}
+		auto symbol = lookupSymbol(*rhs_name);
+		const DeclarationNode* rhs_decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
+		if (!rhs_decl || !rhs_decl->type_node().is<TypeSpecifierNode>()) {
+			return;
+		}
+		const TypeSpecifierNode& rhs_type = rhs_decl->type_node().as<TypeSpecifierNode>();
+		if (!rhs_decl->is_array() && !rhs_type.is_array()) {
+			return;
+		}
+		value_tv.pointer_depth = PointerDepth{1};
+		value_tv.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+	};
+
 	// Route to appropriate store instruction based on LValueInfo::Kind
 	switch (lv_info.kind) {
 	case LValueInfo::Kind::ArrayElement: {
@@ -4657,6 +4678,7 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 		value_tv.ir_type = lhs_operands.effectiveIrType();
 		value_tv.size_in_bits = lhs_operands.size_in_bits;
 		value_tv.value = toIrValue(rhs_operands.value);
+		applyArrayDecayForPointerStore(value_tv);
 
 		// Emit the store using helper
 		emitArrayStore(
@@ -4695,6 +4717,7 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 		value_tv.ir_type = lhs_operands.effectiveIrType();
 		value_tv.size_in_bits = SizeInBits{static_cast<int>(lhs_size)};
 		value_tv.value = toIrValue(rhs_operands.value);
+		applyArrayDecayForPointerStore(value_tv);
 
 		// Emit the store using helper
 		emitMemberStore(
@@ -4722,6 +4745,7 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 		value_tv.ir_type = toIrType(pointee_type);
 		value_tv.size_in_bits = SizeInBits{static_cast<int>(pointee_size_bits)};
 		value_tv.value = toIrValue(rhs_operands.value);
+		applyArrayDecayForPointerStore(value_tv);
 
 		// Emit the store using helper
 		emitDereferenceStore(
