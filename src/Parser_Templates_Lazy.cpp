@@ -605,9 +605,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
 
 			// Parse the function body
-			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			for (const auto& pn : param_names) {
-				current_template_param_names_.push_back(pn);
+				pushCurrentTemplateParamName(pn);
 			}
 
 			auto block_result = parse_function_body();	// handles function-try-blocks

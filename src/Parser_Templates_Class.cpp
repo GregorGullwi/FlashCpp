@@ -218,8 +218,7 @@ ParseResult Parser::parse_template_declaration() {
 	// Set template parameter context EARLY, before any code that might call parse_type_specifier()
 	// This includes variable template detection below which needs to recognize template params
 	// like _Int in return types: typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&
-	current_template_param_names_ = template_param_names;
-	current_template_param_kinds_ = template_param_kinds;
+	setCurrentTemplateParameters(template_param_names, template_param_kinds);
 	FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
 
 	// Check if this is a nested template (member function template of a class template)
@@ -230,8 +229,7 @@ ParseResult Parser::parse_template_declaration() {
 		// parsing_template_depth_, current_template_param_names_, and has_parameter_packs_
 		// were set above and would normally be cleaned up at end-of-function (~line 3805).
 		auto cleanup_template_state = [this, saved_has_packs]() {
-			current_template_param_names_.clear();
-			current_template_param_kinds_.clear();
+			clearCurrentTemplateParameters();
 			has_parameter_packs_ = saved_has_packs;
 		};
 
@@ -617,8 +615,7 @@ ParseResult Parser::parse_template_declaration() {
 		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
 			// Clean up template parameter context before returning
-			current_template_param_names_.clear();
-			current_template_param_kinds_.clear();
+			clearCurrentTemplateParameters();
 			return constraint_result;
 		}
 
@@ -742,8 +739,7 @@ ParseResult Parser::parse_template_declaration() {
 
 		// Clean up template parameter context before returning
 		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
-		current_template_param_names_.clear();
-		current_template_param_kinds_.clear();
+		clearCurrentTemplateParameters();
 
 		return saved_position.success(concept_node);
 	} else if (is_alias_template) {
@@ -929,8 +925,7 @@ ParseResult Parser::parse_template_declaration() {
 
 		// Clean up template parameter context before returning
 		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
-		current_template_param_names_.clear();
-		current_template_param_kinds_.clear();
+		clearCurrentTemplateParameters();
 
 		return saved_position.success(alias_node);
 	} else if (is_variable_template) {
@@ -1146,8 +1141,7 @@ ParseResult Parser::parse_template_declaration() {
 		// Clean up template parameter context before returning
 		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
 		// to avoid breaking template argument resolution in subsequent code
-		current_template_param_names_.clear();
-		current_template_param_kinds_.clear();
+		clearCurrentTemplateParameters();
 
 		return saved_position.success(template_var_node);
 	} else if (is_class_template) {
@@ -1594,7 +1588,7 @@ ParseResult Parser::parse_template_declaration() {
 							struct_ref,
 							struct_info.get(),
 							current_access,
-							current_template_param_names_,
+							currentTemplateParamNames(),
 							/*use_struct_type_info=*/false,
 							/*add_functions_to_ast_nodes=*/true);
 						if (static_result.is_error()) {
@@ -2500,12 +2494,10 @@ ParseResult Parser::parse_template_declaration() {
 
 				// Set up template parameter names if this is a template member
 				const bool has_template_params = !delayed.template_param_names.empty();
-				FlashCpp::ScopedState guard_delay_param_names(current_template_param_names_, has_template_params);
-				FlashCpp::ScopedState guard_delay_param_kinds(current_template_param_kinds_, has_template_params);
+				FlashCpp::ScopedState guard_delay_param_names(currentTemplateParamState(), has_template_params);
 				std::optional<FlashCpp::TemplateDepthGuard> guard_delay_ptb;
 				if (has_template_params) {
-					current_template_param_names_ = delayed.template_param_names;
-					current_template_param_kinds_.clear();
+					setCurrentTemplateParamNames(delayed.template_param_names);
 					guard_delay_ptb.emplace(parsing_template_depth_);
 				}
 
@@ -2586,7 +2578,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Reset parsing context flags
 			parsing_template_class_ = false;
-			current_template_param_names_.clear();
+			clearCurrentTemplateParameters();
 
 			// Don't add specialization to AST - it's stored in the template registry
 			// and will be used when Container<int> is instantiated
@@ -2673,7 +2665,7 @@ ParseResult Parser::parse_template_declaration() {
 									 template_name, member_class_name);
 
 					// Clean up template parameter context
-					current_template_param_names_.clear();
+					clearCurrentTemplateParameters();
 					parsing_template_class_ = false;
 
 					return saved_position.success();
@@ -2906,7 +2898,7 @@ ParseResult Parser::parse_template_declaration() {
 				FLASH_LOG_FORMAT(Parser, Debug, "Registered forward declaration for partial specialization: {} with pattern {}", template_name, pattern_key_view);
 
 				// Clean up template parameter context
-				current_template_param_names_.clear();
+				clearCurrentTemplateParameters();
 
 				return saved_position.success(template_class_node);
 			}
@@ -2932,7 +2924,7 @@ ParseResult Parser::parse_template_declaration() {
 				gTemplateRegistry.registerSpecialization(template_name, pattern_args, template_class_node);
 				FLASH_LOG_FORMAT(Parser, Debug, "Registered forward declaration for partial specialization (after extra tokens): {}", template_name);
 
-				current_template_param_names_.clear();
+				clearCurrentTemplateParameters();
 
 				return saved_position.success(template_class_node);
 			}
@@ -3057,7 +3049,7 @@ ParseResult Parser::parse_template_declaration() {
 							struct_ref,
 							struct_info.get(),
 							current_access,
-							current_template_param_names_,
+							currentTemplateParamNames(),
 							/*use_struct_type_info=*/false,
 							/*add_functions_to_ast_nodes=*/false);
 						if (static_result.is_error()) {
@@ -3922,7 +3914,7 @@ ParseResult Parser::parse_template_declaration() {
 			gTemplateRegistry.registerSpecializationPattern(template_name, template_params, pattern_args, struct_node);
 
 			// Clean up template parameter context before returning
-			current_template_param_names_.clear();
+			clearCurrentTemplateParameters();
 
 			return saved_position.success(struct_node);
 		}
@@ -3948,8 +3940,7 @@ ParseResult Parser::parse_template_declaration() {
 				template_param_kinds_for_body.push_back(tparam.kind());
 			}
 		}
-		current_template_param_names_ = std::move(template_param_names_for_body);
-		current_template_param_kinds_ = std::move(template_param_kinds_for_body);
+		setCurrentTemplateParameters(std::move(template_param_names_for_body), std::move(template_param_kinds_for_body));
 
 		// Parse class template
 		// Save scope/stack state before try block so we can restore on exception
@@ -3982,12 +3973,12 @@ ParseResult Parser::parse_template_declaration() {
 		}
 
 		// Clear template parameter context
-		current_template_param_names_.clear();
+		clearCurrentTemplateParameters();
 
 		// Reset flag
 		parsing_template_class_ = false;
 		template_param_names_.clear();
-		current_template_param_names_.clear();
+		clearCurrentTemplateParameters();
 	} else {
 		// Could be:
 		// 1. Deduction guide: template<typename T> ClassName(T) -> ClassName<T>;
@@ -4422,7 +4413,7 @@ ParseResult Parser::parse_template_declaration() {
 		auto body_result = parse_template_function_declaration_body(template_params, requires_clause, template_func_node);
 
 		// Clean up template parameter context
-		current_template_param_names_.clear();
+		clearCurrentTemplateParameters();
 		has_parameter_packs_ = saved_has_packs;
 
 		if (body_result.is_error()) {
@@ -4724,9 +4715,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	if (is_partial_specialization) {
 		// Save current template param names and set up the new ones for pattern parsing
 		// This allows template parameter references like _Sz in the pattern <_Sz, _List<_Uint, _UInts...>, true>
-		FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 		for (const auto& name : template_param_names) {
-			current_template_param_names_.emplace_back(StringTable::getOrInternStringHandle(name));
+			pushCurrentTemplateParamName(StringTable::getOrInternStringHandle(name));
 		}
 
 		// Parse the specialization pattern: <T, Rest...>, etc.
@@ -4828,9 +4819,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
 
 		// Set template context flags so static_assert deferral works correctly
-		FlashCpp::ScopedState guard_tpn_partial(current_template_param_names_);
+		FlashCpp::ScopedState guard_tpn_partial(currentTemplateParamState());
 		for (const auto& name : template_param_names) {
-			current_template_param_names_.emplace_back(StringTable::getOrInternStringHandle(name));
+			pushCurrentTemplateParamName(StringTable::getOrInternStringHandle(name));
 		}
 		FlashCpp::TemplateDepthGuard guard_ptb_partial(parsing_template_depth_);
 
@@ -5265,9 +5256,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
 
 	// Set template context flags so static_assert deferral works correctly
-	FlashCpp::ScopedState guard_tpn_body(current_template_param_names_);
+	FlashCpp::ScopedState guard_tpn_body(currentTemplateParamState());
 	for (const auto& name : template_param_names) {
-		current_template_param_names_.emplace_back(StringTable::getOrInternStringHandle(name));
+		pushCurrentTemplateParamName(StringTable::getOrInternStringHandle(name));
 	}
 	FlashCpp::TemplateDepthGuard guard_ptb_body(parsing_template_depth_);
 

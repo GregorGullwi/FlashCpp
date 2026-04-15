@@ -795,12 +795,12 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				gSymbolTable.insert(func_name, template_func_node);
 
 				// Set template param names for parsing body (for template parameter recognition)
-				current_template_param_names_ = template_param_names;
+				setCurrentTemplateParamNames(template_param_names);
 
 				// Check if this is just a declaration (no body)
 				if (peek() == ";"_tok) {
 					advance();  // consume ';'
-					current_template_param_names_.clear();
+					clearCurrentTemplateParameters();
 					return saved_position.success(template_func_node);
 				}
 
@@ -814,7 +814,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 					skip_function_body();  // handles both '{' and 'try{...}catch...'
 				}
 
-				current_template_param_names_.clear();
+				clearCurrentTemplateParameters();
 				return saved_position.success(template_func_node);
 			}
 		}

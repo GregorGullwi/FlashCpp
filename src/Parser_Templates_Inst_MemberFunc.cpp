@@ -473,11 +473,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		if (func_decl.has_trailing_return_type_position()) {
 			bool prev_sfinae_context = in_sfinae_context_;
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
-			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
 			in_sfinae_context_ = true;
 			parsing_template_depth_ = 0;	 // suppress template body context during SFINAE
-			current_template_param_names_.clear();  // No dependent names during SFINAE
+			clearCurrentTemplateParameters();  // No dependent names during SFINAE
 			sfinae_type_map_.clear();
 
 			SaveHandle sfinae_pos = save_token_position();
@@ -1022,9 +1022,9 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 		// Parse the function body
 		{
-			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			for (const auto& pn : param_names) {
-				current_template_param_names_.push_back(pn);
+				pushCurrentTemplateParamName(pn);
 			}
 
 			auto block_result = parse_function_body();  // handles function-try-blocks

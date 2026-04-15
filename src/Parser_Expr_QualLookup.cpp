@@ -418,7 +418,7 @@ bool Parser::is_template_parameter(std::string_view name) const {
 // Helper: Check if a base class name is a template parameter
 // Returns true if the name matches any template parameter in the current template scope
 bool Parser::is_base_class_template_parameter(std::string_view base_class_name) const {
-	for (const auto& param_name : current_template_param_names_) {
+	for (const auto& param_name : currentTemplateParamNames()) {
 		if (StringTable::getStringView(param_name) == base_class_name) {
 			FLASH_LOG_FORMAT(Templates, Debug,
 							 "Base class '{}' is a template parameter - deferring resolution",
@@ -1314,8 +1314,9 @@ TypeIndex Parser::substitute_template_parameter(
 // Lookup symbol with template parameter checking
 std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle identifier) {
 	// First check if it's a template parameter using the new method
-	if ((parsing_template_depth_ > 0) && !current_template_param_names_.empty()) {
-		return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
+	if (isTemplateBodyWithActiveParameters()) {
+		const auto& template_param_names = currentTemplateParamNames();
+		return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &template_param_names);
 	}
 
 	// Otherwise, do normal symbol lookup

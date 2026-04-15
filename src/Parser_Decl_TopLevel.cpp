@@ -352,12 +352,12 @@ ParseResult Parser::parse_static_assert() {
 	// defer static_assert evaluation until instantiation.
 	// However, if we can evaluate it now (non-dependent expression), we should do so to catch errors early.
 	// The expression may depend on template parameters that are not yet known
-	bool is_in_template_definition = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
+	bool is_in_template_definition = isTemplateBodyWithActiveParameters();
 
 	// Also consider struct parsing context - if we're inside a template struct body,
 	// member function bodies may be parsed later but still contain template-dependent expressions
 	bool is_in_template_struct = !struct_parsing_context_stack_.empty() &&
-								 (parsing_template_depth_ > 0 || !current_template_param_names_.empty());
+								 isTemplateParameterTrackingActive();
 
 	// Try to evaluate the constant expression using ConstExprEvaluator
 	ConstExpr::EvaluationContext ctx(gSymbolTable);

@@ -740,7 +740,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		// Parse the expression inside noexcept(...)
 		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (expr_result.is_error()) {
-			if (parsing_template_depth_ > 0 || !current_template_param_names_.empty()) {
+			if (isTemplateParameterTrackingActive()) {
 				FLASH_LOG(Templates, Debug, "Recovering dependent noexcept operand after parse failure");
 				int paren_depth = 1;
 				while (!current_token_.kind().is_eof() && paren_depth > 0) {

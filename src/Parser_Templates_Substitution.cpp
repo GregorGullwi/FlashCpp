@@ -802,8 +802,8 @@ ASTNode Parser::substituteTemplateParameters(
 			if (!found_variadic) {
 				// Check if we're inside a template body and the pack name is a known template parameter
 				bool is_known_template_param = false;
-				if ((parsing_template_depth_ > 0)) {
-					for (const auto& param_name : current_template_param_names_) {
+				if (parsing_template_depth_ > 0) {
+					for (const auto& param_name : currentTemplateParamNames()) {
 						if (StringTable::getStringView(param_name) == pack_name) {
 							is_known_template_param = true;
 							break;

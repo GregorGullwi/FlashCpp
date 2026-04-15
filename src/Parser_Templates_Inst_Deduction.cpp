@@ -140,12 +140,12 @@ bool Parser::tryAppendDefaultTemplateArg(
 
 		bool prev_sfinae_context = in_sfinae_context_;
 		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
-		FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 		FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
 		in_sfinae_context_ = true;
 		ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
 		parsing_template_depth_ = 0;
-		current_template_param_names_.clear();
+		clearCurrentTemplateParameters();
 		sfinae_type_map_.clear();
 
 		SaveHandle sfinae_pos = save_token_position();
@@ -172,12 +172,12 @@ bool Parser::tryAppendDefaultTemplateArg(
 		if (param.has_default_value_position() && !template_args.empty()) {
 			bool prev_sfinae_context = in_sfinae_context_;
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
-			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
 			in_sfinae_context_ = true;
 			ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
 			parsing_template_depth_ = 0;
-			current_template_param_names_.clear();
+			clearCurrentTemplateParameters();
 			sfinae_type_map_.clear();
 
 			SaveHandle sfinae_pos = save_token_position();
@@ -575,9 +575,9 @@ void Parser::reparse_template_function_body(
 
 		// Parse the body, substitute template parameters, then install as definition.
 		{
-			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			for (const auto& pn : param_names) {
-				current_template_param_names_.push_back(pn);
+				pushCurrentTemplateParamName(pn);
 			}
 
 			auto block_result = parse_function_body();  // handles function-try-blocks
@@ -1276,12 +1276,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		if (func_decl.has_trailing_return_type_position()) {
 			bool prev_sfinae_context = in_sfinae_context_;
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
-			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
 			in_sfinae_context_ = true;
 			ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
 			parsing_template_depth_ = 0;	 // suppress template body context during SFINAE
-			current_template_param_names_.clear();  // No dependent names during SFINAE
+			clearCurrentTemplateParameters();  // No dependent names during SFINAE
 			sfinae_type_map_.clear();
 
 			SaveHandle sfinae_pos = save_token_position();

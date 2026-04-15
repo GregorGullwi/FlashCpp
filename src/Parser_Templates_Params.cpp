@@ -33,14 +33,13 @@ bool Parser::parse_noexcept_value() {
 }
 
 ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_params) {
-	// Save the current template parameter names so we can restore them later.
-	// This allows nested template declarations to have their own parameter scope.
-	InlineVector<StringHandle, 4> saved_template_param_names = current_template_param_names_;
+	// Save the current template parameter state so nested template declarations
+	// can extend the visible parameter-name set for default arguments.
+	FlashCpp::ScopedState guard_template_params(currentTemplateParamState());
 
 	// Parse first parameter
 	auto param_result = parse_template_parameter();
 	if (param_result.is_error()) {
-		current_template_param_names_ = std::move(saved_template_param_names);
 		return param_result;
 	}
 
@@ -51,9 +50,9 @@ ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_
 		// This enables patterns like: template<typename T, bool = is_arithmetic<T>::value>
 		if (param_result.node()->is<TemplateParameterNode>()) {
 			const auto& tparam = param_result.node()->as<TemplateParameterNode>();
-			current_template_param_names_.push_back(tparam.nameHandle());
+			pushCurrentTemplateParamName(tparam.nameHandle());
 			FLASH_LOG(Templates, Debug, "Added template parameter '", tparam.name(),
-					  "' to current_template_param_names_ (now has ", current_template_param_names_.size(), " params)");
+					  "' to current_template_param_names_ (now has ", currentTemplateParamCount(), " params)");
 		}
 	}
 
@@ -63,7 +62,6 @@ ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_
 
 		param_result = parse_template_parameter();
 		if (param_result.is_error()) {
-			current_template_param_names_ = std::move(saved_template_param_names);
 			return param_result;
 		}
 
@@ -72,17 +70,12 @@ ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_
 			// Add this parameter's name too
 			if (param_result.node()->is<TemplateParameterNode>()) {
 				const auto& tparam = param_result.node()->as<TemplateParameterNode>();
-				current_template_param_names_.push_back(tparam.nameHandle());
+				pushCurrentTemplateParamName(tparam.nameHandle());
 				FLASH_LOG(Templates, Debug, "Added template parameter '", tparam.name(),
-						  "' to current_template_param_names_ (now has ", current_template_param_names_.size(), " params)");
+						  "' to current_template_param_names_ (now has ", currentTemplateParamCount(), " params)");
 			}
 		}
 	}
-
-	// Restore the original template parameter names.
-	// The caller (parse_template_declaration) will set current_template_param_names_
-	// to the full list of parameters for the body parsing phase.
-	current_template_param_names_ = std::move(saved_template_param_names);
 
 	return ParseResult::success();
 }
@@ -1755,7 +1748,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// so we should NOT mark them as dependent
 				bool is_template_param = false;
 				if (!in_sfinae_context_) {
-					for (const auto& param_name : current_template_param_names_) {
+					for (const auto& param_name : currentTemplateParamNames()) {
 						std::string_view param_sv = StringTable::getStringView(param_name);
 						if (type_name == param_sv || matches_identifier(type_name, param_sv)) {
 							is_template_param = true;
@@ -1779,7 +1772,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// This is a qualified identifier - extract the base part (before ::)
 						std::string_view base_part = check_name.substr(0, scope_pos);
 
-						for (const auto& param_name : current_template_param_names_) {
+						for (const auto& param_name : currentTemplateParamNames()) {
 							std::string_view param_sv = StringTable::getStringView(param_name);
 							// Check both as standalone identifier AND as substring
 							// BUT only check substring if the base_part contains underscores (mangled names)
@@ -1823,7 +1816,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					// Check if type_name contains any current template parameters
 					// If not, it's a concrete template class being used as a template template argument
 					bool contains_template_param = false;
-					for (const auto& param_name : current_template_param_names_) {
+					for (const auto& param_name : currentTemplateParamNames()) {
 						if (type_name == param_name) {
 							contains_template_param = true;
 							break;

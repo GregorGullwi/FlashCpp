@@ -3526,7 +3526,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// (self-referential templates like __ratio_add_impl). In this case, the template
 			// hasn't been registered yet because we're still parsing its body.
 			// Check if the name matches the struct currently being defined.
-			if (parsing_template_depth_ > 0 || !current_template_param_names_.empty()) {
+			if (isTemplateParameterTrackingActive()) {
 				// Check struct_parsing_context_stack_ for self-reference
 				for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
 					std::string_view struct_name = it->struct_name;
@@ -6064,10 +6064,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Save current lexer position and parser state
 		SaveHandle saved_pos = save_token_position();
-		FlashCpp::ScopedState guard_param_names(current_template_param_names_);
-		FlashCpp::ScopedState guard_param_kinds(current_template_param_kinds_);
-		current_template_param_names_ = ool_nested.template_param_names;
-		current_template_param_kinds_.clear();
+		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
+		setCurrentTemplateParamNames(ool_nested.template_param_names);
 		FlashCpp::TemplateDepthGuard guard_template_body(parsing_template_depth_);
 		FlashCpp::ScopedState guard_template_class(parsing_template_class_);
 		parsing_template_class_ = true;
@@ -8232,8 +8230,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Set up template parameter substitution context
 			// Map template parameter names to actual types and values
-			current_template_param_names_ = delayed.template_param_names;
-			current_template_param_kinds_.clear();
+			setCurrentTemplateParamNames(delayed.template_param_names);
 
 			// Create template parameter substitutions for non-type AND type parameters
 			// This allows template parameters like 'v' in 'return v;' to be substituted with actual values
@@ -8278,7 +8275,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			FLASH_LOG(Templates, Debug, "Finished parse_delayed_function_body, result.is_error()=", result.is_error());
 
-			current_template_param_names_.clear();
+			clearCurrentTemplateParameters();
 			template_param_substitutions_.clear(); // Clear substitutions after parsing
 
 			if (result.is_error()) {

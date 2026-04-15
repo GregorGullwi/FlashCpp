@@ -110,8 +110,8 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	}
 
 	// Set template parameter context for parsing the requires clause
-	FlashCpp::ScopedState guard_param_names(current_template_param_names_);
-	current_template_param_names_ = template_param_names;
+	FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
+	setCurrentTemplateParamNames(template_param_names);
 	FlashCpp::TemplateDepthGuard guard_parsing_body(parsing_template_depth_);
 
 	// Handle optional requires clause

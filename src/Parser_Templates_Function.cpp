@@ -258,11 +258,11 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 	// Set up template parameter names for the body parsing phase
 	// This is needed for decltype expressions and other template-dependent constructs
-	FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+	FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-			current_template_param_names_.push_back(tparam.nameHandle());
+			pushCurrentTemplateParamName(tparam.nameHandle());
 		}
 	}
 
