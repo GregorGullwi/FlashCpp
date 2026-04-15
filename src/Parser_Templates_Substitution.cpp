@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "AstTraversal.h"
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
@@ -125,69 +126,96 @@ ASTNode makeRebuiltPointerToMemberAccessNode(
 		member_access.is_arrow());
 }
 
-template <typename Unused>
-inline constexpr bool AlwaysFalseExprContainsIdentifierNode = false;
-
-template <typename Visitor>
-bool visitStandaloneExprNode(const ASTNode& expr, Visitor&&) {
-	(void)expr;
-	return false;
-}
-
-template <typename NodeType, typename... RemainingNodeTypes, typename Visitor>
-bool visitStandaloneExprNode(const ASTNode& expr, Visitor&& visitor) {
-	if (expr.is<NodeType>()) {
-		return visitor(expr.as<NodeType>());
+bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
+	if (!expr.has_value() || pack_name.empty()) {
+		return false;
 	}
 
-	if constexpr (sizeof...(RemainingNodeTypes) > 0) {
-		return visitStandaloneExprNode<RemainingNodeTypes...>(expr, visitor);
-	}
+	return AstTraversal::visitASTWithDecisions(expr, [&](const ASTNode& current) {
+		if (current.is<IdentifierNode>()) {
+			return current.as<IdentifierNode>().name() == pack_name
+				? AstTraversal::VisitDecision::Stop
+				: AstTraversal::VisitDecision::Continue;
+		}
 
-	return false;
-}
+		if (current.is<CallExprNode>()) {
+			const auto& call = current.as<CallExprNode>();
+			if (call.has_template_arguments()) {
+				for (const auto& template_arg : call.template_arguments()) {
+					if (exprContainsIdentifier(template_arg, pack_name)) {
+						return AstTraversal::VisitDecision::Stop;
+					}
+				}
+			}
+			return AstTraversal::VisitDecision::Continue;
+		}
 
-// Dispatches both ExpressionNode variants and legacy standalone expression wrappers to the same visitor.
-template <typename Visitor>
-bool visitExprContainsIdentifierNode(const ASTNode& expr, Visitor&& visitor) {
-	if (expr.is<ExpressionNode>()) {
-		return std::visit(visitor, expr.as<ExpressionNode>());
-	}
+		if (current.is<StaticCastNode>()) {
+			return exprContainsIdentifier(current.as<StaticCastNode>().expr(), pack_name)
+				? AstTraversal::VisitDecision::Stop
+				: AstTraversal::VisitDecision::SkipChildren;
+		}
 
-	return visitStandaloneExprNode<
-		IdentifierNode,
-		QualifiedIdentifierNode,
-		StringLiteralNode,
-		NumericLiteralNode,
-		BoolLiteralNode,
-		BinaryOperatorNode,
-		UnaryOperatorNode,
-		TernaryOperatorNode,
-		ConstructorCallNode,
-		MemberAccessNode,
-		PointerToMemberAccessNode,
-		ArraySubscriptNode,
-		SizeofExprNode,
-		SizeofPackNode,
-		AlignofExprNode,
-		OffsetofExprNode,
-		TypeTraitExprNode,
-		NewExpressionNode,
-		DeleteExpressionNode,
-		StaticCastNode,
-		DynamicCastNode,
-		ConstCastNode,
-		ReinterpretCastNode,
-		TypeidNode,
-		LambdaExpressionNode,
-		TemplateParameterReferenceNode,
-		FoldExpressionNode,
-		PackExpansionExprNode,
-		PseudoDestructorCallNode,
-		NoexceptExprNode,
-		InitializerListConstructionNode,
-		ThrowExpressionNode,
-		CallExprNode>(expr, visitor);
+		if (current.is<DynamicCastNode>()) {
+			return exprContainsIdentifier(current.as<DynamicCastNode>().expr(), pack_name)
+				? AstTraversal::VisitDecision::Stop
+				: AstTraversal::VisitDecision::SkipChildren;
+		}
+
+		if (current.is<ConstCastNode>()) {
+			return exprContainsIdentifier(current.as<ConstCastNode>().expr(), pack_name)
+				? AstTraversal::VisitDecision::Stop
+				: AstTraversal::VisitDecision::SkipChildren;
+		}
+
+		if (current.is<ReinterpretCastNode>()) {
+			return exprContainsIdentifier(current.as<ReinterpretCastNode>().expr(), pack_name)
+				? AstTraversal::VisitDecision::Stop
+				: AstTraversal::VisitDecision::SkipChildren;
+		}
+
+		if (current.is<SizeofExprNode>()) {
+			const auto& sizeof_expr = current.as<SizeofExprNode>();
+			return !sizeof_expr.is_type() && exprContainsIdentifier(sizeof_expr.type_or_expr(), pack_name)
+				? AstTraversal::VisitDecision::Stop
+				: AstTraversal::VisitDecision::SkipChildren;
+		}
+
+		if (current.is<AlignofExprNode>()) {
+			const auto& alignof_expr = current.as<AlignofExprNode>();
+			return !alignof_expr.is_type() && exprContainsIdentifier(alignof_expr.type_or_expr(), pack_name)
+				? AstTraversal::VisitDecision::Stop
+				: AstTraversal::VisitDecision::SkipChildren;
+		}
+
+		if (current.is<TypeidNode>()) {
+			const auto& typeid_expr = current.as<TypeidNode>();
+			return !typeid_expr.is_type() && exprContainsIdentifier(typeid_expr.operand(), pack_name)
+				? AstTraversal::VisitDecision::Stop
+				: AstTraversal::VisitDecision::SkipChildren;
+		}
+
+		if (current.is<NoexceptExprNode>()) {
+			return exprContainsIdentifier(current.as<NoexceptExprNode>().expr(), pack_name)
+				? AstTraversal::VisitDecision::Stop
+				: AstTraversal::VisitDecision::SkipChildren;
+		}
+
+		if (current.is<TypeTraitExprNode>() ||
+			current.is<NewExpressionNode>() ||
+			current.is<DeleteExpressionNode>() ||
+			current.is<LambdaExpressionNode>() ||
+			current.is<TemplateParameterReferenceNode>() ||
+			current.is<FoldExpressionNode>() ||
+			current.is<PackExpansionExprNode>() ||
+			current.is<PseudoDestructorCallNode>() ||
+			current.is<InitializerListConstructionNode>() ||
+			current.is<ThrowExpressionNode>()) {
+			return AstTraversal::VisitDecision::SkipChildren;
+		}
+
+		return AstTraversal::VisitDecision::Continue;
+	});
 }
 
 }
@@ -1891,94 +1919,6 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 	return expr;
 }
 
-
-// Return true if the expression tree contains an IdentifierNode whose name equals pack_name.
-// Uses std::visit for exhaustive coverage of the ExpressionNode variant, including
-// TernaryOperatorNode, MemberAccessNode, ArraySubscriptNode, and all cast types.
-bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
-	if (!expr.has_value() || pack_name.empty())
-		return false;
-
-	auto argsContain = [&](const auto& args) -> bool {
-		for (const auto& arg : args)
-			if (exprContainsIdentifier(arg, pack_name))
-				return true;
-		return false;
-	};
-
-	auto callContains = [&](const CallExprNode& call) -> bool {
-		if (call.has_receiver() && exprContainsIdentifier(call.receiver(), pack_name))
-			return true;
-		if (argsContain(call.arguments()))
-			return true;
-		if (call.has_template_arguments()) {
-			for (const auto& ta : call.template_arguments())
-				if (exprContainsIdentifier(ta, pack_name))
-					return true;
-		}
-		return false;
-	};
-
-	return visitExprContainsIdentifierNode(expr, [&](const auto& node) -> bool {
-		using T = std::decay_t<decltype(node)>;
-		if constexpr (std::is_same_v<T, IdentifierNode>) {
-			return node.name() == pack_name;
-		} else if constexpr (std::is_same_v<T, CallExprNode>) {
-			return callContains(node);
-		} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
-			return argsContain(node.arguments());
-		} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
-			return exprContainsIdentifier(node.get_lhs(), pack_name) ||
-				   exprContainsIdentifier(node.get_rhs(), pack_name);
-		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-			return exprContainsIdentifier(node.get_operand(), pack_name);
-		} else if constexpr (std::is_same_v<T, StaticCastNode> ||
-							 std::is_same_v<T, DynamicCastNode> ||
-							 std::is_same_v<T, ConstCastNode> ||
-							 std::is_same_v<T, ReinterpretCastNode>) {
-			return exprContainsIdentifier(node.expr(), pack_name);
-		} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
-			return !node.is_type() && exprContainsIdentifier(node.type_or_expr(), pack_name);
-		} else if constexpr (std::is_same_v<T, AlignofExprNode>) {
-			return !node.is_type() && exprContainsIdentifier(node.type_or_expr(), pack_name);
-		} else if constexpr (std::is_same_v<T, TypeidNode>) {
-			return !node.is_type() && exprContainsIdentifier(node.operand(), pack_name);
-		} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
-			return exprContainsIdentifier(node.expr(), pack_name);
-		} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
-			return exprContainsIdentifier(node.condition(), pack_name) ||
-				   exprContainsIdentifier(node.true_expr(), pack_name) ||
-				   exprContainsIdentifier(node.false_expr(), pack_name);
-		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-			return exprContainsIdentifier(node.object(), pack_name);
-		} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
-			return exprContainsIdentifier(node.object(), pack_name) ||
-				   exprContainsIdentifier(node.member_pointer(), pack_name);
-		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-			return exprContainsIdentifier(node.array_expr(), pack_name) ||
-				   exprContainsIdentifier(node.index_expr(), pack_name);
-		} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode> ||
-							 std::is_same_v<T, StringLiteralNode> ||
-							 std::is_same_v<T, NumericLiteralNode> ||
-							 std::is_same_v<T, BoolLiteralNode> ||
-							 std::is_same_v<T, SizeofPackNode> ||
-							 std::is_same_v<T, OffsetofExprNode> ||
-							 std::is_same_v<T, TypeTraitExprNode> ||
-							 std::is_same_v<T, NewExpressionNode> ||
-							 std::is_same_v<T, DeleteExpressionNode> ||
-							 std::is_same_v<T, LambdaExpressionNode> ||
-							 std::is_same_v<T, TemplateParameterReferenceNode> ||
-							 std::is_same_v<T, FoldExpressionNode> ||
-							 std::is_same_v<T, PackExpansionExprNode> ||
-							 std::is_same_v<T, PseudoDestructorCallNode> ||
-							 std::is_same_v<T, InitializerListConstructionNode> ||
-							 std::is_same_v<T, ThrowExpressionNode>) {
-			return false;
-		} else {
-			static_assert(AlwaysFalseExprContainsIdentifierNode<T>, "Unhandled exprContainsIdentifier node type");
-		}
-	});
-}
 
 std::vector<ASTNode> Parser::expandPackExpressionArgument(const ASTNode& pattern) {
 	std::vector<const PackParamInfo*> packs_in_expr;
