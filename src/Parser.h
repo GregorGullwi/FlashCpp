@@ -990,6 +990,11 @@ private:
 		const TemplateParameterNode& param,
 		const std::vector<ASTNode>& template_params,
 		InlineVector<TemplateTypeArg, 4>& template_args);
+	bool tryAppendMemberDefaultTemplateArg(
+		const TemplateParameterNode& param,
+		const std::vector<ASTNode>& template_params,
+		const OuterTemplateBinding* outer_binding,
+		InlineVector<TemplateTypeArg, 4>& template_args);
 	ASTNode substituteNonTypeDefaultExpression(
 		const ASTNode& default_node,
 		const std::vector<ASTNode>& template_params,

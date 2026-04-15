@@ -4,6 +4,77 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+bool Parser::tryAppendMemberDefaultTemplateArg(
+	const TemplateParameterNode& param,
+	const std::vector<ASTNode>& template_params,
+	const OuterTemplateBinding* outer_binding,
+	InlineVector<TemplateTypeArg, 4>& current_template_args) {
+	if (tryAppendDefaultTemplateArg(param, template_params, current_template_args)) {
+		return true;
+	}
+	if (!param.has_default() || !outer_binding) {
+		return false;
+	}
+
+	InlineVector<ASTNode, 4> combined_template_params;
+	InlineVector<TemplateTypeArg, 4> combined_template_args;
+	combined_template_params.reserve(outer_binding->param_names.size() + template_params.size());
+	combined_template_args.reserve(outer_binding->param_args.size() + current_template_args.size());
+	if (outer_binding->param_names.size() != outer_binding->param_args.size()) {
+		throw InternalError("Outer template binding parameter state is inconsistent");
+	}
+
+	for (size_t i = 0; i < outer_binding->param_names.size(); ++i) {
+		StringHandle outer_name = outer_binding->param_names[i];
+		const TemplateTypeArg& outer_arg = outer_binding->param_args[i];
+		Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_name), 0, 0, 0);
+		if (outer_arg.is_value) {
+			auto outer_type_node = emplace_node<TypeSpecifierNode>(
+				outer_arg.type_index.withCategory(outer_arg.typeEnum()),
+				get_type_size_bits(outer_arg.typeEnum()),
+				outer_token,
+				CVQualifier::None,
+				ReferenceQualifier::None);
+			combined_template_params.push_back(emplace_node<TemplateParameterNode>(outer_name, outer_type_node, outer_token));
+		} else if (outer_arg.is_template_template_arg) {
+			combined_template_params.push_back(
+				emplace_node<TemplateParameterNode>(outer_name, std::vector<ASTNode>{}, outer_token));
+		} else {
+			auto outer_param = emplace_node<TemplateParameterNode>(outer_name, outer_token);
+			outer_param.as<TemplateParameterNode>().set_registered_type_index(
+				outer_arg.type_index.withCategory(outer_arg.typeEnum()));
+			combined_template_params.push_back(outer_param);
+		}
+		combined_template_args.push_back(outer_arg);
+	}
+
+	for (const auto& template_param_node : template_params) {
+		combined_template_params.push_back(template_param_node);
+	}
+	for (const auto& current_arg : current_template_args) {
+		combined_template_args.push_back(current_arg);
+	}
+
+	ASTNode substituted_default = substituteTemplateParameters(
+		param.default_value(),
+		combined_template_params,
+		combined_template_args);
+	if (param.kind() == TemplateParameterKind::Type && substituted_default.is<TypeSpecifierNode>()) {
+		current_template_args.push_back(TemplateTypeArg(substituted_default.as<TypeSpecifierNode>()));
+		return true;
+	}
+	if (param.kind() == TemplateParameterKind::NonType && substituted_default.is<ExpressionNode>()) {
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		eval_ctx.parser = this;
+		auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default, eval_ctx);
+		if (eval_result.success()) {
+			current_template_args.push_back(templateTypeArgFromEvalResult(eval_result));
+			return true;
+		}
+	}
+	return false;
+}
+
 std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	std::string_view struct_name,
 	std::string_view member_name,
@@ -42,70 +113,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 	const auto& template_params = template_func.template_parameters();
 	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
-	auto tryAppendMemberDefaultTemplateArg =
-		[&](const TemplateParameterNode& param, InlineVector<TemplateTypeArg, 4>& current_template_args) -> bool {
-		if (tryAppendDefaultTemplateArg(param, template_params, current_template_args)) {
-			return true;
-		}
-		if (!param.has_default() || !outer_binding) {
-			return false;
-		}
-
-		InlineVector<ASTNode, 4> combined_template_params;
-		InlineVector<TemplateTypeArg, 4> combined_template_args;
-		combined_template_params.reserve(outer_binding->param_names.size() + template_params.size());
-		combined_template_args.reserve(outer_binding->param_args.size() + current_template_args.size());
-
-		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
-			StringHandle outer_name = outer_binding->param_names[i];
-			const TemplateTypeArg& outer_arg = outer_binding->param_args[i];
-			Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_name), 0, 0, 0);
-			if (outer_arg.is_value) {
-				auto outer_type_node = emplace_node<TypeSpecifierNode>(
-					outer_arg.type_index.withCategory(outer_arg.typeEnum()),
-					get_type_size_bits(outer_arg.typeEnum()),
-					outer_token,
-					CVQualifier::None,
-					ReferenceQualifier::None);
-				combined_template_params.push_back(emplace_node<TemplateParameterNode>(outer_name, outer_type_node, outer_token));
-			} else if (outer_arg.is_template_template_arg) {
-				combined_template_params.push_back(
-					emplace_node<TemplateParameterNode>(outer_name, std::vector<ASTNode>{}, outer_token));
-			} else {
-				auto outer_param = emplace_node<TemplateParameterNode>(outer_name, outer_token);
-				outer_param.as<TemplateParameterNode>().set_registered_type_index(
-					outer_arg.type_index.withCategory(outer_arg.typeEnum()));
-				combined_template_params.push_back(outer_param);
-			}
-			combined_template_args.push_back(outer_arg);
-		}
-
-		for (const auto& template_param_node : template_params) {
-			combined_template_params.push_back(template_param_node);
-		}
-		for (const auto& current_arg : current_template_args) {
-			combined_template_args.push_back(current_arg);
-		}
-
-		ASTNode substituted_default = substituteTemplateParameters(
-			param.default_value(),
-			combined_template_params,
-			combined_template_args);
-		if (param.kind() == TemplateParameterKind::Type && substituted_default.is<TypeSpecifierNode>()) {
-			current_template_args.push_back(TemplateTypeArg(substituted_default.as<TypeSpecifierNode>()));
-			return true;
-		}
-		if (param.kind() == TemplateParameterKind::NonType && substituted_default.is<ExpressionNode>()) {
-			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-			eval_ctx.parser = this;
-			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default, eval_ctx);
-			if (eval_result.success()) {
-				current_template_args.push_back(templateTypeArgFromEvalResult(eval_result));
-				return true;
-			}
-		}
-		return false;
-	};
 	if (arg_types.empty()) {
 		return std::nullopt;	 // Can't deduce without arguments
 	}
@@ -152,7 +159,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			for (const auto& existing_arg : template_args) {
 				default_args.push_back(existing_arg);
 			}
-			if (!tryAppendMemberDefaultTemplateArg(param, default_args)) {
+			if (!tryAppendMemberDefaultTemplateArg(param, template_params, outer_binding, default_args)) {
 				return std::nullopt;
 			}
 			template_args.push_back(default_args.back());
@@ -526,70 +533,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		const auto& template_params = template_func.template_parameters();
 		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 		const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
-		auto tryAppendMemberDefaultTemplateArg =
-			[&](const TemplateParameterNode& param, InlineVector<TemplateTypeArg, 4>& current_template_args) -> bool {
-			if (tryAppendDefaultTemplateArg(param, template_params, current_template_args)) {
-				return true;
-			}
-			if (!param.has_default() || !outer_binding) {
-				return false;
-			}
-
-			InlineVector<ASTNode, 4> combined_template_params;
-			InlineVector<TemplateTypeArg, 4> combined_template_args;
-			combined_template_params.reserve(outer_binding->param_names.size() + template_params.size());
-			combined_template_args.reserve(outer_binding->param_args.size() + current_template_args.size());
-
-			for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
-				StringHandle outer_name = outer_binding->param_names[i];
-				const TemplateTypeArg& outer_arg = outer_binding->param_args[i];
-				Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_name), 0, 0, 0);
-				if (outer_arg.is_value) {
-					auto outer_type_node = emplace_node<TypeSpecifierNode>(
-						outer_arg.type_index.withCategory(outer_arg.typeEnum()),
-						get_type_size_bits(outer_arg.typeEnum()),
-						outer_token,
-						CVQualifier::None,
-						ReferenceQualifier::None);
-					combined_template_params.push_back(emplace_node<TemplateParameterNode>(outer_name, outer_type_node, outer_token));
-				} else if (outer_arg.is_template_template_arg) {
-					combined_template_params.push_back(
-						emplace_node<TemplateParameterNode>(outer_name, std::vector<ASTNode>{}, outer_token));
-				} else {
-					auto outer_param = emplace_node<TemplateParameterNode>(outer_name, outer_token);
-					outer_param.as<TemplateParameterNode>().set_registered_type_index(
-						outer_arg.type_index.withCategory(outer_arg.typeEnum()));
-					combined_template_params.push_back(outer_param);
-				}
-				combined_template_args.push_back(outer_arg);
-			}
-
-			for (const auto& template_param_node : template_params) {
-				combined_template_params.push_back(template_param_node);
-			}
-			for (const auto& current_arg : current_template_args) {
-				combined_template_args.push_back(current_arg);
-			}
-
-			ASTNode substituted_default = substituteTemplateParameters(
-				param.default_value(),
-				combined_template_params,
-				combined_template_args);
-			if (param.kind() == TemplateParameterKind::Type && substituted_default.is<TypeSpecifierNode>()) {
-				current_template_args.push_back(TemplateTypeArg(substituted_default.as<TypeSpecifierNode>()));
-				return true;
-			}
-			if (param.kind() == TemplateParameterKind::NonType && substituted_default.is<ExpressionNode>()) {
-				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-				eval_ctx.parser = this;
-				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default, eval_ctx);
-				if (eval_result.success()) {
-					current_template_args.push_back(templateTypeArgFromEvalResult(eval_result));
-					return true;
-				}
-			}
-			return false;
-		};
 		if (template_type_args.size() > template_params.size()) {
 			continue;
 		}
@@ -605,7 +548,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				break;
 			}
 			const auto& template_param = template_params[i].as<TemplateParameterNode>();
-			if (!tryAppendMemberDefaultTemplateArg(template_param, completed_template_args)) {
+			if (!tryAppendMemberDefaultTemplateArg(template_param, template_params, outer_binding, completed_template_args)) {
 				has_all_template_args = false;
 				break;
 			}
@@ -645,9 +588,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			// Add inner template params (the member function template's own params, e.g. U)
 			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 			// Add outer template params (from enclosing class template, e.g. T→int)
-			const OuterTemplateBinding* sfinae_outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
-			if (sfinae_outer_binding)
-				registerOuterBindingInScope(*sfinae_outer_binding, sfinae_scope, &sfinae_type_map_);
+			if (outer_binding)
+				registerOuterBindingInScope(*outer_binding, sfinae_scope, &sfinae_type_map_);
 
 			auto return_type_result = parse_type_specifier();
 			gSymbolTable.exit_scope();
