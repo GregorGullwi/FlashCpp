@@ -401,7 +401,7 @@ ASTNode Parser::substituteTemplateParameters(
 		if (std::holds_alternative<IdentifierNode>(expr)) {
 			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 			if (id_node.binding() == IdentifierBinding::Local) {
-				return emplace_node<ExpressionNode>(IdentifierNode(id_node.identifier_token()));
+				return node;
 			}
 			if (id_node.binding() == IdentifierBinding::Unresolved) {
 				IdentifierNode rebound = createBoundIdentifier(id_node.identifier_token());
@@ -1698,6 +1698,35 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 			return emplace_node<ExpressionNode>(ReinterpretCastNode(cast.target_type(), new_expr, cast.cast_token()));
 		}
 
+		if (const auto* sizeof_expr = std::get_if<SizeofExprNode>(&expr_variant)) {
+			if (sizeof_expr->is_type()) {
+				return expr;
+			}
+			ASTNode new_expr = replacePackIdentifierInExpr(sizeof_expr->type_or_expr(), pack_name, element_index);
+			return emplace_node<ExpressionNode>(SizeofExprNode::from_expression(new_expr, sizeof_expr->sizeof_token()));
+		}
+
+		if (const auto* alignof_expr = std::get_if<AlignofExprNode>(&expr_variant)) {
+			if (alignof_expr->is_type()) {
+				return expr;
+			}
+			ASTNode new_expr = replacePackIdentifierInExpr(alignof_expr->type_or_expr(), pack_name, element_index);
+			return emplace_node<ExpressionNode>(AlignofExprNode::from_expression(new_expr, alignof_expr->alignof_token()));
+		}
+
+		if (const auto* typeid_expr = std::get_if<TypeidNode>(&expr_variant)) {
+			if (typeid_expr->is_type()) {
+				return expr;
+			}
+			ASTNode new_operand = replacePackIdentifierInExpr(typeid_expr->operand(), pack_name, element_index);
+			return emplace_node<ExpressionNode>(TypeidNode(new_operand, false, typeid_expr->typeid_token()));
+		}
+
+		if (const auto* noexcept_expr = std::get_if<NoexceptExprNode>(&expr_variant)) {
+			ASTNode new_expr = replacePackIdentifierInExpr(noexcept_expr->expr(), pack_name, element_index);
+			return emplace_node<ExpressionNode>(NoexceptExprNode(new_expr, noexcept_expr->noexcept_token()));
+		}
+
 		if (const auto* ternary_operator = std::get_if<TernaryOperatorNode>(&expr_variant)) {
 			const TernaryOperatorNode& ternary = *ternary_operator;
 			ASTNode new_cond = replacePackIdentifierInExpr(ternary.condition(), pack_name, element_index);
@@ -1761,6 +1790,39 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 		return new_call;
 	}
 
+	if (expr.is<SizeofExprNode>()) {
+		const SizeofExprNode& sizeof_expr = expr.as<SizeofExprNode>();
+		if (sizeof_expr.is_type()) {
+			return expr;
+		}
+		ASTNode new_expr = replacePackIdentifierInExpr(sizeof_expr.type_or_expr(), pack_name, element_index);
+		return emplace_node<ExpressionNode>(SizeofExprNode::from_expression(new_expr, sizeof_expr.sizeof_token()));
+	}
+
+	if (expr.is<AlignofExprNode>()) {
+		const AlignofExprNode& alignof_expr = expr.as<AlignofExprNode>();
+		if (alignof_expr.is_type()) {
+			return expr;
+		}
+		ASTNode new_expr = replacePackIdentifierInExpr(alignof_expr.type_or_expr(), pack_name, element_index);
+		return emplace_node<ExpressionNode>(AlignofExprNode::from_expression(new_expr, alignof_expr.alignof_token()));
+	}
+
+	if (expr.is<TypeidNode>()) {
+		const TypeidNode& typeid_expr = expr.as<TypeidNode>();
+		if (typeid_expr.is_type()) {
+			return expr;
+		}
+		ASTNode new_operand = replacePackIdentifierInExpr(typeid_expr.operand(), pack_name, element_index);
+		return emplace_node<ExpressionNode>(TypeidNode(new_operand, false, typeid_expr.typeid_token()));
+	}
+
+	if (expr.is<NoexceptExprNode>()) {
+		const NoexceptExprNode& noexcept_expr = expr.as<NoexceptExprNode>();
+		ASTNode new_expr = replacePackIdentifierInExpr(noexcept_expr.expr(), pack_name, element_index);
+		return emplace_node<ExpressionNode>(NoexceptExprNode(new_expr, noexcept_expr.noexcept_token()));
+	}
+
 	return expr;
 }
 
@@ -1797,6 +1859,25 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 		return false;
 	}
 
+	if (expr.is<SizeofExprNode>()) {
+		const SizeofExprNode& sizeof_expr = expr.as<SizeofExprNode>();
+		return !sizeof_expr.is_type() && exprContainsIdentifier(sizeof_expr.type_or_expr(), pack_name);
+	}
+
+	if (expr.is<AlignofExprNode>()) {
+		const AlignofExprNode& alignof_expr = expr.as<AlignofExprNode>();
+		return !alignof_expr.is_type() && exprContainsIdentifier(alignof_expr.type_or_expr(), pack_name);
+	}
+
+	if (expr.is<TypeidNode>()) {
+		const TypeidNode& typeid_expr = expr.as<TypeidNode>();
+		return !typeid_expr.is_type() && exprContainsIdentifier(typeid_expr.operand(), pack_name);
+	}
+
+	if (expr.is<NoexceptExprNode>()) {
+		return exprContainsIdentifier(expr.as<NoexceptExprNode>().expr(), pack_name);
+	}
+
 	if (expr.is<ExpressionNode>()) {
 		return std::visit([&](const auto& node) -> bool {
 			using T = std::decay_t<decltype(node)>;
@@ -1824,6 +1905,14 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 								 std::is_same_v<T, DynamicCastNode> ||
 								 std::is_same_v<T, ConstCastNode> ||
 								 std::is_same_v<T, ReinterpretCastNode>) {
+				return exprContainsIdentifier(node.expr(), pack_name);
+			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
+				return !node.is_type() && exprContainsIdentifier(node.type_or_expr(), pack_name);
+			} else if constexpr (std::is_same_v<T, AlignofExprNode>) {
+				return !node.is_type() && exprContainsIdentifier(node.type_or_expr(), pack_name);
+			} else if constexpr (std::is_same_v<T, TypeidNode>) {
+				return !node.is_type() && exprContainsIdentifier(node.operand(), pack_name);
+			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				return exprContainsIdentifier(node.expr(), pack_name);
 			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 				return exprContainsIdentifier(node.condition(), pack_name) ||

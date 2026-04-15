@@ -982,7 +982,12 @@ private:
 		// Called from both try_instantiate_template_explicit (preserve_ref_qualifier=true) and
 		// try_instantiate_single_template (preserve_ref_qualifier=false, default) after cycle
 		// detection has already passed.  Sets new_func_ref's definition.
-		// Pack-parameter state and cycle detection remain in the callers.
+		// Pack-parameter state (pack_param_info_, has_parameter_packs_) and cycle detection
+		// remain entirely in the callers.  The callers must set pack_param_info_ to the
+		// already-expanded pack info before the call and restore it afterwards.
+		// This function does not touch pack_param_info_ so that complex pack types such as
+		// std::pair<Args,int>... work correctly (the type-name matching done by the old
+		// internal rebuild only worked for simple Args... cases).
 	void reparse_template_function_body(
 		FunctionDeclarationNode& new_func_ref,
 		const FunctionDeclarationNode& func_decl,

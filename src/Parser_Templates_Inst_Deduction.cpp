@@ -526,6 +526,13 @@ void Parser::reparse_template_function_body(
 	const InlineVector<ASTNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args,
 	bool preserve_ref_qualifier) {
+	// pack_param_info_ must be set up by the caller before entering here.
+	// Both callers (try_instantiate_template_explicit and try_instantiate_single_template)
+	// correctly compute it from the expanded parameter list and own the save/restore
+	// lifecycle around this call.  We do not touch pack_param_info_ here to avoid
+	// duplicating that logic with a version that is broken for complex pack types such as
+	// std::pair<Args,int>... (where type_name != tparam.name()).
+
 	// Collect parameter names and register TypeInfo entries for type params.
 	FlashCpp::TemplateParameterScope template_scope;
 	InlineVector<StringHandle, 4> param_names;
@@ -3105,11 +3112,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// Pack expansion in function calls (rest...) uses pack_param_info_ to expand
 		// the pack name to rest_0, rest_1, etc. without adding the original name to scope
 		// (adding to scope would break fold expressions which need the name unresolved).
+		// pack_param_info_ was built from the expanded parameter list earlier in this
+		// function (the parameter-expansion loop) and is correct for all pack types,
+		// including complex ones like std::pair<Args,int>...
 		bool saved_has_parameter_packs = has_parameter_packs_;
-		auto saved_pack_param_info = std::move(pack_param_info_);
-		if (!saved_pack_param_info.empty()) {
+		if (!pack_param_info_.empty()) {
 			has_parameter_packs_ = true;
-			pack_param_info_ = saved_pack_param_info;
 		}
 
 		// Re-parse body, register types, substitute parameters — shared with explicit path.
