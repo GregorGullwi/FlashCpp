@@ -2106,8 +2106,7 @@ private:	 // Resume private methods
 	// Unified symbol lookup that automatically provides template parameters when parsing templates
 	std::optional<ASTNode> lookup_symbol(StringHandle identifier) const {
 		if (isTemplateBodyWithActiveParameters()) {
-			const auto& template_param_names = currentTemplateParamNames();
-			return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &template_param_names);
+			return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &currentTemplateParamNames());
 		} else {
 			return gSymbolTable.lookup(identifier);
 		}

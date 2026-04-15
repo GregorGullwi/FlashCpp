@@ -40,6 +40,7 @@ bool Parser::isTemplateTemplateParameter(StringHandle template_name_handle) cons
 	if (auto param_kind = currentTemplateParamKind(template_name_handle)) {
 		return *param_kind == TemplateParameterKind::Template;
 	}
+	// A missing kind may still mean the name is active in a names-only context.
 	if (std::find(currentTemplateParamNames().begin(), currentTemplateParamNames().end(), template_name_handle) != currentTemplateParamNames().end()) {
 		if (const TypeInfo* type_info = findTypeByName(template_name_handle)) {
 			return type_info->type_index_.category() == TypeCategory::Template;
@@ -2889,8 +2890,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		std::optional<ASTNode> identifierType;
 		if (hasActiveTemplateParameters()) {
 			// Template-aware lookup: checks if identifier is a template parameter first
-			const auto& template_param_names = currentTemplateParamNames();
-			identifierType = gSymbolTable.lookup(identifier_token.handle(), gSymbolTable.get_current_scope_handle(), &template_param_names);
+			identifierType = gSymbolTable.lookup(identifier_token.handle(), gSymbolTable.get_current_scope_handle(), &currentTemplateParamNames());
 			FLASH_LOG_FORMAT(Parser, Debug, "Template-aware lookup for '{}', template_params_count={}", identifier_token.value(), currentTemplateParamCount());
 		} else {
 			identifierType = lookup_symbol(identifier_token.handle());

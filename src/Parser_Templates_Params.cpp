@@ -34,7 +34,8 @@ bool Parser::parse_noexcept_value() {
 
 ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_params) {
 	// Save the current template parameter state so nested template declarations
-	// can extend the visible parameter-name set for default arguments.
+	// can see outer parameters while parsing their own defaults, then restore
+	// the outer state unchanged when the nested parse finishes.
 	FlashCpp::ScopedState guard_template_params(currentTemplateParamState());
 
 	// Parse first parameter

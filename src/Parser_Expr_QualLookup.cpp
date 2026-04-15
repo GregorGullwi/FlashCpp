@@ -1315,8 +1315,7 @@ TypeIndex Parser::substitute_template_parameter(
 std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle identifier) {
 	// First check if it's a template parameter using the new method
 	if (isTemplateBodyWithActiveParameters()) {
-		const auto& template_param_names = currentTemplateParamNames();
-		return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &template_param_names);
+		return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &currentTemplateParamNames());
 	}
 
 	// Otherwise, do normal symbol lookup
