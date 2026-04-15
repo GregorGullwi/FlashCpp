@@ -1805,10 +1805,6 @@ private:	 // Resume private methods
 		// e.g., replace "args" with "args_0" in a pattern like identity(args)
 	ASTNode replacePackIdentifierInExpr(const ASTNode& expr, std::string_view pack_name, size_t element_index);
 
-		// Return true if the expression tree contains an IdentifierNode whose name equals pack_name.
-		// Used to decide whether a complex pack-expansion expression references a given pack parameter.
-	static bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name);
-
 		// Expand a PackExpansionExprNode into substituted call arguments.
 		// Returns true when the node was recognized and consumed; empty packs
 		// legitimately contribute zero arguments.
