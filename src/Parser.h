@@ -1991,6 +1991,15 @@ private:	 // Resume private methods
 	// template deduction can observe the real extent information.
 	void applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpecifierNode& arg_type_node) const;
 
+	// Check if a template name is a template-template parameter in the current template context
+	bool isTemplateTemplateParameter(StringHandle template_name_handle) const;
+
+	// Build a placeholder name for TTP instantiation (e.g., "W$0" for W<int>)
+	std::string_view buildTTPPlaceholderName(std::string_view ttp_name, const std::vector<TemplateTypeArg>& template_args);
+
+	// Create a QualifiedIdentifierNode for a TTP-qualified expression like W<int>::id
+	ParseResult buildTTPQualifiedIdentifier(std::string_view ttp_placeholder_name);
+
 	// Overload for qualified lookups with vector of strings
 	std::optional<ASTNode> lookup_symbol_qualified(const std::vector<StringType<>>& namespaces, std::string_view identifier) const {
 		if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {

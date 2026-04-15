@@ -3,6 +3,7 @@
 #include "Parser.h"
 #include "TemplateInstantiationHelper.h"
 #include "Log.h"
+#include <charconv>
 #include <limits>
 
 namespace {
@@ -1101,9 +1102,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				// Get the concrete template name
 				std::string_view concrete_template_name = StringTable::getStringView(ttp_arg.template_name_handle);
 
-				// Parse the encoded args - for now, support single type arg encoded as type_index
-				// Format: "0" means type_index 0, "123" means type_index 123, etc.
-				// For multiple args separated by _, we'd parse: "0_1_2" etc.
+				// Parse the encoded args - format: "0" or "0_1_2" where numbers are type indices
 				std::vector<TemplateTypeArg> instantiation_args;
 				std::string_view remaining = encoded_args;
 				while (!remaining.empty()) {
@@ -1112,20 +1111,13 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 						? remaining.substr(0, underscore)
 						: remaining;
 
-					// Parse as type index
+					// Parse as type index using std::from_chars for safety
 					int64_t type_idx = 0;
-					bool is_negative = false;
-					size_t start = 0;
-					if (!arg_str.empty() && arg_str[0] == '-') {
-						is_negative = true;
-						start = 1;
+					auto [ptr, ec] = std::from_chars(arg_str.data(), arg_str.data() + arg_str.size(), type_idx);
+					if (ec != std::errc{}) {
+						FLASH_LOG(Templates, Warning, "  Failed to parse TTP arg encoding: '", arg_str, "'");
+						break;
 					}
-					for (size_t i = start; i < arg_str.size(); ++i) {
-						if (arg_str[i] >= '0' && arg_str[i] <= '9') {
-							type_idx = type_idx * 10 + (arg_str[i] - '0');
-						}
-					}
-					if (is_negative) type_idx = -type_idx;
 
 					// Create a TemplateTypeArg from the type index
 					TemplateTypeArg type_arg;
