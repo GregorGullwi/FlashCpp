@@ -923,7 +923,15 @@ void AstToIr::generateStaticMemberDeclarations() {
 								static_member.type_index,
 								static_member.initializer->as<InitializerListNode>(),
 								object_ctx);
-							if (!object_result.success()) {
+							if (object_result.success()) {
+								packStructEvalResultIntoInitData(
+									packStructEvalResultIntoInitData,
+									op.init_data,
+									*static_struct_info,
+									object_result,
+									0,
+									0);
+							} else {
 								auto eval_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) {
 									return evalAggregateLeafToRaw(leaf_expr, target_type, struct_info);
 								};
@@ -932,17 +940,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 									*static_struct_info,
 									static_member.initializer->as<InitializerListNode>(),
 									eval_leaf);
-								FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "' (", op.init_data.size(), " bytes)");
-								write_back_constant_bytes();
-								continue;
 							}
-							packStructEvalResultIntoInitData(
-								packStructEvalResultIntoInitData,
-								op.init_data,
-								*static_struct_info,
-								object_result,
-								0,
-								0);
 							FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "' (", op.init_data.size(), " bytes)");
 							write_back_constant_bytes();
 						} else if (static_member.is_array && !static_member.array_dimensions.empty()) {
