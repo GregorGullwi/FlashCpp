@@ -3959,17 +3959,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			} else {
 				// Regular scalar parameter (type or non-type)
 				if (arg_index < template_args_to_use.size()) {
-					TemplateTypeArg arg_to_insert = template_args_to_use[arg_index];
-					// For template-template parameters, ensure is_template_template_arg is set
-					// and the template name is recorded
-					if (tparam.kind() == TemplateParameterKind::Template) {
-						arg_to_insert.is_template_template_arg = true;
-						if (!arg_to_insert.template_name_handle.isValid()) {
-							if (const TypeInfo* ti = tryGetTypeInfo(arg_to_insert.type_index)) {
-								arg_to_insert.template_name_handle = ti->name_;
-							}
-						}
-					}
+					TemplateTypeArg arg_to_insert =
+						enrichTemplateArgForParameter(tparam, template_args_to_use[arg_index]);
 					name_substitution_map[param_name] = arg_to_insert;
 					FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", static_cast<int>(arg_to_insert.typeEnum()), " type_index=", arg_to_insert.type_index, " is_value=", arg_to_insert.is_value, " is_ttp=", arg_to_insert.is_template_template_arg);
 					arg_index++;
@@ -6074,7 +6065,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Save current lexer position and parser state
 		SaveHandle saved_pos = save_token_position();
 		FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+		FlashCpp::ScopedState guard_param_kinds(current_template_param_kinds_);
 		current_template_param_names_ = ool_nested.template_param_names;
+		current_template_param_kinds_.clear();
 		FlashCpp::TemplateDepthGuard guard_template_body(parsing_template_depth_);
 		FlashCpp::ScopedState guard_template_class(parsing_template_class_);
 		parsing_template_class_ = true;
@@ -8240,6 +8233,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Set up template parameter substitution context
 			// Map template parameter names to actual types and values
 			current_template_param_names_ = delayed.template_param_names;
+			current_template_param_kinds_.clear();
 
 			// Create template parameter substitutions for non-type AND type parameters
 			// This allows template parameters like 'v' in 'return v;' to be substituted with actual values
