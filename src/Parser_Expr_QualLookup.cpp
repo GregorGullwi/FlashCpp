@@ -230,11 +230,16 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 
 	// Try to instantiate the member template function if we have explicit template args
 	std::optional<ASTNode> instantiated_func;
-	if (member_template_args.has_value() && !member_template_args->empty()) {
+	if (member_template_args.has_value()) {
 		instantiated_func = try_instantiate_member_function_template_explicit(
 			instantiated_class_name,
 			member_name,
 			*member_template_args);
+	} else if (args.empty()) {
+		instantiated_func = try_instantiate_member_function_template_explicit(
+			instantiated_class_name,
+			member_name,
+			{});
 	}
 
 	// Trigger lazy member function instantiation if needed
