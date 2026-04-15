@@ -526,6 +526,9 @@ void Parser::reparse_template_function_body(
 	const InlineVector<ASTNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args,
 	bool preserve_ref_qualifier) {
+	auto saved_pack_param_info = std::move(pack_param_info_);
+	pack_param_info_.clear();
+
 	// Collect parameter names and register TypeInfo entries for type params.
 	FlashCpp::TemplateParameterScope template_scope;
 	InlineVector<StringHandle, 4> param_names;
@@ -538,6 +541,89 @@ void Parser::reparse_template_function_body(
 	// preserve_ref_qualifier=true for the explicit path (user-written T=int& must be
 	// reflected in TypeInfo); false for the deduced path.
 	registerTypeParamsInScope(template_params, template_args, template_scope, preserve_ref_qualifier);
+
+	auto getTypeName = [&](const TypeSpecifierNode& type_spec) -> std::string_view {
+		std::string_view name;
+		if (type_spec.type_index().is_valid()) {
+			if (const TypeInfo* ti = tryGetTypeInfo(type_spec.type_index())) {
+				name = StringTable::getStringView(ti->name());
+			}
+		}
+		if (name.empty()) {
+			name = type_spec.token().value();
+		}
+		return name;
+	};
+
+	for (const auto& param : func_decl.parameter_nodes()) {
+		if (!param.is<DeclarationNode>()) {
+			continue;
+		}
+		const DeclarationNode& param_decl = param.as<DeclarationNode>();
+		if (!param_decl.type_node().is<TypeSpecifierNode>()) {
+			continue;
+		}
+
+		const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+		bool is_pack_param = param_decl.is_parameter_pack();
+		std::string_view type_name = getTypeName(param_type_spec);
+		if (!is_pack_param && !type_name.empty()) {
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				if (!template_params[i].is<TemplateParameterNode>()) {
+					continue;
+				}
+				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.is_variadic() && tparam.name() == type_name) {
+					is_pack_param = true;
+					break;
+				}
+			}
+		}
+
+		if (!is_pack_param ||
+			(param_type_spec.category() != TypeCategory::UserDefined &&
+			 param_type_spec.category() != TypeCategory::TypeAlias &&
+			 param_type_spec.category() != TypeCategory::Template)) {
+			continue;
+		}
+
+		size_t pack_arg_start = 0;
+		size_t pack_size = 0;
+		bool found_pack = false;
+		size_t template_arg_index = 0;
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) {
+				continue;
+			}
+			const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+			if (tparam.is_variadic()) {
+				size_t remaining_args = template_arg_index < template_args.size()
+											? template_args.size() - template_arg_index
+											: 0;
+				size_t required_after = countRequiredTemplateArgsAfter<InlineVector<ASTNode, 4>, InlineVector<TemplateTypeArg, 4>>(
+					template_params, i + 1);
+				size_t current_pack_size = remaining_args > required_after
+											 ? remaining_args - required_after
+											 : 0;
+				if (tparam.name() == type_name) {
+					pack_arg_start = template_arg_index;
+					pack_size = current_pack_size;
+					found_pack = true;
+					break;
+				}
+				template_arg_index += current_pack_size;
+				continue;
+			}
+
+			if (template_arg_index < template_args.size()) {
+				++template_arg_index;
+			}
+		}
+
+		if (found_pack) {
+			pack_param_info_.push_back({param_decl.identifier_token().value(), pack_arg_start, pack_size});
+		}
+	}
 
 	// Save lexer position and function context.
 	SaveHandle current_pos = save_token_position();
@@ -593,6 +679,7 @@ void Parser::reparse_template_function_body(
 	gSymbolTable.exit_scope();
 	restore_lexer_position_only(current_pos);
 	discard_saved_token(current_pos);
+	pack_param_info_ = std::move(saved_pack_param_info);
 
 	// Check for Phase 1 violations (after full cleanup so RAII guards are still in scope).
 	phase1_cutoff_line_ = 0;
