@@ -125,24 +125,26 @@ ASTNode makeRebuiltPointerToMemberAccessNode(
 		member_access.is_arrow());
 }
 
-template <typename Type>
+template <typename Unused>
 inline constexpr bool AlwaysFalseExprContainsIdentifierNode = false;
 
-template <typename... NodeTypes, typename Visitor>
+template <typename Visitor>
+bool visitStandaloneExprNode(const ASTNode& expr, Visitor&&) {
+	(void)expr;
+	return false;
+}
+
+template <typename NodeType, typename... RemainingNodeTypes, typename Visitor>
 bool visitStandaloneExprNode(const ASTNode& expr, Visitor&& visitor) {
-	bool handled = false;
-	bool result = false;
+	if (expr.is<NodeType>()) {
+		return visitor(expr.as<NodeType>());
+	}
 
-	auto tryVisit = [&](const auto* node_tag) {
-		using NodeType = std::remove_pointer_t<decltype(node_tag)>;
-		if (!handled && expr.is<NodeType>()) {
-			handled = true;
-			result = visitor(expr.as<NodeType>());
-		}
-	};
+	if constexpr (sizeof...(RemainingNodeTypes) > 0) {
+		return visitStandaloneExprNode<RemainingNodeTypes...>(expr, visitor);
+	}
 
-	(tryVisit(static_cast<const NodeTypes*>(nullptr)), ...);
-	return handled ? result : false;
+	return false;
 }
 
 // Dispatches both ExpressionNode variants and legacy standalone expression wrappers to the same visitor.
