@@ -892,6 +892,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
 						const StructTypeInfo* elem_struct = type_info ? type_info->getStructInfo() : nullptr;
 						if (elem_struct) {
+							// For unsized struct arrays (e.g. Point pts[] = {{1,2},{3,4},{5,6}}),
+							// neither type_node.array_dimensions() nor decl.array_dimensions() are
+							// populated, so op.element_count was never set above.  Infer it from
+							// the initializer count — each top-level initializer is one struct element.
+							if (op.element_count <= 1 && initializers.size() > 1) {
+								op.element_count = initializers.size();
+							}
 							op.init_data.resize(op.element_count * toSizeT(elem_struct->sizeInBytes()), 0);
 							for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
 								const ASTNode& elem_init = initializers[elem_i];
