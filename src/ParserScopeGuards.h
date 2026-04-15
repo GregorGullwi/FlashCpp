@@ -192,27 +192,36 @@ private:
 };
 
 // =============================================================================
-// Generic RAII guard that saves a value on construction and restores it on
-// destruction.  Intended for parser state fields that must be temporarily
-// overwritten during template body re-parsing and then restored on all exit
-// paths (normal return, early return, exception).
+// ScopedState / ScopedStateCopy
+// =============================================================================
+// RAII guards that save a value on construction and restore it on destruction.
+// Intended for parser state fields that must be temporarily overwritten during
+// template body re-parsing and then restored on all exit paths (normal return,
+// early return, exception).
+//
+// Two distinct types encode the save semantics in the type name so that the
+// intent is visible at every call site and impossible to confuse:
+//
+//   ScopedState      – MOVES the field into the guard, leaving the field in a
+//                      moved-from (empty) state.  Use when the caller will
+//                      immediately overwrite or clear the field.
+//
+//   ScopedStateCopy  – COPIES the field into the guard, leaving the field
+//                      populated with its original contents.  Use when inner
+//                      code needs to see (and extend) the existing field value.
 //
 // Usage:
 //   {
-//       ScopedState guard(current_template_param_names_);
-//       current_template_param_names_.clear();
-//       // ... populate and use ...
+//       ScopedState guard(field);      // field is now moved-from
+//       field = new_value;
+//       // ...
 //   } // original value is automatically restored here
 //
-// Replaces the manual three-line pattern:
-//   auto saved = std::move(field);
-//   field.clear();
-//   /* ... */
-//   field = std::move(saved);
-
-// Tag type: pass CopyOnSave to ScopedState to copy-save the field instead of
-// move-saving it.  This keeps the field populated during the guarded scope.
-struct CopyOnSave {};
+//   {
+//       ScopedStateCopy guard(field);  // field retains its contents
+//       field.push_back(extra);
+//       // ...
+//   } // original value is automatically restored here
 
 template <typename T>
 class ScopedState {
@@ -221,12 +230,6 @@ public:
 	// The field is MOVED into the guard, leaving the field in a moved-from state.
 	explicit ScopedState(T& field)
 		: field_ref_(field), saved_state_(std::move(field)) {}
-
-	// Copy-save variant: the field is COPIED into the guard, leaving the field
-	// populated with its original contents during the guarded scope.
-	// Use this when inner code needs to see (and extend) the existing field value.
-	explicit ScopedState(T& field, CopyOnSave)
-		: field_ref_(field), saved_state_(field) {}
 
 	// Conditional save/restore: when active==false the field is left untouched
 	// and the destructor is a no-op.  No default T{} is constructed when inactive.
@@ -246,6 +249,27 @@ public:
 private:
 	T& field_ref_;
 	std::optional<T> saved_state_;
+};
+
+// Copy-save variant: the field is COPIED into the guard, leaving the field
+// populated with its original contents during the guarded scope.
+// Use this when inner code needs to see (and extend) the existing field value.
+template <typename T>
+class ScopedStateCopy {
+public:
+	explicit ScopedStateCopy(T& field)
+		: field_ref_(field), saved_state_(field) {}
+
+	~ScopedStateCopy() {
+		field_ref_ = std::move(saved_state_);
+	}
+
+	ScopedStateCopy(const ScopedStateCopy&) = delete;
+	ScopedStateCopy& operator=(const ScopedStateCopy&) = delete;
+
+private:
+	T& field_ref_;
+	T saved_state_;
 };
 
 // =============================================================================

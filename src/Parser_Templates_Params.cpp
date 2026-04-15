@@ -35,10 +35,10 @@ bool Parser::parse_noexcept_value() {
 ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_params) {
 	// Save and restore the current template parameter state that existed before
 	// parsing this list so names added here do not persist after the parse.
-	// CopyOnSave keeps the field populated so that outer template parameter names
-	// remain visible while parsing inner parameters' default values (e.g.
+	// ScopedStateCopy keeps the field populated so that outer template parameter
+	// names remain visible while parsing inner parameters' default values (e.g.
 	// template<typename T, bool = is_arithmetic<T>::value>).
-	FlashCpp::ScopedState guard_template_params(currentTemplateParamState(), FlashCpp::CopyOnSave{});
+	FlashCpp::ScopedStateCopy guard_template_params(currentTemplateParamState());
 
 	// Parse first parameter
 	auto param_result = parse_template_parameter();
