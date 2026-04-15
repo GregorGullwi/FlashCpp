@@ -741,6 +741,19 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		}
 	}
 
+	if (unaryOperatorNode.op() == "*" && unaryOperatorNode.get_operand().is<ExpressionNode>() && sema_) {
+		if (const FunctionDeclarationNode* resolved_deref =
+				sema_->getResolvedUnaryDereferenceOperator(&unaryOperatorNode)) {
+			ChunkedVector<ASTNode> member_args;
+			CallExprNode member_call = makeResolvedMemberCallExpr(
+				unaryOperatorNode.get_operand(),
+				*resolved_deref,
+				std::move(member_args),
+				unaryOperatorNode.get_token());
+			return generateMemberFunctionCallIr(member_call, context);
+		}
+	}
+
 	auto tryBuildIdentifierOperand = [&](const IdentifierNode& identifier, ExprResult& out) -> bool {
 			// Phase 4: Using StringHandle for lookup
 		StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier.name());

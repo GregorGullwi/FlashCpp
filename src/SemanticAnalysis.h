@@ -109,6 +109,7 @@ public:
 	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	const FunctionDeclarationNode* getResolvedUnaryDereferenceOperator(const UnaryOperatorNode* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
 	struct ResolvedIdentifierMemberInfo {
@@ -317,6 +318,7 @@ private:
 
 	void tryResolveCallableOperator(const CallExprNode& call_node);
 	void tryResolveCallableOperatorImpl(const CallInfo& call_info, const void* call_key);
+	void tryResolveUnaryDereferenceOperator(const UnaryOperatorNode& unary_node);
 
 	// Resolve operator[] for an ArraySubscriptNode whose object is a struct type.
 	// Stores the resolved FunctionDeclarationNode* in op_subscript_table_ so that codegen
@@ -365,6 +367,7 @@ private:
 	// Side table: call-expression pointer -> resolved operator() declaration.
 	// Populated by tryResolveCallableOperator for struct-typed callable objects.
 	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
+	std::unordered_map<const UnaryOperatorNode*, const FunctionDeclarationNode*> op_unary_deref_table_;
 	std::unordered_map<const void*, const FunctionDeclarationNode*> resolved_direct_call_table_;
 	std::unordered_map<const void*, ResolvedMemberAccessInfo> resolved_member_access_table_;
 	std::unordered_map<const IdentifierNode*, ResolvedIdentifierMemberInfo> resolved_identifier_member_table_;
