@@ -128,6 +128,23 @@ ASTNode makeRebuiltPointerToMemberAccessNode(
 template <typename T>
 inline constexpr bool AlwaysFalseExprContainsIdentifierNode = false;
 
+template <typename... NodeTypes, typename Visitor>
+bool visitExprContainsIdentifierStandaloneNode(const ASTNode& expr, Visitor&& visitor) {
+	bool handled = false;
+	bool result = false;
+
+	auto tryVisit = [&](const auto* node_tag) {
+		using NodeType = std::remove_pointer_t<decltype(node_tag)>;
+		if (!handled && expr.is<NodeType>()) {
+			handled = true;
+			result = visitor(expr.as<NodeType>());
+		}
+	};
+
+	(tryVisit(static_cast<const NodeTypes*>(nullptr)), ...);
+	return handled ? result : false;
+}
+
 // Dispatches both ExpressionNode variants and legacy standalone expression wrappers to the same visitor.
 template <typename Visitor>
 bool visitExprContainsIdentifierNode(const ASTNode& expr, Visitor&& visitor) {
@@ -135,48 +152,40 @@ bool visitExprContainsIdentifierNode(const ASTNode& expr, Visitor&& visitor) {
 		return std::visit(visitor, expr.as<ExpressionNode>());
 	}
 
-#define FLASHCPP_VISIT_EXPR_NODE(NodeType) \
-	if (expr.is<NodeType>()) { \
-		return visitor(expr.as<NodeType>()); \
-	}
-
-	FLASHCPP_VISIT_EXPR_NODE(IdentifierNode);
-	FLASHCPP_VISIT_EXPR_NODE(QualifiedIdentifierNode);
-	FLASHCPP_VISIT_EXPR_NODE(StringLiteralNode);
-	FLASHCPP_VISIT_EXPR_NODE(NumericLiteralNode);
-	FLASHCPP_VISIT_EXPR_NODE(BoolLiteralNode);
-	FLASHCPP_VISIT_EXPR_NODE(BinaryOperatorNode);
-	FLASHCPP_VISIT_EXPR_NODE(UnaryOperatorNode);
-	FLASHCPP_VISIT_EXPR_NODE(TernaryOperatorNode);
-	FLASHCPP_VISIT_EXPR_NODE(ConstructorCallNode);
-	FLASHCPP_VISIT_EXPR_NODE(MemberAccessNode);
-	FLASHCPP_VISIT_EXPR_NODE(PointerToMemberAccessNode);
-	FLASHCPP_VISIT_EXPR_NODE(ArraySubscriptNode);
-	FLASHCPP_VISIT_EXPR_NODE(SizeofExprNode);
-	FLASHCPP_VISIT_EXPR_NODE(SizeofPackNode);
-	FLASHCPP_VISIT_EXPR_NODE(AlignofExprNode);
-	FLASHCPP_VISIT_EXPR_NODE(OffsetofExprNode);
-	FLASHCPP_VISIT_EXPR_NODE(TypeTraitExprNode);
-	FLASHCPP_VISIT_EXPR_NODE(NewExpressionNode);
-	FLASHCPP_VISIT_EXPR_NODE(DeleteExpressionNode);
-	FLASHCPP_VISIT_EXPR_NODE(StaticCastNode);
-	FLASHCPP_VISIT_EXPR_NODE(DynamicCastNode);
-	FLASHCPP_VISIT_EXPR_NODE(ConstCastNode);
-	FLASHCPP_VISIT_EXPR_NODE(ReinterpretCastNode);
-	FLASHCPP_VISIT_EXPR_NODE(TypeidNode);
-	FLASHCPP_VISIT_EXPR_NODE(LambdaExpressionNode);
-	FLASHCPP_VISIT_EXPR_NODE(TemplateParameterReferenceNode);
-	FLASHCPP_VISIT_EXPR_NODE(FoldExpressionNode);
-	FLASHCPP_VISIT_EXPR_NODE(PackExpansionExprNode);
-	FLASHCPP_VISIT_EXPR_NODE(PseudoDestructorCallNode);
-	FLASHCPP_VISIT_EXPR_NODE(NoexceptExprNode);
-	FLASHCPP_VISIT_EXPR_NODE(InitializerListConstructionNode);
-	FLASHCPP_VISIT_EXPR_NODE(ThrowExpressionNode);
-	FLASHCPP_VISIT_EXPR_NODE(CallExprNode);
-
-#undef FLASHCPP_VISIT_EXPR_NODE
-
-	return false;
+	return visitExprContainsIdentifierStandaloneNode<
+		IdentifierNode,
+		QualifiedIdentifierNode,
+		StringLiteralNode,
+		NumericLiteralNode,
+		BoolLiteralNode,
+		BinaryOperatorNode,
+		UnaryOperatorNode,
+		TernaryOperatorNode,
+		ConstructorCallNode,
+		MemberAccessNode,
+		PointerToMemberAccessNode,
+		ArraySubscriptNode,
+		SizeofExprNode,
+		SizeofPackNode,
+		AlignofExprNode,
+		OffsetofExprNode,
+		TypeTraitExprNode,
+		NewExpressionNode,
+		DeleteExpressionNode,
+		StaticCastNode,
+		DynamicCastNode,
+		ConstCastNode,
+		ReinterpretCastNode,
+		TypeidNode,
+		LambdaExpressionNode,
+		TemplateParameterReferenceNode,
+		FoldExpressionNode,
+		PackExpansionExprNode,
+		PseudoDestructorCallNode,
+		NoexceptExprNode,
+		InitializerListConstructionNode,
+		ThrowExpressionNode,
+		CallExprNode>(expr, visitor);
 }
 
 }
