@@ -932,10 +932,17 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 						}
 						if (!packed_as_constexpr_array) {
-							for (const auto& elem_init : initializers) {
-								unsigned long long value = evalToValue(elem_init, type_node.type());
-								appendValueAsBytes(op.init_data, value, element_size);
-							}
+							auto flattenAndAppend = [&](const auto& self, const std::vector<ASTNode>& elems) -> void {
+								for (const auto& elem : elems) {
+									if (elem.is<InitializerListNode>()) {
+										self(self, elem.as<InitializerListNode>().initializers());
+									} else {
+										unsigned long long value = evalToValue(elem, type_node.type());
+										appendValueAsBytes(op.init_data, value, element_size);
+									}
+								}
+							};
+							flattenAndAppend(flattenAndAppend, initializers);
 						}
 					}
 				}
