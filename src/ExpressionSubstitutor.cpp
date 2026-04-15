@@ -70,7 +70,14 @@ bool decodeTTPPlaceholderArg(std::string_view encoded_arg, TemplateTypeArg& deco
 	}
 
 	if (is_builtin_type(category)) {
-		decoded_arg.type_index = nativeTypeIndex(category);
+		TypeIndex builtin_index = nativeTypeIndex(category);
+		// Builtin categories are encoded with their canonical native TypeIndex slot so
+		// placeholder names remain unambiguous across parse/substitution. Reject
+		// mismatches here to avoid silently materializing the wrong builtin type.
+		if (!builtin_index.is_valid() || builtin_index.index() != raw_index) {
+			return false;
+		}
+		decoded_arg.type_index = builtin_index;
 		decoded_arg.setCategory(category);
 		return true;
 	}

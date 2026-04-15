@@ -74,12 +74,16 @@ StringHandle Parser::buildTTPPlaceholderName(
 			placeholder_name.append('v');
 			placeholder_name.append(static_cast<uint64_t>(static_cast<uint8_t>(arg.typeEnum())));
 			placeholder_name.append(":"sv);
-			placeholder_name.append(arg.value);
+			placeholder_name.append(static_cast<int64_t>(arg.value));
 		} else {
 			placeholder_name.append('t');
 			placeholder_name.append(static_cast<uint64_t>(static_cast<uint8_t>(arg.typeEnum())));
 			placeholder_name.append(":"sv);
-			placeholder_name.append(static_cast<uint64_t>(arg.type_index.index()));
+			TypeIndex encoded_index = arg.type_index;
+			if (is_builtin_type(arg.typeEnum())) {
+				encoded_index = nativeTypeIndex(arg.typeEnum());
+			}
+			placeholder_name.append(static_cast<uint64_t>(encoded_index.index()));
 		}
 	}
 	return StringTable::getOrInternStringHandle(placeholder_name.commit());
