@@ -816,6 +816,30 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			}
 			return 0;
 		};
+		auto materializeStructInitForStaticStorage = [&](const StructTypeInfo& target_struct_info, TypeIndex target_type_index, const InitializerListNode& target_init_list) -> ConstExpr::EvalResult {
+			auto ctx = makeStaticStorageEvalContext();
+			ChunkedVector<ASTNode> ctor_args;
+			for (const ASTNode& arg : target_init_list.initializers()) {
+				ctor_args.push_back(arg);
+			}
+			if (auto ctor_result = ConstExpr::Evaluator::try_materialize_struct_from_ctor_args(
+					&target_struct_info,
+					target_type_index,
+					ctor_args,
+					ctx,
+					false,
+					nullptr,
+					nullptr,
+					false)) {
+				return std::move(*ctor_result);
+			}
+			return ConstExpr::Evaluator::materialize_aggregate_object_value(
+				&target_struct_info,
+				target_type_index,
+				target_init_list,
+				ctx,
+				nullptr);
+		};
 
 			// Check if this is an array and get element count (product of all dimensions for multidimensional)
 		if (decl.is_array() || type_node.is_array()) {
@@ -873,9 +897,27 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
 					const StructTypeInfo* struct_info_ptr = type_info ? type_info->getStructInfo() : nullptr;
 					if (struct_info_ptr) {
-							// Struct aggregate initialization: pack values into init_data using member bit offsets
-						op.init_data.resize(toSizeT(struct_info_ptr->sizeInBytes()), 0);
-						fillAggregateInitData(op.init_data, *struct_info_ptr, init_list, evalToValue);
+						auto object_result = materializeStructInitForStaticStorage(
+							*struct_info_ptr,
+							type_node.type_index(),
+							init_list);
+						if (object_result.success()) {
+							op.init_data.resize(toSizeT(struct_info_ptr->sizeInBytes()), 0);
+							packStructEvalResultIntoInitData(
+								packStructEvalResultIntoInitData,
+								op.init_data,
+								*struct_info_ptr,
+								object_result,
+								0,
+								0);
+						} else {
+							if (shouldRejectStaticStorageEvalFailure(object_result.error_type)) {
+								throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
+												   "' initializer is not a constant expression: " + object_result.error_message);
+							}
+							op.init_data.resize(toSizeT(struct_info_ptr->sizeInBytes()), 0);
+							fillAggregateInitData(op.init_data, *struct_info_ptr, init_list, evalToValue);
+						}
 					} else {
 							// Fallback: array-like behavior
 						op.element_count = initializers.size();
@@ -903,12 +945,30 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
 								const ASTNode& elem_init = initializers[elem_i];
 								if (elem_init.is<InitializerListNode>()) {
-									fillAggregateInitData(
-										op.init_data,
+									auto element_result = materializeStructInitForStaticStorage(
 										*elem_struct,
-										elem_init.as<InitializerListNode>(),
-										evalToValue,
-										elem_i * toSizeT(elem_struct->sizeInBytes()));
+										type_node.type_index(),
+										elem_init.as<InitializerListNode>());
+									if (element_result.success()) {
+										packStructEvalResultIntoInitData(
+											packStructEvalResultIntoInitData,
+											op.init_data,
+											*elem_struct,
+											element_result,
+											elem_i * toSizeT(elem_struct->sizeInBytes()),
+											0);
+									} else {
+										if (shouldRejectStaticStorageEvalFailure(element_result.error_type)) {
+											throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
+															   "' initializer is not a constant expression: " + element_result.error_message);
+										}
+										fillAggregateInitData(
+											op.init_data,
+											*elem_struct,
+											elem_init.as<InitializerListNode>(),
+											evalToValue,
+											elem_i * toSizeT(elem_struct->sizeInBytes()));
+									}
 								} else {
 									unsigned long long value = evalToValue(elem_init, type_node.type());
 									size_t byte_off = elem_i * toSizeT(elem_struct->sizeInBytes());
