@@ -1320,7 +1320,7 @@ bool Parser::looks_like_function_parameters() {
 			// A current non-type template parameter (e.g. N in `Box box(N);`) is an
 			// expression argument, not an unnamed parameter type, so prefer direct-init.
 			bool is_current_template_param = false;
-			for (StringHandle param_name : current_template_param_names_) {
+			for (StringHandle param_name : currentTemplateParamNames()) {
 				if (param_name == id_handle) {
 					is_current_template_param = true;
 					break;

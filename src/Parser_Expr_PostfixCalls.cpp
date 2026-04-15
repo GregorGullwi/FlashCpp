@@ -276,6 +276,11 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is
 				*object_struct_name,
 				member_name_token.value(),
 				*explicit_template_args);
+		} else if (object_struct_name.has_value() && arg_types.empty()) {
+			instantiated_func = try_instantiate_member_function_template_explicit(
+				*object_struct_name,
+				member_name_token.value(),
+				{});
 		} else if (object_struct_name.has_value() && !arg_types.empty()) {
 			instantiated_func = try_instantiate_member_function_template(
 				*object_struct_name,

@@ -230,11 +230,16 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 
 	// Try to instantiate the member template function if we have explicit template args
 	std::optional<ASTNode> instantiated_func;
-	if (member_template_args.has_value() && !member_template_args->empty()) {
+	if (member_template_args.has_value()) {
 		instantiated_func = try_instantiate_member_function_template_explicit(
 			instantiated_class_name,
 			member_name,
 			*member_template_args);
+	} else if (args.empty()) {
+		instantiated_func = try_instantiate_member_function_template_explicit(
+			instantiated_class_name,
+			member_name,
+			{});
 	}
 
 	// Trigger lazy member function instantiation if needed
@@ -418,7 +423,7 @@ bool Parser::is_template_parameter(std::string_view name) const {
 // Helper: Check if a base class name is a template parameter
 // Returns true if the name matches any template parameter in the current template scope
 bool Parser::is_base_class_template_parameter(std::string_view base_class_name) const {
-	for (const auto& param_name : current_template_param_names_) {
+	for (const auto& param_name : currentTemplateParamNames()) {
 		if (StringTable::getStringView(param_name) == base_class_name) {
 			FLASH_LOG_FORMAT(Templates, Debug,
 							 "Base class '{}' is a template parameter - deferring resolution",
@@ -1314,8 +1319,8 @@ TypeIndex Parser::substitute_template_parameter(
 // Lookup symbol with template parameter checking
 std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle identifier) {
 	// First check if it's a template parameter using the new method
-	if ((parsing_template_depth_ > 0) && !current_template_param_names_.empty()) {
-		return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
+	if (isTemplateBodyWithActiveParameters()) {
+		return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &currentTemplateParamNames());
 	}
 
 	// Otherwise, do normal symbol lookup

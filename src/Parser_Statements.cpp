@@ -525,8 +525,8 @@ ParseResult Parser::parse_statement_or_declaration() {
 		// Check if this identifier is a template parameter name (e.g., T in template<typename T>)
 		// Template parameters can be used as types in variable declarations like "T result = value;"
 		// OR as functional-style casts like "_Tp(args...).swap(c)" (temporary construction)
-		if (!current_template_param_names_.empty()) {
-			for (const auto& param_name : current_template_param_names_) {
+		if (hasActiveTemplateParameters()) {
+			for (const auto& param_name : currentTemplateParamNames()) {
 				if (param_name == type_name_handle) {
 					// This is a template parameter being used as a type.
 					// Disambiguate per C++20 [stmt.ambig]: when a statement is ambiguous

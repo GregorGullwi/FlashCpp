@@ -445,8 +445,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 									if (const TypeInfo* type_info = tryGetTypeInfo(targ.type_index))
 										dep_name = type_info->name_;
 								}
-								if (!dep_name.isValid() && arg_idx < current_template_param_names_.size()) {
-									dep_name = current_template_param_names_[arg_idx];
+								if (!dep_name.isValid() && arg_idx < currentTemplateParamCount()) {
+									dep_name = currentTemplateParamNames()[arg_idx];
 								}
 
 								if ((targ.is_pack || targ.is_dependent) && dep_name.isValid()) {
@@ -544,7 +544,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					// Mangled names like "is_integral__Tp" use underscore as separator
 					bool is_mangled_name = type_name.find('_') != std::string_view::npos;
 
-					for (const auto& param_name : current_template_param_names_) {
+					for (const auto& param_name : currentTemplateParamNames()) {
 						std::string_view param_sv = StringTable::getStringView(param_name);
 						// Check if type_name contains param_name as an identifier
 						// (not just substring, to avoid false positives like "T" in "Template")
@@ -1460,7 +1460,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					struct_ref,
 					struct_info.get(),
 					current_access,
-					current_template_param_names_,
+					currentTemplateParamNames(),
 					/*add_to_struct_info=*/false,
 					/*add_to_ast_nodes=*/false)) {
 				// Function was handled (or error occurred)
@@ -1997,7 +1997,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					true, // is_destructor
 					nullptr, // ctor_node
 					&dtor_ref, // dtor_node
-					current_template_param_names_ // template parameter names
+					currentTemplateParamNames() // template parameter names
 				});
 			} else if (!is_defaulted && !is_deleted && !consume(";"_tok)) {
 				return ParseResult::error("Expected '{', ';', '= default', or '= delete' after destructor declaration", peek_info());
@@ -2251,7 +2251,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					false, // is_destructor
 					nullptr, // ctor_node
 					nullptr, // dtor_node
-					current_template_param_names_ // template parameter names
+					currentTemplateParamNames() // template parameter names
 				});
 				// Inline function body consumed, no semicolon needed
 			} else if (!is_defaulted && !is_deleted) {
@@ -2747,7 +2747,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				if (!eval_result.success()) {
 					const bool can_defer_dependent_bound =
 						eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression &&
-						(parsing_template_class_ || parsing_template_depth_ > 0 || !current_template_param_names_.empty());
+						isDependentTemplateContext();
 					if (can_defer_dependent_bound) {
 						continue;
 					}
@@ -4441,7 +4441,7 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	// Set up template parameter types in the type system so they are
 	// visible when parsing the friend function declaration (e.g. return type T, param type T).
 	FlashCpp::TemplateParameterScope template_scope;
-	FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+	FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
 			const auto& tparam = param.as<TemplateParameterNode>();
@@ -4450,7 +4450,7 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 				getTypesByNameMap().emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
-			current_template_param_names_.push_back(tparam.nameHandle());
+			pushCurrentTemplateParamName(tparam.nameHandle());
 		}
 	}
 

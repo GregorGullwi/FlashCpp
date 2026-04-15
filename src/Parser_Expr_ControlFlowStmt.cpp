@@ -1110,12 +1110,12 @@ ParseResult Parser::parse_lambda_expression() {
 		lambda_is_constexpr,
 		lambda_is_consteval);
 	auto& lambda_ref = lambda_node.as<LambdaExpressionNode>();
-	if (!current_template_param_names_.empty() && !template_param_substitutions_.empty()) {
+	if (hasActiveTemplateParameters() && !template_param_substitutions_.empty()) {
 		InlineVector<StringHandle, 4> outer_template_param_names;
 		InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args;
-		outer_template_param_names.reserve(current_template_param_names_.size());
-		outer_template_args.reserve(current_template_param_names_.size());
-		for (StringHandle param_name : current_template_param_names_) {
+		outer_template_param_names.reserve(currentTemplateParamCount());
+		outer_template_args.reserve(currentTemplateParamCount());
+		for (StringHandle param_name : currentTemplateParamNames()) {
 			for (const auto& subst : template_param_substitutions_) {
 				if (subst.param_name != param_name) {
 					continue;

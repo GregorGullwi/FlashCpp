@@ -547,8 +547,58 @@ private:
 	bool parsing_template_class_ = false;
 	// Track when an inline namespace declaration was prefixed with 'inline'
 	bool pending_inline_namespace_ = false;
-	InlineVector<StringHandle, 4> current_template_param_names_;	 // Names of current template parameters - from Token storage
-	InlineVector<TemplateParameterKind, 4> current_template_param_kinds_;
+	struct ActiveTemplateParameterState {
+		InlineVector<StringHandle, 4> names;	 // Names of current template parameters - from Token storage
+		InlineVector<TemplateParameterKind, 4> kinds;
+
+		bool empty() const { return names.empty(); }
+		size_t size() const { return names.size(); }
+
+		void clear() {
+			names.clear();
+			kinds.clear();
+		}
+
+		void setNames(const InlineVector<StringHandle, 4>& param_names) {
+			names = param_names;
+			kinds.clear();
+		}
+
+		void setNames(InlineVector<StringHandle, 4>&& param_names) {
+			names = std::move(param_names);
+			kinds.clear();
+		}
+
+		void setNamesAndKinds(const InlineVector<StringHandle, 4>& param_names,
+							  const InlineVector<TemplateParameterKind, 4>& param_kinds) {
+			names = param_names;
+			kinds = param_kinds;
+		}
+
+		void setNamesAndKinds(InlineVector<StringHandle, 4>&& param_names,
+							  InlineVector<TemplateParameterKind, 4>&& param_kinds) {
+			names = std::move(param_names);
+			kinds = std::move(param_kinds);
+		}
+
+		void pushName(StringHandle param_name) {
+			names.push_back(param_name);
+		}
+
+		std::optional<TemplateParameterKind> kindOf(StringHandle param_name) const {
+			for (size_t i = 0; i < names.size(); ++i) {
+				if (names[i] != param_name) {
+					continue;
+				}
+				if (i < kinds.size()) {
+					return kinds[i];
+				}
+				break;
+			}
+			return std::nullopt;
+		}
+	};
+	ActiveTemplateParameterState current_template_params_;
 
 		// Template parameter substitution for deferred template body parsing
 		// Maps template parameter names to their substituted values (for non-type AND type parameters)
@@ -939,6 +989,11 @@ private:
 	bool tryAppendDefaultTemplateArg(
 		const TemplateParameterNode& param,
 		const std::vector<ASTNode>& template_params,
+		InlineVector<TemplateTypeArg, 4>& template_args);
+	bool tryAppendMemberDefaultTemplateArg(
+		const TemplateParameterNode& param,
+		const std::vector<ASTNode>& template_params,
+		const OuterTemplateBinding* outer_binding,
 		InlineVector<TemplateTypeArg, 4>& template_args);
 	ASTNode substituteNonTypeDefaultExpression(
 		const ASTNode& default_node,
@@ -1992,10 +2047,76 @@ private:	 // Resume private methods
 	// Lookup symbol with template parameter checking
 	std::optional<ASTNode> lookup_symbol_with_template_check(StringHandle identifier);
 
+	bool hasActiveTemplateParameters() const {
+		return !current_template_params_.empty();
+	}
+
+	bool isTemplateBodyWithActiveParameters() const {
+		return parsing_template_depth_ > 0 && hasActiveTemplateParameters();
+	}
+
+	bool isTemplateParameterTrackingActive() const {
+		return parsing_template_depth_ > 0 || hasActiveTemplateParameters();
+	}
+
+	bool isTemplateClassOrActiveParameters() const {
+		return parsing_template_class_ || hasActiveTemplateParameters();
+	}
+
+	bool isDependentTemplateContext() const {
+		return parsing_template_class_ || isTemplateParameterTrackingActive();
+	}
+
+	const InlineVector<StringHandle, 4>& currentTemplateParamNames() const {
+		return current_template_params_.names;
+	}
+
+	size_t currentTemplateParamCount() const {
+		return current_template_params_.size();
+	}
+
+	std::optional<TemplateParameterKind> currentTemplateParamKind(StringHandle param_name) const {
+		return current_template_params_.kindOf(param_name);
+	}
+
+	void setCurrentTemplateParamNames(const InlineVector<StringHandle, 4>& param_names) {
+		current_template_params_.setNames(param_names);
+	}
+
+	void setCurrentTemplateParamNames(InlineVector<StringHandle, 4>&& param_names) {
+		current_template_params_.setNames(std::move(param_names));
+	}
+
+	void setCurrentTemplateParameters(const InlineVector<StringHandle, 4>& param_names,
+									  const InlineVector<TemplateParameterKind, 4>& param_kinds) {
+		current_template_params_.setNamesAndKinds(param_names, param_kinds);
+	}
+
+	void setCurrentTemplateParameters(InlineVector<StringHandle, 4>&& param_names,
+									  InlineVector<TemplateParameterKind, 4>&& param_kinds) {
+		current_template_params_.setNamesAndKinds(std::move(param_names), std::move(param_kinds));
+	}
+
+	void clearCurrentTemplateParameters() {
+		current_template_params_.clear();
+	}
+
+	void pushCurrentTemplateParamName(StringHandle param_name) {
+		current_template_params_.pushName(param_name);
+	}
+
+	ActiveTemplateParameterState& currentTemplateParamState() {
+		return current_template_params_;
+	}
+
+	const ActiveTemplateParameterState& currentTemplateParamState() const {
+		return current_template_params_;
+	}
+
 	// Unified symbol lookup that automatically provides template parameters when parsing templates
 	std::optional<ASTNode> lookup_symbol(StringHandle identifier) const {
-		if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {
-			return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
+		if (isTemplateBodyWithActiveParameters()) {
+			return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &currentTemplateParamNames());
 		} else {
 			return gSymbolTable.lookup(identifier);
 		}
@@ -2017,7 +2138,7 @@ private:	 // Resume private methods
 
 	// Overload for qualified lookups with vector of strings
 	std::optional<ASTNode> lookup_symbol_qualified(const std::vector<StringType<>>& namespaces, std::string_view identifier) const {
-		if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {
+		if (isTemplateBodyWithActiveParameters()) {
 				// For qualified lookups, we still need template params for the base lookup
 				// But qualified lookups are less common in template bodies
 			return gSymbolTable.lookup_qualified(namespaces, identifier);
@@ -2095,7 +2216,7 @@ private:	 // Resume private methods
 			auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
 			if (!static_member || !owner_struct)
 				return false;
-			bool is_template_member_context = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
+			bool is_template_member_context = isTemplateBodyWithActiveParameters();
 			if (is_template_member_context && owner_struct != struct_info)
 				return false;
 			node.set_binding(IdentifierBinding::StaticMember);
@@ -2112,7 +2233,7 @@ private:	 // Resume private methods
 			}
 			if (!current_struct_info)
 				return false;
-			bool is_template_member_context = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
+			bool is_template_member_context = isTemplateBodyWithActiveParameters();
 				// When parsing a template body and the struct has dependent (deferred) base classes,
 				// skip gLazyMemberResolver which traverses concrete base classes — a dependent base
 				// may also provide the same name, making eager binding to a concrete base incorrect

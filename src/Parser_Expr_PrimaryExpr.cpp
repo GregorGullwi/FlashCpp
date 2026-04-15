@@ -37,16 +37,16 @@ bool Parser::isTemplateTemplateParameter(StringHandle template_name_handle) cons
 	if (parsing_template_depth_ == 0) {
 		return false;
 	}
-	for (size_t i = 0; i < current_template_param_names_.size(); ++i) {
-		if (current_template_param_names_[i] == template_name_handle) {
-			if (i < current_template_param_kinds_.size()) {
-				return current_template_param_kinds_[i] == TemplateParameterKind::Template;
-			}
-			if (const TypeInfo* type_info = findTypeByName(template_name_handle)) {
-				return type_info->type_index_.category() == TypeCategory::Template;
-			}
-			return false;
+	if (auto param_kind = currentTemplateParamKind(template_name_handle)) {
+		return *param_kind == TemplateParameterKind::Template;
+	}
+	// A missing kind may still mean the name is active in a names-only context.
+	const auto& current_template_param_names = currentTemplateParamNames();
+	if (std::find(current_template_param_names.begin(), current_template_param_names.end(), template_name_handle) != current_template_param_names.end()) {
+		if (const TypeInfo* type_info = findTypeByName(template_name_handle)) {
+			return type_info->type_index_.category() == TypeCategory::Template;
 		}
+		return false;
 	}
 	return false;
 }
@@ -2303,7 +2303,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				bool base_is_template_param = false;
 				if (!qual_id.namespace_handle().isGlobal()) {
 					std::string_view base_name = gNamespaceRegistry.getRootNamespaceName(qual_id.namespace_handle());
-					for (const auto& param_name : current_template_param_names_) {
+					for (const auto& param_name : currentTemplateParamNames()) {
 						if (StringTable::getStringView(param_name) == base_name) {
 							base_is_template_param = true;
 							break;
@@ -2889,10 +2889,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		// Use template-aware lookup if we're parsing a template body OR if we have template parameters
 		// in scope (e.g., when parsing template parameter defaults that reference earlier parameters)
 		std::optional<ASTNode> identifierType;
-		if (!current_template_param_names_.empty()) {
+		if (hasActiveTemplateParameters()) {
 			// Template-aware lookup: checks if identifier is a template parameter first
-			identifierType = gSymbolTable.lookup(identifier_token.handle(), gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
-			FLASH_LOG_FORMAT(Parser, Debug, "Template-aware lookup for '{}', template_params_count={}", identifier_token.value(), current_template_param_names_.size());
+			identifierType = gSymbolTable.lookup(identifier_token.handle(), gSymbolTable.get_current_scope_handle(), &currentTemplateParamNames());
+			FLASH_LOG_FORMAT(Parser, Debug, "Template-aware lookup for '{}', template_params_count={}", identifier_token.value(), currentTemplateParamCount());
 		} else {
 			identifierType = lookup_symbol(identifier_token.handle());
 		}
@@ -3960,9 +3960,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				result = function_call_node;
 				return ParseResult::success(*result);
 			} else {
-				bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, current_template_param_names_);
+				bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, currentTemplateParamNames());
 				if (has_dependent_call_args ||
-					argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
+					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
@@ -4431,7 +4431,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						return ParseResult::success(*result);
 					}
-					if (argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
+					if (argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
 						return make_dependent_call_result();
 					}
 					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
@@ -4494,7 +4494,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						return ParseResult::success(*result);
 					}
-					if (argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
+					if (argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
 						return make_dependent_call_result();
 					}
 					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
@@ -5247,9 +5247,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 
 				// Check if we're parsing a template and this identifier is a template parameter
-				if (!identifierType && (parsing_template_class_ || !current_template_param_names_.empty())) {
+				if (!identifierType && isTemplateClassOrActiveParameters()) {
 					// Check if this identifier matches any template parameter name
-					for (const auto& param_name : current_template_param_names_) {
+					for (const auto& param_name : currentTemplateParamNames()) {
 						if (param_name == identifier_token.value()) {
 							// This is a template parameter reference
 							// Check if we have a substitution value (for deferred template body parsing)
@@ -5512,7 +5512,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							break;
 						}
 					}
-					if (parsing_template_depth_ > 0 || !current_template_param_names_.empty() || !struct_parsing_context_stack_.empty() || is_pack_param) {
+					if (isTemplateParameterTrackingActive() || !struct_parsing_context_stack_.empty() || is_pack_param) {
 						FLASH_LOG(Parser, Debug, "Treating unknown identifier '", identifier_token.value(), "' as dependent in template context");
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						// Don't return error - let it continue as a dependent expression
@@ -6482,9 +6482,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												}
 											}
 									} else {
-										bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, current_template_param_names_);
+										bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, currentTemplateParamNames());
 										if (has_dependent_call_args ||
-											argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
+											argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
 											FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 											auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
 											auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
@@ -6545,9 +6545,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													}
 												}
 										} else {
-											bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, current_template_param_names_);
+											bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, currentTemplateParamNames());
 											if (has_dependent_call_args ||
-												argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
+												argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
 												FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 												auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
 												auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
