@@ -14,6 +14,13 @@ int cube[2][2][3] = {{{1,2,3},{4,5,6}}, {{7,8,9},{10,11,12}}};
 // Single-row 2D array
 int single[1][4] = {{100, 200, 300, 400}};
 
+// Unsized global struct-array: size inferred from initializer count.
+// Exercises the struct-array path where op.element_count must come from
+// initializers.size() because neither type_node.array_dimensions() nor
+// decl.array_dimensions() are populated for unsized arrays.
+struct Point { int x; int y; };
+Point pts[] = {{1, 2}, {3, 4}, {5, 6}};
+
 int main() {
 	// Verify grid values
 	if (grid[0][0] != 1 || grid[0][1] != 2 || grid[0][2] != 3)
@@ -36,6 +43,14 @@ int main() {
 	// Verify single-row 2D
 	if (single[0][0] != 100 || single[0][1] != 200 || single[0][2] != 300 || single[0][3] != 400)
 		return 7;
+
+	// Verify unsized global struct-array
+	if (pts[0].x != 1 || pts[0].y != 2)
+		return 8;
+	if (pts[1].x != 3 || pts[1].y != 4)
+		return 9;
+	if (pts[2].x != 5 || pts[2].y != 6)
+		return 10;
 
 	return 0;
 }
