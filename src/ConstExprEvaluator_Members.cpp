@@ -6488,21 +6488,34 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	std::unordered_map<std::string_view, EvalResult> ctor_body_bindings = member_bindings;
 	std::unordered_map<std::string_view, EvalResult> ctor_local_bindings = ctor_param_bindings;
 	saved_local_bindings = context.local_bindings;
+	const StructTypeInfo* saved_struct_info = context.struct_info;
+	TypeIndex saved_struct_type_index = context.struct_type_index;
+	auto restoreCtorBodyContext = [&]() {
+		context.local_bindings = saved_local_bindings;
+		context.struct_info = saved_struct_info;
+		context.struct_type_index = saved_struct_type_index;
+	};
 	context.local_bindings = &ctor_local_bindings;
+	context.struct_info = struct_info;
+	if (ctor_decl.owning_type_index().is_valid()) {
+		context.struct_type_index = ctor_decl.owning_type_index();
+	} else if (struct_info && struct_info->own_type_index_.has_value()) {
+		context.struct_type_index = *struct_info->own_type_index_;
+	}
 
 	const BlockNode& ctor_body = ctor_definition->as<BlockNode>();
 	for (const auto& ctor_stmt : ctor_body.get_statements()) {
 		auto stmt_result = evaluate_statement_with_bindings(ctor_stmt, ctor_body_bindings, context);
 		if (stmt_result.success()) {
-			context.local_bindings = saved_local_bindings;
+			restoreCtorBodyContext();
 			break;
 		}
 		if (stmt_result.error_message != "Statement executed (not a return)") {
-			context.local_bindings = saved_local_bindings;
+			restoreCtorBodyContext();
 			return stmt_result;
 		}
 	}
-	context.local_bindings = saved_local_bindings;
+	restoreCtorBodyContext();
 
 	for (const auto& member : struct_info->members) {
 		std::string_view member_name = StringTable::getStringView(member.getName());
