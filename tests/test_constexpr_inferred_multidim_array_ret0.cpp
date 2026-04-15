@@ -32,5 +32,16 @@ static_assert(sparse[0][0] == 1);
 static_assert(sparse[1][0] == 2);
 
 int main() {
+	if (globalGrid[0][0] != 1 || globalGrid[0][1] != 2 || globalGrid[0][2] != 3)
+		return 1;
+	if (globalGrid[1][0] != 4 || globalGrid[1][1] != 5 || globalGrid[1][2] != 6)
+		return 2;
+	if (explicitGrid[0][0] != 1 || explicitGrid[0][3] != 4 || explicitGrid[1][0] != 5 || explicitGrid[1][3] != 8)
+		return 3;
+	if (cube[0][0][0] != 1 || cube[0][1][2] != 6 || cube[1][0][0] != 7 || cube[1][1][2] != 12)
+		return 4;
+	if (sparse[0][0] != 1 || sparse[0][1] != 0 || sparse[0][2] != 0 ||
+		sparse[1][0] != 2 || sparse[1][1] != 0 || sparse[1][2] != 0)
+		return 5;
 	return 0;
 }

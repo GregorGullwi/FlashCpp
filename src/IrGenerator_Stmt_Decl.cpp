@@ -713,6 +713,43 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				}
 			}
 		};
+		auto packArrayResultIntoInitData =
+			[&](std::vector<char>& init_data, const ConstExpr::EvalResult& array_result, TypeCategory element_type, size_t total_elements, size_t element_size) {
+				size_t element_index = 0;
+				auto packLevel = [&](const auto& self, const ConstExpr::EvalResult& current) -> void {
+					if (element_size == 0 || element_index >= total_elements) {
+						return;
+					}
+					if (current.is_array) {
+						if (!current.array_elements.empty()) {
+							for (const auto& child : current.array_elements) {
+								if (element_index >= total_elements) break;
+								self(self, child);
+							}
+						} else {
+							for (int64_t child_value : current.array_values) {
+								if (element_index >= total_elements) break;
+								writeRawValueAtOffset(
+									init_data,
+									element_index * element_size,
+									element_size,
+									evalResultMemberToRaw(ConstExpr::EvalResult::from_int(child_value), element_type));
+								element_index++;
+							}
+						}
+						return;
+					}
+
+					writeRawValueAtOffset(
+						init_data,
+						element_index * element_size,
+						element_size,
+						evalResultMemberToRaw(current, element_type));
+					element_index++;
+				};
+
+				packLevel(packLevel, array_result);
+			};
 		auto resolveGlobalRelocTarget = [&](std::string_view name) -> StringHandle {
 			StringHandle simple_name_handle = StringTable::getOrInternStringHandle(name);
 			auto it = global_variable_names_.find(simple_name_handle);
@@ -782,19 +819,26 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 			// Check if this is an array and get element count (product of all dimensions for multidimensional)
 		if (decl.is_array() || type_node.is_array()) {
-			const auto& dims = decl.array_dimensions();
-			if (!dims.empty()) {
-					// Calculate total element count as product of all dimensions
+			if (type_node.is_array() && !type_node.array_dimensions().empty()) {
 				op.element_count = 1;
-				for (const auto& dim_expr : dims) {
-					ConstExpr::EvaluationContext ctx(gSymbolTable);
-					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-					if (eval_result.success() && eval_result.as_int() > 0) {
-						op.element_count *= static_cast<size_t>(eval_result.as_int());
-					}
+				for (size_t dim_size : type_node.array_dimensions()) {
+					op.element_count *= dim_size;
 				}
-			} else if (type_node.array_size().has_value()) {
-				op.element_count = *type_node.array_size();
+			} else {
+				const auto& dims = decl.array_dimensions();
+				if (!dims.empty()) {
+						// Calculate total element count as product of all dimensions
+					op.element_count = 1;
+					for (const auto& dim_expr : dims) {
+						ConstExpr::EvaluationContext ctx(gSymbolTable);
+						auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+						if (eval_result.success() && eval_result.as_int() > 0) {
+							op.element_count *= static_cast<size_t>(eval_result.as_int());
+						}
+					}
+				} else if (type_node.array_size().has_value()) {
+					op.element_count = *type_node.array_size();
+				}
 			}
 		}
 
@@ -842,13 +886,19 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					}
 				} else {
 						// Array initialization: each element is a separate value
-					op.element_count = initializers.size();
 						// Check if this is an array of structs (elements may be InitializerListNodes)
 					bool handled_as_struct_array = false;
 					if ((is_struct_type(type_node.category()))) {
 						const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
 						const StructTypeInfo* elem_struct = type_info ? type_info->getStructInfo() : nullptr;
 						if (elem_struct) {
+							// For unsized struct arrays (e.g. Point pts[] = {{1,2},{3,4},{5,6}}),
+							// neither type_node.array_dimensions() nor decl.array_dimensions() are
+							// populated, so op.element_count was never set above.  Infer it from
+							// the initializer count — each top-level initializer is one struct element.
+							if (op.element_count <= 1 && initializers.size() > 1) {
+								op.element_count = initializers.size();
+							}
 							op.init_data.resize(op.element_count * toSizeT(elem_struct->sizeInBytes()), 0);
 							for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
 								const ASTNode& elem_init = initializers[elem_i];
@@ -871,9 +921,35 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 					}
 					if (!handled_as_struct_array) {
-						for (const auto& elem_init : initializers) {
-							unsigned long long value = evalToValue(elem_init, type_node.type());
-							appendValueAsBytes(op.init_data, value, element_size);
+						bool packed_as_constexpr_array = false;
+						if (type_node.is_array() && !type_node.array_dimensions().empty()) {
+							auto constexpr_ctx = makeStaticStorageEvalContext();
+							auto array_result = ConstExpr::Evaluator::materialize_array_value_with_spec(
+								type_node,
+								init_list,
+								constexpr_ctx,
+								nullptr);
+							if (array_result.success()) {
+								op.init_data.assign(op.element_count * element_size, 0);
+								packArrayResultIntoInitData(op.init_data, array_result, type_node.type(), op.element_count, element_size);
+								packed_as_constexpr_array = true;
+							} else if (shouldRejectStaticStorageEvalFailure(array_result.error_type)) {
+								throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
+												   "' initializer is not a constant expression: " + array_result.error_message);
+							}
+						}
+						if (!packed_as_constexpr_array) {
+							auto flattenAndAppend = [&](const auto& self, const std::vector<ASTNode>& elems) -> void {
+								for (const auto& elem : elems) {
+									if (elem.is<InitializerListNode>()) {
+										self(self, elem.as<InitializerListNode>().initializers());
+									} else {
+										unsigned long long value = evalToValue(elem, type_node.type());
+										appendValueAsBytes(op.init_data, value, element_size);
+									}
+								}
+							};
+							flattenAndAppend(flattenAndAppend, initializers);
 						}
 					}
 				}

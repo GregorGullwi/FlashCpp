@@ -42,4 +42,12 @@ constexpr int mat_brace_elide() {
 }
 static_assert(mat_brace_elide() == 0);
 
-int main() { return 0; }
+int main() {
+	if (grid[0][0] != 1 || grid[0][1] != 2 || grid[0][2] != 3)
+		return 1;
+	if (grid[1][0] != 4 || grid[1][1] != 5 || grid[1][2] != 6)
+		return 2;
+	if (mat_sum() != 21 || mat_assign() != 15 || mat_brace_elide() != 0)
+		return 3;
+	return 0;
+}
