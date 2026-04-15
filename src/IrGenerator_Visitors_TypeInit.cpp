@@ -437,29 +437,24 @@ void AstToIr::generateStaticMemberDeclarations() {
 			}
 		}
 	};
-	auto evaluate_static_initializer = [&](const ASTNode& expr_node, unsigned long long& out_value, const StructTypeInfo* struct_info) -> bool {
+	auto makeStaticMemberEvalContext = [&](const StructTypeInfo* context_struct_info) {
 		ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 		ctx.storage_duration = ConstExpr::StorageDuration::Static;
-		// Enable on-demand template instantiation when static member initializers
-		// reference uninstantiated template members during constexpr evaluation
 		ctx.parser = parser_;
 		ctx.sema = sema_;
-		// Set struct_info so that sizeof(T) can be resolved from template arguments in struct name
-		ctx.struct_info = struct_info;
-		if (struct_info) {
-			// Prefer type-owned instantiation context (avoids registry-name lookups)
+		ctx.struct_info = context_struct_info;
+		if (context_struct_info) {
 			bool context_loaded = false;
-			if (struct_info->own_type_index_.has_value()) {
-				if (const TypeInfo* ti = tryGetTypeInfo(*struct_info->own_type_index_)) {
+			if (context_struct_info->own_type_index_.has_value()) {
+				if (const TypeInfo* ti = tryGetTypeInfo(*context_struct_info->own_type_index_)) {
 					ConstExpr::Evaluator::load_template_bindings_from_type(ti, ctx);
 					context_loaded = !ctx.template_param_names.empty() || !ctx.template_args.empty();
 				}
 			}
 
-			// Fallback: lazy class info while incomplete instantiations are still materializing
 			if (!context_loaded) {
 				if (const LazyClassInstantiationInfo* lazy_class_info =
-						LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(struct_info->name)) {
+						LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context_struct_info->name)) {
 					ctx.template_args = lazy_class_info->template_args;
 					ctx.template_param_names.reserve(lazy_class_info->template_params.size());
 					for (const auto& template_param : lazy_class_info->template_params) {
@@ -470,7 +465,10 @@ void AstToIr::generateStaticMemberDeclarations() {
 				}
 			}
 		}
-
+		return ctx;
+	};
+	auto evaluate_static_initializer = [&](const ASTNode& expr_node, unsigned long long& out_value, const StructTypeInfo* struct_info) -> bool {
+		ConstExpr::EvaluationContext ctx = makeStaticMemberEvalContext(struct_info);
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (!eval_result.success()) {
 			if (struct_info && expr_node.is<ExpressionNode>()) {
@@ -561,6 +559,41 @@ void AstToIr::generateStaticMemberDeclarations() {
 		}
 
 		return false;
+	};
+	auto evalAggregateLeafToRaw = [&](const ASTNode& leaf_expr, TypeCategory target_type, const StructTypeInfo* context_struct_info) -> unsigned long long {
+		unsigned long long leaf_value = 0;
+		if (evaluate_static_initializer(leaf_expr, leaf_value, context_struct_info)) {
+			auto evalFloatingLeaf = [&]() -> std::optional<ConstExpr::EvalResult> {
+				if (target_type != TypeCategory::Float &&
+					target_type != TypeCategory::Double &&
+					target_type != TypeCategory::LongDouble) {
+					return std::nullopt;
+				}
+				ConstExpr::EvaluationContext ctx = makeStaticMemberEvalContext(context_struct_info);
+				auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
+				if (!eval_result.success()) {
+					return std::nullopt;
+				}
+				return eval_result;
+			};
+			if (target_type == TypeCategory::Float) {
+				if (auto eval_result = evalFloatingLeaf()) {
+					float f = static_cast<float>(eval_result->as_double());
+					uint32_t f_bits;
+					std::memcpy(&f_bits, &f, sizeof(float));
+					return f_bits;
+				}
+			} else if (target_type == TypeCategory::Double || target_type == TypeCategory::LongDouble) {
+				if (auto eval_result = evalFloatingLeaf()) {
+					double d = eval_result->as_double();
+					unsigned long long bits;
+					std::memcpy(&bits, &d, sizeof(double));
+					return bits;
+				}
+			}
+			return leaf_value;
+		}
+		return 0;
 	};
 
 	auto hasUnsubstitutedTemplateDependency = [&](const ASTNode& initializer, const StructTypeInfo* owner_struct) -> bool {
@@ -775,38 +808,6 @@ void AstToIr::generateStaticMemberDeclarations() {
 				} else if (op.is_initialized) {
 					if (static_member.initializer->is<InitializerListNode>()) {
 						const StructTypeInfo* static_struct_info = tryGetStructTypeInfo(static_member.type_index);
-						auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) -> unsigned long long {
-							unsigned long long leaf_value = 0;
-							if (evaluate_static_initializer(leaf_expr, leaf_value, struct_info)) {
-								if (target_type == TypeCategory::Float) {
-									ConstExpr::EvaluationContext ctx(*global_symbol_table_);
-									ctx.storage_duration = ConstExpr::StorageDuration::Static;
-									ctx.parser = parser_;
-									ctx.sema = sema_;
-									auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
-									if (eval_result.success()) {
-										float f = static_cast<float>(eval_result.as_double());
-										uint32_t f_bits;
-										std::memcpy(&f_bits, &f, sizeof(float));
-										return f_bits;
-									}
-								} else if (target_type == TypeCategory::Double || target_type == TypeCategory::LongDouble) {
-									ConstExpr::EvaluationContext ctx(*global_symbol_table_);
-									ctx.storage_duration = ConstExpr::StorageDuration::Static;
-									ctx.parser = parser_;
-									ctx.sema = sema_;
-									auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
-									if (eval_result.success()) {
-										double d = eval_result.as_double();
-										unsigned long long bits;
-										std::memcpy(&bits, &d, sizeof(double));
-										return bits;
-									}
-								}
-								return leaf_value;
-							}
-							return 0;
-						};
 						if (static_member.is_array && !static_member.array_dimensions.empty() && static_struct_info) {
 							const auto& init_list = static_member.initializer->as<InitializerListNode>();
 							size_t total_elements = 1;
@@ -827,11 +828,35 @@ void AstToIr::generateStaticMemberDeclarations() {
 										}
 										std::vector<char> element_bytes(element_size, 0);
 										if (node.is<InitializerListNode>()) {
-											fillAggregateInitData(
+											ConstExpr::EvaluationContext element_ctx = makeStaticMemberEvalContext(struct_info);
+											ConstExpr::EvalResult object_result = materializeStructInitializerForStaticStorage(
+												*static_struct_info,
+												static_member.type_index,
+												node.as<InitializerListNode>(),
+												element_ctx);
+											if (!object_result.success()) {
+												auto eval_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) {
+													return evalAggregateLeafToRaw(leaf_expr, target_type, struct_info);
+												};
+												fillAggregateInitData(
+													element_bytes,
+													*static_struct_info,
+													node.as<InitializerListNode>(),
+													eval_leaf);
+												std::copy(
+													element_bytes.begin(),
+													element_bytes.end(),
+													op.init_data.begin() + static_cast<std::ptrdiff_t>(base_offset + element_index * element_size));
+												element_index++;
+												continue;
+											}
+											packStructEvalResultIntoInitData(
+												packStructEvalResultIntoInitData,
 												element_bytes,
 												*static_struct_info,
-												node.as<InitializerListNode>(),
-												eval_aggregate_leaf);
+												object_result,
+												0,
+												0);
 										} else {
 											ConstExpr::EvaluationContext eval_ctx(*global_symbol_table_);
 											eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
@@ -892,7 +917,30 @@ void AstToIr::generateStaticMemberDeclarations() {
 									  ", members=", static_struct_info->members.size(),
 									  ", type_index=", static_member.type_index.index());
 							op.init_data.resize(toSizeT(static_struct_info->sizeInBytes()), 0);
-							fillAggregateInitData(op.init_data, *static_struct_info, static_member.initializer->as<InitializerListNode>(), eval_aggregate_leaf);
+							ConstExpr::EvaluationContext object_ctx = makeStaticMemberEvalContext(struct_info);
+							ConstExpr::EvalResult object_result = materializeStructInitializerForStaticStorage(
+								*static_struct_info,
+								static_member.type_index,
+								static_member.initializer->as<InitializerListNode>(),
+								object_ctx);
+							if (object_result.success()) {
+								packStructEvalResultIntoInitData(
+									packStructEvalResultIntoInitData,
+									op.init_data,
+									*static_struct_info,
+									object_result,
+									0,
+									0);
+							} else {
+								auto eval_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) {
+									return evalAggregateLeafToRaw(leaf_expr, target_type, struct_info);
+								};
+								fillAggregateInitData(
+									op.init_data,
+									*static_struct_info,
+									static_member.initializer->as<InitializerListNode>(),
+									eval_leaf);
+							}
 							FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "' (", op.init_data.size(), " bytes)");
 							write_back_constant_bytes();
 						} else if (static_member.is_array && !static_member.array_dimensions.empty()) {
