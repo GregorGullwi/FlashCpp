@@ -618,6 +618,7 @@ ParseResult Parser::parse_template_declaration() {
 		if (constraint_result.is_error()) {
 			// Clean up template parameter context before returning
 			current_template_param_names_.clear();
+			current_template_param_kinds_.clear();
 			return constraint_result;
 		}
 
@@ -742,6 +743,7 @@ ParseResult Parser::parse_template_declaration() {
 		// Clean up template parameter context before returning
 		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
 		current_template_param_names_.clear();
+		current_template_param_kinds_.clear();
 
 		return saved_position.success(concept_node);
 	} else if (is_alias_template) {
@@ -928,6 +930,7 @@ ParseResult Parser::parse_template_declaration() {
 		// Clean up template parameter context before returning
 		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
 		current_template_param_names_.clear();
+		current_template_param_kinds_.clear();
 
 		return saved_position.success(alias_node);
 	} else if (is_variable_template) {
@@ -1144,6 +1147,7 @@ ParseResult Parser::parse_template_declaration() {
 		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
 		// to avoid breaking template argument resolution in subsequent code
 		current_template_param_names_.clear();
+		current_template_param_kinds_.clear();
 
 		return saved_position.success(template_var_node);
 	} else if (is_class_template) {
