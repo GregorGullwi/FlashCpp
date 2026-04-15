@@ -3959,8 +3959,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			} else {
 				// Regular scalar parameter (type or non-type)
 				if (arg_index < template_args_to_use.size()) {
-					name_substitution_map[param_name] = template_args_to_use[arg_index];
-					FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", static_cast<int>(template_args_to_use[arg_index].typeEnum()), " type_index=", template_args_to_use[arg_index].type_index, " is_value=", template_args_to_use[arg_index].is_value);
+					TemplateTypeArg arg_to_insert = template_args_to_use[arg_index];
+					// For template-template parameters, ensure is_template_template_arg is set
+					// and the template name is recorded
+					if (tparam.kind() == TemplateParameterKind::Template) {
+						arg_to_insert.is_template_template_arg = true;
+						if (!arg_to_insert.template_name_handle.isValid()) {
+							if (const TypeInfo* ti = tryGetTypeInfo(arg_to_insert.type_index)) {
+								arg_to_insert.template_name_handle = ti->name_;
+							}
+						}
+					}
+					name_substitution_map[param_name] = arg_to_insert;
+					FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", static_cast<int>(arg_to_insert.typeEnum()), " type_index=", arg_to_insert.type_index, " is_value=", arg_to_insert.is_value, " is_ttp=", arg_to_insert.is_template_template_arg);
 					arg_index++;
 				}
 			}

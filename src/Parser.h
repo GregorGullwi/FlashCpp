@@ -297,7 +297,19 @@ inline SubstitutionParamMap buildSubstitutionParamMap(
 			continue;
 		}
 		const TemplateParameterNode& param = template_params[i].template as<TemplateParameterNode>();
-		result.param_map[param.name()] = template_args[i];
+		TemplateTypeArg arg_to_insert = template_args[i];
+		// For template-template parameters, ensure is_template_template_arg is set
+		// This is critical for proper substitution of TTP-qualified expressions like W<int>::id
+		if (param.kind() == TemplateParameterKind::Template) {
+			arg_to_insert.is_template_template_arg = true;
+			// Try to get template name from type info if not already set
+			if (!arg_to_insert.template_name_handle.isValid() && arg_to_insert.type_index.is_valid()) {
+				if (const TypeInfo* ti = tryGetTypeInfo(arg_to_insert.type_index)) {
+					arg_to_insert.template_name_handle = ti->name_;
+				}
+			}
+		}
+		result.param_map[param.name()] = arg_to_insert;
 		result.param_order.push_back(param.name());
 	}
 	return result;

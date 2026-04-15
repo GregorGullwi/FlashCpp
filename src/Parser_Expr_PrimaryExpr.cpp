@@ -4647,6 +4647,101 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// Now check for :: to handle Template<T>::member syntax
 						if (peek() == "::"_tok) {
 							std::string_view template_name = identifier_token.value();
+
+							// Check if the template name itself is a template-template parameter.
+							// If so, the entire expression W<int>::id is dependent and must be deferred.
+							bool is_template_template_param = false;
+							if (parsing_template_depth_ > 0) {
+								StringHandle template_name_handle = identifier_token.handle();
+								for (const auto& param_name : current_template_param_names_) {
+									if (param_name == template_name_handle) {
+										// Found the name in template parameters - check if it's a template-template param
+										// by looking up its registered type (TypeCategory::Template for TTP)
+										if (const TypeInfo* type_info = findTypeByName(param_name)) {
+											if (type_info->type_index_.category() == TypeCategory::Template) {
+												is_template_template_param = true;
+												FLASH_LOG_FORMAT(Parser, Debug,
+													"Identified '{}' as a template-template parameter - deferring resolution",
+													template_name);
+											}
+										}
+										break;
+									}
+								}
+							}
+
+							// If the template name is a template-template parameter, create a dependent
+							// qualified identifier that captures the full expression W<int>::id.
+							// This allows proper substitution during template instantiation.
+							if (is_template_template_param) {
+								pending_explicit_template_args_.reset();
+
+								// Build a placeholder name for the TTP instantiation (e.g., "W$int" for W<int>)
+								// This name will be substituted during template instantiation
+								StringBuilder ttp_placeholder_name;
+								ttp_placeholder_name.append(template_name);
+								ttp_placeholder_name.append("$"sv);
+								for (size_t i = 0; i < explicit_template_args->size(); ++i) {
+									if (i > 0) ttp_placeholder_name.append("_"sv);
+									const TemplateTypeArg& arg = (*explicit_template_args)[i];
+									if (arg.is_value) {
+										ttp_placeholder_name.append(arg.value);
+									} else {
+										// Use type index for uniqueness
+										ttp_placeholder_name.append(static_cast<int64_t>(arg.type_index.index()));
+									}
+								}
+								std::string_view ttp_name_view = ttp_placeholder_name.commit();
+								StringHandle ttp_name_handle = StringTable::getOrInternStringHandle(ttp_name_view);
+
+								// Register the placeholder as a dependent type
+								auto type_it = getTypesByNameMap().find(ttp_name_handle);
+								if (type_it == getTypesByNameMap().end()) {
+									TypeInfo& placeholder_type = add_empty_type_entry();
+									placeholder_type.fallback_size_bits_ = 0;
+									placeholder_type.name_ = ttp_name_handle;
+									placeholder_type.is_incomplete_instantiation_ = true;
+									placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
+									getTypesByNameMap()[ttp_name_handle] = &placeholder_type;
+								}
+
+								// Create a namespace for the placeholder so we can build a QualifiedIdentifierNode
+								std::vector<StringType<32>> namespaces;
+								namespaces.emplace_back(StringType<32>(ttp_name_view));
+
+								// Consume :: and get the member name
+								if (!consume("::"_tok)) {
+									return ParseResult::error("Expected '::' after template-template parameter instantiation",
+															  peek_info());
+								}
+
+								// Handle ::template syntax for dependent names
+								if (peek() == "template"_tok) {
+									advance();
+								}
+
+								// Get the member identifier
+								if (!peek().is_identifier()) {
+									return ParseResult::error("Expected identifier after '::'", peek_info());
+								}
+								Token member_token = peek_info();
+								advance();
+
+								// Create namespace handle for the placeholder
+								NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+
+								// Create a QualifiedIdentifierNode for the dependent expression
+								QualifiedIdentifierNode& qual_id =
+									gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(ns_handle, member_token);
+
+								FLASH_LOG_FORMAT(Parser, Debug,
+									"Created dependent TTP qualified identifier: {}::{}",
+									ttp_name_view, member_token.value());
+
+								result = emplace_node<ExpressionNode>(qual_id);
+								return ParseResult::success(*result);
+							}
+
 							AliasTemplateMaterializationResult materialized_owner =
 								materializePrimaryTemplateOwnerForLookup(
 									template_name,
@@ -5428,6 +5523,95 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// After template arguments, check for :: to handle Template<T>::member syntax
 				if (explicit_template_args.has_value() && peek() == "::"_tok) {
+					// Check if the template name itself is a template-template parameter.
+					// If so, the entire expression W<int>::id is dependent and must be deferred.
+					bool is_template_template_param = false;
+					if (parsing_template_depth_ > 0) {
+						StringHandle template_name_handle = identifier_token.handle();
+						for (const auto& param_name : current_template_param_names_) {
+							if (param_name == template_name_handle) {
+								// Found the name in template parameters - check if it's a template-template param
+								// by looking up its registered type (TypeCategory::Template for TTP)
+								if (const TypeInfo* type_info = findTypeByName(param_name)) {
+									if (type_info->type_index_.category() == TypeCategory::Template) {
+										is_template_template_param = true;
+										FLASH_LOG_FORMAT(Parser, Debug,
+											"Identified '{}' as a template-template parameter - deferring resolution",
+											identifier_token.value());
+									}
+								}
+								break;
+							}
+						}
+					}
+
+					// If the template name is a template-template parameter, create a dependent
+					// qualified identifier that captures the full expression W<int>::id.
+					if (is_template_template_param) {
+						// Build a placeholder name for the TTP instantiation (e.g., "W$int" for W<int>)
+						StringBuilder ttp_placeholder_name;
+						ttp_placeholder_name.append(identifier_token.value());
+						ttp_placeholder_name.append("$"sv);
+						for (size_t i = 0; i < explicit_template_args->size(); ++i) {
+							if (i > 0) ttp_placeholder_name.append("_"sv);
+							const TemplateTypeArg& arg = (*explicit_template_args)[i];
+							if (arg.is_value) {
+								ttp_placeholder_name.append(arg.value);
+							} else {
+								ttp_placeholder_name.append(static_cast<int64_t>(arg.type_index.index()));
+							}
+						}
+						std::string_view ttp_name_view = ttp_placeholder_name.commit();
+						StringHandle ttp_name_handle = StringTable::getOrInternStringHandle(ttp_name_view);
+
+						// Register the placeholder as a dependent type
+						auto type_it = getTypesByNameMap().find(ttp_name_handle);
+						if (type_it == getTypesByNameMap().end()) {
+							TypeInfo& placeholder_type = add_empty_type_entry();
+							placeholder_type.fallback_size_bits_ = 0;
+							placeholder_type.name_ = ttp_name_handle;
+							placeholder_type.is_incomplete_instantiation_ = true;
+							placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
+							getTypesByNameMap()[ttp_name_handle] = &placeholder_type;
+						}
+
+						// Create a namespace for the placeholder
+						std::vector<StringType<32>> namespaces;
+						namespaces.emplace_back(StringType<32>(ttp_name_view));
+
+						// Consume :: and get the member name
+						if (!consume("::"_tok)) {
+							return ParseResult::error("Expected '::' after template-template parameter instantiation",
+													  peek_info());
+						}
+
+						// Handle ::template syntax
+						if (peek() == "template"_tok) {
+							advance();
+						}
+
+						// Get the member identifier
+						if (!peek().is_identifier()) {
+							return ParseResult::error("Expected identifier after '::'", peek_info());
+						}
+						Token member_token = peek_info();
+						advance();
+
+						// Create namespace handle for the placeholder
+						NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+
+						// Create a QualifiedIdentifierNode for the dependent expression
+						QualifiedIdentifierNode& qual_id =
+							gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(ns_handle, member_token);
+
+						FLASH_LOG_FORMAT(Parser, Debug,
+							"Created dependent TTP qualified identifier: {}::{}",
+							ttp_name_view, member_token.value());
+
+						result = emplace_node<ExpressionNode>(qual_id);
+						return ParseResult::success(*result);
+					}
+
 					Parser::AliasTemplateMaterializationResult materialized_owner =
 						materializePrimaryTemplateOwnerForLookup(
 							identifier_token.value(),

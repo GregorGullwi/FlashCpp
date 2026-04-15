@@ -19,33 +19,6 @@ non-type argument chain.
 **Phase:** This is the exact kind of bug that Phase 2 alias-template
 materialization consolidation is intended to fix.
 
-## Static constexpr member initializer fails when accessing a member via TTP instantiation
-
-**Repro:**
-```cpp
-template <typename T>
-struct box { static constexpr int id = sizeof(T); };
-
-template <template <typename> class W>
-struct probe {
-    static constexpr int sz = W<int>::id;  // error: Failed to parse initializer expression
-};
-
-int main() { return probe<box>::sz - 4; }
-```
-**Symptom:** Parsing fails with `error: Failed to parse initializer expression`
-when a `static constexpr` member initializer in a template struct directly
-instantiates a template-template parameter with explicit arguments and then
-accesses a member via `::`.
-**Impact:** Accessing static members (constants, type aliases) of an on-the-spot
-TTP instantiation (`W<int>::id`) in a `static constexpr` initializer is
-rejected.  Workaround: introduce an intermediate `using` alias
-(`using inner = W<int>;`) and reference that instead (`inner::id`), which
-parses and compiles correctly.
-**Root cause:** The parser's static-member initializer expression path does not
-recognise `W<Args>` as a valid primary expression when `W` is a template-template
-parameter, so it fails before it can resolve the `::` scope qualifier.
-
 ## Function-template body reparse loses ODR-used TTP value substitution
 
 **Repro:**

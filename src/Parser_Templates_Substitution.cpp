@@ -202,7 +202,20 @@ ASTNode Parser::substituteTemplateParameters(
 			if (arg_index >= template_args.size()) {
 				break;
 			}
-			param_map.emplace(tparam.name(), template_args[arg_index]);
+			TemplateTypeArg arg_to_insert = template_args[arg_index];
+			// For template-template parameters, ensure the is_template_template_arg flag is set
+			// and record the template name. The template arg might have been parsed as a type
+			// reference but we know from the parameter kind that it's actually a TTP argument.
+			if (tparam.kind() == TemplateParameterKind::Template) {
+				arg_to_insert.is_template_template_arg = true;
+				// Get the template name from the type info
+				if (!arg_to_insert.template_name_handle.isValid()) {
+					if (const TypeInfo* ti = tryGetTypeInfo(arg_to_insert.type_index)) {
+						arg_to_insert.template_name_handle = ti->name_;
+					}
+				}
+			}
+			param_map.emplace(tparam.name(), arg_to_insert);
 			++arg_index;
 		}
 
