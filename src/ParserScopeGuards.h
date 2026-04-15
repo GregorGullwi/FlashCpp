@@ -210,12 +210,23 @@ private:
 //   /* ... */
 //   field = std::move(saved);
 
+// Tag type: pass CopyOnSave to ScopedState to copy-save the field instead of
+// move-saving it.  This keeps the field populated during the guarded scope.
+struct CopyOnSave {};
+
 template <typename T>
 class ScopedState {
 public:
 	// Unconditional save/restore (the common case).
+	// The field is MOVED into the guard, leaving the field in a moved-from state.
 	explicit ScopedState(T& field)
 		: field_ref_(field), saved_state_(std::move(field)) {}
+
+	// Copy-save variant: the field is COPIED into the guard, leaving the field
+	// populated with its original contents during the guarded scope.
+	// Use this when inner code needs to see (and extend) the existing field value.
+	explicit ScopedState(T& field, CopyOnSave)
+		: field_ref_(field), saved_state_(field) {}
 
 	// Conditional save/restore: when active==false the field is left untouched
 	// and the destructor is a no-op.  No default T{} is constructed when inactive.
