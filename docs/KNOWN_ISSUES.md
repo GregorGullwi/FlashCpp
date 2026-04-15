@@ -78,29 +78,3 @@ no definition). The `C<T, N>::size` expression path is therefore not preserved
 through instantiation, so codegen never emits the instantiated function body.
 
 
-
-**Repro:**
-```cpp
-template <typename T>
-struct identity {
-	using type = T;
-};
-
-template <typename Prefix, template <typename> class Wrap, typename T>
-struct holder {
-	using value_type = typename Wrap<T>::type;
-};
-
-template <typename T>
-concept has_ll_value_type = requires {
-	requires sizeof(typename holder<char, identity, T>::value_type) == 8;
-};
-```
-**Symptom:** Parsing fails with:
-`error: Expected type or expression after 'sizeof('`
-at the end of the dependent `type-id`.
-**Impact:** Valid C++20 nested requirements that use `sizeof(type-id)` on a
-dependent qualified type are rejected, which forced the regression for
-dependent-member `sizeof` constraints into a more indirect shape.
-**Standards note:** `sizeof(type-id)` is valid in a nested requirement, and the
-dependent `type-id` above is well-formed C++20 syntax.
