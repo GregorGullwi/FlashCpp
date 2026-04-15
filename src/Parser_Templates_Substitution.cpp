@@ -125,11 +125,11 @@ ASTNode makeRebuiltPointerToMemberAccessNode(
 		member_access.is_arrow());
 }
 
-template <typename T>
+template <typename Type>
 inline constexpr bool AlwaysFalseExprContainsIdentifierNode = false;
 
 template <typename... NodeTypes, typename Visitor>
-bool visitExprContainsIdentifierStandaloneNode(const ASTNode& expr, Visitor&& visitor) {
+bool visitStandaloneExprNode(const ASTNode& expr, Visitor&& visitor) {
 	bool handled = false;
 	bool result = false;
 
@@ -152,7 +152,7 @@ bool visitExprContainsIdentifierNode(const ASTNode& expr, Visitor&& visitor) {
 		return std::visit(visitor, expr.as<ExpressionNode>());
 	}
 
-	return visitExprContainsIdentifierStandaloneNode<
+	return visitStandaloneExprNode<
 		IdentifierNode,
 		QualifiedIdentifierNode,
 		StringLiteralNode,
