@@ -723,10 +723,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					if (current.is_array) {
 						if (!current.array_elements.empty()) {
 							for (const auto& child : current.array_elements) {
+								if (element_index >= total_elements) break;
 								self(self, child);
 							}
 						} else {
 							for (int64_t child_value : current.array_values) {
+								if (element_index >= total_elements) break;
 								writeRawValueAtOffset(
 									init_data,
 									element_index * element_size,
