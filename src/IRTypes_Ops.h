@@ -979,6 +979,8 @@ struct TypeidOp {
 struct DynamicCastOp {
 	TempVar result;				// Result variable
 	TempVar source;				// Source pointer/reference
+	TypeIndex source_type_index{};  // Static source class type
+	TypeIndex target_type_index{};  // Static target class type
 	std::string target_type_name;  // Target type name
 	bool is_reference = false;   // true for references (throws on failure), false for pointers (returns nullptr)
 };

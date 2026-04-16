@@ -5906,6 +5906,23 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		needs_dynamic_cast_runtime_ = true;
 	}
 
+	auto getClassTypeinfoSymbol = [&](TypeIndex type_index, std::string_view fallback_name) -> std::string {
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (type_index.is_valid()) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+					if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+						return writer.get_or_create_class_typeinfo(struct_info);
+					}
+				}
+			}
+			if (!fallback_name.empty()) {
+				return writer.get_or_create_class_typeinfo(fallback_name);
+			}
+			return {};
+		}
+		return {};
+	};
+
 		// Implementation using auto-generated runtime helper __dynamic_cast_check
 		// (Generated at end of compilation - see emit_dynamic_cast_check_function)
 		//
@@ -5968,13 +5985,17 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		sb.append(op.target_type_name);
 		sb.append("@@6B@");
 	}
-	std::string_view target_rtti_symbol = sb.commit();
+	[[maybe_unused]] std::string_view target_rtti_symbol = sb.commit();
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			// Linux: __dynamic_cast(source_ptr, source_rtti, target_rtti, -1)
+		std::string source_typeinfo_symbol = getClassTypeinfoSymbol(op.source_type_index, {});
+		std::string target_typeinfo_symbol = getClassTypeinfoSymbol(op.target_type_index, op.target_type_name);
+		if (source_typeinfo_symbol.empty() || target_typeinfo_symbol.empty()) {
+			throw InternalError("dynamic_cast requires emitted class RTTI symbols");
+		}
 		emitMovRegReg(X64Register::RDI, X64Register::RAX);
-		emitMovRegFromMemRegSized(X64Register::R8, X64Register::RAX, 64);
-		emitMovRegFromMemRegDisp8(X64Register::RSI, X64Register::R8, -8);
-		emitLeaRipRelativeWithRelocation(X64Register::RDX, target_rtti_symbol);
+		emitLeaRipRelativeWithRelocation(X64Register::RSI, source_typeinfo_symbol);
+		emitLeaRipRelativeWithRelocation(X64Register::RDX, target_typeinfo_symbol);
 		emitMovImm64(X64Register::RCX, static_cast<uint64_t>(-1));
 	} else {
 		emitMovRegFromMemRegSized(X64Register::RAX, X64Register::RAX, 64);
