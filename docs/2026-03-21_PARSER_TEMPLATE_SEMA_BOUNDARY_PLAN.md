@@ -327,10 +327,11 @@ Post-review fixes applied to the MemberAccessNode fallback paths:
   `struct_info->static_members` (the immediate struct).  Fixed to use
   `findStaticMemberRecursive()` which walks `base_classes`, matching
   `CodeGen.h` and `ConstExprEvaluator.h` usage.
-- **Member function inheritance**: the member function loop still only checks
-  the immediate struct's `member_functions`.  No `findMemberFunctionRecursive`
-  helper exists; other call sites (e.g., `OverloadResolution.h`) manually walk
-  `base_classes`.  Documented as a TODO in the code for a future follow-up.
+- **Member function inheritance**: the original immediate-struct-only
+  member-function loop has now been tightened further in Phase 7 for inherited
+  `operator()` candidate collection too; the remaining related follow-up is to
+  keep narrowing parser-owned late-materialization fallbacks rather than direct
+  sema fallback lookups.
 - **Redundant type resolution**: `tryResolveMemberAccessInfo()` re-infers the
   object type that `inferExpressionType` already resolved a few lines above.
   Minor perf nit; left as-is since `inferExpressionType` is cached for
@@ -343,6 +344,28 @@ Post-review fixes applied to the MemberAccessNode fallback paths:
 - `tests/test_sema_resolved_qualified_nested_owner_collision_ret0.cpp`:
   regression test for nested qualified-owner recovery staying on the enclosing
   type instead of drifting to a broader same-name match
+
+### Phase 7 progress
+
+Phase 7 continues the sema-first callable-object work by removing one more
+immediate-struct-only member-function lookup:
+
+- `SemanticAnalysis::tryResolveCallableOperatorImpl()` now walks
+  `base_classes` recursively when collecting `operator()` candidates, matching
+  the already-fixed `operator[]` path and allowing inherited callable base
+  members to participate in sema-side overload resolution
+- the matching late codegen fallback in `IrGenerator_Call_Direct.cpp` now uses
+  the same inherited `operator()` candidate walk, so template-instantiation
+  paths that materialize `CallExprNode`s after the main sema pass do not fall
+  back to immediate-struct-only lookup
+- `tests/test_inherited_callable_operator_ret0.cpp`: regression test for a
+  derived functor inheriting both one-arg and two-arg `operator()` overloads
+  from its base class
+
+**Test result:** focused regression pass for
+`test_inherited_callable_operator_ret0.cpp`,
+`test_callable_sema_resolved_ret0.cpp`, and
+`test_operator_call_ambiguous_fail.cpp`.
 
 ### Workstream 1: make post-parse AST legality explicit
 
@@ -526,6 +549,21 @@ Current narrow follow-up after the nested-class slice:
 - remove both calls and the associated `node` lambda capture
   **(implemented: `SemanticAnalysis.cpp` is now free of
   `parser_.get_expression_type` calls)**
+
+## Next steps
+
+With sema-owned expression typing now largely complete, the next narrow follow-up
+work should stay on the remaining parser/template-owned boundary surfaces:
+
+1. audit surviving `PackExpansionExprNode` creation sites and expansion sites so
+   the post-parse boundary checker can stop skipping broader function-body
+   regions than necessary
+2. audit the remaining parser-owned fold-expression survivor paths and decide
+   which ones should become earlier parser/substitution diagnostics instead of
+   invariant failures
+3. keep late-materialization/codegen fallback recovery aligned with sema-owned
+   lookup improvements whenever a new inherited-member or deferred-instantiation
+   lookup path is tightened
 
 ## Exit criteria
 

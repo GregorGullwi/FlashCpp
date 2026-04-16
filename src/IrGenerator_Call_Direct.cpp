@@ -619,9 +619,15 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				if (struct_info) {
 					const FunctionDeclarationNode* sole_operator_call = nullptr;
 					size_t operator_call_count = 0;
-					for (const auto& member_func : struct_info->member_functions) {
-						if (member_func.operator_kind == OverloadableOperator::Call &&
-							member_func.function_decl.is<FunctionDeclarationNode>()) {
+					std::unordered_set<const StructTypeInfo*> visited;
+					auto collectOperatorCall = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
+						if (operator_call || !visited.insert(current_struct).second)
+							return;
+						for (const auto& member_func : current_struct->member_functions) {
+							if (member_func.operator_kind != OverloadableOperator::Call ||
+								!member_func.function_decl.is<FunctionDeclarationNode>()) {
+								continue;
+							}
 							const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
 							++operator_call_count;
 							if (!sole_operator_call) {
@@ -629,10 +635,24 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 							}
 							if (candidate.parameter_nodes().size() == callExprNode.arguments().size()) {
 								operator_call = &candidate;
-								break;
+								return;
 							}
 						}
-					}
+						for (const auto& base_spec : current_struct->base_classes) {
+							if (!base_spec.type_index.is_valid())
+								continue;
+							const TypeInfo* base_info = tryGetTypeInfo(base_spec.type_index);
+							if (!base_info)
+								continue;
+							const StructTypeInfo* base_struct = base_info->getStructInfo();
+							if (!base_struct)
+								continue;
+							self(self, base_struct);
+							if (operator_call)
+								return;
+						}
+					};
+					collectOperatorCall(collectOperatorCall, struct_info);
 					if (!operator_call && operator_call_count == 1) {
 							// Only fall back when the callable object exposes a single
 							// operator(); this avoids silently choosing an arbitrary overload.
