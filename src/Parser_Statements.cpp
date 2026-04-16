@@ -1006,8 +1006,10 @@ std::optional<ASTNode> Parser::parse_direct_initialization() {
 
 	advance(); // consume '('
 
-	// Create an InitializerListNode to hold the arguments
-	auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+	// Preserve that this initializer list came from direct paren-init so later
+	// constexpr/codegen paths can distinguish C++20 aggregate paren-init from brace-init.
+	auto [init_list_node, init_list_ref] =
+		create_node_ref(InitializerListNode(InitializerListNode::InitializationStyle::Paren));
 
 	// Parse argument list
 	while (true) {

@@ -60,7 +60,13 @@ private:
 
 class InitializerListNode {
 public:
-	explicit InitializerListNode() {}
+	enum class InitializationStyle {
+		Brace,
+		Paren,
+	};
+
+	explicit InitializerListNode(InitializationStyle style = InitializationStyle::Brace)
+		: initialization_style_(style) {}
 
 	void add_initializer(ASTNode init_expr) {
 		initializers_.push_back(init_expr);
@@ -103,12 +109,15 @@ public:
 
 	const ConstructorDeclarationNode* resolved_constructor() const { return resolved_constructor_; }
 	void set_resolved_constructor(const ConstructorDeclarationNode* ctor) const { resolved_constructor_ = ctor; }
+	bool is_brace_init() const { return initialization_style_ == InitializationStyle::Brace; }
+	bool is_paren_init() const { return initialization_style_ == InitializationStyle::Paren; }
 
 private:
 	std::vector<ASTNode> initializers_;
 	std::vector<bool> is_designated_;
 	std::vector<StringHandle> member_names_;
 	mutable const ConstructorDeclarationNode* resolved_constructor_ = nullptr;
+	InitializationStyle initialization_style_ = InitializationStyle::Brace;
 };
 
 class IfStatementNode {
