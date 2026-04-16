@@ -6338,16 +6338,12 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 					   : evaluate(initializer, context);
 		if (!val.success())
 			return val;
-		if (!member_info) {
-			return EvalResult::error(
-				"Excess or unrecognized initializer in aggregate initialization "
-				"(no matching member for positional initializer)");
-		}
-		val = applyAggregateMemberScalarInitialization(
-			*member_info, std::move(val), init_list.is_brace_init());
-		if (!val.success())
-			return val;
-		bindings[mname] = std::move(val);
+		// member_info is always null here: the `if (member_info) { ... continue; }`
+		// block above handles all cases where the member was found.  Reaching this
+		// point means the initializer has no matching struct member.
+		return EvalResult::error(
+			"Excess or unrecognized initializer in aggregate initialization "
+			"(no matching member for positional initializer)");
 	}
 	// Apply default member initializers for remaining members.
 	for (size_t mi = 0; mi < struct_info->members.size(); ++mi) {
