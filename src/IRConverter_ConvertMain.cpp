@@ -5943,21 +5943,25 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 				if (!current_struct) {
 					return std::nullopt;
 				}
+				std::optional<int64_t> found_offset;
 				for (const auto& base : current_struct->base_classes) {
 					if (base.access != AccessSpecifier::Public || base.is_virtual) {
 						continue;
 					}
 					int64_t base_offset = current_offset + static_cast<int64_t>(base.offset);
 					if (base.type_index == source_type_index) {
-						return base_offset;
+						if (found_offset) return std::optional<int64_t>{-1}; // Ambiguous
+						found_offset = base_offset;
+						continue;
 					}
 					const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 					const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
-					if (auto nested_offset = self(self, base_struct_info, base_offset)) {
-						return nested_offset;
+					if (auto nested = self(self, base_struct_info, base_offset)) {
+						if (*nested == -1 || found_offset) return std::optional<int64_t>{-1}; // Ambiguous
+						found_offset = nested;
 					}
 				}
-				return std::nullopt;
+				return found_offset;
 			};
 
 			if (auto offset = findPublicNonVirtualBaseOffset(findPublicNonVirtualBaseOffset, target_struct_info, 0)) {
