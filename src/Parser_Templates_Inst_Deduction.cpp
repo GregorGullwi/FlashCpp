@@ -84,6 +84,175 @@ static void mergeAliasAndUseSiteTypeSpec(
 	}
 }
 
+static bool hasUsableTemplateFunctionDefinition(const FunctionDeclarationNode& func_decl) {
+	return func_decl.has_template_body_position() ||
+		   func_decl.get_definition().has_value() ||
+		   func_decl.is_deleted();
+}
+
+static bool hasTemplateFunctionBodyDefinition(const FunctionDeclarationNode& func_decl) {
+	return func_decl.has_template_body_position() ||
+		   func_decl.get_definition().has_value();
+}
+
+static bool sameTypeSpecifierShape(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+	if (lhs.category() != rhs.category() ||
+		lhs.cv_qualifier() != rhs.cv_qualifier() ||
+		lhs.reference_qualifier() != rhs.reference_qualifier() ||
+		lhs.pointer_levels().size() != rhs.pointer_levels().size() ||
+		lhs.is_array() != rhs.is_array()) {
+		return false;
+	}
+	for (size_t i = 0; i < lhs.pointer_levels().size(); ++i) {
+		if (lhs.pointer_levels()[i].cv_qualifier != rhs.pointer_levels()[i].cv_qualifier) {
+			return false;
+		}
+	}
+	if (lhs.array_dimensions() != rhs.array_dimensions()) {
+		return false;
+	}
+	if (lhs.has_function_signature() != rhs.has_function_signature()) {
+		return false;
+	}
+	if (lhs.has_function_signature()) {
+		const FunctionSignature& lhs_sig = lhs.function_signature();
+		const FunctionSignature& rhs_sig = rhs.function_signature();
+		if (lhs_sig.return_type_index != rhs_sig.return_type_index ||
+			lhs_sig.return_pointer_depth != rhs_sig.return_pointer_depth ||
+			lhs_sig.return_reference_qualifier != rhs_sig.return_reference_qualifier ||
+			lhs_sig.parameter_type_indices != rhs_sig.parameter_type_indices ||
+			lhs_sig.linkage != rhs_sig.linkage ||
+			lhs_sig.class_name != rhs_sig.class_name ||
+			lhs_sig.calling_convention != rhs_sig.calling_convention ||
+			lhs_sig.is_const != rhs_sig.is_const ||
+			lhs_sig.is_volatile != rhs_sig.is_volatile ||
+			lhs_sig.function_reference_qualifier != rhs_sig.function_reference_qualifier ||
+			lhs_sig.is_noexcept != rhs_sig.is_noexcept) {
+			return false;
+		}
+	}
+	TypeIndex lhs_type_index = lhs.type_index();
+	TypeIndex rhs_type_index = rhs.type_index();
+	if (lhs_type_index.needsTypeIndex() != rhs_type_index.needsTypeIndex()) {
+		return false;
+	}
+	if (lhs_type_index.needsTypeIndex() && rhs_type_index.needsTypeIndex() &&
+		lhs_type_index != rhs_type_index &&
+		lhs.token().value() != rhs.token().value()) {
+		return false;
+	}
+	return true;
+}
+
+template <typename LeftParamContainer, typename RightParamContainer>
+static bool templateParameterListsHaveMatchingShape(const LeftParamContainer& lhs, const RightParamContainer& rhs) {
+	auto same_shape = [&](const auto& self, const auto& lhs_params, const auto& rhs_params) -> bool {
+		if (lhs_params.size() != rhs_params.size()) {
+			return false;
+		}
+		for (size_t i = 0; i < lhs_params.size(); ++i) {
+			if (!lhs_params[i].is<TemplateParameterNode>() ||
+				!rhs_params[i].is<TemplateParameterNode>()) {
+				return false;
+			}
+			const TemplateParameterNode& lhs_param = lhs_params[i].as<TemplateParameterNode>();
+			const TemplateParameterNode& rhs_param = rhs_params[i].as<TemplateParameterNode>();
+			if (lhs_param.kind() != rhs_param.kind() ||
+				lhs_param.is_variadic() != rhs_param.is_variadic() ||
+				lhs_param.has_concept_constraint() != rhs_param.has_concept_constraint()) {
+				return false;
+			}
+			if (lhs_param.kind() == TemplateParameterKind::Template &&
+				!self(self, lhs_param.nested_parameters(), rhs_param.nested_parameters())) {
+				return false;
+			}
+			if (lhs_param.kind() == TemplateParameterKind::NonType) {
+				if (lhs_param.has_type() != rhs_param.has_type()) {
+					return false;
+				}
+				if (lhs_param.has_type()) {
+					if (!lhs_param.type_node().is<TypeSpecifierNode>() ||
+						!rhs_param.type_node().is<TypeSpecifierNode>()) {
+						return false;
+					} else if (!sameTypeSpecifierShape(
+								   lhs_param.type_node().as<TypeSpecifierNode>(),
+								   rhs_param.type_node().as<TypeSpecifierNode>())) {
+						return false;
+					}
+				}
+			}
+		}
+		return true;
+	};
+	return same_shape(same_shape, lhs, rhs);
+}
+
+static bool functionDeclarationsHaveMatchingShape(
+	const FunctionDeclarationNode& lhs,
+	const FunctionDeclarationNode& rhs) {
+	if (lhs.parameter_nodes().size() != rhs.parameter_nodes().size() ||
+		lhs.is_variadic() != rhs.is_variadic() ||
+		lhs.is_const_member_function() != rhs.is_const_member_function() ||
+		lhs.is_volatile_member_function() != rhs.is_volatile_member_function() ||
+		lhs.is_noexcept() != rhs.is_noexcept() ||
+		lhs.calling_convention() != rhs.calling_convention() ||
+		lhs.linkage() != rhs.linkage()) {
+		return false;
+	}
+	if (!sameTypeSpecifierShape(
+			lhs.decl_node().type_node().as<TypeSpecifierNode>(),
+			rhs.decl_node().type_node().as<TypeSpecifierNode>())) {
+		return false;
+	}
+	for (size_t i = 0; i < lhs.parameter_nodes().size(); ++i) {
+		if (!lhs.parameter_nodes()[i].is<DeclarationNode>() ||
+			!rhs.parameter_nodes()[i].is<DeclarationNode>()) {
+			return false;
+		}
+		const DeclarationNode& lhs_param = lhs.parameter_nodes()[i].as<DeclarationNode>();
+		const DeclarationNode& rhs_param = rhs.parameter_nodes()[i].as<DeclarationNode>();
+		if (lhs_param.is_parameter_pack() != rhs_param.is_parameter_pack() ||
+			!sameTypeSpecifierShape(
+				lhs_param.type_node().as<TypeSpecifierNode>(),
+				rhs_param.type_node().as<TypeSpecifierNode>())) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool hasLaterUsableTemplateDefinitionWithMatchingShape(
+	const std::vector<ASTNode>& overloads,
+	size_t current_index) {
+	if (current_index >= overloads.size() ||
+		!overloads[current_index].is<TemplateFunctionDeclarationNode>()) {
+		return false;
+	}
+	const TemplateFunctionDeclarationNode& current_template =
+		overloads[current_index].as<TemplateFunctionDeclarationNode>();
+	const FunctionDeclarationNode& current_decl = current_template.function_decl_node();
+	for (size_t candidate_index = current_index + 1; candidate_index < overloads.size(); ++candidate_index) {
+		if (!overloads[candidate_index].is<TemplateFunctionDeclarationNode>()) {
+			continue;
+		}
+		const TemplateFunctionDeclarationNode& candidate_template =
+			overloads[candidate_index].as<TemplateFunctionDeclarationNode>();
+		const FunctionDeclarationNode& candidate_decl = candidate_template.function_decl_node();
+		if (!hasTemplateFunctionBodyDefinition(candidate_decl)) {
+			continue;
+		}
+		if (!templateParameterListsHaveMatchingShape(
+				current_template.template_parameters(),
+				candidate_template.template_parameters())) {
+			continue;
+		}
+		if (functionDeclarationsHaveMatchingShape(current_decl, candidate_decl)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 bool Parser::tryAppendDefaultTemplateArg(
 	const TemplateParameterNode& param,
 	const std::vector<ASTNode>& template_params,
@@ -167,7 +336,6 @@ bool Parser::tryAppendDefaultTemplateArg(
 
 		return appendEvaluatedNonTypeArg(*reparse_result.node());
 	};
-
 	if (param.kind() == TemplateParameterKind::Type) {
 		if (param.has_default_value_position() && !template_args.empty()) {
 			bool prev_sfinae_context = in_sfinae_context_;
@@ -1922,6 +2090,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 	// Try each template overload in order
 	// For SFINAE: If instantiation fails due to substitution errors, silently skip to next overload
+	std::optional<ASTNode> deferred_forward_declaration_result;
 	for (size_t overload_idx = 0; overload_idx < all_templates->size(); ++overload_idx) {
 		const ASTNode& template_node = (*all_templates)[overload_idx];
 
@@ -1936,6 +2105,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 		// Enable SFINAE context for this instantiation attempt
 		bool prev_sfinae_context = in_sfinae_context_;
+		bool outer_sfinae_context = prev_sfinae_context;
 		in_sfinae_context_ = true;
 		ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
 
@@ -1944,6 +2114,24 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			template_node, template_name, arg_types, recursion_depth);
 
 		if (result.has_value()) {
+			const TemplateFunctionDeclarationNode& template_func =
+				template_node.as<TemplateFunctionDeclarationNode>();
+			const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+			if (!outer_sfinae_context &&
+				!hasUsableTemplateFunctionDefinition(func_decl) &&
+				hasLaterUsableTemplateDefinitionWithMatchingShape(*all_templates, overload_idx)) {
+				FLASH_LOG_FORMAT(
+					Templates,
+					Debug,
+					"[depth={}]: Deferring bodyless overload {} for '{}' until later matching definitions are checked",
+					recursion_depth,
+					overload_idx,
+					template_name);
+				if (!deferred_forward_declaration_result.has_value()) {
+					deferred_forward_declaration_result = result;
+				}
+				continue;
+			}
 			// Success! Return this instantiation
 			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Successfully instantiated overload {} for '{}'",
 							 recursion_depth, overload_idx, template_name);
@@ -1954,6 +2142,17 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		// Instantiation failed - try next overload (SFINAE)
 		FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Overload {} failed substitution, trying next",
 						 recursion_depth, overload_idx);
+	}
+
+	if (deferred_forward_declaration_result.has_value()) {
+		FLASH_LOG_FORMAT(
+			Templates,
+			Debug,
+			"[depth={}]: Falling back to deferred bodyless overload for '{}'",
+			recursion_depth,
+			template_name);
+		recursion_depth--;
+		return deferred_forward_declaration_result;
 	}
 
 	// All overloads failed
@@ -2193,13 +2392,23 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Step 2: Check if we already have this instantiation
 	auto key = FlashCpp::makeInstantiationKey(
 		StringTable::getOrInternStringHandle(template_name), template_args);
+	const bool cacheable_instantiation = hasUsableTemplateFunctionDefinition(func_decl);
 
-	auto existing_inst = gTemplateRegistry.getInstantiation(key);
-	if (existing_inst.has_value()) {
-		PROFILE_TEMPLATE_CACHE_HIT(std::string(template_name) + "_func");
-		return *existing_inst;  // Return existing instantiation
+	if (cacheable_instantiation) {
+		auto existing_inst = gTemplateRegistry.getInstantiation(key);
+		if (existing_inst.has_value()) {
+			PROFILE_TEMPLATE_CACHE_HIT(std::string(template_name) + "_func");
+			return *existing_inst;  // Return existing instantiation
+		}
+		PROFILE_TEMPLATE_CACHE_MISS(std::string(template_name) + "_func");
+	} else {
+		FLASH_LOG_FORMAT(
+			Templates,
+			Debug,
+			"[depth={}]: Not caching declaration-only instantiation for '{}'",
+			recursion_depth,
+			template_name);
 	}
-	PROFILE_TEMPLATE_CACHE_MISS(std::string(template_name) + "_func");
 
 	// Step 3: Instantiate the template
 	// For Phase 2, we'll create a simplified instantiation
@@ -3217,7 +3426,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Register the instantiation
-	gTemplateRegistry.registerInstantiation(key, new_func_node);
+	if (cacheable_instantiation) {
+		gTemplateRegistry.registerInstantiation(key, new_func_node);
+	}
 
 	// Add to symbol table at GLOBAL scope (not current scope)
 	// Template instantiations should be globally visible, not scoped to where they're called
