@@ -5825,10 +5825,15 @@ void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instructi
 			// typeid(Type) - compile-time constant
 		StringHandle type_name_handle = std::get<StringHandle>(op.operand);
 		std::string typeinfo_symbol = getTypeinfoSymbol(op.type_index, type_name_handle);
-		if (typeinfo_symbol.empty()) {
-			throw InternalError("typeid(Type) requires an emitted RTTI symbol");
+		if (!typeinfo_symbol.empty()) {
+			emitLeaRipRelativeWithRelocation(X64Register::RAX, typeinfo_symbol);
+		} else {
+				// Windows/COFF: no RTTI symbol support yet — use a hash-based placeholder
+				// so that typeid() returns a non-null, unique-per-type pointer.
+			std::string_view type_name = StringTable::getStringView(type_name_handle);
+			size_t type_hash = std::hash<std::string_view>{}(type_name);
+			emitMovImm64(X64Register::RAX, type_hash);
 		}
-		emitLeaRipRelativeWithRelocation(X64Register::RAX, typeinfo_symbol);
 	} else {
 			// typeid(expr) - may need runtime lookup for polymorphic types
 			// For polymorphic types, RTTI pointer is at vtable[-1]
