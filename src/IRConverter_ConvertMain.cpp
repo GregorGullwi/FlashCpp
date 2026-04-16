@@ -5934,6 +5934,11 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 				return -1;
 			}
 
+			// Find the byte offset of the static source subobject inside the target type
+			// by recursively walking only public, non-virtual bases. __dynamic_cast can
+			// use this hint for simple derived-to-base relationships; other cases fall
+			// back to -1. The lambda takes itself explicitly to recurse without adding
+			// another helper function.
 			auto findPublicNonVirtualBaseOffset = [&](const auto& self, const StructTypeInfo* current_struct, int64_t current_offset) -> std::optional<int64_t> {
 				if (!current_struct) {
 					return std::nullopt;
@@ -6010,21 +6015,6 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 	textSectionData.push_back(0x00);
 
 		// Step 4: Load the platform RTTI arguments.
-		// Generate platform-specific RTTI symbol
-	StringBuilder sb;
-	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-			// Linux/ELF: Use Itanium C++ ABI typeinfo symbol: _ZTI<length><classname>
-			// Example: class "Derived" -> "_ZTI7Derived"
-		sb.append("_ZTI");
-		sb.append(op.target_type_name.length());
-		sb.append(op.target_type_name);
-	} else {
-			// Windows/COFF: Use MSVC Complete Object Locator symbol: ??_R4.?AV<classname>@@6B@
-		sb.append("??_R4.?AV");
-		sb.append(op.target_type_name);
-		sb.append("@@6B@");
-	}
-	[[maybe_unused]] std::string_view target_rtti_symbol = sb.commit();
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			// Linux: __dynamic_cast(source_ptr, source_rtti, target_rtti, -1)
 		std::string source_typeinfo_symbol = getClassTypeinfoSymbol(op.source_type_index, {});
@@ -6037,6 +6027,12 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		emitLeaRipRelativeWithRelocation(X64Register::RDX, target_typeinfo_symbol);
 		emitMovImm64(X64Register::RCX, static_cast<uint64_t>(getDynamicCastOffsetHint(op.source_type_index, op.target_type_index)));
 	} else {
+		StringBuilder sb;
+			// Windows/COFF: Use MSVC Complete Object Locator symbol: ??_R4.?AV<classname>@@6B@
+		sb.append("??_R4.?AV");
+		sb.append(op.target_type_name);
+		sb.append("@@6B@");
+		std::string_view target_rtti_symbol = sb.commit();
 		emitMovRegFromMemRegSized(X64Register::RAX, X64Register::RAX, 64);
 		emitMovRegFromMemRegDisp8(X64Register::RCX, X64Register::RAX, -8);
 			// Windows: Second parameter in RDX

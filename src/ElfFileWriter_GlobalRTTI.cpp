@@ -642,7 +642,6 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	// offset. The RTTI object itself lives in .data.rel.ro; the vtable only
 	// carries a relocation to it.
 	std::string typeinfo_symbol;
-	[[maybe_unused]] const RTTITypeInfo* unused_rtti_info = rtti_info;
 
 	char vtable_data_buf[8192]; // Stack-based buffer for vtable (reasonable max size)
 	size_t vtable_data_size = 0;
