@@ -6785,10 +6785,38 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 	std::string_view member_name = member_access.member_name();
 	std::string_view var_name;
 	const IdentifierNode* object_identifier = nullptr;
+	auto extract_indexed_array_value = [&](const EvalResult& array_value) -> EvalResult {
+		if (!array_value.is_array) {
+			return EvalResult::error("Array member is not initialized with an array value");
+		}
+		if (!array_value.array_elements.empty()) {
+			if (index >= array_value.array_elements.size()) {
+				return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(array_value.array_elements.size()) + ")");
+			}
+			return array_value.array_elements[index];
+		}
+		if (index >= array_value.array_values.size()) {
+			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(array_value.array_values.size()) + ")");
+		}
+		return EvalResult::from_int(array_value.array_values[index]);
+	};
+	auto try_evaluate_object_member_array = [&](const ASTNode& object_expression) -> std::optional<EvalResult> {
+		EvalResult object_result = evaluate(object_expression, context);
+		if (!object_result.success()) {
+			return object_result;
+		}
+		auto member_it = object_result.object_member_bindings.find(member_name);
+		if (member_it == object_result.object_member_bindings.end()) {
+			return std::nullopt;
+		}
+		return extract_indexed_array_value(member_it->second);
+	};
 
 	if (const IdentifierNode* identifier = tryGetIdentifier(object_expr)) {
 		object_identifier = identifier;
 		var_name = identifier->name();
+	} else if (auto evaluated_member = try_evaluate_object_member_array(object_expr)) {
+		return *evaluated_member;
 	} else {
 		return EvalResult::error("Invalid object expression in array member access");
 	}
@@ -6807,20 +6835,7 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 		}
 
 		if (resolved_member.value.has_value()) {
-			const EvalResult& resolved_value = resolved_member.value.value();
-			if (!resolved_value.is_array) {
-				return EvalResult::error("Array member is not initialized with an array value");
-			}
-			if (!resolved_value.array_elements.empty()) {
-				if (index >= resolved_value.array_elements.size()) {
-					return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(resolved_value.array_elements.size()) + ")");
-				}
-				return resolved_value.array_elements[index];
-			}
-			if (index >= resolved_value.array_values.size()) {
-				return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(resolved_value.array_values.size()) + ")");
-			}
-			return EvalResult::from_int(resolved_value.array_values[index]);
+			return extract_indexed_array_value(resolved_member.value.value());
 		}
 
 		if (!resolved_member.initializer.has_value()) {

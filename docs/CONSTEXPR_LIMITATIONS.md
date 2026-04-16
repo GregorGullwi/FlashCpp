@@ -627,6 +627,7 @@ Several array-related constexpr forms are supported in simple/supported shapes:
 - direct array subscripts such as `values[1]`
 - array-element member access such as `items[1].value`
 - member-array subscripts such as `box.data[1]`, including straightforward local aggregate object cases inside constexpr functions
+- member-array subscripts on function-returned or temporary struct/class objects such as `makeBox().data[1]` and `Box(1, 2).data[1]`
 - member-array brace-init in constructor initializer lists such as `arr{a, b, c}` with full C++ zero-fill for partial/single-element init
 - local variable as array subscript inside constexpr member functions such as `int idx = 1; return arr[idx];`
 - flat brace-elision for one-dimensional arrays of aggregate struct elements such as `Item items[] = {40, 2}` and aggregate members such as `Holder h = {40, 2, 7}`
