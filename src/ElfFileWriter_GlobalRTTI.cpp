@@ -620,7 +620,7 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 							   std::string_view class_name,
 							   [[maybe_unused]] std::span<const std::string_view> base_class_names,
 							   [[maybe_unused]] std::span<const BaseClassDescriptorInfo> base_class_info,
-							   const RTTITypeInfo* rtti_info,
+							   [[maybe_unused]] const RTTITypeInfo* rtti_info,
 							   TypeIndex subobject_type_index,
 							   int64_t offset_to_top) {
 
