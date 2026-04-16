@@ -830,7 +830,7 @@ public:
 		} break;
 
 		case IrOpcode::Typeid: {
-			// %result = typeid [type_name_or_expr] [is_type]
+			// %result = typeid [type_name_or_expr] [type_index] [is_type]
 			auto& op = getTypedPayload<TypeidOp>();
 			oss << '%' << op.result.var_number << " = typeid ";
 			if (const auto* string = std::get_if<StringHandle>(&op.operand)) {
@@ -838,6 +838,7 @@ public:
 			} else {
 				oss << '%' << std::get<TempVar>(op.operand).var_number;
 			}
+			oss << " [type_index=" << op.type_index.index() << ':' << static_cast<int>(op.type_index.category()) << "]";
 			oss << " [is_type=" << (op.is_type ? "true" : "false") << "]";
 		} break;
 

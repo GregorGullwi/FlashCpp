@@ -1060,6 +1060,7 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		TypeidOp op{
 			.result = result_temp,
 			.operand = type_name,  // Type name for RTTI lookup
+			.type_index = type_node.type_index(),
 			.is_type = true};
 		ir_.addInstruction(IrOpcode::Typeid, std::move(op), typeidNode.typeid_token());
 	} else {
@@ -1080,6 +1081,7 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		TypeidOp op{
 			.result = result_temp,
 			.operand = operand_value,  // Expression result
+			.type_index = expr_operands.type_index,
 			.is_type = false};
 		ir_.addInstruction(IrOpcode::Typeid, std::move(op), typeidNode.typeid_token());
 	}

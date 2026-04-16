@@ -638,31 +638,11 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	// - RTTI pointer (8 bytes) - pointer to typeinfo structure
 	// - Function pointers (8 bytes each)
 
-	// First, emit typeinfo if available (goes into .rodata BEFORE the vtable)
+	// First, ensure the ABI typeinfo symbol exists before we capture the vtable
+	// offset. The RTTI object itself lives in .data.rel.ro; the vtable only
+	// carries a relocation to it.
 	std::string typeinfo_symbol;
-	if (rtti_info && rtti_info->itanium_type_info) {
-		// Generate typeinfo symbol name: _ZTI + mangled class name
-		// For now, use the class name length-prefixed
-		StringBuilder typeinfo_builder;
-		typeinfo_builder.append("_ZTI").append(class_name.length()).append(class_name);
-		typeinfo_symbol = std::string(typeinfo_builder.commit());
-
-		// Determine which typeinfo structure to emit based on kind
-		if (rtti_info->itanium_kind == RTTITypeInfo::ItaniumTypeInfoKind::ClassTypeInfo) {
-			add_typeinfo(typeinfo_symbol, rtti_info->itanium_type_info, sizeof(ItaniumClassTypeInfo));
-		} else if (rtti_info->itanium_kind == RTTITypeInfo::ItaniumTypeInfoKind::SIClassTypeInfo) {
-			add_typeinfo(typeinfo_symbol, rtti_info->itanium_type_info, sizeof(ItaniumSIClassTypeInfo));
-		} else if (rtti_info->itanium_kind == RTTITypeInfo::ItaniumTypeInfoKind::VMIClassTypeInfo) {
-			// Variable size - need to calculate
-			const ItaniumVMIClassTypeInfo* vmi = static_cast<const ItaniumVMIClassTypeInfo*>(rtti_info->itanium_type_info);
-			// Safe calculation - VMI always has at least 1 base class
-			size_t vmi_size = sizeof(ItaniumVMIClassTypeInfo);
-			if (vmi->base_count > 1) {
-				vmi_size += (vmi->base_count - 1) * sizeof(ItaniumBaseClassTypeInfo);
-			}
-			add_typeinfo(typeinfo_symbol, rtti_info->itanium_type_info, vmi_size);
-		}
-	}
+	[[maybe_unused]] const RTTITypeInfo* unused_rtti_info = rtti_info;
 
 	// Capture vtable_offset AFTER typeinfo emission, since add_typeinfo also
 	// appends to .rodata and would shift the vtable position.
@@ -697,6 +677,8 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 			}
 		}
 		if (this_struct) {
+			typeinfo_symbol = get_or_create_class_typeinfo(this_struct);
+
 			const StructTypeInfo* vbase_owner_struct = this_struct;
 			size_t subobject_offset = 0;
 			if (subobject_type_index.is_valid()) {
@@ -727,6 +709,9 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 				vbase_entries.push_back({static_cast<int64_t>(offset) - static_cast<int64_t>(subobject_offset)});
 			}
 		}
+	}
+	if (typeinfo_symbol.empty() && !class_name.empty()) {
+		typeinfo_symbol = get_or_create_class_typeinfo(class_name);
 	}
 	size_t n_vbase_entries = vbase_entries.size();
 

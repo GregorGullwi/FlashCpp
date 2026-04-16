@@ -971,6 +971,7 @@ struct TypeConversionOp {
 struct TypeidOp {
 	TempVar result;				// Result variable (pointer to type_info)
 	std::variant<StringHandle, TempVar> operand;	 // Type name (StringHandle) or expression (TempVar)
+	TypeIndex type_index{};	  // Static type for compile-time RTTI symbol lookup
 	bool is_type = false;		  // true if typeid(Type), false if typeid(expr)
 };
 
