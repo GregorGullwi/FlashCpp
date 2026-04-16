@@ -1,3 +1,5 @@
+#include <typeinfo>
+
 struct Base {
 	virtual ~Base() {}
 };
