@@ -4388,7 +4388,7 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 		return EvalResult::error("Type is not a struct in " + std::string(usage_name));
 	}
 
-const auto& ctor_args = ctor_call.arguments();
+	const auto& ctor_args = ctor_call.arguments();
 	const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
 	if (!matching_ctor) {
 		matching_ctor = find_matching_constructor(struct_info, ctor_args, context, false, nullptr);
@@ -6333,7 +6333,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 			continue;
 		}
 
-auto val = evaluation_bindings
+		auto val = evaluation_bindings
 					   ? Evaluator::evaluate_expression_with_bindings_const(initializer, *evaluation_bindings, context)
 					   : evaluate(initializer, context);
 		if (!val.success())
@@ -6802,7 +6802,7 @@ EvalResult Evaluator::extract_object_members(
 		return EvalResult::error("Type is not a struct in member function call");
 	}
 
-auto ctor_result = materialize_constructor_object_value(ctor_call, context, nullptr);
+	auto ctor_result = materialize_constructor_object_value(ctor_call, context, nullptr);
 	if (!ctor_result.success()) {
 		return ctor_result;
 	}
