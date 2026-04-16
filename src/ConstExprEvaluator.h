@@ -562,6 +562,12 @@ public:
 		const InitializerListNode& init_list,
 		EvaluationContext& context,
 		const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
+	// Convert an already-evaluated EvalResult to a different scalar/enum target type.
+	// Shared across Core and Members constexpr materialization paths.
+	static EvalResult convertEvalResultToTargetType(
+		const TypeSpecifierNode& target_type,
+		const EvalResult& expr_result,
+		const char* invalidTypeErrorStr);
 	static EvalResult bind_members_from_initializer_list(
 		const StructTypeInfo* struct_info,
 		const InitializerListNode& init_list,
@@ -971,14 +977,6 @@ private:
 		const EvalResult& result,
 		const ASTNode& expr,
 		EvaluationContext& context);
-
-	// Convert an already-evaluated EvalResult to a different target type
-	// (Bool/Int/Uint/Float).  Returns an error for unsupported target types
-	// (e.g. Struct).  Shared across Core and Members TUs.
-	static EvalResult convertEvalResultToTargetType(
-		const TypeSpecifierNode& target_type,
-		const EvalResult& expr_result,
-		const char* invalidTypeErrorStr);
 
 	// Safe arithmetic with overflow detection
 	static std::optional<long long> safe_add(long long a, long long b);

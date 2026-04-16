@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "BuiltinListInitNarrowing.h"
 #include "CallNodeHelpers.h"
 #include "OverloadResolution.h"
 #include "SemanticAnalysis.h"
@@ -157,6 +158,64 @@ EvalResult make_shift_result(const std::optional<TypeSpecifierNode>& promoted_ty
 		result.set_exact_type(*promoted_type);
 	}
 	return result;
+}
+
+TypeSpecifierNode makeAggregateMemberTypeSpec(const StructMember& member_info) {
+	TypeSpecifierNode member_type(
+		member_info.type_index.withCategory(member_info.memberType()),
+		static_cast<int>(member_info.referenced_size_bits),
+		Token{},
+		CVQualifier::None,
+		member_info.reference_qualifier);
+	member_type.set_type_index(member_info.type_index);
+	if (member_info.is_array) {
+		member_type.set_array_dimensions(member_info.array_dimensions);
+	}
+	if (member_info.pointer_depth > 0) {
+		member_type.add_pointer_levels(member_info.pointer_depth);
+	}
+	return member_type;
+}
+
+EvalResult applyAggregateMemberScalarInitialization(
+	const StructMember& member_info,
+	EvalResult value,
+	bool enforce_list_narrowing) {
+	if (!value.success() ||
+		member_info.is_array ||
+		is_struct_type(member_info.type_index.category()) ||
+		member_info.pointer_depth > 0 ||
+		member_info.reference_qualifier != ReferenceQualifier::None) {
+		return value;
+	}
+
+	const TypeSpecifierNode member_type = makeAggregateMemberTypeSpec(member_info);
+	const TypeCategory target_category = member_type.category();
+	if (!(isIntegralType(target_category) ||
+		  isFloatingPointType(target_category) ||
+		  target_category == TypeCategory::Enum)) {
+		return value;
+	}
+
+	if (enforce_list_narrowing) {
+		const TypeCategory source_category =
+			BuiltinListInitNarrowing::effectiveScalarCategory(value);
+		const TypeCategory effective_target_category =
+			BuiltinListInitNarrowing::effectiveScalarCategory(member_type);
+		if (BuiltinListInitNarrowing::isNarrowingConversion(
+				source_category,
+				effective_target_category,
+				value)) {
+			return EvalResult::error(
+				"Narrowing conversion in direct-list-initialization",
+				EvalErrorType::NotConstantExpression);
+		}
+	}
+
+	return Evaluator::convertEvalResultToTargetType(
+		member_type,
+		value,
+		"Unsupported aggregate member type in constant evaluation");
 }
 } // namespace
 
@@ -4329,12 +4388,35 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 		return EvalResult::error("Type is not a struct in " + std::string(usage_name));
 	}
 
-	const auto& ctor_args = ctor_call.arguments();
+const auto& ctor_args = ctor_call.arguments();
 	const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
 	if (!matching_ctor) {
 		matching_ctor = find_matching_constructor(struct_info, ctor_args, context, false, nullptr);
 	}
 	if (!matching_ctor) {
+		// No explicit constructor found. For aggregates without user-defined constructors,
+		// try aggregate initialization directly with the constructor arguments.
+		// Use Paren style because this came from paren-init (e.g., Type(arg1, arg2)),
+		// not brace-init, so narrowing conversions should be allowed.
+		if (!struct_info->hasUserDefinedConstructor() && !ctor_args.empty()) {
+			InitializerListNode init_list(InitializerListNode::InitializationStyle::Paren);
+			for (size_t i = 0; i < ctor_args.size(); ++i) {
+				init_list.add_initializer(ctor_args[i]);
+			}
+			EvalResult obj_result = EvalResult::from_int(0);
+			obj_result.object_type_index = type_index;
+			auto bind_result = bind_members_from_initializer_list(
+				struct_info, init_list, obj_result.object_member_bindings, context, enclosing_bindings);
+			if (!bind_result.success()) {
+				return bind_result;
+			}
+			auto it = obj_result.object_member_bindings.find(member_name);
+			if (it != obj_result.object_member_bindings.end()) {
+				resolved_member.value = it->second;
+				return std::nullopt;
+			}
+			return EvalResult::error("Member '" + std::string(member_name) + "' not found in aggregate initialization result");
+		}
 		return EvalResult::error("No matching constructor found for constexpr " + std::string(usage_name));
 	}
 
@@ -6113,7 +6195,8 @@ std::optional<EvalResult> tryMaterializeMultidimArrayRow(
 EvalResult materialize_member_initializer_value(
 	const StructMember& member_info,
 	const ASTNode& initializer,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	bool enforce_list_narrowing) {
 	if (initializer.is<InitializerListNode>()) {
 		const InitializerListNode& init_list = initializer.as<InitializerListNode>();
 
@@ -6148,7 +6231,14 @@ EvalResult materialize_member_initializer_value(
 		}
 	}
 
-	return Evaluator::evaluate(initializer, context);
+	EvalResult value = Evaluator::evaluate(initializer, context);
+	if (!value.success()) {
+		return value;
+	}
+	return applyAggregateMemberScalarInitialization(
+		member_info,
+		std::move(value),
+		enforce_list_narrowing);
 }
 } // namespace
 
@@ -6224,8 +6314,18 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 					initializer,
 					*evaluation_bindings,
 					context);
+				if (val.success()) {
+					val = applyAggregateMemberScalarInitialization(
+						*member_info,
+						std::move(val),
+						init_list.is_brace_init());
+				}
 			} else {
-				val = materialize_member_initializer_value(*member_info, initializer, context);
+				val = materialize_member_initializer_value(
+					*member_info,
+					initializer,
+					context,
+					init_list.is_brace_init());
 			}
 			if (!val.success())
 				return val;
@@ -6233,19 +6333,27 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 			continue;
 		}
 
-		auto val = evaluation_bindings
+auto val = evaluation_bindings
 					   ? Evaluator::evaluate_expression_with_bindings_const(initializer, *evaluation_bindings, context)
 					   : evaluate(initializer, context);
 		if (!val.success())
 			return val;
-		bindings[mname] = val;
+		val = applyAggregateMemberScalarInitialization(
+			*member_info, std::move(val), init_list.is_brace_init());
+		if (!val.success())
+			return val;
+		bindings[mname] = std::move(val);
 	}
 	// Apply default member initializers for remaining members.
 	for (size_t mi = 0; mi < struct_info->members.size(); ++mi) {
 		const auto& member = struct_info->members[mi];
 		std::string_view mname = StringTable::getStringView(member.getName());
 		if (bindings.find(mname) == bindings.end() && member.default_initializer.has_value()) {
-			auto default_result = materialize_member_initializer_value(member, member.default_initializer.value(), context);
+			auto default_result = materialize_member_initializer_value(
+				member,
+				member.default_initializer.value(),
+				context,
+				false);
 			if (!default_result.success())
 				return default_result;
 			bindings[mname] = default_result;
@@ -6694,24 +6802,12 @@ EvalResult Evaluator::extract_object_members(
 		return EvalResult::error("Type is not a struct in member function call");
 	}
 
-	const auto& ctor_args = ctor_call.arguments();
-	auto ctor_result = try_materialize_struct_from_ctor_args(
-		struct_info,
-		type_index,
-		ctor_args,
-		context,
-		false,
-		nullptr,
-		ctor_call.resolved_constructor(),
-		true);
-	if (!ctor_result) {
-		return EvalResult::error("No matching constructor found for constexpr object");
-	}
-	if (!ctor_result->success()) {
-		return *ctor_result;
+auto ctor_result = materialize_constructor_object_value(ctor_call, context, nullptr);
+	if (!ctor_result.success()) {
+		return ctor_result;
 	}
 
-	member_bindings = std::move(ctor_result->object_member_bindings);
+	member_bindings = std::move(ctor_result.object_member_bindings);
 	return EvalResult::from_bool(true);	// Success
 }
 
