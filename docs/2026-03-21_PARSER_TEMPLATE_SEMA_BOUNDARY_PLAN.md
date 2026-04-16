@@ -1,6 +1,15 @@
 # Parser / Template-Substitution / Sema Boundary Plan
 
-> **Status (2026-03-22 follow-up):** The sema-owned boundary hardening work in this plan is largely complete. `SemanticAnalysis.cpp` no longer relies on direct `parser_.get_expression_type(...)` calls, and surviving fold/pack nodes on the sema-owned surface are treated as boundary violations. The remaining related work is narrower and mainly parser/template-substitution owned, including pack-expansion creation-site audits and other pre-sema boundary guarantees.
+> **Status (2026-04-16 update):** The core boundary hardening work (Phases 1-6) is **complete**. All exit criteria have been met:
+> - The legal post-parse AST surface is documented
+> - `FoldExpressionNode` and `PackExpansionExprNode` are treated as invariant violations
+> - Sema no longer depends on `parser_.get_expression_type(...)` calls
+> - Codegen fold/pack handlers are assertion-only
+> - The boundary between parser/template-substitution and sema is well-defined
+>
+> **Phase 7** (in planning) focuses on observability, validation, and test coverage to ensure
+> these boundary guarantees remain robust as the codebase evolves. See the Phase 7 section
+> below for planned work items.
 
 ## Problem
 
@@ -527,6 +536,53 @@ Current narrow follow-up after the nested-class slice:
   **(implemented: `SemanticAnalysis.cpp` is now free of
   `parser_.get_expression_type` calls)**
 
+### Phase 7: observability, validation, and robustness
+
+Phase 7 strengthens the boundary guarantees through better observability, test coverage,
+and diagnostic quality. The implementation work from Phases 1-6 is complete; this phase
+ensures those guarantees remain durable as the compiler continues to evolve.
+
+## Phase 7 progress
+
+Phase 7 focuses on observability, validation, and strengthening the boundary guarantees
+established in Phases 1-6. The goal is to make the sema-owned post-parse surface more
+observable and ensure the boundary invariants remain robust as the codebase evolves.
+
+**Planned work:**
+
+1. **Boundary validation enhancement**
+   - Add opt-in verbose logging for pre-sema boundary check violations
+   - Report violation counts by AST subtree to identify template-substitution gaps
+   - Consider adding a debug-mode AST walker that validates the entire post-parse
+     tree (not just sema-owned expressions) to catch parser-owned template artifacts
+     that should have been eliminated
+
+2. **Test coverage for boundary conditions**
+   - Add focused regression tests for template forms that historically leaked
+     fold/pack nodes into sema (e.g., nested templates, partial specializations,
+     variadic template edge cases)
+   - Test coverage for `TemplateParameterReferenceNode` resolution in all
+     outer-template binding contexts (functions, constructors, destructors, lambdas,
+     variables, structs, nested classes)
+   - Verify that the pre-sema boundary check catches violations in practice, not
+     just in theory
+
+3. **Diagnostic quality improvements**
+   - Review CompileError messages thrown during semantic analysis for scoped enums,
+     conversion failures, and type mismatches
+   - Move appropriate codegen-time type errors earlier into sema where context is richer
+   - Ensure error messages reference source locations when available
+
+4. **Documentation and maintainability**
+   - Update inline code comments to reference the phases where invariants were
+     established (e.g., "safe after Phase 2 boundary check")
+   - Add architectural notes explaining why certain codegen paths remain as fallbacks
+     vs. being unreachable
+   - Document the dual-context nature of `ConstExprEvaluator` (parser-owned template
+     substitution vs. sema-owned constant evaluation)
+
+**Test result:** TBD (Phase 7 in planning)
+
 ## Exit criteria
 
 This plan is complete when:
@@ -543,6 +599,7 @@ This plan is complete when:
 - sema/codegen ownership is clear enough that new work does not add fresh
   parser-to-sema fallback paths casually **(done: Phase 4 codegen handlers
   are assertion-only, constexpr evaluator dual-context documented)**
+- boundary guarantees are observable and well-tested **(Phase 7 in progress)**
 
 ## Why this is separate from the implicit-cast roadmap
 
