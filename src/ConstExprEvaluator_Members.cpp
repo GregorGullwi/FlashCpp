@@ -6791,12 +6791,26 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 		}
 		if (!array_value.array_elements.empty()) {
 			if (index >= array_value.array_elements.size()) {
-				return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(array_value.array_elements.size()) + ")");
+				return EvalResult::error(
+					StringBuilder()
+						.append("Array index "sv)
+						.append(index)
+						.append(" out of bounds (size "sv)
+						.append(array_value.array_elements.size())
+						.append(")"sv)
+						.commit());
 			}
 			return array_value.array_elements[index];
 		}
 		if (index >= array_value.array_values.size()) {
-			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(array_value.array_values.size()) + ")");
+			return EvalResult::error(
+				StringBuilder()
+					.append("Array index "sv)
+					.append(index)
+					.append(" out of bounds (size "sv)
+					.append(array_value.array_values.size())
+					.append(")"sv)
+					.commit());
 		}
 		return EvalResult::from_int(array_value.array_values[index]);
 	};
