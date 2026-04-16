@@ -644,10 +644,6 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	std::string typeinfo_symbol;
 	[[maybe_unused]] const RTTITypeInfo* unused_rtti_info = rtti_info;
 
-	// Capture vtable_offset AFTER typeinfo emission, since add_typeinfo also
-	// appends to .rodata and would shift the vtable position.
-	uint32_t vtable_offset = rodata->get_size();
-
 	char vtable_data_buf[8192]; // Stack-based buffer for vtable (reasonable max size)
 	size_t vtable_data_size = 0;
 
@@ -744,6 +740,17 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	for (size_t i = 0; i < function_symbols.size(); ++i) {
 		append_bytes(&func_ptr, 8);
 	}
+
+	// Align the concrete vtable object itself to pointer alignment before we
+	// record offsets or append bytes.
+	size_t rodata_size = rodata->get_size();
+	size_t padding = (8 - (rodata_size % 8)) % 8;
+	if (padding != 0) {
+		static const char zero_padding[8] = {};
+		rodata->append_data(zero_padding, padding);
+	}
+
+	uint32_t vtable_offset = rodata->get_size();
 
 	// Add vtable data to .rodata
 	rodata->append_data(vtable_data_buf, vtable_data_size);

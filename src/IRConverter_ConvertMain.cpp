@@ -5923,6 +5923,45 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		return {};
 	};
 
+	auto getDynamicCastOffsetHint = [&](TypeIndex source_type_index, TypeIndex target_type_index) -> int64_t {
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (source_type_index == target_type_index) {
+				return 0;
+			}
+			const TypeInfo* target_type_info = tryGetTypeInfo(target_type_index);
+			const StructTypeInfo* target_struct_info = target_type_info ? target_type_info->getStructInfo() : nullptr;
+			if (!target_struct_info) {
+				return -1;
+			}
+
+			auto findPublicNonVirtualBaseOffset = [&](const auto& self, const StructTypeInfo* current_struct, int64_t current_offset) -> std::optional<int64_t> {
+				if (!current_struct) {
+					return std::nullopt;
+				}
+				for (const auto& base : current_struct->base_classes) {
+					if (base.access != AccessSpecifier::Public || base.is_virtual) {
+						continue;
+					}
+					int64_t base_offset = current_offset + static_cast<int64_t>(base.offset);
+					if (base.type_index == source_type_index) {
+						return base_offset;
+					}
+					const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+					const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+					if (auto nested_offset = self(self, base_struct_info, base_offset)) {
+						return nested_offset;
+					}
+				}
+				return std::nullopt;
+			};
+
+			if (auto offset = findPublicNonVirtualBaseOffset(findPublicNonVirtualBaseOffset, target_struct_info, 0)) {
+				return *offset;
+			}
+		}
+		return -1;
+	};
+
 		// Implementation using auto-generated runtime helper __dynamic_cast_check
 		// (Generated at end of compilation - see emit_dynamic_cast_check_function)
 		//
@@ -5996,7 +6035,7 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		emitMovRegReg(X64Register::RDI, X64Register::RAX);
 		emitLeaRipRelativeWithRelocation(X64Register::RSI, source_typeinfo_symbol);
 		emitLeaRipRelativeWithRelocation(X64Register::RDX, target_typeinfo_symbol);
-		emitMovImm64(X64Register::RCX, static_cast<uint64_t>(-1));
+		emitMovImm64(X64Register::RCX, static_cast<uint64_t>(getDynamicCastOffsetHint(op.source_type_index, op.target_type_index)));
 	} else {
 		emitMovRegFromMemRegSized(X64Register::RAX, X64Register::RAX, 64);
 		emitMovRegFromMemRegDisp8(X64Register::RCX, X64Register::RAX, -8);
