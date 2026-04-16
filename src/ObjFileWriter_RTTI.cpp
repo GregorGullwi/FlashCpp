@@ -789,6 +789,58 @@ std::string ObjectFileWriter::get_or_create_builtin_throwinfo(TypeCategory type)
 	return throw_info_symbol;
 }
 
+// Get or create MSVC ??_R0 Type Descriptor symbol for a class.
+// Returns the symbol name (e.g., "??_R0.?AVMyClass@@").
+// If the descriptor doesn't exist yet, it will be created in .rdata section.
+std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view class_name) {
+	// MSVC class name mangling: .?AV<name>@@
+	std::string mangled_class_name = std::string(".?AV") + std::string(class_name) + "@@";
+	std::string type_desc_symbol = "??_R0" + mangled_class_name;
+
+	// Check if the type descriptor was already emitted
+	auto td_cache_it = symbol_index_cache_.find(type_desc_symbol);
+	if (td_cache_it != symbol_index_cache_.end()) {
+		auto* existing_sym = coffi_.get_symbol(td_cache_it->second);
+		// Only reuse if the symbol has a definition (section_number > 0)
+		if (existing_sym && existing_sym->get_section_number() > 0) {
+			if (g_enable_debug_output)
+				std::cerr << "Reusing existing ??_R0 Type Descriptor '" << type_desc_symbol << "'" << std::endl;
+			return type_desc_symbol;
+		}
+	}
+
+	// Type descriptor not found or was only an external reference - create it
+	auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
+	uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+
+	std::vector<char> type_desc_data;
+	type_desc_data.reserve(16 + mangled_class_name.size() + 1);	// 8+8 header + name + null
+	// vtable pointer (8 bytes) - null
+	ObjectFileCommon::appendZeros(type_desc_data, 8);
+	// spare pointer (8 bytes) - null
+	ObjectFileCommon::appendZeros(type_desc_data, 8);
+	// mangled name (null-terminated)
+	for (char c : mangled_class_name)
+		type_desc_data.push_back(c);
+	type_desc_data.push_back(0);
+
+	add_data(type_desc_data, SectionType::RDATA);
+	auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
+	type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+	type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+	type_desc_sym->set_section_number(rdata_section->get_index() + 1);
+	type_desc_sym->set_value(type_desc_offset);
+
+	// Update cache
+	symbol_index_cache_[type_desc_symbol] = type_desc_sym->get_index();
+
+	if (g_enable_debug_output)
+		std::cerr << "Created ??_R0 Type Descriptor '" << type_desc_symbol << "' at offset "
+				  << type_desc_offset << std::endl;
+
+	return type_desc_symbol;
+}
+
 // Helper: get or create symbol index for a function name (cached for O(1) repeated lookups)
 uint32_t ObjectFileWriter::get_or_create_symbol_index(const std::string& symbol_name) {
 	// Check cache first

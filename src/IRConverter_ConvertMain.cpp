@@ -5817,8 +5817,18 @@ void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instructi
 				return {};
 			}
 			return writer.get_or_create_builtin_typeinfo(type_index.category());
+		} else {
+			// Windows/COFF: use ??_R0 Type Descriptor symbols
+			if (type_index.category() == TypeCategory::Struct) {
+				if (type_name_handle.isValid()) {
+					return writer.get_or_create_type_descriptor(StringTable::getStringView(type_name_handle));
+				}
+				return {};
+			}
+			// For built-in types on Windows, we would need to handle them separately
+			// For now, return empty and fall back to hash-based approach
+			return {};
 		}
-		return {};
 	};
 
 	if (op.is_type) {
@@ -5828,8 +5838,9 @@ void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instructi
 		if (!typeinfo_symbol.empty()) {
 			emitLeaRipRelativeWithRelocation(X64Register::RAX, typeinfo_symbol);
 		} else {
-				// Windows/COFF: no RTTI symbol support yet — use a hash-based placeholder
+				// Fallback for built-in types on Windows/COFF: use a hash-based placeholder
 				// so that typeid() returns a non-null, unique-per-type pointer.
+				// (Class types now use proper ??_R0 symbols)
 			std::string_view type_name = StringTable::getStringView(type_name_handle);
 			size_t type_hash = std::hash<std::string_view>{}(type_name);
 			emitMovImm64(X64Register::RAX, type_hash);
@@ -5906,11 +5917,6 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 
 	flushAllDirtyRegisters();
 
-		// Windows still uses the internal runtime helpers. ELF uses the ABI runtime.
-	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-		needs_dynamic_cast_runtime_ = true;
-	}
-
 	auto getClassTypeinfoSymbol = [&](TypeIndex type_index, std::string_view fallback_name) -> std::string {
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			if (type_index.is_valid()) {
@@ -5976,40 +5982,23 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		return -1;
 	};
 
-		// Implementation using auto-generated runtime helper __dynamic_cast_check
-		// (Generated at end of compilation - see emit_dynamic_cast_check_function)
+		// Platform-specific runtime implementations:
 		//
-		// C++ equivalent logic:
-		//   bool __dynamic_cast_check(RTTIInfo* source, RTTIInfo* target) {
-		//     if (!source || !target) return false;
-		//     if (source == target) return true;
-		//     if (source->class_hash == target->class_hash) return true;
-		//     // Check each base class recursively
-		//     for (size_t i = 0; i < source->num_bases && i < 64; i++) {
-		//       if (__dynamic_cast_check(source->base_ptrs[i], target)) return true;
-		//     }
-		//     return false;
-		//   }
+		// ELF/Linux: __dynamic_cast(src_ptr, src_rtti, dst_rtti, offset_hint)
+		//   - Standard Itanium C++ ABI runtime from libstdc++
+		//   - Returns adjusted pointer on success, nullptr on failure
 		//
-		// Calling convention: Windows x64 (first 4 args in RCX, RDX, R8, R9)
-		// Arguments:
-		//   RCX = source RTTI pointer (loaded from vtable[-1])
-		//   RDX = target RTTI pointer
-		// Returns: RAX = 1 if cast is valid, 0 otherwise
+		// Windows/COFF: __RTDynamicCast(src_ptr, vfDelta, src_type, dst_type, isReference)
+		//   - MSVC runtime from CRT
+		//   - Returns adjusted pointer on success, nullptr on failure
+		//   - Handles multi-level inheritance, VMI hierarchies, and cross-casts
+		//   - Uses ??_R0 Type Descriptors for RTTI comparison
 
 	int result_offset = getStackOffsetFromTempVar(op.result);
 
 		// Step 1: Load source pointer from stack
 	int source_offset = getStackOffsetFromTempVar(op.source);
 	emitMovFromFrame(X64Register::RAX, source_offset);
-
-		// Step 2: Preserve the original source pointer for the Windows helper path.
-		// ELF uses __dynamic_cast, which returns the adjusted result pointer in RAX.
-	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-		emitMovToFrameSized(
-			SizedRegister{X64Register::RAX, 64, false},
-			SizedStackSlot{result_offset, 64, false});
-	}
 
 		// Step 3: Check if source pointer is null
 	emitTestRegReg(X64Register::RAX);
@@ -6036,33 +6025,64 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		emitLeaRipRelativeWithRelocation(X64Register::RDX, target_typeinfo_symbol);
 		emitMovImm64(X64Register::RCX, static_cast<uint64_t>(getDynamicCastOffsetHint(op.source_type_index, op.target_type_index)));
 	} else {
-		StringBuilder sb;
-			// Windows/COFF: Use MSVC Complete Object Locator symbol: ??_R4.?AV<classname>@@6B@
-		sb.append("??_R4.?AV");
-		sb.append(op.target_type_name);
-		sb.append("@@6B@");
-		std::string_view target_rtti_symbol = sb.commit();
-		emitMovRegFromMemRegSized(X64Register::RAX, X64Register::RAX, 64);
-		emitMovRegFromMemRegDisp8(X64Register::RCX, X64Register::RAX, -8);
-			// Windows: Second parameter in RDX
-		emitLeaRipRelativeWithRelocation(X64Register::RDX, target_rtti_symbol);
+			// Windows/COFF: __RTDynamicCast(src_ptr, vfDelta, src_type, target_type, isReference)
+			// Parameters: RCX=src_ptr, RDX=vfDelta, R8=src_type, R9=target_type, stack=isReference
+
+			// Get source type name from TypeIndex
+		std::string_view source_type_name;
+		if (op.source_type_index.is_valid()) {
+			if (const TypeInfo* source_type_info = tryGetTypeInfo(op.source_type_index)) {
+				if (const StructTypeInfo* source_struct_info = source_type_info->getStructInfo()) {
+					source_type_name = StringTable::getStringView(source_struct_info->name);
+				}
+			}
+		}
+		if (source_type_name.empty()) {
+			throw InternalError("dynamic_cast requires valid source class type");
+		}
+
+			// Get source and target type descriptor symbols
+		std::string source_type_desc = writer.get_or_create_type_descriptor(source_type_name);
+		std::string target_type_desc = writer.get_or_create_type_descriptor(op.target_type_name);
+
+			// RCX: src_ptr (already in RAX, move to RCX)
+		emitMovRegReg(X64Register::RCX, X64Register::RAX);
+
+			// RDX: vfDelta (0 for now - would need vtable offset calculation for complex hierarchies)
+			// XOR RDX, RDX to zero it
+		emitXorRegReg(X64Register::RDX);
+
+			// R8: src_type (pointer to source ??_R0 Type Descriptor)
+		emitLeaRipRelativeWithRelocation(X64Register::R8, source_type_desc);
+
+			// R9: target_type (pointer to target ??_R0 Type Descriptor)
+		emitLeaRipRelativeWithRelocation(X64Register::R9, target_type_desc);
+
+			// Stack parameter: isReference (1 for reference cast, 0 for pointer cast)
+			// Note: This goes on the stack after shadow space (at [RSP+32])
 	}
 
 		// Step 7: Call the platform runtime.
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 		emitCall("__dynamic_cast");
 	} else {
-		emitSubRSP(32);	// Shadow space for Windows x64 calling convention
-		emitCall("__dynamic_cast_check");
-		emitAddRSP(32);	// Restore stack
+		emitSubRSP(40);	// Shadow space (32) + 5th parameter (8)
+			// MOV DWORD PTR [RSP+32], isReference (5th parameter)
+		textSectionData.push_back(0xC7);	// MOV r/m32, imm32
+		textSectionData.push_back(0x44);	// ModR/M: [RSP+disp8]
+		textSectionData.push_back(0x24);	// SIB: RSP
+		textSectionData.push_back(0x20);	// disp8 = 32
+		uint32_t is_ref_value = op.is_reference ? 1 : 0;
+		textSectionData.push_back(static_cast<uint8_t>(is_ref_value & 0xFF));
+		textSectionData.push_back(static_cast<uint8_t>((is_ref_value >> 8) & 0xFF));
+		textSectionData.push_back(static_cast<uint8_t>((is_ref_value >> 16) & 0xFF));
+		textSectionData.push_back(static_cast<uint8_t>((is_ref_value >> 24) & 0xFF));
+		emitCall("__RTDynamicCast");
+		emitAddRSP(40);	// Restore stack
 	}
 
-		// Step 8: Check return value (ELF: result pointer in RAX, Windows: AL is success flag)
-	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-		emitTestRegReg(X64Register::RAX);
-	} else {
-		emitTestAL();
-	}
+		// Step 8: Check return value (both platforms now return pointer in RAX)
+	emitTestRegReg(X64Register::RAX);
 
 		// JZ to null_result (if check failed, return null)
 	textSectionData.push_back(0x0F); // Two-byte opcode prefix
@@ -6073,13 +6093,11 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 
-		// Step 9: Cast succeeded.
-	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-		emitMovToFrameSized(
-			SizedRegister{X64Register::RAX, 64, false},
-			SizedStackSlot{result_offset, 64, false});
-	}
-		// Windows' helper returns only success/failure, so keep the original pointer.
+		// Step 9: Cast succeeded - store result pointer from RAX
+	emitMovToFrameSized(
+		SizedRegister{X64Register::RAX, 64, false},
+		SizedStackSlot{result_offset, 64, false});
+
 	textSectionData.push_back(0xEB); // JMP rel8
 	size_t success_jmp_offset = textSectionData.size();
 	textSectionData.push_back(0x00); // Placeholder
@@ -6106,8 +6124,7 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		textSectionData.push_back(0xC0); // ModR/M: RAX, RAX
 	}
 
-		// Step 10: Store the null failure result to the stack (pointer is always 64-bit).
-		// The success path skips this because Step 2 already preserved the source pointer.
+		// Step 10: Store the null/failure result to the stack
 	emitMovToFrameSized(
 		SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
 		SizedStackSlot{result_offset, 64, false}	 // dest: 64-bit for pointer
