@@ -971,6 +971,7 @@ struct TypeConversionOp {
 struct TypeidOp {
 	TempVar result;				// Result variable (pointer to type_info)
 	std::variant<StringHandle, TempVar> operand;	 // Type name (StringHandle) or expression (TempVar)
+	TypeIndex type_index{};	  // Static type for compile-time RTTI symbol lookup
 	bool is_type = false;		  // true if typeid(Type), false if typeid(expr)
 };
 
@@ -978,6 +979,8 @@ struct TypeidOp {
 struct DynamicCastOp {
 	TempVar result;				// Result variable
 	TempVar source;				// Source pointer/reference
+	TypeIndex source_type_index{};  // Static source class type
+	TypeIndex target_type_index{};  // Static target class type
 	std::string target_type_name;  // Target type name
 	bool is_reference = false;   // true for references (throws on failure), false for pointers (returns nullptr)
 };

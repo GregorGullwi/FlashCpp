@@ -1060,6 +1060,7 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		TypeidOp op{
 			.result = result_temp,
 			.operand = type_name,  // Type name for RTTI lookup
+			.type_index = type_node.type_index(),
 			.is_type = true};
 		ir_.addInstruction(IrOpcode::Typeid, std::move(op), typeidNode.typeid_token());
 	} else {
@@ -1080,6 +1081,7 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		TypeidOp op{
 			.result = result_temp,
 			.operand = operand_value,  // Expression result
+			.type_index = expr_operands.type_index,
 			.is_type = false};
 		ir_.addInstruction(IrOpcode::Typeid, std::move(op), typeidNode.typeid_token());
 	}
@@ -1143,6 +1145,8 @@ ExprResult AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode
 	DynamicCastOp op{
 		.result = result_temp,
 		.source = source_ptr,
+		.source_type_index = expr_operands.type_index,
+		.target_type_index = target_type_node.type_index(),
 		.target_type_name = target_type_name,
 		.is_reference = target_type_node.is_reference()};
 	ir_.addInstruction(IrOpcode::DynamicCast, std::move(op), dynamicCastNode.cast_token());

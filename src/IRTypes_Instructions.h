@@ -830,7 +830,7 @@ public:
 		} break;
 
 		case IrOpcode::Typeid: {
-			// %result = typeid [type_name_or_expr] [is_type]
+			// %result = typeid [type_name_or_expr] [type_index] [is_type]
 			auto& op = getTypedPayload<TypeidOp>();
 			oss << '%' << op.result.var_number << " = typeid ";
 			if (const auto* string = std::get_if<StringHandle>(&op.operand)) {
@@ -838,13 +838,16 @@ public:
 			} else {
 				oss << '%' << std::get<TempVar>(op.operand).var_number;
 			}
+			oss << " [type_index=" << op.type_index.index() << ':' << static_cast<int>(op.type_index.category()) << "]";
 			oss << " [is_type=" << (op.is_type ? "true" : "false") << "]";
 		} break;
 
 		case IrOpcode::DynamicCast: {
-			// %result = dynamic_cast %source_ptr [target_type] [is_reference]
+			// %result = dynamic_cast %source_ptr [source_type] [target_type] [is_reference]
 			auto& op = getTypedPayload<DynamicCastOp>();
 			oss << '%' << op.result.var_number << " = dynamic_cast %" << op.source.var_number;
+			oss << " [src=" << op.source_type_index.index() << ':' << static_cast<int>(op.source_type_index.category()) << "]";
+			oss << " [dst=" << op.target_type_index.index() << ':' << static_cast<int>(op.target_type_index.category()) << "]";
 			oss << " [" << op.target_type_name << "]";
 			oss << " [is_ref=" << (op.is_reference ? "true" : "false") << "]";
 		} break;

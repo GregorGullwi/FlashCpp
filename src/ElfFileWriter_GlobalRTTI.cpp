@@ -620,7 +620,7 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 							   std::string_view class_name,
 							   [[maybe_unused]] std::span<const std::string_view> base_class_names,
 							   [[maybe_unused]] std::span<const BaseClassDescriptorInfo> base_class_info,
-							   const RTTITypeInfo* rtti_info,
+							   [[maybe_unused]] const RTTITypeInfo* rtti_info,
 							   TypeIndex subobject_type_index,
 							   int64_t offset_to_top) {
 
@@ -638,35 +638,10 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	// - RTTI pointer (8 bytes) - pointer to typeinfo structure
 	// - Function pointers (8 bytes each)
 
-	// First, emit typeinfo if available (goes into .rodata BEFORE the vtable)
+	// First, ensure the ABI typeinfo symbol exists before we capture the vtable
+	// offset. The RTTI object itself lives in .data.rel.ro; the vtable only
+	// carries a relocation to it.
 	std::string typeinfo_symbol;
-	if (rtti_info && rtti_info->itanium_type_info) {
-		// Generate typeinfo symbol name: _ZTI + mangled class name
-		// For now, use the class name length-prefixed
-		StringBuilder typeinfo_builder;
-		typeinfo_builder.append("_ZTI").append(class_name.length()).append(class_name);
-		typeinfo_symbol = std::string(typeinfo_builder.commit());
-
-		// Determine which typeinfo structure to emit based on kind
-		if (rtti_info->itanium_kind == RTTITypeInfo::ItaniumTypeInfoKind::ClassTypeInfo) {
-			add_typeinfo(typeinfo_symbol, rtti_info->itanium_type_info, sizeof(ItaniumClassTypeInfo));
-		} else if (rtti_info->itanium_kind == RTTITypeInfo::ItaniumTypeInfoKind::SIClassTypeInfo) {
-			add_typeinfo(typeinfo_symbol, rtti_info->itanium_type_info, sizeof(ItaniumSIClassTypeInfo));
-		} else if (rtti_info->itanium_kind == RTTITypeInfo::ItaniumTypeInfoKind::VMIClassTypeInfo) {
-			// Variable size - need to calculate
-			const ItaniumVMIClassTypeInfo* vmi = static_cast<const ItaniumVMIClassTypeInfo*>(rtti_info->itanium_type_info);
-			// Safe calculation - VMI always has at least 1 base class
-			size_t vmi_size = sizeof(ItaniumVMIClassTypeInfo);
-			if (vmi->base_count > 1) {
-				vmi_size += (vmi->base_count - 1) * sizeof(ItaniumBaseClassTypeInfo);
-			}
-			add_typeinfo(typeinfo_symbol, rtti_info->itanium_type_info, vmi_size);
-		}
-	}
-
-	// Capture vtable_offset AFTER typeinfo emission, since add_typeinfo also
-	// appends to .rodata and would shift the vtable position.
-	uint32_t vtable_offset = rodata->get_size();
 
 	char vtable_data_buf[8192]; // Stack-based buffer for vtable (reasonable max size)
 	size_t vtable_data_size = 0;
@@ -697,6 +672,8 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 			}
 		}
 		if (this_struct) {
+			typeinfo_symbol = get_or_create_class_typeinfo(this_struct);
+
 			const StructTypeInfo* vbase_owner_struct = this_struct;
 			size_t subobject_offset = 0;
 			if (subobject_type_index.is_valid()) {
@@ -727,6 +704,9 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 				vbase_entries.push_back({static_cast<int64_t>(offset) - static_cast<int64_t>(subobject_offset)});
 			}
 		}
+	}
+	if (typeinfo_symbol.empty() && !class_name.empty()) {
+		typeinfo_symbol = get_or_create_class_typeinfo(class_name);
 	}
 	size_t n_vbase_entries = vbase_entries.size();
 
@@ -759,6 +739,17 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	for (size_t i = 0; i < function_symbols.size(); ++i) {
 		append_bytes(&func_ptr, 8);
 	}
+
+	// Align the concrete vtable object itself to pointer alignment before we
+	// record offsets or append bytes.
+	size_t rodata_size = rodata->get_size();
+	size_t padding = (8 - (rodata_size % 8)) % 8;
+	if (padding != 0) {
+		static const char zero_padding[8] = {};
+		rodata->append_data(zero_padding, padding);
+	}
+
+	uint32_t vtable_offset = rodata->get_size();
 
 	// Add vtable data to .rodata
 	rodata->append_data(vtable_data_buf, vtable_data_size);
