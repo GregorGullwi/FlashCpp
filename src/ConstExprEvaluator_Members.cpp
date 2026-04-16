@@ -6338,6 +6338,11 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 					   : evaluate(initializer, context);
 		if (!val.success())
 			return val;
+		if (!member_info) {
+			return EvalResult::error(
+				"Excess or unrecognized initializer in aggregate initialization "
+				"(no matching member for positional initializer)");
+		}
 		val = applyAggregateMemberScalarInitialization(
 			*member_info, std::move(val), init_list.is_brace_init());
 		if (!val.success())
