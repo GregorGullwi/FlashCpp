@@ -831,6 +831,22 @@ std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view cla
 	type_desc_sym->set_section_number(rdata_section->get_index() + 1);
 	type_desc_sym->set_value(type_desc_offset);
 
+	// Relocate vftable pointer to type_info::vftable
+	auto* type_info_vftable = coffi_.get_symbol("??_7type_info@@6B@");
+	if (!type_info_vftable) {
+		type_info_vftable = coffi_.add_symbol("??_7type_info@@6B@");
+		type_info_vftable->set_value(0);
+		type_info_vftable->set_section_number(0);
+		type_info_vftable->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		type_info_vftable->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+	}
+
+	COFFI::rel_entry_generic td_vft_reloc;
+	td_vft_reloc.virtual_address = type_desc_offset;
+	td_vft_reloc.symbol_table_index = type_info_vftable->get_index();
+	td_vft_reloc.type = IMAGE_REL_AMD64_ADDR64;
+	rdata_section->add_relocation_entry(&td_vft_reloc);
+
 	// Update cache
 	symbol_index_cache_[type_desc_symbol] = type_desc_sym->get_index();
 

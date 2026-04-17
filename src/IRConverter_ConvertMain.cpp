@@ -6108,14 +6108,16 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		// Check if this is a reference cast (needs to throw exception on failure)
 	if (op.is_reference) {
 			// For reference casts, throw std::bad_cast instead of returning nullptr
-			// Call the platform bad_cast runtime (never returns)
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// ELF: __dynamic_cast returns nullptr on failure, so we need to throw explicitly
 			emitCall("__cxa_bad_cast");
+			// Note: We don't restore RSP or add code after this because __cxa_bad_cast never returns
 		} else {
-			emitSubRSP(32);	// Shadow space for Windows x64 calling convention
-			emitCall("__dynamic_cast_throw_bad_cast");
+			// Windows: __RTDynamicCast with isReference=1 already throws std::bad_cast internally,
+			// so this path is unreachable. Emit a trap instruction as a safeguard.
+			// INT3 (debugger breakpoint/trap)
+			textSectionData.push_back(0xCC);
 		}
-			// Note: We don't restore RSP or add code after this because __dynamic_cast_throw_bad_cast never returns
 	} else {
 			// For pointer casts, return nullptr
 			// XOR RAX, RAX  ; set result to nullptr
