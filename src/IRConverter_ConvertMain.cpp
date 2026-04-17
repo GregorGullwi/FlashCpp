@@ -5908,7 +5908,9 @@ void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instructi
 		} else {
 				// MSVC's helper expects the original object pointer, not the COL pointer.
 			emitMovRegReg(X64Register::RCX, X64Register::RAX);
+			emitSubRSP(32);	// Shadow space for Windows x64 calling convention
 			emitCall("__RTtypeid");
+			emitAddRSP(32);	// Restore stack
 		}
 	}
 
