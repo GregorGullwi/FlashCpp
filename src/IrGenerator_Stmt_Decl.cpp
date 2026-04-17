@@ -921,7 +921,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					}
 				} else {
 						// Array initialization: each element is a separate value
-					bool packed_as_constexpr_array = false;
+					bool materialized_as_constexpr_array = false;
 					if (type_node.is_array() && !type_node.array_dimensions().empty()) {
 						auto constexpr_ctx = makeStaticStorageEvalContext();
 						auto array_result = ConstExpr::Evaluator::materialize_array_value_with_spec(
@@ -932,14 +932,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						if (array_result.success()) {
 							op.init_data.assign(op.element_count * element_size, 0);
 							packArrayResultIntoInitData(op.init_data, array_result, type_node.type(), op.element_count, element_size);
-							packed_as_constexpr_array = true;
+							materialized_as_constexpr_array = true;
 						} else if (shouldRejectStaticStorageEvalFailure(array_result.error_type)) {
 							throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
 											   "' initializer is not a constant expression: " + array_result.error_message);
 						}
 					}
 
-					if (!packed_as_constexpr_array) {
+					if (!materialized_as_constexpr_array) {
 							// Check if this is an array of structs (elements may be InitializerListNodes)
 						bool handled_as_struct_array = false;
 						if ((is_struct_type(type_node.category()))) {

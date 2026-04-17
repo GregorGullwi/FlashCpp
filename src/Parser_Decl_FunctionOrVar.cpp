@@ -909,6 +909,9 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		global_decl_node.set_is_constexpr(is_constexpr);
 		global_decl_node.set_is_constinit(is_constinit);
 
+		// Parse the initializer against the registered declaration node so later
+		// unsized-array inference updates the same AST object already stored in the
+		// symbol table and returned VariableDeclarationNode.
 		DeclarationNode& registered_decl = global_decl_node.declaration();
 		TypeSpecifierNode& type_specifier = registered_decl.type_node().as<TypeSpecifierNode>();
 		const Token& identifier_token = registered_decl.identifier_token();
