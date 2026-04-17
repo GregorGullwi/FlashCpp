@@ -1,4 +1,4 @@
-﻿#include "Parser.h"
+#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -253,13 +253,66 @@ static bool hasLaterUsableTemplateDefinitionWithMatchingShape(
 	return false;
 }
 
+// Compute a structural specificity score for a function template overload.
+// A higher score means the overload's parameter types are more constrained/specific.
+// Parameters whose type token is a bare template param (e.g. Type in swap(Type&,Type&))
+// score 0 for that parameter; concrete/instantiated types (e.g. pair<F,S>) score higher.
+// This is used in SFINAE overload selection to prefer the most-specialized overload.
+static int computeTemplateFunctionSpecificity(const TemplateFunctionDeclarationNode& template_func) {
+	// Build set of template parameter name handles for quick lookup.
+	std::unordered_set<StringHandle, StringHandleHash> param_name_handles;
+	for (const auto& tp : template_func.template_parameters()) {
+		if (tp.is<TemplateParameterNode>()) {
+			param_name_handles.insert(tp.as<TemplateParameterNode>().nameHandle());
+		}
+	}
+
+	int score = 0;
+	for (const auto& p : template_func.function_decl_node().parameter_nodes()) {
+		if (!p.is<DeclarationNode>()) continue;
+		const TypeSpecifierNode& ts = p.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+
+		// Check whether this param's type token matches a template parameter name.
+		// If it does, it's a bare template param (low specificity).
+		StringHandle tok_handle = ts.token().handle();
+		bool is_bare_template_param = tok_handle.isValid() && param_name_handles.count(tok_handle) > 0;
+
+		if (is_struct_type(ts.category()) || ts.category() == TypeCategory::UserDefined) {
+			if (!is_bare_template_param) {
+				// Named concrete type (e.g., pair<F,S>) — significantly more specific.
+				if (const TypeInfo* ti = tryGetTypeInfo(ts.type_index())) {
+					if (ti->isTemplateInstantiation()) {
+						score += 2 + static_cast<int>(ti->templateArgs().size());
+					} else {
+						score += 2; // concrete named non-template-instantiation struct
+					}
+				} else {
+					score += 2; // named type without TypeInfo (e.g., dependent instantiation)
+				}
+			}
+			// bare template param → contributes 0 here
+		} else if (ts.category() != TypeCategory::Invalid) {
+			// Concrete built-in type → 1
+			score += 1;
+		}
+
+		score += static_cast<int>(ts.pointer_depth());
+		if (ts.is_lvalue_reference()) score += 1;
+		if (ts.is_rvalue_reference()) score += 1;
+		if (ts.is_const()) score += 1;
+	}
+	return score;
+}
+
 bool Parser::tryAppendDefaultTemplateArg(
 	const TemplateParameterNode& param,
 	const std::vector<ASTNode>& template_params,
-	InlineVector<TemplateTypeArg, 4>& template_args) {
+	InlineVector<TemplateTypeArg, 4>& template_args,
+	NamespaceHandle source_namespace) {
 	FLASH_LOG_FORMAT(Templates, Debug,
-					 "tryAppendDefaultTemplateArg: param='{}', has_default={}, has_default_pos={}",
-					 param.name(), param.has_default(), param.has_default_value_position());
+					 "tryAppendDefaultTemplateArg: param='{}', has_default={}, has_default_pos={}, source_ns={}",
+					 param.name(), param.has_default(), param.has_default_value_position(),
+					 source_namespace.isValid() ? gNamespaceRegistry.getQualifiedName(source_namespace) : "(none)");
 	if (!param.has_default()) {
 		return false;
 	}
@@ -302,6 +355,34 @@ bool Parser::tryAppendDefaultTemplateArg(
 			default_value->type));
 		return true;
 	};
+
+	// Helper to enter the source namespace for reparsing if provided
+	// Pushes ALL ancestor namespace scopes (outermost first) so that unqualified
+	// lookup correctly walks from the declaration namespace up to global.
+	// Returns the number of scopes pushed (to be passed to exitSourceNamespaceIfNeeded).
+	auto enterSourceNamespaceIfNeeded = [&]() -> int {
+		if (!source_namespace.isValid() || source_namespace.isGlobal()) {
+			return 0;
+		}
+		// Collect chain from innermost to outermost (excluding global)
+		InlineVector<NamespaceHandle, 8> chain;
+		NamespaceHandle cur = source_namespace;
+		while (cur.isValid() && !cur.isGlobal()) {
+			chain.push_back(cur);
+			cur = gNamespaceRegistry.getParent(cur);
+		}
+		// Push from outermost to innermost so lookup finds ancestors first
+		for (int i = static_cast<int>(chain.size()) - 1; i >= 0; --i) {
+			gSymbolTable.enter_namespace(chain[i]);
+		}
+		return static_cast<int>(chain.size());
+	};
+	auto exitSourceNamespaceIfNeeded = [&](int entered) {
+		for (int i = 0; i < entered; ++i) {
+			gSymbolTable.exit_scope();
+		}
+	};
+
 	auto tryReparseNonTypeDefaultArg = [&]() -> bool {
 		if (!param.has_default_value_position() || template_args.empty()) {
 			return false;
@@ -323,7 +404,9 @@ bool Parser::tryAppendDefaultTemplateArg(
 		FlashCpp::TemplateParameterScope sfinae_scope;
 		registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 
+		int entered_ns = enterSourceNamespaceIfNeeded();
 		auto reparse_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::TemplateTypeArg);
+		exitSourceNamespaceIfNeeded(entered_ns);
 		restore_lexer_position_only(sfinae_pos);
 
 		if (reparse_result.is_error() || !reparse_result.node().has_value() ||
@@ -354,7 +437,14 @@ bool Parser::tryAppendDefaultTemplateArg(
 			FlashCpp::TemplateParameterScope sfinae_scope;
 			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 
+			int entered_ns = enterSourceNamespaceIfNeeded();
+			FLASH_LOG_FORMAT(Templates, Debug, "SFINAE reparse: entered_ns={}, current_ns={}",
+				entered_ns,
+				gSymbolTable.get_current_namespace_handle().isValid()
+					? gNamespaceRegistry.getQualifiedName(gSymbolTable.get_current_namespace_handle())
+					: "(global)");
 			auto reparse_result = parse_type_specifier();
+			exitSourceNamespaceIfNeeded(entered_ns);
 			restore_lexer_position_only(sfinae_pos);
 
 			if (reparse_result.is_error() || !reparse_result.node().has_value() ||
@@ -1144,6 +1234,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 		const std::vector<ASTNode>& template_params = template_func.template_parameters();
 		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+		FLASH_LOG_FORMAT(Templates, Debug, "[explicit] func_decl name='{}' ns={}",
+			func_decl.decl_node().identifier_token().value(),
+			func_decl.namespace_handle().isValid()
+				? gNamespaceRegistry.getQualifiedName(func_decl.namespace_handle())
+				: "(invalid)");
 		bool has_variadic_func_pack = false;
 		size_t required_function_args_after_pack = 0;
 
@@ -1253,7 +1348,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					}
 					template_args.push_back(TemplateTypeArg::makeTemplate(tpl_name_handle));
 					++explicit_idx;
-				} else if (!tryAppendDefaultTemplateArg(param, template_params, template_args)) {
+				} else if (!tryAppendDefaultTemplateArg(param, template_params, template_args, func_decl.namespace_handle())) {
 					overload_mismatch = true;
 					break;
 				}
@@ -1337,7 +1432,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						template_param_arg_counts[i] = template_args.size() - arg_start_index;
 						continue;
 					}
-					if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
+					if (tryAppendDefaultTemplateArg(param, template_params, template_args, func_decl.namespace_handle())) {
 						template_param_arg_starts[i] = arg_start_index;
 						template_param_arg_counts[i] = template_args.size() - arg_start_index;
 						continue;
@@ -2088,8 +2183,19 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Found {} template overload(s) for '{}'",
 					 recursion_depth, all_templates->size(), template_name);
 
-	// Try each template overload in order
-	// For SFINAE: If instantiation fails due to substitution errors, silently skip to next overload
+	// Try each template overload in order.
+	// For SFINAE: collect all viable matches and return the most specific one.
+	// For non-SFINAE: return the first successful non-deferred match.
+	bool outer_sfinae_context = in_sfinae_context_;
+
+	struct SfinaeCandidateEntry {
+		ASTNode result;
+		int specificity;
+		bool is_deleted;
+		size_t overload_idx;
+	};
+	std::vector<SfinaeCandidateEntry> sfinae_candidates;
+
 	std::optional<ASTNode> deferred_forward_declaration_result;
 	for (size_t overload_idx = 0; overload_idx < all_templates->size(); ++overload_idx) {
 		const ASTNode& template_node = (*all_templates)[overload_idx];
@@ -2105,7 +2211,6 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 		// Enable SFINAE context for this instantiation attempt
 		bool prev_sfinae_context = in_sfinae_context_;
-		bool outer_sfinae_context = prev_sfinae_context;
 		in_sfinae_context_ = true;
 		ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
 
@@ -2117,31 +2222,78 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			const TemplateFunctionDeclarationNode& template_func =
 				template_node.as<TemplateFunctionDeclarationNode>();
 			const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
-			if (!outer_sfinae_context &&
-				!hasUsableTemplateFunctionDefinition(func_decl) &&
-				hasLaterUsableTemplateDefinitionWithMatchingShape(*all_templates, overload_idx)) {
-				FLASH_LOG_FORMAT(
-					Templates,
-					Debug,
-					"[depth={}]: Deferring bodyless overload {} for '{}' until later matching definitions are checked",
-					recursion_depth,
-					overload_idx,
-					template_name);
-				if (!deferred_forward_declaration_result.has_value()) {
-					deferred_forward_declaration_result = result;
-				}
-				continue;
-			}
-			// Success! Return this instantiation
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Successfully instantiated overload {} for '{}'",
-							 recursion_depth, overload_idx, template_name);
-			recursion_depth--;
-			return result;
-		}
 
-		// Instantiation failed - try next overload (SFINAE)
-		FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Overload {} failed substitution, trying next",
-						 recursion_depth, overload_idx);
+			if (outer_sfinae_context) {
+				// In SFINAE: collect all viable candidates for best-match selection.
+				int spec = computeTemplateFunctionSpecificity(template_func);
+				bool is_del = func_decl.is_deleted();
+				FLASH_LOG_FORMAT(Templates, Debug,
+					"[depth={}]: SFINAE candidate overload {} for '{}' specificity={} deleted={}",
+					recursion_depth, overload_idx, template_name, spec, is_del);
+				sfinae_candidates.push_back({*result, spec, is_del, overload_idx});
+			} else {
+				if (!hasUsableTemplateFunctionDefinition(func_decl) &&
+					hasLaterUsableTemplateDefinitionWithMatchingShape(*all_templates, overload_idx)) {
+					FLASH_LOG_FORMAT(
+						Templates,
+						Debug,
+						"[depth={}]: Deferring bodyless overload {} for '{}' until later matching definitions are checked",
+						recursion_depth,
+						overload_idx,
+						template_name);
+					if (!deferred_forward_declaration_result.has_value()) {
+						deferred_forward_declaration_result = result;
+					}
+					continue;
+				}
+				// Non-SFINAE: success — return first good match.
+				FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Successfully instantiated overload {} for '{}'",
+								 recursion_depth, overload_idx, template_name);
+				recursion_depth--;
+				return result;
+			}
+		} else {
+			// Instantiation failed - try next overload (SFINAE)
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Overload {} failed substitution, trying next",
+							 recursion_depth, overload_idx);
+		}
+	}
+
+	// SFINAE best-match selection: pick the most specific successful candidate.
+	if (!sfinae_candidates.empty()) {
+		int best_specificity = sfinae_candidates[0].specificity;
+		for (const auto& candidate : sfinae_candidates) {
+			if (candidate.specificity > best_specificity) {
+				best_specificity = candidate.specificity;
+			}
+		}
+		// Collect all candidates at the best specificity level.
+		bool any_deleted_at_best = false;
+		const SfinaeCandidateEntry* best_non_deleted = nullptr;
+		for (const auto& candidate : sfinae_candidates) {
+			if (candidate.specificity == best_specificity) {
+				if (candidate.is_deleted) {
+					any_deleted_at_best = true;
+				} else if (!best_non_deleted) {
+					best_non_deleted = &candidate;
+				}
+			}
+		}
+		// If any best-specificity candidate is deleted → SFINAE failure.
+		// This handles the case where a deleted overload explicitly catches
+		// a class of inputs (e.g., pair<const F,S>) that should not be swappable.
+		if (any_deleted_at_best) {
+			FLASH_LOG_FORMAT(Templates, Debug,
+				"[depth={}]: SFINAE failure for '{}': deleted candidate at best specificity={}",
+				recursion_depth, template_name, best_specificity);
+			recursion_depth--;
+			return std::nullopt;
+		}
+		FLASH_LOG_FORMAT(Templates, Debug,
+			"[depth={}]: SFINAE best match for '{}' is overload {} specificity={} deleted=false",
+			recursion_depth, template_name, best_non_deleted->overload_idx, best_specificity);
+		recursion_depth--;
+		return best_non_deleted->result;
 	}
 
 	if (deferred_forward_declaration_result.has_value()) {
@@ -2167,7 +2319,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 	const std::vector<TypeSpecifierNode>& arg_types,
 	const CallArgDeductionInfo& deduction_info,
 	size_t function_pack_arg_start,
-	int recursion_depth) {
+	int recursion_depth,
+	NamespaceHandle source_namespace) {
 	InlineVector<TemplateTypeArg, 4> template_args;
 	std::vector<TypeCategory> deduced_type_args;
 	size_t next_deduced_type_arg = 0;
@@ -2265,7 +2418,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 				++arg_index;
 				continue;
 			}
-			if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
+			if (tryAppendDefaultTemplateArg(param, template_params, template_args, source_namespace)) {
 				continue;
 			}
 			return std::nullopt;
@@ -2281,7 +2434,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 			template_args.push_back(deduced_value_args[next_deduced_value_arg++]);
 			continue;
 		}
-		if (tryAppendDefaultTemplateArg(param, template_params, template_args)) {
+		if (tryAppendDefaultTemplateArg(param, template_params, template_args, source_namespace)) {
 			continue;
 		}
 
@@ -2382,7 +2535,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		arg_types,
 		*deduction_info,
 		function_pack_arg_start,
-		recursion_depth);
+		recursion_depth,
+		func_decl.namespace_handle());
 	if (!deduced_template_args.has_value()) {
 		return std::nullopt;
 	}
@@ -3436,8 +3590,39 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Register with the human-readable template-specific name for template lookups
 	gSymbolTable.insertGlobal(saved_mangled_name, new_func_node);
 
-	// Add to top-level AST so it gets visited by the code generator
-	registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
+	// Add to top-level AST so it gets visited by the code generator.
+	// Bodyless instantiations (no function definition) can never be compiled and must
+	// not be registered — they appear as declaration-only forward declarations or as
+	// SFINAE probes with dependent/unresolved parameter types.  Registering them causes
+	// IR errors when codegen encounters parameters that still hold template placeholders.
+	// Add to top-level AST so it gets visited by the code generator.
+	// Skip registration in two cases that produce uncompilable nodes:
+	//   1. Bodyless instantiations (forward declarations, SFINAE probes) — no code to emit.
+	//   2. Bodied instantiations where any parameter still has an unresolved dependent type
+	//      (TypeCategory::UserDefined with size=0).  This happens when swap or similar
+	//      helpers are instantiated during default-template-argument analysis with still-
+	//      dependent arguments (e.g., Type=23 during initial parse of detail::test).
+	const bool has_unresolved_params = std::invoke([&]() {
+		for (const auto& param : new_func_ref.parameter_nodes()) {
+			if (param.is<DeclarationNode>()) {
+				const auto& type_node = param.as<DeclarationNode>().type_node();
+				if (type_node.is<TypeSpecifierNode>()) {
+					const auto& pt = type_node.as<TypeSpecifierNode>();
+					if (pt.category() == TypeCategory::UserDefined && pt.size_in_bits() == 0) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	});
+	FLASH_LOG_FORMAT(Templates, Debug,
+		"'{}': has_body={}, has_unresolved_params={}, registering={}",
+		template_name, func_definition.has_value(), has_unresolved_params,
+		func_definition.has_value() && !has_unresolved_params);
+	if (func_definition.has_value() && !has_unresolved_params) {
+		registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
+	}
 
 	return new_func_node;
 }

@@ -9,7 +9,9 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 	const std::vector<ASTNode>& template_params,
 	const OuterTemplateBinding* outer_binding,
 	InlineVector<TemplateTypeArg, 4>& current_template_args) {
-	if (tryAppendDefaultTemplateArg(param, template_params, current_template_args)) {
+	// Member templates don't have a separate namespace context - use invalid handle
+	// which causes no namespace scope to be entered during SFINAE reparse.
+	if (tryAppendDefaultTemplateArg(param, template_params, current_template_args, NamespaceHandle{})) {
 		return true;
 	}
 	if (!param.has_default() || !outer_binding) {
@@ -221,7 +223,8 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 			continue;
 		}
 
-		if (!tryAppendDefaultTemplateArg(param, template_params, ctor_template_args)) {
+		// Constructor templates don't have a separate namespace context
+		if (!tryAppendDefaultTemplateArg(param, template_params, ctor_template_args, NamespaceHandle{})) {
 			return std::nullopt;
 		}
 	}

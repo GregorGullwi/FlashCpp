@@ -21,6 +21,9 @@ materialization consolidation is intended to fix.
 
 ## Function-template forward-declaration + definition instantiation picks wrong overload
 
+**Status:** Partially resolved. The `hasLaterUsableTemplateDefinitionWithMatchingShape` check
+now defers body-less matches in non-SFINAE context, redirecting to the later definition.
+
 **Repro:**
 ```cpp
 template <template <typename, int> class C, typename T, int N>
@@ -32,23 +35,25 @@ int useMixed(C<T, N>& c) {               // full definition
     return c.data + r;
 }
 ```
-**Symptom:** Link error: undefined reference to `useMixed(...)`.
-When a function template is both forward-declared and later defined, both
-declarations are pushed into `TemplateRegistry` as separate entries.  The
-instantiation loop in `try_instantiate_single_template` finds the forward
-declaration first (no body → `inline_always`), returns immediately, and
-never reaches the full definition.
-**Root cause:** `TemplateRegistry_Registry.h::registerTemplate` does not
-replace a prior body-less entry when the full definition is registered,
-unlike the equivalent class-template path which already merges forward
-declarations.  An attempted fix (replacing forward-decl entries on
-registration of a definition) caused a regression in SFINAE tests that use
-`declval` — specifically `test_namespaced_pair_swap_sfinae_ret0.cpp` — because
-the replacement matched `= delete` overloads with the same template/function
-parameter count, altering the overload set in a way that broke lookup inside
-SFINAE-gated default template arguments.
-**Workaround:** The regression test `test_template_template_body_reparse_odr_use_ret0.cpp`
-uses only the inline (non-forward-declared) definition form, which instantiates
-correctly after the `isTemplateTemplateParameter` fix.
+**Symptom (resolved):** Link error: undefined reference to `useMixed(...)`.
+The `hasLaterUsableTemplateDefinitionWithMatchingShape` check now defers body-less
+matches in non-SFINAE context, so later full definitions are preferred.
+**Residual issue:** The `enable_if<false>` substitution failure in complex SFINAE
+scenarios (see below) can still result in incorrect overload selection when two
+overloads have equal structural specificity but different enable_if conditions.
 **Standards note:** C++20 [temp.decls]/1 requires that a function template
 defined after its declaration be treated as the same entity.
+
+## SFINAE enable_if<false> not causing substitution failure in return type
+
+**Test:** `test_namespaced_pair_swap_sfinae_ret0.cpp` now passes with workaround.
+**Symptom:** When a function template has `enable_if<false_condition>::type` as its
+return type, FlashCpp may still consider the instantiation successful (as a bodyless
+placeholder) rather than failing the substitution.
+**Workaround applied:** In SFINAE overload selection, if any candidate at the
+highest specificity level is `= delete`, the entire group is treated as a SFINAE
+failure. This matches the intent of `= delete` overloads that explicitly catch
+"error" cases (e.g., `swap` on `pair<const F, S>`).
+**Proper fix needed:** The SFINAE instantiation path should detect `enable_if<false>`
+return types and propagate them as substitution failures, eliminating the need for
+the tie-breaking heuristic.
