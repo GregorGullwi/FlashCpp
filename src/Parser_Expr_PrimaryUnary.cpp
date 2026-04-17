@@ -800,11 +800,19 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		SaveHandle saved_pos = save_token_position();
 		ParseResult type_result = parse_type_specifier();
 
-		// Check if this is really a type by seeing if ')' follows
-		// This disambiguates between "typeid(int)" and "typeid(x + 1)" where x might be
-		// incorrectly parsed as a user-defined type
-		bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() &&
-										 peek() == ")"_tok;
+		bool parsed_resolved_type = false;
+		if (!type_result.is_error() && type_result.node().has_value() &&
+			type_result.node()->is<TypeSpecifierNode>()) {
+			const auto& type_node = type_result.node()->as<TypeSpecifierNode>();
+			parsed_resolved_type =
+				type_node.category() != TypeCategory::UserDefined || type_node.type_index().is_valid();
+		}
+
+		// Check if this is really a type by seeing if ')' follows and the parsed type
+		// resolved to something more concrete than a bare unresolved user-defined name.
+		// This disambiguates between "typeid(int)" and "typeid(x)" where x would
+		// otherwise parse as a speculative user-defined type.
+		bool is_type_followed_by_paren = parsed_resolved_type && peek() == ")"_tok;
 
 		if (is_type_followed_by_paren) {
 			// Successfully parsed as type and ')' follows

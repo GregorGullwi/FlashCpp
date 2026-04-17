@@ -5850,21 +5850,43 @@ void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instructi
 			// For polymorphic types, RTTI pointer is at vtable[-1]
 			// For non-polymorphic types, return compile-time constant
 
-			// Load the expression result (should be a pointer to object)
-		TempVar expr_var = std::get<TempVar>(op.operand);
-		int expr_offset = getStackOffsetFromTempVar(expr_var);
+			// Load the expression result (object pointer or addressable named object) into RAX.
+		if (const auto* expr_var = std::get_if<TempVar>(&op.operand)) {
+			int expr_offset = getStackOffsetFromTempVar(*expr_var);
 
-			// Load object pointer into RAX
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x8B); // MOV r64, r/m64
-		if (expr_offset >= -128 && expr_offset <= 127) {
-			textSectionData.push_back(0x45); // ModR/M: RAX, [RBP + disp8]
-			textSectionData.push_back(static_cast<uint8_t>(expr_offset));
+				// Load object pointer into RAX
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			if (expr_offset >= -128 && expr_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: RAX, [RBP + disp8]
+				textSectionData.push_back(static_cast<uint8_t>(expr_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: RAX, [RBP + disp32]
+				for (int j = 0; j < 4; ++j) {
+					textSectionData.push_back(static_cast<uint8_t>(expr_offset & 0xFF));
+					expr_offset >>= 8;
+				}
+			}
 		} else {
-			textSectionData.push_back(0x85); // ModR/M: RAX, [RBP + disp32]
-			for (int j = 0; j < 4; ++j) {
-				textSectionData.push_back(static_cast<uint8_t>(expr_offset & 0xFF));
-				expr_offset >>= 8;
+			const StringHandle expr_name_handle = std::get<StringHandle>(op.operand);
+			const StackVariableScope& current_scope = variable_scopes.back();
+			bool is_global = isGlobalVariable(expr_name_handle);
+
+			if (is_global) {
+				uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
+				pending_global_relocations_.push_back({reloc_offset, expr_name_handle, IMAGE_REL_AMD64_REL32});
+			} else {
+				auto it = current_scope.variables.find(expr_name_handle);
+				if (it == current_scope.variables.end()) {
+					throw InternalError("typeid expression variable not found in current scope");
+				}
+				int expr_offset = it->second.offset;
+				auto ref_info = getIndirectStackInfo(expr_offset);
+				if (ref_info.has_value()) {
+					emitMovFromFrame(X64Register::RAX, expr_offset);
+				} else {
+					emitLeaFromFrame(X64Register::RAX, expr_offset);
+				}
 			}
 		}
 
@@ -5876,20 +5898,24 @@ void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instructi
 			emitCall("__cxa_bad_typeid");
 			textSectionData[non_null_object_jump + 1] =
 				static_cast<uint8_t>(textSectionData.size() - non_null_object_jump - 2);
+
+				// Load vtable pointer from object (first 8 bytes)
+				// MOV RAX, [RAX]
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			textSectionData.push_back(0x00); // ModR/M: RAX, [RAX]
+
+				// Load RTTI pointer from vtable[-1] (8 bytes before vtable)
+				// MOV RAX, [RAX - 8]
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			textSectionData.push_back(0x40); // ModR/M: RAX, [RAX + disp8]
+			textSectionData.push_back(static_cast<uint8_t>(-8)); // -8 offset
+		} else {
+				// MSVC's helper expects the original object pointer, not the COL pointer.
+			emitMovRegReg(X64Register::RCX, X64Register::RAX);
+			emitCall("__RTtypeid");
 		}
-
-			// Load vtable pointer from object (first 8 bytes)
-			// MOV RAX, [RAX]
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x8B); // MOV r64, r/m64
-		textSectionData.push_back(0x00); // ModR/M: RAX, [RAX]
-
-			// Load RTTI pointer from vtable[-1] (8 bytes before vtable)
-			// MOV RAX, [RAX - 8]
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x8B); // MOV r64, r/m64
-		textSectionData.push_back(0x40); // ModR/M: RAX, [RAX + disp8]
-		textSectionData.push_back(static_cast<uint8_t>(-8)); // -8 offset
 	}
 
 		// Store result to stack
