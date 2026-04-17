@@ -4344,13 +4344,30 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
 	const size_t arg_count = arguments.size();
 	std::vector<ASTNode> candidates;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.operator_kind != OverloadableOperator::Call)
-			continue;
-		if (!member_func.function_decl.is<FunctionDeclarationNode>())
-			continue;
-		candidates.push_back(member_func.function_decl);
-	}
+	std::unordered_set<const StructTypeInfo*> visited;
+	auto collectCandidates = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
+		if (!visited.insert(current_struct).second)
+			return;
+		for (const auto& member_func : current_struct->member_functions) {
+			if (member_func.operator_kind != OverloadableOperator::Call)
+				continue;
+			if (!member_func.function_decl.is<FunctionDeclarationNode>())
+				continue;
+			candidates.push_back(member_func.function_decl);
+		}
+		for (const auto& base_spec : current_struct->base_classes) {
+			if (!base_spec.type_index.is_valid())
+				continue;
+			const TypeInfo* base_info = tryGetTypeInfo(base_spec.type_index);
+			if (!base_info)
+				continue;
+			const StructTypeInfo* base_struct = base_info->getStructInfo();
+			if (!base_struct)
+				continue;
+			self(self, base_struct);
+		}
+	};
+	collectCandidates(collectCandidates, struct_info);
 	if (candidates.empty())
 		return;
 
