@@ -545,7 +545,7 @@ ParseResult Parser::parse_template_declaration() {
 					QualifiedIdentifier::fromQualifiedName(
 						nested_qualified_class_name,
 						gSymbolTable.get_current_namespace_handle()),
-					out_of_line_member);
+					std::move(out_of_line_member));
 
 				FLASH_LOG(Templates, Debug, "Registered nested template out-of-line member: ",
 						  nested_qualified_class_name, "::", nested_func_name_token.value(),
