@@ -3994,11 +3994,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 					return ParseResult::success(*result);
 				}
-				// Template instantiation failed - always return error.
-				// In SFINAE context (e.g., requires expression), the caller
-				// (parse_requires_expression) handles errors by marking the
-				// requirement as unsatisfied (false node).
-				FLASH_LOG(Parser, Error, "Template instantiation failed");
+				// Template instantiation failure is an expected substitution failure in
+				// SFINAE contexts (e.g. decltype(...) inside a default template arg).
+				// Let the caller reject the overload without emitting a hard parser error.
+				if (in_sfinae_context_) {
+					FLASH_LOG(Templates, Debug, "SFINAE: template instantiation failed for call to '{}'", identifier_token.value());
+				} else {
+					FLASH_LOG(Parser, Error, "Template instantiation failed");
+				}
 				return ParseResult::error("Failed to instantiate template function", identifier_token);
 			}
 		}

@@ -779,6 +779,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				}
 
 				// Create the TemplateFunctionDeclarationNode wrapping the function
+				func_decl.set_is_template_pattern(true);
 				auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
 					std::move(template_params),
 					*func_node_ptr,

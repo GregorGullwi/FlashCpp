@@ -550,6 +550,20 @@ void registerTypeParamsInScope(
 	const InlineVector<TemplateTypeArg, 4>& type_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier) {
+	auto apply_registered_type_binding_metadata = [&](TypeInfo& type_info, const TemplateTypeArg& arg, bool preserve_ref_qualifier_for_arg) {
+		if (is_builtin_type(arg.typeEnum())) {
+			type_info.fallback_size_bits_ = get_type_size_bits(arg.category());
+		} else if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+			type_info.fallback_size_bits_ = arg_type_info->sizeInBits().value;
+		} else {
+			type_info.fallback_size_bits_ = 0;
+		}
+		if (preserve_ref_qualifier_for_arg) {
+			type_info.reference_qualifier_ = arg.is_rvalue_reference()
+												 ? ReferenceQualifier::RValueReference
+												 : (arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
+		}
+	};
 	auto register_type_binding = [&](StringHandle param_name, const TemplateTypeArg& arg) -> TypeInfo& {
 		if (arg.type_index.is_valid()) {
 			return add_type_alias_copy(
@@ -569,20 +583,7 @@ void registerTypeParamsInScope(
 		if (arg.is_template_template_arg)
 			continue;  // Template-template params don't represent concrete types
 		auto& type_info = register_type_binding(param_names[i], arg);
-		if (is_builtin_type(arg.typeEnum())) {
-			type_info.fallback_size_bits_ = get_type_size_bits(arg.category());
-		} else {
-			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
-				type_info.fallback_size_bits_ = arg_type_info->sizeInBits().value;
-			} else {
-				type_info.fallback_size_bits_ = 0;
-			}
-		}
-		if (preserve_ref_qualifier) {
-			type_info.reference_qualifier_ = arg.is_rvalue_reference()
-												 ? ReferenceQualifier::RValueReference
-												 : (arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
-		}
+		apply_registered_type_binding_metadata(type_info, arg, preserve_ref_qualifier);
 		scope.addParameter(&type_info);
 	}
 }
@@ -600,6 +601,20 @@ void registerTypeParamsInScope(
 	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier) {
+	auto apply_registered_type_binding_metadata = [&](TypeInfo& type_info, const TemplateTypeArg& arg, bool preserve_ref_qualifier_for_arg) {
+		if (is_builtin_type(arg.typeEnum())) {
+			type_info.fallback_size_bits_ = get_type_size_bits(arg.category());
+		} else if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+			type_info.fallback_size_bits_ = arg_type_info->sizeInBits().value;
+		} else {
+			type_info.fallback_size_bits_ = 0;
+		}
+		if (preserve_ref_qualifier_for_arg) {
+			type_info.reference_qualifier_ = arg.is_rvalue_reference()
+												 ? ReferenceQualifier::RValueReference
+												 : (arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
+		}
+	};
 	auto register_type_binding = [&](StringHandle param_name, const TemplateTypeArg& arg) -> TypeInfo& {
 		if (arg.type_index.is_valid()) {
 			return add_type_alias_copy(
@@ -619,11 +634,7 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = register_type_binding(param.nameHandle(), arg);
-			if (preserve_ref_qualifier) {
-				type_info.reference_qualifier_ = arg.is_rvalue_reference()
-													 ? ReferenceQualifier::RValueReference
-													 : (arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
-			}
+			apply_registered_type_binding_metadata(type_info, arg, preserve_ref_qualifier);
 			scope.addParameter(&type_info);
 		});
 }
@@ -633,6 +644,15 @@ void registerTypeParamsInScope(
 	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map) {
+	auto apply_registered_type_binding_metadata = [&](TypeInfo& type_info, const TemplateTypeArg& arg) {
+		if (is_builtin_type(arg.typeEnum())) {
+			type_info.fallback_size_bits_ = get_type_size_bits(arg.category());
+		} else if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+			type_info.fallback_size_bits_ = arg_type_info->sizeInBits().value;
+		} else {
+			type_info.fallback_size_bits_ = 0;
+		}
+	};
 	auto register_type_binding = [&](StringHandle param_name, const TemplateTypeArg& arg) -> TypeInfo& {
 		if (arg.type_index.is_valid()) {
 			return add_type_alias_copy(
@@ -652,6 +672,7 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = register_type_binding(param.nameHandle(), arg);
+			apply_registered_type_binding_metadata(type_info, arg);
 			scope.addParameter(&type_info);
 			if (sfinae_map)
 				(*sfinae_map)[type_info.name()] = arg.type_index;
@@ -3598,17 +3619,15 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Add to top-level AST so it gets visited by the code generator.
 	// Skip registration in two cases that produce uncompilable nodes:
 	//   1. Bodyless instantiations (forward declarations, SFINAE probes) — no code to emit.
-	//   2. Bodied instantiations where any parameter still has an unresolved dependent type
-	//      (TypeCategory::UserDefined with size=0).  This happens when swap or similar
-	//      helpers are instantiated during default-template-argument analysis with still-
-	//      dependent arguments (e.g., Type=23 during initial parse of detail::test).
+	//   2. Bodied instantiations where any parameter still carries an explicit dependent
+	//      placeholder TypeInfo after substitution/alias resolution.
 	const bool has_unresolved_params = std::invoke([&]() {
 		for (const auto& param : new_func_ref.parameter_nodes()) {
 			if (param.is<DeclarationNode>()) {
 				const auto& type_node = param.as<DeclarationNode>().type_node();
 				if (type_node.is<TypeSpecifierNode>()) {
 					const auto& pt = type_node.as<TypeSpecifierNode>();
-					if (pt.category() == TypeCategory::UserDefined && pt.size_in_bits() == 0) {
+					if (typeSpecStillUsesDependentPlaceholder(pt)) {
 						return true;
 					}
 				}
