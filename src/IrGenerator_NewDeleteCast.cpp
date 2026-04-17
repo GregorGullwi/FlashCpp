@@ -146,6 +146,12 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 			return;
 		}
 
+		if (!struct_info.hasUserDefinedConstructor()) {
+			if (emit_new_aggregate_member_stores(pointer_var, struct_info)) {
+				return;
+			}
+		}
+
 		if (const ConstructorDeclarationNode* resolved_ctor =
 				resolveCodegenConstructorFromArgs(struct_info, ctor_args)) {
 			ConstructorCallOp ctor_op;
