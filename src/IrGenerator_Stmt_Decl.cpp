@@ -740,6 +740,22 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						return;
 					}
 
+					if (current.object_type_index.is_valid() && !current.object_member_bindings.empty()) {
+						if (const TypeInfo* element_type_info = resolveToConcreteStructTypeInfo(current.object_type_index)) {
+							if (const StructTypeInfo* element_struct = element_type_info->getStructInfo()) {
+								packStructEvalResultIntoInitData(
+									packStructEvalResultIntoInitData,
+									init_data,
+									*element_struct,
+									current,
+									element_index * element_size,
+									0);
+								element_index++;
+								return;
+							}
+						}
+					}
+
 					writeRawValueAtOffset(
 						init_data,
 						element_index * element_size,
@@ -905,79 +921,80 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					}
 				} else {
 						// Array initialization: each element is a separate value
-						// Check if this is an array of structs (elements may be InitializerListNodes)
-					bool handled_as_struct_array = false;
-					if ((is_struct_type(type_node.category()))) {
-						const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
-						const StructTypeInfo* elem_struct = type_info ? type_info->getStructInfo() : nullptr;
-						if (elem_struct) {
-							// For unsized struct arrays (e.g. Point pts[] = {{1,2},{3,4},{5,6}}),
-							// neither type_node.array_dimensions() nor decl.array_dimensions() are
-							// populated, so op.element_count was never set above.  Infer it from
-							// the initializer count — each top-level initializer is one struct element.
-							if (op.element_count <= 1 && initializers.size() > 1) {
-								op.element_count = initializers.size();
-							}
-							op.init_data.resize(op.element_count * toSizeT(elem_struct->sizeInBytes()), 0);
-							for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
-								const ASTNode& elem_init = initializers[elem_i];
-								if (elem_init.is<InitializerListNode>()) {
-									auto constexpr_ctx = makeStaticStorageEvalContext();
-									auto element_result = materializeStructInitializerForStaticStorage(
-										*elem_struct,
-										type_node.type_index(),
-										elem_init.as<InitializerListNode>(),
-										constexpr_ctx);
-									if (element_result.success()) {
-										packStructEvalResultIntoInitData(
-											packStructEvalResultIntoInitData,
-											op.init_data,
-											*elem_struct,
-											element_result,
-											elem_i * toSizeT(elem_struct->sizeInBytes()),
-											0);
-									} else {
-										if (shouldRejectStaticStorageEvalFailure(element_result.error_type)) {
-											throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
-															   "' initializer is not a constant expression: " + element_result.error_message);
-										}
-										fillAggregateInitData(
-											op.init_data,
-											*elem_struct,
-											elem_init.as<InitializerListNode>(),
-											evalToValue,
-											elem_i * toSizeT(elem_struct->sizeInBytes()));
-									}
-								} else {
-									unsigned long long value = evalToValue(elem_init, type_node.type());
-									size_t byte_off = elem_i * toSizeT(elem_struct->sizeInBytes());
-									size_t write_bytes = (toSizeT(elem_struct->sizeInBytes()) < sizeof(unsigned long long)) ? toSizeT(elem_struct->sizeInBytes()) : sizeof(unsigned long long);
-									for (size_t b = 0; b < write_bytes && (byte_off + b) < op.init_data.size(); ++b)
-										op.init_data[byte_off + b] = static_cast<char>((value >> (b * 8)) & 0xFF);
-								}
-							}
-							handled_as_struct_array = true;
+					bool packed_as_constexpr_array = false;
+					if (type_node.is_array() && !type_node.array_dimensions().empty()) {
+						auto constexpr_ctx = makeStaticStorageEvalContext();
+						auto array_result = ConstExpr::Evaluator::materialize_array_value_with_spec(
+							type_node,
+							init_list,
+							constexpr_ctx,
+							nullptr);
+						if (array_result.success()) {
+							op.init_data.assign(op.element_count * element_size, 0);
+							packArrayResultIntoInitData(op.init_data, array_result, type_node.type(), op.element_count, element_size);
+							packed_as_constexpr_array = true;
+						} else if (shouldRejectStaticStorageEvalFailure(array_result.error_type)) {
+							throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
+											   "' initializer is not a constant expression: " + array_result.error_message);
 						}
 					}
-					if (!handled_as_struct_array) {
-						bool packed_as_constexpr_array = false;
-						if (type_node.is_array() && !type_node.array_dimensions().empty()) {
-							auto constexpr_ctx = makeStaticStorageEvalContext();
-							auto array_result = ConstExpr::Evaluator::materialize_array_value_with_spec(
-								type_node,
-								init_list,
-								constexpr_ctx,
-								nullptr);
-							if (array_result.success()) {
-								op.init_data.assign(op.element_count * element_size, 0);
-								packArrayResultIntoInitData(op.init_data, array_result, type_node.type(), op.element_count, element_size);
-								packed_as_constexpr_array = true;
-							} else if (shouldRejectStaticStorageEvalFailure(array_result.error_type)) {
-								throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
-												   "' initializer is not a constant expression: " + array_result.error_message);
+
+					if (!packed_as_constexpr_array) {
+							// Check if this is an array of structs (elements may be InitializerListNodes)
+						bool handled_as_struct_array = false;
+						if ((is_struct_type(type_node.category()))) {
+							const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
+							const StructTypeInfo* elem_struct = type_info ? type_info->getStructInfo() : nullptr;
+							if (elem_struct) {
+								// For unsized struct arrays (e.g. Point pts[] = {{1,2},{3,4},{5,6}}),
+								// neither type_node.array_dimensions() nor decl.array_dimensions() are
+								// populated, so op.element_count was never set above.  Infer it from
+								// the initializer count — each top-level initializer is one struct element.
+								if (op.element_count <= 1 && initializers.size() > 1) {
+									op.element_count = initializers.size();
+								}
+								op.init_data.resize(op.element_count * toSizeT(elem_struct->sizeInBytes()), 0);
+								for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
+									const ASTNode& elem_init = initializers[elem_i];
+									if (elem_init.is<InitializerListNode>()) {
+										auto constexpr_ctx = makeStaticStorageEvalContext();
+										auto element_result = materializeStructInitializerForStaticStorage(
+											*elem_struct,
+											type_node.type_index(),
+											elem_init.as<InitializerListNode>(),
+											constexpr_ctx);
+										if (element_result.success()) {
+											packStructEvalResultIntoInitData(
+												packStructEvalResultIntoInitData,
+												op.init_data,
+												*elem_struct,
+												element_result,
+												elem_i * toSizeT(elem_struct->sizeInBytes()),
+												0);
+										} else {
+											if (shouldRejectStaticStorageEvalFailure(element_result.error_type)) {
+												throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
+																   "' initializer is not a constant expression: " + element_result.error_message);
+											}
+											fillAggregateInitData(
+												op.init_data,
+												*elem_struct,
+												elem_init.as<InitializerListNode>(),
+												evalToValue,
+												elem_i * toSizeT(elem_struct->sizeInBytes()));
+										}
+									} else {
+										unsigned long long value = evalToValue(elem_init, type_node.type());
+										size_t byte_off = elem_i * toSizeT(elem_struct->sizeInBytes());
+										size_t write_bytes = (toSizeT(elem_struct->sizeInBytes()) < sizeof(unsigned long long)) ? toSizeT(elem_struct->sizeInBytes()) : sizeof(unsigned long long);
+										for (size_t b = 0; b < write_bytes && (byte_off + b) < op.init_data.size(); ++b)
+											op.init_data[byte_off + b] = static_cast<char>((value >> (b * 8)) & 0xFF);
+									}
+								}
+								handled_as_struct_array = true;
 							}
 						}
-						if (!packed_as_constexpr_array) {
+						if (!handled_as_struct_array) {
 							auto flattenAndAppend = [&](const auto& self, const std::vector<ASTNode>& elems) -> void {
 								for (const auto& elem : elems) {
 									if (elem.is<InitializerListNode>()) {

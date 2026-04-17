@@ -895,10 +895,6 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// Check for initialization
 		std::optional<ASTNode> initializer;
 
-		// Get the type specifier for brace initializer parsing and constexpr checks
-		// This is always safe since decl_node is a DeclarationNode with a TypeSpecifierNode
-		TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
-
 		// Skip declaration suffixes between declarator and initializer/semicolon.
 		// Per [dcl.attr.grammar], attributes can appear after a declarator.
 		parse_variable_declarator_suffixes(decl_node);
@@ -913,14 +909,16 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		global_decl_node.set_is_constexpr(is_constexpr);
 		global_decl_node.set_is_constinit(is_constinit);
 
-		const Token& identifier_token = decl_node.identifier_token();
+		DeclarationNode& registered_decl = global_decl_node.declaration();
+		TypeSpecifierNode& type_specifier = registered_decl.type_node().as<TypeSpecifierNode>();
+		const Token& identifier_token = registered_decl.identifier_token();
 		if (!gSymbolTable.insert(identifier_token.value(), global_var_node)) {
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
 		}
 
 		// Phase 3 Consolidation: Use shared copy initialization helper for = and = {} forms
 		if (peek() == "="_tok) {
-			auto init_result = parse_copy_initialization(decl_node, type_specifier);
+			auto init_result = parse_copy_initialization(registered_decl, type_specifier);
 			if (init_result.has_value()) {
 				initializer = init_result;
 			} else {
@@ -928,13 +926,13 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			}
 		} else if (peek() == "{"_tok) {
 			// Direct list initialization: Type var{args}
-			prepareArrayTypeForBraceInitializer(decl_node, type_specifier);
+			prepareArrayTypeForBraceInitializer(registered_decl, type_specifier);
 			ParseResult init_list_result = parse_brace_initializer(type_specifier);
 			if (init_list_result.is_error()) {
 				return init_list_result;
 			}
 			initializer = init_list_result.node();
-			inferUnsizedArraySizeFromInitializer(decl_node, type_specifier, initializer);
+			inferUnsizedArraySizeFromInitializer(registered_decl, type_specifier, initializer);
 		} else if (peek() == "("_tok) {
 			// Direct initialization: Type var(args)
 			// At global scope with struct types, use ConstructorCallNode for constexpr evaluation.
@@ -962,7 +960,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after constructor arguments", current_token_);
 				}
-				ASTNode type_node_copy = decl_node.type_node();
+				ASTNode type_node_copy = registered_decl.type_node();
 				// Wrap ConstructorCallNode in ExpressionNode, matching the convention used
 				// everywhere else in the codebase, so IR path checks work correctly.
 				initializer = ASTNode::emplace_node<ExpressionNode>(
