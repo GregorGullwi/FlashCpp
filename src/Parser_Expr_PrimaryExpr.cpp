@@ -3998,7 +3998,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// SFINAE contexts (e.g. decltype(...) inside a default template arg).
 				// Let the caller reject the overload without emitting a hard parser error.
 				if (in_sfinae_context_) {
-					FLASH_LOG(Templates, Debug, "SFINAE: template instantiation failed for call to '{}'", identifier_token.value());
+					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: template instantiation failed for call to '{}'", identifier_token.value());
 				} else {
 					FLASH_LOG(Parser, Error, "Template instantiation failed");
 				}
