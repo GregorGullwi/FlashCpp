@@ -405,6 +405,10 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			if (from_resolved_index.isStruct() &&
 				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
 				from_resolved_index != to_resolved_index) {
+				// Derived* → Base* is a valid pointer conversion (C++20 [conv.ptr]/3).
+				if (isTransitivelyDerivedFrom(from_resolved_index, to_resolved_index)) {
+					return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
+				}
 				return ConversionPlan::no_match();
 			}
 			return ConversionPlan::exact_match();
@@ -416,6 +420,11 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			if (from_resolved_index.isStruct() &&
 				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
 				from_resolved_index != to_resolved_index) {
+				// Derived* → Base* is valid with const qualification adjustment too.
+				if (!from_pointee_is_const && to_pointee_is_const &&
+					isTransitivelyDerivedFrom(from_resolved_index, to_resolved_index)) {
+					return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
+				}
 				return ConversionPlan::no_match();
 			}
 			// T* → const T* is a qualification conversion (C++20 [conv.qual]).

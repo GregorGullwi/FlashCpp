@@ -6044,6 +6044,46 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		return;
 	}
 
+		// dynamic_cast<void*>(expr) — C++20 [expr.dynamic.cast]/7:
+		// Returns a pointer to the most-derived complete object.
+		// Implementation: read offset_to_top from vtable[-2] and add to source pointer.
+	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+		if (op.target_type_index.category() == TypeCategory::Void) {
+			emitMovRegReg(X64Register::RDI, X64Register::RAX);
+				// null check: if src == null, return null
+			emitTestRegReg(X64Register::RDI);
+			textSectionData.push_back(0x0F);
+			textSectionData.push_back(0x84);
+			size_t vc_null_check = textSectionData.size();
+			textSectionData.push_back(0x00); textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00); textSectionData.push_back(0x00);
+				// RAX = *RDI  (vptr = first 8 bytes of object)
+			emitMovFromMemory(X64Register::RAX, X64Register::RDI, 0, 8);
+				// RCX = *(RAX - 16)  (offset_to_top at vtable[-2])
+			emitMovFromMemory(X64Register::RCX, X64Register::RAX, -16, 8);
+				// RDI = RDI + RCX  (complete-object pointer)
+			emitAddRegs(textSectionData, X64Register::RDI, X64Register::RCX);
+			emitMovToFrameSized(SizedRegister{X64Register::RDI, 64, false}, SizedStackSlot{result_offset, 64, false});
+			textSectionData.push_back(0xEB); // JMP short past null path
+			size_t vc_jmp = textSectionData.size();
+			textSectionData.push_back(0x00);
+				// null path
+			size_t vc_null_target = textSectionData.size();
+			int32_t vc_null_delta = static_cast<int32_t>(vc_null_target - vc_null_check - 4);
+			textSectionData[vc_null_check + 0] = static_cast<uint8_t>(vc_null_delta & 0xFF);
+			textSectionData[vc_null_check + 1] = static_cast<uint8_t>((vc_null_delta >> 8) & 0xFF);
+			textSectionData[vc_null_check + 2] = static_cast<uint8_t>((vc_null_delta >> 16) & 0xFF);
+			textSectionData[vc_null_check + 3] = static_cast<uint8_t>((vc_null_delta >> 24) & 0xFF);
+			emitXorRegReg(X64Register::RDI);
+			emitMovToFrameSized(SizedRegister{X64Register::RDI, 64, false}, SizedStackSlot{result_offset, 64, false});
+			size_t vc_end = textSectionData.size();
+			int8_t vc_jmp_delta = static_cast<int8_t>(vc_end - vc_jmp - 1);
+			textSectionData[vc_jmp] = static_cast<uint8_t>(vc_jmp_delta);
+			regAlloc.reset();
+			return;
+		}
+	}
+
 		// Step 3: Check if source pointer is null
 	emitTestRegReg(X64Register::RAX);
 
@@ -6058,7 +6098,7 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 
 		// Step 4: Load the platform RTTI arguments.
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-			// Linux: __dynamic_cast(source_ptr, source_rtti, target_rtti, -1)
+			// Linux: __dynamic_cast(source_ptr, source_rtti, target_rtti, offset_hint)
 		std::string source_typeinfo_symbol = getClassTypeinfoSymbol(op.source_type_index, {});
 		std::string target_typeinfo_symbol = getClassTypeinfoSymbol(op.target_type_index, op.target_type_name);
 		if (source_typeinfo_symbol.empty() || target_typeinfo_symbol.empty()) {
@@ -6342,6 +6382,48 @@ void IrToObjConverter<TWriterClass>::handleGlobalStore(const IrInstruction& inst
 			// Store to global using RIP-relative addressing
 		uint32_t reloc_offset = emitMovRipRelativeStore(X64Register::RAX, size_in_bits);
 		pending_global_relocations_.push_back({reloc_offset, global_name, IMAGE_REL_AMD64_REL32});
+	}
+}
+
+template <class TWriterClass>
+std::optional<int64_t> IrToObjConverter<TWriterClass>::findBaseOffsetWithinDerived(TypeIndex base_type, TypeIndex derived_type) const {
+	if (!base_type.is_valid() || !derived_type.is_valid())
+		return std::nullopt;
+	if (base_type == derived_type)
+		return 0;
+	const TypeInfo* derived_info = tryGetTypeInfo(derived_type);
+	const StructTypeInfo* derived_struct = derived_info ? derived_info->getStructInfo() : nullptr;
+	if (!derived_struct)
+		return std::nullopt;
+	// Recursively search public non-virtual base classes for base_type.
+	auto findOffset = [&](const auto& self, const StructTypeInfo* cur, int64_t cur_offset) -> std::optional<int64_t> {
+		if (!cur)
+			return std::nullopt;
+		for (const auto& base : cur->base_classes) {
+			if (base.access != AccessSpecifier::Public || base.is_virtual)
+				continue;
+			int64_t off = cur_offset + static_cast<int64_t>(base.offset);
+			if (base.type_index == base_type)
+				return off;
+			const TypeInfo* b_info = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* b_struct = b_info ? b_info->getStructInfo() : nullptr;
+			if (auto nested = self(self, b_struct, off))
+				return nested;
+		}
+		return std::nullopt;
+	};
+	return findOffset(findOffset, derived_struct, 0);
+}
+
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitDerivedToBasePointerAdjust(X64Register ptr_reg, TypeIndex base_type, TypeIndex derived_type) {
+	if (!base_type.isStruct() || !derived_type.isStruct() || base_type == derived_type)
+		return;
+	if (auto offset = findBaseOffsetWithinDerived(base_type, derived_type)) {
+		if (*offset > 0) {
+			FLASH_LOG(Codegen, Debug, "Derived-to-base pointer adjustment: +", *offset, " bytes");
+			emitAddImmToReg(textSectionData, ptr_reg, static_cast<int64_t>(*offset));
+		}
 	}
 }
 
@@ -6828,6 +6910,12 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						loadReferenceSourceIntoRegister(allocated_reg_val, src_offset, src_ref_info->value_size_bits.value, false);
 					} else {
 						emitMovFromFrameBySize(allocated_reg_val, src_offset, op.size_in_bits.value);
+					}
+						// Derived-to-base pointer adjustment: when initializing B* from a C* where
+						// B is a non-primary (non-zero-offset) base of C, add the subobject offset.
+					if (op.pointer_depth.is_pointer() && op.type_index.isStruct() &&
+						init.type_index.isStruct() && init.type_index != op.type_index) {
+						emitDerivedToBasePointerAdjust(allocated_reg_val, op.type_index, init.type_index);
 					}
 					emitMovToFrameSized(
 						SizedRegister{allocated_reg_val, 64, false},
@@ -11381,6 +11469,20 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 
 		if (rhs_offset == -1) {
 			throw InternalError("RHS variable not found in struct assignment");
+			return;
+		}
+
+			// Derived-to-base pointer assignment: B* bp = c_ptr where B is a non-primary base of C.
+			// The RHS is a pointer (pointer_depth >= 1) so we must add the base-class subobject offset
+			// instead of performing a raw struct copy.
+		if (op.rhs.pointer_depth.is_pointer() &&
+			op.rhs.type_index.isStruct() && op.lhs.type_index.isStruct() &&
+			op.rhs.type_index != op.lhs.type_index) {
+			X64Register ptr_reg = allocateRegisterWithSpilling();
+			emitMovFromFrameSized(SizedRegister{ptr_reg, 64, false}, SizedStackSlot{rhs_offset, 64, false});
+			emitDerivedToBasePointerAdjust(ptr_reg, op.lhs.type_index, op.rhs.type_index);
+			emitMovToFrameSized(SizedRegister{ptr_reg, 64, false}, SizedStackSlot{lhs_offset, 64, false});
+			regAlloc.release(ptr_reg);
 			return;
 		}
 

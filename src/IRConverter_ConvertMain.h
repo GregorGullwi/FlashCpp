@@ -488,6 +488,16 @@ private:
 
 	void handleVariableDecl(const IrInstruction& instruction);
 
+	// Returns the byte offset of base_type within derived_type by recursively
+	// walking public non-virtual base classes. Returns 0 when types are the same,
+	// std::nullopt when base_type is not a base of derived_type.
+	std::optional<int64_t> findBaseOffsetWithinDerived(TypeIndex base_type, TypeIndex derived_type) const;
+
+	// If init_type is a derived class of decl_type, emits an ADD instruction to
+	// adjust ptr_reg from pointing to the derived object to the base subobject.
+	// Does nothing when the types are unrelated or the offset is 0.
+	void emitDerivedToBasePointerAdjust(X64Register ptr_reg, TypeIndex base_type, TypeIndex derived_type);
+
 	uint16_t getX64RegisterCodeViewCode(X64Register reg);
 
 	// Reset per-function state between function declarations
