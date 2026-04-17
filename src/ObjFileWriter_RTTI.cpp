@@ -48,7 +48,7 @@ uint32_t getMsvcClassHierarchyAttributes(std::string_view class_name) {
 	}
 
 	uint32_t attributes = 0;
-	const size_t direct_base_count = struct_info->base_classes.size() + struct_info->virtual_bases.size();
+	const size_t direct_base_count = struct_info->base_classes.size();
 	if (direct_base_count > 1) {
 		attributes |= 0x1; // CHD_MULTINH
 	}
