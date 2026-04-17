@@ -4,6 +4,61 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+namespace {
+std::string_view unqualifiedTypeComponent(std::string_view type_name) {
+	size_t scope_pos = type_name.rfind("::");
+	return scope_pos == std::string_view::npos ? type_name : type_name.substr(scope_pos + 2);
+}
+
+std::optional<StringHandle> getTemplateLookupOwnerName(std::string_view struct_name) {
+	auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
+	if (type_it == getTypesByNameMap().end()) {
+		return std::nullopt;
+	}
+
+	const TypeInfo* type_info = type_it->second;
+	if (!type_info->struct_info_) {
+		if (type_info->isTemplateInstantiation()) {
+			return type_info->baseTemplateName();
+		}
+		return std::nullopt;
+	}
+
+	StringBuilder owner_name_builder;
+	bool has_owner_component = false;
+	auto append_lookup_owner = [&](const auto& self, const StructTypeInfo* current_struct) -> void {
+		if (current_struct == nullptr) {
+			return;
+		}
+
+		if (const StructTypeInfo* enclosing = current_struct->getEnclosingClass()) {
+			self(self, enclosing);
+			if (has_owner_component) {
+				owner_name_builder.append("::"sv);
+			}
+			owner_name_builder.append(unqualifiedTypeComponent(StringTable::getStringView(current_struct->getName())));
+			has_owner_component = true;
+			return;
+		}
+
+		std::string_view current_name = StringTable::getStringView(current_struct->getName());
+		auto current_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(current_name));
+		if (current_type_it != getTypesByNameMap().end() && current_type_it->second->isTemplateInstantiation()) {
+			owner_name_builder.append(StringTable::getStringView(current_type_it->second->baseTemplateName()));
+		} else {
+			owner_name_builder.append(current_name);
+		}
+		has_owner_component = true;
+	};
+
+	append_lookup_owner(append_lookup_owner, type_info->struct_info_.get());
+	if (!has_owner_component) {
+		return std::nullopt;
+	}
+	return StringTable::getOrInternStringHandle(owner_name_builder.commit());
+}
+}
+
 bool Parser::tryAppendMemberDefaultTemplateArg(
 	const TemplateParameterNode& param,
 	const std::vector<ASTNode>& template_params,
@@ -90,15 +145,19 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// Look up the template in the registry
 	auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
 
-	// If not found and struct_name looks like an instantiated template (e.g., has_foo$a1b2c3),
-	// try the base template class name (e.g., has_foo::method)
+	// If not found, recover the source owner name for instantiated/nested owners
+	// (e.g. Outer$hash::Inner -> Outer::Inner, math::Adder$hash -> math::Adder).
 	if (!template_opt.has_value()) {
-		std::string_view base_name = extractBaseTemplateName(struct_name);
-		if (!base_name.empty()) {
+		if (auto lookup_owner = getTemplateLookupOwnerName(struct_name)) {
 			StringBuilder base_qualified_name_sb;
-			base_qualified_name_sb.append(base_name).append("::").append(member_name);
+			base_qualified_name_sb.append(StringTable::getStringView(*lookup_owner)).append("::").append(member_name);
 			StringHandle base_qualified_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
-			template_opt = gTemplateRegistry.lookupTemplate(base_qualified_name);
+			if (base_qualified_name != qualified_name) {
+				template_opt = gTemplateRegistry.lookupTemplate(base_qualified_name);
+				if (template_opt.has_value()) {
+					qualified_name = base_qualified_name;
+				}
+			}
 		}
 	}
 
