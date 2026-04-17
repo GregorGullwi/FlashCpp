@@ -290,6 +290,51 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 				normalizePendingSemanticRoots();
 				visitFunctionDeclarationNode(func);
 			} else if (info.function_node.is<ConstructorDeclarationNode>()) {
+				const ConstructorDeclarationNode& ctor = info.function_node.as<ConstructorDeclarationNode>();
+				if (!ctor.get_definition().has_value() && parser_) {
+					StringHandle member_handle = ctor.name();
+					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(info.struct_name, member_handle, false)) {
+						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(info.struct_name, member_handle, false);
+						if (lazy_info_opt.has_value()) {
+							auto new_ctor_node = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+							normalizePendingSemanticRoots();
+							if (new_ctor_node.has_value() && new_ctor_node->is<ConstructorDeclarationNode>()) {
+								LazyMemberInstantiationRegistry::getInstance().markInstantiated(info.struct_name, member_handle, false);
+								visitConstructorDeclarationNode(new_ctor_node->as<ConstructorDeclarationNode>());
+								current_function_name_ = saved_function;
+								current_namespace_stack_ = saved_namespace;
+								continue;
+							}
+						}
+					}
+					bool visited_replacement_ctor = false;
+					if (auto struct_it = getTypesByNameMap().find(info.struct_name);
+						struct_it != getTypesByNameMap().end()) {
+						if (const StructTypeInfo* struct_info = struct_it->second->getStructInfo()) {
+							for (const auto& member_func : struct_info->member_functions) {
+								if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+									continue;
+								}
+								const auto& replacement_ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
+								if (!replacement_ctor.get_definition().has_value()) {
+									continue;
+								}
+								if (replacement_ctor.name() == ctor.name() &&
+									replacement_ctor.parameter_nodes().size() == ctor.parameter_nodes().size()) {
+									normalizePendingSemanticRoots();
+									visitConstructorDeclarationNode(replacement_ctor);
+									current_function_name_ = saved_function;
+									current_namespace_stack_ = saved_namespace;
+									visited_replacement_ctor = true;
+									break;
+								}
+							}
+						}
+					}
+					if (visited_replacement_ctor) {
+						continue;
+					}
+				}
 				normalizePendingSemanticRoots();
 				visitConstructorDeclarationNode(info.function_node.as<ConstructorDeclarationNode>());
 			} else if (info.function_node.is<DestructorDeclarationNode>()) {
@@ -1944,29 +1989,108 @@ void AstToIr::emitRecursiveZeroFill(
 	StringHandle base_object,
 	int base_offset,
 	const Token& token) {
-	for (const StructMember& sub_member : struct_info.members) {
-		const StructTypeInfo* sub_struct_info = tryGetStructTypeInfo(sub_member.type_index);
-		bool is_nested_struct = isIrStructType(toIrType(sub_member.memberType())) && sub_struct_info && (sub_member.size * 8) > 64;
+	emitRecursiveZeroFill(
+		struct_info,
+		std::variant<StringHandle, TempVar>{base_object},
+		base_offset,
+		false,
+		token);
+}
 
-		if (is_nested_struct) {
-			emitRecursiveZeroFill(
-				*sub_struct_info,
-				base_object,
-				base_offset + static_cast<int>(sub_member.offset),
-				token);
-		} else {
-			MemberStoreOp member_store;
-			member_store.value.setType(sub_member.type_index.category());
-			member_store.value.size_in_bits = SizeInBits{static_cast<int>(sub_member.size * 8)};
-			member_store.value.value = 0ULL;
-			member_store.object = base_object;
-			member_store.member_name = sub_member.getName();
-			member_store.offset = base_offset + static_cast<int>(sub_member.offset);
-			member_store.ref_qualifier = ((sub_member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((sub_member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-			member_store.struct_type_info = nullptr;
-			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
-		}
+void AstToIr::emitRecursiveZeroFill(
+	const StructTypeInfo& struct_info,
+	std::variant<StringHandle, TempVar> base_object,
+	int base_offset,
+	bool base_object_is_pointer,
+	const Token& token) {
+	for (const StructMember& sub_member : struct_info.members) {
+		emitZeroInitializedMember(sub_member, base_object, base_offset, base_object_is_pointer, token);
 	}
+}
+
+void AstToIr::emitZeroInitializedMember(
+	const StructMember& member,
+	std::variant<StringHandle, TempVar> base_object,
+	int base_offset,
+	bool base_object_is_pointer,
+	const Token& token) {
+	if (member.is_array) {
+		size_t element_count = 1;
+		for (size_t dim : member.array_dimensions) {
+			element_count *= dim;
+		}
+		if (element_count == 0) {
+			return;
+		}
+
+		int element_size_bits = 0;
+		if (const TypeInfo* elem_type_info = tryGetTypeInfo(member.type_index)) {
+			if (elem_type_info->hasStoredSize()) {
+				element_size_bits = static_cast<int>(elem_type_info->sizeInBits().value);
+			}
+		}
+		if (element_size_bits <= 0) {
+			element_size_bits = static_cast<int>((member.size * 8) / element_count);
+		}
+
+		const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
+		const bool is_struct_element =
+			isIrStructType(toIrType(member.memberType())) && member_struct_info && element_size_bits > 64;
+		for (size_t i = 0; i < element_count; ++i) {
+			if (is_struct_element) {
+				int element_byte_offset =
+					base_offset + static_cast<int>(member.offset) + static_cast<int>(i) * (element_size_bits / 8);
+				emitRecursiveZeroFill(
+					*member_struct_info,
+					base_object,
+					element_byte_offset,
+					base_object_is_pointer,
+					token);
+				continue;
+			}
+
+			emitArrayStore(
+				member.memberType(),
+				element_size_bits,
+				base_object,
+				makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
+				makeTypedValue(member.memberType(), SizeInBits{element_size_bits}, 0ULL),
+				base_offset + static_cast<int>(member.offset),
+				base_object_is_pointer,
+				token);
+		}
+		return;
+	}
+
+	const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
+	const bool is_nested_struct =
+		isIrStructType(toIrType(member.memberType())) &&
+		member_struct_info &&
+		// Members with user-defined constructors require constructor-call semantics when
+		// value-initialized; only recurse for plain aggregate subobjects that can be zero-filled.
+		!member_struct_info->hasUserDefinedConstructor() &&
+		(member.size * 8) > 64;
+	if (is_nested_struct) {
+		emitRecursiveZeroFill(
+			*member_struct_info,
+			base_object,
+			base_offset + static_cast<int>(member.offset),
+			base_object_is_pointer,
+			token);
+		return;
+	}
+
+	MemberStoreOp member_store;
+	member_store.value.setType(member.type_index.category());
+	member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+	member_store.value.value = 0ULL;
+	member_store.object = base_object;
+	member_store.member_name = member.getName();
+	member_store.offset = base_offset + static_cast<int>(member.offset);
+	member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+	member_store.struct_type_info = nullptr;
+	member_store.is_pointer_to_member = base_object_is_pointer;
+	ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 }
 
 // Implementation of recursive nested member store generation
@@ -1975,6 +2099,22 @@ bool AstToIr::tryEmitArrayMemberStores(
 	const InitializerListNode& init_list,
 	StringHandle base_object,
 	int base_offset,
+	const Token& token) {
+	return tryEmitArrayMemberStores(
+		member,
+		init_list,
+		std::variant<StringHandle, TempVar>{base_object},
+		base_offset,
+		false,
+		token);
+}
+
+bool AstToIr::tryEmitArrayMemberStores(
+	const StructMember& member,
+	const InitializerListNode& init_list,
+	std::variant<StringHandle, TempVar> base_object,
+	int base_offset,
+	bool base_object_is_pointer,
 	const Token& token) {
 	if (!member.is_array || member.array_dimensions.empty()) {
 		return false;
@@ -2054,7 +2194,7 @@ bool AstToIr::tryEmitArrayMemberStores(
 			makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
 			toTypedValue(init_operands),
 			base_offset + static_cast<int>(member.offset),
-			false,
+			base_object_is_pointer,
 			token);
 	}
 
@@ -2070,7 +2210,7 @@ bool AstToIr::tryEmitArrayMemberStores(
 			int element_byte_offset = base_offset + static_cast<int>(member.offset) + static_cast<int>(i) * (element_size_bits / 8);
 
 			emitRecursiveZeroFill(*member_struct_info,
-								  base_object, element_byte_offset, token);
+								  base_object, element_byte_offset, base_object_is_pointer, token);
 		} else {
 			auto zero_value = makeTypedValue(member.memberType(), SizeInBits{element_size_bits}, 0ULL);
 			emitArrayStore(
@@ -2080,7 +2220,7 @@ bool AstToIr::tryEmitArrayMemberStores(
 				makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
 				zero_value,
 				base_offset + static_cast<int>(member.offset),
-				false,
+				base_object_is_pointer,
 				token);
 		}
 	}
@@ -2094,6 +2234,39 @@ void AstToIr::generateNestedMemberStores(
 	StringHandle base_object,
 	int base_offset,
 	const Token& token) {
+	generateNestedMemberStores(
+		struct_info,
+		init_list,
+		std::variant<StringHandle, TempVar>{base_object},
+		base_offset,
+		false,
+		token);
+}
+
+void AstToIr::generateNestedMemberStores(
+	const StructTypeInfo& struct_info,
+	const InitializerListNode& init_list,
+	std::variant<StringHandle, TempVar> base_object,
+	int base_offset,
+	bool base_object_is_pointer,
+	const Token& token) {
+	auto emit_nested_ctor_call = [&](const StructMember& member,
+								  const StructTypeInfo& member_struct_info,
+								  const ConstructorDeclarationNode& resolved_ctor,
+								  const ChunkedVector<ASTNode>& ctor_args) {
+		ConstructorCallOp ctor_op;
+		ctor_op.object = base_object;
+		ctor_op.resolved_constructor = &resolved_ctor;
+		ctor_op.is_heap_allocated = base_object_is_pointer;
+		if (base_offset + static_cast<int>(member.offset) < 0) {
+			throw InternalError("Nested aggregate member offset became negative during constructor lowering");
+		}
+		ctor_op.base_class_offset = base_offset + static_cast<int>(member.offset);
+		appendConstructorCallArguments(ctor_op, &resolved_ctor, ctor_args, token);
+		finalizeConstructorCallOp(ctor_op, member_struct_info, token);
+		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), token));
+	};
+
 	// Build map of member names to initializer expressions
 	std::unordered_map<StringHandle, const ASTNode*> member_values;
 	size_t positional_index = 0;
@@ -2115,16 +2288,7 @@ void AstToIr::generateNestedMemberStores(
 
 		if (!member_values.count(member_name)) {
 			// Zero-initialize unspecified members
-			MemberStoreOp member_store;
-			member_store.value.setType(member.type_index.category());
-			member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-			member_store.value.value = 0ULL;
-			member_store.object = base_object;
-			member_store.member_name = member_name;
-			member_store.offset = base_offset + static_cast<int>(member.offset);
-			member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-			member_store.struct_type_info = nullptr;
-			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+			emitZeroInitializedMember(member, base_object, base_offset, base_object_is_pointer, token);
 			continue;
 		}
 
@@ -2134,11 +2298,38 @@ void AstToIr::generateNestedMemberStores(
 			// Nested brace initializer - check if member is a struct
 			const InitializerListNode& nested_init_list = init_expr.as<InitializerListNode>();
 
-			if (tryEmitArrayMemberStores(member, nested_init_list, base_object, base_offset, token)) {
+			if (tryEmitArrayMemberStores(member, nested_init_list, base_object, base_offset, base_object_is_pointer, token)) {
 				continue;
 			}
 
 			if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index)) {
+				const ConstructorDeclarationNode* resolved_ctor = nullptr;
+				if (const ConstructorDeclarationNode* sema_resolved_ctor = nested_init_list.resolved_constructor()) {
+					if (resolvedConstructorMatchesTargetType(*sema_resolved_ctor, member.type_index)) {
+						resolved_ctor = sema_resolved_ctor;
+					}
+				}
+
+				ChunkedVector<ASTNode> ctor_args;
+				for (const ASTNode& nested_arg : nested_init_list.initializers()) {
+					ctor_args.push_back(nested_arg);
+				}
+
+				if (!resolved_ctor) {
+					resolved_ctor = resolveCodegenConstructorFromArgs(*member_struct_info, ctor_args);
+				}
+
+				if (resolved_ctor) {
+					emit_nested_ctor_call(member, *member_struct_info, *resolved_ctor, ctor_args);
+					continue;
+				}
+
+				if (member_struct_info->hasUserDefinedConstructor()) {
+					throw CompileError(
+						"No matching constructor for nested aggregate member '" +
+						std::string(StringTable::getStringView(member_name)) + "'");
+				}
+
 				if (!member_struct_info->members.empty()) {
 					// RECURSIVE CALL for nested struct
 					generateNestedMemberStores(
@@ -2146,6 +2337,7 @@ void AstToIr::generateNestedMemberStores(
 						nested_init_list,
 						base_object,
 						base_offset + static_cast<int>(member.offset),
+						base_object_is_pointer,
 						token);
 					continue;
 				}
@@ -2175,19 +2367,11 @@ void AstToIr::generateNestedMemberStores(
 				member_store.offset = base_offset + static_cast<int>(member.offset);
 				member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				member_store.struct_type_info = nullptr;
+				member_store.is_pointer_to_member = base_object_is_pointer;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 			} else {
 				// Zero-initialize if we can't extract a value
-				MemberStoreOp member_store;
-				member_store.value.setType(member.type_index.category());
-				member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-				member_store.value.value = 0ULL;
-				member_store.object = base_object;
-				member_store.member_name = member_name;
-				member_store.offset = base_offset + static_cast<int>(member.offset);
-				member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-				member_store.struct_type_info = nullptr;
-				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+				emitZeroInitializedMember(member, base_object, base_offset, base_object_is_pointer, token);
 			}
 		} else if (init_expr.is<ExpressionNode>()) {
 			// Direct expression initializer
@@ -2212,6 +2396,7 @@ void AstToIr::generateNestedMemberStores(
 			member_store.offset = base_offset + static_cast<int>(member.offset);
 			member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 			member_store.struct_type_info = nullptr;
+			member_store.is_pointer_to_member = base_object_is_pointer;
 			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 		}
 	}

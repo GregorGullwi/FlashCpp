@@ -1797,9 +1797,36 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				this_arg_value = IrValue(this_addr);
 			}
 		} else if (object_is_pointer_like) {
-			// For pointer/reference objects, pass through directly
-			this_arg_value = IrValue(StringTable::getOrInternStringHandle(object_name));
-			this_arg_is_pointer_value = true;
+			bool requires_loaded_pointer_value = false;
+			if (object_expr) {
+				if (const auto* object_ident = std::get_if<IdentifierNode>(object_expr)) {
+					requires_loaded_pointer_value =
+						object_ident->binding() == IdentifierBinding::Global ||
+						object_ident->binding() == IdentifierBinding::StaticLocal ||
+						object_ident->binding() == IdentifierBinding::StaticMember;
+				} else if (std::holds_alternative<QualifiedIdentifierNode>(*object_expr)) {
+					requires_loaded_pointer_value = true;
+				}
+			}
+
+			if (requires_loaded_pointer_value) {
+				// Global/static pointer receivers need an explicit load of the pointer value so
+				// the call receives the pointee address as `this` instead of the storage slot
+				// holding the pointer.
+				ExprResult obj_result = visitExpressionNode(*object_expr);
+				this_arg_value = toIrValue(obj_result.value);
+				this_arg_is_pointer_value =
+					obj_result.pointer_depth.is_pointer() &&
+					obj_result.storage == ValueStorage::ContainsData;
+				if (this_arg_is_pointer_value) {
+					this_arg_storage = ValueStorage::ContainsAddress;
+				}
+			} else {
+				// Local pointer/reference objects already lower correctly when passed through
+				// directly by name.
+				this_arg_value = IrValue(StringTable::getOrInternStringHandle(object_name));
+				this_arg_is_pointer_value = true;
+			}
 		} else {
 			// For object values, take the address so member functions receive a pointer to the object
 			TempVar this_addr = var_counter.next();

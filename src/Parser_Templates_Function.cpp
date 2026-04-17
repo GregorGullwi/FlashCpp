@@ -20,6 +20,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 		if (tparam.kind() == TemplateParameterKind::Type && !tparam.registered_type_index().is_valid()) {
 			TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0);
+			type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 			tparam.set_registered_type_index(type_info.type_index_);
 			template_scope.addParameter(&type_info);
 		}
@@ -164,6 +165,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 	std::optional<ASTNode> final_requires_clause = trailing_requires_clause.has_value() ? trailing_requires_clause : requires_clause;
 
 	// Create a template function declaration node
+	func_decl.set_is_template_pattern(true);
 	auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
 		std::move(template_params),
 		*func_result_node,
@@ -250,6 +252,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
+				type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 				getTypesByNameMap().emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
@@ -679,6 +682,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						skip_trailing_requires_clause();
 
 						// Create template function declaration node
+						func_ref.set_is_template_pattern(true);
 						auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
 							std::move(template_params),
 							func_node,

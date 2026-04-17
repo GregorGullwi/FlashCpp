@@ -232,13 +232,9 @@ public:
 	 * @param target_name  The symbol whose absolute address is stored
 	 */
 	void add_data_relocation(std::string_view var_name, std::string_view target_name) {
-		// Find the .data section
-		auto* data_section = getSectionByName(".data");
-		if (!data_section)
-			return;
-
-		// Find the variable's offset in .data by looking up its symbol
+		// Find the variable's offset and containing section by looking up its symbol.
 		ELFIO::Elf64_Addr var_offset = 0;
+		ELFIO::Elf_Half data_section_index = 0;
 		bool found = false;
 		auto* sym_section = getSectionByName(".symtab");
 		if (sym_section) {
@@ -250,8 +246,9 @@ public:
 				unsigned char bind, type, other;
 				ELFIO::Elf_Half section_index;
 				sym_accessor.get_symbol(i, name, value, size, bind, type, section_index, other);
-				if (name == var_name && section_index == data_section->get_index()) {
+				if (name == var_name && section_index != ELFIO::SHN_UNDEF) {
 					var_offset = value;
+					data_section_index = section_index;
 					found = true;
 					break;
 				}
@@ -259,14 +256,31 @@ public:
 		}
 		if (!found)
 			return;
+		if (data_section_index >= elf_writer_.sections.size()) {
+			if (g_enable_debug_output) {
+				std::cerr << "Skipping data relocation for " << var_name
+						  << ": section index " << data_section_index
+						  << " is out of bounds" << std::endl;
+			}
+			return;
+		}
+		auto* data_section = elf_writer_.sections[data_section_index];
+		if (!data_section) {
+			if (g_enable_debug_output) {
+				std::cerr << "Skipping data relocation for " << var_name
+						  << ": null section at index " << data_section_index << std::endl;
+			}
+			return;
+		}
 
 		// Get or create the target symbol (may be in .data, .bss, or external)
 		auto target_index = getOrCreateSymbol(target_name, ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
 
-		// Get or create .rela.data section
-		auto* rela_data = getSectionByName(".rela.data");
+		// Get or create the relocation section matching the variable's containing section
+		std::string rela_section_name = ".rela" + data_section->get_name();
+		auto* rela_data = getSectionByName(rela_section_name);
 		if (!rela_data) {
-			rela_data = elf_writer_.sections.add(".rela.data");
+			rela_data = elf_writer_.sections.add(rela_section_name);
 			rela_data->set_type(ELFIO::SHT_RELA);
 			rela_data->set_flags(ELFIO::SHF_INFO_LINK);
 			rela_data->set_info(data_section->get_index());
@@ -283,7 +297,7 @@ public:
 
 		if (g_enable_debug_output) {
 			std::cerr << "Added data relocation: " << var_name << " -> " << target_name
-					  << " at offset " << var_offset << std::endl;
+					  << " in " << data_section->get_name() << " at offset " << var_offset << std::endl;
 		}
 	}
 

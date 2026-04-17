@@ -471,6 +471,12 @@ public:
 	}
 	bool has_template_body_position() const { return has_template_body_; }
 	SaveHandle template_body_position() const { return template_body_position_handle_; }
+	void set_template_initializer_list_position(SaveHandle handle) {
+		has_template_initializer_list_ = true;
+		template_initializer_list_position_handle_ = handle;
+	}
+	bool has_template_initializer_list_position() const { return has_template_initializer_list_; }
+	SaveHandle template_initializer_list_position() const { return template_initializer_list_position_handle_; }
 
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
@@ -520,7 +526,9 @@ private:
 	std::optional<ASTNode> requires_clause_;	 // C++20 trailing requires clause
 	std::vector<ASTNode> template_parameters_;
 	bool has_template_body_ = false;
+	bool has_template_initializer_list_ = false;
 	SaveHandle template_body_position_handle_;  // Handle to saved position for template body
+	SaveHandle template_initializer_list_position_handle_{};  // Handle to saved position for constructor initializer list
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 	TypeIndex owning_type_index_{};

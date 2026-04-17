@@ -28,6 +28,42 @@ static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type
 	return arg;
 }
 
+static const TypeSpecifierNode* getDeclarationParamTypeNode(const ASTNode& param) {
+	if (!param.is<DeclarationNode>()) {
+		return nullptr;
+	}
+	const ASTNode& type_node = param.as<DeclarationNode>().type_node();
+	if (!type_node.is<TypeSpecifierNode>()) {
+		return nullptr;
+	}
+	return &type_node.as<TypeSpecifierNode>();
+}
+
+static bool constructorDeclarationsHaveMatchingParameterShape(
+	const ConstructorDeclarationNode& ctor_decl,
+	const FunctionDeclarationNode& out_of_line_stub) {
+	if (ctor_decl.parameter_nodes().size() != out_of_line_stub.parameter_nodes().size()) {
+		return false;
+	}
+
+	for (size_t i = 0; i < ctor_decl.parameter_nodes().size(); ++i) {
+		const TypeSpecifierNode* ctor_param = getDeclarationParamTypeNode(ctor_decl.parameter_nodes()[i]);
+		const TypeSpecifierNode* stub_param = getDeclarationParamTypeNode(out_of_line_stub.parameter_nodes()[i]);
+		if (!ctor_param || !stub_param) {
+			return false;
+		}
+		if (ctor_param->type() != stub_param->type() ||
+			ctor_param->type_index() != stub_param->type_index() ||
+			ctor_param->pointer_depth() != stub_param->pointer_depth() ||
+			ctor_param->reference_qualifier() != stub_param->reference_qualifier() ||
+			ctor_param->cv_qualifier() != stub_param->cv_qualifier()) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 // Resolve any stored template arguments on a deferred base member-type chain after a class
 // template's substitution maps are available.
 // Returns std::nullopt when any pack expansion or concrete member argument cannot be resolved.
@@ -5978,6 +6014,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			StringBuilder original_nested_name_builder;
 			original_nested_name_builder.append(template_name).append("::"sv).append(nested_struct.name());
 			std::string_view original_nested_name = original_nested_name_builder.commit();
+			auto nested_out_of_line_members = gTemplateRegistry.getOutOfLineMemberFunctions(original_nested_name);
 			auto original_nested_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(original_nested_name));
 			if (original_nested_it != getTypesByNameMap().end() && original_nested_it->second->getStructInfo()) {
 				copy_nested_static_members(*original_nested_it->second->getStructInfo());
@@ -5985,6 +6022,44 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto simple_nested_it = getTypesByNameMap().find(nested_struct.name());
 				if (simple_nested_it != getTypesByNameMap().end() && simple_nested_it->second->getStructInfo()) {
 					copy_nested_static_members(*simple_nested_it->second->getStructInfo());
+				}
+			}
+
+			for (const auto& out_of_line_member : nested_out_of_line_members) {
+				for (const auto& mem_func : nested_struct.member_functions()) {
+					const bool out_of_line_ctor_stub =
+						out_of_line_member.function_node.is<FunctionDeclarationNode>() &&
+						out_of_line_member.function_node.as<FunctionDeclarationNode>().decl_node().identifier_token().value() ==
+							nested_struct.name().view();
+					if (mem_func.function_declaration.is<ConstructorDeclarationNode>() &&
+						(out_of_line_member.function_node.is<ConstructorDeclarationNode>() || out_of_line_ctor_stub)) {
+						ASTNode ctor_node = mem_func.function_declaration;
+						auto& ctor_decl = ctor_node.as<ConstructorDeclarationNode>();
+						size_t out_of_line_template_param_count = out_of_line_member.function_node.is<ConstructorDeclarationNode>()
+							? out_of_line_member.function_node.as<ConstructorDeclarationNode>().template_parameters().size()
+							: out_of_line_member.inner_template_params.size();
+						const bool template_param_count_matches =
+							ctor_decl.template_parameters().empty() ||
+							ctor_decl.template_parameters().size() == out_of_line_template_param_count;
+						const FunctionDeclarationNode* out_of_line_ctor_stub_decl =
+							out_of_line_member.function_node.is<FunctionDeclarationNode>()
+								? &out_of_line_member.function_node.as<FunctionDeclarationNode>()
+								: nullptr;
+						const bool out_of_line_ctor_stub_matches =
+							!out_of_line_ctor_stub_decl ||
+							(out_of_line_ctor_stub_decl->parameter_nodes().size() == ctor_decl.parameter_nodes().size() &&
+							 (nested_out_of_line_members.size() == 1 ||
+							  constructorDeclarationsHaveMatchingParameterShape(ctor_decl, *out_of_line_ctor_stub_decl)));
+						if (!ctor_decl.get_definition().has_value() &&
+							!ctor_decl.has_template_body_position() &&
+							template_param_count_matches &&
+							out_of_line_ctor_stub_matches) {
+							ctor_decl.set_template_body_position(out_of_line_member.body_start);
+							if (out_of_line_member.has_initializer_list) {
+								ctor_decl.set_template_initializer_list_position(out_of_line_member.initializer_list_start);
+							}
+						}
+					}
 				}
 			}
 
@@ -7273,6 +7348,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_ctor_ref.set_template_parameters(ctor_decl.template_parameters());
 					if (ctor_decl.has_template_body_position()) {
 						new_ctor_ref.set_template_body_position(ctor_decl.template_body_position());
+						if (ctor_decl.has_template_initializer_list_position()) {
+							new_ctor_ref.set_template_initializer_list_position(ctor_decl.template_initializer_list_position());
+						}
 					}
 
 					// Ensure template_param_order is populated (used by ExpressionSubstitutor later)
@@ -7574,6 +7652,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_func_ref.set_trailing_return_type_position(func_decl.trailing_return_type_position());
 
 				// Create new TemplateFunctionDeclarationNode with inner template params
+				new_func_ref.set_is_template_pattern(true);
 				auto new_template_func = emplace_node<TemplateFunctionDeclarationNode>(
 					template_func.template_parameters(),
 					new_func_node,

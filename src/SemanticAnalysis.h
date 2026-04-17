@@ -303,6 +303,9 @@ private:
 
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
+	const ConstructorDeclarationNode* ensureSelectedConstructorMaterialized(
+		const StructTypeInfo& struct_info,
+		const ConstructorDeclarationNode* ctor);
 
 	// Annotate InitializerListNode elements used as constructor arguments
 	// with their parameter-type conversions (for direct-init syntax like `Type obj(args...)`).

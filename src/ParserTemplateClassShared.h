@@ -102,6 +102,15 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	else
 		id.kind = DeferredMemberIdentity::Kind::Function;
 	appendLazyTemplateSequence(lazy_mem_info.template_params, template_params);
+	if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
+		appendLazyTemplateSequence(
+			lazy_mem_info.template_params,
+			mem_func.function_declaration.as<ConstructorDeclarationNode>().template_parameters());
+	} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+		appendLazyTemplateSequence(
+			lazy_mem_info.template_params,
+			mem_func.function_declaration.as<TemplateFunctionDeclarationNode>().template_parameters());
+	}
 	appendLazyTemplateSequence(lazy_mem_info.template_args, template_args);
 	lazy_mem_info.access = mem_func.access;
 	lazy_mem_info.is_virtual = mem_func.is_virtual;

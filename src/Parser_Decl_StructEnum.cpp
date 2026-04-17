@@ -2139,9 +2139,14 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// This handles: const, volatile, &, &&, noexcept, override, final, = 0, = default, = delete
 			FlashCpp::MemberQualifiers member_quals;
 			FlashCpp::FunctionSpecifiers func_specs;
-			auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+			auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs, member_func_ref.parameter_nodes());
 			if (specs_result.is_error()) {
 				return specs_result;
+			}
+
+			auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
+			if (trailing_return_result.is_error()) {
+				return trailing_return_result;
 			}
 
 			// Extract parsed specifiers for use in member function registration
@@ -3535,6 +3540,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		if (delayed.is_member_function_template) {
 			if (delayed.is_constructor && delayed.ctor_node) {
 				delayed.ctor_node->set_template_body_position(delayed.body_start);
+				if (delayed.has_initializer_list) {
+					delayed.ctor_node->set_template_initializer_list_position(delayed.initializer_list_start);
+				}
 			} else if (delayed.func_node) {
 				delayed.func_node->set_template_body_position(delayed.body_start);
 			}
@@ -4447,6 +4455,7 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 			const auto& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0);
+				type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 				getTypesByNameMap().emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}

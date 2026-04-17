@@ -609,6 +609,18 @@ private:
 		StringHandle base_object,
 		int base_offset,
 		const Token& token);
+	void emitRecursiveZeroFill(
+		const StructTypeInfo& struct_info,
+		std::variant<StringHandle, TempVar> base_object,
+		int base_offset,
+		bool base_object_is_pointer,
+		const Token& token);
+	void emitZeroInitializedMember(
+		const StructMember& member,
+		std::variant<StringHandle, TempVar> base_object,
+		int base_offset,
+		bool base_object_is_pointer,
+		const Token& token);
 
 	// Implementation of recursive nested member store generation
 	bool tryEmitArrayMemberStores(
@@ -617,12 +629,26 @@ private:
 		StringHandle base_object,
 		int base_offset,
 		const Token& token);
+	bool tryEmitArrayMemberStores(
+		const StructMember& member,
+		const InitializerListNode& init_list,
+		std::variant<StringHandle, TempVar> base_object,
+		int base_offset,
+		bool base_object_is_pointer,
+		const Token& token);
 
 	void generateNestedMemberStores(
 		const StructTypeInfo& struct_info,
 		const InitializerListNode& init_list,
 		StringHandle base_object,
 		int base_offset,
+		const Token& token);
+	void generateNestedMemberStores(
+		const StructTypeInfo& struct_info,
+		const InitializerListNode& init_list,
+		std::variant<StringHandle, TempVar> base_object,
+		int base_offset,
+		bool base_object_is_pointer,
 		const Token& token);
 
 	// Helper function to route a misparsed member-call syntax through ordinary free-call lowering.
@@ -754,6 +780,10 @@ private:
 			if (resolution.selected_overload) {
 				return resolution.selected_overload;
 			}
+		}
+
+		if (!target_struct_info.hasUserDefinedConstructor()) {
+			return nullptr;
 		}
 
 		auto arity_resolution = resolve_constructor_overload_arity(target_struct_info, num_args, false);

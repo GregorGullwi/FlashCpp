@@ -211,6 +211,34 @@ static_assert(p1.sum() == 30);  // ✅ Works - member function call
 
 Multi-statement member functions with if/else, loops, and switch now also work. See the "What Doesn't Work" section for details.
 
+### ✅ Member Function Calls Through Constexpr Pointers (NEW)
+Straightforward member-function calls through constexpr pointers now work in the currently supported constexpr paths, including:
+
+- pointers to global/static constexpr objects
+- pointers to local constexpr objects inside constexpr functions
+- pointers returned by constexpr `new`, as long as the allocation is later freed
+
+```cpp
+struct Counter {
+    int value;
+    constexpr Counter(int v) : value(v) {}
+    constexpr int get() const { return value; }
+    constexpr void add(int delta) { value += delta; }
+};
+
+constexpr Counter g(40);
+constexpr const Counter* gp = &g;
+static_assert(gp->get() == 40);  // ✅ Works
+
+constexpr int f() {
+    Counter c(10);
+    Counter* p = &c;
+    p->add(5);
+    return p->get();
+}
+static_assert(f() == 15);  // ✅ Works
+```
+
 ### ✅ Break and Continue in Constexpr Loops
 ```cpp
 constexpr int find_first_gt(int n) {
@@ -960,7 +988,7 @@ The following patterns are supported:
    - ✅ **Local default-initialized constexpr bindings now preserve indeterminate state** — Function-scope default-initialized scalars, arrays, and implicit-default-initialized aggregate/class objects no longer collapse to zero in constexpr evaluation. Reads such as `int x; return x;`, `int x; x += 1;`, and `Pair p; return p.first;` are now rejected, while default member initializers continue to materialize and later writes still operate on the bound object/array state. Covered by `tests/test_constexpr_local_default_init_scalar_fail.cpp`, `tests/test_constexpr_local_default_init_compound_fail.cpp`, and `tests/test_constexpr_local_default_init_aggregate_fail.cpp`.
    - ✅ **Non-array `new T{}` / `new T{args}` brace-init syntax now parses correctly** — The parser now treats brace-init for scalar/class `new` the same way it already handled parenthesized constructor arguments and array brace-init. This means value-initializing forms such as `new int{}` and constructor calls such as `new Point{3, 4}` now set `has_value_init=true`, consume the full braced argument list, and flow through the existing constexpr `new` evaluation paths.
    - ✅ **Scalar `new T{arg}` now preserves direct-list-init narrowing rules** — `NewExpressionNode` now records whether the initializer used braces or parentheses, so `new T{arg}` no longer collapses to the same form as `new T(arg)`. For scalar/fundamental `new`, constexpr evaluation and runtime codegen now reject narrowing conversions in the brace form while continuing to allow the paren form's normal conversion rules. Covered by `tests/test_constexpr_new_scalar_brace_narrowing_fail.cpp` and `tests/test_constexpr_new_scalar_paren_narrowing_ret0.cpp`.
-   - ⚠️ **Full brace-init vs paren-init semantics for `new` are still incomplete for richer type forms** — Straightforward aggregate heap construction with explicit scalar member arguments (for example `new Pair{1, 2}` / `new Pair(1, 2)`) now works in constexpr evaluation and runtime codegen, but downstream handling still does not fully model every semantic difference between `new T{args}` and `new T(args)` for richer nested aggregate cases and other list-initialization-only diagnostics. This is also a pre-existing limitation outside `new`. **TODO:** Extend the preserved init-kind through the remaining initialization/codegen paths so aggregate-init rules and other list-initialization-only diagnostics are enforced uniformly.
+   - ⚠️ **Full brace-init vs paren-init semantics for `new` are still incomplete for richer type forms** — Straightforward aggregate heap construction with explicit scalar member arguments (for example `new Pair{1, 2}` / `new Pair(1, 2)`) now works in constexpr evaluation and runtime codegen, and straightforward nested-brace aggregate heap construction such as `new Outer{{1, 2}, 3}` now also works end-to-end in constexpr plus runtime codegen. Covered by `tests/test_constexpr_new_nested_aggregate_brace_ret0.cpp`. Downstream handling still does not fully model every semantic difference between `new T{args}` and `new T(args)` for richer brace-elision cases and other list-initialization-only diagnostics. This is also a pre-existing limitation outside `new`. **TODO:** Extend the preserved init-kind through the remaining initialization/codegen paths so aggregate-init rules and other list-initialization-only diagnostics are enforced uniformly.
 
 ### ⚠️ Constexpr Lambdas Have Remaining Capture Limits
 
@@ -1220,7 +1248,7 @@ Potential areas for enhancement (in order of complexity):
 2. **Nested/member access is okay in supported shapes** - this includes straightforward local aggregate object reads like `obj.value` and `obj.inner.value`; prefer simple, directly initialized object graphs
 3. **Multi-statement member functions now work** - if/else, for/while, switch, and break/continue are all supported
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns, including simple local object member-array reads like `obj.data[1]`, straightforward local inferred-size arrays like `int arr[] = {1, 2}`, and straightforward loop-driven reads over supported local arrays
-5. **Pointer forms are broader now** - `&arr[i]`, `ptr + n`, `ptr - n`, `ptr[i]`, `ptr1 - ptr2`, pointer relational comparisons (`<`, `<=`, `>`, `>=`), and constexpr pointer-to-member forms (`&Type::member`, `obj.*pmf`) all work in the currently supported constexpr paths
+5. **Pointer forms are broader now** - `&arr[i]`, `ptr + n`, `ptr - n`, `ptr[i]`, `ptr1 - ptr2`, pointer relational comparisons (`<`, `<=`, `>`, `>=`), straightforward pointer-based member access / member calls (`ptr->value`, `ptr->get()`), and constexpr pointer-to-member forms (`&Type::member`, `obj.*pmf`) all work in the currently supported constexpr paths
 6. **Use straightforward lambda captures** - the following work best:
    - explicit captures
    - straightforward local `&` captures

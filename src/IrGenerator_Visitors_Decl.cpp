@@ -29,6 +29,9 @@ namespace {
 } // namespace
 
 void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
+	if (node.is_template_pattern()) {
+		return;
+	}
 	if (!node.get_definition().has_value() && !node.is_implicit()) {
 		return;
 	}
@@ -1280,6 +1283,16 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 					}
 					if (!ctor_has_auto) {
 						visitConstructorDeclarationNode(ctor);
+						if (!ctor.get_definition().has_value() && !ctor.is_implicit() && parser_) {
+							StringHandle member_handle = member_func.getName();
+							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle, false)) {
+								DeferredMemberFunctionInfo deferred_info;
+								deferred_info.struct_name = current_struct_name_;
+								deferred_info.function_node = func_decl;
+								deferred_member_functions_.push_back(std::move(deferred_info));
+								FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - queued lazy constructor for deferred instantiation");
+							}
+						}
 					} else {
 						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping template constructor with auto params (will be instantiated on call)");
 					}
