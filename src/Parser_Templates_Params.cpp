@@ -414,8 +414,7 @@ ParseResult Parser::parse_template_parameter() {
 		// Anonymous parameter - generate unique name
 		// Check if next token is valid for end of parameter (comma, >, or =)
 		if (!peek().is_eof() &&
-			((peek().is_punctuator() && peek() == ","_tok) ||
-			 (peek().is_operator() && (peek() == ">"_tok || peek() == "="_tok)))) {
+			(peek() == ","_tok || peek() == ">"_tok || peek() == ">>"_tok || peek() == "="_tok)) {
 			// Generate unique anonymous parameter name
 			static int anonymous_counter = 0;
 			param_name = StringBuilder().append("__anon_param_"sv).append(static_cast<int64_t>(anonymous_counter++)).commit();
@@ -846,7 +845,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 											std::holds_alternative<SizeofExprNode>(expr) ||
 											std::holds_alternative<AlignofExprNode>(expr) ||
 											std::holds_alternative<TypeTraitExprNode>(expr) ||
-											std::holds_alternative<QualifiedIdentifierNode>(expr);
+											std::holds_alternative<QualifiedIdentifierNode>(expr) ||
+											std::holds_alternative<BinaryOperatorNode>(expr);
 
 				if (is_compile_time_expr && !peek().is_eof()) {
 					// Handle >> token splitting for nested templates
@@ -891,7 +891,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						if (std::holds_alternative<SizeofExprNode>(expr) ||
 							std::holds_alternative<AlignofExprNode>(expr) ||
 							std::holds_alternative<NoexceptExprNode>(expr) ||
-							std::holds_alternative<TypeTraitExprNode>(expr)) {
+							std::holds_alternative<TypeTraitExprNode>(expr) ||
+							std::holds_alternative<BinaryOperatorNode>(expr)) {
 							if (expr_result.node().has_value()) {
 								stored_expr = *expr_result.node();
 							}
@@ -1215,7 +1216,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								std::holds_alternative<NoexceptExprNode>(expr) ||
 								std::holds_alternative<SizeofExprNode>(expr) ||
 								std::holds_alternative<AlignofExprNode>(expr) ||
-								std::holds_alternative<TypeTraitExprNode>(expr);
+								std::holds_alternative<TypeTraitExprNode>(expr) ||
+								std::holds_alternative<BinaryOperatorNode>(expr);
 							if (is_value_like_dependent_expr) {
 								// For sizeof/alignof expressions, use UnsignedLongLong (size_t) as the type
 								TypeCategory value_category = TypeCategory::Bool;
@@ -1229,7 +1231,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								if ((std::holds_alternative<SizeofExprNode>(expr) ||
 									 std::holds_alternative<AlignofExprNode>(expr) ||
 									 std::holds_alternative<NoexceptExprNode>(expr) ||
-									 std::holds_alternative<TypeTraitExprNode>(expr)) &&
+									 std::holds_alternative<TypeTraitExprNode>(expr) ||
+									 std::holds_alternative<BinaryOperatorNode>(expr)) &&
 									expr_result.node().has_value()) {
 									stored_expr = *expr_result.node();
 									FLASH_LOG(Templates, Debug, "Storing dependent NTTP expression (sizeof/alignof/etc) for re-evaluation");

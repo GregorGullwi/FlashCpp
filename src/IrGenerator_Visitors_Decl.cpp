@@ -1703,12 +1703,6 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		vptr_store.value.value = static_cast<unsigned long long>(0);
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(vptr_store), node.name_token()));
 
-		// Secondary vtable vptr stores are only needed for the Itanium ABI (ELF).
-		// MSVC uses a different mechanism (vbtable pointers) for virtual base dispatch.
-		if (NameMangling::g_mangling_style != NameMangling::ManglingStyle::Itanium) {
-			return;
-		}
-
 		for (const auto& base : struct_info->base_classes) {
 			if (base.is_virtual || base.offset == 0) {
 				continue;

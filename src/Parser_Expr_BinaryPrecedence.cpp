@@ -880,10 +880,13 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text) {
 	bool is_hex_literal = lowerText.find("0x") == 0;
 	bool is_binary_literal = lowerText.find("0b") == 0;
 
-	// Check if this is a floating-point literal (contains '.', 'e', or 'E', or has 'f'/'l' suffix)
-	// BUT only check for 'e' (exponent) and 'f' (float suffix) if NOT a hex literal
+	// Check if this is a floating-point literal.
+	// Hexadecimal floating literals use 'p'/'P' exponents (e.g. 0x1.0p-3),
+	// while decimal floating literals use 'e'/'E'.
 	bool has_decimal_point = lowerText.find('.') != std::string::npos;
-	bool has_exponent = !is_hex_literal && lowerText.find('e') != std::string::npos;
+	bool has_exponent = is_hex_literal
+		? (lowerText.find('p') != std::string::npos)
+		: (lowerText.find('e') != std::string::npos);
 	bool has_float_suffix = !is_hex_literal && lowerText.find('f') != std::string::npos;
 	bool is_floating_point = has_decimal_point || has_exponent || has_float_suffix;
 

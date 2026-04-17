@@ -601,20 +601,31 @@ ParseResult Parser::parse_function_trailing_specifiers(
 
 			// Check for noexcept(expr) form
 			if (peek() == "("_tok) {
+				SaveHandle noexcept_expr_pos = save_token_position();
 				advance(); // consume '('
+
+				// Nested noexcept(...) expressions are common in standard library
+				// headers and frequently contain constructs we do not need to
+				// model semantically for declaration parsing.
+				if (peek() == "noexcept"_tok) {
+					restore_token_position(noexcept_expr_pos);
+					skip_balanced_parens();
+					continue;
+				}
 
 				// Parse the constant expression
 				auto expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (expr_result.is_error()) {
-					return expr_result;
-				}
-
-				if (expr_result.node().has_value()) {
+				if (!expr_result.is_error() && expr_result.node().has_value() && peek() == ")"_tok) {
 					out_specs.noexcept_expr = *expr_result.node();
-				}
-
-				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after noexcept expression", current_token_);
+					advance(); // consume ')'
+					discard_saved_token(noexcept_expr_pos);
+				} else {
+					// Header-only standard library code frequently uses heavyweight
+					// noexcept expressions that the front-end does not need to model
+					// precisely. Fall back to syntactic skipping so the declaration
+					// still parses and retains the noexcept flag.
+					restore_token_position(noexcept_expr_pos);
+					skip_balanced_parens();
 				}
 			}
 			continue;

@@ -92,3 +92,24 @@ consistently to all `TypeSpecifierNode` use-sites.
 **Fix approach:** Add a `bool is_dependent_` field to `TypeSpecifierNode` (or reuse
 `DependentPlaceholderKind`) set at placeholder creation and cleared on resolution.
 Replace the size-based guard with an explicit predicate `TypeSpecifierNode::is_dependent()`.
+
+## MSVC standard headers can fail on `this` pointer comparisons in member functions
+
+**Repro:** Including the full MSVC `<typeinfo>` header stack currently pulls in
+`std::exception::operator=(const exception&)`, which contains:
+```cpp
+if (this == &_Other) {
+	return *this;
+}
+```
+**Symptom:** FlashCpp rejects this with `Operator== not defined for operand types`
+while compiling the standard library, which blocks tests that rely on
+`std::type_info` comparisons through `<typeinfo>`.
+**Root cause:** In binary-operator codegen, pointer-to-struct expressions like
+`this` still carry `TypeCategory::Struct`, and the struct comparison fallback path
+ignores `pointer_depth`. That causes pointer equality to be misrouted through
+user-defined/synthesized struct comparison handling instead of builtin pointer
+comparison.
+**Workaround:** Keep RTTI tests self-contained and compare the raw RTTI identity
+returned by `typeid(...)` instead of pulling in the full MSVC `<typeinfo>` header
+implementation.

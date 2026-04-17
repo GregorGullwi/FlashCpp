@@ -39,6 +39,44 @@ std::string buildMsvcTypeDescriptorSymbol(std::string_view mangled_type_name) {
 											   .commit();
 	return std::string(type_desc_symbol_sv);
 }
+
+uint32_t getMsvcClassHierarchyAttributes(std::string_view class_name) {
+	const TypeInfo* type_info = findTypeByName(StringTable::getOrInternStringHandle(class_name));
+	const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+	if (!struct_info) {
+		return 0;
+	}
+
+	uint32_t attributes = 0;
+	const size_t direct_base_count = struct_info->base_classes.size() + struct_info->virtual_bases.size();
+	if (direct_base_count > 1) {
+		attributes |= 0x1; // CHD_MULTINH
+	}
+
+	auto hasVirtualBase = [&](const auto& self, const StructTypeInfo* current_struct) -> bool {
+		if (!current_struct) {
+			return false;
+		}
+		if (!current_struct->virtual_bases.empty()) {
+			return true;
+		}
+		for (const auto& base : current_struct->base_classes) {
+			if (base.is_virtual) {
+				return true;
+			}
+			const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+			if (self(self, base_type_info ? base_type_info->getStructInfo() : nullptr)) {
+				return true;
+			}
+		}
+		return false;
+	};
+	if (hasVirtualBase(hasVirtualBase, struct_info)) {
+		attributes |= 0x2; // CHD_VIRTINH
+	}
+
+	return attributes;
+}
 } // namespace
 
 void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks, const std::vector<UnwindMapEntryInfo>& unwind_map, const std::vector<SehTryBlockInfo>& seh_try_blocks, uint32_t stack_frame_size) {
@@ -307,13 +345,8 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 								  [[maybe_unused]] const RTTITypeInfo* rtti_info,
 								  [[maybe_unused]] TypeIndex subobject_type_index,
 								  [[maybe_unused]] int64_t offset_to_top) {
-	// Secondary vtables (non-zero offset_to_top) share RTTI with the primary vtable.
-	// On COFF/MSVC, secondary vtables are not used, so skip emission entirely.
-	if (offset_to_top != 0) {
-		return;
-	}
-
 	auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
+	const bool is_secondary_vtable = offset_to_top != 0;
 
 	if (g_enable_debug_output)
 		std::cerr << "DEBUG: add_vtable - vtable_symbol=" << vtable_symbol
@@ -343,179 +376,187 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 		rdata_section->add_relocation_entry(&reloc);
 	};
 
-	// ??_R1 - Base Class Descriptors (one for self + one per base)
-	std::vector<uint32_t> bcd_offsets;
-	std::vector<uint32_t> bcd_symbol_indices;
+	std::string chd_symbol = "??_R3" + mangled_class_name + "8";
+	uint32_t chd_symbol_index = 0;
 
-	// Self descriptor
-	uint32_t self_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-	std::string self_bcd_symbol = "??_R1" + mangled_class_name + "8";  // "8" suffix for self
-	std::vector<char> self_bcd_data;
-	self_bcd_data.reserve(28);  // 7 image-relative / scalar DWORDs
+	if (!is_secondary_vtable) {
+		// ??_R1 - Base Class Descriptors (one for self + one per base)
+		std::vector<uint32_t> bcd_offsets;
+		std::vector<uint32_t> bcd_symbol_indices;
 
-	// type_descriptor image-relative pointer (4 bytes) - relocation added below
-	ObjectFileCommon::appendZeros(self_bcd_data, 4);
-	// num_contained_bases (4 bytes)
-	uint32_t num_contained = static_cast<uint32_t>(base_class_info.size());
-	ObjectFileCommon::appendLE(self_bcd_data, num_contained);
-	// mdisp (4 bytes) - 0 for self
-	ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0));
-	// pdisp (4 bytes) - -1 for non-virtual
-	ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0xFFFFFFFF));
-	// vdisp (4 bytes) - 0
-	ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0));
-	// attributes (4 bytes) - include the pClassDescriptor field
-	ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0x40));
-	// class hierarchy descriptor image-relative pointer (4 bytes) - relocation added later
-	ObjectFileCommon::appendZeros(self_bcd_data, 4);
+		// Self descriptor
+		uint32_t self_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		std::string self_bcd_symbol = "??_R1" + mangled_class_name + "8";  // "8" suffix for self
+		std::vector<char> self_bcd_data;
+		self_bcd_data.reserve(28);  // 7 image-relative / scalar DWORDs
 
-	add_data(self_bcd_data, SectionType::RDATA);
-	auto self_bcd_sym = coffi_.add_symbol(self_bcd_symbol);
-	self_bcd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-	self_bcd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-	self_bcd_sym->set_section_number(rdata_section->get_index() + 1);
-	self_bcd_sym->set_value(self_bcd_offset);
-
-	// Add relocation for type_descriptor pointer in self BCD
-	addImageRelativeRelocation(self_bcd_offset, type_desc_symbol_index);
-
-	bcd_offsets.push_back(self_bcd_offset);
-	bcd_symbol_indices.push_back(self_bcd_sym->get_index());
-
-	if (g_enable_debug_output)
-		std::cerr << "  Added ??_R1 self BCD '" << self_bcd_symbol << "' at offset "
-				  << self_bcd_offset << std::endl;
-
-	// Base class descriptors
-	for (size_t i = 0; i < base_class_info.size(); ++i) {
-		const auto& bci = base_class_info[i];
-		std::string base_mangled = buildMsvcTypeDescriptorName(bci.name, {});
-		std::string base_type_desc_symbol = get_or_create_type_descriptor(bci.name);
-		uint32_t base_type_desc_index = get_or_create_symbol_index(base_type_desc_symbol);
-
-		uint32_t base_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-		std::string_view base_bcd_symbol_sv = StringBuilder()
-												  .append("??_R1"sv)
-												  .append(mangled_class_name)
-												  .append("0"sv)
-												  .append(base_mangled)
-												  .append("_"sv)
-												  .append(static_cast<uint64_t>(bcd_symbol_indices.size()))
-												  .commit();
-		std::string base_bcd_symbol(base_bcd_symbol_sv);
-		std::vector<char> base_bcd_data;
-
-		// type_descriptor image-relative pointer (4 bytes) - will add relocation
-		ObjectFileCommon::appendZeros(base_bcd_data, 4);
-
-		// num_contained_bases (4 bytes) - actual value from base class info
-		uint32_t base_num_contained = bci.num_contained_bases;
-		ObjectFileCommon::appendLE(base_bcd_data, base_num_contained);
-
-		// mdisp (4 bytes) - offset of base in derived class
-		uint32_t mdisp = bci.offset;
-		ObjectFileCommon::appendLE(base_bcd_data, mdisp);
-
-		// pdisp (4 bytes) - vbtable displacement
-		// -1 for non-virtual bases (not applicable)
-		// 0+ for virtual bases (offset into vbtable)
-		int32_t pdisp = bci.is_virtual ? 0 : -1;
-		ObjectFileCommon::appendLE(base_bcd_data, pdisp);
-
-		// vdisp (4 bytes) - displacement inside vbtable (0 for simplicity)
-		ObjectFileCommon::appendLE(base_bcd_data, uint32_t(0));
-
-		// attributes (4 bytes) - flags
-		// Bit 0: virtual base (1 if virtual, 0 if non-virtual)
-		// Bit 6: pClassDescriptor field is present
-		uint32_t attributes = (bci.is_virtual ? 1u : 0u) | 0x40u;
-		ObjectFileCommon::appendLE(base_bcd_data, attributes);
+		// type_descriptor image-relative pointer (4 bytes) - relocation added below
+		ObjectFileCommon::appendZeros(self_bcd_data, 4);
+		// num_contained_bases (4 bytes)
+		uint32_t num_contained = static_cast<uint32_t>(base_class_info.size());
+		ObjectFileCommon::appendLE(self_bcd_data, num_contained);
+		// mdisp (4 bytes) - 0 for self
+		ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0));
+		// pdisp (4 bytes) - -1 for non-virtual
+		ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0xFFFFFFFF));
+		// vdisp (4 bytes) - 0
+		ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0));
+		// attributes (4 bytes) - include the pClassDescriptor field
+		ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0x40));
 		// class hierarchy descriptor image-relative pointer (4 bytes) - relocation added later
-		ObjectFileCommon::appendZeros(base_bcd_data, 4);
+		ObjectFileCommon::appendZeros(self_bcd_data, 4);
 
-		add_data(base_bcd_data, SectionType::RDATA);
-		auto base_bcd_sym = coffi_.add_symbol(base_bcd_symbol);
-		base_bcd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		base_bcd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		base_bcd_sym->set_section_number(rdata_section->get_index() + 1);
-		base_bcd_sym->set_value(base_bcd_offset);
+		add_data(self_bcd_data, SectionType::RDATA);
+		auto self_bcd_sym = coffi_.add_symbol(self_bcd_symbol);
+		self_bcd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		self_bcd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		self_bcd_sym->set_section_number(rdata_section->get_index() + 1);
+		self_bcd_sym->set_value(self_bcd_offset);
 
-		// Add relocation for type_descriptor pointer in base BCD
-		addImageRelativeRelocation(base_bcd_offset, base_type_desc_index);
+		// Add relocation for type_descriptor pointer in self BCD
+		addImageRelativeRelocation(self_bcd_offset, type_desc_symbol_index);
 
-		bcd_offsets.push_back(base_bcd_offset);
-		bcd_symbol_indices.push_back(base_bcd_sym->get_index());
+		bcd_offsets.push_back(self_bcd_offset);
+		bcd_symbol_indices.push_back(self_bcd_sym->get_index());
 
 		if (g_enable_debug_output)
-			std::cerr << "  Added ??_R1 base BCD for " << bci.name << std::endl;
+			std::cerr << "  Added ??_R1 self BCD '" << self_bcd_symbol << "' at offset "
+					  << self_bcd_offset << std::endl;
+
+		// Base class descriptors
+		for (size_t i = 0; i < base_class_info.size(); ++i) {
+			const auto& bci = base_class_info[i];
+			std::string base_mangled = buildMsvcTypeDescriptorName(bci.name, {});
+			std::string base_type_desc_symbol = get_or_create_type_descriptor(bci.name);
+			uint32_t base_type_desc_index = get_or_create_symbol_index(base_type_desc_symbol);
+
+			uint32_t base_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+			std::string_view base_bcd_symbol_sv = StringBuilder()
+													  .append("??_R1"sv)
+													  .append(mangled_class_name)
+													  .append("0"sv)
+													  .append(base_mangled)
+													  .append("_"sv)
+													  .append(static_cast<uint64_t>(bcd_symbol_indices.size()))
+													  .commit();
+			std::string base_bcd_symbol(base_bcd_symbol_sv);
+			std::vector<char> base_bcd_data;
+
+			// type_descriptor image-relative pointer (4 bytes) - will add relocation
+			ObjectFileCommon::appendZeros(base_bcd_data, 4);
+
+			// num_contained_bases (4 bytes) - actual value from base class info
+			uint32_t base_num_contained = bci.num_contained_bases;
+			ObjectFileCommon::appendLE(base_bcd_data, base_num_contained);
+
+			// mdisp (4 bytes) - offset of base in derived class
+			uint32_t mdisp = bci.offset;
+			ObjectFileCommon::appendLE(base_bcd_data, mdisp);
+
+			// pdisp (4 bytes) - vbtable displacement
+			// -1 for non-virtual bases (not applicable)
+			// 0+ for virtual bases (offset into vbtable)
+			int32_t pdisp = bci.is_virtual ? 0 : -1;
+			ObjectFileCommon::appendLE(base_bcd_data, pdisp);
+
+			// vdisp (4 bytes) - displacement inside vbtable (0 for simplicity)
+			ObjectFileCommon::appendLE(base_bcd_data, uint32_t(0));
+
+			// attributes (4 bytes) - flags
+			// Bit 0: virtual base (1 if virtual, 0 if non-virtual)
+			// Bit 6: pClassDescriptor field is present
+			uint32_t attributes = (bci.is_virtual ? 1u : 0u) | 0x40u;
+			ObjectFileCommon::appendLE(base_bcd_data, attributes);
+			// class hierarchy descriptor image-relative pointer (4 bytes) - relocation added later
+			ObjectFileCommon::appendZeros(base_bcd_data, 4);
+
+			add_data(base_bcd_data, SectionType::RDATA);
+			auto base_bcd_sym = coffi_.add_symbol(base_bcd_symbol);
+			base_bcd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+			base_bcd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+			base_bcd_sym->set_section_number(rdata_section->get_index() + 1);
+			base_bcd_sym->set_value(base_bcd_offset);
+
+			// Add relocation for type_descriptor pointer in base BCD
+			addImageRelativeRelocation(base_bcd_offset, base_type_desc_index);
+
+			bcd_offsets.push_back(base_bcd_offset);
+			bcd_symbol_indices.push_back(base_bcd_sym->get_index());
+
+			if (g_enable_debug_output)
+				std::cerr << "  Added ??_R1 base BCD for " << bci.name << std::endl;
+		}
+
+		// ??_R2 - Base Class Array (pointers to all BCDs)
+		uint32_t bca_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		std::string bca_symbol = "??_R2" + mangled_class_name + "8";
+		std::vector<char> bca_data(bcd_offsets.size() * 4, 0);
+
+		add_data(bca_data, SectionType::RDATA);
+		auto bca_sym = coffi_.add_symbol(bca_symbol);
+		bca_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		bca_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		bca_sym->set_section_number(rdata_section->get_index() + 1);
+		bca_sym->set_value(bca_offset);
+		uint32_t bca_symbol_index = bca_sym->get_index();
+
+		// Add relocations for BCD pointers in BCA
+		for (size_t i = 0; i < bcd_offsets.size(); ++i) {
+			addImageRelativeRelocation(bca_offset + static_cast<uint32_t>(i * 4), bcd_symbol_indices[i]);
+		}
+
+		if (g_enable_debug_output)
+			std::cerr << "  Added ??_R2 Base Class Array '" << bca_symbol << "' at offset "
+					  << bca_offset << std::endl;
+
+		// ??_R3 - Class Hierarchy Descriptor
+		uint32_t chd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		std::vector<char> chd_data;
+
+		// signature (4 bytes) - 0
+		ObjectFileCommon::appendLE(chd_data, uint32_t(0));
+		// attributes (4 bytes) - inheritance model flags
+		ObjectFileCommon::appendLE(chd_data, getMsvcClassHierarchyAttributes(class_name));
+		// num_base_classes (4 bytes) - total including self
+		uint32_t total_bases = static_cast<uint32_t>(bcd_offsets.size());
+		ObjectFileCommon::appendLE(chd_data, total_bases);
+		// base_class_array image-relative pointer (4 bytes) - will add relocation
+		ObjectFileCommon::appendZeros(chd_data, 4);
+
+		add_data(chd_data, SectionType::RDATA);
+		auto chd_sym = coffi_.add_symbol(chd_symbol);
+		chd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		chd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		chd_sym->set_section_number(rdata_section->get_index() + 1);
+		chd_sym->set_value(chd_offset);
+		chd_symbol_index = chd_sym->get_index();
+
+		// Add relocation for base_class_array pointer in CHD
+		addImageRelativeRelocation(chd_offset + 12, bca_symbol_index);
+
+		// Each BCD also stores an image-relative pointer back to the CHD.
+		for (uint32_t bcd_offset : bcd_offsets) {
+			addImageRelativeRelocation(bcd_offset + 24, chd_symbol_index);
+		}
+
+		if (g_enable_debug_output)
+			std::cerr << "  Added ??_R3 Class Hierarchy Descriptor '" << chd_symbol << "' at offset "
+					  << chd_offset << std::endl;
+	} else {
+		chd_symbol_index = get_or_create_symbol_index(chd_symbol);
 	}
-
-	// ??_R2 - Base Class Array (pointers to all BCDs)
-	uint32_t bca_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-	std::string bca_symbol = "??_R2" + mangled_class_name + "8";
-	std::vector<char> bca_data(bcd_offsets.size() * 4, 0);
-
-	add_data(bca_data, SectionType::RDATA);
-	auto bca_sym = coffi_.add_symbol(bca_symbol);
-	bca_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-	bca_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-	bca_sym->set_section_number(rdata_section->get_index() + 1);
-	bca_sym->set_value(bca_offset);
-	uint32_t bca_symbol_index = bca_sym->get_index();
-
-	// Add relocations for BCD pointers in BCA
-	for (size_t i = 0; i < bcd_offsets.size(); ++i) {
-		addImageRelativeRelocation(bca_offset + static_cast<uint32_t>(i * 4), bcd_symbol_indices[i]);
-	}
-
-	if (g_enable_debug_output)
-		std::cerr << "  Added ??_R2 Base Class Array '" << bca_symbol << "' at offset "
-				  << bca_offset << std::endl;
-
-	// ??_R3 - Class Hierarchy Descriptor
-	uint32_t chd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-	std::string chd_symbol = "??_R3" + mangled_class_name + "8";
-	std::vector<char> chd_data;
-
-	// signature (4 bytes) - 0
-	ObjectFileCommon::appendLE(chd_data, uint32_t(0));
-	// attributes (4 bytes) - 0 (can be extended for multiple/virtual inheritance)
-	ObjectFileCommon::appendLE(chd_data, uint32_t(0));
-	// num_base_classes (4 bytes) - total including self
-	uint32_t total_bases = static_cast<uint32_t>(bcd_offsets.size());
-	ObjectFileCommon::appendLE(chd_data, total_bases);
-	// base_class_array image-relative pointer (4 bytes) - will add relocation
-	ObjectFileCommon::appendZeros(chd_data, 4);
-
-	add_data(chd_data, SectionType::RDATA);
-	auto chd_sym = coffi_.add_symbol(chd_symbol);
-	chd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-	chd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-	chd_sym->set_section_number(rdata_section->get_index() + 1);
-	chd_sym->set_value(chd_offset);
-	uint32_t chd_symbol_index = chd_sym->get_index();
-
-	// Add relocation for base_class_array pointer in CHD
-	addImageRelativeRelocation(chd_offset + 12, bca_symbol_index);
-
-	// Each BCD also stores an image-relative pointer back to the CHD.
-	for (uint32_t bcd_offset : bcd_offsets) {
-		addImageRelativeRelocation(bcd_offset + 24, chd_symbol_index);
-	}
-
-	if (g_enable_debug_output)
-		std::cerr << "  Added ??_R3 Class Hierarchy Descriptor '" << chd_symbol << "' at offset "
-				  << chd_offset << std::endl;
 
 	// ??_R4 - Complete Object Locator
 	uint32_t col_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-	std::string col_symbol = "??_R4" + mangled_class_name + "6B@";  // "6B@" suffix for COL
+	std::string col_symbol = is_secondary_vtable
+		? (std::string(vtable_symbol) + "$col")
+		: ("??_R4" + mangled_class_name + "6B@");
 	std::vector<char> col_data;
 
 	// signature (4 bytes) - 1 for 64-bit
 	ObjectFileCommon::appendLE(col_data, uint32_t(1));
-	// offset (4 bytes) - 0 for primary vtable
-	ObjectFileCommon::appendLE(col_data, uint32_t(0));
+	// offset (4 bytes) - offset of this vtable within the complete object
+	ObjectFileCommon::appendLE(col_data, static_cast<uint32_t>(-offset_to_top));
 	// cd_offset (4 bytes) - 0
 	ObjectFileCommon::appendLE(col_data, uint32_t(0));
 	// type_descriptor image-relative pointer (4 bytes) - relocation added at offset+12

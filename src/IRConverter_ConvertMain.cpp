@@ -6069,11 +6069,10 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		return;
 	}
 
-		// dynamic_cast<void*>(expr) — C++20 [expr.dynamic.cast]/7:
-		// Returns a pointer to the most-derived complete object.
-		// Implementation: read offset_to_top from vtable[-2] and add to source pointer.
-	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-		if (op.target_type_index.category() == TypeCategory::Void) {
+	// dynamic_cast<void*>(expr) — C++20 [expr.dynamic.cast]/7:
+	// Returns a pointer to the most-derived complete object.
+	if (op.target_type_index.category() == TypeCategory::Void) {
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			emitMovRegReg(X64Register::RDI, X64Register::RAX);
 				// null check: if src == null, return null
 			emitTestRegReg(X64Register::RDI);
@@ -6104,9 +6103,17 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 			size_t vc_end = textSectionData.size();
 			int8_t vc_jmp_delta = static_cast<int8_t>(vc_end - vc_jmp - 1);
 			textSectionData[vc_jmp] = static_cast<uint8_t>(vc_jmp_delta);
-			regAlloc.reset();
-			return;
+		} else {
+			emitMovRegReg(X64Register::RCX, X64Register::RAX);
+			emitSubRSP(32);
+			emitCall("__RTCastToVoid");
+			emitAddRSP(32);
+			emitMovToFrameSized(
+				SizedRegister{X64Register::RAX, 64, false},
+				SizedStackSlot{result_offset, 64, false});
 		}
+		regAlloc.reset();
+		return;
 	}
 
 		// Step 3: Check if source pointer is null
@@ -7644,6 +7651,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						vtables_.push_back(std::move(secondary_vtable_info));
 					};
 
+					vtables_.push_back(vtable_info);
 					for (const auto& base : struct_info->base_classes) {
 						if (!base.is_virtual) {
 							registerSecondaryVTable(base);
@@ -7652,8 +7660,6 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 					for (const auto& virtual_base : struct_info->virtual_bases) {
 						registerSecondaryVTable(virtual_base);
 					}
-
-					vtables_.push_back(std::move(vtable_info));
 				}
 
 					// Check if this function is virtual and add it to the vtable
