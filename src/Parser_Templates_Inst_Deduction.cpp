@@ -151,12 +151,12 @@ static bool templateParameterListsHaveMatchingShape(const LeftParamContainer& lh
 			return false;
 		}
 		for (size_t i = 0; i < lhs_params.size(); ++i) {
-			if (!lhs_params[i].is<TemplateParameterNode>() ||
-				!rhs_params[i].is<TemplateParameterNode>()) {
+			if (!lhs_params[i].template is<TemplateParameterNode>() ||
+				!rhs_params[i].template is<TemplateParameterNode>()) {
 				return false;
 			}
-			const TemplateParameterNode& lhs_param = lhs_params[i].as<TemplateParameterNode>();
-			const TemplateParameterNode& rhs_param = rhs_params[i].as<TemplateParameterNode>();
+			const TemplateParameterNode& lhs_param = lhs_params[i].template as<TemplateParameterNode>();
+			const TemplateParameterNode& rhs_param = rhs_params[i].template as<TemplateParameterNode>();
 			if (lhs_param.kind() != rhs_param.kind() ||
 				lhs_param.is_variadic() != rhs_param.is_variadic() ||
 				lhs_param.has_concept_constraint() != rhs_param.has_concept_constraint()) {
