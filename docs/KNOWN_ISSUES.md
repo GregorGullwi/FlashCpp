@@ -92,3 +92,27 @@ consistently to all `TypeSpecifierNode` use-sites.
 **Fix approach:** Add a `bool is_dependent_` field to `TypeSpecifierNode` (or reuse
 `DependentPlaceholderKind`) set at placeholder creation and cleared on resolution.
 Replace the size-based guard with an explicit predicate `TypeSpecifierNode::is_dependent()`.
+
+## Runtime aggregate initialization can still synthesize invalid default-ctor calls for nested non-aggregate members
+
+**Repro:**
+```cpp
+struct Inner {
+	int x;
+	int y;
+	constexpr Inner(int a, int b) : x(a), y(b) {}
+};
+
+struct Outer {
+	Inner inner;
+	int z;
+};
+
+int main() {
+	Outer o = {{1, 2}, 3};
+	return o.inner.x + o.inner.y + o.z;
+}
+```
+**Symptom:** Link error: `undefined reference to 'Inner::Inner()'`.
+**Impact:** Some runtime aggregate-initialization paths still materialize or emit an implicit default constructor for the enclosing aggregate even when a nested member must instead be initialized directly from the brace clause.
+**Fix approach:** Reuse the constructor-aware nested brace-init lowering uniformly across the remaining runtime aggregate-initialization paths so nested non-aggregate members construct in-place instead of routing through a synthesized default constructor.
