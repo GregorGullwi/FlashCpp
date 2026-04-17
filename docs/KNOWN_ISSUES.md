@@ -57,3 +57,38 @@ failure. This matches the intent of `= delete` overloads that explicitly catch
 **Proper fix needed:** The SFINAE instantiation path should detect `enable_if<false>`
 return types and propagate them as substitution failures, eliminating the need for
 the tie-breaking heuristic.
+
+## Non-SFINAE function-template overload selection uses "first match" instead of most-specific
+
+**Symptom:** In non-SFINAE call sites, `try_instantiate_template` returns the first
+overload that instantiates successfully rather than the most-specialized one.  C++20
+[temp.func.order] requires the most-specialized template to be preferred.
+**Impact:** If multiple overloads are viable for a given call, the one declared first
+wins regardless of specificity.  This silently produces wrong behavior rather than a
+compile error, making it hard to detect.
+**Root cause:** The non-SFINAE path in `try_instantiate_template` has a fast-return
+after the first success.  The existing `hasLaterUsableTemplateDefinitionWithMatchingShape`
+deferral only addresses the forward-declaration case, not the general partial-ordering
+problem.
+**Fix approach:** Apply the same `computeTemplateFunctionSpecificity` scoring used in
+SFINAE selection to the non-SFINAE path as well, collecting all viable candidates before
+selecting the best one.  The two paths would then share a single `selectBestCandidate`
+helper, with SFINAE differing only in what happens when no candidate matches (silently
+return `nullopt` vs. error).
+
+## Unresolved-type detection relies on fragile heuristic (`UserDefined && size_in_bits() == 0`)
+
+**Location:** `try_instantiate_single_template` codegen guard
+(`src/Parser_Templates_Inst_Deduction.cpp`).
+**Symptom:** Template instantiations whose parameter types still hold dependent
+placeholders are blocked from codegen by checking `TypeCategory::UserDefined &&
+size_in_bits() == 0`.  This heuristic can misfire on legitimate zero-size structs
+(e.g., empty tag types, `std::monostate`) or miss placeholders stored under a
+different category.
+**Root cause:** There is no explicit `is_dependent` / `is_placeholder` flag on
+`TypeSpecifierNode`; resolution status is inferred from size.
+`DependentPlaceholderKind` already exists on `TypeInfo` but is not propagated
+consistently to all `TypeSpecifierNode` use-sites.
+**Fix approach:** Add a `bool is_dependent_` field to `TypeSpecifierNode` (or reuse
+`DependentPlaceholderKind`) set at placeholder creation and cleared on resolution.
+Replace the size-based guard with an explicit predicate `TypeSpecifierNode::is_dependent()`.
