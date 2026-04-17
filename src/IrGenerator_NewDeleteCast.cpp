@@ -1146,10 +1146,15 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		TypeIndex resolved_expr_type_index = resolveExprTypeIndex(operand_node.as<ExpressionNode>(), expr_operands.type_index);
 		bool runtime_typeid_candidate = isRuntimeTypeidExpression(operand_node.as<ExpressionNode>());
 		bool expr_is_reference_object = resolveExprIsReference(operand_node.as<ExpressionNode>());
-		bool is_runtime_polymorphic_object =
-			runtime_typeid_candidate &&
-			(resolved_expr_type_index.category() == TypeCategory::Struct ||
-			 expr_operands.category() == TypeCategory::UserDefined);
+		bool type_is_polymorphic = false;
+		if (resolved_expr_type_index.category() == TypeCategory::Struct && resolved_expr_type_index.is_valid()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(resolved_expr_type_index)) {
+				if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+					type_is_polymorphic = struct_info->has_vtable;
+				}
+			}
+		}
+		bool is_runtime_polymorphic_object = runtime_typeid_candidate && type_is_polymorphic;
 		if (is_runtime_polymorphic_object) {
 			if (expr_is_reference_object) {
 				expr_operands =

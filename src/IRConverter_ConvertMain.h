@@ -476,6 +476,9 @@ private:
 	void handleTypeid(const IrInstruction& instruction);
 
 	void handleDynamicCast(const IrInstruction& instruction);
+	void emit_dynamic_cast_runtime_helpers();
+	void emit_dynamic_cast_check_function();
+	void emit_dynamic_cast_throw_function();
 
 	void spillAndInvalidateRegisterForManualOverwrite(X64Register target_reg);
 
