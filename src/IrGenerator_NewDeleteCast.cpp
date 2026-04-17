@@ -110,32 +110,23 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 			throw CompileError("Too many initializers for aggregate type in new-expression");
 		}
 
-		ConstructorCallOp ctor_op;
-		ctor_op.object = pointer_var;
-		ctor_op.is_heap_allocated = true;
-		fillInDefaultConstructorArguments(ctor_op, struct_info);
-		finalizeConstructorCallOp(ctor_op, struct_info, Token());
-		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
-
+		InitializerListNode aggregate_init_list;
 		for (size_t member_idx = 0; member_idx < ctor_args.size(); ++member_idx) {
 			const ASTNode& argument = ctor_args[member_idx];
 			const StructMember& member = struct_info.members[member_idx];
-			if (!argument.is<ExpressionNode>()) {
+			if (!argument.is<ExpressionNode>() && !argument.is<InitializerListNode>()) {
 				throw CompileError("Unsupported aggregate new initializer shape for member '" +
 								   std::string(StringTable::getStringView(member.getName())) + "'");
 			}
-
-			ExprResult arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
-			MemberStoreOp store_op;
-			store_op.object = pointer_var;
-			store_op.member_name = member.getName();
-			store_op.offset = static_cast<int>(member.offset);
-			store_op.value = toTypedValue(arg_operands);
-			store_op.struct_type_info = nullptr;
-			store_op.ref_qualifier = CVReferenceQualifier::None;
-			store_op.is_pointer_to_member = true;
-			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), Token()));
+			aggregate_init_list.add_initializer(argument);
 		}
+		generateNestedMemberStores(
+			struct_info,
+			aggregate_init_list,
+			std::variant<StringHandle, TempVar>{pointer_var},
+			0,
+			true,
+			Token());
 
 		return true;
 	};
