@@ -1969,7 +1969,7 @@ void AstToIr::emitZeroInitializedMember(
 	int base_offset,
 	bool base_object_is_pointer,
 	const Token& token) {
-	if (member.is_array && !member.array_dimensions.empty()) {
+	if (member.is_array) {
 		size_t element_count = 1;
 		for (size_t dim : member.array_dimensions) {
 			element_count *= dim;
@@ -2021,6 +2021,8 @@ void AstToIr::emitZeroInitializedMember(
 	const bool is_nested_struct =
 		isIrStructType(toIrType(member.memberType())) &&
 		member_struct_info &&
+		// Members with user-defined constructors require constructor-call semantics when
+		// value-initialized; only recurse for plain aggregate subobjects that can be zero-filled.
 		!member_struct_info->hasUserDefinedConstructor() &&
 		(member.size * 8) > 64;
 	if (is_nested_struct) {
