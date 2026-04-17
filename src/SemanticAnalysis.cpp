@@ -5271,7 +5271,6 @@ const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMat
 		return ctor;
 	}
 
-	lazy_registry.markInstantiated(struct_info.getName(), ctor_name, false);
 	return &instantiated_ctor->as<ConstructorDeclarationNode>();
 }
 

@@ -1,27 +1,5 @@
 # Known Issues
 
-## Nested out-of-line template constructors lose member-initializer metadata
-
-**Repro shape:**
-```cpp
-template <typename T>
-struct Outer {
-    struct Inner {
-        T value;
-        template <typename U>
-        Inner(U v);
-    };
-};
-
-template <typename T>
-template <typename U>
-Outer<T>::Inner::Inner(U v) : value(v) {}
-```
-**Symptom:** After the Phase 5 stmt-decl ownership move, nested out-of-line template constructors now materialize their bodies before IR as intended, but the lazy path still drops the out-of-line member-initializer list. The constructor links and the body runs, yet members initialized only through `: value(v)` remain zero-initialized unless the body assigns them explicitly.
-**Impact:** This is narrower than the old codegen fallback problem — direct-init and brace-init variable declarations now resolve/materialize the right constructor declaration — but nested out-of-line constructor definitions that rely on member/base/delegating initializers can still miscompile.
-**Root cause:** The nested template out-of-line-member registration path in `Parser_Templates_Class.cpp` records a delayed body position for lazy constructor materialization, but it still does not preserve constructor initializer-list metadata the way the regular out-of-line constructor path does.
-**Phase:** Adjacent Phase 5 follow-up after removing stmt-decl constructor materialization fallbacks.
-
 ## Alias-chain dependent-bool resolution loses size_bits (Phase 2)
 
 **Test:** `test_alias_chain_dependent_bool_ret1.cpp`

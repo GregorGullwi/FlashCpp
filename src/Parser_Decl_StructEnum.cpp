@@ -3535,6 +3535,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		if (delayed.is_member_function_template) {
 			if (delayed.is_constructor && delayed.ctor_node) {
 				delayed.ctor_node->set_template_body_position(delayed.body_start);
+				if (delayed.has_initializer_list) {
+					delayed.ctor_node->set_template_initializer_list_position(delayed.initializer_list_start);
+				}
 			} else if (delayed.func_node) {
 				delayed.func_node->set_template_body_position(delayed.body_start);
 			}

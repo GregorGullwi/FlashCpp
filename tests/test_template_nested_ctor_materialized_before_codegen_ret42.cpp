@@ -1,7 +1,7 @@
 // Regression test: nested template constructors must be fully materialized in
 // parser/sema before variable-declaration codegen consumes them. Exercises both
-// paren-init and brace-init variable declarations without relying on a codegen
-// fallback to instantiate the constructor body.
+// paren-init and brace-init variable declarations and verifies that an
+// out-of-line member-initializer list survives lazy constructor materialization.
 
 template<typename T>
 struct Outer {
@@ -17,9 +17,7 @@ struct Outer {
 
 template<typename T>
 template<typename U>
-Outer<T>::Inner::Inner(U v) {
-	value = static_cast<T>(v);
-}
+Outer<T>::Inner::Inner(U v) : value(static_cast<T>(v)) {}
 
 int main() {
 	Outer<int>::Inner paren(40);

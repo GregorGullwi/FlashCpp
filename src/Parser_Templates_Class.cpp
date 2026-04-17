@@ -307,6 +307,7 @@ ParseResult Parser::parse_template_declaration() {
 			// We DON'T call try_parse_out_of_line_template_member because its save/restore
 			// logic conflicts with the nested template parameter scope.
 			std::string_view nested_class_name;
+			std::string nested_qualified_class_name;
 			Token nested_func_name_token;
 			bool found_nested_def = false;
 
@@ -329,12 +330,15 @@ ParseResult Parser::parse_template_declaration() {
 								if (peek().is_identifier()) {
 									// Tentatively record this match
 									nested_class_name = class_token.value();
+									nested_qualified_class_name = std::string(class_token.value());
 									nested_func_name_token = peek_info();
 									advance(); // consume function name
 									// Handle nested :: for deeper nesting
 									while (peek() == "::"_tok) {
 										advance();
 										if (peek().is_identifier()) {
+											nested_qualified_class_name += "::";
+											nested_qualified_class_name += nested_func_name_token.value();
 											nested_class_name = nested_func_name_token.value();
 											nested_func_name_token = peek_info();
 											advance();
@@ -407,8 +411,17 @@ ParseResult Parser::parse_template_declaration() {
 				auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(void_type, nested_func_name_token);
 				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, nested_func_name_token.value());
 
-				// Skip parameter list
-				skip_balanced_parens();
+				// Parse parameter list so delayed constructor/member matching can compare signatures.
+				FlashCpp::ParsedParameterList nested_params;
+				auto nested_param_result = parse_parameter_list(nested_params);
+				if (nested_param_result.is_error()) {
+					cleanup_template_state();
+					return saved_position.success();
+				}
+				for (const auto& param : nested_params.parameters) {
+					func_ref.add_parameter_node(param);
+				}
+				func_ref.set_is_variadic(nested_params.is_variadic);
 				// Skip trailing specifiers
 				FlashCpp::MemberQualifiers quals;
 				skip_function_trailing_specifiers(quals);
@@ -426,8 +439,12 @@ ParseResult Parser::parse_template_declaration() {
 				// Skip trailing requires clause if present
 				skip_trailing_requires_clause();
 
+				SaveHandle initializer_list_start{};
+				bool has_initializer_list = false;
 				// Handle constructor member initializer list: ClassName<T>::ClassName(...) : init1(x), init2(y) { }
 				if (peek() == ":"_tok) {
+					initializer_list_start = save_token_position();
+					has_initializer_list = true;
 					advance(); // consume ':'
 					// Skip member initializer list entries: name(expr), name(expr), ...
 					while (!peek().is_eof()) {
@@ -489,14 +506,16 @@ ParseResult Parser::parse_template_declaration() {
 				out_of_line_member.template_params = template_params;
 				out_of_line_member.function_node = func_node;
 				out_of_line_member.body_start = body_start;
+				out_of_line_member.initializer_list_start = initializer_list_start;
 				out_of_line_member.template_param_names = template_param_names;
 				out_of_line_member.inner_template_params = inner_template_params;
 				out_of_line_member.inner_template_param_names = inner_template_param_names;
+				out_of_line_member.has_initializer_list = has_initializer_list;
 
-				gTemplateRegistry.registerOutOfLineMember(nested_class_name, std::move(out_of_line_member));
+				gTemplateRegistry.registerOutOfLineMember(nested_qualified_class_name, std::move(out_of_line_member));
 
 				FLASH_LOG(Templates, Debug, "Registered nested template out-of-line member: ",
-						  nested_class_name, "::", nested_func_name_token.value(),
+						  nested_qualified_class_name, "::", nested_func_name_token.value(),
 						  " (outer params: ", template_params.size(),
 						  ", inner params: ", inner_template_params.size(), ")");
 

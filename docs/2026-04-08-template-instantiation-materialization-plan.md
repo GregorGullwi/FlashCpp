@@ -127,6 +127,7 @@ Relates to Phase 5 cleanup of codegen-side heuristics.
    - `IrGenerator_Stmt_Decl.cpp` no longer calls `materializeMatchingConstructorTemplate(...)` during variable-declaration IR lowering
    - the old `is_unresolved_noop_ctor` / `prepare_nested_template_ctor` stmt-decl fallbacks are removed
    - responsibility moved earlier into sema/lazy materialization for the direct-init and brace-init variable-declaration paths
+   - follow-up parser/sema fixes now preserve nested out-of-line ctor initializer lists and attach non-template-class ctor-template instantiations back to the owning struct so codegen emits the materialized specialization
 3. **Extend `DependentPlaceholderKind` if needed** — if Phase 5 discovers additional placeholder categories (e.g., dependent function pointers, dependent array element types), extend the enum rather than adding new string heuristics.
 4. **Consider removing remaining legitimate `find("::")` structural splits** in favor of a pre-computed `QualifiedIdentifier` stored on the TypeInfo, so the name never needs to be re-parsed for scope components. This is optional but would further improve maintainability.
 5. **Phase 6: unify template-parameter-to-function-parameter deduction mapping** — the positional `deduced_call_arg_index` counter in `try_instantiate_template_explicit` should be replaced with a proper pre-deduction pass.
@@ -158,7 +159,7 @@ After the remaining work:
 2. Alias-template uses are materialized through **one authoritative helper**, not hand-reimplemented at each parser entry point. ✅ DONE (Phase 2)
 3. Any late-materialized AST root that becomes visible to sema, constexpr, or codegen goes through **one explicit registration + normalization path**. ✅ DONE (Phase 3)
 4. Unresolved dependent placeholders are identified by **typed state**, not by best-effort name inspection. ✅ DONE (Phase 4)
-5. Codegen only consumes already-materialized constructor declarations; it does not decide when template constructors get instantiated. **IN PROGRESS (Phase 5): done for `IrGenerator_Stmt_Decl.cpp` variable-declaration constructor paths.**
+5. Codegen only consumes already-materialized constructor declarations; it does not decide when template constructors get instantiated. **IN PROGRESS (Phase 5): done for `IrGenerator_Stmt_Decl.cpp` variable-declaration constructor paths, nested out-of-line ctor initializer-list replay, and inline ctor-template materialization for the exercised constructor paths.**
 
 ## Short bottom line
 

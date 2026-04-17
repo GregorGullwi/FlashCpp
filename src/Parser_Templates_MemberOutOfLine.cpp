@@ -193,8 +193,12 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 							}
 						}
 					}
-						// Skip member initializer list (for constructors)
+					SaveHandle ctor_initializer_list_start{};
+					bool ctor_has_initializer_list = false;
+					// Skip member initializer list (for constructors)
 					if (peek() == ":"_tok) {
+						ctor_initializer_list_start = save_token_position();
+						ctor_has_initializer_list = true;
 						advance(); // consume ':'
 							// Skip entries: name(args), name{args}, name<T>(args), ...
 							// Brace-init in the list must be skipped as balanced
@@ -243,7 +247,9 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 					out_of_line_ctor.template_params = template_params;
 					out_of_line_ctor.function_node = ctor_func_node;
 					out_of_line_ctor.body_start = ctor_body_start;
+					out_of_line_ctor.initializer_list_start = ctor_initializer_list_start;
 					out_of_line_ctor.template_param_names = template_param_names;
+					out_of_line_ctor.has_initializer_list = ctor_has_initializer_list;
 					out_of_line_ctor.is_defaulted = ctor_is_defaulted;
 					out_of_line_ctor.is_deleted = ctor_is_deleted;
 

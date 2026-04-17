@@ -290,6 +290,51 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 				normalizePendingSemanticRoots();
 				visitFunctionDeclarationNode(func);
 			} else if (info.function_node.is<ConstructorDeclarationNode>()) {
+				const ConstructorDeclarationNode& ctor = info.function_node.as<ConstructorDeclarationNode>();
+				if (!ctor.get_definition().has_value() && parser_) {
+					StringHandle member_handle = ctor.name();
+					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(info.struct_name, member_handle, false)) {
+						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(info.struct_name, member_handle, false);
+						if (lazy_info_opt.has_value()) {
+							auto new_ctor_node = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+							normalizePendingSemanticRoots();
+							if (new_ctor_node.has_value() && new_ctor_node->is<ConstructorDeclarationNode>()) {
+								LazyMemberInstantiationRegistry::getInstance().markInstantiated(info.struct_name, member_handle, false);
+								visitConstructorDeclarationNode(new_ctor_node->as<ConstructorDeclarationNode>());
+								current_function_name_ = saved_function;
+								current_namespace_stack_ = saved_namespace;
+								continue;
+							}
+						}
+					}
+					bool visited_replacement_ctor = false;
+					if (auto struct_it = getTypesByNameMap().find(info.struct_name);
+						struct_it != getTypesByNameMap().end()) {
+						if (const StructTypeInfo* struct_info = struct_it->second->getStructInfo()) {
+							for (const auto& member_func : struct_info->member_functions) {
+								if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+									continue;
+								}
+								const auto& replacement_ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
+								if (!replacement_ctor.get_definition().has_value()) {
+									continue;
+								}
+								if (replacement_ctor.name() == ctor.name() &&
+									replacement_ctor.parameter_nodes().size() == ctor.parameter_nodes().size()) {
+									normalizePendingSemanticRoots();
+									visitConstructorDeclarationNode(replacement_ctor);
+									current_function_name_ = saved_function;
+									current_namespace_stack_ = saved_namespace;
+									visited_replacement_ctor = true;
+									break;
+								}
+							}
+						}
+					}
+					if (visited_replacement_ctor) {
+						continue;
+					}
+				}
 				normalizePendingSemanticRoots();
 				visitConstructorDeclarationNode(info.function_node.as<ConstructorDeclarationNode>());
 			} else if (info.function_node.is<DestructorDeclarationNode>()) {
