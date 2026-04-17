@@ -1145,8 +1145,8 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		};
 		TypeIndex static_expr_type_index = static_expr_type.has_value() ? static_expr_type->type_index() : TypeIndex{};
 		TypeIndex resolved_expr_type_index = resolveExprTypeIndex(operand_expr, static_expr_type_index);
-		bool runtime_typeid_candidate = isRuntimeTypeidExpression(operand_expr);
 		bool expr_is_reference_object = resolveExprIsReference(operand_expr);
+		bool runtime_typeid_candidate = expr_is_reference_object || isRuntimeTypeidExpression(operand_expr);
 		bool type_is_polymorphic = false;
 		if (resolved_expr_type_index.category() == TypeCategory::Struct && resolved_expr_type_index.is_valid()) {
 			if (const TypeInfo* type_info = tryGetTypeInfo(resolved_expr_type_index)) {
