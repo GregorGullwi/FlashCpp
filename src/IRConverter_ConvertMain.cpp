@@ -6804,8 +6804,10 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					if (should_deref_reference_source) {
 						loadReferenceSourceIntoRegister(src_reg.value(), src_offset, src_ref_info->value_size_bits.value, false);
 					}
+					// Derived-to-base pointer adjustment: add base class offset for non-primary bases.
+					// Check is_valid() to skip dynamic_cast results that have TypeIndex with index 0.
 					if (op.pointer_depth.is_pointer() && op.type_index.isStruct() &&
-						init.type_index.isStruct() && init.type_index != op.type_index) {
+						init.type_index.isStruct() && init.type_index.is_valid() && init.type_index != op.type_index) {
 						emitDerivedToBasePointerAdjust(src_reg.value(), op.type_index, init.type_index);
 					}
 					emitMovToFrameSized(
