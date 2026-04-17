@@ -4,6 +4,30 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+StringHandle Parser::getStructQualifiedNameForRegistration(const StructDeclarationNode& struct_node) const {
+	if (struct_parsing_context_stack_.empty()) {
+		return struct_node.qualified_name();
+	}
+
+	StringBuilder chain_builder;
+	bool found_struct = false;
+	for (const auto& ctx : struct_parsing_context_stack_) {
+		chain_builder.append(ctx.struct_name);
+		if (ctx.struct_node == &struct_node) {
+			found_struct = true;
+			break;
+		}
+		chain_builder.append("::"sv);
+	}
+
+	if (found_struct) {
+		return StringTable::getOrInternStringHandle(chain_builder.commit());
+	}
+
+	chain_builder.reset();
+	return struct_node.qualified_name();
+}
+
 ParseResult Parser::parse_template_function_declaration_body(
 	InlineVector<ASTNode, 4>& template_params,
 	std::optional<ASTNode> requires_clause,
@@ -219,7 +243,6 @@ ParseResult Parser::parse_template_function_declaration_body(
 // Pattern: template<typename U> ReturnType functionName(U param) { ... }
 ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct_node, AccessSpecifier access) {
 	ScopedTokenPosition saved_position(*this);
-
 	// Consume 'template' keyword
 	if (!consume("template"_tok)) {
 		return ParseResult::error("Expected 'template' keyword", peek_info());
@@ -716,8 +739,9 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 														false, false, false, false,
 														member_quals.cv_qualifier);
 
+						StringHandle owner_qualified_name = getStructQualifiedNameForRegistration(struct_node);
 						auto qualified_name = StringTable::getOrInternStringHandle(
-							StringBuilder().append(struct_node.name()).append("::"sv).append(operator_name));
+							StringBuilder().append(owner_qualified_name).append("::"sv).append(operator_name));
 						gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
 						gTemplateRegistry.registerTemplate(StringTable::getOrInternStringHandle(operator_name), template_func_node);
 
@@ -750,10 +774,16 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 	// Add to struct as a member function template
 	// First, add to the struct's member functions list so it can be found for inheritance lookup
-	struct_node.add_member_function(template_func_node, access);
+	OverloadableOperator operator_kind = overloadableOperatorFromFunctionName(decl_node.identifier_token().value());
+	if (operator_kind != OverloadableOperator::None) {
+		struct_node.add_operator_overload(operator_kind, template_func_node, access);
+	} else {
+		struct_node.add_member_function(template_func_node, access);
+	}
 
 	// Register the template in the global registry with qualified name (ClassName::functionName)
-	auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_node.name()).append("::"sv).append(decl_node.identifier_token().value()));
+	StringHandle owner_qualified_name = getStructQualifiedNameForRegistration(struct_node);
+	auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(owner_qualified_name).append("::"sv).append(decl_node.identifier_token().value()));
 	gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
 
 	// Also register with simple name for unqualified lookups (needed for inherited member template function calls)
@@ -768,7 +798,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& struct_node, AccessSpecifier access) {
 	// Look ahead to determine if this is a template alias, struct/class template, friend, or function template
 	SaveHandle lookahead_pos = save_token_position();
-
 	advance(); // consume 'template'
 
 	// Skip template parameter list to find what comes after

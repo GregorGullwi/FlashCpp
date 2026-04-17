@@ -152,9 +152,8 @@ void registerNestedMemberFunctionsForLazy(
 				template_params,
 				template_args);
 			LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
-		} else if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
-			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
-			const DeclarationNode& decl = func_decl.decl_node();
+		} else if (const FunctionDeclarationNode* func_decl = get_function_decl_node(mem_func.function_declaration)) {
+			const DeclarationNode& decl = func_decl->decl_node();
 
 			auto lazy_mem_info = buildLazyNestedMemberFunctionInfo(
 				mem_func,
@@ -176,14 +175,25 @@ void registerNestedMemberFunctionsForLazy(
 					fn->set_is_volatile_member_function(mem_func.is_volatile());
 				}
 			}
-			nested_struct_info.addMemberFunction(
-				decl.identifier_token().handle(),
-				mem_func.function_declaration,
-				mem_func.access,
-				mem_func.is_virtual,
-				mem_func.is_pure_virtual,
-				mem_func.is_override,
-				mem_func.is_final);
+			if (mem_func.operator_kind != OverloadableOperator::None) {
+				nested_struct_info.addOperatorOverload(
+					mem_func.operator_kind,
+					mem_func.function_declaration,
+					mem_func.access,
+					mem_func.is_virtual,
+					mem_func.is_pure_virtual,
+					mem_func.is_override,
+					mem_func.is_final);
+			} else {
+				nested_struct_info.addMemberFunction(
+					decl.identifier_token().handle(),
+					mem_func.function_declaration,
+					mem_func.access,
+					mem_func.is_virtual,
+					mem_func.is_pure_virtual,
+					mem_func.is_override,
+					mem_func.is_final);
+			}
 			// cv_qualifier is now auto-derived by propagateAstProperties
 
 			FLASH_LOG(Templates, Debug, "Registered lazy member function for nested type: ",

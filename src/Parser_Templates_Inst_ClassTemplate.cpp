@@ -6026,7 +6026,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			for (const auto& out_of_line_member : nested_out_of_line_members) {
-				for (const auto& mem_func : nested_struct.member_functions()) {
+				for (auto& mem_func : nested_struct.member_functions()) {
 					const bool out_of_line_ctor_stub =
 						out_of_line_member.function_node.is<FunctionDeclarationNode>() &&
 						out_of_line_member.function_node.as<FunctionDeclarationNode>().decl_node().identifier_token().value() ==
@@ -6058,6 +6058,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if (out_of_line_member.has_initializer_list) {
 								ctor_decl.set_template_initializer_list_position(out_of_line_member.initializer_list_start);
 							}
+						}
+					} else if (!out_of_line_member.inner_template_params.empty() &&
+							   mem_func.function_declaration.is<TemplateFunctionDeclarationNode>() &&
+							   out_of_line_member.function_node.is<FunctionDeclarationNode>()) {
+						ASTNode nested_func_node = mem_func.function_declaration;
+						auto& nested_template_func = nested_func_node.as<TemplateFunctionDeclarationNode>();
+						auto* nested_func_decl = get_function_decl_node_mut(nested_func_node);
+						const auto& out_of_line_decl = out_of_line_member.function_node.as<FunctionDeclarationNode>().decl_node();
+						if (nested_func_decl != nullptr &&
+							!nested_func_decl->get_definition().has_value() &&
+							!nested_func_decl->has_template_body_position() &&
+							nested_template_func.template_parameters().size() == out_of_line_member.inner_template_params.size() &&
+							nested_func_decl->decl_node().identifier_token().value() == out_of_line_decl.identifier_token().value()) {
+							nested_func_decl->set_template_body_position(out_of_line_member.body_start);
 						}
 					}
 				}
@@ -7658,7 +7672,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_func_node,
 					template_func.requires_clause());
 
-				instantiated_struct_ref.add_member_function(new_template_func, mem_func.access);
+				if (mem_func.operator_kind != OverloadableOperator::None) {
+					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_template_func, mem_func.access);
+					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_template_func, mem_func.access,
+														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
+				} else {
+					instantiated_struct_ref.add_member_function(new_template_func, mem_func.access);
+					struct_info_ptr->addMemberFunction(
+						decl_node.identifier_token().handle(),
+						new_template_func,
+						mem_func.access,
+						mem_func.is_virtual,
+						mem_func.is_pure_virtual,
+						mem_func.is_override,
+						mem_func.is_final);
+				}
 
 				// Register with qualified name
 				StringBuilder qualified_name_builder;
@@ -7679,9 +7707,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			} else {
 				// No substitution needed - copy as-is
-				instantiated_struct_ref.add_member_function(
-					mem_func.function_declaration,
-					mem_func.access);
+				if (mem_func.operator_kind != OverloadableOperator::None) {
+					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, mem_func.function_declaration, mem_func.access);
+					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, mem_func.function_declaration, mem_func.access,
+														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
+				} else {
+					instantiated_struct_ref.add_member_function(
+						mem_func.function_declaration,
+						mem_func.access);
+					struct_info_ptr->addMemberFunction(
+						decl_node.identifier_token().handle(),
+						mem_func.function_declaration,
+						mem_func.access,
+						mem_func.is_virtual,
+						mem_func.is_pure_virtual,
+						mem_func.is_override,
+						mem_func.is_final);
+				}
 
 				// Register with qualified name
 				StringBuilder qualified_name_builder;
@@ -7730,23 +7772,66 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			bool found = false;
 			for (auto& mem_func : instantiated_struct_ref.member_functions()) {
-				if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
-					auto& inst_template_func = mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
-					auto& inst_func_decl = inst_template_func.function_decl_node();
-					if (inst_func_decl.decl_node().identifier_token().value() == ool_func_name) {
-						// Set the body position from the out-of-line definition
-						inst_func_decl.set_template_body_position(out_of_line_member.body_start);
-						FLASH_LOG(Templates, Debug, "Set body position on nested template member: ", ool_func_name);
+				FunctionDeclarationNode* inst_func_decl = get_function_decl_node_mut(mem_func.function_declaration);
+				if (!inst_func_decl) {
+					continue;
+				}
+				if (inst_func_decl->decl_node().identifier_token().value() == ool_func_name) {
+					// Set the body position from the out-of-line definition
+					inst_func_decl->set_template_body_position(out_of_line_member.body_start);
+					FLASH_LOG(Templates, Debug, "Set body position on nested template member: ", ool_func_name);
+					found = true;
+					break;
+				}
+			}
+
+			if (!found) {
+				auto original_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(template_name));
+				if (original_type_it != getTypesByNameMap().end() && original_type_it->second->getStructInfo()) {
+					for (const auto& original_member : original_type_it->second->getStructInfo()->member_functions) {
+						ASTNode recovered_member = original_member.function_decl;
+						FunctionDeclarationNode* recovered_func_decl = get_function_decl_node_mut(recovered_member);
+						if (!recovered_func_decl) {
+							continue;
+						}
+						if (recovered_func_decl->decl_node().identifier_token().value() != ool_func_name) {
+							continue;
+						}
+
+						recovered_func_decl->set_template_body_position(out_of_line_member.body_start);
+						OverloadableOperator recovered_operator_kind = original_member.operator_kind;
+						if (recovered_operator_kind == OverloadableOperator::None) {
+							recovered_operator_kind = overloadableOperatorFromFunctionName(ool_func_name);
+						}
+
+						if (recovered_operator_kind != OverloadableOperator::None) {
+							instantiated_struct_ref.add_operator_overload(recovered_operator_kind, recovered_member, original_member.access);
+							struct_info_ptr->addOperatorOverload(
+								recovered_operator_kind,
+								recovered_member,
+								original_member.access,
+								original_member.is_virtual,
+								original_member.is_pure_virtual,
+								original_member.is_override,
+								original_member.is_final);
+						} else {
+							instantiated_struct_ref.add_member_function(recovered_member, original_member.access);
+							struct_info_ptr->addMemberFunction(
+								recovered_func_decl->decl_node().identifier_token().handle(),
+								recovered_member,
+								original_member.access,
+								original_member.is_virtual,
+								original_member.is_pure_virtual,
+								original_member.is_override,
+								original_member.is_final);
+						}
+
 						found = true;
 						break;
 					}
 				}
 			}
 
-			if (!found) {
-				FLASH_LOG(Templates, Warning, "Nested template out-of-line member '", ool_func_name,
-						  "' not found in instantiated struct");
-			}
 			continue;
 		}
 

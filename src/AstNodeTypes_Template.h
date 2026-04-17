@@ -907,6 +907,9 @@ public:
 
 	// Nested class support
 	void add_nested_class(ASTNode nested_class) {
+		if (nested_class.is<StructDeclarationNode>()) {
+			nested_class.as<StructDeclarationNode>().set_enclosing_class(this);
+		}
 		nested_classes_.push_back(nested_class);
 	}
 

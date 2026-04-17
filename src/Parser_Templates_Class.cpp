@@ -316,90 +316,119 @@ ParseResult Parser::parse_template_declaration() {
 			// We take the LAST such match before '(' to avoid misidentifying qualified
 			// return types (e.g. typename Container<T>::value_type) as the class::function pattern.
 			{
-				Token last_ident;
+				auto appendQualifiedComponent = [](std::string& qualified_name, std::string_view component) {
+					if (!qualified_name.empty()) {
+						qualified_name += "::";
+					}
+					qualified_name += component;
+				};
+
+				std::string qualified_prefix;
 				while (!peek().is_eof()) {
 					if (peek().is_identifier()) {
-						last_ident = peek_info();
+						Token current_ident = peek_info();
 						advance();
+
+						if (peek() == "::"_tok) {
+							appendQualifiedComponent(qualified_prefix, current_ident.value());
+							advance(); // consume '::'
+							continue;
+						}
+
 						if (peek() == "<"_tok) {
-							// This might be ClassName<T>
-							Token class_token = last_ident;
+							Token class_token = current_ident;
 							skip_template_arguments();
 							if (peek() == "::"_tok) {
+								std::string owner_name = qualified_prefix;
+								appendQualifiedComponent(owner_name, class_token.value());
 								advance(); // consume '::'
-								if (peek().is_identifier()) {
-									// Tentatively record this match
-									nested_class_name = class_token.value();
-									nested_qualified_class_name = std::string(class_token.value());
-									nested_func_name_token = peek_info();
-									advance(); // consume function name
-									// Handle nested :: for deeper nesting
-									while (peek() == "::"_tok) {
-										advance();
-										if (peek().is_identifier()) {
-											nested_qualified_class_name += "::";
-											nested_qualified_class_name += nested_func_name_token.value();
-											nested_class_name = nested_func_name_token.value();
-											nested_func_name_token = peek_info();
-											advance();
-										} else
-											break;
-									}
-									found_nested_def = true;
-									// If '(' follows, this is the actual definition - stop
-									if (peek() == "("_tok) {
-										break;
-									}
-									// Otherwise, this was a qualified return type - keep scanning
-								} else if (peek_info().value() == "operator") {
-									// Handle operator overloads: Class<T>::operator()(...)
-									nested_class_name = class_token.value();
-									Token operator_keyword = peek_info();
-									advance(); // consume 'operator'
-									// Consume the operator symbol(s) and build the full name
-									std::string_view full_op_name;
-									if (peek() == "("_tok) {
-										advance(); // consume '('
-										if (peek() == ")"_tok) {
-											advance(); // consume ')' -> operator()
+
+								while (!peek().is_eof()) {
+									if (peek_info().value() == "operator") {
+										nested_class_name = class_token.value();
+										nested_qualified_class_name = owner_name;
+										Token operator_keyword = peek_info();
+										advance(); // consume 'operator'
+										// Consume the operator symbol(s) and build the full name
+										std::string_view full_op_name;
+										if (peek() == "("_tok) {
+											advance(); // consume '('
+											if (peek() == ")"_tok) {
+												advance(); // consume ')' -> operator()
+											}
+											static const std::string op_call = "operator()";
+											full_op_name = op_call;
+										} else if (peek() == "["_tok) {
+											advance(); // consume '['
+											if (peek() == "]"_tok) {
+												advance(); // consume ']' -> operator[]
+											}
+											static const std::string op_subscript = "operator[]";
+											full_op_name = op_subscript;
+										} else if (peek().is_operator() || peek().is_punctuator()) {
+											// Build "operator+" etc.
+											static std::unordered_map<std::string_view, std::string> op_names;
+											auto sym = peek_info().value();
+											auto it = op_names.find(sym);
+											if (it == op_names.end()) {
+												it = op_names.emplace(sym, "operator" + std::string(sym)).first;
+											}
+											full_op_name = it->second;
+											advance(); // consume single-char operator
+										} else {
+											static const std::string op_default = "operator";
+											full_op_name = op_default;
 										}
-										static const std::string op_call = "operator()";
-										full_op_name = op_call;
-									} else if (peek() == "["_tok) {
-										advance(); // consume '['
-										if (peek() == "]"_tok) {
-											advance(); // consume ']' -> operator[]
-										}
-										static const std::string op_subscript = "operator[]";
-										full_op_name = op_subscript;
-									} else if (peek().is_operator() || peek().is_punctuator()) {
-										// Build "operator+" etc.
-										static std::unordered_map<std::string_view, std::string> op_names;
-										auto sym = peek_info().value();
-										auto it = op_names.find(sym);
-										if (it == op_names.end()) {
-											it = op_names.emplace(sym, "operator" + std::string(sym)).first;
-										}
-										full_op_name = it->second;
-										advance(); // consume single-char operator
-									} else {
-										static const std::string op_default = "operator";
-										full_op_name = op_default;
-									}
-									// Create a token with the full operator name
-									nested_func_name_token = Token(Token::Type::Identifier, full_op_name,
+										// Create a token with the full operator name
+										nested_func_name_token = Token(Token::Type::Identifier, full_op_name,
 																   operator_keyword.line(), operator_keyword.column(),
 																   operator_keyword.file_index());
-									found_nested_def = true;
-									if (peek() == "("_tok) {
+										found_nested_def = true;
 										break;
 									}
+
+									if (!peek().is_identifier()) {
+										break;
+									}
+
+									Token candidate_token = peek_info();
+									advance();
+									if (peek() == "<"_tok) {
+										skip_template_arguments();
+									}
+
+									if (peek() == "::"_tok) {
+										appendQualifiedComponent(owner_name, candidate_token.value());
+										nested_class_name = candidate_token.value();
+										advance(); // consume '::'
+										continue;
+									}
+
+									nested_class_name = class_token.value();
+									nested_qualified_class_name = owner_name;
+									nested_func_name_token = candidate_token;
+									found_nested_def = true;
+									break;
 								}
+
+								// If '(' follows, this is the actual definition - stop
+								if (found_nested_def && peek() == "("_tok) {
+									break;
+								}
+
+								// Otherwise, this was a qualified return type - keep scanning
+								qualified_prefix.clear();
+								continue;
 							}
 						}
+
+						qualified_prefix.clear();
 					} else if (peek() == "("_tok || peek() == "{"_tok || peek() == ";"_tok) {
 						break;
 					} else {
+						if (peek() != "::"_tok) {
+							qualified_prefix.clear();
+						}
 						advance();
 					}
 				}
@@ -512,7 +541,11 @@ ParseResult Parser::parse_template_declaration() {
 				out_of_line_member.inner_template_param_names = inner_template_param_names;
 				out_of_line_member.has_initializer_list = has_initializer_list;
 
-				gTemplateRegistry.registerOutOfLineMember(nested_qualified_class_name, std::move(out_of_line_member));
+				gTemplateRegistry.registerOutOfLineMember(
+					QualifiedIdentifier::fromQualifiedName(
+						nested_qualified_class_name,
+						gSymbolTable.get_current_namespace_handle()),
+					std::move(out_of_line_member));
 
 				FLASH_LOG(Templates, Debug, "Registered nested template out-of-line member: ",
 						  nested_qualified_class_name, "::", nested_func_name_token.value(),
@@ -4641,6 +4674,84 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		return param_list_result;
 	}
 
+	auto skipMemberStructTemplateConstructor = [&]() {
+		if (peek() == "("_tok) {
+			skip_balanced_parens();
+		}
+
+		int angle_depth = 0;
+		while (!peek().is_eof()) {
+			auto tk = peek();
+			if (angle_depth == 0 &&
+				(tk == ":"_tok || tk == "{"_tok || tk == "try"_tok || tk == ";"_tok || tk == "="_tok || tk == "requires"_tok)) {
+				break;
+			}
+			if (tk == "("_tok) {
+				skip_balanced_parens();
+			} else if (tk == "<"_tok || tk == ">"_tok || tk == ">>"_tok) {
+				update_angle_depth(tk, angle_depth);
+				advance();
+			} else {
+				advance();
+			}
+		}
+
+		if (peek() == "requires"_tok) {
+			skip_trailing_requires_clause();
+		}
+
+		if (peek() == ":"_tok) {
+			advance(); // consume ':'
+			while (!peek().is_eof()) {
+				if (peek() == "typename"_tok) {
+					advance();
+				}
+				while (!peek().is_eof() && peek() != "("_tok && peek() != "{"_tok && peek() != ";"_tok) {
+					if (peek() == "<"_tok) {
+						skip_template_arguments();
+					} else if (peek() == "::"_tok) {
+						advance();
+					} else {
+						advance();
+					}
+				}
+				if (peek() == "("_tok) {
+					skip_balanced_parens();
+				} else if (peek() == "{"_tok) {
+					auto check_save = save_token_position();
+					skip_balanced_braces();
+					if (peek() == ","_tok) {
+						discard_saved_token(check_save);
+					} else {
+						restore_token_position(check_save);
+						break;
+					}
+				} else {
+					break;
+				}
+				if (peek() == ","_tok) {
+					advance();
+				} else {
+					break;
+				}
+			}
+		}
+
+		if (peek() == "try"_tok) {
+			skip_function_body();
+		} else if (peek() == "{"_tok) {
+			skip_balanced_braces();
+		} else if (peek() == "="_tok) {
+			advance();
+			if (peek() == "default"_tok || peek() == "delete"_tok) {
+				advance();
+			}
+			consume(";"_tok);
+		} else if (peek() == ";"_tok) {
+			advance();
+		}
+	};
+
 	// Extract parameter names for later lookup
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
@@ -4866,6 +4977,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				continue;
 			}
 
+			if (peek() == "template"_tok) {
+				auto template_result = parse_member_template_or_function(member_struct_ref, current_access);
+				if (template_result.is_error()) {
+					return template_result;
+				}
+				continue;
+			}
+
 			// Check for access specifiers
 			if (peek().is_keyword()) {
 				std::string_view keyword = peek_info().value();
@@ -5027,14 +5146,6 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					}
 					continue;
 				}
-				// Handle nested template declarations (member function templates, member struct templates, etc.)
-				if (keyword == "template") {
-					auto template_result = parse_member_template_or_function(member_struct_ref, current_access);
-					if (template_result.is_error()) {
-						return template_result;
-					}
-					continue;
-				}
 			}
 			// This ensures specifiers like constexpr, inline, static aren't lost for non-constructor members
 			SaveHandle member_saved_pos = save_token_position();
@@ -5069,7 +5180,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					discard_saved_token(ctor_lookahead_pos);
 					discard_saved_token(member_saved_pos);
 					FLASH_LOG_FORMAT(Parser, Debug, "parse_member_struct_template: Skipping constructor for {}", struct_name);
-					skip_member_declaration_to_semicolon();
+					skipMemberStructTemplateConstructor();
 					continue;
 				} else {
 					// Not a constructor, restore position to BEFORE specifiers so they get re-parsed
@@ -5332,11 +5443,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 				continue;
 			}
-			// Handle member function templates - skip them for now
-			// They will be properly instantiated when the member template struct is used
+			// Handle member templates inside the member struct template body.
+			// These declarations must be recorded now so out-of-line definitions can
+			// bind to the instantiated member later.
 			if (keyword == "template") {
-				advance(); // consume 'template'
-				skip_member_declaration_to_semicolon();
+				auto template_result = parse_member_template_or_function(member_struct_ref, current_access);
+				if (template_result.is_error()) {
+					return template_result;
+				}
 				continue;
 			}
 			// Handle static members (including static constexpr with initializers)
@@ -5439,7 +5553,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				discard_saved_token(ctor_lookahead_pos2);
 				discard_saved_token(member_saved_pos2);
 				FLASH_LOG_FORMAT(Parser, Debug, "parse_member_struct_template (primary): Skipping constructor for {}", struct_name);
-				skip_member_declaration_to_semicolon();
+				skipMemberStructTemplateConstructor();
 				continue;
 			} else {
 				// Not a constructor, restore position to BEFORE specifiers so they get re-parsed
