@@ -615,6 +615,12 @@ private:
 		int base_offset,
 		bool base_object_is_pointer,
 		const Token& token);
+	void emitZeroInitializedMember(
+		const StructMember& member,
+		std::variant<StringHandle, TempVar> base_object,
+		int base_offset,
+		bool base_object_is_pointer,
+		const Token& token);
 
 	// Implementation of recursive nested member store generation
 	bool tryEmitArrayMemberStores(
