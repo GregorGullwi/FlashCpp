@@ -2144,6 +2144,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				return specs_result;
 			}
 
+			auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
+			if (trailing_return_result.is_error()) {
+				return trailing_return_result;
+			}
+
 			// Extract parsed specifiers for use in member function registration
 			bool is_override = func_specs.is_override;
 			bool is_final = func_specs.is_final;

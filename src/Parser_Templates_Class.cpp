@@ -2214,6 +2214,11 @@ ParseResult Parser::parse_template_declaration() {
 						return specs_result;
 					}
 
+					auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
+					if (trailing_return_result.is_error()) {
+						return trailing_return_result;
+					}
+
 					// Propagate noexcept specifier to the function declaration node
 					if (func_specs.is_noexcept) {
 						member_func_ref.set_noexcept(true);
@@ -3632,6 +3637,11 @@ ParseResult Parser::parse_template_declaration() {
 					auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
 					if (specs_result.is_error()) {
 						return specs_result;
+					}
+
+					auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
+					if (trailing_return_result.is_error()) {
+						return trailing_return_result;
 					}
 
 					// Propagate noexcept specifier to the function declaration node
@@ -5113,6 +5123,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					return specs_result;
 				}
 
+				auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
+				if (trailing_return_result.is_error()) {
+					return trailing_return_result;
+				}
+
 				// Propagate cv-qualifiers and noexcept to the function declaration node immediately.
 				member_func_ref.set_is_const_member_function(member_quals.is_const());
 				member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
@@ -5476,6 +5491,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
 			if (specs_result.is_error()) {
 				return specs_result;
+			}
+
+			auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
+			if (trailing_return_result.is_error()) {
+				return trailing_return_result;
 			}
 
 			// Propagate cv-qualifiers and noexcept to the function declaration node immediately.
