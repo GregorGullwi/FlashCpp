@@ -3607,6 +3607,19 @@ void IrToObjConverter<TWriterClass>::emitMovToRSPDisp8(X64Register sourceRegiste
 }
 
 template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitMovImmToRSPDisp8(int8_t displacement, uint32_t immediate_value) {
+		// MOV DWORD PTR [RSP+disp8], imm32
+	textSectionData.push_back(0xC7);
+	textSectionData.push_back(0x44);
+	textSectionData.push_back(0x24);
+	textSectionData.push_back(static_cast<uint8_t>(displacement));
+	textSectionData.push_back(static_cast<uint8_t>(immediate_value & 0xFF));
+	textSectionData.push_back(static_cast<uint8_t>((immediate_value >> 8) & 0xFF));
+	textSectionData.push_back(static_cast<uint8_t>((immediate_value >> 16) & 0xFF));
+	textSectionData.push_back(static_cast<uint8_t>((immediate_value >> 24) & 0xFF));
+}
+
+template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitLeaFromRSPDisp8(X64Register destinationRegister, int8_t displacement) {
 		// LEA reg, [RSP+disp8]
 	uint8_t rex = 0x48; // REX.W for 64-bit
@@ -6101,16 +6114,8 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		emitCall("__dynamic_cast");
 	} else {
 		emitSubRSP(40);	// Shadow space (32) + 5th parameter (8)
-			// MOV DWORD PTR [RSP+32], isReference (5th parameter)
-		textSectionData.push_back(0xC7);	// MOV r/m32, imm32
-		textSectionData.push_back(0x44);	// ModR/M: [RSP+disp8]
-		textSectionData.push_back(0x24);	// SIB: RSP
-		textSectionData.push_back(0x20);	// disp8 = 32
 		uint32_t is_ref_value = op.is_reference ? 1 : 0;
-		textSectionData.push_back(static_cast<uint8_t>(is_ref_value & 0xFF));
-		textSectionData.push_back(static_cast<uint8_t>((is_ref_value >> 8) & 0xFF));
-		textSectionData.push_back(static_cast<uint8_t>((is_ref_value >> 16) & 0xFF));
-		textSectionData.push_back(static_cast<uint8_t>((is_ref_value >> 24) & 0xFF));
+		emitMovImmToRSPDisp8(32, is_ref_value);
 		emitCall("__RTDynamicCast");
 		emitAddRSP(40);	// Restore stack
 	}

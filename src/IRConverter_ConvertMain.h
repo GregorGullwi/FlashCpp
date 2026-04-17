@@ -377,6 +377,7 @@ private:
 
 	// Helper to emit MOV [RSP+disp8], reg
 	void emitMovToRSPDisp8(X64Register sourceRegister, int8_t displacement);
+	void emitMovImmToRSPDisp8(int8_t displacement, uint32_t immediate_value);
 
 	// Helper to emit LEA reg, [RSP+disp8]
 	void emitLeaFromRSPDisp8(X64Register destinationRegister, int8_t displacement);

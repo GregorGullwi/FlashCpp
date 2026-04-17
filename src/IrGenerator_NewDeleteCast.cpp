@@ -1067,7 +1067,7 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		ir_.addInstruction(IrOpcode::Typeid, std::move(op), typeidNode.typeid_token());
 	} else {
 		const ASTNode& operand_node = typeidNode.operand();
-		ExprResult expr_operands = visitExpressionNode(operand_node.as<ExpressionNode>());
+		const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
 		std::optional<TypeSpecifierNode> static_expr_type =
 			sema_ ? sema_->getExpressionType(operand_node) : std::nullopt;
 		auto resolveExprTypeIndex = [&](const ExpressionNode& expr, TypeIndex fallback_type_index) -> TypeIndex {
@@ -1143,9 +1143,10 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 				}
 			}, expr);
 		};
-		TypeIndex resolved_expr_type_index = resolveExprTypeIndex(operand_node.as<ExpressionNode>(), expr_operands.type_index);
-		bool runtime_typeid_candidate = isRuntimeTypeidExpression(operand_node.as<ExpressionNode>());
-		bool expr_is_reference_object = resolveExprIsReference(operand_node.as<ExpressionNode>());
+		TypeIndex static_expr_type_index = static_expr_type.has_value() ? static_expr_type->type_index() : TypeIndex{};
+		TypeIndex resolved_expr_type_index = resolveExprTypeIndex(operand_expr, static_expr_type_index);
+		bool runtime_typeid_candidate = isRuntimeTypeidExpression(operand_expr);
+		bool expr_is_reference_object = resolveExprIsReference(operand_expr);
 		bool type_is_polymorphic = false;
 		if (resolved_expr_type_index.category() == TypeCategory::Struct && resolved_expr_type_index.is_valid()) {
 			if (const TypeInfo* type_info = tryGetTypeInfo(resolved_expr_type_index)) {
@@ -1155,13 +1156,13 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 			}
 		}
 		bool is_runtime_polymorphic_object = runtime_typeid_candidate && type_is_polymorphic;
+		ExpressionContext expr_context =
+			(is_runtime_polymorphic_object && expr_is_reference_object) ? ExpressionContext::LValueAddress : ExpressionContext::Load;
+		ExprResult expr_operands = visitExpressionNode(operand_expr, expr_context);
 		if (is_runtime_polymorphic_object) {
-			if (expr_is_reference_object) {
-				expr_operands =
-					visitExpressionNode(operand_node.as<ExpressionNode>(), ExpressionContext::LValueAddress);
-			} else {
+			if (!expr_is_reference_object) {
 				expr_operands = materializeAddressResult(
-					operand_node.as<ExpressionNode>(),
+					operand_expr,
 					std::move(expr_operands),
 					typeidNode.typeid_token());
 			}
