@@ -211,6 +211,34 @@ static_assert(p1.sum() == 30);  // ✅ Works - member function call
 
 Multi-statement member functions with if/else, loops, and switch now also work. See the "What Doesn't Work" section for details.
 
+### ✅ Member Function Calls Through Constexpr Pointers (NEW)
+Straightforward member-function calls through constexpr pointers now work in the currently supported constexpr paths, including:
+
+- pointers to global/static constexpr objects
+- pointers to local constexpr objects inside constexpr functions
+- pointers returned by constexpr `new`, as long as the allocation is later freed
+
+```cpp
+struct Counter {
+    int value;
+    constexpr Counter(int v) : value(v) {}
+    constexpr int get() const { return value; }
+    constexpr void add(int delta) { value += delta; }
+};
+
+constexpr Counter g(40);
+constexpr const Counter* gp = &g;
+static_assert(gp->get() == 40);  // ✅ Works
+
+constexpr int f() {
+    Counter c(10);
+    Counter* p = &c;
+    p->add(5);
+    return p->get();
+}
+static_assert(f() == 15);  // ✅ Works
+```
+
 ### ✅ Break and Continue in Constexpr Loops
 ```cpp
 constexpr int find_first_gt(int n) {
@@ -1220,7 +1248,7 @@ Potential areas for enhancement (in order of complexity):
 2. **Nested/member access is okay in supported shapes** - this includes straightforward local aggregate object reads like `obj.value` and `obj.inner.value`; prefer simple, directly initialized object graphs
 3. **Multi-statement member functions now work** - if/else, for/while, switch, and break/continue are all supported
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns, including simple local object member-array reads like `obj.data[1]`, straightforward local inferred-size arrays like `int arr[] = {1, 2}`, and straightforward loop-driven reads over supported local arrays
-5. **Pointer forms are broader now** - `&arr[i]`, `ptr + n`, `ptr - n`, `ptr[i]`, `ptr1 - ptr2`, pointer relational comparisons (`<`, `<=`, `>`, `>=`), and constexpr pointer-to-member forms (`&Type::member`, `obj.*pmf`) all work in the currently supported constexpr paths
+5. **Pointer forms are broader now** - `&arr[i]`, `ptr + n`, `ptr - n`, `ptr[i]`, `ptr1 - ptr2`, pointer relational comparisons (`<`, `<=`, `>`, `>=`), straightforward pointer-based member access / member calls (`ptr->value`, `ptr->get()`), and constexpr pointer-to-member forms (`&Type::member`, `obj.*pmf`) all work in the currently supported constexpr paths
 6. **Use straightforward lambda captures** - the following work best:
    - explicit captures
    - straightforward local `&` captures
