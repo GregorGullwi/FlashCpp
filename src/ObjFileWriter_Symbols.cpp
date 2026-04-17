@@ -192,8 +192,12 @@ void ObjectFileWriter::add_data_relocation(std::string_view var_name, std::strin
 	auto* var_symbol = coffi_.get_symbol(var_name);
 	if (!var_symbol)
 		return;
-	if (var_symbol->get_section_number() <= 0)
+	if (var_symbol->get_section_number() <= 0) {
+		if (g_enable_debug_output)
+			std::cerr << "Skipping data relocation for " << var_name
+					  << ": invalid section number " << var_symbol->get_section_number() << std::endl;
 		return;
+	}
 
 	uint32_t var_offset = var_symbol->get_value();
 
@@ -208,8 +212,13 @@ void ObjectFileWriter::add_data_relocation(std::string_view var_name, std::strin
 	}
 
 	auto section_index = static_cast<size_t>(var_symbol->get_section_number() - 1);
-	if (section_index >= coffi_.get_sections().get_count())
+	if (section_index >= coffi_.get_sections().get_count()) {
+		if (g_enable_debug_output)
+			std::cerr << "Skipping data relocation for " << var_name
+					  << ": section index " << section_index
+					  << " is out of bounds" << std::endl;
 		return;
+	}
 	auto data_section = coffi_.get_sections()[section_index];
 
 	COFFI::rel_entry_generic reloc;

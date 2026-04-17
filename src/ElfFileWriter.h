@@ -256,11 +256,22 @@ public:
 		}
 		if (!found)
 			return;
-		if (data_section_index >= elf_writer_.sections.size())
+		if (data_section_index >= elf_writer_.sections.size()) {
+			if (g_enable_debug_output) {
+				std::cerr << "Skipping data relocation for " << var_name
+						  << ": section index " << data_section_index
+						  << " is out of bounds" << std::endl;
+			}
 			return;
+		}
 		auto* data_section = elf_writer_.sections[data_section_index];
-		if (!data_section)
+		if (!data_section) {
+			if (g_enable_debug_output) {
+				std::cerr << "Skipping data relocation for " << var_name
+						  << ": null section at index " << data_section_index << std::endl;
+			}
 			return;
+		}
 
 		// Get or create the target symbol (may be in .data, .bss, or external)
 		auto target_index = getOrCreateSymbol(target_name, ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
