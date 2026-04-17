@@ -1613,14 +1613,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												FLASH_LOG(Codegen, Debug, "Matched ", prefer_move_ctor ? "move" : "copy", " constructor for ", struct_info.name);
 											}
 										}
+									}
 								}
-							}
 
-							const bool require_sema_resolved_ctor =
-								sema_normalized_current_function_ &&
-								type_info &&
-								type_info->struct_info_ &&
-								type_info->struct_info_->hasUserDefinedConstructor();
+								const bool require_sema_resolved_ctor =
+									sema_normalized_current_function_ &&
+									type_info &&
+									type_info->struct_info_ &&
+									type_info->struct_info_->hasUserDefinedConstructor();
 
 								// SECOND: If no copy constructor matched, prefer the sema annotation.
 								// Only fall back to local type-based/arity-based resolution when sema
