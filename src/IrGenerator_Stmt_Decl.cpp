@@ -382,98 +382,17 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			flush();
 		}
 	} full_expression_temp_flush_guard{flushFullExpressionTemps};
-	auto prepare_nested_template_ctor = [this](const TypeInfo& type_info_ref, const ConstructorDeclarationNode*& ctor) {
+	auto queue_nested_template_ctor = [this](const TypeInfo& type_info_ref, const ConstructorDeclarationNode* ctor) {
 		std::string_view ctor_struct_name = StringTable::getStringView(type_info_ref.name());
 		bool is_nested_template_ctor = (ctor_struct_name.find("::") != std::string_view::npos) &&
 									   (type_info_ref.isTemplateInstantiation() || ctor_struct_name.find('$') != std::string_view::npos);
 		if (!is_nested_template_ctor || !ctor) {
 			return;
 		}
-		if (!ctor->get_definition().has_value() && parser_) {
-			StringHandle ctor_name = ctor->name();
-			if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(type_info_ref.name(), ctor_name, false)) {
-				auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(type_info_ref.name(), ctor_name, false);
-				if (lazy_info_opt.has_value()) {
-					auto instantiated_ctor = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
-					normalizePendingSemanticRoots();
-					if (instantiated_ctor.has_value() && instantiated_ctor->is<ConstructorDeclarationNode>()) {
-						ctor = &instantiated_ctor->as<ConstructorDeclarationNode>();
-						LazyMemberInstantiationRegistry::getInstance().markInstantiated(type_info_ref.name(), ctor_name, false);
-					}
-				}
-			}
-		}
 		DeferredMemberFunctionInfo deferred_info;
 		deferred_info.struct_name = type_info_ref.name();
 		deferred_info.function_node = ASTNode(ctor);
 		deferred_member_functions_.push_back(std::move(deferred_info));
-	};
-	auto materialize_template_ctor = [this](const TypeInfo& type_info_ref, const std::vector<TypeSpecifierNode>& arg_types, const ConstructorDeclarationNode*& ctor) {
-		if (!parser_ || !type_info_ref.getStructInfo()) {
-			return;
-		}
-		bool is_ambiguous = false;
-		ctor = parser_->materializeMatchingConstructorTemplate(
-			type_info_ref.name(),
-			*type_info_ref.getStructInfo(),
-			arg_types,
-			ctor,
-			is_ambiguous);
-		if (is_ambiguous) {
-			throw CompileError(
-				std::string("Ambiguous constructor call for ") +
-				std::string(StringTable::getStringView(type_info_ref.name())));
-		}
-	};
-	auto is_unresolved_noop_ctor = [](const ConstructorDeclarationNode* ctor) -> bool {
-		if (!ctor || (!ctor->has_template_parameters() && !ctor->has_template_body_position()) ||
-			!ctor->member_initializers().empty() || !ctor->base_initializers().empty() ||
-			ctor->delegating_initializer().has_value()) {
-			return false;
-		}
-		if (ctor->get_definition().has_value()) {
-			if (ctor->get_definition()->is<BlockNode>() &&
-				ctor->get_definition()->as<BlockNode>().get_statements().empty()) {
-				return true;
-			}
-			return false;
-		}
-		auto is_template_param_name = [&](std::string_view type_name) {
-			for (const ASTNode& param_node : ctor->template_parameters()) {
-				if (!param_node.is<TemplateParameterNode>()) {
-					continue;
-				}
-				if (param_node.as<TemplateParameterNode>().name() == type_name) {
-					return true;
-				}
-			}
-			for (StringHandle outer_name : ctor->outer_template_param_names()) {
-				if (StringTable::getStringView(outer_name) == type_name) {
-					return true;
-				}
-			}
-			return false;
-		};
-		for (const auto& param : ctor->parameter_nodes()) {
-			if (!param.is<DeclarationNode>()) {
-				continue;
-			}
-			const auto& type_spec = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-			if ((type_spec.category() == TypeCategory::UserDefined ||
-				 type_spec.category() == TypeCategory::TypeAlias ||
-				 type_spec.category() == TypeCategory::Template) &&
-				type_spec.type_index().is_valid()) {
-				if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
-					std::string_view type_name = StringTable::getStringView(type_info->name());
-					if (type_info->is_incomplete_instantiation_ || is_template_param_name(type_name)) {
-						return true;
-					}
-				}
-			} else if (is_template_param_name(type_spec.token().value())) {
-				return true;
-			}
-		}
-		return false;
 	};
 	auto register_destructor_if_needed = [this](const DeclarationNode& decl, const TypeInfo* type_info) {
 		if (!type_info || !type_info->struct_info_ || !type_info->struct_info_->hasDestructor()) {
@@ -482,34 +401,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		registerVariableWithDestructor(
 			std::string(decl.identifier_token().value()),
 			std::string(StringTable::getStringView(type_info->name())));
-	};
-	auto zero_initialize_noop_ctor_object = [this](const DeclarationNode& decl, const TypeInfo* type_info) {
-		if (!type_info || !type_info->struct_info_) {
-			return;
-		}
-		auto zero_fill_subobject = [this, &decl](auto&& self, const StructTypeInfo& struct_info, int base_offset) -> void {
-			for (const auto& base : struct_info.base_classes) {
-				if (base.is_virtual || !base.type_index.is_valid()) {
-					continue;
-				}
-				if (const StructTypeInfo* base_struct = tryGetStructTypeInfo(base.type_index)) {
-					self(self, *base_struct, base_offset + static_cast<int>(base.offset));
-				}
-			}
-			emitRecursiveZeroFill(struct_info, decl.identifier_token().handle(), base_offset, decl.identifier_token());
-		};
-		zero_fill_subobject(zero_fill_subobject, *type_info->struct_info_, 0);
-		for (const auto& virtual_base : type_info->struct_info_->virtual_bases) {
-			if (!virtual_base.type_index.is_valid()) {
-				continue;
-			}
-			if (const StructTypeInfo* virtual_base_struct = tryGetStructTypeInfo(virtual_base.type_index)) {
-				zero_fill_subobject(
-					zero_fill_subobject,
-					*virtual_base_struct,
-					static_cast<int>(virtual_base.offset));
-			}
-		}
 	};
 
 		// Check if this is a global variable (declared at global scope)
@@ -1725,6 +1616,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									}
 								}
 
+								const bool require_sema_resolved_ctor =
+									sema_normalized_current_function_ &&
+									type_info &&
+									type_info->struct_info_ &&
+									type_info->struct_info_->hasUserDefinedConstructor();
+
 								// SECOND: If no copy constructor matched, prefer the sema annotation.
 								// Only fall back to local type-based/arity-based resolution when sema
 								// did not annotate the brace-init path.
@@ -1734,10 +1631,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											has_matching_constructor = true;
 											matching_ctor = resolved_ctor;
 											FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved brace-init constructor for {}", StringTable::getStringView(struct_info.name));
+										} else if (require_sema_resolved_ctor) {
+											reportMismatchedSemaResolvedConstructor(type_info->name(), "brace initialization");
 										}
+									} else if (require_sema_resolved_ctor) {
+										reportMissingSemaResolvedConstructor(type_info->name(), "brace initialization");
 									}
 								}
-								if (!has_matching_constructor) {
+								if (!has_matching_constructor && !require_sema_resolved_ctor) {
 								// Try type-based constructor overload resolution first using the
 								// sema-backed expression typing helper. Legacy lookup fallback
 								// stays isolated behind buildCodegenOverloadResolutionArgType().
@@ -1763,17 +1664,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											if (resolution.has_match) {
 												matching_ctor = resolution.selected_overload;
 											}
-											// Call materialize_template_ctor unconditionally so that template
-											// constructors are instantiated even when resolve_constructor_overload
-											// returns has_match=false (which happens because uninstantiated template
-											// parameter types don't match concrete argument types). Mirrors the
-											// direct-init path in visitVariableDeclarationNode (direct-init branch).
-											materialize_template_ctor(*type_info, arg_types, matching_ctor);
 											has_matching_constructor = (matching_ctor != nullptr);
 										}
 									}
 								}
-								if (!has_matching_constructor) {
+								if (!has_matching_constructor && !require_sema_resolved_ctor) {
 									auto arity_resolution = resolve_constructor_overload_arity(struct_info, num_initializers, true);
 									if (arity_resolution.has_match) {
 										has_matching_constructor = true;
@@ -1783,17 +1678,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 							if (has_matching_constructor) {
-								prepare_nested_template_ctor(*type_info, matching_ctor);
-								if (is_unresolved_noop_ctor(matching_ctor)) {
-									for (const ASTNode& init_expr : initializers) {
-										if (init_expr.is<ExpressionNode>()) {
-											visitExpressionNode(init_expr.as<ExpressionNode>());
-										}
-									}
-									zero_initialize_noop_ctor_object(decl, type_info);
-									register_destructor_if_needed(decl, type_info);
-									return;
-								}
+								queue_nested_template_ctor(*type_info, matching_ctor);
 
 								// Generate constructor call with parameters from initializer list
 								ConstructorCallOp ctor_op;
@@ -2530,7 +2415,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											throw CompileError("Ambiguous constructor call");
 										}
 										matching_ctor = resolution.selected_overload;
-										materialize_template_ctor(*type_info, arg_types, matching_ctor);
 									}
 
 									if (!matching_ctor) {
@@ -2608,17 +2492,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							if (!matching_ctor && !allowImplicitDefault) {
 								reportNoMatchingConstructor(type_info->name(), "direct initialization", decl.identifier_token());
 							}
-							prepare_nested_template_ctor(*type_info, matching_ctor);
-							if (is_unresolved_noop_ctor(matching_ctor)) {
-								direct_ctor->arguments().visit([&](ASTNode argument) {
-									if (argument.is<ExpressionNode>()) {
-										visitExpressionNode(argument.as<ExpressionNode>());
-									}
-								});
-								zero_initialize_noop_ctor_object(decl, type_info);
-								register_destructor_if_needed(decl, type_info);
-								return;
-							}
+							queue_nested_template_ctor(*type_info, matching_ctor);
 
 							// Create constructor call with the declared variable as the object
 							ConstructorCallOp ctor_op;

@@ -5198,6 +5198,7 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	if (!resolution.selected_overload) {
 		resolution.selected_overload = resolveUniqueArityConstructor(*struct_info, num_args);
 	}
+	resolution.selected_overload = ensureSelectedConstructorMaterialized(*struct_info, resolution.selected_overload);
 	if (resolution.is_ambiguous && require_constructor_match)
 		throw CompileError(buildConstructorDiagnostic("Ambiguous constructor call", num_args));
 	if (!resolution.selected_overload) {
@@ -5244,6 +5245,33 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument", arg_type_id);
 		++i;
 	});
+}
+
+const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMaterialized(
+	const StructTypeInfo& struct_info,
+	const ConstructorDeclarationNode* ctor) {
+	if (!ctor || ctor->get_definition().has_value() || ctor->is_implicit()) {
+		return ctor;
+	}
+
+	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+	StringHandle ctor_name = ctor->name();
+	if (!lazy_registry.needsInstantiation(struct_info.getName(), ctor_name, false)) {
+		return ctor;
+	}
+
+	auto lazy_info_opt = lazy_registry.getLazyMemberInfo(struct_info.getName(), ctor_name, false);
+	if (!lazy_info_opt.has_value()) {
+		return ctor;
+	}
+
+	auto instantiated_ctor = parser_.instantiateLazyMemberFunction(*lazy_info_opt);
+	parser_.normalizePendingSemanticRootsIfAvailable();
+	if (!instantiated_ctor.has_value() || !instantiated_ctor->is<ConstructorDeclarationNode>()) {
+		return ctor;
+	}
+
+	return &instantiated_ctor->as<ConstructorDeclarationNode>();
 }
 
 void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
@@ -5298,6 +5326,7 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	if (!resolution.selected_overload) {
 		resolution.selected_overload = resolveUniqueArityConstructor(struct_info, initializers.size());
 	}
+	resolution.selected_overload = ensureSelectedConstructorMaterialized(struct_info, resolution.selected_overload);
 	if (!resolution.selected_overload) {
 		// No constructor matched — restore the old scoped-enum diagnostic.
 		// If any argument is a scoped enum that couldn't be implicitly converted,

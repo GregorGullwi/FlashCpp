@@ -268,6 +268,77 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 	bool& is_ambiguous) {
 	is_ambiguous = false;
 
+	auto findExistingMaterializedCtor = [&](std::string_view mangled_name) -> const ConstructorDeclarationNode* {
+		if (mangled_name.empty()) {
+			return nullptr;
+		}
+		for (const auto& member_func : struct_info.member_functions) {
+			if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+				continue;
+			}
+			const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
+			if (ctor.has_template_parameters() || !ctor.get_definition().has_value()) {
+				continue;
+			}
+			if (ctor.mangled_name() == mangled_name) {
+				return &ctor;
+			}
+		}
+		return nullptr;
+	};
+
+	auto attachInstantiatedCtor = [&](const ConstructorDeclarationNode& source_ctor, ASTNode instantiated_node) -> const ConstructorDeclarationNode* {
+		if (!instantiated_node.is<ConstructorDeclarationNode>()) {
+			return nullptr;
+		}
+		auto& instantiated_ctor = instantiated_node.as<ConstructorDeclarationNode>();
+		if (const ConstructorDeclarationNode* existing_ctor = findExistingMaterializedCtor(instantiated_ctor.mangled_name())) {
+			return existing_ctor;
+		}
+
+		AccessSpecifier ctor_access = AccessSpecifier::Public;
+		for (const auto& member_func : struct_info.member_functions) {
+			if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+				continue;
+			}
+			if (member_func.function_decl.raw_pointer() != static_cast<const void*>(&source_ctor)) {
+				continue;
+			}
+			ctor_access = member_func.access;
+			break;
+		}
+
+		if (auto type_it = getTypesByNameMap().find(instantiated_struct_name);
+			type_it != getTypesByNameMap().end()) {
+			if (StructTypeInfo* mutable_struct_info = type_it->second->getStructInfo()) {
+				mutable_struct_info->addConstructor(instantiated_node, ctor_access);
+			}
+		}
+
+		if (auto struct_root = lookupLateMaterializedOwningStructRoot(instantiated_struct_name);
+			struct_root.has_value() && struct_root->is<StructDeclarationNode>()) {
+			auto& struct_decl = struct_root->as<StructDeclarationNode>();
+			bool already_present = false;
+			for (const auto& member_func : struct_decl.member_functions()) {
+				if (!member_func.is_constructor || !member_func.function_declaration.is<ConstructorDeclarationNode>()) {
+					continue;
+				}
+				const auto& existing_ctor = member_func.function_declaration.as<ConstructorDeclarationNode>();
+				if (existing_ctor.mangled_name() == instantiated_ctor.mangled_name()) {
+					already_present = true;
+					break;
+				}
+			}
+			if (!already_present) {
+				struct_decl.add_constructor(instantiated_node, ctor_access);
+			}
+		}
+
+		registerLateMaterializedOwningStructRoot(instantiated_struct_name);
+		normalizePendingSemanticRootsIfAvailable();
+		return &instantiated_ctor;
+	};
+
 	auto matches_call_arguments = [&](const ConstructorDeclarationNode& ctor) {
 		size_t min_required = countMinRequiredArgs(ctor);
 		if (arg_types.size() < min_required || arg_types.size() > ctor.parameter_nodes().size()) {
@@ -294,9 +365,9 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			*preferred_ctor,
 			arg_types);
 		if (instantiated.has_value() && instantiated->is<ConstructorDeclarationNode>()) {
-			const auto& concrete_ctor = instantiated->as<ConstructorDeclarationNode>();
-			if (matches_call_arguments(concrete_ctor)) {
-				return &concrete_ctor;
+			const ConstructorDeclarationNode* concrete_ctor = attachInstantiatedCtor(*preferred_ctor, *instantiated);
+			if (concrete_ctor && matches_call_arguments(*concrete_ctor)) {
+				return concrete_ctor;
 			}
 		}
 		// Instantiation failed or the instantiated ctor doesn't match call arguments.
@@ -321,15 +392,15 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 		if (!instantiated.has_value() || !instantiated->is<ConstructorDeclarationNode>()) {
 			continue;
 		}
-		const auto& concrete_ctor = instantiated->as<ConstructorDeclarationNode>();
-		if (!matches_call_arguments(concrete_ctor)) {
+		const ConstructorDeclarationNode* concrete_ctor = attachInstantiatedCtor(ctor_decl, *instantiated);
+		if (!concrete_ctor || !matches_call_arguments(*concrete_ctor)) {
 			continue;
 		}
 		if (instantiated_match != nullptr) {
 			is_ambiguous = true;
 			return nullptr;
 		}
-		instantiated_match = &concrete_ctor;
+		instantiated_match = concrete_ctor;
 	}
 
 	return instantiated_match;

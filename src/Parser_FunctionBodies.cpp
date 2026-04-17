@@ -289,9 +289,9 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 			}
 		}
 
-		// After parsing initializer list, restore to the body position
-		restore_token_position(delayed.body_start);
 	}
+
+	restore_token_position(delayed.body_start);
 
 	// Parse the function body. For normal functions or member functions with body_start at 'try',
 	// parse_function_body() handles everything.  For constructors/destructors with has_function_try

@@ -30,6 +30,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		}
 		auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 			lazy_info.identity.instantiated_owner_name, ctor_name_handle);
+		if (auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
+			struct_it != getTypesByNameMap().end()) {
+			new_ctor_ref.set_owning_type_index(struct_it->second->type_index_);
+		}
 
 		// Build parameter list, expanding variadic pack parameters into N individual
 		// parameters (args_0, args_1, ...) and populating pack_param_info_ so that
@@ -218,45 +222,38 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			parsing_template_depth_ = 0;
 
 			SaveHandle current_pos = save_token_position();
-			restore_lexer_position_only(ctor_decl.template_body_position());
-
-			auto parse_ctor_body_with_current_context = [&]() {
+			auto parse_ctor_with_current_context = [&]() {
 				FlashCpp::ScopedState guard_subs(template_param_substitutions_);
 				populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
-				auto block_result = parse_function_body(true /* is_ctor_or_dtor: constructor */);
-				if (!block_result.is_error() && block_result.node().has_value()) {
-					body_to_substitute = block_result.node();
+				DelayedFunctionBody delayed{
+					nullptr,
+					ctor_decl.template_body_position(),
+					ctor_decl.has_template_initializer_list_position() ? ctor_decl.template_initializer_list_position() : SaveHandle{},
+					lazy_info.identity.instantiated_owner_name,
+					{},
+					nullptr,
+					ctor_decl.has_template_initializer_list_position(),
+					true,
+					false,
+					&new_ctor_ref,
+					nullptr,
+					{},
+					false,
+					false,
+					false
+				};
+				if (auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
+					struct_it != getTypesByNameMap().end()) {
+					delayed.struct_type_index = struct_it->second->type_index_;
+				}
+
+				auto block_result = parse_delayed_function_body(delayed, body_to_substitute);
+				if (block_result.is_error()) {
+					body_to_substitute.reset();
 				}
 			};
 
-			// Use FunctionParsingScopeGuard with full member-function context so
-			// that struct members and 'this' are visible during body re-parse.
-			// This mirrors the regular member function lazy path (line ~595).
-			if (auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
-				struct_it != getTypesByNameMap().end()) {
-				FlashCpp::FunctionParsingScopeGuard func_guard(
-					*this,
-					true,
-					true,
-					nullptr,
-					lazy_info.identity.instantiated_owner_name,
-					struct_it->second->type_index_,
-					new_ctor_ref.parameter_nodes(),
-					nullptr);
-				parse_ctor_body_with_current_context();
-			} else {
-				// Struct type not found in gTypesByNameMap — this can happen for
-				// forward-declared types or types whose registration was deferred.
-				// Fall back to a bare function scope without member context;
-				// member-access in the body will fail, but this matches the
-				// pre-fix behavior and avoids a crash.
-				FLASH_LOG(Templates, Warning, "Lazy ctor body: struct type not found for ",
-						  lazy_info.identity.instantiated_owner_name, ", using bare scope");
-				FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
-				register_parameters_in_scope(new_ctor_ref.parameter_nodes());
-				parse_ctor_body_with_current_context();
-			}
-
+			parse_ctor_with_current_context();
 			restore_lexer_position_only(current_pos);
 			discard_saved_token(current_pos);
 		}
@@ -271,9 +268,56 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			lazy_info.template_params,
 			converted_template_args);
 		new_ctor_ref.set_definition(substituted_body);
+		new_ctor_ref.set_mangled_name(NameMangling::generateMangledNameFromNode(
+			new_ctor_ref, {}, NameMangling::ConstructorVariant::Complete).view());
 		pack_param_info_.resize(saved_ctor_pack_info);
 
-		registerAndNormalizeLateMaterializedTopLevelNode(new_ctor_node);
+		registerLateMaterializedOwningStructRoot(lazy_info.identity.instantiated_owner_name);
+		normalizePendingSemanticRootsIfAvailable();
+
+		auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
+		if (struct_it != getTypesByNameMap().end()) {
+			if (StructTypeInfo* struct_info = struct_it->second->getStructInfo()) {
+				for (auto& member_func : struct_info->member_functions) {
+					if (!member_func.is_constructor) {
+						continue;
+					}
+					if (member_func.function_decl.raw_pointer() != lazy_info.identity.original_member_node.raw_pointer()) {
+						if (!member_func.function_decl.is<ConstructorDeclarationNode>()) {
+							continue;
+						}
+						const auto& existing_ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
+						if (existing_ctor.name() != ctor_decl.name() ||
+							existing_ctor.parameter_nodes().size() != ctor_decl.parameter_nodes().size()) {
+							continue;
+						}
+					}
+					member_func.function_decl = new_ctor_node;
+					break;
+				}
+			}
+		}
+		if (auto struct_root = lookupLateMaterializedOwningStructRoot(lazy_info.identity.instantiated_owner_name);
+			struct_root.has_value() && struct_root->is<StructDeclarationNode>()) {
+			for (auto& member_func : struct_root->as<StructDeclarationNode>().member_functions()) {
+				if (!member_func.is_constructor) {
+					continue;
+				}
+				if (member_func.function_declaration.raw_pointer() != lazy_info.identity.original_member_node.raw_pointer()) {
+					if (!member_func.function_declaration.is<ConstructorDeclarationNode>()) {
+						continue;
+					}
+					const auto& root_ctor = member_func.function_declaration.as<ConstructorDeclarationNode>();
+					if (root_ctor.name() != ctor_decl.name() ||
+						root_ctor.parameter_nodes().size() != ctor_decl.parameter_nodes().size()) {
+						continue;
+					}
+				}
+				member_func.function_declaration = new_ctor_node;
+				break;
+			}
+		}
+
 		return new_ctor_node;
 	}
 

@@ -35,6 +35,7 @@ struct OutOfLineMemberFunction {
 	InlineVector<ASTNode, 4> template_params; // Template parameters (e.g., <typename T>)
 	ASTNode function_node; // FunctionDeclarationNode
 	SaveHandle body_start; // Handle to saved position of function body for re-parsing
+	SaveHandle initializer_list_start{}; // Handle to saved position at ':' for ctor initializer re-parse
 	InlineVector<StringHandle, 4> template_param_names; // Names of template parameters
 	// For nested templates (member function templates of class templates):
 	// template<typename T> template<typename U> T Container<T>::convert(U u) { ... }
@@ -42,6 +43,7 @@ struct OutOfLineMemberFunction {
 	InlineVector<ASTNode, 4> inner_template_params;
 	InlineVector<StringHandle, 4> inner_template_param_names;
 	// Function specifiers from out-of-line definition (= default, = delete)
+	bool has_initializer_list = false;
 	bool is_defaulted = false;
 	bool is_deleted = false;
 };

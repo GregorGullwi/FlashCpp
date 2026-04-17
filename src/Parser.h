@@ -1530,6 +1530,23 @@ private:
 			--namespace_component_count;
 		}
 
+		StringHandle root_name_handle = StringTable::getOrInternStringHandle(components[0]);
+		for (const ASTNode& root_node : ast_nodes_) {
+			if (!root_node.is<StructDeclarationNode>()) {
+				continue;
+			}
+			if (root_node.as<StructDeclarationNode>().name() != root_name_handle) {
+				continue;
+			}
+			if (components.size() == 1) {
+				return root_node;
+			}
+			if (auto nested_symbol = find_nested_struct(root_node, components, 1);
+				nested_symbol.has_value()) {
+				return nested_symbol;
+			}
+		}
+
 		return std::nullopt;
 	}
 
