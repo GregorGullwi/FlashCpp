@@ -782,6 +782,10 @@ private:
 			}
 		}
 
+		if (!target_struct_info.hasUserDefinedConstructor()) {
+			return nullptr;
+		}
+
 		auto arity_resolution = resolve_constructor_overload_arity(target_struct_info, num_args, false);
 		return arity_resolution.selected_overload;
 	}
