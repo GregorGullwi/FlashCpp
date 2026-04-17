@@ -1439,7 +1439,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 				call_info->called_from.column(),
 				call_info->called_from.file_index());
 			ASTNode deref_expr = ASTNode::emplace_node<ExpressionNode>(
-				UnaryOperatorNode(deref_token, call_info->receiver, true));
+				UnaryOperatorNode(deref_token, call_info->receiver, /* is_prefix= */ true, /* is_builtin_addressof= */ false));
 			EvalResult write_back_result = write_value_to_bound_lvalue(
 				deref_expr,
 				updated_object,
