@@ -1,7 +1,7 @@
 # Template Instantiation Identity / Materialization Follow-up Plan
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-14  
+**Last Updated:** 2026-04-17  
 **Context:** Follows the branch fix that made `test_integral_constant_comprehensive_ret100.cpp`, `test_integral_constant_pattern_ret42.cpp`, `test_ratio_less_alias_ret0.cpp`, `test_sfinae_enable_if_ret0.cpp`, and `test_sfinae_same_name_overload_ret0.cpp` pass by preserving dependent non-type template-argument identity in template-instantiation keys.
 
 ## Current snapshot
@@ -11,7 +11,7 @@
 - **Phase 2:** **complete**. Alias-template materialization is centralized through `materializeAliasTemplateInstantiation`; duplicated helper logic is routed through shared utilities (`buildSubstitutionParamMap`, `templateTypeArgFromEvalResult`, `substituteAndEvaluateNonTypeDefault`). Dead code removed. Type-specifier deferred alias path now routes through the authoritative alias materialization helper, and the remaining deduction-loop body is extracted into `deduceTemplateArgsFromCall(...)`.
 - **Phase 3:** **complete**. Late materialization lifecycle contract is now documented with explicit lifecycle comments in `Parser.h`. The `registerAndNormalizeLateMaterializedTopLevelNode` family of functions is the canonical registration path. Regression test added (`test_pending_sema_normalization_ret0.cpp`).
 - **Phase 4:** **complete**. Unresolved dependent placeholder states are now represented by the `DependentPlaceholderKind` enum on `TypeInfo`, replacing string-level `name.find("::")` heuristics at all critical consumption sites (SFINAE viability, constexpr sizeof, expression substitution, alias resolution).
-- **Phase 5:** intentionally blocked until Phase 4 is complete. **Now ready to begin.**
+- **Phase 5:** in progress. The first stmt-decl slice is now done: variable-declaration constructor codegen no longer materializes template ctors or lazy ctor bodies itself and instead consumes sema/materialized declarations.
 - **Current Linux validation baseline:** `make main CXX=clang++` and `bash ./tests/run_all_tests.sh` currently pass with **2109 pass / 140 expected-fail**.
 
 ## What has already landed
@@ -36,6 +36,8 @@
 - Template constructor member-initializer lists are parsed and stored.
 - `SemanticAnalysis::tryAnnotateInitListConstructorArgs(...)` now performs template-constructor materialization, matching the constructor-call sema path.
 - Lazy template constructor body re-parse now uses full member-function context (`FunctionParsingScopeGuard`), so common template constructors no longer fall through to the old noop codegen safety net.
+- `SemanticAnalysis` now materializes the selected nested/lazy constructor declaration before publishing it to `ConstructorCallNode` / `InitializerListNode`, and `IrGenerator_Stmt_Decl.cpp` now only consumes that resolved constructor metadata for variable declarations.
+- Nested template out-of-line constructor stubs now preserve a reparsable body position for lazy materialization, covered by `test_template_nested_ctor_materialized_before_codegen_ret42.cpp`.
 
 ### Phase 2 consolidation completed (2026-04-14)
 
@@ -121,10 +123,10 @@ Relates to Phase 5 cleanup of codegen-side heuristics.
 ### Immediate next steps (Phase 5 and beyond)
 
 1. **Start Phase 5 parser/sema ownership move** — placeholder state is now explicit, so sema can branch on `DependentPlaceholderKind` instead of parsing names.
-2. **Remove remaining codegen-triggered template materialization fallbacks** so codegen only consumes already-materialized declarations:
-   - `IrGenerator_Stmt_Decl.cpp` still retains `materialize_template_ctor` and `is_unresolved_noop_ctor` fallbacks
-   - `prepare_nested_template_ctor` lambda still calls back into `parser_->instantiateLazyMemberFunction(...)` from codegen
-   - These should become unnecessary once sema covers all constructor-call shapes
+2. **Stmt-decl constructor fallback slice — DONE (2026-04-17):**
+   - `IrGenerator_Stmt_Decl.cpp` no longer calls `materializeMatchingConstructorTemplate(...)` during variable-declaration IR lowering
+   - the old `is_unresolved_noop_ctor` / `prepare_nested_template_ctor` stmt-decl fallbacks are removed
+   - responsibility moved earlier into sema/lazy materialization for the direct-init and brace-init variable-declaration paths
 3. **Extend `DependentPlaceholderKind` if needed** — if Phase 5 discovers additional placeholder categories (e.g., dependent function pointers, dependent array element types), extend the enum rather than adding new string heuristics.
 4. **Consider removing remaining legitimate `find("::")` structural splits** in favor of a pre-computed `QualifiedIdentifier` stored on the TypeInfo, so the name never needs to be re-parsed for scope components. This is optional but would further improve maintainability.
 5. **Phase 6: unify template-parameter-to-function-parameter deduction mapping** — the positional `deduced_call_arg_index` counter in `try_instantiate_template_explicit` should be replaced with a proper pre-deduction pass.
@@ -139,9 +141,9 @@ Phase 5 is the broader parser/sema ownership move. ~~It should not begin until P
 2. ~~**Complete Phase 3**~~ DONE - late materialization now has one explicit register/enqueue/normalize contract.
 3. ~~**Complete Phase 4**~~ DONE - `DependentPlaceholderKind` enum replaces string heuristics for placeholder detection.
 4. **Shrink the remaining codegen-triggered template materialization surface** so Phase 5 is moving ownership, not debugging mixed ownership:
-   - `IrGenerator_Stmt_Decl.cpp` still retains fallback calls into parser materialization
+   - `IrGenerator_Stmt_Decl.cpp` variable-declaration constructor fallbacks are now removed
    - sema still does not cover every constructor-call shape under one enforced invariant
-   - codegen-side lazy-instantiation bridges still exist as safety nets
+   - codegen-side lazy-instantiation bridges still exist outside this stmt-decl slice as safety nets
 
 ### In other words
 
@@ -156,7 +158,7 @@ After the remaining work:
 2. Alias-template uses are materialized through **one authoritative helper**, not hand-reimplemented at each parser entry point. ✅ DONE (Phase 2)
 3. Any late-materialized AST root that becomes visible to sema, constexpr, or codegen goes through **one explicit registration + normalization path**. ✅ DONE (Phase 3)
 4. Unresolved dependent placeholders are identified by **typed state**, not by best-effort name inspection. ✅ DONE (Phase 4)
-5. Codegen only consumes already-materialized constructor declarations; it does not decide when template constructors get instantiated. **TODO (Phase 5)**
+5. Codegen only consumes already-materialized constructor declarations; it does not decide when template constructors get instantiated. **IN PROGRESS (Phase 5): done for `IrGenerator_Stmt_Decl.cpp` variable-declaration constructor paths.**
 
 ## Short bottom line
 

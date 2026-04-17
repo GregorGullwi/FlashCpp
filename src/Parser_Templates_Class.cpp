@@ -426,9 +426,6 @@ ParseResult Parser::parse_template_declaration() {
 				// Skip trailing requires clause if present
 				skip_trailing_requires_clause();
 
-				// Save body position (includes member initializer list for constructors)
-				SaveHandle body_start = save_token_position();
-
 				// Handle constructor member initializer list: ClassName<T>::ClassName(...) : init1(x), init2(y) { }
 				if (peek() == ":"_tok) {
 					advance(); // consume ':'
@@ -475,6 +472,11 @@ ParseResult Parser::parse_template_declaration() {
 						}
 					}
 				}
+
+				// Save the delayed-parse position right before the function body.
+				// Constructors may have a member-initializer list, so capture this
+				// only after skipping any leading ':' initializers.
+				SaveHandle body_start = save_token_position();
 
 				if (peek() == "{"_tok) {
 					skip_balanced_braces();

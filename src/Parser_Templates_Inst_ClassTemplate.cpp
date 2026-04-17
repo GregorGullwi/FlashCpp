@@ -5978,6 +5978,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			StringBuilder original_nested_name_builder;
 			original_nested_name_builder.append(template_name).append("::"sv).append(nested_struct.name());
 			std::string_view original_nested_name = original_nested_name_builder.commit();
+			auto nested_out_of_line_members = gTemplateRegistry.getOutOfLineMemberFunctions(original_nested_name);
+			if (nested_out_of_line_members.empty()) {
+				nested_out_of_line_members = gTemplateRegistry.getOutOfLineMemberFunctions(nested_struct.name());
+			}
 			auto original_nested_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(original_nested_name));
 			if (original_nested_it != getTypesByNameMap().end() && original_nested_it->second->getStructInfo()) {
 				copy_nested_static_members(*original_nested_it->second->getStructInfo());
@@ -5985,6 +5989,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto simple_nested_it = getTypesByNameMap().find(nested_struct.name());
 				if (simple_nested_it != getTypesByNameMap().end() && simple_nested_it->second->getStructInfo()) {
 					copy_nested_static_members(*simple_nested_it->second->getStructInfo());
+				}
+			}
+
+			for (const auto& out_of_line_member : nested_out_of_line_members) {
+				for (const auto& mem_func : nested_struct.member_functions()) {
+					const bool out_of_line_ctor_stub =
+						out_of_line_member.function_node.is<FunctionDeclarationNode>() &&
+						out_of_line_member.function_node.as<FunctionDeclarationNode>().decl_node().identifier_token().value() ==
+							nested_struct.name().view();
+					if (mem_func.function_declaration.is<ConstructorDeclarationNode>() &&
+						(out_of_line_member.function_node.is<ConstructorDeclarationNode>() || out_of_line_ctor_stub)) {
+						ASTNode ctor_node = mem_func.function_declaration;
+						auto& ctor_decl = ctor_node.as<ConstructorDeclarationNode>();
+						size_t out_of_line_template_param_count = out_of_line_member.function_node.is<ConstructorDeclarationNode>()
+							? out_of_line_member.function_node.as<ConstructorDeclarationNode>().template_parameters().size()
+							: out_of_line_member.inner_template_params.size();
+						if (!ctor_decl.get_definition().has_value() &&
+							!ctor_decl.has_template_body_position() &&
+							ctor_decl.template_parameters().size() == out_of_line_template_param_count) {
+							ctor_decl.set_template_body_position(out_of_line_member.body_start);
+						}
+					}
 				}
 			}
 
