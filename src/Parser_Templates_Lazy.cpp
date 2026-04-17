@@ -668,6 +668,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		};
 		std::unique_ptr<void, decltype(pop_struct_ctx)> struct_ctx_scope(reinterpret_cast<void*>(1), pop_struct_ctx);
 
+		FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
+		FlashCpp::ScopedState guard_current_function(current_function_);
+		current_function_ = &new_func_ref;
+		register_parameters_in_scope(new_func_ref.parameter_nodes());
 		ASTNode substituted_body = substituteTemplateParameters(
 			*body_to_substitute,
 			lazy_info.template_params,
