@@ -1681,11 +1681,6 @@ inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_
 		resolved_alias.terminal_type_info != nullptr) {
 		return resolved_alias.terminal_type_info->isDependentPlaceholder();
 	}
-
-	if (const TypeInfo* direct_type_info = tryGetTypeInfo(type_index)) {
-		return direct_type_info->isDependentPlaceholder();
-	}
-
 	return false;
 }
 
