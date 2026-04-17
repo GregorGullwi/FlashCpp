@@ -6942,8 +6942,10 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					}
 						// Derived-to-base pointer adjustment: when initializing B* from a C* where
 						// B is a non-primary (non-zero-offset) base of C, add the subobject offset.
+					FLASH_LOG_FORMAT(Codegen, Debug, "Pointer-to-struct init check: op.pointer_depth={}, op.type_index=(idx={}, isStruct={}), init.type_index=(idx={}, isStruct={})",
+									 op.pointer_depth.value, op.type_index.index(), op.type_index.isStruct(), init.type_index.index(), init.type_index.isStruct());
 					if (op.pointer_depth.is_pointer() && op.type_index.isStruct() &&
-						init.type_index.isStruct() && init.type_index != op.type_index) {
+						init.type_index.isStruct() && init.type_index.is_valid() && init.type_index != op.type_index) {
 						emitDerivedToBasePointerAdjust(allocated_reg_val, op.type_index, init.type_index);
 					}
 					emitMovToFrameSized(
@@ -10738,6 +10740,12 @@ void IrToObjConverter<TWriterClass>::handleUnaryOperation(const IrInstruction& i
 		}
 		std::array<uint8_t, 3> seteInst = {0x0F, 0x94, static_cast<uint8_t>(0xC0 | sete_reg)};
 		textSectionData.insert(textSectionData.end(), seteInst.begin(), seteInst.end());
+
+				// Zero-extend the low byte to full register: movzx r64, r8
+				// This is essential because sete only sets the low byte, leaving high bytes unchanged
+		auto movzx_encoding = encodeRegToRegInstruction(result_physical_reg, result_physical_reg);
+		std::array<uint8_t, 4> movzxInst = {movzx_encoding.rex_prefix, 0x0F, 0xB6, movzx_encoding.modrm_byte};
+		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
 		break;
 	}
 	case UnaryOperation::BitwiseNot:
