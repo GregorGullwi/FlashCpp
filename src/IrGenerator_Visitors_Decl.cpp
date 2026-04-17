@@ -29,6 +29,9 @@ namespace {
 } // namespace
 
 void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
+	if (node.is_template_pattern()) {
+		return;
+	}
 	if (!node.get_definition().has_value() && !node.is_implicit()) {
 		return;
 	}

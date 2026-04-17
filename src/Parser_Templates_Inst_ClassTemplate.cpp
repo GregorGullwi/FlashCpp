@@ -7574,6 +7574,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_func_ref.set_trailing_return_type_position(func_decl.trailing_return_type_position());
 
 				// Create new TemplateFunctionDeclarationNode with inner template params
+				new_func_ref.set_is_template_pattern(true);
 				auto new_template_func = emplace_node<TemplateFunctionDeclarationNode>(
 					template_func.template_parameters(),
 					new_func_node,

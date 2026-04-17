@@ -4447,6 +4447,7 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 			const auto& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0);
+				type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 				getTypesByNameMap().emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}

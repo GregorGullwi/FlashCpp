@@ -1671,6 +1671,19 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 	return resolved;
 }
 
+inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_spec) {
+	TypeIndex type_index = type_spec.type_index();
+	if (!type_index.is_valid()) {
+		return false;
+	}
+
+	if (const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_index);
+		resolved_alias.terminal_type_info != nullptr) {
+		return resolved_alias.terminal_type_info->isDependentPlaceholder();
+	}
+	return false;
+}
+
 inline TypeIndex getCanonicalConversionTargetType(const TypeSpecifierNode& type_spec) {
 	TypeIndex target_type_index = type_spec.type_index();
 	if (!target_type_index.is_valid() && type_spec.type() != TypeCategory::Invalid) {
@@ -2276,6 +2289,9 @@ public:
 	void set_is_deleted(bool deleted) { is_deleted_ = deleted; }
 	bool is_deleted() const { return is_deleted_; }
 
+	void set_is_template_pattern(bool is_template_pattern) { is_template_pattern_ = is_template_pattern; }
+	bool is_template_pattern() const { return is_template_pattern_; }
+
 	// Inline always support (for template instantiations that are pure expressions)
 	// When true, this function should always be inlined and never generate a call
 	void set_inline_always(bool inline_always) { inline_always_ = inline_always; }
@@ -2347,6 +2363,7 @@ private:
 	bool is_consteval_;
 	bool is_noexcept_ = false;  // True if function is declared noexcept
 	bool is_deleted_ = false;  // True if function is declared = delete
+	bool is_template_pattern_ = false;  // True for uninstantiated template pattern function nodes
 	bool is_static_ = false;	 // True if function is a static member function (no 'this' pointer)
 	bool is_const_member_function_ = false;	// True if this function is a const member function (K qualifier)
 	bool is_volatile_member_function_ = false;  // True if this function is a volatile member function (V qualifier)
