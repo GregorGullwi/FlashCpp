@@ -6000,6 +6000,15 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 	int source_offset = getStackOffsetFromTempVar(op.source);
 	emitMovFromFrame(X64Register::RAX, source_offset);
 
+		// Same-type dynamic_cast is an identity conversion.
+	if (op.source_type_index == op.target_type_index) {
+		emitMovToFrameSized(
+			SizedRegister{X64Register::RAX, 64, false},
+			SizedStackSlot{result_offset, 64, false});
+		regAlloc.reset();
+		return;
+	}
+
 		// Step 3: Check if source pointer is null
 	emitTestRegReg(X64Register::RAX);
 
@@ -6011,15 +6020,6 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
-
-		// Same-type dynamic_cast is an identity conversion after the null check.
-	if (op.source_type_index == op.target_type_index) {
-		emitMovToFrameSized(
-			SizedRegister{X64Register::RAX, 64, false},
-			SizedStackSlot{result_offset, 64, false});
-		regAlloc.reset();
-		return;
-	}
 
 		// Step 4: Load the platform RTTI arguments.
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -6051,6 +6051,9 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		}
 
 			// Get source and target type descriptor symbols
+		if (op.target_type_name.empty()) {
+			throw InternalError("dynamic_cast requires valid target class type");
+		}
 		std::string source_type_desc = writer.get_or_create_type_descriptor(source_type_name, op.source_type_index);
 		std::string target_type_desc = writer.get_or_create_type_descriptor(op.target_type_name, op.target_type_index);
 
