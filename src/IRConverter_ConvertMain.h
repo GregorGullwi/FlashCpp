@@ -924,6 +924,23 @@ private:
 
 	void finalizeSections();
 
+	// Emit runtime helper functions for dynamic_cast as native x64 code
+
+	void emit_dynamic_cast_runtime_helpers();
+
+	// Emit __dynamic_cast_check function
+	//   bool __dynamic_cast_check(type_info* source, type_info* target)
+	// Platform-specific implementation:
+	//   - Windows: MSVC RTTI with Complete Object Locator format (RCX, RDX)
+	//   - Linux: Itanium C++ ABI type_info structures (RDI, RSI)
+	// Returns: AL = 1 if cast valid, 0 otherwise
+	void emit_dynamic_cast_check_function();
+
+	// Emit __dynamic_cast_throw_bad_cast function
+	//   [[noreturn]] void __dynamic_cast_throw_bad_cast()
+	// This function throws std::bad_cast exception via C++ runtime
+	void emit_dynamic_cast_throw_function();
+
 	void patchBranches();
 
 	void finalizeFunctionBranches();
