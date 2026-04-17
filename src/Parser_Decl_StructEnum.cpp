@@ -2139,7 +2139,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// This handles: const, volatile, &, &&, noexcept, override, final, = 0, = default, = delete
 			FlashCpp::MemberQualifiers member_quals;
 			FlashCpp::FunctionSpecifiers func_specs;
-			auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+			auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs, member_func_ref.parameter_nodes());
 			if (specs_result.is_error()) {
 				return specs_result;
 			}

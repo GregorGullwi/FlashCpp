@@ -1,12 +1,12 @@
 struct NonTemplateLess {
-	constexpr auto operator()(int lhs, int rhs) const noexcept(true) -> decltype(lhs < rhs) {
+	constexpr auto operator()(int lhs, int rhs) const noexcept(noexcept(lhs < rhs)) -> decltype(lhs < rhs) {
 		return lhs < rhs;
 	}
 };
 
 template <typename T>
 struct TemplateLess {
-	constexpr auto operator()(const T& lhs, const T& rhs) const noexcept(true) -> decltype(lhs < rhs) {
+	constexpr auto operator()(const T& lhs, const T& rhs) const noexcept(noexcept(lhs < rhs)) -> decltype(lhs < rhs) {
 		return lhs < rhs;
 	}
 };

@@ -2209,7 +2209,7 @@ ParseResult Parser::parse_template_declaration() {
 					// Parse trailing specifiers (const, volatile, &, &&, noexcept, override, final)
 					FlashCpp::MemberQualifiers member_quals;
 					FlashCpp::FunctionSpecifiers func_specs;
-					auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+					auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs, member_func_ref.parameter_nodes());
 					if (specs_result.is_error()) {
 						return specs_result;
 					}
@@ -3634,7 +3634,7 @@ ParseResult Parser::parse_template_declaration() {
 					// Parse trailing specifiers (const, volatile, noexcept, override, final, = default, = delete)
 					FlashCpp::MemberQualifiers member_quals;
 					FlashCpp::FunctionSpecifiers func_specs;
-					auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+					auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs, member_func_ref.parameter_nodes());
 					if (specs_result.is_error()) {
 						return specs_result;
 					}
@@ -5118,7 +5118,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				// Parse trailing specifiers
 				FlashCpp::MemberQualifiers member_quals;
 				FlashCpp::FunctionSpecifiers func_specs;
-				auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+				auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs, member_func_ref.parameter_nodes());
 				if (specs_result.is_error()) {
 					return specs_result;
 				}
@@ -5488,7 +5488,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			// Parse trailing specifiers
 			FlashCpp::MemberQualifiers member_quals;
 			FlashCpp::FunctionSpecifiers func_specs;
-			auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+			auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs, member_func_ref.parameter_nodes());
 			if (specs_result.is_error()) {
 				return specs_result;
 			}

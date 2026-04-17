@@ -677,7 +677,15 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to parse_function_trailing_specifiers. current_token={}, peek={}",
 						 std::string(current_token_.value()),
 						 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
-		auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+		const std::vector<ASTNode>* free_function_params = nullptr;
+		if (auto func_node_ptr = function_definition_result.node()) {
+			free_function_params = &func_node_ptr->as<FunctionDeclarationNode>().parameter_nodes();
+		}
+		static const std::vector<ASTNode> no_params;
+		auto specs_result = parse_function_trailing_specifiers(
+			member_quals,
+			func_specs,
+			free_function_params ? *free_function_params : no_params);
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_function_trailing_specifiers returned. is_error={}, current_token={}, peek={}",
 						 specs_result.is_error(),
 						 std::string(current_token_.value()),

@@ -563,6 +563,14 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 ParseResult Parser::parse_function_trailing_specifiers(
 	FlashCpp::MemberQualifiers& out_quals,
 	FlashCpp::FunctionSpecifiers& out_specs) {
+	static const std::vector<ASTNode> no_params;
+	return parse_function_trailing_specifiers(out_quals, out_specs, no_params);
+}
+
+ParseResult Parser::parse_function_trailing_specifiers(
+	FlashCpp::MemberQualifiers& out_quals,
+	FlashCpp::FunctionSpecifiers& out_specs,
+	const std::vector<ASTNode>& params) {
 	// Initialize output structures
 	out_quals = FlashCpp::MemberQualifiers{};
 	out_specs = FlashCpp::FunctionSpecifiers{};
@@ -604,6 +612,8 @@ ParseResult Parser::parse_function_trailing_specifiers(
 				advance(); // consume '('
 
 				// Parse the constant expression
+				FlashCpp::SymbolTableScope noexcept_scope(ScopeType::Function);
+				register_parameters_in_scope(params);
 				auto expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (expr_result.is_error()) {
 					return expr_result;
@@ -844,7 +854,7 @@ ParseResult Parser::parse_function_header(
 	}
 
 	// Parse trailing specifiers using Phase 2 unified method
-	auto specs_result = parse_function_trailing_specifiers(out_header.member_quals, out_header.specifiers);
+	auto specs_result = parse_function_trailing_specifiers(out_header.member_quals, out_header.specifiers, out_header.params.parameters);
 	if (specs_result.is_error()) {
 		return specs_result;
 	}
