@@ -6074,6 +6074,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					// Falls back to arity-only selection when argument types cannot be determined.
 					const FunctionDeclarationNode* operator_call_func = nullptr;
 					bool op_explicitly_ambiguous = false;
+					std::vector<TypeSpecifierNode> op_arg_types;
+					bool all_op_types_known = true;
+					for (const auto& arg : args) {
+						auto arg_type = get_expression_type(arg);
+						if (arg_type.has_value()) {
+							op_arg_types.push_back(*arg_type);
+						} else {
+							all_op_types_known = false;
+							break;
+						}
+					}
 
 					// Build candidate list for resolve_overload.
 					std::vector<ASTNode> op_candidates;
@@ -6086,18 +6097,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 					if (!op_candidates.empty()) {
 						// Try type-based overload resolution first.
-						std::vector<TypeSpecifierNode> op_arg_types;
-						bool all_op_types_known = true;
-						for (const auto& arg : args) {
-							auto arg_type = get_expression_type(arg);
-							if (arg_type.has_value()) {
-								op_arg_types.push_back(*arg_type);
-							} else {
-								all_op_types_known = false;
-								break;
-							}
-						}
-
 						if (all_op_types_known) {
 							auto op_result = resolve_overload(op_candidates, op_arg_types);
 							if (op_result.has_match && !op_result.is_ambiguous) {
@@ -6127,6 +6126,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 							if (!operator_call_func && op_candidate_count == 1)
 								operator_call_func = sole_op_candidate;
+						}
+					}
+
+					if (!operator_call_func && !op_explicitly_ambiguous && all_op_types_known) {
+						if (auto instantiated_operator = try_instantiate_member_function_template(
+								StringTable::getStringView(type_info.struct_info_->name),
+								"operator()"sv,
+								op_arg_types);
+							instantiated_operator.has_value() && instantiated_operator->is<FunctionDeclarationNode>()) {
+							operator_call_func = &instantiated_operator->as<FunctionDeclarationNode>();
 						}
 					}
 

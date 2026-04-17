@@ -7658,7 +7658,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_func_node,
 					template_func.requires_clause());
 
-				instantiated_struct_ref.add_member_function(new_template_func, mem_func.access);
+				if (mem_func.operator_kind != OverloadableOperator::None) {
+					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_template_func, mem_func.access);
+					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_template_func, mem_func.access,
+														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
+				} else {
+					instantiated_struct_ref.add_member_function(new_template_func, mem_func.access);
+					struct_info_ptr->addMemberFunction(
+						decl_node.identifier_token().handle(),
+						new_template_func,
+						mem_func.access,
+						mem_func.is_virtual,
+						mem_func.is_pure_virtual,
+						mem_func.is_override,
+						mem_func.is_final);
+				}
 
 				// Register with qualified name
 				StringBuilder qualified_name_builder;
@@ -7679,9 +7693,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			} else {
 				// No substitution needed - copy as-is
-				instantiated_struct_ref.add_member_function(
-					mem_func.function_declaration,
-					mem_func.access);
+				if (mem_func.operator_kind != OverloadableOperator::None) {
+					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, mem_func.function_declaration, mem_func.access);
+					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, mem_func.function_declaration, mem_func.access,
+														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
+				} else {
+					instantiated_struct_ref.add_member_function(
+						mem_func.function_declaration,
+						mem_func.access);
+					struct_info_ptr->addMemberFunction(
+						decl_node.identifier_token().handle(),
+						mem_func.function_declaration,
+						mem_func.access,
+						mem_func.is_virtual,
+						mem_func.is_pure_virtual,
+						mem_func.is_override,
+						mem_func.is_final);
+				}
 
 				// Register with qualified name
 				StringBuilder qualified_name_builder;

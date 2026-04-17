@@ -354,6 +354,7 @@ ParseResult Parser::parse_template_declaration() {
 								} else if (peek_info().value() == "operator") {
 									// Handle operator overloads: Class<T>::operator()(...)
 									nested_class_name = class_token.value();
+									nested_qualified_class_name = std::string(class_token.value());
 									Token operator_keyword = peek_info();
 									advance(); // consume 'operator'
 									// Consume the operator symbol(s) and build the full name
