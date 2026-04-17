@@ -1244,7 +1244,9 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	const TypeInfo* bound_type_info = nullptr;
 	std::unordered_map<std::string_view, EvalResult> member_bindings;
 	bool write_back_to_object_binding = false;
+	bool write_back_through_pointer = false;
 	std::string_view object_name = object_identifier->name();
+	EvalResult pointed_object_result;
 
 	if (object_name == "this") {
 		if (!context.struct_info) {
@@ -1260,11 +1262,31 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			}
 		}
 	} else {
-		auto object_it = bindings.find(object_name);
-		if (object_it == bindings.end() || !object_it->second.object_type_index.is_valid()) {
+		const EvalResult* object_value = findBindingValue(object_name, bindings, context);
+		if (!object_value) {
 			return std::nullopt;
 		}
-		bound_type_index = object_it->second.object_type_index;
+
+		if (object_value->pointer_to_var.isValid()) {
+			pointed_object_result = deref_pointer_with_bindings(*object_value, bindings, context);
+			if (!pointed_object_result.success()) {
+				return pointed_object_result;
+			}
+			if (!pointed_object_result.object_type_index.is_valid()) {
+				return EvalResult::error("Bound constexpr pointer does not point to a struct object");
+			}
+			bound_type_index = pointed_object_result.object_type_index;
+			member_bindings = pointed_object_result.object_member_bindings;
+			write_back_through_pointer = true;
+		} else {
+			if (!object_value->object_type_index.is_valid()) {
+				return std::nullopt;
+			}
+			bound_type_index = object_value->object_type_index;
+			member_bindings = object_value->object_member_bindings;
+			write_back_to_object_binding = true;
+		}
+
 		bound_type_info = tryGetTypeInfo(bound_type_index);
 		if (!bound_type_info) {
 			return EvalResult::error("Invalid bound object type for constexpr member function call");
@@ -1273,8 +1295,6 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		if (!bound_struct_info) {
 			return EvalResult::error("Bound constexpr object is not a struct");
 		}
-		member_bindings = object_it->second.object_member_bindings;
-		write_back_to_object_binding = true;
 	}
 
 	const FunctionDeclarationNode* actual_func = [&]() -> const FunctionDeclarationNode* {
@@ -1408,6 +1428,25 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			auto object_it = mutable_bindings->find(object_name);
 			if (object_it != mutable_bindings->end()) {
 				object_it->second.object_member_bindings = member_bindings;
+			}
+		} else if (write_back_through_pointer) {
+			EvalResult updated_object = pointed_object_result;
+			updated_object.object_member_bindings = member_bindings;
+			Token deref_token(
+				Token::Type::Operator,
+				"*"sv,
+				call_info->called_from.line(),
+				call_info->called_from.column(),
+				call_info->called_from.file_index());
+			ASTNode deref_expr = ASTNode::emplace_node<ExpressionNode>(
+				UnaryOperatorNode(deref_token, call_info->receiver, true));
+			EvalResult write_back_result = write_value_to_bound_lvalue(
+				deref_expr,
+				updated_object,
+				*mutable_bindings,
+				context);
+			if (!write_back_result.success()) {
+				result = write_back_result;
 			}
 		} else {
 			for (const auto& member : saved_struct_info->members) {
@@ -5528,6 +5567,37 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 			if (auto static_member_result = try_evaluate_current_struct_static_member()) {
 				return *static_member_result;
 			}
+		}
+	}
+
+	if (has_complex_object_result && complex_object_result.pointer_to_var.isValid()) {
+		std::unordered_map<std::string_view, EvalResult> empty_bindings;
+		complex_object_result = deref_pointer_with_bindings(complex_object_result, empty_bindings, context);
+		if (!complex_object_result.success()) {
+			return complex_object_result;
+		}
+	}
+
+	if (!has_complex_object_result && initializer && initializer->has_value()) {
+		bool receiver_is_pointer = false;
+		if (var_decl && var_decl->declaration().type_node().is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& receiver_type = var_decl->declaration().type_node().as<TypeSpecifierNode>();
+			receiver_is_pointer = receiver_type.is_pointer();
+		}
+		if (receiver_is_pointer) {
+			EvalResult pointer_result = evaluate(initializer->value(), context);
+			if (!pointer_result.success()) {
+				return pointer_result;
+			}
+			if (!pointer_result.pointer_to_var.isValid()) {
+				return EvalResult::error("Member function call receiver is not a constexpr object pointer");
+			}
+			std::unordered_map<std::string_view, EvalResult> empty_bindings;
+			complex_object_result = deref_pointer_with_bindings(pointer_result, empty_bindings, context);
+			if (!complex_object_result.success()) {
+				return complex_object_result;
+			}
+			has_complex_object_result = true;
 		}
 	}
 
