@@ -5571,8 +5571,8 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 	}
 
 	if (has_complex_object_result && complex_object_result.pointer_to_var.isValid()) {
-		std::unordered_map<std::string_view, EvalResult> empty_bindings;
-		complex_object_result = deref_pointer_with_bindings(complex_object_result, empty_bindings, context);
+		std::unordered_map<std::string_view, EvalResult> no_local_bindings;
+		complex_object_result = deref_pointer_with_bindings(complex_object_result, no_local_bindings, context);
 		if (!complex_object_result.success()) {
 			return complex_object_result;
 		}
@@ -5592,8 +5592,8 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 			if (!pointer_result.pointer_to_var.isValid()) {
 				return EvalResult::error("Member function call receiver is not a constexpr object pointer");
 			}
-			std::unordered_map<std::string_view, EvalResult> empty_bindings;
-			complex_object_result = deref_pointer_with_bindings(pointer_result, empty_bindings, context);
+			std::unordered_map<std::string_view, EvalResult> no_local_bindings;
+			complex_object_result = deref_pointer_with_bindings(pointer_result, no_local_bindings, context);
 			if (!complex_object_result.success()) {
 				return complex_object_result;
 			}
