@@ -2209,9 +2209,14 @@ ParseResult Parser::parse_template_declaration() {
 					// Parse trailing specifiers (const, volatile, &, &&, noexcept, override, final)
 					FlashCpp::MemberQualifiers member_quals;
 					FlashCpp::FunctionSpecifiers func_specs;
-					auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+					auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs, member_func_ref.parameter_nodes());
 					if (specs_result.is_error()) {
 						return specs_result;
+					}
+
+					auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
+					if (trailing_return_result.is_error()) {
+						return trailing_return_result;
 					}
 
 					// Propagate noexcept specifier to the function declaration node
@@ -3629,9 +3634,14 @@ ParseResult Parser::parse_template_declaration() {
 					// Parse trailing specifiers (const, volatile, noexcept, override, final, = default, = delete)
 					FlashCpp::MemberQualifiers member_quals;
 					FlashCpp::FunctionSpecifiers func_specs;
-					auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+					auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs, member_func_ref.parameter_nodes());
 					if (specs_result.is_error()) {
 						return specs_result;
+					}
+
+					auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
+					if (trailing_return_result.is_error()) {
+						return trailing_return_result;
 					}
 
 					// Propagate noexcept specifier to the function declaration node
@@ -5108,9 +5118,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				// Parse trailing specifiers
 				FlashCpp::MemberQualifiers member_quals;
 				FlashCpp::FunctionSpecifiers func_specs;
-				auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+				auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs, member_func_ref.parameter_nodes());
 				if (specs_result.is_error()) {
 					return specs_result;
+				}
+
+				auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
+				if (trailing_return_result.is_error()) {
+					return trailing_return_result;
 				}
 
 				// Propagate cv-qualifiers and noexcept to the function declaration node immediately.
@@ -5473,9 +5488,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			// Parse trailing specifiers
 			FlashCpp::MemberQualifiers member_quals;
 			FlashCpp::FunctionSpecifiers func_specs;
-			auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+			auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs, member_func_ref.parameter_nodes());
 			if (specs_result.is_error()) {
 				return specs_result;
+			}
+
+			auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
+			if (trailing_return_result.is_error()) {
+				return trailing_return_result;
 			}
 
 			// Propagate cv-qualifiers and noexcept to the function declaration node immediately.

@@ -563,6 +563,14 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 ParseResult Parser::parse_function_trailing_specifiers(
 	FlashCpp::MemberQualifiers& out_quals,
 	FlashCpp::FunctionSpecifiers& out_specs) {
+	static const std::vector<ASTNode> no_params;
+	return parse_function_trailing_specifiers(out_quals, out_specs, no_params);
+}
+
+ParseResult Parser::parse_function_trailing_specifiers(
+	FlashCpp::MemberQualifiers& out_quals,
+	FlashCpp::FunctionSpecifiers& out_specs,
+	const std::vector<ASTNode>& params) {
 	// Initialize output structures
 	out_quals = FlashCpp::MemberQualifiers{};
 	out_specs = FlashCpp::FunctionSpecifiers{};
@@ -604,6 +612,8 @@ ParseResult Parser::parse_function_trailing_specifiers(
 				advance(); // consume '('
 
 				// Parse the constant expression
+				FlashCpp::SymbolTableScope noexcept_scope(ScopeType::Function);
+				register_parameters_in_scope(params);
 				auto expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (expr_result.is_error()) {
 					return expr_result;
@@ -844,7 +854,7 @@ ParseResult Parser::parse_function_header(
 	}
 
 	// Parse trailing specifiers using Phase 2 unified method
-	auto specs_result = parse_function_trailing_specifiers(out_header.member_quals, out_header.specifiers);
+	auto specs_result = parse_function_trailing_specifiers(out_header.member_quals, out_header.specifiers, out_header.params.parameters);
 	if (specs_result.is_error()) {
 		return specs_result;
 	}
@@ -920,6 +930,38 @@ ParseResult Parser::parse_trailing_return_type_with_params(const std::vector<AST
 	}
 
 	return trailing_result;
+}
+
+ParseResult Parser::parse_member_trailing_return_type(FunctionDeclarationNode& func_decl) {
+	if (peek() != "->"_tok) {
+		return ParseResult::success();
+	}
+
+	bool save_trailing_position = false;
+	if (func_decl.decl_node().type_node().is<TypeSpecifierNode>()) {
+		const auto& current_return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+		save_trailing_position = isPlaceholderAutoType(current_return_type.type());
+	}
+
+	std::optional<SaveHandle> trailing_pos;
+	if (save_trailing_position) {
+		trailing_pos = save_token_position();
+	}
+
+	auto trailing_result = parse_trailing_return_type_with_params(func_decl.parameter_nodes());
+	if (trailing_result.is_error()) {
+		return trailing_result;
+	}
+	if (!trailing_result.node().has_value() || !trailing_result.node()->is<TypeSpecifierNode>()) {
+		return ParseResult::error("Expected type specifier for trailing return type", current_token_);
+	}
+
+	func_decl.decl_node().set_type_node(*trailing_result.node());
+	if (trailing_pos.has_value()) {
+		func_decl.set_trailing_return_type_position(*trailing_pos);
+	}
+
+	return ParseResult::success();
 }
 
 // Phase 4: Create a FunctionDeclarationNode from a ParsedFunctionHeader

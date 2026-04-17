@@ -915,6 +915,7 @@ private:
 	FlashCpp::MemberLeadingSpecifiers parse_member_leading_specifiers();	 // Consume constexpr/consteval/inline/explicit/virtual before a member
 	CppAttributeInfo consume_cpp_attribute_blocks();	 // Consume consecutive [[...]] blocks and return detected flags
 	ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);	// Phase 2: Unified trailing specifiers
+	ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs, const std::vector<ASTNode>& params);
 	ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);	// Phase 4: Unified function header parsing
 	ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);	// Phase 4: Create FunctionDeclarationNode from header
 	void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index, bool inject_this);  // Phase 5: Helper for member function scope setup
@@ -1931,9 +1932,10 @@ private:	 // Resume private methods
 	void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
 		// Parse trailing return type (-> type) with the given parameters visible for decltype expressions.
 		// Expects the '->' token to be the next token. Consumes it, registers params in a temporary scope,
-		// calls parse_type_specifier + consume_pointer_ref_modifiers, then pops the scope.
-		// Returns ParseResult::error on failure, or success with a TypeSpecifierNode.
+	// calls parse_type_specifier + consume_pointer_ref_modifiers, then pops the scope.
+	// Returns ParseResult::error on failure, or success with a TypeSpecifierNode.
 	ParseResult parse_trailing_return_type_with_params(const std::vector<ASTNode>& params);
+	ParseResult parse_member_trailing_return_type(FunctionDeclarationNode& func_decl);
 
 		// Helper to parse static member functions (reduces code duplication)
 	bool parse_static_member_function(

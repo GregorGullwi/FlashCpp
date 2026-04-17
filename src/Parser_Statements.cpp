@@ -764,7 +764,15 @@ ParseResult Parser::parse_variable_declaration() {
 				// Parse trailing specifiers
 				FlashCpp::MemberQualifiers member_quals;
 				FlashCpp::FunctionSpecifiers func_specs;
-				auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+				const std::vector<ASTNode>* function_params = nullptr;
+				if (auto func_node_ptr = function_result.node()) {
+					function_params = &func_node_ptr->as<FunctionDeclarationNode>().parameter_nodes();
+				}
+				static const std::vector<ASTNode> no_params;
+				auto specs_result = parse_function_trailing_specifiers(
+					member_quals,
+					func_specs,
+					function_params ? *function_params : no_params);
 				if (specs_result.is_error()) {
 					return specs_result;
 				}
