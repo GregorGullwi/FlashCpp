@@ -5821,7 +5821,7 @@ void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instructi
 			// Windows/COFF: use ??_R0 Type Descriptor symbols
 			if (type_index.category() == TypeCategory::Struct) {
 				if (type_name_handle.isValid()) {
-					return writer.get_or_create_type_descriptor(StringTable::getStringView(type_name_handle));
+					return writer.get_or_create_type_descriptor(StringTable::getStringView(type_name_handle), type_index);
 				}
 				return {};
 			}
@@ -6012,6 +6012,15 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 
+		// Same-type dynamic_cast is an identity conversion after the null check.
+	if (op.source_type_index == op.target_type_index) {
+		emitMovToFrameSized(
+			SizedRegister{X64Register::RAX, 64, false},
+			SizedStackSlot{result_offset, 64, false});
+		regAlloc.reset();
+		return;
+	}
+
 		// Step 4: Load the platform RTTI arguments.
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			// Linux: __dynamic_cast(source_ptr, source_rtti, target_rtti, -1)
@@ -6042,8 +6051,8 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		}
 
 			// Get source and target type descriptor symbols
-		std::string source_type_desc = writer.get_or_create_type_descriptor(source_type_name);
-		std::string target_type_desc = writer.get_or_create_type_descriptor(op.target_type_name);
+		std::string source_type_desc = writer.get_or_create_type_descriptor(source_type_name, op.source_type_index);
+		std::string target_type_desc = writer.get_or_create_type_descriptor(op.target_type_name, op.target_type_index);
 
 			// RCX: src_ptr (already in RAX, move to RCX)
 		emitMovRegReg(X64Register::RCX, X64Register::RAX);
@@ -7377,26 +7386,50 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						++i;
 					}
 
-						// Populate base class names for RTTI
-					for (const auto& base : struct_info->base_classes) {
-						if (const TypeInfo* base_ti = tryGetTypeInfo(base.type_index)) {
-							const TypeInfo& base_type = *base_ti;
-							if (base_type.isStruct()) {
-								const StructTypeInfo* base_struct = base_type.getStructInfo();
-								if (base_struct) {
-									vtable_info.base_class_names.push_back(std::string(StringTable::getStringView(base_struct->getName())));
-
-										// Add detailed base class info
-									ObjectFileWriter::BaseClassDescriptorInfo bci;
-									bci.name = std::string(StringTable::getStringView(base_struct->getName()));
-									bci.num_contained_bases = static_cast<uint32_t>(base_struct->base_classes.size());
-									bci.offset = static_cast<uint32_t>(base.offset);
-									bci.is_virtual = base.is_virtual;
-									vtable_info.base_class_info.push_back(bci);
-								}
+						// Populate RTTI base descriptors recursively so dynamic_cast can
+						// see transitive bases such as Base inside MoreDerived -> Derived -> Base.
+					auto countReachableBases = [&](const auto& self, const StructTypeInfo* current_struct) -> uint32_t {
+						if (!current_struct) {
+							return 0;
+						}
+						uint32_t count = 0;
+						for (const auto& base : current_struct->base_classes) {
+							++count;
+							if (const TypeInfo* base_ti = tryGetTypeInfo(base.type_index)) {
+								count += self(self, base_ti->getStructInfo());
 							}
 						}
-					}
+						return count;
+					};
+					auto appendBaseClassInfo = [&](const auto& self, const StructTypeInfo* current_struct, uint32_t accumulated_offset) -> void {
+						if (!current_struct) {
+							return;
+						}
+						for (const auto& base : current_struct->base_classes) {
+							if (const TypeInfo* base_ti = tryGetTypeInfo(base.type_index)) {
+								const TypeInfo& base_type = *base_ti;
+								if (!base_type.isStruct()) {
+									continue;
+								}
+								const StructTypeInfo* base_struct = base_type.getStructInfo();
+								if (!base_struct) {
+									continue;
+								}
+								uint32_t base_offset = accumulated_offset + static_cast<uint32_t>(base.offset);
+								vtable_info.base_class_names.push_back(std::string(StringTable::getStringView(base_struct->getName())));
+
+								ObjectFileWriter::BaseClassDescriptorInfo bci;
+								bci.name = std::string(StringTable::getStringView(base_struct->getName()));
+								bci.num_contained_bases = countReachableBases(countReachableBases, base_struct);
+								bci.offset = base_offset;
+								bci.is_virtual = base.is_virtual;
+								vtable_info.base_class_info.push_back(bci);
+
+								self(self, base_struct, base_offset);
+							}
+						}
+					};
+					appendBaseClassInfo(appendBaseClassInfo, struct_info, 0);
 
 						// Add RTTI information for this class
 					vtable_info.rtti_info = struct_info->rtti_info;
