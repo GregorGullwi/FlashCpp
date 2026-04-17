@@ -7,12 +7,12 @@ struct Inner {
 struct Outer {
 	int z;
 	Inner inner;
-	int values[3];
+	int tail;
 };
 
 int main() {
 	Outer* p = new Outer{7};
-	int sum = p->z + p->inner.a + p->inner.b + p->inner.c + p->values[0] + p->values[1] + p->values[2];
+	int sum = p->z + p->inner.a + p->inner.b + p->inner.c + p->tail;
 	delete p;
 	return sum == 7 ? 0 : 1;
 }
