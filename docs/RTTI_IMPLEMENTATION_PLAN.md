@@ -2,7 +2,7 @@
 
 ## Summary
 
-**All RTTI features are now fully implemented for both ELF/Linux and Windows/COFF.**
+**RTTI support now covers the implemented ELF/Linux and Windows/COFF paths below, with the remaining gaps tracked here.**
 
 The compiler emits correct platform-specific RTTI symbols and uses standard ABI
 runtimes on both platforms:

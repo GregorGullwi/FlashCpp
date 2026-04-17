@@ -1487,6 +1487,7 @@ bool StructTypeInfo::buildVTable() {
 
 	// Step 1: Copy base class vtable entries (if any)
 	bool any_base_potentially_incomplete = has_deferred_base_classes;
+	bool copied_primary_base_vtable = false;
 	for (const auto& base : base_classes) {
 		if (base.type_index.index() >= gTypeInfo.size()) {
 			continue;
@@ -1496,11 +1497,13 @@ bool StructTypeInfo::buildVTable() {
 		const StructTypeInfo* base_info = base_type.getStructInfo();
 
 		if (base_info && base_info->has_vtable) {
-			// Copy all base vtable entries
-			for (const auto* base_func : base_info->vtable) {
-				if (base_func != nullptr) { // Safety check
-					vtable.push_back(base_func);
+			if (!copied_primary_base_vtable && !base.is_virtual && base.offset == 0) {
+				for (const auto* base_func : base_info->vtable) {
+					if (base_func != nullptr) {
+						vtable.push_back(base_func);
+					}
 				}
+				copied_primary_base_vtable = true;
 			}
 			has_vtable = true;
 		} else if (base_info == nullptr) {
@@ -1603,12 +1606,8 @@ bool StructTypeInfo::buildVTable() {
 
 		// Use platform-appropriate vtable mangling
 		if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
-			// Itanium C++ ABI: _ZTV + length + name
-			// e.g., class "Base" -> "_ZTV4Base"
-			vtable_sb.append("_ZTV");
 			std::string_view name_sv = StringTable::getStringView(getName());
-			vtable_sb.append(static_cast<uint64_t>(name_sv.size()));
-			vtable_sb.append(name_sv);
+			vtable_sb.append(NameMangling::generateItaniumSpecialName("_ZTV", name_sv));
 		} else {
 			// MSVC: ??_7 + name + @@6B@
 			// e.g., class "Base" -> "??_7Base@@6B@"

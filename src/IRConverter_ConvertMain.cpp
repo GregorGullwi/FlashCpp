@@ -5980,39 +5980,64 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 				return -1;
 			}
 
-			// Find the byte offset of the static source subobject inside the target type
-			// by recursively walking only public, non-virtual bases. __dynamic_cast can
-			// use this hint for simple derived-to-base relationships; other cases fall
-			// back to -1. The lambda takes itself explicitly to recurse without adding
-			// another helper function.
-			auto findPublicNonVirtualBaseOffset = [&](const auto& self, const StructTypeInfo* current_struct, int64_t current_offset) -> std::optional<int64_t> {
+			// Itanium ABI src2dst_offset classification:
+			//  >=0 : source is a unique public non-virtual base of target at this offset
+			//   -1 : unspecified / runtime must discover relationship
+			//   -2 : source is not a public base of target
+			//   -3 : source is a multiple public non-virtual base of target
+			struct Src2DstOffsetHintState {
+				bool saw_public_base = false;
+				bool saw_public_virtual_base = false;
+				bool saw_non_public_base = false;
+				bool saw_unique_public_non_virtual_base = false;
+				bool saw_multiple_public_non_virtual_bases = false;
+				int64_t unique_public_non_virtual_offset = 0;
+			};
+			Src2DstOffsetHintState hint_state;
+			auto classifySourceBaseRelationship = [&](const auto& self,
+													  const StructTypeInfo* current_struct,
+													  int64_t current_offset,
+													  bool public_path,
+													  bool virtual_path) -> void {
 				if (!current_struct) {
-					return std::nullopt;
+					return;
 				}
-				std::optional<int64_t> found_offset;
 				for (const auto& base : current_struct->base_classes) {
-					if (base.access != AccessSpecifier::Public || base.is_virtual) {
-						continue;
-					}
+					const bool next_public_path = public_path && base.access == AccessSpecifier::Public;
+					const bool next_virtual_path = virtual_path || base.is_virtual;
 					int64_t base_offset = current_offset + static_cast<int64_t>(base.offset);
 					if (base.type_index == source_type_index) {
-						if (found_offset) return std::optional<int64_t>{-1}; // Ambiguous
-						found_offset = base_offset;
+						if (!next_public_path) {
+							hint_state.saw_non_public_base = true;
+						} else if (next_virtual_path) {
+							hint_state.saw_public_base = true;
+							hint_state.saw_public_virtual_base = true;
+						} else if (!hint_state.saw_unique_public_non_virtual_base) {
+							hint_state.saw_public_base = true;
+							hint_state.saw_unique_public_non_virtual_base = true;
+							hint_state.unique_public_non_virtual_offset = base_offset;
+						} else {
+							hint_state.saw_public_base = true;
+							hint_state.saw_multiple_public_non_virtual_bases = true;
+						}
 						continue;
 					}
 					const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 					const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
-					if (auto nested = self(self, base_struct_info, base_offset)) {
-						if (*nested == -1 || found_offset) return std::optional<int64_t>{-1}; // Ambiguous
-						found_offset = nested;
-					}
+					self(self, base_struct_info, base_offset, next_public_path, next_virtual_path);
 				}
-				return found_offset;
 			};
-
-			if (auto offset = findPublicNonVirtualBaseOffset(findPublicNonVirtualBaseOffset, target_struct_info, 0)) {
-				return *offset;
+			classifySourceBaseRelationship(classifySourceBaseRelationship, target_struct_info, 0, true, false);
+			if (hint_state.saw_multiple_public_non_virtual_bases) {
+				return -3;
 			}
+			if (hint_state.saw_unique_public_non_virtual_base && !hint_state.saw_public_virtual_base) {
+				return hint_state.unique_public_non_virtual_offset;
+			}
+			if (!hint_state.saw_public_base) {
+				return -2;
+			}
+			return -1;
 		}
 		return -1;
 	};
@@ -6779,6 +6804,10 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					if (should_deref_reference_source) {
 						loadReferenceSourceIntoRegister(src_reg.value(), src_offset, src_ref_info->value_size_bits.value, false);
 					}
+					if (op.pointer_depth.is_pointer() && op.type_index.isStruct() &&
+						init.type_index.isStruct() && init.type_index != op.type_index) {
+						emitDerivedToBasePointerAdjust(src_reg.value(), op.type_index, init.type_index);
+					}
 					emitMovToFrameSized(
 						SizedRegister{src_reg.value(), static_cast<uint8_t>(op.size_in_bits.value), false},
 						SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.opType())});
@@ -7434,13 +7463,22 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 		// If this is a member function, check if we need to register vtable for this class
 	if (!struct_name.empty()) {
+		auto usesExternalAbiVTable = [](std::string_view qualified_name) {
+			if (qualified_name == "std::type_info"sv ||
+				qualified_name == "std::exception"sv ||
+				qualified_name == "std::bad_cast"sv ||
+				qualified_name == "std::bad_typeid"sv) {
+				return true;
+			}
+			return qualified_name.starts_with("__cxxabiv1::__");
+		};
 			// Look up the struct type info
 		auto struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 		if (struct_it != getTypesByNameMap().end()) {
 			const TypeInfo* type_info = struct_it->second;
 			const StructTypeInfo* struct_info = type_info->getStructInfo();
 
-			if (struct_info && struct_info->has_vtable) {
+			if (struct_info && struct_info->has_vtable && !usesExternalAbiVTable(struct_name)) {
 					// Use the pre-generated vtable symbol from struct_info
 				std::string_view vtable_symbol = struct_info->vtable_symbol;
 

@@ -893,6 +893,43 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 			// All pointers are 64-bit on x64, so size should be 64
 		FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_CAST_DEBUG] Pointer cast: source={}, target={}, target_ptr_depth={}",
 						 static_cast<int>(source_type), static_cast<int>(target_type), target_pointer_depth);
+		if (source_type_index.isStruct() && target_type_index.isStruct() && source_type_index != target_type_index) {
+			auto findBaseOffsetWithinDerived = [&](const auto& self,
+												   const StructTypeInfo* current_struct,
+												   int64_t current_offset) -> std::optional<int64_t> {
+				if (!current_struct) {
+					return std::nullopt;
+				}
+				for (const auto& base : current_struct->base_classes) {
+					if (base.access != AccessSpecifier::Public || base.is_virtual) {
+						continue;
+					}
+					int64_t base_offset = current_offset + static_cast<int64_t>(base.offset);
+					if (base.type_index == target_type_index) {
+						return base_offset;
+					}
+					const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+					const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+					if (auto nested = self(self, base_struct_info, base_offset)) {
+						return nested;
+					}
+				}
+				return std::nullopt;
+			};
+
+			const TypeInfo* source_type_info = tryGetTypeInfo(source_type_index);
+			const StructTypeInfo* source_struct_info = source_type_info ? source_type_info->getStructInfo() : nullptr;
+			if (auto base_offset = findBaseOffsetWithinDerived(findBaseOffsetWithinDerived, source_struct_info, 0);
+				base_offset.has_value() && *base_offset > 0) {
+				TempVar adjusted_ptr = var_counter.next();
+				BinaryOp add_offset;
+				add_offset.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, toIrValue(expr_operands.value));
+				add_offset.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(*base_offset));
+				add_offset.result = adjusted_ptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), staticCastNode.cast_token()));
+				return makeExprResult(target_type_index, SizeInBits{64}, IrOperand{adjusted_ptr}, PointerDepth{static_cast<int>(target_pointer_depth)}, ValueStorage::ContainsData);
+			}
+		}
 		return makeExprResult(target_type_index, SizeInBits{64}, expr_operands.value, PointerDepth{static_cast<int>(target_pointer_depth)}, ValueStorage::ContainsData);
 	}
 

@@ -5,6 +5,7 @@
 #include "StringBuilder.h"
 #include "TemplateRegistry.h"
 #include "CompileError.h"
+#include <array>
 
 // =============================================================================
 // Name Mangling Utilities - Unified Architecture
@@ -112,6 +113,66 @@ inline StringHandle generateSecondaryVTableSymbol(
 		.append(base_name.size())
 		.append(base_name);
 	return StringTable::getOrInternStringHandle(builder.commit());
+}
+
+template <typename OutputType>
+inline void appendItaniumQualifiedTypeName(OutputType& output, std::string_view qualified_name) {
+	if (qualified_name.empty()) {
+		return;
+	}
+
+	std::array<std::string_view, 16> components{};
+	size_t component_count = 0;
+	size_t start = 0;
+	while (start < qualified_name.size() && component_count < components.size()) {
+		size_t end = qualified_name.find("::", start);
+		if (end == std::string_view::npos) {
+			end = qualified_name.size();
+		}
+		components[component_count++] = qualified_name.substr(start, end - start);
+		start = (end == qualified_name.size()) ? end : end + 2;
+	}
+
+	if (component_count == 1) {
+		if (components[0] == "std") {
+			output += "St";
+		} else {
+			output += std::to_string(components[0].size());
+			output += components[0];
+		}
+		return;
+	}
+
+	if (components[0] == "std" && component_count == 2) {
+		output += "St";
+		output += std::to_string(components[1].size());
+		output += components[1];
+		return;
+	}
+
+	output += 'N';
+	for (size_t i = 0; i < component_count; ++i) {
+		if (components[i] == "std") {
+			output += "St";
+		} else {
+			output += std::to_string(components[i].size());
+			output += components[i];
+		}
+	}
+	output += 'E';
+}
+
+inline std::string generateItaniumSpecialName(std::string_view prefix, std::string_view qualified_name) {
+	StringBuilder builder;
+	builder.append(prefix);
+	appendItaniumQualifiedTypeName(builder, qualified_name);
+	return std::string(builder.commit());
+}
+
+inline std::string generateItaniumEncodedTypeName(std::string_view qualified_name) {
+	StringBuilder builder;
+	appendItaniumQualifiedTypeName(builder, qualified_name);
+	return std::string(builder.commit());
 }
 
 // Helper to append CV-qualifier code (A/B/C/D) to output
