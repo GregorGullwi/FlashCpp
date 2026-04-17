@@ -6942,8 +6942,6 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					}
 						// Derived-to-base pointer adjustment: when initializing B* from a C* where
 						// B is a non-primary (non-zero-offset) base of C, add the subobject offset.
-					FLASH_LOG_FORMAT(Codegen, Debug, "Pointer-to-struct init check: op.pointer_depth={}, op.type_index=(idx={}, isStruct={}), init.type_index=(idx={}, isStruct={})",
-									 op.pointer_depth.value, op.type_index.index(), op.type_index.isStruct(), init.type_index.index(), init.type_index.isStruct());
 					if (op.pointer_depth.is_pointer() && op.type_index.isStruct() &&
 						init.type_index.isStruct() && init.type_index.is_valid() && init.type_index != op.type_index) {
 						emitDerivedToBasePointerAdjust(allocated_reg_val, op.type_index, init.type_index);

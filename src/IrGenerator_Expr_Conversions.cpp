@@ -840,7 +840,9 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), unaryOperatorNode.get_token()));
 
 				// Return pointer to result (64-bit pointer)
-			return makeExprResult(nativeTypeIndex(addr_components->final_type_index.category()), SizeInBits{64}, result_var, PointerDepth{addr_components->pointer_depth.value + 1}, ValueStorage::ContainsAddress);
+				// IMPORTANT: Use the actual type_index, not nativeTypeIndex, for struct types.
+				// nativeTypeIndex(category) returns index=0 for non-primitive types, losing the struct identity.
+			return makeExprResult(addr_components->final_type_index, SizeInBits{64}, result_var, PointerDepth{addr_components->pointer_depth.value + 1}, ValueStorage::ContainsAddress);
 		}
 
 			// Fall back to legacy implementation if analysis failed
