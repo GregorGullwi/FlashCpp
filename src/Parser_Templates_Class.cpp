@@ -5428,11 +5428,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 				continue;
 			}
-			// Handle member function templates - skip them for now
-			// They will be properly instantiated when the member template struct is used
+			// Handle member templates inside the member struct template body.
+			// These declarations must be recorded now so out-of-line definitions can
+			// bind to the instantiated member later.
 			if (keyword == "template") {
-				advance(); // consume 'template'
-				skip_member_declaration_to_semicolon();
+				auto template_result = parse_member_template_or_function(member_struct_ref, current_access);
+				if (template_result.is_error()) {
+					return template_result;
+				}
 				continue;
 			}
 			// Handle static members (including static constexpr with initializers)

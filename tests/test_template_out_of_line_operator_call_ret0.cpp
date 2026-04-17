@@ -19,5 +19,7 @@ T Adder<T>::operator()(U value) const {
 
 int main() {
 	Adder<int> add(40);
-	return add(2);
+	if (add(2) != 42)
+		return 1;
+	return 0;
 }
