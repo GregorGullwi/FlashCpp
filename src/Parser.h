@@ -989,7 +989,8 @@ private:
 	bool tryAppendDefaultTemplateArg(
 		const TemplateParameterNode& param,
 		const std::vector<ASTNode>& template_params,
-		InlineVector<TemplateTypeArg, 4>& template_args);
+		InlineVector<TemplateTypeArg, 4>& template_args,
+		NamespaceHandle source_namespace);
 	bool tryAppendMemberDefaultTemplateArg(
 		const TemplateParameterNode& param,
 		const std::vector<ASTNode>& template_params,
@@ -1018,7 +1019,8 @@ private:
 		const std::vector<TypeSpecifierNode>& arg_types,
 		const CallArgDeductionInfo& deduction_info,
 		size_t function_pack_arg_start,
-		int recursion_depth);
+		int recursion_depth,
+		NamespaceHandle source_namespace);
 	// Shared pre-deduction helper for matching function-parameter slots to call-argument
 	// types. The explicit-template-argument path must only rely on this map for non-pack
 	// signatures; pack-aware remapping needs an explicit contract first.

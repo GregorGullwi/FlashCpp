@@ -687,14 +687,19 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bo
 			}
 		}
 		if (!struct_found && ns_path.empty()) {
-			// Free functions, or member functions whose struct wasn't found: fall back
-			// to the current symbol table namespace. Do NOT fall back when the struct
-			// was found at global scope — an empty ns_path is correct in that case,
-			// and overwriting it with the instantiation-site namespace would produce
-			// wrong mangled names.
-			NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-			std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(current_handle);
-			ns_path = splitQualifiedNamespace(qualified_namespace);
+			// For free functions, prefer the function's own namespace_handle (set at
+			// declaration time) over the current symbol table state. This ensures correct
+			// mangling when called during SFINAE reparse or template body reparse where
+			// artificial namespace scopes may be pushed onto the symbol table stack.
+			// Fall back to the current scope only when no namespace_handle was recorded.
+			NamespaceHandle func_ns = func_node.namespace_handle();
+			if (func_ns.isValid()) {
+				ns_path = buildNamespacePathFromHandle(func_ns);
+			} else {
+				NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+				std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(current_handle);
+				ns_path = splitQualifiedNamespace(qualified_namespace);
+			}
 		}
 	}
 
@@ -712,6 +717,9 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 
 	// Set calling convention immediately so it's available during parameter parsing
 	func_ref.set_calling_convention(calling_convention);
+
+	// Set the namespace handle so SFINAE reparse can restore the declaration namespace
+	func_ref.set_namespace_handle(gSymbolTable.get_current_namespace_handle());
 
 	// Set linkage from current context (for extern "C" blocks)
 	if (current_linkage_ != Linkage::None) {

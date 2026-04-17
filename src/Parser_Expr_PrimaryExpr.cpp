@@ -34,6 +34,16 @@ void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpec
 
 // Helper function to check if a template name is a template-template parameter
 bool Parser::isTemplateTemplateParameter(StringHandle template_name_handle) const {
+	// During function-template body reparse, parsing_template_depth_ is 0 but
+	// template_param_substitutions_ holds live TTP bindings.  Check it first so
+	// C<T,N>::member is correctly recognised as TTP-dependent.  This mirrors the
+	// existing check in parse_type_specifier (Parser_TypeSpecifiers.cpp) which
+	// already queries template_param_substitutions_ without a depth guard.
+	for (const auto& subst : template_param_substitutions_) {
+		if (subst.is_template_template_param && subst.param_name == template_name_handle) {
+			return true;
+		}
+	}
 	if (parsing_template_depth_ == 0) {
 		return false;
 	}

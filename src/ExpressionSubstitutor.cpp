@@ -630,10 +630,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			for (size_t i = 0; i < call.arguments().size(); ++i) {
 				ASTNode substituted_arg = substitute(call.arguments()[i]);
 				substituted_args_nodes.push_back(substituted_arg);
-				auto substituted_arg_type = parser_.get_expression_type(substituted_arg);
-				if (substituted_arg_type.has_value()) {
-					substituted_arg_types.push_back(*substituted_arg_type);
-				} else {
+				size_t previous_count = substituted_arg_types.size();
+				parser_.appendFunctionCallArgType(substituted_arg, &substituted_arg_types);
+				if (substituted_arg_types.size() == previous_count ||
+					substituted_arg_types.back().category() == TypeCategory::Invalid) {
 					have_complete_substituted_arg_types = false;
 				}
 			}
@@ -855,40 +855,67 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 	if (symbol_opt.has_value() && symbol_opt->is<TemplateFunctionDeclarationNode>()) {
 		FLASH_LOG(Templates, Debug, "  Function is a template: ", template_func_name);
 
-		// This is a template function call - we need to instantiate it
-		// Try to deduce template arguments from the substituted function arguments
 		ChunkedVector<ASTNode> substituted_args;
+		std::vector<TypeSpecifierNode> substituted_arg_types;
+		bool have_complete_arg_types = true;
+		substituted_arg_types.reserve(call.arguments().size());
 		for (size_t i = 0; i < call.arguments().size(); ++i) {
-			substituted_args.push_back(substitute(call.arguments()[i]));
+			ASTNode substituted_arg = substitute(call.arguments()[i]);
+			substituted_args.push_back(substituted_arg);
+			size_t previous_count = substituted_arg_types.size();
+			parser_.appendFunctionCallArgType(substituted_arg, &substituted_arg_types);
+			if (substituted_arg_types.size() == previous_count ||
+				substituted_arg_types.back().category() == TypeCategory::Invalid) {
+				have_complete_arg_types = false;
+			}
 		}
 
-		// Use shared helper to deduce template arguments from constructor call patterns
-		std::vector<TemplateTypeArg> deduced_template_args = TemplateInstantiationHelper::deduceTemplateArgsFromCall(substituted_args);
-
-		// If we deduced template arguments, try to instantiate the template function
-		if (!deduced_template_args.empty()) {
-			// Use shared helper to try instantiation with various name variations
-			auto instantiated_opt = TemplateInstantiationHelper::tryInstantiateTemplateFunction(
-				parser_, template_func_name, template_func_name, deduced_template_args);
+		// Prefer the parser's main function-template instantiation path, which can
+		// deduce from ordinary argument types (e.g. foo(args...)->foo(int,int)) after
+		// pack expansion. The older constructor-wrapper helper remains as fallback for
+		// specialized patterns such as __type_identity<T>{}.
+		std::optional<ASTNode> instantiated_opt;
+		if (have_complete_arg_types) {
+			if (call.has_qualified_name()) {
+				instantiated_opt = parser_.try_instantiate_template(call.qualified_name(), substituted_arg_types);
+			}
+			if (!instantiated_opt.has_value()) {
+				instantiated_opt = parser_.try_instantiate_template(template_func_name, substituted_arg_types);
+			}
 			if (instantiated_opt.has_value()) {
 				normalizePendingSemanticRoots();
 			}
+		}
 
-			if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
-				const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
-				FLASH_LOG(Templates, Debug, "  Successfully instantiated template function");
-
-				// Create a new direct CallExprNode with the instantiated function
-				ExpressionNode& new_expr = emplaceDirectCallExpr(
-					instantiated_func.decl_node(),
-					&instantiated_func,
-					std::move(substituted_args),
-					call.called_from());
-				copyMetadataToExpr(new_expr);
-				return ASTNode(&new_expr);
-			} else {
-				FLASH_LOG(Templates, Warning, "  Failed to instantiate template function: ", template_func_name);
+		if (!instantiated_opt.has_value()) {
+			std::vector<TemplateTypeArg> deduced_template_args =
+				TemplateInstantiationHelper::deduceTemplateArgsFromCall(substituted_args);
+			if (!deduced_template_args.empty()) {
+				instantiated_opt = TemplateInstantiationHelper::tryInstantiateTemplateFunction(
+					parser_, template_func_name, template_func_name, deduced_template_args);
+				if (instantiated_opt.has_value()) {
+					normalizePendingSemanticRoots();
+				}
 			}
+		}
+
+		if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
+			FLASH_LOG(Templates, Debug, "  Successfully instantiated template function");
+
+			// Create a new direct CallExprNode with the instantiated function
+			ExpressionNode& new_expr = emplaceDirectCallExpr(
+				instantiated_func.decl_node(),
+				&instantiated_func,
+				std::move(substituted_args),
+				call.called_from());
+			copyMetadataToExpr(new_expr);
+			if (instantiated_func.has_mangled_name()) {
+				setCallMangledName(new_expr, instantiated_func.mangled_name());
+			}
+			return ASTNode(&new_expr);
+		} else {
+			FLASH_LOG(Templates, Warning, "  Failed to instantiate template function: ", template_func_name);
 		}
 	}
 

@@ -99,6 +99,25 @@ See "Phase 3 completed" section above for details.
 ~~3. **Use explicit state in SFINAE viability checks** instead of string heuristics.~~
 ~~4. **Update alias-template resolution and late-instantiation lookup** to use the new explicit state.~~
 
+### Phase 4 follow-on: codegen guard still uses size-based heuristic
+
+**Status:** Open.
+
+The codegen guard in `try_instantiate_single_template`
+(`src/Parser_Templates_Inst_Deduction.cpp`) that blocks bodyless/unresolved
+instantiations from reaching IR still detects unresolved parameters by checking
+`TypeCategory::UserDefined && size_in_bits() == 0`.  Phase 4 added
+`DependentPlaceholderKind` on `TypeInfo` precisely to replace this kind of
+heuristic, but the codegen guard was not updated to use it.
+
+**Impact:** The heuristic can misfire on legitimate zero-size structs
+(`std::monostate`, empty tag types, etc.) and could miss placeholders stored
+under a non-UserDefined category.
+
+**Fix:** Replace the `size_in_bits() == 0` check in the codegen guard with
+`TypeInfo::isDependentPlaceholder()` (already available via `DependentPlaceholderKind`).
+Relates to Phase 5 cleanup of codegen-side heuristics.
+
 ### Immediate next steps (Phase 5 and beyond)
 
 1. **Start Phase 5 parser/sema ownership move** — placeholder state is now explicit, so sema can branch on `DependentPlaceholderKind` instead of parsing names.
@@ -709,6 +728,88 @@ deduction logic.
 - New test needed: `template<typename T, typename U = int> void foo(T, U)` called as
   `foo<double>(1.0, "hello")` to verify `U` is deduced as `const char*` (not `int`)
 - Full test suite regression check
+
+### Phase 6 extension: unify candidate selection after deduction
+
+The recent `swap` / `enable_if` regression showed that correct deduction alone is
+not enough: after viable candidates are built, FlashCpp still uses two different
+selection models.
+
+Current split:
+
+- **SFINAE path** now collects viable candidates and prefers the highest
+  `computeTemplateFunctionSpecificity(...)` score
+- **Non-SFINAE path** still returns the first successful instantiation
+
+That asymmetry is architecturally wrong. C++ template overload resolution should
+not change its partial-ordering model just because the call appears inside a
+SFINAE probe.
+
+#### Problems to address
+
+1. **Non-SFINAE still uses "first successful match wins"**
+   - `try_instantiate_template(...)` fast-returns the first viable non-SFINAE
+     candidate.
+   - This is only partly masked by the existing
+     `hasLaterUsableTemplateDefinitionWithMatchingShape(...)` deferral, which
+     fixes forward-declaration vs definition selection but not general overload
+     ordering.
+
+2. **`enable_if<false>` return-type failure is not propagated as a true
+   substitution failure**
+   - In some SFINAE cases, a candidate with `typename enable_if<false, T>::type`
+     in the return type can still survive as a bodyless placeholder instead of
+     failing immediately.
+   - The current deleted-overload tie handling is a pragmatic workaround, not the
+     real architectural fix.
+
+#### Recommended follow-up
+
+Add a shared candidate-selection layer after instantiation attempts:
+
+```cpp
+struct TemplateCandidate {
+    ASTNode node;
+    int specificity;
+    bool is_deleted;
+    bool has_body;
+};
+
+std::optional<ASTNode> Parser::selectBestTemplateCandidate(
+    const std::vector<TemplateCandidate>& candidates,
+    TemplateSelectionMode mode);
+```
+
+Where:
+
+- candidate **collection** is shared between SFINAE and non-SFINAE paths
+- candidate **selection** uses one ordering model in both modes
+- SFINAE vs non-SFINAE differs only in the terminal behavior:
+  - SFINAE: no viable winner => `nullopt`
+  - non-SFINAE: no viable winner => diagnostic / hard failure
+
+#### Proper root-cause fix for the SFINAE side
+
+In addition to the shared selector, the instantiation path should stop treating
+`enable_if<false>` return-type substitution as a successful bodyless
+instantiation. If substituting the return type removes `::type`, that must
+propagate as substitution failure before candidate selection.
+
+#### Files likely involved
+
+- `src/Parser_Templates_Inst_Deduction.cpp`
+- `src/Parser.h`
+- possibly `src/ExpressionSubstitutor.cpp` or the return-type substitution path
+  used by `try_instantiate_single_template(...)`
+
+#### Validation additions
+
+- `test_namespaced_pair_swap_sfinae_ret0.cpp`
+- existing forward-declaration regression coverage from this branch
+- new non-SFINAE overload-ordering regression where the more-specialized
+  overload is declared later
+- new `enable_if<false>` return-type regression that must fail by substitution,
+  not by deleted-overload tie-breaking
 
 ---
 

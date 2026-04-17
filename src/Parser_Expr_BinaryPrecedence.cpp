@@ -5,6 +5,51 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+namespace {
+
+static int computeFunctionTemplateSpecificity(const TemplateFunctionDeclarationNode& template_func) {
+	std::unordered_set<StringHandle, StringHandleHash> param_name_handles;
+	for (const auto& tp : template_func.template_parameters()) {
+		if (tp.is<TemplateParameterNode>()) {
+			param_name_handles.insert(tp.as<TemplateParameterNode>().nameHandle());
+		}
+	}
+
+	int score = 0;
+	for (const auto& p : template_func.function_decl_node().parameter_nodes()) {
+		if (!p.is<DeclarationNode>()) {
+			continue;
+		}
+		const TypeSpecifierNode& ts = p.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+		StringHandle tok_handle = ts.token().handle();
+		bool is_bare_template_param = tok_handle.isValid() && param_name_handles.count(tok_handle) > 0;
+
+		if (is_struct_type(ts.category()) || ts.category() == TypeCategory::UserDefined) {
+			if (!is_bare_template_param) {
+				if (const TypeInfo* ti = tryGetTypeInfo(ts.type_index())) {
+					if (ti->isTemplateInstantiation()) {
+						score += 2 + static_cast<int>(ti->templateArgs().size());
+					} else {
+						score += 2;
+					}
+				} else {
+					score += 2;
+				}
+			}
+		} else if (ts.category() != TypeCategory::Invalid) {
+			score += 1;
+		}
+
+		score += static_cast<int>(ts.pointer_depth());
+		if (ts.is_lvalue_reference()) score += 1;
+		if (ts.is_rvalue_reference()) score += 1;
+		if (ts.is_const()) score += 1;
+	}
+	return score;
+}
+
+}
+
 ParseResult Parser::parse_expression(int precedence, ExpressionContext context) {
 	static thread_local int recursion_depth = 0;
 	// Flat binary chains and simple unary prefixes no longer recurse/iterate artificially,
@@ -47,11 +92,16 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		struct RankedOperatorTemplateCandidate {
 			ConversionRank lhs_rank = ConversionRank::NoMatch;
 			ConversionRank rhs_rank = ConversionRank::NoMatch;
+			int specificity = 0;
 			const FunctionDeclarationNode* function = nullptr;
 			OperatorTemplateCandidateSource source = OperatorTemplateCandidateSource::Registry;
 		};
 
-		auto tryRankOperatorTemplateCandidate = [&left_type_spec, &right_type_spec](const FunctionDeclarationNode& func_decl, OperatorTemplateCandidateSource source, RankedOperatorTemplateCandidate& ranked_candidate) -> bool {
+		auto tryRankOperatorTemplateCandidate = [&left_type_spec, &right_type_spec](
+			const FunctionDeclarationNode& func_decl,
+			OperatorTemplateCandidateSource source,
+			int specificity,
+			RankedOperatorTemplateCandidate& ranked_candidate) -> bool {
 			const auto& params = func_decl.parameter_nodes();
 			if (params.size() < 2 || !params[0].is<DeclarationNode>() || !params[1].is<DeclarationNode>()) {
 				return false;
@@ -79,49 +129,52 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				return false;
 			}
 
-			ranked_candidate = {lhs_rank, rhs_rank, &func_decl, source};
+			ranked_candidate = {lhs_rank, rhs_rank, specificity, &func_decl, source};
 			return true;
 		};
 
 		bool has_ranked_candidate = false;
 		RankedOperatorTemplateCandidate single_candidate;
 		std::vector<RankedOperatorTemplateCandidate> ranked_candidates;
-		auto isDuplicateCandidate = [&has_ranked_candidate, &single_candidate, &ranked_candidates](const FunctionDeclarationNode& func_decl) -> bool {
+		auto sameFunction = [](const RankedOperatorTemplateCandidate& candidate, const FunctionDeclarationNode& func_decl) -> bool {
+			if (candidate.function == &func_decl) {
+				return true;
+			}
+
+			if (candidate.function != nullptr && candidate.function->has_mangled_name() && func_decl.has_mangled_name()) {
+				return candidate.function->mangled_name() == func_decl.mangled_name();
+			}
+
+			return false;
+		};
+		auto updateDuplicateCandidateSpecificity = [&has_ranked_candidate, &single_candidate, &ranked_candidates, &sameFunction](
+			const FunctionDeclarationNode& func_decl,
+			int specificity) -> bool {
 			if (!has_ranked_candidate) {
 				return false;
 			}
 
-			auto isSameFunction = [&](const RankedOperatorTemplateCandidate& candidate) -> bool {
-				if (candidate.function == &func_decl) {
-					return true;
-				}
-
-				if (candidate.function != nullptr && candidate.function->has_mangled_name() && func_decl.has_mangled_name()) {
-					return candidate.function->mangled_name() == func_decl.mangled_name();
-				}
-
-				return false;
-			};
-
-			if (isSameFunction(single_candidate)) {
+			if (sameFunction(single_candidate, func_decl)) {
+				single_candidate.specificity = std::max(single_candidate.specificity, specificity);
 				return true;
 			}
 
-			for (const auto& candidate : ranked_candidates) {
-				if (isSameFunction(candidate)) {
+			for (auto& candidate : ranked_candidates) {
+				if (sameFunction(candidate, func_decl)) {
+					candidate.specificity = std::max(candidate.specificity, specificity);
 					return true;
 				}
 			}
 
 			return false;
 		};
-		auto addSuccessfulCandidate = [&](const FunctionDeclarationNode& func_decl, OperatorTemplateCandidateSource source) {
-			if (isDuplicateCandidate(func_decl)) {
+		auto addSuccessfulCandidate = [&](const FunctionDeclarationNode& func_decl, OperatorTemplateCandidateSource source, int specificity) {
+			if (updateDuplicateCandidateSpecificity(func_decl, specificity)) {
 				return;
 			}
 
 			RankedOperatorTemplateCandidate ranked_candidate;
-			if (!tryRankOperatorTemplateCandidate(func_decl, source, ranked_candidate)) {
+			if (!tryRankOperatorTemplateCandidate(func_decl, source, specificity, ranked_candidate)) {
 				return;
 			}
 
@@ -145,7 +198,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		in_sfinae_context_ = true;
 		if (std::optional<ASTNode> instantiated = try_instantiate_template(op_name, arg_types); instantiated.has_value()) {
 			if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
-				addSuccessfulCandidate(*func_decl, OperatorTemplateCandidateSource::Registry);
+				addSuccessfulCandidate(*func_decl, OperatorTemplateCandidateSource::Registry, 0);
 			}
 		}
 		in_sfinae_context_ = previous_sfinae_phase1;
@@ -178,7 +231,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 					OperatorTemplateCandidateSource source = candidate_index < lookup_all_candidate_count
 						? OperatorTemplateCandidateSource::LookupAll
 						: OperatorTemplateCandidateSource::AdlOnly;
-					addSuccessfulCandidate(*func_decl, source);
+					int specificity = computeFunctionTemplateSpecificity(candidate.as<TemplateFunctionDeclarationNode>());
+					addSuccessfulCandidate(*func_decl, source, specificity);
 				}
 			}
 		}
@@ -211,6 +265,24 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 					is_dominated = true;
 					break;
 				}
+				BinaryOperatorCandidateComparison equivalent_compare = compareBinaryOperatorCandidateRanks(
+						ranked_candidates[j].lhs_rank,
+						ranked_candidates[j].rhs_rank,
+						candidate.lhs_rank,
+						candidate.rhs_rank);
+				if (equivalent_compare == BinaryOperatorCandidateComparison::Equivalent &&
+					ranked_candidates[j].source == OperatorTemplateCandidateSource::Registry &&
+					candidate.source == OperatorTemplateCandidateSource::LookupAll) {
+					is_dominated = true;
+					break;
+				}
+				if (equivalent_compare == BinaryOperatorCandidateComparison::Equivalent &&
+					ranked_candidates[j].specificity > candidate.specificity &&
+					!(candidate.source == OperatorTemplateCandidateSource::Registry &&
+					  ranked_candidates[j].source == OperatorTemplateCandidateSource::LookupAll)) {
+					is_dominated = true;
+					break;
+				}
 			}
 
 			if (!is_dominated) {
@@ -223,6 +295,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		}
 
 		return nullptr;
+	};
+
+	auto isTemplateDerivedFreeFunction = [](const FunctionDeclarationNode* func_decl) {
+		return func_decl != nullptr &&
+			(func_decl->has_template_body_position() || func_decl->has_template_declaration_position());
 	};
 
 	if (recursion_depth > MAX_RECURSION_DEPTH) {
@@ -644,10 +721,15 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 								*right_type_spec,
 								op_kind,
 								gSymbolTable);
-							if (!overload_result.has_match && !overload_result.is_ambiguous && op_kind != OverloadableOperator::Assign) {
+							if (op_kind != OverloadableOperator::Assign) {
 								if (const FunctionDeclarationNode* instantiated_overload =
 										tryInstantiateOperatorTemplate(op_symbol, *left_type_spec, *right_type_spec)) {
-									overload_result = OperatorOverloadResult(instantiated_overload);
+									if (!overload_result.has_match ||
+										overload_result.is_ambiguous ||
+										(overload_result.is_free_function &&
+										 isTemplateDerivedFreeFunction(overload_result.free_function_overload))) {
+										overload_result = OperatorOverloadResult(instantiated_overload);
+									}
 								}
 							}
 							if (overload_result.is_ambiguous) {
@@ -691,9 +773,12 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 								*right_type_spec,
 								op_kind,
 								gSymbolTable);
-							if (!overload_result.has_match && !overload_result.is_ambiguous) {
-								if (const FunctionDeclarationNode* instantiated_overload =
-										tryInstantiateOperatorTemplate(operator_token.value(), *left_type_spec, *right_type_spec)) {
+							if (const FunctionDeclarationNode* instantiated_overload =
+									tryInstantiateOperatorTemplate(operator_token.value(), *left_type_spec, *right_type_spec)) {
+								if (!overload_result.has_match ||
+									overload_result.is_ambiguous ||
+									(overload_result.is_free_function &&
+									 isTemplateDerivedFreeFunction(overload_result.free_function_overload))) {
 									overload_result = OperatorOverloadResult(instantiated_overload);
 								}
 							}

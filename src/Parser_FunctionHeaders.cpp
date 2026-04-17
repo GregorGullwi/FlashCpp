@@ -942,7 +942,13 @@ ParseResult Parser::create_function_from_header(
 	auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_ref);
 
 	// Set the namespace handle for the function
-	func_ref.set_namespace_handle(gSymbolTable.get_current_namespace_handle());
+	{
+		NamespaceHandle ns_h = gSymbolTable.get_current_namespace_handle();
+		func_ref.set_namespace_handle(ns_h);
+		FLASH_LOG_FORMAT(Templates, Trace, "[build_func_decl] name='{}' ns={}",
+			header.name_token.value(),
+			ns_h.isValid() ? gNamespaceRegistry.getQualifiedName(ns_h) : "(global)");
+	}
 
 	// Set calling convention
 	func_ref.set_calling_convention(header.storage.calling_convention);
