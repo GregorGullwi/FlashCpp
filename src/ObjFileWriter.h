@@ -547,6 +547,8 @@ public:
 	void add_global_variable_data(std::string_view var_name, size_t size_in_bytes, bool is_initialized, std::span<const char> init_data, bool is_rodata = false);
 	void add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols, std::string_view class_name, std::span<const std::string_view> base_class_names, std::span<const BaseClassDescriptorInfo> base_class_info, const RTTITypeInfo* rtti_info = nullptr, TypeIndex subobject_type_index = {}, int64_t offset_to_top = 0);
 	std::string get_or_create_builtin_throwinfo(TypeCategory type);
+	std::string get_or_create_type_descriptor(std::string_view class_name);
+	std::string get_or_create_type_descriptor(std::string_view class_name, TypeIndex type_index);
 	uint32_t get_or_create_symbol_index(const std::string& symbol_name);
 
 protected:

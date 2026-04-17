@@ -377,6 +377,7 @@ private:
 
 	// Helper to emit MOV [RSP+disp8], reg
 	void emitMovToRSPDisp8(X64Register sourceRegister, int8_t displacement);
+	void emitMovImmToRSPDisp8(int8_t displacement, uint32_t immediate_value);
 
 	// Helper to emit LEA reg, [RSP+disp8]
 	void emitLeaFromRSPDisp8(X64Register destinationRegister, int8_t displacement);
@@ -1059,9 +1060,6 @@ private:
 	std::unordered_map<std::string, int32_t, TransparentStringHash, std::equal_to<>> variable_name_to_offset_;
 	// Track TempVar sizes from instructions that produce them (for correct loads in conditionals)
 	std::unordered_map<StringHandle, int> temp_var_sizes_;
-
-	// Track if dynamic_cast runtime helpers need to be emitted
-	bool needs_dynamic_cast_runtime_ = false;
 
 	// Track most recently allocated named variable for TempVar linking
 	StringHandle last_allocated_variable_name_;

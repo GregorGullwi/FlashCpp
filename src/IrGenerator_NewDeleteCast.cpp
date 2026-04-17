@@ -1039,22 +1039,24 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		// For non-polymorphic types, we return a compile-time constant
 
 	TempVar result_temp = var_counter.next();
+	auto getStructTypeName = [&](TypeIndex type_index) -> StringHandle {
+		if (type_index.category() != TypeCategory::Struct || !type_index.is_valid()) {
+			return {};
+		}
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+			if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+				return struct_info->getName();
+			}
+		}
+		return {};
+	};
 
 	if (typeidNode.is_type()) {
 			// typeid(Type) - compile-time constant
 		const auto& type_node = typeidNode.operand().as<TypeSpecifierNode>();
 
 			// Get type information
-		StringHandle type_name;
-		if (type_node.category() == TypeCategory::Struct) {
-			TypeIndex type_idx = type_node.type_index();
-			if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
-				const StructTypeInfo* struct_info = type_info->getStructInfo();
-				if (struct_info) {
-					type_name = struct_info->getName();
-				}
-			}
-		}
+		StringHandle type_name = getStructTypeName(type_node.type_index());
 
 			// Generate IR to get compile-time type_info
 		TypeidOp op{
@@ -1064,9 +1066,139 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 			.is_type = true};
 		ir_.addInstruction(IrOpcode::Typeid, std::move(op), typeidNode.typeid_token());
 	} else {
-			// typeid(expr) - may need runtime lookup for polymorphic types
-		ExprResult expr_operands = visitExpressionNode(typeidNode.operand().as<ExpressionNode>());
+		const ASTNode& operand_node = typeidNode.operand();
+		const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
+		std::optional<TypeSpecifierNode> static_expr_type =
+			sema_ ? sema_->getExpressionType(operand_node) : std::nullopt;
+		auto resolveExprTypeIndex = [&](const ExpressionNode& expr, TypeIndex fallback_type_index) -> TypeIndex {
+			if (fallback_type_index.category() == TypeCategory::Struct && fallback_type_index.is_valid()) {
+				return fallback_type_index;
+			}
 
+			if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
+				std::optional<ASTNode> symbol = symbol_table.lookup(identifier->name());
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(identifier->name());
+				}
+				if (symbol.has_value()) {
+					const auto tryResolveTypeNode = [&](const TypeSpecifierNode& type_node) -> TypeIndex {
+						if (type_node.category() == TypeCategory::Struct && type_node.type_index().is_valid()) {
+							return type_node.type_index();
+						}
+						if (type_node.category() == TypeCategory::UserDefined) {
+							StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_node.token().value());
+							auto it = getTypesByNameMap().find(type_name_handle);
+							if (it != getTypesByNameMap().end() && it->second && it->second->struct_info_ &&
+								it->second->struct_info_->own_type_index_.has_value()) {
+								return *it->second->struct_info_->own_type_index_;
+							}
+						}
+						return {};
+					};
+
+					if (symbol->is<VariableDeclarationNode>()) {
+						return tryResolveTypeNode(symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>());
+					}
+					if (symbol->is<DeclarationNode>()) {
+						return tryResolveTypeNode(symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+					}
+				}
+			}
+
+			return fallback_type_index;
+		};
+		auto resolveExprIsReference = [&](const ExpressionNode& expr) -> bool {
+			if (static_expr_type.has_value() && static_expr_type->is_reference()) {
+				return true;
+			}
+			if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
+				std::optional<ASTNode> symbol = symbol_table.lookup(identifier->name());
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(identifier->name());
+				}
+				if (symbol.has_value()) {
+					if (symbol->is<VariableDeclarationNode>()) {
+						return symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>().is_reference();
+					}
+					if (symbol->is<DeclarationNode>()) {
+						return symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>().is_reference();
+					}
+				}
+			}
+			return false;
+		};
+		auto isRuntimeTypeidExpression = [](const ExpressionNode& expr) {
+			return std::visit([](const auto& node) -> bool {
+				using T = std::decay_t<decltype(node)>;
+				if constexpr (std::is_same_v<T, IdentifierNode> ||
+							  std::is_same_v<T, QualifiedIdentifierNode> ||
+							  std::is_same_v<T, MemberAccessNode> ||
+							  std::is_same_v<T, ArraySubscriptNode> ||
+							  std::is_same_v<T, PointerToMemberAccessNode>) {
+					return true;
+				} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+					return node.op() == "*";
+				} else {
+					return false;
+				}
+			}, expr);
+		};
+		TypeIndex static_expr_type_index = static_expr_type.has_value() ? static_expr_type->type_index() : TypeIndex{};
+		TypeIndex resolved_expr_type_index = resolveExprTypeIndex(operand_expr, static_expr_type_index);
+		bool expr_is_reference_object = resolveExprIsReference(operand_expr);
+		bool runtime_typeid_candidate = expr_is_reference_object || isRuntimeTypeidExpression(operand_expr);
+		bool type_is_polymorphic = false;
+		if (resolved_expr_type_index.category() == TypeCategory::Struct && resolved_expr_type_index.is_valid()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(resolved_expr_type_index)) {
+				if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+					type_is_polymorphic = struct_info->has_vtable;
+				}
+			}
+		}
+		bool is_runtime_polymorphic_object = runtime_typeid_candidate && type_is_polymorphic;
+		ExpressionContext expr_context =
+			(is_runtime_polymorphic_object && expr_is_reference_object) ? ExpressionContext::LValueAddress : ExpressionContext::Load;
+		ExprResult expr_operands = visitExpressionNode(operand_expr, expr_context);
+		if (is_runtime_polymorphic_object) {
+			if (!expr_is_reference_object) {
+				expr_operands = materializeAddressResult(
+					operand_expr,
+					std::move(expr_operands),
+					typeidNode.typeid_token());
+			}
+
+				// typeid(expr) on a polymorphic class expression needs runtime RTTI from the object.
+			std::variant<StringHandle, TempVar> operand_value;
+			if (const auto* temp_var = std::get_if<TempVar>(&expr_operands.value)) {
+				operand_value = *temp_var;
+			} else if (const auto* string_ptr = std::get_if<StringHandle>(&expr_operands.value)) {
+				operand_value = *string_ptr;
+			} else {
+				operand_value = TempVar{0};
+			}
+
+			TypeidOp op{
+				.result = result_temp,
+				.operand = operand_value,
+				.type_index = resolved_expr_type_index,
+				.is_type = false};
+			ir_.addInstruction(IrOpcode::Typeid, std::move(op), typeidNode.typeid_token());
+
+			return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{64}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
+		}
+
+		if (static_expr_type.has_value()) {
+			TypeidOp op{
+				.result = result_temp,
+				.operand = getStructTypeName(static_expr_type->type_index()),
+				.type_index = static_expr_type->type_index(),
+				.is_type = true};
+			ir_.addInstruction(IrOpcode::Typeid, std::move(op), typeidNode.typeid_token());
+
+			return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{64}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
+		}
+
+			// Fallback when semantic typing is unavailable.
 			// Extract IrValue from expression result
 		std::variant<StringHandle, TempVar> operand_value;
 		if (const auto* temp_var = std::get_if<TempVar>(&expr_operands.value)) {

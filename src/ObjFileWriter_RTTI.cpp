@@ -4,6 +4,43 @@
 // ObjFileWriter_RTTI.cpp - Out-of-line method definitions for ObjectFileWriter
 // Part of ObjectFileWriter class (unity build)
 
+namespace {
+char getMsvcUserTypeTag(std::string_view class_name, TypeIndex type_index) {
+	const TypeInfo* type_info = nullptr;
+	if (type_index.is_valid()) {
+		type_info = tryGetTypeInfo(type_index);
+	}
+	if (!type_info) {
+		type_info = findTypeByName(StringTable::getOrInternStringHandle(class_name));
+	}
+	if (type_info) {
+		if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+			return struct_info->default_access == AccessSpecifier::Private ? 'V' : 'U';
+		}
+	}
+	return 'V';
+}
+
+std::string buildMsvcTypeDescriptorName(std::string_view class_name, TypeIndex type_index) {
+	std::string_view mangled_name_sv = StringBuilder()
+										  .append(".?A"sv)
+										  .append(getMsvcUserTypeTag(class_name, type_index))
+										  .append(class_name)
+										  .append("@@"sv)
+										  .commit();
+	return std::string(mangled_name_sv);
+}
+
+std::string buildMsvcTypeDescriptorSymbol(std::string_view mangled_type_name) {
+	std::string_view type_desc_symbol_sv = StringBuilder()
+											   .append("??_R0"sv)
+											   .append(mangled_type_name.substr(1))
+											   .append("@8"sv)
+											   .commit();
+	return std::string(type_desc_symbol_sv);
+}
+} // namespace
+
 void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks, const std::vector<UnwindMapEntryInfo>& unwind_map, const std::vector<SehTryBlockInfo>& seh_try_blocks, uint32_t stack_frame_size) {
 	// Check if exception info has already been added for this function
 	for (const auto& existing : added_exception_functions_) {
@@ -292,61 +329,19 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 	//   ??_R3 - Class Hierarchy Descriptor
 	//   ??_R4 - Complete Object Locator
 
-	// MSVC class name mangling: .?AV<name>@@
-	// Note: This is a simplified mangling for classes. Full MSVC mangling would handle
-	// templates, namespaces, and other complex types. For basic classes, this format works.
-	std::string mangled_class_name = std::string(".?AV") + std::string(class_name) + "@@";
+	// MSVC RTTI uses .?AV for class and .?AU for struct names.
+	std::string mangled_class_name = buildMsvcTypeDescriptorName(class_name, subobject_type_index);
 
 	// ??_R0 - Type Descriptor (16 bytes header + mangled name)
-	std::string type_desc_symbol = "??_R0" + mangled_class_name;
-	uint32_t type_desc_symbol_index = 0;
-	bool type_desc_already_emitted = false;
-
-	// Check if the type descriptor was already emitted (e.g., by a derived class's
-	// add_vtable call that emitted base class type descriptors inline).
-	auto td_cache_it = symbol_index_cache_.find(type_desc_symbol);
-	if (td_cache_it != symbol_index_cache_.end()) {
-		// Use get_symbol() for correct lookup by COFFI file index (not vector index,
-		// which differs due to auxiliary entries on section symbols).
-		auto* existing_sym = coffi_.get_symbol(td_cache_it->second);
-		// Cache may contain external references (section_number == 0) from
-		// get_or_create_symbol_index; only reuse if the symbol has a definition.
-		if (existing_sym && existing_sym->get_section_number() > 0) {
-			// Already defined — reuse existing symbol index
-			type_desc_symbol_index = td_cache_it->second;
-			type_desc_already_emitted = true;
-			if (g_enable_debug_output)
-				std::cerr << "  Reusing existing ??_R0 Type Descriptor '" << type_desc_symbol << "'" << std::endl;
-		}
-	}
-
-	if (!type_desc_already_emitted) {
-		uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-
-		std::vector<char> type_desc_data;
-		type_desc_data.reserve(16 + mangled_class_name.size() + 1);	// 8+8 header + name + null
-		// vtable pointer (8 bytes) - null
-		ObjectFileCommon::appendZeros(type_desc_data, 8);
-		// spare pointer (8 bytes) - null
-		ObjectFileCommon::appendZeros(type_desc_data, 8);
-		// mangled name (null-terminated)
-		for (char c : mangled_class_name)
-			type_desc_data.push_back(c);
-		type_desc_data.push_back(0);
-
-		add_data(type_desc_data, SectionType::RDATA);
-		auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
-		type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		type_desc_sym->set_section_number(rdata_section->get_index() + 1);
-		type_desc_sym->set_value(type_desc_offset);
-		type_desc_symbol_index = type_desc_sym->get_index();
-		symbol_index_cache_[type_desc_symbol] = type_desc_symbol_index;
-
-		if (g_enable_debug_output)
-			std::cerr << "  Added ??_R0 Type Descriptor '" << type_desc_symbol << "' at offset "
-					  << type_desc_offset << std::endl;
-	}
+	std::string type_desc_symbol = get_or_create_type_descriptor(class_name, subobject_type_index);
+	uint32_t type_desc_symbol_index = get_or_create_symbol_index(type_desc_symbol);
+	auto addImageRelativeRelocation = [&](uint32_t virtual_address, uint32_t symbol_table_index) {
+		COFFI::rel_entry_generic reloc;
+		reloc.virtual_address = virtual_address;
+		reloc.symbol_table_index = symbol_table_index;
+		reloc.type = IMAGE_REL_AMD64_ADDR32NB;
+		rdata_section->add_relocation_entry(&reloc);
+	};
 
 	// ??_R1 - Base Class Descriptors (one for self + one per base)
 	std::vector<uint32_t> bcd_offsets;
@@ -356,12 +351,12 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 	uint32_t self_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 	std::string self_bcd_symbol = "??_R1" + mangled_class_name + "8";  // "8" suffix for self
 	std::vector<char> self_bcd_data;
-	self_bcd_data.reserve(28);  // 8 + 5*4 = 28 bytes total
+	self_bcd_data.reserve(28);  // 7 image-relative / scalar DWORDs
 
-	// type_descriptor pointer (8 bytes) - will add relocation
-	ObjectFileCommon::appendZeros(self_bcd_data, 8);
+	// type_descriptor image-relative pointer (4 bytes) - relocation added below
+	ObjectFileCommon::appendZeros(self_bcd_data, 4);
 	// num_contained_bases (4 bytes)
-	uint32_t num_contained = static_cast<uint32_t>(base_class_names.size());
+	uint32_t num_contained = static_cast<uint32_t>(base_class_info.size());
 	ObjectFileCommon::appendLE(self_bcd_data, num_contained);
 	// mdisp (4 bytes) - 0 for self
 	ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0));
@@ -369,8 +364,10 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 	ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0xFFFFFFFF));
 	// vdisp (4 bytes) - 0
 	ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0));
-	// attributes (4 bytes) - 0 for self
-	ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0));
+	// attributes (4 bytes) - include the pClassDescriptor field
+	ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0x40));
+	// class hierarchy descriptor image-relative pointer (4 bytes) - relocation added later
+	ObjectFileCommon::appendZeros(self_bcd_data, 4);
 
 	add_data(self_bcd_data, SectionType::RDATA);
 	auto self_bcd_sym = coffi_.add_symbol(self_bcd_symbol);
@@ -380,11 +377,7 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 	self_bcd_sym->set_value(self_bcd_offset);
 
 	// Add relocation for type_descriptor pointer in self BCD
-	COFFI::rel_entry_generic self_bcd_reloc;
-	self_bcd_reloc.virtual_address = self_bcd_offset;
-	self_bcd_reloc.symbol_table_index = type_desc_symbol_index;
-	self_bcd_reloc.type = IMAGE_REL_AMD64_ADDR64;
-	rdata_section->add_relocation_entry(&self_bcd_reloc);
+	addImageRelativeRelocation(self_bcd_offset, type_desc_symbol_index);
 
 	bcd_offsets.push_back(self_bcd_offset);
 	bcd_symbol_indices.push_back(self_bcd_sym->get_index());
@@ -396,48 +389,24 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 	// Base class descriptors
 	for (size_t i = 0; i < base_class_info.size(); ++i) {
 		const auto& bci = base_class_info[i];
-		std::string base_mangled = ".?AV" + bci.name + "@@";
-		std::string base_type_desc_symbol = "??_R0" + base_mangled;
-
-		// Ensure the base class type descriptor exists. If the base class's own
-		// add_vtable was never called (e.g., template base class whose member
-		// functions were all overridden), the symbol would be left as an unresolved
-		// external. Emit it here if needed.
-		bool base_td_defined = false;
-		auto cache_it = symbol_index_cache_.find(base_type_desc_symbol);
-		if (cache_it != symbol_index_cache_.end()) {
-			// Use get_symbol() for correct lookup by COFFI file index (not vector index,
-			// which differs due to auxiliary entries on section symbols).
-			auto* sym = coffi_.get_symbol(cache_it->second);
-			base_td_defined = (sym && sym->get_section_number() > 0);
-		}
-		if (!base_td_defined) {
-			uint32_t btd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-			std::vector<char> btd_data;
-			btd_data.reserve(16 + base_mangled.size() + 1);
-			ObjectFileCommon::appendZeros(btd_data, 8);	// vtable pointer
-			ObjectFileCommon::appendZeros(btd_data, 8);	// spare pointer
-			for (char c : base_mangled)
-				btd_data.push_back(c);
-			btd_data.push_back(0);
-			add_data(btd_data, SectionType::RDATA);
-			auto btd_sym = coffi_.add_symbol(base_type_desc_symbol);
-			btd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-			btd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-			btd_sym->set_section_number(rdata_section->get_index() + 1);
-			btd_sym->set_value(btd_offset);
-			// Update cache so get_or_create_symbol_index finds it
-			symbol_index_cache_[base_type_desc_symbol] = btd_sym->get_index();
-			if (g_enable_debug_output)
-				std::cerr << "  Emitted base ??_R0 Type Descriptor '" << base_type_desc_symbol << "' at offset " << btd_offset << std::endl;
-		}
+		std::string base_mangled = buildMsvcTypeDescriptorName(bci.name, {});
+		std::string base_type_desc_symbol = get_or_create_type_descriptor(bci.name);
+		uint32_t base_type_desc_index = get_or_create_symbol_index(base_type_desc_symbol);
 
 		uint32_t base_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-		std::string base_bcd_symbol = "??_R1" + mangled_class_name + "0" + base_mangled;
+		std::string_view base_bcd_symbol_sv = StringBuilder()
+												  .append("??_R1"sv)
+												  .append(mangled_class_name)
+												  .append("0"sv)
+												  .append(base_mangled)
+												  .append("_"sv)
+												  .append(static_cast<uint64_t>(bcd_symbol_indices.size()))
+												  .commit();
+		std::string base_bcd_symbol(base_bcd_symbol_sv);
 		std::vector<char> base_bcd_data;
 
-		// type_descriptor pointer (8 bytes) - will add relocation
-		ObjectFileCommon::appendZeros(base_bcd_data, 8);
+		// type_descriptor image-relative pointer (4 bytes) - will add relocation
+		ObjectFileCommon::appendZeros(base_bcd_data, 4);
 
 		// num_contained_bases (4 bytes) - actual value from base class info
 		uint32_t base_num_contained = bci.num_contained_bases;
@@ -458,8 +427,11 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 
 		// attributes (4 bytes) - flags
 		// Bit 0: virtual base (1 if virtual, 0 if non-virtual)
-		uint32_t attributes = bci.is_virtual ? 1 : 0u;
+		// Bit 6: pClassDescriptor field is present
+		uint32_t attributes = (bci.is_virtual ? 1u : 0u) | 0x40u;
 		ObjectFileCommon::appendLE(base_bcd_data, attributes);
+		// class hierarchy descriptor image-relative pointer (4 bytes) - relocation added later
+		ObjectFileCommon::appendZeros(base_bcd_data, 4);
 
 		add_data(base_bcd_data, SectionType::RDATA);
 		auto base_bcd_sym = coffi_.add_symbol(base_bcd_symbol);
@@ -469,12 +441,7 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 		base_bcd_sym->set_value(base_bcd_offset);
 
 		// Add relocation for type_descriptor pointer in base BCD
-		uint32_t base_type_desc_index = get_or_create_symbol_index(base_type_desc_symbol);
-		COFFI::rel_entry_generic base_bcd_reloc;
-		base_bcd_reloc.virtual_address = base_bcd_offset;
-		base_bcd_reloc.symbol_table_index = base_type_desc_index;
-		base_bcd_reloc.type = IMAGE_REL_AMD64_ADDR64;
-		rdata_section->add_relocation_entry(&base_bcd_reloc);
+		addImageRelativeRelocation(base_bcd_offset, base_type_desc_index);
 
 		bcd_offsets.push_back(base_bcd_offset);
 		bcd_symbol_indices.push_back(base_bcd_sym->get_index());
@@ -486,7 +453,7 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 	// ??_R2 - Base Class Array (pointers to all BCDs)
 	uint32_t bca_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 	std::string bca_symbol = "??_R2" + mangled_class_name + "8";
-	std::vector<char> bca_data(bcd_offsets.size() * 8, 0);
+	std::vector<char> bca_data(bcd_offsets.size() * 4, 0);
 
 	add_data(bca_data, SectionType::RDATA);
 	auto bca_sym = coffi_.add_symbol(bca_symbol);
@@ -498,11 +465,7 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 
 	// Add relocations for BCD pointers in BCA
 	for (size_t i = 0; i < bcd_offsets.size(); ++i) {
-		COFFI::rel_entry_generic bca_reloc;
-		bca_reloc.virtual_address = bca_offset + static_cast<uint32_t>(i * 8);
-		bca_reloc.symbol_table_index = bcd_symbol_indices[i];
-		bca_reloc.type = IMAGE_REL_AMD64_ADDR64;
-		rdata_section->add_relocation_entry(&bca_reloc);
+		addImageRelativeRelocation(bca_offset + static_cast<uint32_t>(i * 4), bcd_symbol_indices[i]);
 	}
 
 	if (g_enable_debug_output)
@@ -521,8 +484,8 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 	// num_base_classes (4 bytes) - total including self
 	uint32_t total_bases = static_cast<uint32_t>(bcd_offsets.size());
 	ObjectFileCommon::appendLE(chd_data, total_bases);
-	// base_class_array pointer (8 bytes) - will add relocation
-	ObjectFileCommon::appendZeros(chd_data, 8);
+	// base_class_array image-relative pointer (4 bytes) - will add relocation
+	ObjectFileCommon::appendZeros(chd_data, 4);
 
 	add_data(chd_data, SectionType::RDATA);
 	auto chd_sym = coffi_.add_symbol(chd_symbol);
@@ -533,11 +496,12 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 	uint32_t chd_symbol_index = chd_sym->get_index();
 
 	// Add relocation for base_class_array pointer in CHD
-	COFFI::rel_entry_generic chd_reloc;
-	chd_reloc.virtual_address = chd_offset + 12;	 // After signature + attributes + num_base_classes
-	chd_reloc.symbol_table_index = bca_symbol_index;
-	chd_reloc.type = IMAGE_REL_AMD64_ADDR64;
-	rdata_section->add_relocation_entry(&chd_reloc);
+	addImageRelativeRelocation(chd_offset + 12, bca_symbol_index);
+
+	// Each BCD also stores an image-relative pointer back to the CHD.
+	for (uint32_t bcd_offset : bcd_offsets) {
+		addImageRelativeRelocation(bcd_offset + 24, chd_symbol_index);
+	}
 
 	if (g_enable_debug_output)
 		std::cerr << "  Added ??_R3 Class Hierarchy Descriptor '" << chd_symbol << "' at offset "
@@ -554,10 +518,12 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 	ObjectFileCommon::appendLE(col_data, uint32_t(0));
 	// cd_offset (4 bytes) - 0
 	ObjectFileCommon::appendLE(col_data, uint32_t(0));
-	// type_descriptor pointer (8 bytes) - relocation added at offset+12
-	ObjectFileCommon::appendZeros(col_data, 8);
-	// hierarchy pointer (8 bytes) - relocation added at offset+20
-	ObjectFileCommon::appendZeros(col_data, 8);
+	// type_descriptor image-relative pointer (4 bytes) - relocation added at offset+12
+	ObjectFileCommon::appendZeros(col_data, 4);
+	// hierarchy image-relative pointer (4 bytes) - relocation added at offset+16
+	ObjectFileCommon::appendZeros(col_data, 4);
+	// self image-relative pointer (4 bytes) - relocation added at offset+20
+	ObjectFileCommon::appendZeros(col_data, 4);
 
 	add_data(col_data, SectionType::RDATA);
 	auto col_sym = coffi_.add_symbol(col_symbol);
@@ -567,18 +533,10 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 	col_sym->set_value(col_offset);
 	uint32_t col_symbol_index = col_sym->get_index();
 
-	// Add relocations for type_descriptor and hierarchy pointers in COL
-	COFFI::rel_entry_generic col_type_reloc;
-	col_type_reloc.virtual_address = col_offset + 12;  // After signature + offset + cd_offset
-	col_type_reloc.symbol_table_index = type_desc_symbol_index;
-	col_type_reloc.type = IMAGE_REL_AMD64_ADDR64;
-	rdata_section->add_relocation_entry(&col_type_reloc);
-
-	COFFI::rel_entry_generic col_hier_reloc;
-	col_hier_reloc.virtual_address = col_offset + 20;  // After type_descriptor pointer
-	col_hier_reloc.symbol_table_index = chd_symbol_index;
-	col_hier_reloc.type = IMAGE_REL_AMD64_ADDR64;
-	rdata_section->add_relocation_entry(&col_hier_reloc);
+	// Add relocations for type_descriptor, hierarchy, and self pointers in COL.
+	addImageRelativeRelocation(col_offset + 12, type_desc_symbol_index);
+	addImageRelativeRelocation(col_offset + 16, chd_symbol_index);
+	addImageRelativeRelocation(col_offset + 20, col_symbol_index);
 
 	if (g_enable_debug_output)
 		std::cerr << "  Added ??_R4 Complete Object Locator '" << col_symbol << "' at offset "
@@ -787,6 +745,77 @@ std::string ObjectFileWriter::get_or_create_builtin_throwinfo(TypeCategory type)
 	if (g_enable_debug_output)
 		std::cerr << "Created builtin throw metadata symbol: " << throw_info_symbol << std::endl;
 	return throw_info_symbol;
+}
+
+// Get or create MSVC ??_R0 Type Descriptor symbol for a class.
+// Returns the symbol name (e.g., "??_R0.?AVMyClass@@").
+// If the descriptor doesn't exist yet, it will be created in .rdata section.
+std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view class_name) {
+	return get_or_create_type_descriptor(class_name, {});
+}
+
+std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view class_name, TypeIndex type_index) {
+	std::string mangled_class_name = buildMsvcTypeDescriptorName(class_name, type_index);
+	std::string type_desc_symbol = buildMsvcTypeDescriptorSymbol(mangled_class_name);
+
+	// Check if the type descriptor was already emitted
+	auto td_cache_it = symbol_index_cache_.find(type_desc_symbol);
+	if (td_cache_it != symbol_index_cache_.end()) {
+		auto* existing_sym = coffi_.get_symbol(td_cache_it->second);
+		// Only reuse if the symbol has a definition (section_number > 0)
+		if (existing_sym && existing_sym->get_section_number() > 0) {
+			if (g_enable_debug_output)
+				std::cerr << "Reusing existing ??_R0 Type Descriptor '" << type_desc_symbol << "'" << std::endl;
+			return type_desc_symbol;
+		}
+	}
+
+	// Type descriptor not found or was only an external reference - create it
+	auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
+	uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+
+	std::vector<char> type_desc_data;
+	type_desc_data.reserve(16 + mangled_class_name.size() + 1);	// 8+8 header + name + null
+	// vtable pointer (8 bytes) - null
+	ObjectFileCommon::appendZeros(type_desc_data, 8);
+	// spare pointer (8 bytes) - null
+	ObjectFileCommon::appendZeros(type_desc_data, 8);
+	// mangled name (null-terminated)
+	for (char c : mangled_class_name)
+		type_desc_data.push_back(c);
+	type_desc_data.push_back(0);
+
+	add_data(type_desc_data, SectionType::RDATA);
+	auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
+	type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+	type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+	type_desc_sym->set_section_number(rdata_section->get_index() + 1);
+	type_desc_sym->set_value(type_desc_offset);
+
+	// Relocate vftable pointer to type_info::vftable
+	auto* type_info_vftable = coffi_.get_symbol("??_7type_info@@6B@");
+	if (!type_info_vftable) {
+		type_info_vftable = coffi_.add_symbol("??_7type_info@@6B@");
+		type_info_vftable->set_value(0);
+		type_info_vftable->set_section_number(0);
+		type_info_vftable->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		type_info_vftable->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+	}
+
+	COFFI::rel_entry_generic td_vft_reloc;
+	td_vft_reloc.virtual_address = type_desc_offset;
+	td_vft_reloc.symbol_table_index = type_info_vftable->get_index();
+	td_vft_reloc.type = IMAGE_REL_AMD64_ADDR64;
+	rdata_section->add_relocation_entry(&td_vft_reloc);
+
+	// Update cache
+	symbol_index_cache_[type_desc_symbol] = type_desc_sym->get_index();
+
+	if (g_enable_debug_output)
+		std::cerr << "Created ??_R0 Type Descriptor '" << type_desc_symbol << "' at offset "
+				  << type_desc_offset << std::endl;
+
+	return type_desc_symbol;
 }
 
 // Helper: get or create symbol index for a function name (cached for O(1) repeated lookups)
