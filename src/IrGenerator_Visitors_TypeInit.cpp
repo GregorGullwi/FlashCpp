@@ -2164,7 +2164,9 @@ void AstToIr::generateNestedMemberStores(
 		ctor_op.object = base_object;
 		ctor_op.resolved_constructor = &resolved_ctor;
 		ctor_op.is_heap_allocated = base_object_is_pointer;
-		assert(base_offset + static_cast<int>(member.offset) >= 0 && "Member offset must be non-negative");
+		if (base_offset + static_cast<int>(member.offset) < 0) {
+			throw InternalError("Nested aggregate member offset became negative during constructor lowering");
+		}
 		ctor_op.base_class_offset = base_offset + static_cast<int>(member.offset);
 		appendConstructorCallArguments(ctor_op, &resolved_ctor, ctor_args, token);
 		fillInConstructorDefaultArguments(ctor_op, resolved_ctor, ctor_op.arguments.size());

@@ -110,7 +110,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 			throw CompileError("Too many initializers for aggregate type in new-expression");
 		}
 
-		InitializerListNode init_list;
+		InitializerListNode aggregate_init_list;
 		for (size_t member_idx = 0; member_idx < ctor_args.size(); ++member_idx) {
 			const ASTNode& argument = ctor_args[member_idx];
 			const StructMember& member = struct_info.members[member_idx];
@@ -118,11 +118,11 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 				throw CompileError("Unsupported aggregate new initializer shape for member '" +
 								   std::string(StringTable::getStringView(member.getName())) + "'");
 			}
-			init_list.add_initializer(argument);
+			aggregate_init_list.add_initializer(argument);
 		}
 		generateNestedMemberStores(
 			struct_info,
-			init_list,
+			aggregate_init_list,
 			std::variant<StringHandle, TempVar>{pointer_var},
 			0,
 			true,
