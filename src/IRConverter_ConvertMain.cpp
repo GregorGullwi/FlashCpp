@@ -611,12 +611,6 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 		writer.add_source_file(actual_source_file);
 	}
 
-		// Emit dynamic_cast runtime helpers if needed
-	if (needs_dynamic_cast_runtime_) {
-		ProfilingTimer timer("Emit dynamic_cast runtime helpers", show_timing);
-		emit_dynamic_cast_runtime_helpers();
-	}
-
 	{
 		ProfilingTimer timer("Finalize sections", show_timing);
 		finalizeSections();

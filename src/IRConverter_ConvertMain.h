@@ -924,23 +924,6 @@ private:
 
 	void finalizeSections();
 
-	// Emit runtime helper functions for dynamic_cast as native x64 code
-
-	void emit_dynamic_cast_runtime_helpers();
-
-	// Emit __dynamic_cast_check function
-	//   bool __dynamic_cast_check(type_info* source, type_info* target)
-	// Platform-specific implementation:
-	//   - Windows: MSVC RTTI with Complete Object Locator format (RCX, RDX)
-	//   - Linux: Itanium C++ ABI type_info structures (RDI, RSI)
-	// Returns: AL = 1 if cast valid, 0 otherwise
-	void emit_dynamic_cast_check_function();
-
-	// Emit __dynamic_cast_throw_bad_cast function
-	//   [[noreturn]] void __dynamic_cast_throw_bad_cast()
-	// This function throws std::bad_cast exception via C++ runtime
-	void emit_dynamic_cast_throw_function();
-
 	void patchBranches();
 
 	void finalizeFunctionBranches();
@@ -1059,9 +1042,6 @@ private:
 	std::unordered_map<std::string, int32_t, TransparentStringHash, std::equal_to<>> variable_name_to_offset_;
 	// Track TempVar sizes from instructions that produce them (for correct loads in conditionals)
 	std::unordered_map<StringHandle, int> temp_var_sizes_;
-
-	// Track if dynamic_cast runtime helpers need to be emitted
-	bool needs_dynamic_cast_runtime_ = false;
 
 	// Track most recently allocated named variable for TempVar linking
 	StringHandle last_allocated_variable_name_;
