@@ -615,6 +615,12 @@ private:
 		int base_offset,
 		bool base_object_is_pointer,
 		const Token& token);
+	void emitZeroInitializedMember(
+		const StructMember& member,
+		std::variant<StringHandle, TempVar> base_object,
+		int base_offset,
+		bool base_object_is_pointer,
+		const Token& token);
 
 	// Implementation of recursive nested member store generation
 	bool tryEmitArrayMemberStores(
@@ -774,6 +780,10 @@ private:
 			if (resolution.selected_overload) {
 				return resolution.selected_overload;
 			}
+		}
+
+		if (!target_struct_info.hasUserDefinedConstructor()) {
+			return nullptr;
 		}
 
 		auto arity_resolution = resolve_constructor_overload_arity(target_struct_info, num_args, false);
