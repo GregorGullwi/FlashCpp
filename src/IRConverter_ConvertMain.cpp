@@ -7478,13 +7478,13 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			TypeInfo* type_info = struct_it->second;
 			StructTypeInfo* struct_info = type_info->getStructInfo();
 
-				// Mark that this TU is compiling a member function body for this class.
-				// This acts as a key-function-like heuristic: only emit a vtable definition
-				// when the current TU has actually compiled at least one member function body.
-				// For classes whose vtables are provided by the C++ runtime (std::type_info,
-				// std::exception, __cxxabiv1::* etc.), no FunctionDecl IR is ever emitted for
-				// their member functions, so vtable_defined_in_tu stays false and no vtable
-				// definition is emitted — avoiding ODR violations with the runtime library.
+			// Mark that this TU is compiling a member function body for this class.
+			// This acts as a key-function-like heuristic: only emit a vtable definition
+			// when the current TU has actually compiled at least one member function body.
+			// For classes whose vtables are provided by the C++ runtime (std::type_info,
+			// std::exception, __cxxabiv1::* etc.), no FunctionDecl IR is ever emitted for
+			// their member functions, so vtable_defined_in_tu stays false and no vtable
+			// definition is emitted — avoiding ODR violations with the runtime library.
 			if (struct_info) {
 				struct_info->vtable_defined_in_tu = true;
 			}
