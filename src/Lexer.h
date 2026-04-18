@@ -424,7 +424,7 @@ private:
 		}
 
 		// Check for exponent (e.g., 1.5e10, 3e-5)
-		if (!is_hex_literal && cursor_ < source_size_ && (source_[cursor_] == 'e' || source_[cursor_] == 'E')) {
+		if (!is_hex_literal && !is_binary_literal && cursor_ < source_size_ && (source_[cursor_] == 'e' || source_[cursor_] == 'E')) {
 			++cursor_;
 			++column_;
 
