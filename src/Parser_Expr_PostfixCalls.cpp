@@ -85,9 +85,11 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	return match;
 }
 
-ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is_arrow_access, const Token& operator_start_token) {
+ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const Token& operator_start_token) {
 	// Expect an identifier (member name) OR ~ for pseudo-destructor call
 	// Pseudo-destructor pattern: obj.~Type() or ptr->~Type()
+	bool is_arrow_access = (operator_start_token.kind() == "->"_tok);
+
 	if (peek() == "~"_tok) {
 		advance(); // consume '~'
 
@@ -178,7 +180,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is
 
 	if (!peek().is_identifier()) {
 		return ParseResult::error(
-			is_arrow_access ? "Expected member name after '->'" : "Expected member name after '.'",
+			std::string(StringBuilder().append("Expected member name after '").append(operator_start_token.value()).append("'").commit()),
 			operator_start_token);
 	}
 
@@ -445,10 +447,9 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 		// Check for member access (. or ->)
 		if ((peek().is_punctuator() && peek() == "."_tok) || peek() == "->"_tok) {
 			Token member_operator_token = peek_info();
-			bool is_arrow_access = peek() == "->"_tok;
 			advance(); // consume '.' or '->'
 
-			ParseResult member_result = parse_member_postfix(result, is_arrow_access, member_operator_token);
+			ParseResult member_result = parse_member_postfix(result, member_operator_token);
 			if (member_result.is_error()) {
 				return member_result;
 			}
@@ -1119,13 +1120,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 		}
 
 		// Check for member access operator . or -> (or pointer-to-member .* or ->*)
-		bool is_arrow_access = false;
 		Token operator_start_token;	// Track the operator token for error reporting
 
 		if (peek() == "."_tok) {
 			operator_start_token = peek_info();
 			advance(); // consume '.'
-			is_arrow_access = false;
 
 			// Check for pointer-to-member operator .*
 			if (peek() == "*"_tok) {
@@ -1151,7 +1150,6 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 		} else if (peek() == "->"_tok) {
 			operator_start_token = peek_info();
 			advance(); // consume '->'
-			is_arrow_access = true;
 
 			// Check for pointer-to-member operator ->*
 			if (peek() == "*"_tok) {
@@ -1188,7 +1186,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			break;  // No more postfix operators
 		}
 
-		ParseResult member_result = parse_member_postfix(result, is_arrow_access, operator_start_token);
+		ParseResult member_result = parse_member_postfix(result, operator_start_token);
 		if (member_result.is_error()) {
 			return member_result;
 		}
