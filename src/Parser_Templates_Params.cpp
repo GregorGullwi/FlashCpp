@@ -1908,6 +1908,7 @@ Parser::TemplateTypeArgParsingResult Parser::parse_explicit_template_arguments_a
 		FLASH_LOG(Parser, Trace, "parse_explicit_template_arguments_as_result, failed to parse as template argument");
 
 		restore_token_position(saved_pos);
+		discard_saved_token(saved_pos);
 		return {};
 	}
 
@@ -1918,6 +1919,7 @@ Parser::TemplateTypeArgParsingResult Parser::parse_explicit_template_arguments_a
 		FLASH_LOG(Parser, Trace, "parse_explicit_template_arguments_as_result, following token is not :: or (, so not treating as a template!");
 
 		restore_token_position(saved_pos);
+		discard_saved_token(saved_pos);
 		return {};
 	}
 

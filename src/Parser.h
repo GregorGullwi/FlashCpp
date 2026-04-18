@@ -1007,6 +1007,7 @@ private:
 		void restore_token_position() {
 			if (parser_ && original_token_) {
 				parser_->restore_token_position(original_token_);
+				parser_->discard_saved_token(original_token_);
 				original_token_ = 0;
 			}
 		}
