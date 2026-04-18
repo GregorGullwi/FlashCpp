@@ -615,7 +615,12 @@ ParseResult Parser::parse_function_trailing_specifiers(
 				// Nested noexcept(...) expressions are common in standard library
 				// headers and frequently contain constructs we do not need to
 				// model semantically for declaration parsing.
+				// IMPORTANT: We must clear is_noexcept here because the safe
+				// default when we cannot evaluate the expression is false
+				// (potentially-throwing), not true.  Defaulting to noexcept(true)
+				// would cause std::terminate at runtime when the function throws.
 				if (peek() == "noexcept"_tok) {
+					out_specs.is_noexcept = false;
 					restore_token_position(noexcept_expr_pos);
 					skip_balanced_parens();
 					continue;
@@ -633,7 +638,10 @@ ParseResult Parser::parse_function_trailing_specifiers(
 					// Header-only standard library code frequently uses heavyweight
 					// noexcept expressions that the front-end does not need to model
 					// precisely. Fall back to syntactic skipping so the declaration
-					// still parses and retains the noexcept flag.
+					// still parses.  Default to potentially-throwing (noexcept(false))
+					// because the safe assumption when we cannot evaluate the
+					// expression is that the function may throw.
+					out_specs.is_noexcept = false;
 					restore_token_position(noexcept_expr_pos);
 					skip_balanced_parens();
 				}
