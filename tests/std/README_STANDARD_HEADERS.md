@@ -7,7 +7,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1369ms |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~479ms |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~479ms (retested 2026-04-18). Now parses successfully - gets past earlier noexcept issues, but static_assert fails on semantic (is_integral trait evaluation returns wrong value).
 | `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | ~609ms (retested 2026-04-11). Targeted test still compiles, but bare `#include <compare>` now fails with "Ambiguous constructor call" during codegen of a namespace-level node. |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
@@ -17,7 +17,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | ~2238ms (retested 2026-04-14). The old `::template _Is_nothrow_invocable_r<_Rx>` base lookup stop and the later `_Function_args<_Ret CALL_OPT(_Types...) ...>` partial-specialization parse stop are both fixed. MSVC `<type_traits>` now gets further and fails at `less::operator() const noexcept(...)` with "Expected '{', ';', '= default', or '= delete' after member function declaration". |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
 | `<utility>` | `test_std_utility.cpp` | ❌ Codegen Error | ~830ms (retested 2026-04-11). Targeted test now fails with codegen errors from template deduction / Non-type parameter issues. |
-| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~540ms |
+| `<concepts>` | `test_std_concepts.cpp` | ❌ Parse Error | ~659ms (retested 2026-04-18). Fixed line 38 blocker (added `_is_convertible_to` trait). Now fails at line 254: pack expansion in requires expression.
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~1460ms (retested 2026-04-11). Call to deleted function 'swap' in `stl_pair.h:308`. Blocked by eager inline member body parsing during implicit template class instantiation (std::pair::swap tries to swap const members). |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~2192ms (retested 2026-04-11). Call to deleted function 'swap' — same `stl_pair.h:308` blocker as `<string_view>`. |
@@ -140,6 +140,13 @@ This directory contains test files for C++ standard library headers to assess Fl
 - Template-argument parsing now accepts bare non-member function types with a calling convention before the parameter list, plus trailing cv/ref/noexcept qualifiers, so partial specializations like `_Function_args<_Ret __cdecl(_Types...) noexcept>` no longer stop during pattern parsing. Focused regression: `tests/test_nonmember_callconv_function_partial_spec_ret42.cpp`.
 - Re-checking `<array>` (~2.12s), `<optional>` (~2.24s), `<variant>` (~2.53s), `<functional>` (~3.01s), and `<map>` (~2.48s) shows that both earlier `type_traits` parser gaps are gone. These headers now reach a later member-function declaration parser stop in `type_traits:2378-2379` at `less::operator() const noexcept(...)`.
 
+#### 2026-04-18 Retests
+
+- **Global namespace prefix in expression contexts**: Fixed by template argument parser lookahead improvements. The focused test `tests/test_noexcept_complex_expr_ret0.cpp` now compiles successfully with the current Sharded build.
+- **Added `_is_convertible_to` builtin type trait**: MSVC uses this in `<concepts>` line 38 and `<type_traits>`. Adding it to the trait map fixes the parser error at these locations. Test: `tests/test_volatile_qualified_conv_ret0.cpp`.
+- `<concepts>` now passes line 38 but hits new blocker at line 254 (pack expansion in requires expression).
+- `<type_traits>` now parses past the earlier errors but fails on semantic (is_integral static_assert).
+
 #### 2026-04-07 Retests
 
 - `<atomic>` and `<latch>` were re-checked after teaching sema/parser to preserve user-defined enum identity for overloaded binary operators and parenthesized functional casts. That clears the old `memory_order | __memory_order_modifier(...)` semantic stop from `bits/atomic_base.h`, so both headers now progress into later atomic-wait codegen fallout instead of failing during scoped-enum checking. `<atomic>` currently stops on the same deeper `_M_do_wait` / missing default-argument / dependent-payload-size / `memory_order_seq_cst` symbol issues summarized in the table, while `<latch>` now fails even later on `_M_do_wait`, `__mutex_base` constructor recovery, integer-conversion gaps in wait helpers, and missing `memory_order_relaxed` symbol recovery.
@@ -156,6 +163,8 @@ The overall header counts above still reflect the older full sweep and need a fu
 ### Known Blockers
 
 The most impactful blockers preventing more headers from compiling, ordered by impact:
+
+As of the 2026-04-18 targeted retest, the global namespace prefix blocker is FIXED. The focused test passes with the current Sharded build.
 
 As of the 2026-04-14 targeted retest, the earlier `Template<...>::template Member<...>` base lookup gap and the bare non-member calling-convention function-type partial-specialization gap are both fixed. `<array>`, `<optional>`, `<variant>`, `<functional>`, and `<map>` now stop later in MSVC `<type_traits>` at `less::operator() const noexcept(...)`, while `<set>` / `<ranges>` still fail even later in Windows UCRT overload-resolution fallout.
 

@@ -1090,6 +1090,7 @@ const std::unordered_map<std::string_view, TraitInfo> trait_map = {
 	{"_is_base_of", {TypeTraitKind::IsBaseOf, true, false, false}},
 	{"_is_same", {TypeTraitKind::IsSame, true, false, false}},
 	{"_is_convertible", {TypeTraitKind::IsConvertible, true, false, false}},
+	{"_is_convertible_to", {TypeTraitKind::IsConvertible, true, false, false}},
 	{"_is_nothrow_convertible", {TypeTraitKind::IsNothrowConvertible, true, false, false}},
 	{"_is_polymorphic", {TypeTraitKind::IsPolymorphic, false, false, false}},
 	{"_is_final", {TypeTraitKind::IsFinal, false, false, false}},

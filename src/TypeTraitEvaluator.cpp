@@ -426,7 +426,7 @@ TypeTraitResult evaluateTypeTrait(
 	case TypeTraitKind::HasVirtualDestructor:
 		if (struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0) {
 			result = struct_info->has_vtable && struct_info->hasUserDefinedDestructor();
-				// If no explicit destructor but has vtable, check base classes
+			// If no explicit destructor but has vtable, check base classes
 			if (!result && struct_info->has_vtable && !struct_info->base_classes.empty()) {
 				for (const auto& base : struct_info->base_classes) {
 					if (const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index)) {
@@ -444,7 +444,7 @@ TypeTraitResult evaluateTypeTrait(
 	case TypeTraitKind::IsConstructible:
 	case TypeTraitKind::IsTriviallyConstructible:
 	case TypeTraitKind::IsNothrowConstructible:
-			// These need variadic type arguments, return failure for simple evaluation
+		// These need variadic type arguments, return failure for simple evaluation
 		if (isScalarType(cat, is_reference, pointer_depth)) {
 			result = true;  // Scalars are always default constructible
 		} else if (struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0) {
@@ -466,11 +466,11 @@ TypeTraitResult evaluateTypeTrait(
 	case TypeTraitKind::IsNothrowAssignable:
 	case TypeTraitKind::IsLayoutCompatible:
 	case TypeTraitKind::IsPointerInterconvertibleBaseOf:
-			// These need the second type argument, return failure
+		// These need the second type argument, return failure
 		return TypeTraitResult::failure();
 
 	case TypeTraitKind::UnderlyingType:
-			// This returns a type, not a bool, so handle specially
+		// This returns a type, not a bool, so handle specially
 		return TypeTraitResult::failure();
 
 	default:
