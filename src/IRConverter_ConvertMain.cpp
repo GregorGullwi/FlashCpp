@@ -7472,22 +7472,24 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 		// If this is a member function, check if we need to register vtable for this class
 	if (!struct_name.empty()) {
-		auto usesExternalAbiVTable = [](std::string_view qualified_name) {
-			if (qualified_name == "std::type_info"sv ||
-				qualified_name == "std::exception"sv ||
-				qualified_name == "std::bad_cast"sv ||
-				qualified_name == "std::bad_typeid"sv) {
-				return true;
-			}
-			return qualified_name.starts_with("__cxxabiv1::__");
-		};
 			// Look up the struct type info
 		auto struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 		if (struct_it != getTypesByNameMap().end()) {
-			const TypeInfo* type_info = struct_it->second;
-			const StructTypeInfo* struct_info = type_info->getStructInfo();
+			TypeInfo* type_info = struct_it->second;
+			StructTypeInfo* struct_info = type_info->getStructInfo();
 
-			if (struct_info && struct_info->has_vtable && !usesExternalAbiVTable(struct_name)) {
+				// Mark that this TU is compiling a member function body for this class.
+				// This acts as a key-function-like heuristic: only emit a vtable definition
+				// when the current TU has actually compiled at least one member function body.
+				// For classes whose vtables are provided by the C++ runtime (std::type_info,
+				// std::exception, __cxxabiv1::* etc.), no FunctionDecl IR is ever emitted for
+				// their member functions, so vtable_defined_in_tu stays false and no vtable
+				// definition is emitted — avoiding ODR violations with the runtime library.
+			if (struct_info) {
+				struct_info->vtable_defined_in_tu = true;
+			}
+
+			if (struct_info && struct_info->has_vtable && struct_info->vtable_defined_in_tu) {
 					// Use the pre-generated vtable symbol from struct_info
 				std::string_view vtable_symbol = struct_info->vtable_symbol;
 
