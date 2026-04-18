@@ -187,15 +187,18 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 	Token member_name_token = peek_info();
 	advance(); // consume member name
 
-	std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
-	if (peek() == "<"_tok) {
-		explicit_template_args = parse_explicit_template_arguments();
-	}
+	TemplateTypeArgParsingResult explicit_template_args = parse_explicit_template_arguments_as_result(TokenDestroyPattern::Restore);
 
 	if (peek() == "("_tok) {
-		const FunctionDeclarationNode* known_member_func = explicit_template_args.has_value()
-															   ? nullptr
-															   : tryResolveConcreteMemberFunction(result, member_name_token.value());
+		explicit_template_args.destroy_pattern_ = TokenDestroyPattern::Discard;
+
+		const FunctionDeclarationNode* known_member_func = nullptr;
+		if (explicit_template_args) {
+			std::optional<ASTNode> instantiated_template = tryResolveMemberFunctionTemplate(result, member_name_token.value(), explicit_template_args.read_template_type_args(), {});
+			FLASH_LOG(Parser, Debug, "parse_member_postfix: tryResolveMemberFunctionTemplate result has_value=", instantiated_template.has_value());
+		} else {
+			known_member_func = tryResolveConcreteMemberFunction(result, member_name_token.value());
+		}
 
 		advance(); // consume '('
 
@@ -218,15 +221,15 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 		if (auto type_opt = get_expression_type(*result); type_opt.has_value() &&
 													  is_struct_type(type_opt->category())) {
 			TypeIndex type_idx = type_opt->type_index();
-		if (type_idx.is_valid()) {
-			if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
-				if (!type_info->is_incomplete_instantiation_) {
-					object_struct_name = StringTable::getStringView(type_info->name());
-					instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
+			if (type_idx.is_valid()) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
+					if (!type_info->is_incomplete_instantiation_) {
+						object_struct_name = StringTable::getStringView(type_info->name());
+						instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
+					}
 				}
 			}
 		}
-	}
 
 		if (in_sfinae_context_ && object_struct_name.has_value() && !sfinae_type_map_.empty()) {
 			StringHandle obj_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
@@ -273,11 +276,11 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 		}
 
 		std::optional<ASTNode> instantiated_func;
-		if (object_struct_name.has_value() && explicit_template_args.has_value()) {
+		if (object_struct_name.has_value() && explicit_template_args) {
 			instantiated_func = try_instantiate_member_function_template_explicit(
 				*object_struct_name,
 				member_name_token.value(),
-				*explicit_template_args);
+				explicit_template_args.read_template_type_args());
 		} else if (object_struct_name.has_value() && arg_types.empty()) {
 			instantiated_func = try_instantiate_member_function_template_explicit(
 				*object_struct_name,
@@ -356,7 +359,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 		// nullptr).  If the derived class owns the name but no local overload accepts
 		// the argument count, the call is ill-formed.
 		if (!known_member_func && !instantiated_func.has_value() &&
-			!explicit_template_args.has_value() && object_struct_name.has_value() &&
+			!explicit_template_args && object_struct_name.has_value() &&
 			!in_sfinae_context_) {
 			if (auto type_opt = get_expression_type(*result); type_opt.has_value() &&
 														  is_struct_type(type_opt->category())) {

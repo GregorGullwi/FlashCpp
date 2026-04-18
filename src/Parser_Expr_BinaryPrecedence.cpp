@@ -483,12 +483,13 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 
 			// Use lookahead to check if this could be template arguments
 			// In Decltype context, be more aggressive about treating < as template arguments
-			if (could_be_template_name && could_be_template_arguments()) {
+			TemplateTypeArgParsingResult template_args;
+			if (could_be_template_name) {
+				template_args = parse_explicit_template_arguments_as_result(TokenDestroyPattern::Restore);
+			}
+
+			if (template_args) {
 				FLASH_LOG(Parser, Debug, "Confirmed: '<' starts template arguments, not comparison operator");
-				// Template arguments were successfully parsed by could_be_template_arguments()
-				// The parse_explicit_template_arguments() call inside it already consumed the tokens
-				// We need to re-parse to get the actual template arguments
-				auto template_args = parse_explicit_template_arguments();
 
 				// Check if followed by '::' for qualified member access
 				// This handles patterns like: Base<T>::member(args)
@@ -531,9 +532,9 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						const DeclarationNode* decl_ptr = nullptr;
 						const FunctionDeclarationNode* func_decl_ptr = nullptr;
 
-						if (!base_name.empty() && template_args.has_value()) {
+						if (!base_name.empty()) {
 							AliasTemplateMaterializationResult materialized_owner =
-								materializeTemplateInstantiationForLookup(base_name, *template_args);
+								materializeTemplateInstantiationForLookup(base_name, template_args.read_template_type_args());
 							std::string_view instantiated_class_name = materialized_owner.instantiated_name;
 
 							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_class_name));
@@ -603,7 +604,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				}
 				continue;
 			}
-			// If could_be_template_arguments() returned false, fall through to treat '<' as operator
+			// If parse_explicit_template_arguments_as_result() returned an invalid result, fall through to treat '<' as operator
 		}
 
 		// Get the precedence of the current operator

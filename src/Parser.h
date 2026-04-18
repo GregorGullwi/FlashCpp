@@ -968,10 +968,77 @@ private:
 		TypeCategory type;
 	};
 
+	enum TokenDestroyPattern {
+		Discard,
+		Restore,
+	};
+	struct TemplateTypeArgParsingResult
+	{
+	protected:
+		std::vector<TemplateTypeArg> template_type_args_;	// use read_template_type_args() or move_template_type_args() to access
+
+	public:
+		Parser* parser_ = nullptr;
+		SaveHandle original_token_ = 0;
+		Token next_token_;
+		mutable TokenDestroyPattern destroy_pattern_ = TokenDestroyPattern::Discard;
+
+		TemplateTypeArgParsingResult() = default;
+
+		TemplateTypeArgParsingResult(Parser* p, std::vector<TemplateTypeArg> args, SaveHandle save, Token tok, TokenDestroyPattern destroy_pattern)
+			: parser_(p), template_type_args_(std::move(args)), original_token_(save), next_token_(tok), destroy_pattern_(destroy_pattern) {}
+
+		TemplateTypeArgParsingResult(TemplateTypeArgParsingResult&& other) noexcept
+			: parser_(other.parser_), template_type_args_(std::move(other.template_type_args_)),
+			  original_token_(other.original_token_), next_token_(other.next_token_), destroy_pattern_(other.destroy_pattern_) {
+			other.original_token_ = 0;  // Prevent destructor from restoring
+		}
+
+		TemplateTypeArgParsingResult& operator=(TemplateTypeArgParsingResult&& other) noexcept {
+			if (this != &other) {
+				if (parser_ && original_token_) {
+					parser_->discard_saved_token(original_token_);
+				}
+				parser_ = other.parser_;
+				template_type_args_ = std::move(other.template_type_args_);
+				original_token_ = other.original_token_;
+				next_token_ = other.next_token_;
+				destroy_pattern_ = other.destroy_pattern_;
+				other.original_token_ = 0;
+			}
+			return *this;
+		}
+
+		void restore_token_position() {
+			if (parser_ && original_token_) {
+				parser_->restore_token_position(original_token_);
+				original_token_ = 0;
+			}
+		}
+
+		~TemplateTypeArgParsingResult() {
+			if (destroy_pattern_ == Restore) {
+				restore_token_position();
+			} else if (parser_ && original_token_) {
+				parser_->discard_saved_token(original_token_);
+			}
+		}
+
+		operator bool() const { return (parser_ != nullptr && original_token_ != 0); }
+		const std::vector<TemplateTypeArg>& read_template_type_args() const {
+			destroy_pattern_ = TokenDestroyPattern::Discard;
+			return template_type_args_;
+		}
+		std::vector<TemplateTypeArg>&& move_template_type_args() {
+			destroy_pattern_ = TokenDestroyPattern::Discard;
+			return std::move(template_type_args_);
+		}
+	};
+
 	ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
 	ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
 	std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes = nullptr);  // NEW: Parse explicit template arguments like <int, float>
-	bool could_be_template_arguments();	// NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
+	TemplateTypeArgParsingResult parse_explicit_template_arguments_as_result(TokenDestroyPattern destroy_pattern);	// NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
 	ConstructorLookaheadResult consume_constructor_or_destructor_prefix(std::string_view class_name);  // Priority 3: Consume ClassName[<...>]::[~] prefix and detect ClassName( pattern (advances token position)
 	ConstructorLookaheadResult lookahead_constructor_or_destructor(std::string_view class_name);	 // Priority 3: Detect ClassName[<...>]::[~]ClassName( pattern with save/restore
 

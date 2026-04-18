@@ -1887,33 +1887,39 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 	return template_args;
 }
 
-// Phase 1: C++20 Template Argument Disambiguation
+// C++20 Template Argument Disambiguation
 // Check if '<' at current position could start template arguments without consuming tokens.
 // This implements lookahead to disambiguate template argument lists from comparison operators.
-// Returns true if parse_explicit_template_arguments() would succeed at this position.
-bool Parser::could_be_template_arguments() {
-	FLASH_LOG(Parser, Debug, "could_be_template_arguments: checking if '<' starts template arguments");
+Parser::TemplateTypeArgParsingResult Parser::parse_explicit_template_arguments_as_result(TokenDestroyPattern destroy_pattern) {
+	FLASH_LOG(Parser, Debug, "parse_explicit_template_arguments_as_result: checking if '<' starts template arguments");
 
 	// Quick check: must have '<' at current position
 	if (peek() != "<"_tok) {
-		return false;
+		return {};
 	}
 
 	// Save position BEFORE attempting to parse template arguments
-	// This ensures we restore position even on success, making this truly non-consuming
 	auto saved_pos = save_token_position();
 
 	// Try to parse template arguments speculatively
 	auto template_args = parse_explicit_template_arguments();
 
-	// Always restore position - this makes the function non-consuming
-	restore_token_position(saved_pos);
+	if (!template_args.has_value()) {
+		restore_token_position(saved_pos);
+		return {};
+	}
 
-	// Return true if parsing would succeed
-	return template_args.has_value();
+	// A template needs to be followed by a qualifier or a function
+	if (peek() != "::"_tok &&
+		peek() != "("_tok)
+	{
+		restore_token_position(saved_pos);
+		return {};
+	}
+
+	return TemplateTypeArgParsingResult{ this, std::move(template_args.value()), saved_pos, peek_token(), destroy_pattern };
 }
 
-// Phase 2: Unified Qualified Identifier Parser (Sprint 3-4)
 // Consolidates all qualified identifier parsing into a single, consistent code path.
 // This function parses patterns like: A::B::C or ns::Template<Args>::member
 std::optional<QualifiedIdParseResult> Parser::parse_qualified_identifier_with_templates() {
