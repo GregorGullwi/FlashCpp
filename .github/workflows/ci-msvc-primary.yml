@@ -9,7 +9,7 @@ on:
 
 jobs:
   windows-debug:
-    name: Windows - MSVC - Debug
+    name: Windows - MSVC - Sharded
     runs-on: windows-latest
     steps:
       - name: Checkout
