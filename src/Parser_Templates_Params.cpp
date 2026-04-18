@@ -1891,12 +1891,12 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 // Check if '<' at current position could start template arguments without consuming tokens.
 // This implements lookahead to disambiguate template argument lists from comparison operators.
 Parser::TemplateTypeArgParsingResult Parser::parse_explicit_template_arguments_as_result(TokenDestroyPattern destroy_pattern) {
-	FLASH_LOG(Parser, Debug, "parse_explicit_template_arguments_as_result: checking if '<' starts template arguments");
-
 	// Quick check: must have '<' at current position
 	if (peek() != "<"_tok) {
 		return {};
 	}
+
+	FLASH_LOG(Parser, Debug, "parse_explicit_template_arguments_as_result: checking if '<' starts template arguments");
 
 	// Save position BEFORE attempting to parse template arguments
 	auto saved_pos = save_token_position();
@@ -1905,6 +1905,8 @@ Parser::TemplateTypeArgParsingResult Parser::parse_explicit_template_arguments_a
 	auto template_args = parse_explicit_template_arguments();
 
 	if (!template_args.has_value()) {
+		FLASH_LOG(Parser, Trace, "parse_explicit_template_arguments_as_result, failed to parse as template argument");
+
 		restore_token_position(saved_pos);
 		return {};
 	}
@@ -1913,11 +1915,13 @@ Parser::TemplateTypeArgParsingResult Parser::parse_explicit_template_arguments_a
 	if (peek() != "::"_tok &&
 		peek() != "("_tok)
 	{
+		FLASH_LOG(Parser, Trace, "parse_explicit_template_arguments_as_result, following token is not :: or (, so not treating as a template!");
+
 		restore_token_position(saved_pos);
 		return {};
 	}
 
-	return TemplateTypeArgParsingResult{ this, std::move(template_args.value()), saved_pos, peek_token(), destroy_pattern };
+	return TemplateTypeArgParsingResult{ this, std::move(template_args.value()), saved_pos, destroy_pattern };
 }
 
 // Consolidates all qualified identifier parsing into a single, consistent code path.
