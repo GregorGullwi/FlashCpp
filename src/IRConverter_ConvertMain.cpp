@@ -831,8 +831,9 @@ void IrToObjConverter<TWriterClass>::emitComparisonInstruction(const typename Ir
 	textSectionData.insert(textSectionData.end(), setccInst.begin(), setccInst.end());
 
 	// Zero-extend the low byte to full register: movzx r32, r8
-	// REX.W is unnecessary for MOVZX — writing a 32-bit register zero-extends to 64 bits on x86-64.
-	auto movzx_encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.result_physical_reg, /* include_rex_w = */ false);
+	// include_rex_w=true ensures a REX prefix is always emitted, which is required
+	// because the 4-byte emit pattern below unconditionally includes rex_prefix.
+	auto movzx_encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.result_physical_reg, /* include_rex_w = */ true);
 	std::array<uint8_t, 4> movzxInst = {movzx_encoding.rex_prefix, 0x0F, 0xB6, movzx_encoding.modrm_byte};
 	textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
 
@@ -10754,8 +10755,9 @@ void IrToObjConverter<TWriterClass>::handleUnaryOperation(const IrInstruction& i
 
 		// Zero-extend the low byte to full register: movzx r32, r8
 		// This is essential because sete only sets the low byte, leaving high bytes unchanged.
-		// REX.W is unnecessary for MOVZX — writing a 32-bit register zero-extends to 64 bits on x86-64.
-		auto movzx_encoding = encodeRegToRegInstruction(result_physical_reg, result_physical_reg, /* include_rex_w = */ false);
+		// include_rex_w=true ensures a REX prefix is always emitted, which is required
+		// because the 4-byte emit pattern below unconditionally includes rex_prefix.
+		auto movzx_encoding = encodeRegToRegInstruction(result_physical_reg, result_physical_reg, /* include_rex_w = */ true);
 		std::array<uint8_t, 4> movzxInst = {movzx_encoding.rex_prefix, 0x0F, 0xB6, movzx_encoding.modrm_byte};
 		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
 		break;
