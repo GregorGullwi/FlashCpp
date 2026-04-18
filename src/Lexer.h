@@ -340,16 +340,39 @@ private:
 
 			// Hexadecimal floating literals may have a fractional part after the
 			// hex digits and use a 'p' exponent (e.g. 0x1.0p-3).
+			// Per C++20 [lex.fcon], a hex float REQUIRES a binary-exponent-part
+			// (p/P). If no 'p'/'P' follows, the '.' is not part of the literal
+			// and we must backtrack so it is tokenized separately.
 			if (cursor_ < source_size_ && source_[cursor_] == '.') {
+				size_t saved_cursor = cursor_;
+				size_t saved_column = column_;
 				++cursor_;
 				++column_;
 				while (cursor_ < source_size_ && (std::isxdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
 					++cursor_;
 					++column_;
 				}
-			}
 
-			if (cursor_ < source_size_ && (source_[cursor_] == 'p' || source_[cursor_] == 'P')) {
+				if (cursor_ < source_size_ && (source_[cursor_] == 'p' || source_[cursor_] == 'P')) {
+					++cursor_;
+					++column_;
+
+					if (cursor_ < source_size_ && (source_[cursor_] == '+' || source_[cursor_] == '-')) {
+						++cursor_;
+						++column_;
+					}
+
+					while (cursor_ < source_size_ && std::isdigit(source_[cursor_])) {
+						++cursor_;
+						++column_;
+					}
+				} else {
+					// No binary exponent — backtrack: '.' is not part of this hex literal.
+					cursor_ = saved_cursor;
+					column_ = saved_column;
+				}
+			} else if (cursor_ < source_size_ && (source_[cursor_] == 'p' || source_[cursor_] == 'P')) {
+				// Hex float without fractional part but with exponent (e.g. 0x1p10)
 				++cursor_;
 				++column_;
 
