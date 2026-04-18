@@ -969,10 +969,73 @@ private:
 		TypeCategory type;
 	};
 
+	enum TokenDestroyPattern {
+		Discard,
+		Restore,
+	};
+	struct TemplateTypeArgParsingResult
+	{
+	protected:
+		std::vector<TemplateTypeArg> template_type_args_;	// use read_template_type_args() or move_template_type_args() to access
+
+	public:
+		Parser* parser_ = nullptr;
+		SaveHandle original_token_ = 0;
+		mutable TokenDestroyPattern destroy_pattern_ = TokenDestroyPattern::Discard;
+
+		TemplateTypeArgParsingResult() = default;
+
+		TemplateTypeArgParsingResult(Parser* p, std::vector<TemplateTypeArg> args, SaveHandle save, TokenDestroyPattern destroy_pattern)
+			: template_type_args_(std::move(args)), parser_(p), original_token_(save), destroy_pattern_(destroy_pattern) {}
+
+		TemplateTypeArgParsingResult(TemplateTypeArgParsingResult&& other) noexcept
+			: template_type_args_(std::move(other.template_type_args_)), parser_(other.parser_),
+			  original_token_(other.original_token_), destroy_pattern_(other.destroy_pattern_) {
+			other.original_token_ = 0;  // Prevent destructor from restoring
+		}
+
+		TemplateTypeArgParsingResult& operator=(TemplateTypeArgParsingResult&& other) noexcept {
+			if (this != &other) {
+				parser_ = other.parser_;
+				template_type_args_ = std::move(other.template_type_args_);
+				original_token_ = other.original_token_;
+				destroy_pattern_ = other.destroy_pattern_;
+				other.original_token_ = 0;
+			}
+			return *this;
+		}
+
+		void restore_token_position() {
+			if (parser_ && original_token_) {
+				parser_->restore_token_position(original_token_);
+				parser_->discard_saved_token(original_token_);
+				original_token_ = 0;
+			}
+		}
+
+		~TemplateTypeArgParsingResult() {
+			if (destroy_pattern_ == Restore) {
+				restore_token_position();
+			} else if (parser_ && original_token_) {
+				parser_->discard_saved_token(original_token_);
+			}
+		}
+
+		operator bool() const { return (parser_ != nullptr && original_token_ != 0); }
+		const std::vector<TemplateTypeArg>& read_template_type_args() const {	// If we use the arguments, we change to discard
+			destroy_pattern_ = TokenDestroyPattern::Discard;
+			return template_type_args_;
+		}
+		std::vector<TemplateTypeArg>&& move_template_type_args() {	// If we use the arguments, we change to discard
+			destroy_pattern_ = TokenDestroyPattern::Discard;
+			return std::move(template_type_args_);
+		}
+	};
+
 	ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
 	ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
 	std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes = nullptr);  // NEW: Parse explicit template arguments like <int, float>
-	bool could_be_template_arguments();	// NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
+	TemplateTypeArgParsingResult parse_explicit_template_arguments_as_result(TokenDestroyPattern destroy_pattern);	// NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
 	ConstructorLookaheadResult consume_constructor_or_destructor_prefix(std::string_view class_name);  // Priority 3: Consume ClassName[<...>]::[~] prefix and detect ClassName( pattern (advances token position)
 	ConstructorLookaheadResult lookahead_constructor_or_destructor(std::string_view class_name);	 // Priority 3: Detect ClassName[<...>]::[~]ClassName( pattern with save/restore
 
@@ -1870,7 +1933,7 @@ private:	 // Resume private methods
 	const FunctionDeclarationNode* tryResolveConcreteMemberFunction(const std::optional<ASTNode>& object_expr, std::string_view member_name);
 	std::optional<ASTNode> tryResolveMemberFunctionTemplate(const std::optional<ASTNode>& object_expr, std::string_view member_name,
 															const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args, const std::vector<TypeSpecifierNode>& arg_types);
-	ParseResult parse_member_postfix(std::optional<ASTNode>& result, bool is_arrow_access, const Token& operator_start_token);
+	ParseResult parse_member_postfix(std::optional<ASTNode>& result, const Token& operator_start_token);
 	ParseResult parse_unary_expression(ExpressionContext context);
 	ParseResult parse_qualified_operator_call(const Token& context_token, const std::vector<StringType<32>>& namespaces);  // Parse operator symbol + call after 'operator' keyword consumed
 		// Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.

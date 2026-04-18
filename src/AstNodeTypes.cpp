@@ -1487,6 +1487,7 @@ bool StructTypeInfo::buildVTable() {
 
 	// Step 1: Copy base class vtable entries (if any)
 	bool any_base_potentially_incomplete = has_deferred_base_classes;
+	bool copied_primary_base_vtable = false;
 	for (const auto& base : base_classes) {
 		if (base.type_index.index() >= gTypeInfo.size()) {
 			continue;
@@ -1496,11 +1497,13 @@ bool StructTypeInfo::buildVTable() {
 		const StructTypeInfo* base_info = base_type.getStructInfo();
 
 		if (base_info && base_info->has_vtable) {
-			// Copy all base vtable entries
-			for (const auto* base_func : base_info->vtable) {
-				if (base_func != nullptr) { // Safety check
-					vtable.push_back(base_func);
+			if (!copied_primary_base_vtable && !base.is_virtual && base.offset == 0) {
+				for (const auto* base_func : base_info->vtable) {
+					if (base_func != nullptr) {
+						vtable.push_back(base_func);
+					}
 				}
+				copied_primary_base_vtable = true;
 			}
 			has_vtable = true;
 		} else if (base_info == nullptr) {
@@ -1544,6 +1547,7 @@ bool StructTypeInfo::buildVTable() {
 
 		// Check if this function overrides a base class virtual function
 		int override_index = -1;
+		bool overrides_secondary_base = false;
 		const StructMemberFunction* base_func_ptr = nullptr;
 		for (size_t i = 0; i < vtable.size(); ++i) {
 			const StructMemberFunction* base_func = vtable[i];
@@ -1551,6 +1555,32 @@ bool StructTypeInfo::buildVTable() {
 				override_index = static_cast<int>(i);
 				base_func_ptr = base_func;
 				break;
+			}
+		}
+
+		if (override_index < 0) {
+			for (const auto& base : base_classes) {
+				if (base.type_index.index() >= gTypeInfo.size()) {
+					continue;
+				}
+
+				const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
+				const StructTypeInfo* base_info = base_type.getStructInfo();
+				if (base_info == nullptr) {
+					continue;
+				}
+
+				for (const auto* base_func : base_info->vtable) {
+					if (base_func != nullptr && base_func->getName() == func_name) {
+						overrides_secondary_base = true;
+						base_func_ptr = base_func;
+						break;
+					}
+				}
+
+				if (overrides_secondary_base) {
+					break;
+				}
 			}
 		}
 
@@ -1569,6 +1599,19 @@ bool StructTypeInfo::buildVTable() {
 			// Override existing vtable entry
 			vtable[override_index] = &func;
 			func.vtable_index = override_index;
+		} else if (overrides_secondary_base) {
+			if (base_func_ptr && base_func_ptr->is_final) {
+				std::string error_msg = "cannot override final function '" +
+										std::string(StringTable::getStringView(func_name)) + "' in class '" +
+										std::string(StringTable::getStringView(getName())) + "'";
+				FLASH_LOG(Parser, Error, error_msg);
+				finalization_error_ = error_msg;
+				success = false;
+			}
+
+			// Secondary-base overrides are emitted into the secondary vtable, not the
+			// primary vtable layout tracked by this vector.
+			func.vtable_index = -1;
 		} else {
 			// Add new vtable entry
 			func.vtable_index = static_cast<int>(vtable.size());
@@ -1576,7 +1619,7 @@ bool StructTypeInfo::buildVTable() {
 		}
 
 		// Validate override keyword usage
-		if (func.is_override && override_index < 0) {
+		if (func.is_override && override_index < 0 && !overrides_secondary_base) {
 			if (any_base_potentially_incomplete) {
 				// Base class vtable may be incomplete (template base classes are deferred
 				// during parsing). Defer the check to instantiation time.
@@ -1603,12 +1646,8 @@ bool StructTypeInfo::buildVTable() {
 
 		// Use platform-appropriate vtable mangling
 		if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
-			// Itanium C++ ABI: _ZTV + length + name
-			// e.g., class "Base" -> "_ZTV4Base"
-			vtable_sb.append("_ZTV");
 			std::string_view name_sv = StringTable::getStringView(getName());
-			vtable_sb.append(static_cast<uint64_t>(name_sv.size()));
-			vtable_sb.append(name_sv);
+			vtable_sb.append(NameMangling::generateItaniumSpecialName("_ZTV", name_sv));
 		} else {
 			// MSVC: ??_7 + name + @@6B@
 			// e.g., class "Base" -> "??_7Base@@6B@"

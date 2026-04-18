@@ -810,12 +810,6 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 		std::string saved_tok = std::string(saved_token.current_token_.value());
 		std::string current_tok = std::string(current_token_.value());
 
-		// DEBUGGING: Track if we're restoring to "ns" token
-		if (saved_tok == "ns") {
-			FLASH_LOG_FORMAT(Parser, Error, "!!! RESTORING TO 'ns' TOKEN !!! handle={}, current={}",
-							 static_cast<unsigned long>(handle), current_tok);
-		}
-
 		FLASH_LOG_FORMAT(Parser, Debug, "restore_token_position: handle={}, saved token={}, current={}",
 						 static_cast<unsigned long>(handle), saved_tok, current_tok);
 	}

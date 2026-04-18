@@ -609,22 +609,31 @@ ParseResult Parser::parse_function_trailing_specifiers(
 
 			// Check for noexcept(expr) form
 			if (peek() == "("_tok) {
+				SaveHandle noexcept_expr_pos = save_token_position();
 				advance(); // consume '('
 
-				// Parse the constant expression
+				// Parse the constant expression.
+				// The expression parser already handles the noexcept operator
+				// (noexcept(expr) as a unary expression), so nested forms like
+				// noexcept(noexcept(may_throw())) are parsed correctly without
+				// special-casing here.
 				FlashCpp::SymbolTableScope noexcept_scope(ScopeType::Function);
 				register_parameters_in_scope(params);
 				auto expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (expr_result.is_error()) {
-					return expr_result;
-				}
-
-				if (expr_result.node().has_value()) {
+				if (!expr_result.is_error() && expr_result.node().has_value() && peek() == ")"_tok) {
 					out_specs.noexcept_expr = *expr_result.node();
-				}
-
-				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after noexcept expression", current_token_);
+					advance(); // consume ')'
+					discard_saved_token(noexcept_expr_pos);
+				} else {
+					// Header-only standard library code frequently uses heavyweight
+					// noexcept expressions that the front-end does not need to model
+					// precisely. Fall back to syntactic skipping so the declaration
+					// still parses.  Default to potentially-throwing (noexcept(false))
+					// because the safe assumption when we cannot evaluate the
+					// expression is that the function may throw.
+					out_specs.is_noexcept = false;
+					restore_token_position(noexcept_expr_pos);
+					skip_balanced_parens();
 				}
 			}
 			continue;

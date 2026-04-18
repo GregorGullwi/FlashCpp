@@ -1411,7 +1411,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		// Create variable declaration operands
 		// Format: [type, size_in_bits, var_name, custom_alignment, is_ref, is_rvalue_ref, is_array, ...]
 	std::vector<IrOperand> operands;
+	std::optional<TypedValue> initializer_typed_value;
 	auto appendExprResultToOperands = [&](const ExprResult& result) {
+		initializer_typed_value = toTypedValue(result);
 		operands.reserve(operands.size() + 4);
 		operands.emplace_back(result.typeEnum());
 		operands.emplace_back(result.size_in_bits.value);
@@ -1516,9 +1518,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
 				decl_op.is_array = decl.is_array();
-				if (operands.size() >= 11) {
-					TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 4));
-					decl_op.initializer = std::move(tv);
+				if (initializer_typed_value.has_value()) {
+					decl_op.initializer = std::move(initializer_typed_value);
 				}
 				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 				return;	// Done with scalar direct initialization
@@ -2152,12 +2153,16 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				decl_op.initializer = std::move(tv);
 			} else {
 					// Not an array element, use the value as-is
-				TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 4));
+				TypedValue tv = initializer_typed_value.has_value()
+									? std::move(*initializer_typed_value)
+									: toTypedValue(std::span<const IrOperand>(&operands[7], 4));
 				decl_op.initializer = std::move(tv);
 			}
 		} else {
 				// Not a reference, or not a TempVar - use the value as-is
-			TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 4));
+			TypedValue tv = initializer_typed_value.has_value()
+								? std::move(*initializer_typed_value)
+								: toTypedValue(std::span<const IrOperand>(&operands[7], 4));
 			decl_op.initializer = std::move(tv);
 		}
 	}

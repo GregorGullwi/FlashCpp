@@ -93,6 +93,52 @@ consistently to all `TypeSpecifierNode` use-sites.
 `DependentPlaceholderKind`) set at placeholder creation and cleared on resolution.
 Replace the size-based guard with an explicit predicate `TypeSpecifierNode::is_dependent()`.
 
+## MSVC standard headers can fail on `this` pointer comparisons in member functions
+
+**Repro:** Including the full MSVC `<typeinfo>` header stack currently pulls in
+`std::exception::operator=(const exception&)`, which contains:
+```cpp
+if (this == &_Other) {
+	return *this;
+}
+```
+**Symptom:** FlashCpp rejects this with `Operator== not defined for operand types`
+while compiling the standard library, which blocks tests that rely on
+`std::type_info` comparisons through `<typeinfo>`.
+**Root cause:** In binary-operator codegen, pointer-to-struct expressions like
+`this` still carry `TypeCategory::Struct`, and the struct comparison fallback path
+ignores `pointer_depth`. That causes pointer equality to be misrouted through
+user-defined/synthesized struct comparison handling instead of builtin pointer
+comparison.
+**Workaround:** Keep RTTI tests self-contained and compare the raw RTTI identity
+returned by `typeid(...)` instead of pulling in the full MSVC `<typeinfo>` header
+implementation.
+  
+## Implicit Derived*→PrivateBase* pointer conversion not rejected
+
+**Repro:**
+```cpp
+struct Base { int x; };
+struct Derived : private Base { int y; };
+int main() {
+    Derived d;
+    Base* bp = &d;  // should be rejected per C++20 [conv.ptr]/3
+    return bp->x;
+}
+```
+**Symptom:** FlashCpp compiles this without error. A conforming compiler rejects
+the conversion because `Base` is a private base of `Derived`.
+**Root cause:** `isTransitivelyDerivedFrom` in `OverloadResolution.h` now correctly
+filters non-public bases, but that function is only called during overload
+resolution (function argument matching). The pointer variable initialization path
+in `IrGenerator_Stmt_Decl.cpp` does not validate base accessibility — it silently
+emits the derived-to-base pointer adjustment for any base class regardless of
+access specifier.
+**Fix approach:** Add an `isTransitivelyDerivedFrom` check (or equivalent) in the
+IR generator's pointer initialization path. When the initializer is a struct
+pointer with a different `TypeIndex` from the declaration, verify the base is
+publicly accessible before emitting the adjustment; otherwise emit a compile error.
+
 ## Runtime aggregate initialization can still synthesize invalid default-ctor calls for nested non-aggregate members
 
 **Repro:**

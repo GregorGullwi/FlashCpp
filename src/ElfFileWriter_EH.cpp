@@ -300,9 +300,7 @@ std::string ElfFileWriter::get_typeinfo_symbol(const std::string& type_name) con
 		return it->second;
 	}
 
-	// For class types, generate symbol: _ZTI + length + name (Itanium ABI)
-	// Example: class "MyClass" -> "_ZTI7MyClass"
-	return "_ZTI" + std::to_string(type_name.length()) + type_name;
+	return NameMangling::generateItaniumSpecialName("_ZTI", type_name);
 }
 
 // Additional compatibility methods

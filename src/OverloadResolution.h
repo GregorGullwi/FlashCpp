@@ -259,8 +259,9 @@ inline bool hasConversionOperator(TypeIndex source_type_index, TypeCategory targ
 	return false;
 }
 
-// Check if source_idx is transitively derived from base_idx (recursive through full hierarchy).
-// Per C++20 [class.derived], a derived class implicitly converts to any of its base classes.
+// Check if source_idx is transitively derived from base_idx through public bases only.
+// Per C++20 [conv.ptr]/3, implicit derived-to-base conversions require the base to be
+// accessible, so private/protected inheritance paths are excluded.
 inline bool isTransitivelyDerivedFrom(TypeIndex source_idx, TypeIndex base_idx) {
 	if (!source_idx.is_valid() || !base_idx.is_valid())
 		return false;
@@ -271,6 +272,8 @@ inline bool isTransitivelyDerivedFrom(TypeIndex source_idx, TypeIndex base_idx) 
 	if (!source)
 		return false;
 	for (const auto& b : source->base_classes) {
+		if (b.access != AccessSpecifier::Public)
+			continue;
 		if (b.type_index == base_idx)
 			return true;
 		if (isTransitivelyDerivedFrom(b.type_index, base_idx))
@@ -405,6 +408,10 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			if (from_resolved_index.isStruct() &&
 				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
 				from_resolved_index != to_resolved_index) {
+				// Derived* → Base* is a valid pointer conversion (C++20 [conv.ptr]/3).
+				if (isTransitivelyDerivedFrom(from_resolved_index, to_resolved_index)) {
+					return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
+				}
 				return ConversionPlan::no_match();
 			}
 			return ConversionPlan::exact_match();
@@ -416,6 +423,11 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			if (from_resolved_index.isStruct() &&
 				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
 				from_resolved_index != to_resolved_index) {
+				// Derived* → Base* is valid with const qualification adjustment too.
+				if (!from_pointee_is_const && to_pointee_is_const &&
+					isTransitivelyDerivedFrom(from_resolved_index, to_resolved_index)) {
+					return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
+				}
 				return ConversionPlan::no_match();
 			}
 			// T* → const T* is a qualification conversion (C++20 [conv.qual]).

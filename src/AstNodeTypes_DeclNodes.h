@@ -46,6 +46,7 @@ struct StructTypeInfo {
 	bool has_vtable = false;	 // True if this struct has virtual functions
 	bool is_abstract = false;	  // True if this struct has pure virtual functions
 	bool has_deferred_base_classes = false;	// True if base classes depend on unresolved template parameters
+	bool vtable_defined_in_tu = false;	// True when the backend has compiled a member function body for this class in the current TU
 	std::vector<const StructMemberFunction*> vtable;	 // Virtual function table (pointers to member functions)
 	std::string_view vtable_symbol;	// MSVC mangled vtable symbol name (e.g., "??_7Base@@6B@"), empty if no vtable
 

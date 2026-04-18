@@ -312,6 +312,8 @@ private:
 	Token consume_literal() {
 		size_t start = cursor_;
 		char first_char = source_[cursor_];
+		bool is_hex_literal = false;
+		bool is_binary_literal = false;
 		++cursor_;
 		++column_;
 
@@ -325,8 +327,9 @@ private:
 			// Skip to exponent/suffix handling below
 		}
 		// Check for prefix (hex, binary, octal)
-		else if (source_[cursor_] == 'x' || source_[cursor_] == 'X') {
+		else if (cursor_ < source_size_ && (source_[cursor_] == 'x' || source_[cursor_] == 'X')) {
 			// Hexadecimal literal (0x / 0X)
+			is_hex_literal = true;
 			++cursor_;
 			++column_;
 
@@ -334,8 +337,58 @@ private:
 				++cursor_;
 				++column_;
 			}
-		} else if (source_[cursor_] == 'b' || source_[cursor_] == 'B') {
+
+			// Hexadecimal floating literals may have a fractional part after the
+			// hex digits and use a 'p' exponent (e.g. 0x1.0p-3).
+			// Per C++20 [lex.fcon], a hex float REQUIRES a binary-exponent-part
+			// (p/P). If no 'p'/'P' follows, the '.' is not part of the literal
+			// and we must backtrack so it is tokenized separately.
+			if (cursor_ < source_size_ && source_[cursor_] == '.') {
+				size_t saved_cursor = cursor_;
+				size_t saved_column = column_;
+				++cursor_;
+				++column_;
+				while (cursor_ < source_size_ && (std::isxdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
+					++cursor_;
+					++column_;
+				}
+
+				if (cursor_ < source_size_ && (source_[cursor_] == 'p' || source_[cursor_] == 'P')) {
+					++cursor_;
+					++column_;
+
+					if (cursor_ < source_size_ && (source_[cursor_] == '+' || source_[cursor_] == '-')) {
+						++cursor_;
+						++column_;
+					}
+
+					while (cursor_ < source_size_ && std::isdigit(source_[cursor_])) {
+						++cursor_;
+						++column_;
+					}
+				} else {
+					// No binary exponent — backtrack: '.' is not part of this hex literal.
+					cursor_ = saved_cursor;
+					column_ = saved_column;
+				}
+			} else if (cursor_ < source_size_ && (source_[cursor_] == 'p' || source_[cursor_] == 'P')) {
+				// Hex float without fractional part but with exponent (e.g. 0x1p10)
+				++cursor_;
+				++column_;
+
+				if (cursor_ < source_size_ && (source_[cursor_] == '+' || source_[cursor_] == '-')) {
+					++cursor_;
+					++column_;
+				}
+
+				while (cursor_ < source_size_ && std::isdigit(source_[cursor_])) {
+					++cursor_;
+					++column_;
+				}
+			}
+		} else if (cursor_ < source_size_ && (source_[cursor_] == 'b' || source_[cursor_] == 'B')) {
 			// Binary literal (0b / 0B)
+			is_binary_literal = true;
 			++cursor_;
 			++column_;
 
@@ -358,7 +411,8 @@ private:
 		}
 
 		// Check for decimal point (floating-point literal) - only if we didn't start with one
-		if (first_char != '.' && cursor_ < source_size_ && source_[cursor_] == '.') {
+		if (!is_hex_literal && !is_binary_literal &&
+			first_char != '.' && cursor_ < source_size_ && source_[cursor_] == '.') {
 			++cursor_;
 			++column_;
 
@@ -370,7 +424,7 @@ private:
 		}
 
 		// Check for exponent (e.g., 1.5e10, 3e-5)
-		if (cursor_ < source_size_ && (source_[cursor_] == 'e' || source_[cursor_] == 'E')) {
+		if (!is_hex_literal && !is_binary_literal && cursor_ < source_size_ && (source_[cursor_] == 'e' || source_[cursor_] == 'E')) {
 			++cursor_;
 			++column_;
 

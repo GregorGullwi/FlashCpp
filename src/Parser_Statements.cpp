@@ -637,6 +637,9 @@ ParseResult Parser::parse_statement_or_declaration() {
 		} else if (punct == "(") {
 			// Parenthesized expression
 			return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		} else if (punct == "::") {
+			// Global-scope qualified expression statements like ::std::terminate();
+			return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		}
 		// Unknown punctuator - consume token to avoid infinite loop and return error
 		advance();

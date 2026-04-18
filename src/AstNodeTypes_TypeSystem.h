@@ -1048,7 +1048,7 @@ struct StructMemberFunction {
 	bool is_pure_virtual = false;	  // True if pure virtual (= 0)
 	bool is_override = false;		  // True if declared with 'override' keyword
 	bool is_final = false;		   // True if declared with 'final' keyword
-	int vtable_index = -1;		   // Index in vtable, -1 if not virtual
+	int vtable_index = -1;		   // Index in primary vtable (>=0), or -1 if not virtual / overrides a secondary base
 
 	// CV qualifiers for member functions (Phase 4)
 	CVQualifier cv_qualifier = CVQualifier::None;

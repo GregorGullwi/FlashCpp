@@ -483,12 +483,13 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 
 			// Use lookahead to check if this could be template arguments
 			// In Decltype context, be more aggressive about treating < as template arguments
-			if (could_be_template_name && could_be_template_arguments()) {
+			TemplateTypeArgParsingResult template_args;
+			if (could_be_template_name) {
+				template_args = parse_explicit_template_arguments_as_result(TokenDestroyPattern::Restore);
+			}
+
+			if (template_args) {
 				FLASH_LOG(Parser, Debug, "Confirmed: '<' starts template arguments, not comparison operator");
-				// Template arguments were successfully parsed by could_be_template_arguments()
-				// The parse_explicit_template_arguments() call inside it already consumed the tokens
-				// We need to re-parse to get the actual template arguments
-				auto template_args = parse_explicit_template_arguments();
 
 				// Check if followed by '::' for qualified member access
 				// This handles patterns like: Base<T>::member(args)
@@ -531,9 +532,9 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						const DeclarationNode* decl_ptr = nullptr;
 						const FunctionDeclarationNode* func_decl_ptr = nullptr;
 
-						if (!base_name.empty() && template_args.has_value()) {
+						if (!base_name.empty()) {
 							AliasTemplateMaterializationResult materialized_owner =
-								materializeTemplateInstantiationForLookup(base_name, *template_args);
+								materializeTemplateInstantiationForLookup(base_name, template_args.read_template_type_args());
 							std::string_view instantiated_class_name = materialized_owner.instantiated_name;
 
 							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_class_name));
@@ -594,16 +595,15 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 					continue;
 				}
 
-				// Note: We don't directly use template_args here because the postfix operator loop
-				// will handle function calls with template arguments. We just needed to prevent
-				// the binary operator loop from consuming '<' as a comparison operator.
-				// Continue to the next iteration to let postfix operators handle this.
-				if (isParserAtSameToken(loop_start_token, peek_info())) {
-					return makeBinaryLoopStallError();
-				}
-				continue;
+				// Template arguments were parsed but followed by '(' instead of '::'.
+				// The binary expression loop cannot handle template function calls —
+				// that should have been handled by parse_primary_expression or
+				// parse_postfix_expression.  Break out of the binary loop; the Restore
+				// destructor rewinds the token position back to before '<' so the
+				// caller sees '<' and treats it as a comparison operator.
+				break;
 			}
-			// If could_be_template_arguments() returned false, fall through to treat '<' as operator
+			// If parse_explicit_template_arguments_as_result() returned an invalid result, fall through to treat '<' as operator
 		}
 
 		// Get the precedence of the current operator
@@ -880,10 +880,13 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text) {
 	bool is_hex_literal = lowerText.find("0x") == 0;
 	bool is_binary_literal = lowerText.find("0b") == 0;
 
-	// Check if this is a floating-point literal (contains '.', 'e', or 'E', or has 'f'/'l' suffix)
-	// BUT only check for 'e' (exponent) and 'f' (float suffix) if NOT a hex literal
+	// Check if this is a floating-point literal.
+	// Hexadecimal floating literals use 'p'/'P' exponents (e.g. 0x1.0p-3),
+	// while decimal floating literals use 'e'/'E'.
 	bool has_decimal_point = lowerText.find('.') != std::string::npos;
-	bool has_exponent = !is_hex_literal && lowerText.find('e') != std::string::npos;
+	bool has_exponent = is_hex_literal
+		? (lowerText.find('p') != std::string::npos)
+		: (lowerText.find('e') != std::string::npos);
 	bool has_float_suffix = !is_hex_literal && lowerText.find('f') != std::string::npos;
 	bool is_floating_point = has_decimal_point || has_exponent || has_float_suffix;
 

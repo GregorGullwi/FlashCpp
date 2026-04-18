@@ -233,25 +233,20 @@ std::string ElfFileWriter::get_or_create_builtin_typeinfo(TypeCategory cat) {
  * @return Symbol name for the type_info (e.g., "_ZTI7MyClass")
  */
 std::string ElfFileWriter::get_or_create_class_typeinfo(std::string_view class_name) {
-	// Itanium C++ ABI class type_info: _ZTI + length + name
-	// Example: class "Foo" -> "_ZTI3Foo"
-	StringBuilder builder;
-	builder.append("_ZTI").append(class_name.length()).append(class_name);
-	std::string typeinfo_symbol(builder.commit());
+	std::string typeinfo_symbol = NameMangling::generateItaniumSpecialName("_ZTI", class_name);
 
 	// Check if we've already created this symbol
 	if (created_class_typeinfos_.find(typeinfo_symbol) != created_class_typeinfos_.end()) {
 		return typeinfo_symbol;
 	}
 
-	// Build the type-name symbol: _ZTS + length + name
-	std::string typename_symbol = "_ZTS" + std::to_string(class_name.length()) + std::string(class_name);
+	std::string typename_symbol = NameMangling::generateItaniumSpecialName("_ZTS", class_name);
 
 	// ------------------------------------------------------------------
 	// 1. Create _ZTS<classname> in .rodata: the null-terminated type name
 	//    string, e.g. "11MyException\0" for class MyException.
 	// ------------------------------------------------------------------
-	std::string type_name_str = std::to_string(class_name.length()) + std::string(class_name);
+	std::string type_name_str = NameMangling::generateItaniumEncodedTypeName(class_name);
 	auto* rodata = getSectionByName(".rodata");
 	if (!rodata) {
 		throw std::runtime_error(".rodata section not found");
@@ -343,10 +338,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 
 	std::string_view class_name = StringTable::getStringView(struct_info->getName());
 
-	// Build _ZTI symbol name
-	StringBuilder builder;
-	builder.append("_ZTI").append(class_name.length()).append(class_name);
-	std::string typeinfo_symbol(builder.commit());
+	std::string typeinfo_symbol = NameMangling::generateItaniumSpecialName("_ZTI", class_name);
 
 	// Reuse the same cache as the flat overload so delegation for classes without bases
 	// cannot re-emit _ZTS/_ZTI symbols on a subsequent hierarchical lookup.
@@ -372,9 +364,8 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 		}
 	}
 
-	// Build _ZTS (type name string) in .rodata
-	std::string typename_symbol = "_ZTS" + std::to_string(class_name.length()) + std::string(class_name);
-	std::string type_name_str = std::to_string(class_name.length()) + std::string(class_name);
+	std::string typename_symbol = NameMangling::generateItaniumSpecialName("_ZTS", class_name);
+	std::string type_name_str = NameMangling::generateItaniumEncodedTypeName(class_name);
 
 	auto* rodata = getSectionByName(".rodata");
 	if (!rodata)
@@ -450,9 +441,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 			const StructTypeInfo* base_si = base_ti->getStructInfo();
 			if (base_si) {
 				std::string_view base_name = StringTable::getStringView(base_si->getName());
-				StringBuilder b2;
-				b2.append("_ZTI").append(base_name.length()).append(base_name);
-				base_zti = std::string(b2.commit());
+				base_zti = NameMangling::generateItaniumSpecialName("_ZTI", base_name);
 			}
 		}
 		if (!base_zti.empty()) {
@@ -591,9 +580,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 				const StructTypeInfo* base_si = base_ti->getStructInfo();
 				if (base_si) {
 					std::string_view base_name = StringTable::getStringView(base_si->getName());
-					StringBuilder b2;
-					b2.append("_ZTI").append(base_name.length()).append(base_name);
-					base_zti = std::string(b2.commit());
+					base_zti = NameMangling::generateItaniumSpecialName("_ZTI", base_name);
 				}
 			}
 			if (!base_zti.empty()) {

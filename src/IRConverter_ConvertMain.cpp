@@ -830,8 +830,10 @@ void IrToObjConverter<TWriterClass>::emitComparisonInstruction(const typename Ir
 	std::array<uint8_t, 3> setccInst = {0x0F, setcc_opcode, static_cast<uint8_t>(0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) & 0x07))};
 	textSectionData.insert(textSectionData.end(), setccInst.begin(), setccInst.end());
 
-		// Zero-extend the low byte to full register: movzx r64, r8
-	auto movzx_encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.result_physical_reg);
+	// Zero-extend the low byte to full register: movzx r32, r8
+	// include_rex_w=true ensures a REX prefix is always emitted, which is required
+	// because the 4-byte emit pattern below unconditionally includes rex_prefix.
+	auto movzx_encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.result_physical_reg, /* include_rex_w = */ true);
 	std::array<uint8_t, 4> movzxInst = {movzx_encoding.rex_prefix, 0x0F, 0xB6, movzx_encoding.modrm_byte};
 	textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
 
@@ -5980,39 +5982,64 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 				return -1;
 			}
 
-			// Find the byte offset of the static source subobject inside the target type
-			// by recursively walking only public, non-virtual bases. __dynamic_cast can
-			// use this hint for simple derived-to-base relationships; other cases fall
-			// back to -1. The lambda takes itself explicitly to recurse without adding
-			// another helper function.
-			auto findPublicNonVirtualBaseOffset = [&](const auto& self, const StructTypeInfo* current_struct, int64_t current_offset) -> std::optional<int64_t> {
+			// Itanium ABI src2dst_offset classification:
+			//  >=0 : source is a unique public non-virtual base of target at this offset
+			//   -1 : unspecified / runtime must discover relationship
+			//   -2 : source is not a public base of target
+			//   -3 : source is a multiple public non-virtual base of target
+			struct Src2DstOffsetHintState {
+				bool saw_public_base = false;
+				bool saw_public_virtual_base = false;
+				bool saw_non_public_base = false;
+				bool saw_unique_public_non_virtual_base = false;
+				bool saw_multiple_public_non_virtual_bases = false;
+				int64_t unique_public_non_virtual_offset = 0;
+			};
+			Src2DstOffsetHintState hint_state;
+			auto classifySourceBaseRelationship = [&](const auto& self,
+													  const StructTypeInfo* current_struct,
+													  int64_t current_offset,
+													  bool public_path,
+													  bool virtual_path) -> void {
 				if (!current_struct) {
-					return std::nullopt;
+					return;
 				}
-				std::optional<int64_t> found_offset;
 				for (const auto& base : current_struct->base_classes) {
-					if (base.access != AccessSpecifier::Public || base.is_virtual) {
-						continue;
-					}
+					const bool next_public_path = public_path && base.access == AccessSpecifier::Public;
+					const bool next_virtual_path = virtual_path || base.is_virtual;
 					int64_t base_offset = current_offset + static_cast<int64_t>(base.offset);
 					if (base.type_index == source_type_index) {
-						if (found_offset) return std::optional<int64_t>{-1}; // Ambiguous
-						found_offset = base_offset;
+						if (!next_public_path) {
+							hint_state.saw_non_public_base = true;
+						} else if (next_virtual_path) {
+							hint_state.saw_public_base = true;
+							hint_state.saw_public_virtual_base = true;
+						} else if (!hint_state.saw_unique_public_non_virtual_base) {
+							hint_state.saw_public_base = true;
+							hint_state.saw_unique_public_non_virtual_base = true;
+							hint_state.unique_public_non_virtual_offset = base_offset;
+						} else {
+							hint_state.saw_public_base = true;
+							hint_state.saw_multiple_public_non_virtual_bases = true;
+						}
 						continue;
 					}
 					const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 					const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
-					if (auto nested = self(self, base_struct_info, base_offset)) {
-						if (*nested == -1 || found_offset) return std::optional<int64_t>{-1}; // Ambiguous
-						found_offset = nested;
-					}
+					self(self, base_struct_info, base_offset, next_public_path, next_virtual_path);
 				}
-				return found_offset;
 			};
-
-			if (auto offset = findPublicNonVirtualBaseOffset(findPublicNonVirtualBaseOffset, target_struct_info, 0)) {
-				return *offset;
+			classifySourceBaseRelationship(classifySourceBaseRelationship, target_struct_info, 0, true, false);
+			if (hint_state.saw_multiple_public_non_virtual_bases) {
+				return -3;
 			}
+			if (hint_state.saw_unique_public_non_virtual_base && !hint_state.saw_public_virtual_base) {
+				return hint_state.unique_public_non_virtual_offset;
+			}
+			if (!hint_state.saw_public_base) {
+				return -2;
+			}
+			return -1;
 		}
 		return -1;
 	};
@@ -6044,6 +6071,55 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		return;
 	}
 
+	// dynamic_cast<void*>(expr) — C++20 [expr.dynamic.cast]/7:
+	// Returns a pointer to the most-derived complete object.
+	if (op.target_type_index.category() == TypeCategory::Void) {
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			emitMovRegReg(X64Register::RDI, X64Register::RAX);
+				// null check: if src == null, return null
+			emitTestRegReg(X64Register::RDI);
+			textSectionData.push_back(0x0F);
+			textSectionData.push_back(0x84);
+			size_t vc_null_check = textSectionData.size();
+			textSectionData.push_back(0x00); textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00); textSectionData.push_back(0x00);
+				// RAX = *RDI  (vptr = first 8 bytes of object)
+			emitMovFromMemory(X64Register::RAX, X64Register::RDI, 0, 8);
+				// RCX = *(RAX - 16)  (offset_to_top at vtable[-2])
+			emitMovFromMemory(X64Register::RCX, X64Register::RAX, -16, 8);
+				// RDI = RDI + RCX  (complete-object pointer)
+			emitAddRegs(textSectionData, X64Register::RDI, X64Register::RCX);
+			emitMovToFrameSized(SizedRegister{X64Register::RDI, 64, false}, SizedStackSlot{result_offset, 64, false});
+			textSectionData.push_back(0xEB); // JMP short past null path
+			size_t vc_jmp = textSectionData.size();
+			textSectionData.push_back(0x00);
+				// null path
+			size_t vc_null_target = textSectionData.size();
+			int32_t vc_null_delta = static_cast<int32_t>(vc_null_target - vc_null_check - 4);
+			textSectionData[vc_null_check + 0] = static_cast<uint8_t>(vc_null_delta & 0xFF);
+			textSectionData[vc_null_check + 1] = static_cast<uint8_t>((vc_null_delta >> 8) & 0xFF);
+			textSectionData[vc_null_check + 2] = static_cast<uint8_t>((vc_null_delta >> 16) & 0xFF);
+			textSectionData[vc_null_check + 3] = static_cast<uint8_t>((vc_null_delta >> 24) & 0xFF);
+			emitXorRegReg(X64Register::RDI);
+			emitMovToFrameSized(SizedRegister{X64Register::RDI, 64, false}, SizedStackSlot{result_offset, 64, false});
+			size_t vc_end = textSectionData.size();
+			int8_t vc_jmp_delta = static_cast<int8_t>(vc_end - vc_jmp - 1);
+			textSectionData[vc_jmp] = static_cast<uint8_t>(vc_jmp_delta);
+		} else {
+			// __RTCastToVoid handles null internally (returns nullptr), so no
+			// explicit null guard is needed on the COFF/Windows path.
+			emitMovRegReg(X64Register::RCX, X64Register::RAX);
+			emitSubRSP(32);
+			emitCall("__RTCastToVoid");
+			emitAddRSP(32);
+			emitMovToFrameSized(
+				SizedRegister{X64Register::RAX, 64, false},
+				SizedStackSlot{result_offset, 64, false});
+		}
+		regAlloc.reset();
+		return;
+	}
+
 		// Step 3: Check if source pointer is null
 	emitTestRegReg(X64Register::RAX);
 
@@ -6058,7 +6134,7 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 
 		// Step 4: Load the platform RTTI arguments.
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-			// Linux: __dynamic_cast(source_ptr, source_rtti, target_rtti, -1)
+			// Linux: __dynamic_cast(source_ptr, source_rtti, target_rtti, offset_hint)
 		std::string source_typeinfo_symbol = getClassTypeinfoSymbol(op.source_type_index, {});
 		std::string target_typeinfo_symbol = getClassTypeinfoSymbol(op.target_type_index, op.target_type_name);
 		if (source_typeinfo_symbol.empty() || target_typeinfo_symbol.empty()) {
@@ -6342,6 +6418,48 @@ void IrToObjConverter<TWriterClass>::handleGlobalStore(const IrInstruction& inst
 			// Store to global using RIP-relative addressing
 		uint32_t reloc_offset = emitMovRipRelativeStore(X64Register::RAX, size_in_bits);
 		pending_global_relocations_.push_back({reloc_offset, global_name, IMAGE_REL_AMD64_REL32});
+	}
+}
+
+template <class TWriterClass>
+std::optional<int64_t> IrToObjConverter<TWriterClass>::findBaseOffsetWithinDerived(TypeIndex base_type, TypeIndex derived_type) const {
+	if (!base_type.is_valid() || !derived_type.is_valid())
+		return std::nullopt;
+	if (base_type == derived_type)
+		return 0;
+	const TypeInfo* derived_info = tryGetTypeInfo(derived_type);
+	const StructTypeInfo* derived_struct = derived_info ? derived_info->getStructInfo() : nullptr;
+	if (!derived_struct)
+		return std::nullopt;
+	// Recursively search public non-virtual base classes for base_type.
+	auto findOffset = [&](const auto& self, const StructTypeInfo* cur, int64_t cur_offset) -> std::optional<int64_t> {
+		if (!cur)
+			return std::nullopt;
+		for (const auto& base : cur->base_classes) {
+			if (base.access != AccessSpecifier::Public || base.is_virtual)
+				continue;
+			int64_t off = cur_offset + static_cast<int64_t>(base.offset);
+			if (base.type_index == base_type)
+				return off;
+			const TypeInfo* b_info = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* b_struct = b_info ? b_info->getStructInfo() : nullptr;
+			if (auto nested = self(self, b_struct, off))
+				return nested;
+		}
+		return std::nullopt;
+	};
+	return findOffset(findOffset, derived_struct, 0);
+}
+
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitDerivedToBasePointerAdjust(X64Register ptr_reg, TypeIndex base_type, TypeIndex derived_type) {
+	if (!base_type.isStruct() || !derived_type.isStruct() || base_type == derived_type)
+		return;
+	if (auto offset = findBaseOffsetWithinDerived(base_type, derived_type)) {
+		if (*offset > 0) {
+			FLASH_LOG(Codegen, Debug, "Derived-to-base pointer adjustment: +", *offset, " bytes");
+			emitAddImmToReg(textSectionData, ptr_reg, static_cast<int64_t>(*offset));
+		}
 	}
 }
 
@@ -6697,6 +6815,12 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					if (should_deref_reference_source) {
 						loadReferenceSourceIntoRegister(src_reg.value(), src_offset, src_ref_info->value_size_bits.value, false);
 					}
+					// Derived-to-base pointer adjustment: add base class offset for non-primary bases.
+					// Check is_valid() to skip dynamic_cast results that have TypeIndex with index 0.
+					if (op.pointer_depth.is_pointer() && op.type_index.isStruct() &&
+						init.type_index.isStruct() && init.type_index.is_valid() && init.type_index != op.type_index) {
+						emitDerivedToBasePointerAdjust(src_reg.value(), op.type_index, init.type_index);
+					}
 					emitMovToFrameSized(
 						SizedRegister{src_reg.value(), static_cast<uint8_t>(op.size_in_bits.value), false},
 						SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.opType())});
@@ -6828,6 +6952,12 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						loadReferenceSourceIntoRegister(allocated_reg_val, src_offset, src_ref_info->value_size_bits.value, false);
 					} else {
 						emitMovFromFrameBySize(allocated_reg_val, src_offset, op.size_in_bits.value);
+					}
+						// Derived-to-base pointer adjustment: when initializing B* from a C* where
+						// B is a non-primary (non-zero-offset) base of C, add the subobject offset.
+					if (op.pointer_depth.is_pointer() && op.type_index.isStruct() &&
+						init.type_index.isStruct() && init.type_index.is_valid() && init.type_index != op.type_index) {
+						emitDerivedToBasePointerAdjust(allocated_reg_val, op.type_index, init.type_index);
 					}
 					emitMovToFrameSized(
 						SizedRegister{allocated_reg_val, 64, false},
@@ -7349,10 +7479,21 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			// Look up the struct type info
 		auto struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 		if (struct_it != getTypesByNameMap().end()) {
-			const TypeInfo* type_info = struct_it->second;
-			const StructTypeInfo* struct_info = type_info->getStructInfo();
+			TypeInfo* type_info = struct_it->second;
+			StructTypeInfo* struct_info = type_info->getStructInfo();
 
-			if (struct_info && struct_info->has_vtable) {
+			// Mark that this TU is compiling a member function body for this class.
+			// This acts as a key-function-like heuristic: only emit a vtable definition
+			// when the current TU has actually compiled at least one member function body.
+			// For classes whose vtables are provided by the C++ runtime (std::type_info,
+			// std::exception, __cxxabiv1::* etc.), no FunctionDecl IR is ever emitted for
+			// their member functions, so vtable_defined_in_tu stays false and no vtable
+			// definition is emitted — avoiding ODR violations with the runtime library.
+			if (struct_info) {
+				struct_info->vtable_defined_in_tu = true;
+			}
+
+			if (struct_info && struct_info->has_vtable && struct_info->vtable_defined_in_tu) {
 					// Use the pre-generated vtable symbol from struct_info
 				std::string_view vtable_symbol = struct_info->vtable_symbol;
 
@@ -7516,6 +7657,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						vtables_.push_back(std::move(secondary_vtable_info));
 					};
 
+					vtables_.push_back(vtable_info);
 					for (const auto& base : struct_info->base_classes) {
 						if (!base.is_virtual) {
 							registerSecondaryVTable(base);
@@ -7524,8 +7666,6 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 					for (const auto& virtual_base : struct_info->virtual_bases) {
 						registerSecondaryVTable(virtual_base);
 					}
-
-					vtables_.push_back(std::move(vtable_info));
 				}
 
 					// Check if this function is virtual and add it to the vtable
@@ -10612,6 +10752,14 @@ void IrToObjConverter<TWriterClass>::handleUnaryOperation(const IrInstruction& i
 		}
 		std::array<uint8_t, 3> seteInst = {0x0F, 0x94, static_cast<uint8_t>(0xC0 | sete_reg)};
 		textSectionData.insert(textSectionData.end(), seteInst.begin(), seteInst.end());
+
+		// Zero-extend the low byte to full register: movzx r32, r8
+		// This is essential because sete only sets the low byte, leaving high bytes unchanged.
+		// include_rex_w=true ensures a REX prefix is always emitted, which is required
+		// because the 4-byte emit pattern below unconditionally includes rex_prefix.
+		auto movzx_encoding = encodeRegToRegInstruction(result_physical_reg, result_physical_reg, /* include_rex_w = */ true);
+		std::array<uint8_t, 4> movzxInst = {movzx_encoding.rex_prefix, 0x0F, 0xB6, movzx_encoding.modrm_byte};
+		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
 		break;
 	}
 	case UnaryOperation::BitwiseNot:
@@ -11381,6 +11529,20 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 
 		if (rhs_offset == -1) {
 			throw InternalError("RHS variable not found in struct assignment");
+			return;
+		}
+
+		// Derived-to-base pointer assignment: B* bp = c_ptr where B is a non-primary base of C.
+		// The RHS is a pointer (pointer_depth >= 1) so we must add the base-class subobject offset
+		// instead of performing a raw struct copy.
+		if (op.rhs.pointer_depth.is_pointer() && op.lhs.pointer_depth.is_pointer() &&
+			op.rhs.type_index.isStruct() && op.lhs.type_index.isStruct() &&
+			op.rhs.type_index != op.lhs.type_index) {
+			X64Register ptr_reg = allocateRegisterWithSpilling();
+			emitMovFromFrameSized(SizedRegister{ptr_reg, 64, false}, SizedStackSlot{rhs_offset, 64, false});
+			emitDerivedToBasePointerAdjust(ptr_reg, op.lhs.type_index, op.rhs.type_index);
+			emitMovToFrameSized(SizedRegister{ptr_reg, 64, false}, SizedStackSlot{lhs_offset, 64, false});
+			regAlloc.release(ptr_reg);
 			return;
 		}
 
