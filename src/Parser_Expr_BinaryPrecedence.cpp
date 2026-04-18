@@ -595,15 +595,12 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 					continue;
 				}
 
-				// Note: We don't directly use template_args here because the postfix operator loop
-				// will handle function calls with template arguments. We just needed to prevent
-				// the binary operator loop from consuming '<' as a comparison operator.
 				// Template arguments were parsed but followed by '(' instead of '::'.
 				// The binary expression loop cannot handle template function calls —
 				// that should have been handled by parse_primary_expression or
-				// parse_postfix_expression.  Let the Restore destructor rewind the
-				// token position back to '<' and fall through to treat '<' as a
-				// comparison operator.
+				// parse_postfix_expression.  Break out of the binary loop; the Restore
+				// destructor rewinds the token position back to before '<' so the
+				// caller sees '<' and treats it as a comparison operator.
 				break;
 			}
 			// If parse_explicit_template_arguments_as_result() returned an invalid result, fall through to treat '<' as operator
