@@ -10752,9 +10752,9 @@ void IrToObjConverter<TWriterClass>::handleUnaryOperation(const IrInstruction& i
 		std::array<uint8_t, 3> seteInst = {0x0F, 0x94, static_cast<uint8_t>(0xC0 | sete_reg)};
 		textSectionData.insert(textSectionData.end(), seteInst.begin(), seteInst.end());
 
-			// Zero-extend the low byte to full register: movzx r32, r8
-			// This is essential because sete only sets the low byte, leaving high bytes unchanged.
-			// REX.W is unnecessary for MOVZX — writing a 32-bit register zero-extends to 64 bits on x86-64.
+		// Zero-extend the low byte to full register: movzx r32, r8
+		// This is essential because sete only sets the low byte, leaving high bytes unchanged.
+		// REX.W is unnecessary for MOVZX — writing a 32-bit register zero-extends to 64 bits on x86-64.
 		auto movzx_encoding = encodeRegToRegInstruction(result_physical_reg, result_physical_reg, /* include_rex_w = */ false);
 		std::array<uint8_t, 4> movzxInst = {movzx_encoding.rex_prefix, 0x0F, 0xB6, movzx_encoding.modrm_byte};
 		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
