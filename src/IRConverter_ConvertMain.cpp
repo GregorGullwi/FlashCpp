@@ -6104,6 +6104,8 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 			int8_t vc_jmp_delta = static_cast<int8_t>(vc_end - vc_jmp - 1);
 			textSectionData[vc_jmp] = static_cast<uint8_t>(vc_jmp_delta);
 		} else {
+			// __RTCastToVoid handles null internally (returns nullptr), so no
+			// explicit null guard is needed on the COFF/Windows path.
 			emitMovRegReg(X64Register::RCX, X64Register::RAX);
 			emitSubRSP(32);
 			emitCall("__RTCastToVoid");

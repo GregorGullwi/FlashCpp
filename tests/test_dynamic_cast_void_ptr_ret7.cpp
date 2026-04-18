@@ -53,5 +53,10 @@ int main() {
 	void* vp3 = dynamic_cast<void*>(null_bp);
 	if (vp3 != nullptr) return 3;
 
+	// Test 4: dynamic_cast<void*> on nullptr with single-inheritance base pointer
+	Base* null_base = nullptr;
+	void* vp4 = dynamic_cast<void*>(null_base);
+	if (vp4 != nullptr) return 4;
+
 	return 7;
 }
