@@ -11528,10 +11528,10 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			return;
 		}
 
-			// Derived-to-base pointer assignment: B* bp = c_ptr where B is a non-primary base of C.
-			// The RHS is a pointer (pointer_depth >= 1) so we must add the base-class subobject offset
-			// instead of performing a raw struct copy.
-		if (op.rhs.pointer_depth.is_pointer() &&
+		// Derived-to-base pointer assignment: B* bp = c_ptr where B is a non-primary base of C.
+		// The RHS is a pointer (pointer_depth >= 1) so we must add the base-class subobject offset
+		// instead of performing a raw struct copy.
+		if (op.rhs.pointer_depth.is_pointer() && op.lhs.pointer_depth.is_pointer() &&
 			op.rhs.type_index.isStruct() && op.lhs.type_index.isStruct() &&
 			op.rhs.type_index != op.lhs.type_index) {
 			X64Register ptr_reg = allocateRegisterWithSpilling();
