@@ -612,21 +612,11 @@ ParseResult Parser::parse_function_trailing_specifiers(
 				SaveHandle noexcept_expr_pos = save_token_position();
 				advance(); // consume '('
 
-				// Nested noexcept(...) expressions are common in standard library
-				// headers and frequently contain constructs we do not need to
-				// model semantically for declaration parsing.
-				// IMPORTANT: We must clear is_noexcept here because the safe
-				// default when we cannot evaluate the expression is false
-				// (potentially-throwing), not true.  Defaulting to noexcept(true)
-				// would cause std::terminate at runtime when the function throws.
-				if (peek() == "noexcept"_tok) {
-					out_specs.is_noexcept = false;
-					restore_token_position(noexcept_expr_pos);
-					skip_balanced_parens();
-					continue;
-				}
-
-				// Parse the constant expression
+				// Parse the constant expression.
+				// The expression parser already handles the noexcept operator
+				// (noexcept(expr) as a unary expression), so nested forms like
+				// noexcept(noexcept(may_throw())) are parsed correctly without
+				// special-casing here.
 				FlashCpp::SymbolTableScope noexcept_scope(ScopeType::Function);
 				register_parameters_in_scope(params);
 				auto expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
