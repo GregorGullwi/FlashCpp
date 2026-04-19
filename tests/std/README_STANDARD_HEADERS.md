@@ -25,7 +25,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2051ms (retested 2026-04-11). "Operator- not defined for operand types". |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~1564ms (retested 2026-04-11). "unsupported PackExpansionExprNode reached semantic analysis". |
-| `<vector>` | `test_std_vector.cpp` | 💥 Crash | ~6741ms (retested 2026-04-11). |
+| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~1500ms (retested 2026-04-19). "No matching function for call to '__stdio_common_vfwprintf'" in UCRT headers during overload resolution. Not a crash as previously reported. |
 | `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
 | `<list>` | `test_std_list.cpp` | 💥 Crash | ~1987ms (retested 2026-04-11). |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
@@ -98,6 +98,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+#### 2026-04-19 Fix: nullptr literal support for void* parameters
+
+Fixed `nullptr` literal matching for `void*` and `const void*` parameters. Regression test: `tests/test_nullptr_void_ptr_arg_ret0.cpp`.
 
 ### Summary (2026-03-14, updated)
 

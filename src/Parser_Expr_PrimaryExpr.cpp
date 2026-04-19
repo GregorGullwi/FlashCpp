@@ -6809,10 +6809,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		result = emplace_node<ExpressionNode>(BoolLiteralNode(current_token_, value));
 		advance();
 	} else if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "nullptr"sv) {
-		// Handle nullptr literal - represented as null pointer constant (0)
-		// The actual type will be determined by context (can convert to any pointer type)
+		// Handle nullptr literal as std::nullptr_t. The value still lowers as zero,
+		// but overload resolution must not see it as an int literal.
 		result = emplace_node<ExpressionNode>(NumericLiteralNode(current_token_,
-																 0ULL, TypeCategory::Int, TypeQualifier::None, 64));
+																 0ULL, TypeCategory::Nullptr, TypeQualifier::None, 64));
 		advance();
 	} else if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "this"sv) {
 		// Handle 'this' keyword - represents a pointer to the current object

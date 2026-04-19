@@ -83,6 +83,7 @@ inline ConversionPlan buildConversionPlan(TypeCategory from_category, TypeCatego
 
 	// --- Target is bool: BooleanConversion [conv.bool] ---
 	if (to_category == TypeCategory::Bool) {
+		// nullptr_t is not an ordinary conversion to bool for overload resolution.
 		if (isIntegralType(from_category) || isFloatingPointType(from_category) || from_category == TypeCategory::Enum) {
 			return {ConversionRank::Conversion, StandardConversionKind::BooleanConversion, true};
 		}
@@ -357,6 +358,12 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 //   • Set is_lvalue_reference(true) on 'from' for lvalue expressions (named variables, etc.)
 //   • Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	if (from.category() == TypeCategory::Nullptr &&
+		(to.is_pointer() || to.is_function_pointer() ||
+		 to.is_member_function_pointer() || to.is_member_object_pointer())) {
+		return {ConversionRank::Conversion, StandardConversionKind::PointerConversion, true};
+	}
+
 	// Check pointer-to-pointer compatibility FIRST
 	// This handles pointer types with lvalue/rvalue flags (which indicate value category, not actual reference types)
 	// Pointers with lvalue flags can still be passed to functions expecting pointer parameters
