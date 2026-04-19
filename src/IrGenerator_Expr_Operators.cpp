@@ -817,7 +817,9 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// ir_type, ref_qualifier, etc.) from the branch ExprResult.
 	auto makeBranchRhs = [&](const ExprResult& branch_result) {
 		if (context == ExpressionContext::LValueAddress) {
-			return makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, toIrValue(branch_result.value));
+			return withStorage(
+				makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, toIrValue(branch_result.value)),
+				ValueStorage::ContainsAddress);
 		}
 		return toTypedValue(branch_result);
 	};
@@ -830,6 +832,7 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	assign_true_op.result = result_var;
 	assign_true_op.lhs = makeBranchLhs(IrValue(result_var));
 	assign_true_op.rhs = makeBranchRhs(true_result);
+	assign_true_op.dereference_rhs_references = context != ExpressionContext::LValueAddress;
 	ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_true_op), ternaryNode.get_token()));
 
 	// Unconditional branch to end
@@ -857,6 +860,7 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	assign_false_op.result = result_var;
 	assign_false_op.lhs = makeBranchLhs(IrValue(result_var));
 	assign_false_op.rhs = makeBranchRhs(false_result);
+	assign_false_op.dereference_rhs_references = context != ExpressionContext::LValueAddress;
 	ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_false_op), ternaryNode.get_token()));
 
 	// End label (merge point)

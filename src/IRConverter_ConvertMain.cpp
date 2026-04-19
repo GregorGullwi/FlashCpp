@@ -11782,6 +11782,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		// For non-reference LHS, proceed with normal assignment
 		// Get RHS source
 	TypeCategory rhs_type = op.rhs.typeEnum();
+	const bool rhs_contains_address = op.rhs.storage == ValueStorage::ContainsAddress;
 	X64Register source_reg = X64Register::RAX;
 	std::optional<IndirectStorageInfo> copied_indirect_info;
 	TempVar lhs_temp_for_metadata{};
@@ -11797,13 +11798,16 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		if (it != variable_scopes.back().variables.end()) {
 			int32_t rhs_offset = it->second.offset;
 
-				// Check if RHS is a reference - if so, dereference it (unless explicitly disabled)
-				// Skip dereferencing if holds_address_only is true (AddressOf results)
+				// Check if RHS is a reference - if so, dereference it unless this
+				// assignment is explicitly copying an address.
 			auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
-			if (rhs_ref_info.has_value() && !op.dereference_rhs_references) {
+			if (rhs_ref_info.has_value() && !op.dereference_rhs_references && !rhs_contains_address) {
 				copied_indirect_info = rhs_ref_info;
 			}
-			if (rhs_ref_info.has_value() && op.dereference_rhs_references && shouldImplicitlyDeref(rhs_ref_info.value())) {
+			if (rhs_ref_info.has_value() &&
+				op.dereference_rhs_references &&
+				!rhs_contains_address &&
+				shouldImplicitlyDeref(rhs_ref_info.value())) {
 					// RHS is a reference - load pointer and dereference
 				X64Register ptr_reg = allocateRegisterWithSpilling();
 				emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
@@ -11853,7 +11857,10 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			}
 		}
 
-		if (rhs_ref_info.has_value() && op.dereference_rhs_references && shouldImplicitlyDeref(rhs_ref_info.value())) {
+		if (rhs_ref_info.has_value() &&
+			op.dereference_rhs_references &&
+			!rhs_contains_address &&
+			shouldImplicitlyDeref(rhs_ref_info.value())) {
 				// RHS is a reference - load pointer and dereference
 			X64Register ptr_reg = allocateRegisterWithSpilling();
 			emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
@@ -11861,7 +11868,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			int value_size_bytes = rhs_ref_info->value_size_bits.value / 8;
 			emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 			source_reg = ptr_reg;
-		} else if (rhs_ref_info.has_value() && !op.dereference_rhs_references) {
+		} else if (rhs_ref_info.has_value() && !op.dereference_rhs_references && !rhs_contains_address) {
 			copied_indirect_info = rhs_ref_info;
 		} else if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
 				// Check if the value is already in a register
