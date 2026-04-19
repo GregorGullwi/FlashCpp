@@ -1821,6 +1821,11 @@ private:	 // Resume private methods
 											 TypeSpecifierNode& type_specifier,
 											 const std::optional<ASTNode>& initializer);
 	ParseResult parse_extern_block(Linkage linkage);	 // Parse extern "C" { ... } block
+	ParseResult parse_brace_initializer_clause_list(std::vector<ASTNode>& elements,
+													const TypeSpecifierNode* nested_type_specifier,
+													bool allow_nested_braces);
+	std::optional<TypeSpecifierNode> get_initializer_list_element_type_spec(const TypeSpecifierNode& type_specifier,
+																			const Token& token) const;
 	ParseResult parse_brace_initializer(const TypeSpecifierNode& type_specifier);  // Add brace initializer parser
 	static bool isFoldOperatorToken(std::string_view op);
 	ParseResult parse_for_loop();  // Add this line

@@ -1910,6 +1910,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				}
 			}
 
+			const bool is_initializer_list_construction_init =
+				init_node.is<ExpressionNode>() &&
+				std::holds_alternative<InitializerListConstructionNode>(init_node.as<ExpressionNode>());
+
 				// References don't use copy constructors - they bind to the address of the initializer
 			bool is_copy_init_for_struct = (type_node.category() == TypeCategory::Struct &&
 											type_node.pointer_depth() == 0 &&
@@ -1917,6 +1921,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											!type_node.is_rvalue_reference() &&
 											node.initializer() &&
 											init_node.is<ExpressionNode>() &&
+											!is_initializer_list_construction_init &&
 											!init_node.is<InitializerListNode>() &&
 											is_struct_with_constructor);
 

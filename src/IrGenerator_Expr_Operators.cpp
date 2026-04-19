@@ -2513,10 +2513,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 		}
 	}
+	if (rhs_pointer_depth == 0) {
+		rhs_pointer_depth = rhsExprResult.pointer_depth.value;
+	}
 
 	// Special handling for pointer subtraction (ptr - ptr)
 	// Result is ptrdiff_t (number of elements between pointers)
-	if (op == "-" && lhs_pointer_depth > 0 && rhs_pointer_depth > 0 && lhs_type_node) {
+	if (op == "-" && lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
 		// Both sides are pointers - this is pointer difference
 		// C++ standard: (ptr1 - ptr2) / sizeof(*ptr1) gives element count
 		// Result type is ptrdiff_t (signed long, 64-bit on x64)
@@ -2536,8 +2539,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		size_t element_size;
 		if (lhs_pointer_depth > 1) {
 			element_size = 8; // Multi-level pointer: element is a pointer
-		} else {
+		} else if (lhs_type_node) {
 			element_size = static_cast<size_t>(getPointerElementSize(lhs_type_node->type_index(), lhs_pointer_depth));
+		} else {
+			int base_size_bits = get_type_size_bits(lhsCat);
+			element_size = static_cast<size_t>(base_size_bits / 8);
+			if (element_size == 0)
+				element_size = 1;
 		}
 
 		// Step 3: Divide byte difference by element size to get element count

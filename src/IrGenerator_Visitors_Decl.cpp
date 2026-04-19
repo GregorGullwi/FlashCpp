@@ -2965,7 +2965,26 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_size.object = init_list_name;	// Use StringHandle
 		store_size.member_name = size_member.getName();
 		store_size.offset = static_cast<int>(size_member.offset);
-		store_size.value = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(array_size));
+		if (size_member.pointer_depth > 0) {
+			TempVar end_ptr = var_counter.next();
+			ArrayElementAddressOp end_addr_op;
+			end_addr_op.result = end_ptr;
+			end_addr_op.element_type_index = nativeTypeIndex(element_type);
+			end_addr_op.element_size_in_bits = element_size_bits;
+			end_addr_op.array = array_name;
+			end_addr_op.index = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(array_size));
+			end_addr_op.is_pointer_to_array = false;
+			ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(end_addr_op), init_list.called_from()));
+
+			TypedValue end_value;
+			end_value.setType(element_type);
+			end_value.size_in_bits = SizeInBits{64};
+			end_value.value = end_ptr;
+			end_value.pointer_depth = PointerDepth{1};
+			store_size.value = end_value;
+		} else {
+			store_size.value = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(array_size));
+		}
 		store_size.struct_type_info = nullptr;
 		store_size.ref_qualifier = CVReferenceQualifier::None;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_size), init_list.called_from()));

@@ -1338,7 +1338,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 }
 
 // Check if a type name is std::initializer_list (or just initializer_list in std namespace)
-// Returns the element type index if it is, or nullopt otherwise
+// Returns the initializer_list type index if it is, or nullopt otherwise
 std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNode& type_spec) const {
 	if (type_spec.category() != TypeCategory::Struct) {
 		return std::nullopt;
@@ -1367,6 +1367,76 @@ std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNod
 	}
 
 	return std::nullopt;
+}
+
+std::optional<TypeSpecifierNode> Parser::get_initializer_list_element_type_spec(const TypeSpecifierNode& type_specifier,
+																				const Token& token) const {
+	const TypeInfo* type_info = tryGetTypeInfo(type_specifier.type_index());
+	if (!type_info || !type_info->isTemplateInstantiation() || type_info->templateArgs().empty()) {
+		return std::nullopt;
+	}
+
+	const TypeInfo::TemplateArgInfo& element_arg = type_info->templateArgs()[0];
+	if (element_arg.is_value) {
+		return std::nullopt;
+	}
+
+	const TypeIndex element_type_index = element_arg.type_index.withCategory(element_arg.typeEnum());
+	SizeInBits element_size{get_type_size_bits(element_arg.typeEnum())};
+	if (const TypeInfo* element_info = tryGetTypeInfo(element_type_index)) {
+		if (element_info->hasStoredSize()) {
+			element_size = element_info->sizeInBits();
+		}
+	}
+
+	TypeSpecifierNode element_type(
+		element_type_index,
+		TypeQualifier::None,
+		element_size,
+		token,
+		element_arg.cv_qualifier);
+	for (const CVQualifier pointer_cv : element_arg.pointer_cv_qualifiers) {
+		element_type.add_pointer_level(pointer_cv);
+	}
+	element_type.set_reference_qualifier(element_arg.ref_qualifier);
+	if (element_arg.is_array) {
+		element_type.set_array(true, element_arg.array_size);
+	}
+	return element_type;
+}
+
+ParseResult Parser::parse_brace_initializer_clause_list(std::vector<ASTNode>& elements,
+														const TypeSpecifierNode* nested_type_specifier,
+														bool allow_nested_braces) {
+	while (true) {
+		if (peek() == "}"_tok) {
+			break;
+		}
+
+		ParseResult init_expr_result;
+		if (allow_nested_braces && nested_type_specifier && peek() == "{"_tok) {
+			init_expr_result = parse_brace_initializer(*nested_type_specifier);
+		} else {
+			init_expr_result = parse_expression(2, ExpressionContext::Normal);
+		}
+		if (init_expr_result.is_error()) {
+			return init_expr_result;
+		}
+
+		if (init_expr_result.node().has_value()) {
+			elements.push_back(*init_expr_result.node());
+		} else {
+			return ParseResult::error("Expected initializer expression", current_token_);
+		}
+
+		if (peek() == ","_tok) {
+			advance();
+		} else {
+			break;
+		}
+	}
+
+	return ParseResult::success();
 }
 
 // Find a constructor in struct_info that takes std::initializer_list<T> as its parameter
@@ -1637,24 +1707,13 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 		// Dependent/unresolved types may not have struct_info_ yet.
 		// Parse as a generic initializer list (comma-separated expressions).
-		while (true) {
-			if (peek() == "}"_tok)
-				break;
-			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
-			if (init_expr_result.is_error())
-				return init_expr_result;
-			if (init_expr_result.node().has_value()) {
-				init_list_ref.add_initializer(*init_expr_result.node());
-			} else {
-				return ParseResult::error("Expected initializer expression", current_token_);
-			}
-			if (peek() == ","_tok) {
-				advance();
-				if (peek() == "}"_tok)
-					break;
-			} else {
-				break;
-			}
+		std::vector<ASTNode> elements;
+		ParseResult elements_result = parse_brace_initializer_clause_list(elements, nullptr, false);
+		if (elements_result.is_error()) {
+			return elements_result;
+		}
+		for (const ASTNode& element : elements) {
+			init_list_ref.add_initializer(element);
 		}
 		if (!consume("}"_tok)) {
 			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
@@ -1664,99 +1723,48 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 	const StructTypeInfo& struct_info = *type_info->struct_info_;
 
-	// Check if this struct has an initializer_list constructor
-	// If so, we need to handle brace-init-list specially by creating an InitializerListConstructionNode
-	auto init_list_ctor = find_initializer_list_constructor(struct_info);
-	if (init_list_ctor.has_value()) {
-		// This struct has an initializer_list constructor
-		// Parse all the brace elements first
+	auto init_list_type_result = is_initializer_list_type(type_specifier);
+	if (init_list_type_result.has_value()) {
 		std::vector<ASTNode> elements;
-		while (true) {
-			// Check if we've reached the end of the initializer list
-			if (peek() == "}"_tok) {
-				break;
-			}
-
-			// Parse the initializer expression
-			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
-			if (init_expr_result.is_error()) {
-				return init_expr_result;
-			}
-
-			if (init_expr_result.node().has_value()) {
-				elements.push_back(*init_expr_result.node());
-			} else {
-				return ParseResult::error("Expected initializer expression", current_token_);
-			}
-
-			// Check for comma or end of list
-			if (peek() == ","_tok) {
-				advance(); // consume the comma
-
-				// Allow trailing comma before '}'
-				if (peek() == "}"_tok) {
-					break;
-				}
-			} else {
-				// No comma, so we should be at the end
-				break;
-			}
+		ParseResult elements_result = parse_brace_initializer_clause_list(elements, nullptr, false);
+		if (elements_result.is_error()) {
+			return elements_result;
 		}
-
 		if (!consume("}"_tok)) {
 			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 		}
 
-		// Get element type from the initializer_list type
-		// The initializer_list struct stores the element type in its first member's type_index
-		TypeIndex init_list_type_index = init_list_ctor->second;
-		ASTNode element_type_node;
-
-		// Extract element type from the initializer_list struct's first member
-		// The first member is typically a pointer (const T*), and type_index points to T
-		if (const TypeInfo* init_list_info = tryGetTypeInfo(init_list_type_index)) {
-			if (init_list_info->struct_info_ && !init_list_info->struct_info_->members.empty()) {
-				const StructMember& first_member = init_list_info->struct_info_->members[0];
-				// The first member's type_index should point to the element type
-				if (const TypeInfo* elem_info = tryGetTypeInfo(first_member.type_index)) {
-					TypeCategory elem_type = elem_info->resolvedType();
-					const TypeCategory elem_cat = elem_info->category();
-					int elem_size = elem_info->hasStoredSize() ? static_cast<int>(elem_info->sizeInBits().value) : get_type_size_bits(elem_type);
-
-					auto elem_type_spec = emplace_node<TypeSpecifierNode>(
-						elem_type,
-						TypeQualifier::None,
-						static_cast<unsigned char>(elem_size),
-						brace_token,
-						CVQualifier::None);
-					// If it's a struct type, preserve the type_index
-					if (elem_cat == TypeCategory::Struct) {
-						elem_type_spec.as<TypeSpecifierNode>().set_type_index(first_member.type_index);
-					}
-					element_type_node = elem_type_spec;
-				} else {
-					// Fall back to using the member's type directly (for primitive types)
-					int elem_size = get_type_size_bits(first_member.memberType());
-					element_type_node = emplace_node<TypeSpecifierNode>(
-						first_member.memberType(),
-						TypeQualifier::None,
-						static_cast<unsigned char>(elem_size),
-						brace_token,
-						CVQualifier::None);
-				}
-			}
+		auto element_type_spec = get_initializer_list_element_type_spec(type_specifier, brace_token);
+		if (!element_type_spec.has_value()) {
+			throw InternalError("Could not extract element type from std::initializer_list");
 		}
 
-		// Fallback to int if we couldn't extract the element type
-		if (!element_type_node.has_value()) {
-			element_type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, brace_token, CVQualifier::None);
+		auto element_type_node = emplace_node<TypeSpecifierNode>(*element_type_spec);
+		auto target_type_node = emplace_node<TypeSpecifierNode>(type_specifier);
+		auto init_list_construction = emplace_node<ExpressionNode>(
+			InitializerListConstructionNode(
+				element_type_node,
+				target_type_node,
+				std::move(elements),
+				brace_token));
+		return ParseResult::success(init_list_construction);
+	}
+
+	// Check if this struct has an initializer_list constructor.
+	// If so, create an initializer_list argument from the brace elements and pass that to the constructor.
+	auto init_list_ctor = find_initializer_list_constructor(struct_info);
+	if (init_list_ctor.has_value()) {
+		std::vector<ASTNode> elements;
+		ParseResult elements_result = parse_brace_initializer_clause_list(elements, nullptr, false);
+		if (elements_result.is_error()) {
+			return elements_result;
+		}
+		if (!consume("}"_tok)) {
+			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 		}
 
-		// Try to get the actual element type from the parameter
 		const StructMemberFunction* ctor = init_list_ctor->first;
 		ASTNode target_type_node;
-
-		// Constructors can be stored as ConstructorDeclarationNode or FunctionDeclarationNode
 		if (ctor && ctor->function_decl.is<ConstructorDeclarationNode>()) {
 			const ConstructorDeclarationNode& ctor_decl = ctor->function_decl.as<ConstructorDeclarationNode>();
 			if (!ctor_decl.parameter_nodes().empty()) {
@@ -1781,32 +1789,33 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			}
 		}
 
-		// If we found the target type, create the InitializerListConstructionNode
-		if (target_type_node.has_value()) {
-			// Create InitializerListConstructionNode
-			auto init_list_construction = emplace_node<ExpressionNode>(
-				InitializerListConstructionNode(
-					element_type_node,
-					target_type_node,
-					std::move(elements),
-					brace_token));
-
-			// Now wrap this in a ConstructorCallNode to call the actual constructor
-			ChunkedVector<ASTNode> ctor_args;
-			ctor_args.push_back(init_list_construction);
-
-			auto type_spec_node = emplace_node<TypeSpecifierNode>(
-				type_index.withCategory(TypeCategory::Struct),
-				getStructTypeSizeBits(type_index),
-				brace_token, CVQualifier::None, ReferenceQualifier::None);
-
-			return ParseResult::success(
-				emplace_node<ExpressionNode>(
-					ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)));
+		if (!target_type_node.has_value() || !target_type_node.is<TypeSpecifierNode>()) {
+			return ParseResult::error("Could not determine initializer_list target type", brace_token);
 		}
 
-		// Fallback: if we couldn't get the target type, return an error
-		return ParseResult::error("Could not determine initializer_list element type", brace_token);
+		const TypeSpecifierNode& target_type_spec = target_type_node.as<TypeSpecifierNode>();
+		auto element_type_spec = get_initializer_list_element_type_spec(target_type_spec, brace_token);
+		if (!element_type_spec.has_value()) {
+			throw InternalError("Could not extract element type from std::initializer_list constructor parameter");
+		}
+
+		auto element_type_node = emplace_node<TypeSpecifierNode>(*element_type_spec);
+		auto init_list_construction = emplace_node<ExpressionNode>(
+			InitializerListConstructionNode(
+				element_type_node,
+				target_type_node,
+				std::move(elements),
+				brace_token));
+
+		ChunkedVector<ASTNode> ctor_args;
+		ctor_args.push_back(init_list_construction);
+		auto type_spec_node = emplace_node<TypeSpecifierNode>(
+			type_index.withCategory(TypeCategory::Struct),
+			getStructTypeSizeBits(type_index),
+			brace_token, CVQualifier::None, ReferenceQualifier::None);
+		return ParseResult::success(
+			emplace_node<ExpressionNode>(
+				ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)));
 	}
 
 	// If the type has user-declared constructors, brace-init must perform constructor
