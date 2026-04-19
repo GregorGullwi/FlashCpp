@@ -172,8 +172,8 @@ Write-Host "FlashCpp Standard Header Support Test Report"
 Write-Host "=============================================="
 Write-Host ""
 Write-Host "Date: $(Get-Date)"
-if (Test-Path "x64\Debug\FlashCpp.exe") {
-    $buildDate = (Get-Item "x64\Debug\FlashCpp.exe").LastWriteTime
+if (Test-Path "x64\Sharded\FlashCpp.exe") {
+    $buildDate = (Get-Item "x64\Sharded\FlashCpp.exe").LastWriteTime
     Write-Host "FlashCpp built: $buildDate"
 }
 else {
