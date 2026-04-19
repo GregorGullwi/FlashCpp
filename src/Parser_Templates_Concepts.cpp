@@ -167,6 +167,17 @@ ParseResult Parser::parse_requires_expression() {
 			// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
 			consume_pointer_ref_modifiers(type_spec);
 
+			// Check for ellipsis (parameter pack): type... name
+			bool is_parameter_pack = false;
+			if (peek() == "..."_tok) {
+				advance(); // consume '...'
+				is_parameter_pack = true;
+				// Next must be parameter name
+				if (!peek().is_identifier()) {
+					return ParseResult::error("Expected parameter name after '...' in requires expression", current_token_);
+				}
+			}
+
 			// Parse parameter name
 			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected parameter name in requires expression", current_token_);
@@ -200,6 +211,7 @@ ParseResult Parser::parse_requires_expression() {
 
 			// Create a declaration node for the parameter
 			auto decl_node = emplace_node<DeclarationNode>(*type_result.node(), param_name);
+			decl_node.as<DeclarationNode>().set_parameter_pack(true);
 			parameters.push_back(decl_node);
 
 			// Add parameter to the scope so it can be used in the requires body
