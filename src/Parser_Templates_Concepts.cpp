@@ -211,7 +211,7 @@ ParseResult Parser::parse_requires_expression() {
 
 			// Create a declaration node for the parameter
 			auto decl_node = emplace_node<DeclarationNode>(*type_result.node(), param_name);
-			decl_node.as<DeclarationNode>().set_parameter_pack(true);
+			decl_node.as<DeclarationNode>().set_parameter_pack(is_parameter_pack);
 			parameters.push_back(decl_node);
 
 			// Add parameter to the scope so it can be used in the requires body
