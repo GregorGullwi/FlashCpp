@@ -11779,8 +11779,8 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		return;	// Done with reference assignment
 	}
 
-		// For non-reference LHS, proceed with normal assignment
-		// Get RHS source
+	// For non-reference LHS, proceed with normal assignment
+	// Get RHS source
 	TypeCategory rhs_type = op.rhs.typeEnum();
 	const bool rhs_contains_address = op.rhs.storage == ValueStorage::ContainsAddress;
 	X64Register source_reg = X64Register::RAX;
@@ -11798,8 +11798,8 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		if (it != variable_scopes.back().variables.end()) {
 			int32_t rhs_offset = it->second.offset;
 
-				// Check if RHS is a reference - if so, dereference it unless this
-				// assignment is explicitly copying an address.
+			// Check if RHS is a reference - if so, dereference it unless this
+			// assignment is explicitly copying an address.
 			auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
 			if (rhs_ref_info.has_value() && !op.dereference_rhs_references && !rhs_contains_address) {
 				copied_indirect_info = rhs_ref_info;
