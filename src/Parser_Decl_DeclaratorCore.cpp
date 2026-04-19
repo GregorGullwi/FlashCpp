@@ -565,7 +565,38 @@ ParseResult Parser::parse_type_and_name() {
 			identifier_token = Token(Token::Type::Identifier, operator_name,
 									 operator_keyword_token.line(), operator_keyword_token.column(),
 									 operator_keyword_token.file_index());
+		} else if (peek() == "("_tok) {
+			// MSVC extension: ReturnType (function_name) (params)
+			// e.g., const T&(max)(int x) - the function name 'max' is in parentheses after return type
+			// Save position in case this is actually a parenthesized type or cast expression
+			SaveHandle paren_pos = save_token_position();
+			advance(); // consume '('
+
+			// Check if the next token is an identifier (the function name)
+			if (peek().is_identifier()) {
+				// This is the MSVC extension - extract the function name
+				identifier_token = peek_info();
+				advance(); // consume the identifier
+
+				// Expect closing ')' after the function name
+				if (peek() == ")"_tok) {
+					advance(); // consume ')'
+					FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: MSVC extension detected, function name={}",
+										 std::string(identifier_token.value()));
+					// Success - identifier_token now holds the function name like "max"
+					// The next token should be '(' starting the actual parameter list
+				} else {
+					// Not the expected pattern - restore and fall through to normal handling
+					restore_token_position(paren_pos);
+					goto parse_identifier_normal;
+				}
+			} else {
+				// Not an identifier after '(' - restore and fall through
+				restore_token_position(paren_pos);
+				goto parse_identifier_normal;
+			}
 		} else {
+		parse_identifier_normal:
 			// Check if this might be an unnamed parameter (next token is ',', ')', '=', or '[')
 			FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Parsing identifier. current_token={}, peek={}",
 							 std::string(current_token_.value()),
