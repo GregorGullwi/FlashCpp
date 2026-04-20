@@ -42,6 +42,7 @@ runtimes on both platforms:
 | 7 | `typeid(expr)` loads Complete Object Locator from vtable[-1] | `IRConverter_ConvertMain.cpp::handleTypeid` |
 | 8 | `dynamic_cast` calls MSVC `__RTDynamicCast(src_ptr, vfDelta, src_type, dst_type, isReference)` | `IRConverter_ConvertMain.cpp::handleDynamicCast` |
 | 9 | Failed reference casts call `__dynamic_cast_throw_bad_cast` | `IRConverter_ConvertMain.cpp::handleDynamicCast` |
+| 10 | `??_R0` Type Descriptors for built-in/arithmetic types (`H` int, `M` float, `_N` bool, `X` void, …) — no more hash placeholders; cross-TU stable typeid identity for built-ins | `ObjFileWriter_RTTI.cpp::get_or_create_builtin_type_descriptor`, `IRConverter_ConvertMain.cpp::handleTypeid` |
 
 ---
 
@@ -57,7 +58,10 @@ The Windows implementation now uses proper MSVC RTTI structures and runtime:
 2. **`typeid` operator**:
    - `typeid(Type)` emits a LEA instruction with relocation to the `??_R0` symbol
    - `typeid(expr)` loads the vtable pointer and retrieves the Complete Object Locator from vtable[-1]
-   - Built-in types still use hash-based placeholders (future enhancement)
+   - Built-in types emit proper `??_R0<code>@8` descriptors (e.g. `??_R0H@8` for
+     `int`, `??_R0_N@8` for `bool`) using the MSVC RTTI mangling codes. The
+     descriptor body stores the `.<code>` name string and relocates its vftable
+     slot to `??_7type_info@@6B@`, matching MSVC-produced objects.
 
 3. **`dynamic_cast` operator**:
    - Calls MSVC runtime `__RTDynamicCast` with proper Type Descriptor pointers
@@ -71,15 +75,11 @@ The Windows implementation now uses proper MSVC RTTI structures and runtime:
 
 ### Future Enhancements
 
-1. **Built-in Type Descriptors on Windows**: Currently, `typeid` on built-in types
-   (int, float, etc.) uses hash-based placeholders. A future enhancement could emit
-   proper `??_R0` symbols for built-in types (e.g., `??_R0H@8` for int).
-
-2. **vfDelta Calculation**: The `__RTDynamicCast` call currently passes 0 for the
+1. **vfDelta Calculation**: The `__RTDynamicCast` call currently passes 0 for the
    `vfDelta` parameter. For complex virtual inheritance scenarios, this could be
    calculated from vtable offsets for optimization.
 
-3. **Cross-platform Testing**: While the implementation is architecturally sound,
+2. **Cross-platform Testing**: While the implementation is architecturally sound,
    comprehensive testing on actual Windows systems with MSVC linker and CRT would
    validate the runtime behavior.
 

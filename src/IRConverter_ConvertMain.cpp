@@ -5834,9 +5834,11 @@ void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instructi
 				}
 				return {};
 			}
-			// For built-in types on Windows, we would need to handle them separately
-			// For now, return empty and fall back to hash-based approach
-			return {};
+			// Built-in/arithmetic types: emit proper ??_R0<code>@8 descriptors
+			// (e.g. ??_R0H@8 for int). This is required so that typeid(int)
+			// produces a stable cross-TU pointer identity and so that the
+			// runtime type_info::name() returns a usable mangled string.
+			return writer.get_or_create_builtin_type_descriptor(type_index.category());
 		}
 	};
 
@@ -5844,16 +5846,13 @@ void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instructi
 			// typeid(Type) - compile-time constant
 		StringHandle type_name_handle = std::get<StringHandle>(op.operand);
 		std::string typeinfo_symbol = getTypeinfoSymbol(op.type_index, type_name_handle);
-		if (!typeinfo_symbol.empty()) {
-			emitLeaRipRelativeWithRelocation(X64Register::RAX, typeinfo_symbol);
-		} else {
-				// Fallback for built-in types on Windows/COFF: use a hash-based placeholder
-				// so that typeid() returns a non-null, unique-per-type pointer.
-				// (Class types now use proper ??_R0 symbols)
-			std::string_view type_name = StringTable::getStringView(type_name_handle);
-			size_t type_hash = std::hash<std::string_view>{}(type_name);
-			emitMovImm64(X64Register::RAX, type_hash);
+		if (typeinfo_symbol.empty()) {
+			std::string_view type_name_sv = type_name_handle.isValid()
+				? StringTable::getStringView(type_name_handle)
+				: std::string_view{"<unknown>"};
+			throw InternalError("typeid: unable to resolve type_info symbol for operand type '" + std::string(type_name_sv) + "'");
 		}
+		emitLeaRipRelativeWithRelocation(X64Register::RAX, typeinfo_symbol);
 	} else {
 			// typeid(expr) - may need runtime lookup for polymorphic types
 			// For polymorphic types, RTTI pointer is at vtable[-1]

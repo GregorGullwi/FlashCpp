@@ -549,6 +549,12 @@ public:
 	std::string get_or_create_builtin_throwinfo(TypeCategory type);
 	std::string get_or_create_type_descriptor(std::string_view class_name);
 	std::string get_or_create_type_descriptor(std::string_view class_name, TypeIndex type_index);
+	// MSVC ??_R0 Type Descriptor for a built-in/arithmetic type (int, float, …).
+	// Produces a proper descriptor symbol (e.g. "??_R0H@8" for int) so that
+	// typeid(int) yields a stable cross-TU pointer rather than a hash placeholder.
+	// Returns the empty string for categories that don't have a standard MSVC
+	// built-in mangling (e.g. class/enum/function).
+	std::string get_or_create_builtin_type_descriptor(TypeCategory cat);
 	uint32_t get_or_create_symbol_index(const std::string& symbol_name);
 
 protected:
