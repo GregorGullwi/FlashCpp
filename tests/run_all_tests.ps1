@@ -136,8 +136,14 @@ if ($libPath2) { Write-Host "  $libPath2" }
 if ($libPath3) { Write-Host "  $libPath3" }
 Write-Host ""
 
-# Get all .cpp files from tests/
-$allTestFiles = Get-ChildItem -Path "tests" -Filter "*.cpp" | Sort-Object Name
+# Get all .cpp files from tests/.  Full-suite runs intentionally stay at the
+# historical tests/*.cpp scope; explicit test requests may name files under
+# tests/std or another test subdirectory.
+if ($requestedTestNames.Count -gt 0) {
+	$allTestFiles = Get-ChildItem -Path "tests" -Recurse -Filter "*.cpp" | Sort-Object FullName
+} else {
+	$allTestFiles = Get-ChildItem -Path "tests" -Filter "*.cpp" | Sort-Object Name
+}
 
 # Linux-specific test files that should not run on Windows
 $linuxOnlyTests = @(
