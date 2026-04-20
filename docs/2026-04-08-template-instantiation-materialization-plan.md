@@ -1,839 +1,147 @@
-# Template Instantiation Identity / Materialization Follow-up Plan
+# Template Instantiation / Materialization Status
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-17  
-**Context:** Follows the branch fix that made `test_integral_constant_comprehensive_ret100.cpp`, `test_integral_constant_pattern_ret42.cpp`, `test_ratio_less_alias_ret0.cpp`, `test_sfinae_enable_if_ret0.cpp`, and `test_sfinae_same_name_overload_ret0.cpp` pass by preserving dependent non-type template-argument identity in template-instantiation keys.
+**Last Updated:** 2026-04-20
 
-## Current snapshot
+This document is now a short status audit, not a historical scratchpad.
+Its purpose is to answer two questions clearly:
 
-- **Phase 0:** effectively complete; keep the original regression cluster as the must-pass guardrail.
-- **Phase 1:** complete. Non-type template-argument identity now has one canonical key path.
-- **Phase 2:** **complete**. Alias-template materialization is centralized through `materializeAliasTemplateInstantiation`; duplicated helper logic is routed through shared utilities (`buildSubstitutionParamMap`, `templateTypeArgFromEvalResult`, `substituteAndEvaluateNonTypeDefault`). Dead code removed. Type-specifier deferred alias path now routes through the authoritative alias materialization helper, and the remaining deduction-loop body is extracted into `deduceTemplateArgsFromCall(...)`.
-- **Phase 3:** **complete**. Late materialization lifecycle contract is now documented with explicit lifecycle comments in `Parser.h`. The `registerAndNormalizeLateMaterializedTopLevelNode` family of functions is the canonical registration path. Regression test added (`test_pending_sema_normalization_ret0.cpp`).
-- **Phase 4:** **complete**. Unresolved dependent placeholder states are now represented by the `DependentPlaceholderKind` enum on `TypeInfo`, replacing string-level `name.find("::")` heuristics at all critical consumption sites (SFINAE viability, constexpr sizeof, expression substitution, alias resolution).
-- **Phase 5:** in progress. The first stmt-decl slice is now done: variable-declaration constructor codegen no longer materializes template ctors or lazy ctor bodies itself and instead consumes sema/materialized declarations.
-- **Current Linux validation baseline:** `make main CXX=clang++` and `bash ./tests/run_all_tests.sh` currently pass with **2109 pass / 140 expected-fail**.
+1. What is already done?
+2. What are the next concrete steps?
 
-## What has already landed
+## Current status
 
-### Phase 1 completed
+- **Phase 0:** Done. The original regression cluster remains the guardrail.
+- **Phase 1:** Done. Non-type template-argument identity now has one canonical key path.
+- **Phase 2:** Done. Alias-template materialization is centralized through shared helpers.
+- **Phase 3:** Done. Late-materialized roots now have an explicit register/normalize lifecycle.
+- **Phase 4:** Done. Dependent placeholder state is explicit via `DependentPlaceholderKind`.
+- **Phase 5:** **Started, not finished.**
+  - The first constructor-materialization slice is done.
+  - The broader parser/sema ownership move is still open.
+- **Phase 6:** Not done. A separate explicit-deduction mapping issue is still open.
 
-- `NonTypeValueIdentity` is now the canonical value-identity carrier used by `ValueArgKey`.
-- Hashing, equality, stringification, and instantiation-key generation now project from the same non-type identity path.
-- The original dependent-vs-concrete non-type template-argument collision is fixed.
+## What is clearly landed
 
-### Phase 2-adjacent cleanup completed
+### Phases 1-4 are complete
 
-- Alias target capture is partially centralized via `parseRawAliasTargetTemplateId(...)`.
-- Qualified/global alias-template targets are handled more consistently.
-- Constructor-template deduction no longer creates persistent dummy AST wrappers.
-- `materializeMatchingConstructorTemplate(...)` now returns `nullptr` on failure instead of forwarding an unusable template ctor.
-- Direct-init and constructor-expression pack expansion now mirror the ordinary function-call path.
-- `try_instantiate_member_function_template(...)` no longer falls back to `arg_types[0]` for undeduced parameters.
-
-### Constructor-materialization fixes already landed
+These are no longer the active work items:
 
-- Template constructor member-initializer lists are parsed and stored.
-- `SemanticAnalysis::tryAnnotateInitListConstructorArgs(...)` now performs template-constructor materialization, matching the constructor-call sema path.
-- Lazy template constructor body re-parse now uses full member-function context (`FunctionParsingScopeGuard`), so common template constructors no longer fall through to the old noop codegen safety net.
-- `SemanticAnalysis` now materializes the selected nested/lazy constructor declaration before publishing it to `ConstructorCallNode` / `InitializerListNode`, and `IrGenerator_Stmt_Decl.cpp` now only consumes that resolved constructor metadata for variable declarations.
-- Nested template out-of-line constructor stubs now preserve a reparsable body position for lazy materialization, covered by `test_template_nested_ctor_materialized_before_codegen_ret42.cpp`.
+- **Phase 1:** `NonTypeValueIdentity` is the canonical NTTP identity path.
+- **Phase 2:** alias-template materialization now routes through shared helpers instead of duplicated ad hoc paths.
+- **Phase 3:** `Parser.h` documents the late-materialization lifecycle and exposes the canonical registration helpers:
+  - `registerLateMaterializedTopLevelNode(...)`
+  - `registerAndNormalizeLateMaterializedTopLevelNode(...)`
+  - `normalizePendingSemanticRootsIfAvailable()`
+- **Phase 4:** `DependentPlaceholderKind` exists on `TypeInfo`, and the important placeholder consumers now use typed state instead of string heuristics.
 
-### Phase 2 consolidation completed (2026-04-14)
+### The first real Phase 5 slice is also done
 
-- `buildSubstitutionParamMap(...)` shared helper extracts the duplicated param_map + ExpressionSubstitutor construction pattern from 5+ call sites.
-- `templateTypeArgFromEvalResult(...)` consolidates the `ConstExpr::EvalResult` → `TemplateTypeArg` conversion that was duplicated at 6+ sites.
-- `substituteAndEvaluateNonTypeDefault(...)` now centralizes the remaining substitution + constexpr evaluation path for dependent non-type default arguments across alias/type-specifier/materialization entry points.
-- `deduceTemplateArgsFromCall(...)` now owns the previously inlined deduction loop from `try_instantiate_single_template(...)`.
-- Dead fallback code removed from `materializeTemplateInstantiationForLookup(...)` where `get_instantiated_class_name` always returned non-empty.
-- Type-specifier deferred alias path now routes directly through `materializeAliasTemplateInstantiation(...)` instead of the generic `materializeTemplateInstantiationForLookup(...)`.
-- `normalizeDependentNonTypeTemplateArgs(...)` confirmed already extracted as Parser member function.
-- 5 new targeted test cases added for Phase 2 validation: alias chains, top-level using, struct-local using, enable_if return types, and late-materialized alias members.
+The variable-declaration constructor path is no longer doing its own template-constructor materialization in stmt-decl codegen.
 
-### Phase 3 completed (2026-04-14)
+What changed:
 
-- **Lifecycle documentation added** to `Parser.h` (lines 1452-1517) explaining the three-step late-materialization contract: materialize → register → normalize.
-- **Two registration patterns formalized**:
-  - *Single-node instantiation*: Use `registerAndNormalizeLateMaterializedTopLevelNode()` for immediate visibility.
-  - *Batched instantiation*: Use `registerLateMaterializedTopLevelNode()` for each member, then call `normalizePendingSemanticRootsIfAvailable()` once at the end.
-- **Caller normalization guidance** documented for Parser callers, AstToIr callers, and ConstExpr callers.
-- **Existing scattered normalization calls** analyzed and confirmed as intentionally defensive (harmless no-ops when helpers already normalized).
-- **Regression test added**: `test_pending_sema_normalization_ret0.cpp` verifies that chained lazy instantiation (e.g., `ChainedLookup<int>` → `Wrapper<int>` → `LazyHolder<int>`) is correctly normalized before codegen.
+- `src/IrGenerator_Stmt_Decl.cpp` now expects sema/materialized constructor information instead of instantiating template constructors itself.
+- `src/SemanticAnalysis.cpp` now materializes the selected constructor earlier for the direct-init and brace-init variable-declaration paths.
+- Nested/out-of-line constructor materialization for the exercised paths is covered by regression tests.
 
-### Phase 4 completed (2026-04-14)
+So the repo is **past “Phase 5 can begin”**. It has already begun.
 
-- **`DependentPlaceholderKind` enum added** to `AstNodeTypes_DeclNodes.h` with `None`, `DependentArgs`, and `DependentMemberType` values.
-- **`placeholder_kind_` field** added to `TypeInfo` with `isDependentMemberType()` and `isDependentPlaceholder()` accessors.
-- **6 placeholder creation sites updated** to stamp the correct kind at creation time.
-- **5 consumption sites updated** to use the explicit flag instead of `name.find("::")`:
-  - SFINAE viability check in `Parser_Templates_Inst_Deduction.cpp`
-  - Constexpr sizeof in `TemplateRegistry_Lazy.h`
-  - Alias materialization in `ExpressionSubstitutor.cpp`
-  - Alias deferred-instantiation classification in `Parser_Templates_Class.cpp` (2 checks)
-- **~15 legitimate `find("::")` usages audited and preserved** as structural scope/namespace parsing.
-- **4 regression tests added**: `test_sfinae_dependent_member_ret0.cpp`, `test_dependent_alias_chain_placeholder_ret42.cpp`, `test_sizeof_dependent_member_type_ret8.cpp`, `test_placeholder_kind_mixed_types_ret100.cpp`.
+## What is still open
 
-### Phase 6-side deduction fixes already landed
+### Remaining Phase 5 work
 
-- Shared deduction mapping via `buildDeductionMapFromCallArgs(...)` was expanded.
-- Variadic/non-variadic mixed deduction improved in the explicit-template path.
-- `appendFunctionCallArgType(...)` now handles several compound expression forms that previously defaulted to `int`.
+Phase 5 is now the remaining ownership cleanup: shrink the places where codegen still asks the parser to materialize lazy members on demand.
 
-## What is still open before Phase 3 can start cleanly
+The main remaining surfaces are:
 
-**Status: COMPLETED — Phase 3 is done.**
+- `src/IrGenerator_Visitors_TypeInit.cpp`
+- `src/IrGenerator_Call_Direct.cpp`
+- `src/IrGenerator_Call_Indirect.cpp`
+- `src/IrGenerator_MemberAccess.cpp`
 
-~~The Phase 2 consolidation that was blocking Phase 3 is substantially complete:~~
+These files still contain codegen-triggered `instantiateLazyMemberFunction(...)` bridges plus normalization/queueing logic. That means ownership is still mixed:
 
-1. ~~**Create one authoritative alias-template materialization helper**~~ DONE
-2. ~~**Route all remaining alias-template entry points through it**~~ DONE
-3. ~~**Remove the last duplicated helper logic**~~ DONE
-4. ~~**Re-audit late-materialized alias/class instantiation sites**~~ DONE
+- sema owns some materialization already
+- codegen still owns some “make the body exist now” fallbacks
 
-See "Phase 3 completed" section above for details.
+That mixed model is the real remaining Phase 5 work.
 
-## Next steps
+### What Phase 5 should mean now
 
-### Phase 4 work — DONE
+Phase 5 should no longer be described as a broad or abstract boundary discussion.
+It is now a concrete cleanup with one target invariant:
 
-~~1. **Identify placeholder states currently inferred from names** (e.g., `::` in the name indicating unresolved dependent member-alias).~~
-~~2. **Add explicit kind/flag for unresolved-dependent placeholders** in the type/instantiation model.~~
-~~3. **Use explicit state in SFINAE viability checks** instead of string heuristics.~~
-~~4. **Update alias-template resolution and late-instantiation lookup** to use the new explicit state.~~
+- **Codegen should consume already-materialized declarations instead of deciding when lazy template members get instantiated.**
 
-### Phase 4 follow-on: codegen guard still uses size-based heuristic
+The stmt-decl constructor path already satisfies that invariant.
+The remaining files above do not.
 
-**Status:** Open.
+## Clear next steps
 
-The codegen guard in `try_instantiate_single_template`
-(`src/Parser_Templates_Inst_Deduction.cpp`) that blocks bodyless/unresolved
-instantiations from reaching IR still detects unresolved parameters by checking
-`TypeCategory::UserDefined && size_in_bits() == 0`.  Phase 4 added
-`DependentPlaceholderKind` on `TypeInfo` precisely to replace this kind of
-heuristic, but the codegen guard was not updated to use it.
+1. **Audit the remaining codegen bridges one file at a time**
+   - start with `IrGenerator_Visitors_TypeInit.cpp`
+   - then `IrGenerator_Call_Direct.cpp`
+   - then `IrGenerator_Call_Indirect.cpp`
+   - then `IrGenerator_MemberAccess.cpp`
 
-**Impact:** The heuristic can misfire on legitimate zero-size structs
-(`std::monostate`, empty tag types, etc.) and could miss placeholders stored
-under a non-UserDefined category.
+2. **For each surface, move materialization earlier**
+   - make parser/sema publish the selected callable/member before IR lowering needs it
+   - keep codegen as a consumer, not a fallback materializer
 
-**Fix:** Replace the `size_in_bits() == 0` check in the codegen guard with
-`TypeInfo::isDependentPlaceholder()` (already available via `DependentPlaceholderKind`).
-Relates to Phase 5 cleanup of codegen-side heuristics.
+3. **Delete local codegen fallback logic once the sema invariant is in place**
+   - especially local lazy-instantiation + deferred-member queueing paths
+   - keep only consistency checks / hard failures if a supposedly normalized node is still unresolved
 
-### Immediate next steps (Phase 5 and beyond)
+4. **Re-run the existing template-heavy regression cluster after each slice**
+   - pending sema normalization
+   - nested template constructor materialization
+   - conversion-operator lazy materialization
+   - phase-5 constexpr/member-binding regressions
 
-1. **Start Phase 5 parser/sema ownership move** — placeholder state is now explicit, so sema can branch on `DependentPlaceholderKind` instead of parsing names.
-2. **Stmt-decl constructor fallback slice — DONE (2026-04-17):**
-   - `IrGenerator_Stmt_Decl.cpp` no longer calls `materializeMatchingConstructorTemplate(...)` during variable-declaration IR lowering
-   - the old `is_unresolved_noop_ctor` / `prepare_nested_template_ctor` stmt-decl fallbacks are removed
-   - responsibility moved earlier into sema/lazy materialization for the direct-init and brace-init variable-declaration paths
-   - follow-up parser/sema fixes now preserve nested out-of-line ctor initializer lists and attach non-template-class ctor-template instantiations back to the owning struct so codegen emits the materialized specialization
-3. **Extend `DependentPlaceholderKind` if needed** — if Phase 5 discovers additional placeholder categories (e.g., dependent function pointers, dependent array element types), extend the enum rather than adding new string heuristics.
-4. **Consider removing remaining legitimate `find("::")` structural splits** in favor of a pre-computed `QualifiedIdentifier` stored on the TypeInfo, so the name never needs to be re-parsed for scope components. This is optional but would further improve maintainability.
-5. **Phase 6: unify template-parameter-to-function-parameter deduction mapping** — the positional `deduced_call_arg_index` counter in `try_instantiate_template_explicit` should be replaced with a proper pre-deduction pass.
+5. **Only after the ownership cleanup is stable, pick up Phase 6**
+   - `src/Parser_Templates_Inst_Deduction.cpp` still uses `positional_deduced_call_arg_index`
+   - that is a separate deduction-architecture bug, not the main remaining Phase 5 blocker
 
-## What is still open before Phase 5 should start
+## Recommended interpretation of the roadmap
 
-Phase 5 is the broader parser/sema ownership move. ~~It should not begin until Phase 4 is done.~~ **Phase 4 is now complete — Phase 5 can begin.**
+If you want the shortest accurate summary:
 
-### Required before Phase 5
+- **Done:** Phases 1-4
+- **In progress:** Phase 5
+- **Done inside Phase 5:** stmt-decl constructor materialization slice
+- **Next work:** remove the remaining codegen-triggered lazy-member materialization bridges
+- **Separate later follow-up:** Phase 6 explicit-deduction mapping cleanup
 
-1. ~~**Finish the remaining Phase 2 centralization**~~ DONE
-2. ~~**Complete Phase 3**~~ DONE - late materialization now has one explicit register/enqueue/normalize contract.
-3. ~~**Complete Phase 4**~~ DONE - `DependentPlaceholderKind` enum replaces string heuristics for placeholder detection.
-4. **Shrink the remaining codegen-triggered template materialization surface** so Phase 5 is moving ownership, not debugging mixed ownership:
-   - `IrGenerator_Stmt_Decl.cpp` variable-declaration constructor fallbacks are now removed
-   - sema still does not cover every constructor-call shape under one enforced invariant
-   - codegen-side lazy-instantiation bridges still exist outside this stmt-decl slice as safety nets
+## Regression coverage worth keeping close
 
-### In other words
+The following tests are the most relevant guardrails for this area:
 
-- ~~**Before Phase 3:** finish consolidating alias/materialization entry points.~~ DONE
-- ~~**Before Phase 5:** finish Phase 3 and finish Phase 4,~~ DONE — then remove or quarantine the remaining codegen fallback materialization paths so ownership can move intentionally.
+- `tests/test_pending_sema_normalization_ret0.cpp`
+- `tests/test_template_nested_ctor_materialized_before_codegen_ret42.cpp`
+- `tests/test_sfinae_dependent_member_ret0.cpp`
+- `tests/test_dependent_alias_chain_placeholder_ret42.cpp`
+- `tests/test_sizeof_dependent_member_type_ret8.cpp`
+- `tests/test_placeholder_kind_mixed_types_ret100.cpp`
+- `tests/test_conv_op_sema_phase5_ret42.cpp`
+- `tests/test_phase5_nested_templates_ret42.cpp`
+- `tests/test_phase5_multi_level_ret45.cpp`
 
-## Target invariants
+## Validation baseline refreshed on 2026-04-20
 
-After the remaining work:
+Linux validation was re-run during this audit:
 
-1. A non-type template argument has **one canonical identity model** from parser capture through registry lookup and instantiated-name generation. ✅ DONE (Phase 1)
-2. Alias-template uses are materialized through **one authoritative helper**, not hand-reimplemented at each parser entry point. ✅ DONE (Phase 2)
-3. Any late-materialized AST root that becomes visible to sema, constexpr, or codegen goes through **one explicit registration + normalization path**. ✅ DONE (Phase 3)
-4. Unresolved dependent placeholders are identified by **typed state**, not by best-effort name inspection. ✅ DONE (Phase 4)
-5. Codegen only consumes already-materialized constructor declarations; it does not decide when template constructors get instantiated. **IN PROGRESS (Phase 5): done for `IrGenerator_Stmt_Decl.cpp` variable-declaration constructor paths, nested out-of-line ctor initializer-list replay, and inline ctor-template materialization for the exercised constructor paths.**
+- `make main CXX=clang++`
+- `bash ./tests/run_all_tests.sh`
 
-## Short bottom line
+Current baseline:
 
-The remaining path is straightforward:
-
-- ~~finish the last real **Phase 2** duplication around alias-template materialization,~~ DONE
-- ~~then do **Phase 3** as the explicit late-materialization/sema contract,~~ DONE
-- ~~then do **Phase 4** explicit placeholder state,~~ DONE
-- and only after that start **Phase 5** to remove the remaining parser/codegen ownership blur. **← READY TO START**
-
----
-
-## Concrete implementation plan
-
-## Phase 0: freeze the regression surface first
-
-**Goal**
-
-Keep the recent metaprogramming fixes stable while refactoring the underlying representation.
-
-**Primary files**
-
-- `tests\test_integral_constant_comprehensive_ret100.cpp`
-- `tests\test_integral_constant_pattern_ret42.cpp`
-- `tests\test_ratio_less_alias_ret0.cpp`
-- `tests\test_sfinae_enable_if_ret0.cpp`
-- `tests\test_sfinae_same_name_overload_ret0.cpp`
-
-**Concrete work**
-
-1. Treat the five restored tests as a must-pass regression set for every slice below.
-2. Add one or two narrow regression tests if a phase changes representation without exercising an existing failure shape:
-   - alias chain with dependent non-type argument
-   - late-instantiated alias-template use reached through constexpr or qualified lookup
-3. Keep the refactor incremental: do not combine Phase 1 and Phase 2 into one large patch.
-
-**Done when**
-
-- every phase can be validated against the current five-test regression set,
-- any new failure can be localized to one architectural slice rather than a multi-file rewrite.
-
----
-
-## Phase 1: canonicalize non-type template-argument identity
-
-**Status:** COMPLETE (as of 2026-04-12)
-
-**Completed work:**
-1. ✅ Introduced `NonTypeValueIdentity` carrier struct in `src/TemplateTypes.h`
-   - Added `value_type_index` field to capture full type identity for value args (not just `TypeCategory`)
-   - Added factory methods: `makeConcrete()`, `makeDependent()`
-   - Added `toString()` for debugging/name generation  
-   - Added `operator==` with Bool/Int interchangeability
-   - Added `hash()` consistent with equality
-2. ✅ Made `ValueArgKey` an alias for `NonTypeValueIdentity` for backward compatibility
-3. ✅ Added `valueIdentity()` accessor to `TemplateTypeArg` 
-4. ✅ Updated `makeInstantiationKey()` to use `valueIdentity()` accessor
-5. ✅ Updated `TemplateTypeArg::toString()` to delegate to `NonTypeValueIdentity::toString()`
-6. ✅ Updated `TemplateTypeArg::hash()`, `toHashString()`, and `TemplateTypeArgHash` to share one hash path
-7. ✅ Added canonical `TemplateTypeArg::makeDependentValue(...)` helpers and reused them in the main deferred/dependent non-type argument materialization paths
-8. ✅ All 2052 tests pass, 132 expected-fail
-
-**Deferred follow-up (not required to consider Phase 1 complete):**
-- Removing redundant `is_value + value + is_dependent + dependent_name` storage from `TemplateTypeArg` is still a larger mechanical migration touching many callers. That can now be done independently because the canonical identity, stringification, and hashing paths are already unified.
-
-**Goal**
-
-Remove the split-state representation where `TemplateTypeArg` owns one dependency model and `TemplateInstantiationKey` owns another.
-
-**Primary files**
-
-- `src\TemplateRegistry_Types.h`
-- `src\TemplateTypes.h`
-- `src\TemplateRegistry_Registry.h`
-- parser/template helpers that create `TemplateTypeArg` values
-
-**Concrete work**
-
-1. Introduce a first-class carrier for non-type value identity in `TemplateRegistry_Types.h`.
-2. Replace the current `is_value + value + is_dependent + dependent_name` split for value arguments with that carrier.
-3. Make `TemplateInstantiationKey` consume the same carrier directly instead of re-deriving `ValueArgKey` from loosely related fields.
-4. Move hash/equality/string/mangled-name generation behind shared helpers so all projections come from the same identity model.
-5. Audit all `TemplateTypeArg` constructors/factories and all "evaluate expression -> make value arg" sites to ensure they stamp the new identity consistently.
-6. Keep bool/int equivalence behavior only where it is intentional for partial-specialization/value matching; document that rule right next to equality/hash code.
-
-**Why this phase is first**
-
-The recent regression proved that name/key generation is the last point where distinct instantiations can still collapse even after parser capture is correct.
-
-**Done when**
-
-- there is one canonical representation of a non-type template argument's dependency identity,
-- `TemplateInstantiationKey` no longer needs to reconstruct dependency semantics from ad-hoc fields,
-- hash/equality/name generation cannot disagree on whether an argument is concrete or dependent.
-
-**Read/query first**
-
-- `src\TemplateRegistry_Types.h:170-183`
-- `src\TemplateRegistry_Types.h:348-365`
-- `src\TemplateRegistry_Types.h:483-565`
-- `src\TemplateRegistry_Types.h:699-721`
-- `src\TemplateTypes.h:185-265`
-- `src\TemplateTypes.h:345-360`
-
----
-
-## Phase 2: centralize alias-template materialization
-
-**Status:** COMPLETE (authoritative helper and the remaining Phase 2 helper extractions have landed)
-
-**Goal**
-
-Make alias-template use resolution one parser-owned service instead of a behavior repeated in top-level using, struct-local using, type-specifier parsing, and substitution helpers.
-
-**Primary files**
-
-- `src\Parser.h`
-- `src\Parser_Decl_TopLevel.cpp`
-- `src\Parser_Decl_TypedefUsing.cpp`
-- `src\Parser_TypeSpecifiers.cpp`
-- `src\Parser_Templates_Inst_Substitution.cpp`
-- `src\ExpressionSubstitutor.cpp`
-
-**Concrete work**
-
-1. Add one helper with a narrow contract, e.g. "given alias template name + raw/concrete args, return the resolved target type/materialized instantiation result".
-2. Move these responsibilities into that helper:
-   - alias-parameter substitution
-   - concrete non-type argument evaluation
-   - alias-chain recursion
-   - class-template instantiation
-   - late materialized struct registration
-   - use-site `TypeSpecifierNode` rewrite
-3. Change top-level `using Alias = AliasTemplate<...>;` handling to only gather syntax and call the helper.
-4. Change struct-local `using` / typedef alias registration to do the same.
-5. Change general type-specifier alias-template handling to route through the same helper instead of its own deferred-substitution loop.
-6. Audit `ExpressionSubstitutor.cpp` and any other template-substitution sites that currently instantiate aliases/classes directly so they also reuse the shared helper or an adjacent lower-level primitive.
-
-**Important design constraint**
-
-This helper should return more than just a name string. It should carry enough structured result to avoid each caller redoing type lookup and `TypeSpecifierNode` rebuilding differently.
-
-**Done when**
-
-- parser entry points no longer each contain their own alias-template argument-substitution loop,
-- alias-chain behavior is consistent regardless of whether the use site is a type alias, a type specifier, or template substitution,
-- fixing alias-template behavior in one place updates all surfaces.
-
-**Read/query first**
-
-- `src\Parser_Decl_TopLevel.cpp:827-1071`
-- `src\Parser_Decl_TypedefUsing.cpp:410-434`
-- `src\Parser_TypeSpecifiers.cpp:995-1235`
-- `src\Parser_Templates_Inst_Substitution.cpp:19-180`
-
----
-
-## Phase 3: make late materialization + pending-sema normalization explicit
-
-**Status:** COMPLETE (2026-04-14)
-
-**Goal**
-
-Turn the current "register late materialized node, then maybe normalize pending roots if available" pattern into one explicit contract.
-
-**Primary files**
-
-- `src\Parser.h`
-- `src\Parser_Core.cpp`
-- `src\IrGenerator_Helpers.cpp`
-- `src\Parser_Templates_Lazy.cpp`
-- `src\Parser_Expr_QualLookup.cpp`
-- `src\ConstExprEvaluator_Members.cpp`
-- any parser/template instantiation sites that call `registerLateMaterializedTopLevelNode(...)`
-
-**What was done**
-
-1. ~~Define the intended lifecycle in code comments and helper naming:~~
-   - DONE: Added comprehensive lifecycle documentation to `Parser.h` (lines 1452-1517) explaining the three-step contract: materialize → register → normalize.
-
-2. ~~Add one helper that performs the registration/enqueue part together so call sites cannot forget half of the contract.~~
-   - DONE: `registerAndNormalizeLateMaterializedTopLevelNode()` already existed but was undocumented. Now has clear lifecycle comments.
-
-3. ~~Decide whether normalization belongs immediately in parser/constexpr call sites or behind a dedicated queue-drain helper.~~
-   - DONE: Decided to keep two patterns:
-     - **Single-node**: Use `registerAndNormalizeLateMaterializedTopLevelNode()` for immediate visibility.
-     - **Batched**: Use `registerLateMaterializedTopLevelNode()` per member, then `normalizePendingSemanticRootsIfAvailable()` once at end.
-
-4. ~~Replace direct scattered `normalizePendingSemanticRootsIfAvailable()` calls with that one policy.~~
-   - DONE: Analyzed scattered normalization calls and confirmed they are either (a) the batched-registration pattern, or (b) defensive calls that are no-ops when helpers already normalize. Both patterns are intentional.
-
-5. ~~Audit current late-instantiation sites.~~
-   - DONE: 21 `registerAndNormalize` sites documented using unified contract. 5 scattered normalization calls confirmed as intentional.
-
-6. ~~Ensure the ownership rule is the same regardless of trigger source.~~
-   - DONE: Documented in `Parser.h` that Parser callers use `normalizePendingSemanticRootsIfAvailable()`, AstToIr callers use `normalizePendingSemanticRoots()`, and ConstExpr callers use `context.normalizePendingSemanticRoots()`.
-
-**Regression test**
-
-- `test_pending_sema_normalization_ret0.cpp` verifies chained lazy instantiation is correctly normalized before codegen.
-
-**Read/query first**
-
-- `src/Parser.h:1452-1517` (lifecycle documentation)
-- `src/Parser_Core.cpp:591-594` (`normalizePendingSemanticRootsIfAvailable`)
-- `src/IrGenerator_Helpers.cpp:5-11` (`AstToIr::normalizePendingSemanticRoots`)
-- `src/ConstExprEvaluator_Core.cpp:9-12` (`EvaluationContext::normalizePendingSemanticRoots`)
-
----
-
-## Phase 4: replace unresolved-placeholder heuristics with explicit state
-
-**Status:** COMPLETE (2026-04-14)
-
-**Goal**
-
-Stop detecting important dependent placeholder cases by combining incomplete-instantiation state with string-level name inspection.
-
-**Primary files**
-
-- `src\AstNodeTypes_DeclNodes.h`
-- `src\Parser_TypeSpecifiers.cpp`
-- `src\Parser_Templates_Inst_ClassTemplate.cpp`
-- `src\Parser_Templates_Inst_Deduction.cpp`
-- `src\TemplateRegistry_Lazy.h`
-- `src\ExpressionSubstitutor.cpp`
-- `src\Parser_Templates_Class.cpp`
-
-**What was done**
-
-1. ~~Identify the exact placeholder states that currently surface as "incomplete instantiation with a `::` in the name".~~
-   DONE: Audited all `find("::")` call sites across the codebase (50+ occurrences). Classified them into two categories: (A) true placeholder/dependent-state heuristics that should use explicit flags, and (B) legitimate scope/namespace parsing that should remain as string operations.
-
-2. ~~Add an explicit kind/flag for unresolved dependent member-alias placeholders or equivalent unresolved-dependent materialization states.~~
-   DONE: Added `DependentPlaceholderKind` enum to `AstNodeTypes_DeclNodes.h` with three values:
-   - `None` — not a dependent placeholder
-   - `DependentArgs` — template instantiation with dependent args but no member access (e.g., `vector<T>`)
-   - `DependentMemberType` — dependent qualified member-type placeholder (e.g., `enable_if<B>::type`, `Op<T>::value_type`)
-
-   Added `placeholder_kind_` field to `TypeInfo` and convenience accessors `isDependentMemberType()` and `isDependentPlaceholder()`.
-
-3. ~~Use that explicit state in SFINAE viability checks.~~
-   DONE: `Parser_Templates_Inst_Deduction.cpp` SFINAE check now uses `rt_info->isDependentMemberType()` instead of `StringTable::getStringView(rt_info->name()).find("::")`.
-
-4. ~~Audit whether the same explicit state should also guide alias-template resolution, late instantiation lookup, and constexpr member lookup.~~
-   DONE: Updated 5 additional consumption sites:
-   - `TemplateRegistry_Lazy.h` — constexpr sizeof dependent member-type resolution
-   - `ExpressionSubstitutor.cpp` — dependent alias target materialization strategy
-   - `Parser_Templates_Class.cpp` — alias target deferred-instantiation classification (2 checks)
-   - `Parser_Expr_QualLookup.cpp` — analyzed; outer `find("::")` is structural (needed to split `base::member`), inner `is_incomplete_instantiation_` already explicit — no change needed
-
-5. ~~Remove or narrow the current string heuristic once the explicit state is available everywhere it is needed.~~
-   DONE: All 6 placeholder creation sites now stamp `DependentPlaceholderKind`:
-   - `Parser_Templates_Inst_ClassTemplate.cpp:697` → `DependentArgs`
-   - `Parser_TypeSpecifiers.cpp:883` → `DependentMemberType`
-   - `Parser_TypeSpecifiers.cpp:1019` → `DependentMemberType`
-   - `Parser_TypeSpecifiers.cpp:1307` → `DependentMemberType`
-   - `Parser_TypeSpecifiers.cpp:1675` → `DependentMemberType`
-   - `Parser_TypeSpecifiers.cpp:2233` → `DependentArgs`
-
-**Remaining `find("::")` call sites — intentionally preserved**
-
-The following `find("::")` usages were audited and confirmed as **legitimate scope/namespace parsing** that should remain as string operations:
-- `ExpressionSubstitutor.cpp:819` — function name scope splitting for dependent qualified calls
-- `Parser_Expr_QualLookup.cpp:1077` — structural name splitting into `base` + `member`
-- `OverloadResolution.h:1315` — nested class name matching fallback
-- `LazyMemberResolver.h:175` — namespace walk scope control
-- `Parser_Templates_Lazy.cpp:23,293` — ctor/dtor name normalization
-- `IrGenerator_Call_Direct.cpp:822,850` — namespace path recovery
-- `Parser_Templates_Inst_ClassTemplate.cpp:1098,1805,3891,7970` — namespace extraction
-- All `IrGenerator_*.cpp` sites — codegen name mangling
-- `ObjFileWriter.h`, `ElfFileWriter_GlobalRTTI.cpp` — binary format output
-- `NameMangling.h` — name mangling scope splitting
-
-**Regression tests added**
-
-- `test_sfinae_dependent_member_ret0.cpp` — SFINAE elimination with `enable_if<is_integral<T>::value>::type`
-- `test_dependent_alias_chain_placeholder_ret42.cpp` — alias chain through dependent member types
-- `test_sizeof_dependent_member_type_ret8.cpp` — constexpr sizeof with dependent type parameters
-- `test_placeholder_kind_mixed_types_ret100.cpp` — mixed placeholder kinds with various native type sizes
-
----
-
-## Phase 5: only then consider the larger parser/sema ownership move
-
-**Status:** UNBLOCKED — Phases 1-4 are all complete. Ready to begin once the remaining codegen fallback surface is shrunk.
-
-**Goal**
-
-Use the earlier cleanup to make the broader parser/template/sema boundary work practical rather than theoretical.
-
-**Primary references**
-
-- `docs\2026-04-06-template-constexpr-sema-audit-plan.md`
-- `docs\2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`
-
-**Concrete work**
-
-1. Revisit whether alias-template instantiation or more late-instantiation logic should move behind a sema-owned incremental work queue.
-2. Decide whether template materialization should stay parser-owned with stronger invariants, or whether some subset should become sema-triggered.
-3. Keep this as a follow-on after Phases 1-4, not as a prerequisite for them.
-
-**Why this is last**
-
-The recent bug did not require a full architecture rewrite. It exposed specific duplication and split identity first. Removing those is the cheaper and safer way to earn clearer sema ownership later.
-
----
-
-## Validation matrix
-
-Each phase should at minimum run:
-
-- `.\build_flashcpp.bat Sharded`
-- `powershell -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_integral_constant_comprehensive_ret100.cpp test_integral_constant_pattern_ret42.cpp test_ratio_less_alias_ret0.cpp test_sfinae_enable_if_ret0.cpp test_sfinae_same_name_overload_ret0.cpp`
-
-Recommended targeted additions during the refactor:
-
-1. alias chain with dependent bool non-type argument
-2. alias-template use through top-level `using`
-3. alias-template use through struct-local `using`
-4. dependent `enable_if<..., T>::type` return-type viability
-5. late-instantiated member/template path that requires pending-sema normalization after materialization
-
----
-
-## Risks and guardrails
-
-### Risk 1: changing value-arg identity can perturb specialization matching
-
-Guardrail:
-
-- keep bool/int normalization only where the current semantics depend on it,
-- do not silently change equality/hash rules without matching tests.
-
-### Risk 2: centralizing alias materialization can accidentally drop use-site qualifiers
-
-Guardrail:
-
-- treat alias target resolution and use-site pointer/reference/cv/array modifiers as separate steps,
-- preserve the current merge behavior when rebuilding `TypeSpecifierNode`.
-
-### Risk 3: eager normalization hooks can create re-entrancy surprises
-
-Guardrail:
-
-- make the registration/queue contract explicit before widening normalization calls,
-- prefer a queue-drain helper over hidden recursive normalization in many unrelated sites.
-
-### Risk 4: placeholder-state cleanup can overfit one SFINAE bug
-
-Guardrail:
-
-- model unresolved-dependent state broadly enough that it also explains alias-member placeholders and other dependent `::type` shapes,
-- do not bake test-specific string patterns into the final representation.
-
----
-
-## Reviewer-identified issues and refactoring opportunities
-
-The following items were raised during code review (Gemini) and should be addressed as part of or alongside the phases above.
-
-### Dead `else if` in `ExpressionSubstitutor.cpp` (two sites)
-
-At `src/ExpressionSubstitutor.cpp:744` and `src/ExpressionSubstitutor.cpp:1170`, `instantiated_name` is unconditionally assigned `template_name_to_instantiate` (which is non-empty), making the subsequent `else if (instantiated_name.empty())` always false. `get_instantiated_class_name` is therefore dead code. The fix is to try the registry lookup first, then fall back to `get_instantiated_class_name`, and only use the raw template name as a last resort. **Relates to Phase 2.**
-
-### Alias resolution duplication between top-level and struct-local `using`
-
-`src/Parser_Decl_TopLevel.cpp:1019-1054` and `src/Parser_Decl_TypedefUsing.cpp:410-434` both contain the same pattern: check `isTemplateInstantiation`, materialize args via `toTemplateTypeArg`, call `instantiate_and_register_base_template`, and update the `TypeSpecifierNode`. Extract a shared helper (e.g. `resolveAndRegisterAliasTarget`). **Relates to Phase 2.**
-
-### Expression substitution duplication across instantiation sites
-
-~~`src/Parser_Templates_Inst_ClassTemplate.cpp:441-454` duplicates the `ExpressionSubstitutor` + `ConstExpr::Evaluator::evaluate` dispatch pattern that appears at 9+ other sites in this PR. Extract a shared helper (e.g. `TemplateTypeArg fromEvalResult(const ConstExpr::EvalResult&)` plus a `substituteAndEvaluateNonTypeDefault` wrapper).~~ **ADDRESSED in Phase 2 follow-up (2026-04-14):** `substituteAndEvaluateNonTypeDefault(...)` now owns the shared substitution + constexpr-evaluation path for dependent non-type defaults, and the remaining call sites now delegate to it.
-
-### Extract `materialize_placeholder_args` from deduction
-
-~~The `materialize_placeholder_args` lambda at `src/Parser_Templates_Inst_Deduction.cpp:2059-2178` is ~120 lines. It should be a dedicated `Parser` member function for readability and testability.~~ **ADDRESSED in Phase 2 follow-up (2026-04-14):** the deduction loop is now extracted into `deduceTemplateArgsFromCall(...)`. **Relates to Phase 2 / Phase 3.**
-
-### Extract `normalizeDependentNonTypeArgs` from `parse_type_specifier`
-
-The `normalizeDependentNonTypeArgs` lambda at `src/Parser_TypeSpecifiers.cpp:961-988` is complex and likely needed in other parts of the template parsing pipeline. It should be a dedicated helper method on `Parser`. **Relates to Phase 1.**
-
-### Hash strategy drift between `TemplateTypeArg::hash()` and `ValueArgKey::hash()`
-
-~~`TemplateTypeArg::hash()` (`src/TemplateRegistry_Types.h:267-272`) uses `std::hash<StringHandle>` for `dependent_name`, while `ValueArgKey::hash()` (`src/TemplateTypes.h:196-203`) uses `std::hash<uint32_t>` on the raw `.handle` field. The two types are never compared in the same hash map so this is not a correctness bug today, but it is exactly the kind of drift that Phase 1 canonicalization should eliminate.~~ **ADDRESSED in Phase 1 (2026-04-12):** `ValueArgKey` is now an alias for `NonTypeValueIdentity`, which uses `std::hash<StringHandle>{}(dependent_name)` consistently with `TemplateTypeArg::hash()`.
-
-### Codegen calls back into Parser for template constructor materialization
-
-**Added:** 2026-04-13 (PR #1255 review)
-
-The `materialize_template_ctor` lambda at `src/IrGenerator_Stmt_Decl.cpp:411-422` calls `parser_->materializeMatchingConstructorTemplate(...)` during IR generation, triggering template instantiation from the codegen phase. The semantic analysis path at `src/SemanticAnalysis.cpp:4997-5007` does the same work earlier, but the codegen path retains its own materialization as a fallback when sema did not resolve the constructor (e.g. when no `InitializerListNode` annotation was present, or when the brace-init path fell through to arity-based resolution).
-
-This mirrors the existing `prepare_nested_template_ctor` lambda at `src/IrGenerator_Stmt_Decl.cpp:385-409`, which similarly calls back into `parser_->instantiateLazyMemberFunction(...)` from codegen. Both are instances of the same architectural gap: codegen is performing template instantiation that should have been completed before reaching IR generation.
-
-**Additional issues in the current codegen fallback:**
-- The `materialize_template_ctor` lambda captures `is_ambiguous` but never checks it, silently proceeding with `nullptr` instead of throwing an ambiguity error like the sema path does.
-- The `is_unresolved_noop_ctor` lambda uses a fragile `type_name.front() == '_'` heuristic to detect unresolved template parameter placeholders, which can false-positive on user-defined types (e.g. `_MyAllocator`), silently skipping the constructor call.
-- Both `is_unresolved_noop_ctor` early-return sites (brace-init at line ~1562 and direct-init at line ~2366) skip destructor registration, causing resource leaks when the struct has a destructor.
-
-**Partial fix (2026-04-14, proper sema fix):** The primary root cause — lazy template constructor bodies not having struct member scope during re-parse — is now fixed in `Parser_Templates_Lazy.cpp`. The `is_unresolved_noop_ctor` codegen fallback is no longer triggered for the common template-ctor case. The codegen fallback paths remain as defensive code; Phase 5 should eliminate them entirely by ensuring sema normalizes all function bodies.
-
-**Long-term fix:** Resolve all constructor templates in semantic analysis before reaching codegen. The sema path already partially does this; the codegen fallback should become unnecessary once sema covers all constructor-call shapes (including arity-based fallback and direct-init syntax). **Relates to Phase 3 and Phase 5.**
-
-### `appendFunctionCallArgType` lacks full type deduction for complex expressions
-
-**Added:** 2026-04-13 (PR #1255 review)
-
-`Parser::appendFunctionCallArgType()` at `src/Parser_Core.cpp:346-378` produces best-effort `TypeSpecifierNode` entries for function-call overload resolution and template argument deduction. It handles `BoolLiteralNode`, `NumericLiteralNode`, `StringLiteralNode`, and `IdentifierNode` (which correctly copies the full `TypeSpecifierNode` including `type_index` from the declaration). However, all other expression types (`CallExprNode`, `BinaryOperatorNode`, `MemberAccessNode`, casts, etc.) fall through to the `TypeCategory::Int` default at line 352.
-
-This is not a regression — the old inline code it replaced (deleted lines ~4456-4481 in `src/Parser_Expr_PrimaryExpr.cpp`) had the same limitation, only handling the same four expression types and defaulting to `Int` for everything else. The function is currently only used in the template-function-call path where `arg_types` feed `buildDeductionMapFromCallArgs` for template argument deduction rather than full overload resolution, so the impact is limited.
-
-~~**Follow-up:** Extend `appendFunctionCallArgType` to handle compound expressions by computing their result type (e.g., propagating the return type of a `CallExprNode`, the result type of a `BinaryOperatorNode`, etc.). This would improve deduction accuracy for calls like `foo(bar() + 1)` where the argument type should be deduced from the expression's result rather than defaulting to `int`. **Relates to Phase 6.**~~
-
-**FIXED (2026-04-13):** `appendFunctionCallArgType` now handles `StaticCastNode`, `ConstCastNode`, `ReinterpretCastNode`, `DynamicCastNode` (extract target type), `CallExprNode` with a resolved callee (use declared return type), and `UnaryOperatorNode` (propagate operand type for arithmetic/bitwise; deduce Bool for `!`; fall through to Invalid for `*`/`&`). `BinaryOperatorNode`, `MemberAccessNode`, and other complex expression types still default to `TypeCategory::Int` and can be addressed in future passes.
-
-### Brace-init codegen path guards `materialize_template_ctor` behind `resolution.has_match`
-
-**Added:** 2026-04-13 (PR #1255 review — active bug)
-
-**FIXED (2026-04-14 slice):** `materialize_template_ctor` is now called unconditionally in the brace-init codegen path, mirroring the direct-init pattern.
-
-### Sema `tryAnnotateInitListConstructorArgs` missing `materializeMatchingConstructorTemplate` call
-
-**Added:** 2026-04-13 (PR #1255 review — active bug)
-
-**FIXED (2026-04-14 slice):** `SemanticAnalysis::tryAnnotateInitListConstructorArgs` now calls `materializeMatchingConstructorTemplate` after `resolve_constructor_overload`, matching the direct-init sema path.
-
-### `is_unresolved_noop_ctor` early return leaves object uninitialized before destructor registration
-
-**Added:** 2026-04-13 (PR #1255 review — investigate)
-
-~~The `is_unresolved_noop_ctor` early-return paths at `src/IrGenerator_Stmt_Decl.cpp` (brace-init ~line 1595 and direct-init ~line 2400) skip the `ConstructorCallOp` emission that normally handles stack allocation for struct variables, but still call `register_destructor_if_needed`. This means the variable is never allocated on the stack, yet a destructor call is registered. Currently this is safe because the two regression tests (`test_template_ctor_noop_dtor_direct_init_ret42.cpp` and `test_template_ctor_noop_dtor_list_init_ret42.cpp`) use destructors that only modify a global variable and never dereference `this`. For types whose destructors access member data, this would be undefined behavior.
-
-Note: `VariableDeclOp` IS emitted at line 1461 (brace-init) and line 2015 (direct-init), both before the `is_unresolved_noop_ctor` check. So the stack space is allocated. The risk is that member data is uninitialized (not zero-initialized) when the destructor runs, which is UB for destructors that access members.
-
-Follow-up: The noop path should zero-initialize the allocated stack object before registering the destructor, or the long-term fix is to resolve all template constructors in sema so the noop path is never reached.~~
-
-**FIXED (2026-04-14, audit update):** both noop-ctor early-return paths now zero-fill the allocated object (including base subobjects via recursive member stores) before registering the destructor.
-
-**SUPERSEDED (2026-04-14, proper sema fix):** The root cause — missing struct member scope during lazy template constructor body re-parse — is now fixed in `Parser_Templates_Lazy.cpp`. Template constructor bodies are properly parsed with `FunctionParsingScopeGuard`, so `is_unresolved_noop_ctor` is no longer triggered for the common case. The zero-fill safety net and the noop fallback remain as defensive code for edge cases but should be removed in Phase 5 when all codegen fallback materialization is eliminated.
-
-### `materializeMatchingConstructorTemplate` returns original uninstantiated ctor on failure
-
-**Added:** 2026-04-13 (PR #1255 review — investigate)
-
-~~In `src/Parser_Templates_Inst_MemberFunc.cpp:221-235`, when `preferred_ctor` has template parameters but `try_instantiate_constructor_template` fails or the instantiated ctor doesn't match call arguments, the function returns `preferred_ctor` (the original uninstantiated template). Downstream code may then use an uninstantiated template constructor for codegen. For empty-body constructors this is handled by `is_unresolved_noop_ctor`, but for non-empty-body constructors that fail instantiation, the returned uninstantiated ctor could cause issues. The function silently returns an unusable ctor instead of signaling failure.~~
-
-**FIXED (2026-04-13):** `materializeMatchingConstructorTemplate` now returns `nullptr` (not the uninstantiated template) when `try_instantiate_constructor_template` fails or the instantiated ctor doesn't match call arguments. Callers fall back to arity-based resolution. **Test:** `tests/test_template_ctor_nullptr_ret0.cpp`.
-
-### `try_instantiate_constructor_template` creates persistent dummy AST nodes
-
-**Added:** 2026-04-13 (PR #1255 review — investigate)
-
-~~`try_instantiate_constructor_template` at `src/Parser_Templates_Inst_MemberFunc.cpp:103-194` creates dummy `TypeSpecifierNode`, `DeclarationNode`, and `FunctionDeclarationNode` nodes solely to call `buildDeductionMapFromCallArgs`. These nodes are allocated via `emplace_node` and persist in the AST node pool for the lifetime of compilation. If `materializeMatchingConstructorTemplate` iterates many template constructors (~line 238-262), this could create significant node churn.~~
-
-**FIXED (2026-04-13, audit update):** `buildDeductionMapFromCallArgs(...)` now has an overload that accepts function parameter nodes directly, and `try_instantiate_constructor_template(...)` reuses `ctor_decl.parameter_nodes()` instead of allocating persistent dummy wrapper nodes. **Relates to Phase 6.**
-
-### `try_instantiate_member_function_template` fallback to `arg_types[0]` is suspicious
-
-**Added:** 2026-04-13 (PR #1255 review — pre-existing)
-
-**FIXED (2026-04-14 slice):** `try_instantiate_member_function_template(...)` no longer falls back to `arg_types[0]`. It now uses a default template argument when present and otherwise fails deduction. See `tests/test_member_function_template_undeduced_param_fail.cpp`.
-
-### Constructor call pack expansion duplicates logic and misses identifier-pack path
-
-**Added:** 2026-04-13 (PR #1255 review)
-
-~~The constructor argument parsing path at `src/Parser_Expr_PrimaryExpr.cpp` (the "Parse constructor arguments with pack expansion support" section, around line 3561) handles `arg...` pack expansion by calling `expandPackExpressionArgument(*node)` directly. This only covers `pack_param_info_`-based expansion (complex expression packs like `static_cast<T>(args)...`). The function call argument path uses the `append_function_call_argument` lambda (around line 4413) which handles both simple identifier packs and complex expression packs. The constructor path is missing strategy (1).~~
-
-**FIXED (2026-04-13):** Both the constructor expression path (`src/Parser_Expr_PrimaryExpr.cpp:3565`) and the declaration path (`src/Parser_Statements.cpp` `parse_direct_initialization`) now implement both expansion strategies (simple identifier packs via `get_pack_size` + complex packs via `expandPackExpressionArgument`), matching `append_function_call_argument` exactly. **Test:** `tests/test_ctor_direct_init_pack_ret0.cpp`.
-
----
-
-## Phase 6: unify template-parameter-to-function-parameter deduction mapping
-
-**Date added:** 2026-04-11
-**Context:** PR #1207 exposed that `try_instantiate_template_explicit` uses a positional counter (`deduced_call_arg_index`) to map template parameters to call arguments. This is architecturally incorrect — it assumes template parameter `i` corresponds to function parameter `i`, which breaks for SFINAE guards, non-deducible params, and reordered mappings.
-
-### Current state
-
-There are **two separate deduction paths** with different mapping strategies:
-
-1. **`try_instantiate_template_explicit`** (`src/Parser_Templates_Inst_Deduction.cpp:446-1159`)
-   — the "explicit template args + call args" path. Uses a blind positional counter
-   `deduced_call_arg_index` that walks `current_explicit_call_arg_types_` in order.
-   No mapping between template parameter names and function parameter types.
-
-2. **`try_instantiate_single_template`** (`src/Parser_Templates_Inst_Deduction.cpp:1282-1670`)
-   — the "deduce everything from call args" path. Has a **pre-deduction pass**
-   (lines 1361-1522) that builds a `param_name_to_arg` map by inspecting function
-   parameter types against template parameter names. This is architecturally correct.
-
-### The problem with `deduced_call_arg_index`
-
-For `template<typename T, typename = decltype(swap(...))> true_type test(int)` called as
-`test<pair<const int,int>>(0)`:
-
-- Template param 0 (`T`): consumed from explicit args ✓
-- Template param 1 (SFINAE guard): `deduced_call_arg_index=0` still points to the `int`
-  call arg → **incorrectly consumes it** instead of using the default
-
-The current workaround (PR #1207) gates call-arg deduction on `!param.has_default()`.
-This works for SFINAE guards (which always have defaults) but is not C++20-correct for
-`template<typename T, typename U = int> void foo(T, U)` called as `foo<double>(1.0, "hello")`
-— `U` should be deduced as `const char*` from the 2nd call arg, but the workaround uses
-the default `int` because `U` has a default.
-
-### Recommended architectural fix
-
-Add a **pre-deduction pass** to `try_instantiate_template_explicit`, analogous to the one
-in `try_instantiate_single_template`. Specifically:
-
-1. **Build a `param_name_to_arg` map** before the main template-arg-building loop.
-   Walk the function parameter list (`func_decl.parameter_nodes()`), check each
-   parameter's type against the template parameter name set, and match against
-   `current_explicit_call_arg_types_` by position in the *function* parameter list
-   (not the template parameter list).
-
-2. **In the main loop**, when a template parameter isn't covered by explicit args:
-   - Check `param_name_to_arg` first (name-based deduction from function params)
-   - Then fall back to `appendDefaultTemplateArg` (defaults)
-   - Then fail with overload mismatch
-
-3. **Remove `deduced_call_arg_index`** entirely — it is the root cause of the
-   positional mapping bug.
-
-### Why this is correct
-
-The pre-deduction approach works because it maps template parameters to function
-parameters **by name** rather than by position:
-
-- For `template<typename T, typename U> void foo(T a, U b)` called as `foo<double>(1.0, "hello")`:
-  function param 0 has type `T` → maps to template param `T` (already explicit)
-  function param 1 has type `U` → maps to call arg 1 (`"hello"`) → deduces `const char*`
-
-- For `template<typename T, typename = decltype(...)> true_type test(int)`:
-  function param 0 has type `int` (concrete) → no template param mapping
-  template param 1 (SFINAE guard) has no function param → falls through to default
-
-### Shared helper opportunity
-
-The pre-deduction logic in `try_instantiate_single_template` (lines 1361-1522) and the
-proposed new logic for `try_instantiate_template_explicit` are structurally identical.
-They should be extracted into a shared helper, e.g.:
-
-```cpp
-// Build a map from template parameter names to deduced TemplateTypeArgs
-// by matching function parameter types against call argument types.
-std::unordered_map<StringHandle, TemplateTypeArg>
-Parser::buildDeductionMapFromCallArgs(
-    const std::vector<ASTNode>& template_params,
-    const FunctionDeclarationNode& func_decl,
-    const std::vector<TypeSpecifierNode>& call_arg_types);
-```
-
-This would eliminate ~160 lines of duplication and ensure both paths use the same
-deduction logic.
-
-### Files to change
-
-- `src/Parser_Templates_Inst_Deduction.cpp` — add pre-deduction pass to
-  `try_instantiate_template_explicit`, extract shared helper from
-  `try_instantiate_single_template`
-- `src/Parser.h` — declare the shared helper
-
-### Validation
-
-- `test_namespaced_pair_swap_sfinae_ret0.cpp` — SFINAE guard with `decltype` default
-- `test_pack_decltype_simple_ret42.cpp` — pack expansion in `decltype` base class
-- New test needed: `template<typename T, typename U = int> void foo(T, U)` called as
-  `foo<double>(1.0, "hello")` to verify `U` is deduced as `const char*` (not `int`)
-- Full test suite regression check
-
-### Phase 6 extension: unify candidate selection after deduction
-
-The recent `swap` / `enable_if` regression showed that correct deduction alone is
-not enough: after viable candidates are built, FlashCpp still uses two different
-selection models.
-
-Current split:
-
-- **SFINAE path** now collects viable candidates and prefers the highest
-  `computeTemplateFunctionSpecificity(...)` score
-- **Non-SFINAE path** still returns the first successful instantiation
-
-That asymmetry is architecturally wrong. C++ template overload resolution should
-not change its partial-ordering model just because the call appears inside a
-SFINAE probe.
-
-#### Problems to address
-
-1. **Non-SFINAE still uses "first successful match wins"**
-   - `try_instantiate_template(...)` fast-returns the first viable non-SFINAE
-     candidate.
-   - This is only partly masked by the existing
-     `hasLaterUsableTemplateDefinitionWithMatchingShape(...)` deferral, which
-     fixes forward-declaration vs definition selection but not general overload
-     ordering.
-
-2. **`enable_if<false>` return-type failure is not propagated as a true
-   substitution failure**
-   - In some SFINAE cases, a candidate with `typename enable_if<false, T>::type`
-     in the return type can still survive as a bodyless placeholder instead of
-     failing immediately.
-   - The current deleted-overload tie handling is a pragmatic workaround, not the
-     real architectural fix.
-
-#### Recommended follow-up
-
-Add a shared candidate-selection layer after instantiation attempts:
-
-```cpp
-struct TemplateCandidate {
-    ASTNode node;
-    int specificity;
-    bool is_deleted;
-    bool has_body;
-};
-
-std::optional<ASTNode> Parser::selectBestTemplateCandidate(
-    const std::vector<TemplateCandidate>& candidates,
-    TemplateSelectionMode mode);
-```
-
-Where:
-
-- candidate **collection** is shared between SFINAE and non-SFINAE paths
-- candidate **selection** uses one ordering model in both modes
-- SFINAE vs non-SFINAE differs only in the terminal behavior:
-  - SFINAE: no viable winner => `nullopt`
-  - non-SFINAE: no viable winner => diagnostic / hard failure
-
-#### Proper root-cause fix for the SFINAE side
-
-In addition to the shared selector, the instantiation path should stop treating
-`enable_if<false>` return-type substitution as a successful bodyless
-instantiation. If substituting the return type removes `::type`, that must
-propagate as substitution failure before candidate selection.
-
-#### Files likely involved
-
-- `src/Parser_Templates_Inst_Deduction.cpp`
-- `src/Parser.h`
-- possibly `src/ExpressionSubstitutor.cpp` or the return-type substitution path
-  used by `try_instantiate_single_template(...)`
-
-#### Validation additions
-
-- `test_namespaced_pair_swap_sfinae_ret0.cpp`
-- existing forward-declaration regression coverage from this branch
-- new non-SFINAE overload-ordering regression where the more-specialized
-  overload is declared later
-- new `enable_if<false>` return-type regression that must fail by substitution,
-  not by deleted-overload tie-breaking
-
----
-
-## Out of scope for this document
-
-- a full rewrite that moves all template instantiation out of the parser immediately
-- a full constexpr architecture rewrite
-- unrelated codegen/sema ownership cleanup outside the template-materialization surface
-
----
+- **2166** compile+link+runtime passing tests
+- **146** `_fail` tests failing as expected
+- overall result: **SUCCESS**
 
 ## Related docs
 
 - `docs/2026-04-06-template-constexpr-sema-audit-plan.md`
-- `docs/2026-04-04-codegen-name-lookup-investigation.md`
 - `docs/2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`
-
----
-
-## Bottom line
-
-The branch fix solved the immediate regression by teaching instantiation keys to distinguish dependent and concrete non-type arguments. The next worthwhile architectural step is to make that distinction authoritative everywhere, then collapse alias-template materialization and late-materialization normalization onto explicit shared helpers.
-
-That is the highest-leverage follow-up because it attacks the actual fault line that produced the recent failures: duplicated template identity logic plus duplicated materialization paths.
+- `docs/2026-04-04-codegen-name-lookup-investigation.md`
