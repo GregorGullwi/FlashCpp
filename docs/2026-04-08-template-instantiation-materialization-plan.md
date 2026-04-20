@@ -1,7 +1,7 @@
 # Template Instantiation / Materialization Status
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-20 (Phase 5 Slices B & C: call-target materialization is now sema-owned)
+**Last Updated:** 2026-04-20 (Phase 5 Slices D & E: evaluator-owned lazy materialization + dead-ctor-fallback removal)
 
 This document is now a short status audit, not a historical scratchpad.
 Its purpose is to answer two questions clearly:
@@ -22,6 +22,8 @@ Its purpose is to answer two questions clearly:
   - **The shared helper itself is now sema-owned.** `AstToIr::materializeLazyMemberIfNeeded` is a thin forwarder to `SemanticAnalysis::ensureMemberFunctionMaterialized`; registry lookup, `parser_.instantiateLazyMemberFunction(...)`, pending-root normalization, and the "mark instantiated" bookkeeping all live in sema now. `ensureSelectedConstructorMaterialized` also routes through this unified helper.
   - **Slice A (conversion operators) is done.** `SemanticAnalysis::tryAnnotateConversion` now eagerly materializes the matching conversion-operator lazy stub through `ensureMemberFunctionMaterialized`, so by the time codegen runs the struct visitor, the instantiated body already lives on the struct and `visitFunctionDeclarationNode` emits IR for it directly. The codegen fallback in `emitConversionOperatorCall` is preserved as defense in depth for paths that do not go through `tryAnnotateConversion` (e.g., explicit `static_cast`, direct member-access of `operator T()`), but it is now a no-op in the common sema-annotated implicit-conversion flow.
   - **Slices B & C (direct / indirect call targets) are done.** `SemanticAnalysis::tryAnnotateCallArgConversionsImpl` now eagerly materializes any lazy, still-un-defined member target (cross-struct direct call, static call on a template instantiation, or dispatched member/virtual call) via `ensureMemberFunctionMaterialized` immediately after the resolved call target is selected and before it is cached into `resolved_direct_call_table_` or handed to argument-conversion annotation. This removes the dependency on the codegen-side `instantiateAndQueueLazyMember` / `instantiateLazySelectedMember` fallbacks being the *first* materialization site; those codegen bridges are preserved as defense in depth for call-expression paths that do not flow through sema's call-argument annotation (e.g., synthesized wrapper calls, late-bound lambda callees).
+  - **Slice D (constexpr static-member fallback) is done.** `ConstExpr::Evaluator::find_current_struct_member_function_candidate` no longer drives lazy-member materialization directly. When the evaluation context has sema attached it forwards to `SemanticAnalysis::ensureMemberFunctionMaterialized`; the parser-path (`instantiateLazyMemberFunction` + `normalizePendingSemanticRoots` + `markInstantiated`) is preserved only as a pre-sema fallback. Because the first evaluator pass now materializes on its own, the codegen-side retry in `IrGenerator_Visitors_TypeInit.cpp` no longer seeds the retry with its own `materializeLazyMemberIfNeeded` call — it now only owns its symbol-table rebind + template-binding rebuild.
+  - **Slice E (deferred-queue fallbacks) is partially done.** The two `materializeLazyMemberIfNeeded` fallbacks in `generateDeferredMemberFunctions` were audited by temporarily converting them into hard failures and running the full regression suite. The **constructor-shaped fallback is dead** and has been deleted (the subsequent `struct_info->member_functions` replacement-constructor scan that backs it is preserved). The **function-shaped fallback is still reachable** (12 tests rely on it, e.g. `test_operator_overload_template_ret40.cpp`, `test_phase5_slice_bc_call_targets_ret42.cpp`, `test_template_qualified_member_call_ret42.cpp`) and is left in place — further Phase 5 work is needed to push the materialization earlier at the struct-visitor / member-access sites that seed the deferred queue.
   - The broader parser/sema ownership move (pushing materialization earlier at each remaining individual codegen call site) is still open.
 - **Phase 6:** Not done. A separate explicit-deduction mapping issue is still open.
 
@@ -67,7 +69,7 @@ Phase 5 is now the remaining ownership cleanup: shrink the places where codegen 
 
 The main remaining surfaces are:
 
-- `src/IrGenerator_Visitors_TypeInit.cpp` *(constexpr static-member retry fallback; Slice D)*
+- `src/IrGenerator_Visitors_TypeInit.cpp` *(Slice D done; Slice E partially done — function-shaped deferred-queue fallback still reachable)*
 - `src/IrGenerator_Call_Direct.cpp` *(Slices B/C in place in sema: codegen fallback kept only for paths that don't flow through sema's call-arg annotation)*
 - `src/IrGenerator_Call_Indirect.cpp` *(Slices B/C in place in sema: fallback kept only for paths that don't flow through sema's call-arg annotation)*
 - `src/IrGenerator_MemberAccess.cpp` *(Slice A in place: fallback kept only for non-sema-annotated conversion paths)*
@@ -108,8 +110,8 @@ The remaining files above do not.
    - suggested next slices:
      - **Slice B — direct call** (`IrGenerator_Call_Direct.cpp:954`): **done** — `SemanticAnalysis::tryAnnotateCallArgConversionsImpl` materializes the cross-struct lazily-selected direct-call target before caching it in `resolved_direct_call_table_`.
      - **Slice C — indirect / member-access call** (`IrGenerator_Call_Indirect.cpp:1089`): **done** — the same sema site covers member-call targets, so `materialized_member_func_decl` is no longer the first materialization trigger at codegen time.
-     - **Slice D — constexpr static-member fallback** (`IrGenerator_Visitors_TypeInit.cpp:512`): let `ConstExpr::Evaluator` (already invoked with `ctx.parser`/`ctx.sema`) drive materialization for the first eval attempt so the codegen-side retry isn't needed.
-     - **Slice E — deferred-queue fallbacks** (`IrGenerator_Visitors_TypeInit.cpp:275/289`): once Slices A–D have run, re-check whether these fallbacks are still reachable, and delete them if not.
+     - **Slice D — constexpr static-member fallback** (`IrGenerator_Visitors_TypeInit.cpp:512`): **done** — the evaluator routes its lazy-member materialization through `SemanticAnalysis::ensureMemberFunctionMaterialized` when sema is attached, and the codegen-side retry no longer primes with `materializeLazyMemberIfNeeded`.
+     - **Slice E — deferred-queue fallbacks** (`IrGenerator_Visitors_TypeInit.cpp:275/289`): **partially done** — the ctor-shaped fallback at line 289 was verified dead and deleted. The function-shaped fallback at line 275 is still reachable (12 tests) and remains the outstanding piece of Slice E.
 
 3. **Delete the codegen bridge once the sema invariant is in place**
    - the shared helper then collapses to a consistency check / hard failure if a supposedly normalized node is still unresolved
@@ -130,8 +132,8 @@ If you want the shortest accurate summary:
 
 - **Done:** Phases 1-4
 - **In progress:** Phase 5
-- **Done inside Phase 5:** stmt-decl constructor materialization slice; codegen lazy-member bridges consolidated into a single shared helper (`AstToIr::materializeLazyMemberIfNeeded`); that helper is now a thin forwarder to the sema-owned `SemanticAnalysis::ensureMemberFunctionMaterialized`, which also backs `ensureSelectedConstructorMaterialized`; **Slice A (conversion operators) landed** — `tryAnnotateConversion` eagerly materializes the selected conversion-operator body before codegen runs; **Slices B & C (direct / indirect / member call targets) landed** — `tryAnnotateCallArgConversionsImpl` eagerly materializes the selected call target for free/static direct calls and for dispatched member/virtual calls before codegen consumes them.
-- **Next work:** Slice D — push the constexpr static-member materialization earlier so the evaluator's first attempt succeeds and the codegen retry fallback can be deleted. After Slices A–D, re-audit `IrGenerator_Visitors_TypeInit.cpp` Slice E fallbacks for reachability and remove them if dead, then delete the codegen-side forwarder and convert it into a consistency check.
+- **Done inside Phase 5:** stmt-decl constructor materialization slice; codegen lazy-member bridges consolidated into a single shared helper (`AstToIr::materializeLazyMemberIfNeeded`); that helper is now a thin forwarder to the sema-owned `SemanticAnalysis::ensureMemberFunctionMaterialized`, which also backs `ensureSelectedConstructorMaterialized`; **Slice A (conversion operators) landed** — `tryAnnotateConversion` eagerly materializes the selected conversion-operator body before codegen runs; **Slices B & C (direct / indirect / member call targets) landed** — `tryAnnotateCallArgConversionsImpl` eagerly materializes the selected call target for free/static direct calls and for dispatched member/virtual calls before codegen consumes them; **Slice D (constexpr static-member fallback) landed** — `ConstExpr::Evaluator` routes its lazy-member materialization through sema when attached and the codegen retry no longer primes materialization; **Slice E (deferred-queue fallbacks) partially landed** — the ctor-shaped fallback was verified dead and deleted.
+- **Next work:** finish Slice E by pushing function-shaped deferred-member materialization earlier (so the last `materializeLazyMemberIfNeeded` call at `IrGenerator_Visitors_TypeInit.cpp:275` becomes unreachable and can be deleted), then collapse the codegen-side forwarder into a consistency check.
 - **Separate later follow-up:** Phase 6 explicit-deduction mapping cleanup
 
 ## Regression coverage worth keeping close
@@ -157,7 +159,7 @@ Linux validation was re-run during this audit:
 
 Current baseline:
 
-- **2170** compile+link+runtime passing tests
+- **2171** compile+link+runtime passing tests
 - **147** `_fail` tests failing as expected
 - overall result: **SUCCESS**
 
