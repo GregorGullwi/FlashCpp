@@ -225,8 +225,6 @@ Codegen should not be the place where ordinary type-law mistakes are discovered.
 
 - parser/template boundary hardening:
   `docs/2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`
-- deeper constructor-resolution cleanup and remaining dependent-path audits:
-  `docs/2026-04-06-constructor-overload-resolution-refactor.md`
 - TempVar/reference-materialization execution details:
   `docs/2026-03-24_TEMPVAR_LOCAL_VARIABLE_IR_ARCHITECTURE_PROPOSAL.md`
 
