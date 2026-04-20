@@ -1508,56 +1508,12 @@ public:
 	// Get readable string representation
 	std::string getReadableString() const;
 
-	// Compare two type specifiers for function overload resolution
-	// Returns true if they represent the same type signature
-	bool matches_signature(const TypeSpecifierNode& other) const {
-		// Check basic type
-		if (type_index_.category() != other.type_index_.category()) {
-			// Be lenient for typedef/alias cases, but do not collapse distinct semantic
-			// types such as enum vs int just because they share a runtime size.
-			TypeCategory resolved_type = resolve_type_alias(type_index_);
-			TypeCategory other_resolved_type = resolve_type_alias(other.type_index_);
-			if (resolved_type != other_resolved_type) {
-				return false;
-			}
-		}
+	CVQualifier pointee_cv_for_pointer_conversion() const;
+	TypeSpecifierNode adjusted_function_parameter_type() const;
 
-		// Check type index for user-defined types
-		if (is_struct_type(type_index_.category())) {
-			if (type_index_ != other.type_index_) {
-				// Be lenient for dependent/alias types: treat as match when the identifier tokens are the same
-				if (token_.value() != other.token_.value()) {
-					return false;
-				}
-			}
-		}
-
-		// For function signature matching, top-level CV qualifiers on value types are ignored
-		// Example: void f(const int) and void f(int) have the same signature
-		// However, CV qualifiers matter for pointers/references
-		// Example: void f(const int*) and void f(int*) have different signatures
-		bool has_indirection = !pointer_levels_.empty() || reference_qualifier_ != ReferenceQualifier::None;
-		if (has_indirection) {
-			// For pointers/references, CV qualifiers DO matter
-			if (cv_qualifier_ != other.cv_qualifier_)
-				return false;
-		}
-		// else: For value types, ignore top-level CV qualifiers
-
-		// Check reference qualifiers
-		if (reference_qualifier_ != other.reference_qualifier_)
-			return false;
-
-		// Check pointer depth and qualifiers at each level
-		if (pointer_levels_.size() != other.pointer_levels_.size())
-			return false;
-		for (size_t i = 0; i < pointer_levels_.size(); ++i) {
-			if (pointer_levels_[i].cv_qualifier != other.pointer_levels_[i].cv_qualifier)
-				return false;
-		}
-
-		return true;
-	}
+	// Compare two type specifiers for function overload resolution.
+	// Returns true if they represent the same parameter type signature.
+	bool matches_signature(const TypeSpecifierNode& other) const;
 
 private:
 	SizeInBits size_{};  // Size in bits
@@ -1670,6 +1626,103 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 		resolved.type_index = current_type_index.withCategory(type_info->typeEnum());
 	}
 	return resolved;
+}
+
+inline CVQualifier TypeSpecifierNode::pointee_cv_for_pointer_conversion() const {
+	const size_t depth = pointer_depth();
+	if (depth == 0) {
+		return CVQualifier::None;
+	}
+	CVQualifier pointee_cv = depth == 1 ? cv_qualifier_ : pointer_levels_[depth - 2].cv_qualifier;
+	if (depth != 1 || token_.handle() == StringHandle{}) {
+		return pointee_cv;
+	}
+
+	auto type_it = getTypesByNameMap().find(token_.handle());
+	if (type_it == getTypesByNameMap().end() || !type_it->second || !type_it->second->isTypeAlias()) {
+		return pointee_cv;
+	}
+
+	const ResolvedAliasTypeInfo alias_info =
+		resolveAliasTypeInfo(type_it->second->registeredTypeIndex().withCategory(type_it->second->typeEnum()));
+	if (alias_info.pointer_depth != depth) {
+		return pointee_cv;
+	}
+
+	TypeIndex alias_resolved_index = alias_info.type_index;
+	if (alias_resolved_index.category() == TypeCategory::Invalid) {
+		alias_resolved_index = alias_resolved_index.withCategory(alias_info.typeEnum());
+	}
+	TypeIndex spec_resolved_index = canonicalize_type_alias(type_index_).resolvedTypeIndex();
+	if (alias_resolved_index.is_valid() && spec_resolved_index.is_valid() &&
+		alias_resolved_index != spec_resolved_index) {
+		return pointee_cv;
+	}
+
+	return alias_info.cv_qualifier;
+}
+
+inline TypeSpecifierNode TypeSpecifierNode::adjusted_function_parameter_type() const {
+	TypeSpecifierNode adjusted = *this;
+	if (adjusted.reference_qualifier_ != ReferenceQualifier::None) {
+		return adjusted;
+	}
+	if (adjusted.pointer_levels_.empty()) {
+		adjusted.cv_qualifier_ = CVQualifier::None;
+		return adjusted;
+	}
+
+	adjusted.cv_qualifier_ = adjusted.pointee_cv_for_pointer_conversion();
+	adjusted.pointer_levels_.back().cv_qualifier = CVQualifier::None;
+	return adjusted;
+}
+
+inline bool TypeSpecifierNode::matches_signature(const TypeSpecifierNode& other) const {
+	const TypeSpecifierNode self = adjusted_function_parameter_type();
+	const TypeSpecifierNode other_adjusted = other.adjusted_function_parameter_type();
+
+	// Check basic type
+	if (self.type_index_.category() != other_adjusted.type_index_.category()) {
+		// Be lenient for typedef/alias cases, but do not collapse distinct semantic
+		// types such as enum vs int just because they share a runtime size.
+		TypeCategory resolved_type = resolve_type_alias(self.type_index_);
+		TypeCategory other_resolved_type = resolve_type_alias(other_adjusted.type_index_);
+		if (resolved_type != other_resolved_type) {
+			return false;
+		}
+	}
+
+	// Check type index for user-defined types
+	if (is_struct_type(self.type_index_.category())) {
+		if (self.type_index_ != other_adjusted.type_index_) {
+			// Be lenient for dependent/alias types: treat as match when the identifier tokens are the same
+			if (self.token_.value() != other_adjusted.token_.value()) {
+				return false;
+			}
+		}
+	}
+
+	// For function signature matching, top-level CV qualifiers on value types are ignored.
+	// CV qualifiers below the top level still matter for pointers/references.
+	const bool has_indirection =
+		!self.pointer_levels_.empty() || self.reference_qualifier_ != ReferenceQualifier::None;
+	if (has_indirection && self.cv_qualifier_ != other_adjusted.cv_qualifier_) {
+		return false;
+	}
+
+	// Check reference qualifiers
+	if (self.reference_qualifier_ != other_adjusted.reference_qualifier_)
+		return false;
+
+	// Check pointer depth and qualifiers at each level
+	if (self.pointer_levels_.size() != other_adjusted.pointer_levels_.size())
+		return false;
+	for (size_t i = 0; i < self.pointer_levels_.size(); ++i) {
+		if (self.pointer_levels_[i].cv_qualifier != other_adjusted.pointer_levels_[i].cv_qualifier)
+			return false;
+	}
+
+	return true;
 }
 
 inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_spec) {

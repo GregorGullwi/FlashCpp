@@ -421,7 +421,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			} else {
 				for (const TypeIndex& pt : sig.parameter_type_indices) {
 					TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);	 // explicit ctor: see above
-					appendTypeCode(output, param_spec);
+					appendTypeCode(output, param_spec.adjusted_function_parameter_type());
 				}
 			}
 		} else {
@@ -442,6 +442,11 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 	}
 }
 
+template <typename OutputType>
+void appendParameterTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
+	appendTypeCode(output, type_node.adjusted_function_parameter_type());
+}
+
 // ============================================================================
 // Itanium C++ ABI Name Mangling Helpers
 // ============================================================================
@@ -450,7 +455,9 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 // Reference: https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling-type
 template <typename OutputType>
 inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node, bool is_function_parameter = false) {
-	TypeSpecifierNode normalized_type = normalizeTypeSpecifierForMangling(type_node);
+	TypeSpecifierNode parameter_adjusted_type =
+		is_function_parameter ? type_node.adjusted_function_parameter_type() : type_node;
+	TypeSpecifierNode normalized_type = normalizeTypeSpecifierForMangling(parameter_adjusted_type);
 	const TypeSpecifierNode& normalized = normalized_type;
 
 	// Handle pointers first (they modify what comes after)
@@ -1353,7 +1360,7 @@ inline MangledName generateMangledName(
 		builder.append('X');
 	} else {
 		for (const auto& param_type : param_types) {
-			appendTypeCode(builder, param_type);
+			appendParameterTypeCode(builder, param_type);
 		}
 	}
 
@@ -1476,7 +1483,7 @@ inline MangledName generateMangledName(
 	} else {
 		for (const auto& param : param_nodes) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
-			appendTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
+			appendParameterTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
 		}
 	}
 
@@ -1798,7 +1805,7 @@ inline MangledName generateMangledNameForConstructor(
 
 	// Add parameter type codes
 	for (const auto& param_type : param_types) {
-		appendTypeCode(builder, param_type);
+		appendParameterTypeCode(builder, param_type);
 	}
 
 	builder.append("@Z");  // End marker
@@ -1841,7 +1848,7 @@ inline MangledName generateMangledNameForConstructor(
 	// Add parameter type codes directly from param nodes
 	for (const auto& param : param_nodes) {
 		const DeclarationNode& param_decl = param.as<DeclarationNode>();
-		appendTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
+		appendParameterTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
 	}
 
 	builder.append("@Z");  // End marker
