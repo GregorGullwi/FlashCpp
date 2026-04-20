@@ -1953,7 +1953,7 @@ ParseResult Parser::parse_typedef_declaration() {
 		SaveHandle paren_saved = save_token_position();
 		advance(); // consume '('
 
-		parse_calling_convention();
+		last_calling_convention_ = parse_calling_convention(last_calling_convention_);
 
 		if (peek() == "*"_tok) {
 			advance(); // consume '*'
@@ -2025,6 +2025,7 @@ ParseResult Parser::parse_typedef_declaration() {
 		sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
 		sig.return_reference_qualifier = type_spec.reference_qualifier();
 		sig.linkage = Linkage::None;
+		sig.calling_convention = last_calling_convention_;
 		fp_type.set_function_signature(sig);
 
 		// Replace type_spec with the function pointer type
@@ -2046,16 +2047,7 @@ ParseResult Parser::parse_typedef_declaration() {
 		// Parse the parameter list by skipping to the closing ')'
 		advance(); // consume '('
 
-		int paren_depth = 1;
-		while (paren_depth > 0 && !peek().is_eof()) {
-			auto token = peek_info();
-			if (token.value() == "(") {
-				paren_depth++;
-			} else if (token.value() == ")") {
-				paren_depth--;
-			}
-			advance();
-		}
+		skip_balanced_parens();
 
 		// After consuming the closing ')', we should be at the semicolon
 		// (or potentially attribute specifiers, which we'll skip in the semicolon check)
