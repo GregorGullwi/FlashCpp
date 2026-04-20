@@ -703,43 +703,11 @@ std::string ObjectFileWriter::get_or_create_builtin_throwinfo(TypeCategory type)
 	auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
 
 	// Ensure RTTI type descriptor for int exists: ??_R0H@8
-	const std::string type_desc_symbol_name = "??_R0H@8";
+	// Delegate to the shared emitMsvcTypeDescriptor path so that
+	// symbol_index_cache_ is populated — avoids duplicate symbols when
+	// both throw(int) and typeid(int) appear in the same TU.
+	const std::string type_desc_symbol_name = get_or_create_builtin_type_descriptor(TypeCategory::Int);
 	auto* type_desc_symbol = coffi_.get_symbol(type_desc_symbol_name);
-	if (!type_desc_symbol) {
-		uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-
-		std::vector<char> type_desc_data;
-		// vftable pointer (8 bytes) - relocated to type_info vftable
-		type_desc_data.resize(16, 0);
-		// Mangled built-in type name for int
-		type_desc_data.push_back('.');
-		type_desc_data.push_back('H');
-		type_desc_data.push_back(0);
-
-		add_data(type_desc_data, SectionType::RDATA);
-
-		type_desc_symbol = coffi_.add_symbol(type_desc_symbol_name);
-		type_desc_symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		type_desc_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		type_desc_symbol->set_section_number(rdata_section->get_index() + 1);
-		type_desc_symbol->set_value(type_desc_offset);
-
-		// Relocate vftable pointer to type_info::vftable
-		auto* type_info_vftable = coffi_.get_symbol("??_7type_info@@6B@");
-		if (!type_info_vftable) {
-			type_info_vftable = coffi_.add_symbol("??_7type_info@@6B@");
-			type_info_vftable->set_value(0);
-			type_info_vftable->set_section_number(0);
-			type_info_vftable->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-			type_info_vftable->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		}
-
-		COFFI::rel_entry_generic td_vft_reloc;
-		td_vft_reloc.virtual_address = type_desc_offset;
-		td_vft_reloc.symbol_table_index = type_info_vftable->get_index();
-		td_vft_reloc.type = IMAGE_REL_AMD64_ADDR64;
-		rdata_section->add_relocation_entry(&td_vft_reloc);
-	}
 
 	// Emit CatchableType: _CT??_R0H@84 (0x24 bytes)
 	const std::string catchable_type_symbol_name = "_CT??_R0H@84";
