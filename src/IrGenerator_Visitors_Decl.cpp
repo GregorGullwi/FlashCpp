@@ -2124,6 +2124,25 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				} else {
 						// Implicit default constructor: use default member initializers or zero-initialize
 
+						// C++20 [class.default.ctor]/2: the implicitly-declared default constructor is
+						// defined as deleted if any non-static data member of class type M has a
+						// user-declared constructor but no default constructor.
+						// In that case skip generating the body entirely — the function is effectively deleted.
+						bool is_implicitly_deleted = false;
+						for (const auto& member : struct_info->members) {
+							if (member.type_index.category() == TypeCategory::Struct) {
+								const TypeInfo* mti = tryGetTypeInfo(member.type_index);
+								if (mti && mti->struct_info_ &&
+									mti->struct_info_->hasUserDefinedConstructor() &&
+									!mti->struct_info_->hasConstructor()) {
+									is_implicitly_deleted = true;
+									break;
+								}
+							}
+						}
+
+						if (!is_implicitly_deleted) {
+
 						// Step 1: Handle bitfield members - combine into single per-unit stores
 					{
 						std::unordered_map<size_t, unsigned long long> combined_bitfield_values;
@@ -2426,7 +2445,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 					}
-				}
+				} // if (!is_implicitly_deleted)
+				} // end implicit default ctor else
 			} else {
 					// User-defined constructor: initialize all members
 					// Precedence: explicit initializer > default initializer > zero-initialize

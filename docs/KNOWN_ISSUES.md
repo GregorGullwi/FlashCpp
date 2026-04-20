@@ -168,27 +168,3 @@ access specifier.
 IR generator's pointer initialization path. When the initializer is a struct
 pointer with a different `TypeIndex` from the declaration, verify the base is
 publicly accessible before emitting the adjustment; otherwise emit a compile error.
-
-## Runtime aggregate initialization can still synthesize invalid default-ctor calls for nested non-aggregate members
-
-**Repro:**
-```cpp
-struct Inner {
-	int x;
-	int y;
-	constexpr Inner(int a, int b) : x(a), y(b) {}
-};
-
-struct Outer {
-	Inner inner;
-	int z;
-};
-
-int main() {
-	Outer o = {{1, 2}, 3};
-	return o.inner.x + o.inner.y + o.z;
-}
-```
-**Symptom:** Link error: `undefined reference to 'Inner::Inner()'`.
-**Impact:** Some runtime aggregate-initialization paths still materialize or emit an implicit default constructor for the enclosing aggregate even when a nested member must instead be initialized directly from the brace clause.
-**Fix approach:** Reuse the constructor-aware nested brace-init lowering uniformly across the remaining runtime aggregate-initialization paths so nested non-aggregate members construct in-place instead of routing through a synthesized default constructor.
