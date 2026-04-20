@@ -52,6 +52,7 @@ static const std::unordered_set<std::string_view> kExpressionOnlyAfterLeadingIde
 	"%=", "&=", "|=", "^=",
 	"<<=", ">>="};
 
+
 ParseResult Parser::parse_block() {
 	if (!consume("{"_tok)) {
 		return ParseResult::error("Expected '{' for block", current_token_);
