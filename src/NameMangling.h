@@ -507,18 +507,37 @@ public:
 
 	// Try to emit a back-reference for `key` if it is in the substitution table.
 	// Returns true and emits S_/S0_/.../Sn_ if found; returns false otherwise.
+	// Encoding per Itanium C++ ABI §5.1.8:
+	//   index 0 -> "S_"
+	//   index 1 -> "S0_"  (seq-id = 0)
+	//   index 2 -> "S1_"  (seq-id = 1)
+	//   ...
+	//   index 10 -> "S9_"
+	//   index 11 -> "SA_"
+	//   ...
+	//   index 36 -> "SZ_"
+	//   index 37 -> "S10_" (seq-id = 10 in base-36, i.e. "10")
+	// seq-id = i - 1, encoded in base-36 (digits 0-9 then A-Z), most-significant digit first.
 	bool tryEmitSubstitution(std::string_view key) {
 		for (size_t i = 0; i < subs_.size(); ++i) {
 			if (subs_[i] == key) {
 				sb_.append('S');
 				if (i > 0) {
-					// S_ = index 0, S0_ = index 1, S1_ = index 2, ...
-					// Encode i-1 in base-36: digits 0-9 then A-Z
+					// seq-id = i - 1, encode in base-36 (0-9, A-Z) with most-significant first.
+					// Build digits into a small buffer in reverse order, then emit forward.
 					size_t n = i - 1;
-					if (n < 10) {
-						sb_.append(static_cast<char>('0' + static_cast<char>(n)));
-					} else {
-						sb_.append(static_cast<char>('A' + static_cast<char>(n - 10)));
+					char buf[16];
+					int len = 0;
+					do {
+						size_t digit = n % 36;
+						buf[len++] = (digit < 10)
+							? static_cast<char>('0' + digit)
+							: static_cast<char>('A' + (digit - 10));
+						n /= 36;
+					} while (n > 0);
+					// Emit most-significant digit first
+					for (int j = len - 1; j >= 0; --j) {
+						sb_.append(buf[j]);
 					}
 				}
 				sb_.append('_');
