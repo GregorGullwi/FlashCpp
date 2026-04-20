@@ -582,9 +582,8 @@ With sema-owned expression typing now largely complete, the next narrow follow-u
 work should stay on the remaining parser/template-owned boundary surfaces:
 
 1. audit the remaining constructor/template-pattern
-   `PackExpansionExprNode` survivor paths so the pre-sema checker can narrow its
-   remaining constructor/template skip regions just as it now does for ordinary
-   function bodies
+   `PackExpansionExprNode` survivor paths under `$pattern__` owners so the
+   remaining constructor skip region is limited to parser-owned pattern AST only
 2. audit the remaining parser-owned fold-expression survivor paths and decide
    which ones should become earlier parser/substitution diagnostics instead of
    invariant failures
@@ -605,6 +604,21 @@ ensures those guarantees remain durable as the compiler continues to evolve.
 Phase 7 focuses on observability, validation, and strengthening the boundary guarantees
 established in Phases 1-6. The goal is to make the sema-owned post-parse surface more
 observable and ensure the boundary invariants remain robust as the codebase evolves.
+
+Latest slice:
+
+- `PostParseBoundaryChecker` now distinguishes parser-owned template-pattern
+  constructors from instantiated deferred-body constructors: it still skips
+  `$pattern__` owners entirely, but it now walks parameters plus member/base/
+  delegating initializer surfaces for instantiated constructors even when their
+  bodies are still deferred via `has_template_body_position()`
+- this narrows the remaining constructor skip region to the still-parser-owned
+  body only, matching the eager substitution work already done for constructor
+  initializer lists in `Parser_Templates_Inst_ClassTemplate.cpp` and
+  `Parser_Templates_Lazy.cpp`
+- `tests/test_ool_template_ctor_pack_boundary_ret0.cpp`: regression coverage
+  for an out-of-line variadic template constructor whose base initializer uses
+  `args...` on the deferred-body path
 
 **Planned work:**
 
@@ -639,9 +653,8 @@ observable and ensure the boundary invariants remain robust as the codebase evol
    - Document the dual-context nature of `ConstExprEvaluator` (parser-owned template
      substitution vs. sema-owned constant evaluation)
 
-**Test result:** concrete function-body boundary tightening + context-rich
-sample logging landed; focused pack-expansion/pending-sema regressions and the
-full Linux test suite passed on 2026-04-20.
+**Test result:** baseline + post-change full Linux regression suite passed on
+2026-04-20 (`bash tests/run_all_tests.sh`, 2166 files).
 
 ## Exit criteria
 

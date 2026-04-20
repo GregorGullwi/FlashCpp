@@ -463,11 +463,9 @@ private:
 		if (node.is<ConstructorDeclarationNode>()) {
 			const auto& ctor = node.as<ConstructorDeclarationNode>();
 			const bool pushed = pushContext(StringTable::getStringView(ctor.name()));
-			// If this constructor has a deferred (template) body position, it is an
-			// uninstantiated template constructor. Its member/base initializers intentionally
-			// contain PackExpansionExprNode that will be resolved during lazy instantiation.
-			// Skip visiting them here to avoid false-positive boundary violations.
-			if (ctor.has_template_body_position() || ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos) {
+			// Template-pattern constructor AST still belongs to parser/template-substitution
+			// ownership and intentionally retains pre-substitution helper nodes.
+			if (ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos) {
 				popContext(pushed);
 				return;
 			}
@@ -489,6 +487,10 @@ private:
 			}
 			if (ctor.get_definition().has_value()) {
 				visit(*ctor.get_definition());
+			} else if (ctor.has_template_body_position()) {
+				// Instantiated out-of-line template constructors may already have concrete
+				// parameter and initializer surfaces, but their deferred body is still
+				// parser-owned until lazy materialization reparses it.
 			}
 			popContext(pushed);
 			return;
