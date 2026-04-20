@@ -443,8 +443,9 @@ private:
 		if (node.is<FunctionDeclarationNode>()) {
 			const auto& func = node.as<FunctionDeclarationNode>();
 			const bool pushed = pushContext(func.decl_node().identifier_token().value());
-			// Skip functions with deferred template bodies - their bodies intentionally
-			// contain PackExpansionExprNode that will be resolved during lazy instantiation.
+			// Skip functions whose bodies still belong to template parsing/substitution:
+			// deferred bodies will be reparsed during lazy instantiation, and template
+			// pattern nodes intentionally still contain pre-substitution helper nodes.
 			if (func.has_template_body_position() || func.is_template_pattern()) {
 				popContext(pushed);
 				return;
