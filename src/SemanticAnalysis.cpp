@@ -404,7 +404,7 @@ private:
 		if (context_name.empty()) {
 			return false;
 		}
-		context_stack_.push_back(context_name);
+		context_stack_.emplace_back(context_name);
 		return true;
 	}
 
@@ -419,14 +419,14 @@ private:
 			return {};
 		}
 
-		std::string path;
+		StringBuilder path_builder;
 		for (size_t index = 0; index < context_stack_.size(); ++index) {
 			if (index != 0) {
-				path += "::";
+				path_builder.append("::");
 			}
-			path += context_stack_[index];
+			path_builder.append(context_stack_[index]);
 		}
-		return path;
+		return std::string(path_builder.commit());
 	}
 
 	void visit(const ASTNode& node) {
@@ -834,7 +834,7 @@ private:
 	}
 
 	PostParseBoundaryReport report_;
-	std::vector<std::string_view> context_stack_;
+	std::vector<std::string> context_stack_;
 };
 
 void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
@@ -864,11 +864,12 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 	}
 
 	for (const auto& sample : report.samples) {
-		std::string context_suffix;
+		StringBuilder context_suffix_builder;
 		if (!sample.context_path.empty()) {
-			context_suffix = " in ";
-			context_suffix += sample.context_path;
+			context_suffix_builder.append(" in ");
+			context_suffix_builder.append(sample.context_path);
 		}
+		const std::string context_suffix(context_suffix_builder.commit());
 		FLASH_LOG(General, Error,
 				  "  sample ", sample.node_kind, " at ", sample.token.line(), ":", sample.token.column(),
 				  context_suffix);
