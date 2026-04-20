@@ -1,7 +1,7 @@
 # Template Instantiation / Materialization Status
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-20
+**Last Updated:** 2026-04-20 (Phase 5: lazy-member materialization helper moved into sema)
 
 This document is now a short status audit, not a historical scratchpad.
 Its purpose is to answer two questions clearly:
@@ -19,7 +19,8 @@ Its purpose is to answer two questions clearly:
 - **Phase 5:** **In progress.**
   - The first constructor-materialization slice is done (sema materializes stmt-decl ctors).
   - The remaining codegen bridges are now funneled through a **single shared helper** (`AstToIr::materializeLazyMemberIfNeeded`), shrinking the surface for the next sema-ownership move.
-  - The broader parser/sema ownership move is still open.
+  - **The shared helper itself is now sema-owned.** `AstToIr::materializeLazyMemberIfNeeded` is a thin forwarder to `SemanticAnalysis::ensureMemberFunctionMaterialized`; registry lookup, `parser_.instantiateLazyMemberFunction(...)`, pending-root normalization, and the "mark instantiated" bookkeeping all live in sema now. `ensureSelectedConstructorMaterialized` also routes through this unified helper.
+  - The broader parser/sema ownership move (pushing materialization earlier at each individual codegen call site) is still open.
 - **Phase 6:** Not done. A separate explicit-deduction mapping issue is still open.
 
 ## What is clearly landed
@@ -66,12 +67,14 @@ These files used to contain six ad-hoc `parser_->instantiateLazyMemberFunction(.
 - `AstToIr::materializeLazyMemberIfNeeded(struct, member, optional<is_const>)`
 - `AstToIr::queueDeferredMemberFunctionFromNode(struct, node, qualified_name_for_ns)`
 
-Concrete effect: codegen's lazy-member materialization surface is now **one** location (`IrGenerator_Helpers.cpp`) instead of six. Ownership is still mixed:
+`materializeLazyMemberIfNeeded` itself is now just a forwarder to the sema-owned `SemanticAnalysis::ensureMemberFunctionMaterialized`, so the registry/normalize/mark logic lives in exactly one place — inside sema.
 
-- sema owns some materialization already
-- codegen still owns some "make the body exist now" fallbacks — but only through the single shared helper
+Concrete effect: codegen's lazy-member materialization surface is now **one** forwarding location (`IrGenerator_Helpers.cpp`) instead of six, and the actual work happens in sema. Ownership is still mixed at the call sites:
 
-The mixed model is still the real remaining Phase 5 work, but the cleanup is now a single-point change instead of six.
+- sema owns the helper and the stmt-decl constructor path
+- codegen still owns some "make the body exist now" fallbacks — but only through the single shared forwarder
+
+The mixed model at the call sites is still the real remaining Phase 5 work, but the cleanup is now a single-point change instead of six.
 
 ### What Phase 5 should mean now
 
@@ -85,8 +88,8 @@ The remaining files above do not.
 
 ## Clear next steps
 
-1. **Audit the remaining codegen bridge (now a single helper)**
-   - `AstToIr::materializeLazyMemberIfNeeded` in `IrGenerator_Helpers.cpp` is the one remaining surface.
+1. **Audit the remaining codegen bridge (now a thin sema forwarder)**
+   - `AstToIr::materializeLazyMemberIfNeeded` in `IrGenerator_Helpers.cpp` forwards to `SemanticAnalysis::ensureMemberFunctionMaterialized`; this is the one remaining surface.
    - Callers: `IrGenerator_Visitors_TypeInit.cpp`, `IrGenerator_Call_Direct.cpp`, `IrGenerator_Call_Indirect.cpp`, `IrGenerator_MemberAccess.cpp`.
 
 2. **For each caller, move materialization earlier**
@@ -112,8 +115,8 @@ If you want the shortest accurate summary:
 
 - **Done:** Phases 1-4
 - **In progress:** Phase 5
-- **Done inside Phase 5:** stmt-decl constructor materialization slice; codegen lazy-member bridges consolidated into a single shared helper (`AstToIr::materializeLazyMemberIfNeeded`)
-- **Next work:** move materialization of the remaining codegen-consumed lazy members into sema, then delete the shared codegen bridge
+- **Done inside Phase 5:** stmt-decl constructor materialization slice; codegen lazy-member bridges consolidated into a single shared helper (`AstToIr::materializeLazyMemberIfNeeded`); that helper is now a thin forwarder to the sema-owned `SemanticAnalysis::ensureMemberFunctionMaterialized`, which also backs `ensureSelectedConstructorMaterialized`
+- **Next work:** push materialization of the remaining codegen-consumed lazy members into sema at each call site, then delete the codegen forwarder
 - **Separate later follow-up:** Phase 6 explicit-deduction mapping cleanup
 
 ## Regression coverage worth keeping close

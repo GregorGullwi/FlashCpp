@@ -5309,24 +5309,45 @@ const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMat
 		return ctor;
 	}
 
+	// Constructors are never const-qualified members; use is_const = false.
+	auto instantiated = ensureMemberFunctionMaterialized(
+		struct_info.getName(), ctor->name(), /*is_const_member=*/false);
+	if (!instantiated.has_value() || !instantiated->is<ConstructorDeclarationNode>()) {
+		return ctor;
+	}
+
+	return &instantiated->as<ConstructorDeclarationNode>();
+}
+
+std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
+	StringHandle struct_name,
+	StringHandle member_name,
+	std::optional<bool> is_const_member) {
+	if (!struct_name.isValid() || !member_name.isValid()) {
+		return std::nullopt;
+	}
+
 	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
-	StringHandle ctor_name = ctor->name();
-	if (!lazy_registry.needsInstantiation(struct_info.getName(), ctor_name, false)) {
-		return ctor;
-	}
 
-	auto lazy_info_opt = lazy_registry.getLazyMemberInfo(struct_info.getName(), ctor_name, false);
+	// Resolve a matching lazy-member entry. When the caller is indifferent to
+	// const-ness, fall back to the "Any" variant so both const and non-const
+	// candidates are considered. getLazyMemberInfo / getLazyMemberInfoAny already
+	// return nullopt when nothing is registered or the entry was already marked
+	// instantiated, so no separate needsInstantiation pre-check is needed.
+	auto lazy_info_opt = is_const_member.has_value()
+		? lazy_registry.getLazyMemberInfo(struct_name, member_name, *is_const_member)
+		: lazy_registry.getLazyMemberInfoAny(struct_name, member_name);
 	if (!lazy_info_opt.has_value()) {
-		return ctor;
+		return std::nullopt;
 	}
 
-	auto instantiated_ctor = parser_.instantiateLazyMemberFunction(*lazy_info_opt);
+	auto instantiated = parser_.instantiateLazyMemberFunction(*lazy_info_opt);
 	parser_.normalizePendingSemanticRootsIfAvailable();
-	if (!instantiated_ctor.has_value() || !instantiated_ctor->is<ConstructorDeclarationNode>()) {
-		return ctor;
-	}
-
-	return &instantiated_ctor->as<ConstructorDeclarationNode>();
+	// Mark using the const-ness of the actual lazy entry we resolved, so the
+	// specific-const and any-const call patterns stay consistent with what
+	// parser_.instantiateLazyMemberFunction() just materialized.
+	lazy_registry.markInstantiated(struct_name, member_name, lazy_info_opt->identity.is_const_method);
+	return instantiated;
 }
 
 void SemanticAnalysis::tryAnnotateInitListConstructorArgs(

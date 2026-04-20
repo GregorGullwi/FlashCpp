@@ -161,6 +161,28 @@ public:
 									   const FunctionDeclarationNode* dereference_func) const;
 	ASTNode normalizeRangedForLoopDecl(const RangedForStatementNode& stmt);
 
+	// Phase 5: sema-owned lazy-member materialization.
+	//
+	// This is the single canonical place where a lazily-registered template member
+	// (ordinary method, conversion operator, or constructor) gets its body
+	// instantiated on demand and where the resulting pending roots are normalized.
+	//
+	// Parameters:
+	//   struct_name       - interned name of the owning struct (including template args)
+	//   member_name       - interned member name key as used in the lazy registry
+	//                       (e.g. canonical "operator int" for conversion operators)
+	//   is_const_member   - required const-ness of the target overload, or
+	//                       std::nullopt when the caller is indifferent ("any-const")
+	//
+	// Returns the materialized ASTNode (FunctionDeclarationNode or
+	// ConstructorDeclarationNode) on success, or std::nullopt when no matching
+	// lazy entry needs instantiation. Codegen consumers forward here through
+	// the thin `AstToIr::materializeLazyMemberIfNeeded` bridge.
+	std::optional<ASTNode> ensureMemberFunctionMaterialized(
+		StringHandle struct_name,
+		StringHandle member_name,
+		std::optional<bool> is_const_member);
+
 private:
 	// Top-level dispatch
 	void normalizeTopLevelNode(const ASTNode& node);
