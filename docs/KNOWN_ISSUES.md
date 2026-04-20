@@ -1,30 +1,5 @@
 # Known Issues
 
-## ~~`#include <typeinfo>` fails to link — vtable back-substitution bug~~ **FIXED**
-
-**Status:** Fixed in this commit. The Itanium name mangler now tracks substitutions
-and emits correct `S_`/`S<n>_` back-references per ABI §5.1.8.
-
-**What was wrong:**
-- Multi-component non-std type names (e.g. `__cxxabiv1::__class_type_info`) were missing
-  the `N...E` nested-name wrapper in parameter positions.
-- The `PKSt9type_info` parameter of `__do_catch` was emitted without a back-substitution,
-  so the linker got `_ZNKSt9type_info10__do_catchEPKSt9type_infoPPvj` instead of the
-  ABI-correct `_ZNKSt9type_info10__do_catchEPKS_PPvj`.
-
-**What was changed:**
-- Added `ItaniumManglingCtx` class to `NameMangling.h` that wraps `StringBuilder`
-  and maintains a substitution table.
-- Added `ItaniumSubsAware` concept and `if constexpr` branch in `appendItaniumTypeCode`
-  that emits `S_`/`S<n>_` when a type was already encoded.
-- Added `populateSubstitutionsFromClassContext` to pre-seed the substitution table
-  with the enclosing class context (so parameter types matching the class itself get `S_`).
-- Fixed `appendItaniumQualifiedTypeName` to emit `N...E` for multi-component non-std types.
-- Both `generateMangledName` overloads now create an `ItaniumManglingCtx` and pass it
-  through to all sub-calls on the Itanium path.
-
-**Regression test:** `tests/test_rtti_typeinfo_std_ret0.cpp`
-
 ## Alias-chain dependent-bool resolution loses size_bits (Phase 2)
 
 **Test:** `test_alias_chain_dependent_bool_ret1.cpp`
