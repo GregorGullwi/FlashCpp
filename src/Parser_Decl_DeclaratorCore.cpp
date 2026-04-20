@@ -854,18 +854,6 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
 		parse_calling_convention();
 
-		if (peek().is_identifier()) {
-			Token identifier_token = peek_info();
-			advance();
-
-			if (peek() != ")"_tok) {
-				return ParseResult::error("Expected ')' after parenthesized declarator identifier", current_token_);
-			}
-			advance(); // consume ')'
-
-			return parse_postfix_declarator(base_type, identifier_token, linkage);
-		}
-
 		// Expect '*' for function pointer
 		if (peek() != "*"_tok) {
 			return ParseResult::error("Expected '*' in function pointer declarator", current_token_);
