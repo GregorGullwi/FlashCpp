@@ -468,77 +468,77 @@ concept ItaniumSubsAware = requires(T& t, std::string_view sv, std::string s) {
 //   - std::X (two-component starting with std): "St7MyClass"
 //   - Multi-component non-std: "3foo7MyClass" (no N...E)
 inline std::string computeItaniumTypeSubstitutionKey(std::string_view qualified_name) {
-std::array<std::string_view, 16> components{};
-size_t count = 0;
-size_t start = 0;
-while (start < qualified_name.size() && count < components.size()) {
-size_t end = qualified_name.find("::", start);
-if (end == std::string_view::npos)
-end = qualified_name.size();
-components[count++] = qualified_name.substr(start, end - start);
-start = (end == qualified_name.size()) ? end : end + 2;
-}
+	std::array<std::string_view, 16> components{};
+	size_t count = 0;
+	size_t start = 0;
+	while (start < qualified_name.size() && count < components.size()) {
+		size_t end = qualified_name.find("::", start);
+		if (end == std::string_view::npos)
+			end = qualified_name.size();
+		components[count++] = qualified_name.substr(start, end - start);
+		start = (end == qualified_name.size()) ? end : end + 2;
+	}
 
-std::string key;
-for (size_t i = 0; i < count; ++i) {
-if (components[i] == "std") {
-key += "St";
-} else if (components[i].empty()) {
-key += "12_GLOBAL__N_1";
-} else {
-key += std::to_string(components[i].size());
-key += components[i];
-}
-}
-return key;  // No N...E wrapping — see comment above
+	std::string key;
+	for (size_t i = 0; i < count; ++i) {
+		if (components[i] == "std") {
+			key += "St";
+		} else if (components[i].empty()) {
+			key += "12_GLOBAL__N_1";
+		} else {
+			key += std::to_string(components[i].size());
+			key += components[i];
+		}
+	}
+	return key;  // No N...E wrapping — see comment above
 }
 
 // Itanium mangling context that wraps a StringBuilder and tracks substitution candidates.
 // Used in generateMangledName for the Itanium path to emit correct S_/S0_/... back-references.
 class ItaniumManglingCtx {
 public:
-explicit ItaniumManglingCtx(StringBuilder& sb) : sb_(sb) {}
+	explicit ItaniumManglingCtx(StringBuilder& sb) : sb_(sb) {}
 
-// Forward all output operators to the underlying StringBuilder
-ItaniumManglingCtx& operator+=(std::string_view sv) { sb_.append(sv); return *this; }
-ItaniumManglingCtx& operator+=(char c)              { sb_.append(c);  return *this; }
-ItaniumManglingCtx& operator+=(int64_t v)           { sb_.append(v);  return *this; }
-ItaniumManglingCtx& operator+=(uint64_t v)          { sb_.append(v);  return *this; }
+	// Forward all output operators to the underlying StringBuilder
+	ItaniumManglingCtx& operator+=(std::string_view sv) { sb_.append(sv); return *this; }
+	ItaniumManglingCtx& operator+=(char c)              { sb_.append(c);  return *this; }
+	ItaniumManglingCtx& operator+=(int64_t v)           { sb_.append(v);  return *this; }
+	ItaniumManglingCtx& operator+=(uint64_t v)          { sb_.append(v);  return *this; }
 
-// Try to emit a back-reference for `key` if it is in the substitution table.
-// Returns true and emits S_/S0_/.../Sn_ if found; returns false otherwise.
-bool tryEmitSubstitution(std::string_view key) {
-for (size_t i = 0; i < subs_.size(); ++i) {
-if (subs_[i] == key) {
-sb_.append('S');
-if (i > 0) {
-// S_ = index 0, S0_ = index 1, S1_ = index 2, ...
-// Encode i-1 in base-36: digits 0-9 then A-Z
-size_t n = i - 1;
-if (n < 10) {
-sb_.append(static_cast<char>('0' + static_cast<char>(n)));
-} else {
-sb_.append(static_cast<char>('A' + static_cast<char>(n - 10)));
-}
-}
-sb_.append('_');
-return true;
-}
-}
-return false;
-}
+	// Try to emit a back-reference for `key` if it is in the substitution table.
+	// Returns true and emits S_/S0_/.../Sn_ if found; returns false otherwise.
+	bool tryEmitSubstitution(std::string_view key) {
+		for (size_t i = 0; i < subs_.size(); ++i) {
+			if (subs_[i] == key) {
+				sb_.append('S');
+				if (i > 0) {
+					// S_ = index 0, S0_ = index 1, S1_ = index 2, ...
+					// Encode i-1 in base-36: digits 0-9 then A-Z
+					size_t n = i - 1;
+					if (n < 10) {
+						sb_.append(static_cast<char>('0' + static_cast<char>(n)));
+					} else {
+						sb_.append(static_cast<char>('A' + static_cast<char>(n - 10)));
+					}
+				}
+				sb_.append('_');
+				return true;
+			}
+		}
+		return false;
+	}
 
-// Add a new substitution candidate. Duplicates are silently ignored.
-void addSubstitution(std::string key) {
-for (const auto& s : subs_) {
-if (s == key) return;
-}
-subs_.push_back(std::move(key));
-}
+	// Add a new substitution candidate. Duplicates are silently ignored.
+	void addSubstitution(std::string key) {
+		for (const auto& s : subs_) {
+			if (s == key) return;
+		}
+		subs_.push_back(std::move(key));
+	}
 
 private:
-StringBuilder& sb_;
-std::vector<std::string> subs_;
+	StringBuilder& sb_;
+	std::vector<std::string> subs_;
 };
 
 // Pre-populate the substitution table for a member function from its class context.
@@ -551,45 +551,45 @@ std::vector<std::string> subs_;
 //   namespace_path=["foo"], struct_name="Bar"       -> adds "3foo" as S_, "3foo3Bar" as S0_
 //   namespace_path=[],      struct_name="Foo"       -> adds "3Foo" as S_
 inline void populateSubstitutionsFromClassContext(
-ItaniumManglingCtx& ctx,
-std::string_view struct_name,
-const std::vector<std::string_view>& namespace_path) {
-std::string accumulated;
+	ItaniumManglingCtx& ctx,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path) {
+	std::string accumulated;
 
-for (const auto& ns : namespace_path) {
-if (ns == "std") {
-// "St" is predefined — do NOT add to user table, but include in accumulated prefix
-accumulated += "St";
-} else if (ns.empty()) {
-accumulated += "12_GLOBAL__N_1";
-ctx.addSubstitution(accumulated);
-} else {
-accumulated += std::to_string(ns.size());
-accumulated += ns;
-ctx.addSubstitution(accumulated);
-}
-}
+	for (const auto& ns : namespace_path) {
+		if (ns == "std") {
+			// "St" is predefined — do NOT add to user table, but include in accumulated prefix
+			accumulated += "St";
+		} else if (ns.empty()) {
+			accumulated += "12_GLOBAL__N_1";
+			ctx.addSubstitution(accumulated);
+		} else {
+			accumulated += std::to_string(ns.size());
+			accumulated += ns;
+			ctx.addSubstitution(accumulated);
+		}
+	}
 
-// Process struct name components (may contain "::" for nested classes)
-size_t start = 0;
-while (start < struct_name.size()) {
-size_t end = struct_name.find("::", start);
-if (end == std::string_view::npos)
-end = struct_name.size();
-std::string_view component = struct_name.substr(start, end - start);
-if (!component.empty()) {
-if (component == "std") {
-// "St" is predefined — do not add to user table
-accumulated += "St";
-} else {
-accumulated += std::to_string(component.size());
-accumulated += component;
-// Add after each class component (these ARE user substitution candidates)
-ctx.addSubstitution(accumulated);
-}
-}
-start = (end == struct_name.size()) ? end : end + 2;
-}
+	// Process struct name components (may contain "::" for nested classes)
+	size_t start = 0;
+	while (start < struct_name.size()) {
+		size_t end = struct_name.find("::", start);
+		if (end == std::string_view::npos)
+			end = struct_name.size();
+		std::string_view component = struct_name.substr(start, end - start);
+		if (!component.empty()) {
+			if (component == "std") {
+				// "St" is predefined — do not add to user table
+				accumulated += "St";
+			} else {
+				accumulated += std::to_string(component.size());
+				accumulated += component;
+				// Add after each class component (these ARE user substitution candidates)
+				ctx.addSubstitution(accumulated);
+			}
+		}
+		start = (end == struct_name.size()) ? end : end + 2;
+	}
 }
 
 // ============================================================================
