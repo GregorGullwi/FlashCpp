@@ -12,6 +12,7 @@
 
 namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
+constexpr std::string_view kAnonymousNamespaceContext = "<anonymous namespace>";
 
 // Placeholder return-type finalization requires every return statement in the
 // body to deduce to the same full type identity, including cv/reference and
@@ -534,7 +535,7 @@ private:
 
 		if (node.is<NamespaceDeclarationNode>()) {
 			const auto& namespace_node = node.as<NamespaceDeclarationNode>();
-			const bool pushed = pushContext(namespace_node.is_anonymous() ? std::string_view("<anonymous namespace>") : namespace_node.name());
+			const bool pushed = pushContext(namespace_node.is_anonymous() ? kAnonymousNamespaceContext : namespace_node.name());
 			for (const auto& decl : namespace_node.declarations()) {
 				visit(decl);
 			}
@@ -863,16 +864,18 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 				  " PackExpansionExprNode instances on the sema-owned AST surface; pack expansion is unsupported there before semantic normalization");
 	}
 
-	for (const auto& sample : report.samples) {
-		StringBuilder context_suffix_builder;
-		if (sample.context_path.isValid()) {
-			context_suffix_builder.append(" in ");
-			context_suffix_builder.append(sample.context_path);
+	if (IS_FLASH_LOG_ENABLED(General, Error)) {
+		for (const auto& sample : report.samples) {
+			StringBuilder context_suffix_builder;
+			if (sample.context_path.isValid()) {
+				context_suffix_builder.append(" in ");
+				context_suffix_builder.append(sample.context_path);
+			}
+			const std::string context_suffix(context_suffix_builder.commit());
+			FLASH_LOG(General, Error,
+					  "  sample ", sample.node_kind, " at ", sample.token.line(), ":", sample.token.column(),
+					  context_suffix);
 		}
-		const std::string context_suffix(context_suffix_builder.commit());
-		FLASH_LOG(General, Error,
-				  "  sample ", sample.node_kind, " at ", sample.token.line(), ":", sample.token.column(),
-				  context_suffix);
 	}
 
 	if (report.samples.size() < total_violations) {
