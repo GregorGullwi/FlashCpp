@@ -1255,10 +1255,20 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 							// deferred lazy instantiation so the body gets generated.
 						if (!fn.get_definition().has_value() && !fn.is_implicit() && parser_) {
 							StringHandle member_handle = member_func.getName();
-							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle, fn.is_const_member_function())) {
+							const bool is_const_func = fn.is_const_member_function();
+							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle, is_const_func)) {
+								// Phase 5 Slice E: materialize the lazy body eagerly through the
+								// sema-owned bridge before queueing. With this in place, the queued
+								// node always has a definition and `generateDeferredMemberFunctions`
+								// no longer needs a function-shaped materialize-and-retry fallback.
+								auto materialized = materializeLazyMemberIfNeeded(current_struct_name_, member_handle, is_const_func);
+								const ASTNode queued_node =
+									(materialized.has_value() && materialized->is<FunctionDeclarationNode>())
+										? *materialized
+										: func_decl;
 								DeferredMemberFunctionInfo deferred_info;
 								deferred_info.struct_name = current_struct_name_;
-								deferred_info.function_node = func_decl;
+								deferred_info.function_node = queued_node;
 								deferred_member_functions_.push_back(std::move(deferred_info));
 								FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - queued lazy member function '",
 										  fn.decl_node().identifier_token().value(), "' for deferred instantiation");
