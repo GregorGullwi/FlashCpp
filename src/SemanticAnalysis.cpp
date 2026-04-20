@@ -350,7 +350,7 @@ namespace {
 struct PostParseBoundarySample {
 	const char* node_kind = "";
 	Token token;
-	std::string context_path;
+	StringHandle context_path;
 };
 
 struct PostParseBoundaryReport {
@@ -362,14 +362,14 @@ struct PostParseBoundaryReport {
 		return fold_expression_count != 0 || pack_expansion_count != 0;
 	}
 
-	void recordFold(const Token& token, std::string context_path) {
+	void recordFold(const Token& token, StringHandle context_path) {
 		++fold_expression_count;
-		recordSample("FoldExpressionNode", token, std::move(context_path));
+		recordSample("FoldExpressionNode", token, context_path);
 	}
 
-	void recordPackExpansion(const Token& token, std::string context_path) {
+	void recordPackExpansion(const Token& token, StringHandle context_path) {
 		++pack_expansion_count;
-		recordSample("PackExpansionExprNode", token, std::move(context_path));
+		recordSample("PackExpansionExprNode", token, context_path);
 	}
 
 	const PostParseBoundarySample* firstSample(std::string_view node_kind) const {
@@ -382,11 +382,11 @@ struct PostParseBoundaryReport {
 	}
 
 private:
-	void recordSample(const char* node_kind, const Token& token, std::string context_path) {
+	void recordSample(const char* node_kind, const Token& token, StringHandle context_path) {
 		if (samples.size() >= 8) {
 			return;
 		}
-		samples.push_back(PostParseBoundarySample{node_kind, token, std::move(context_path)});
+		samples.push_back(PostParseBoundarySample{node_kind, token, context_path});
 	}
 };
 
@@ -404,7 +404,7 @@ private:
 		if (context_name.empty()) {
 			return false;
 		}
-		context_stack_.emplace_back(context_name);
+		context_stack_.push_back(StringTable::getOrInternStringHandle(context_name));
 		return true;
 	}
 
@@ -414,7 +414,7 @@ private:
 		}
 	}
 
-	std::string currentContextPath() const {
+	StringHandle currentContextPath() const {
 		if (context_stack_.empty()) {
 			return {};
 		}
@@ -426,7 +426,7 @@ private:
 			}
 			path_builder.append(context_stack_[index]);
 		}
-		return std::string(path_builder.commit());
+		return StringTable::getOrInternStringHandle(path_builder.commit());
 	}
 
 	void visit(const ASTNode& node) {
@@ -834,7 +834,7 @@ private:
 	}
 
 	PostParseBoundaryReport report_;
-	std::vector<std::string> context_stack_;
+	std::vector<StringHandle> context_stack_;
 };
 
 void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
@@ -865,7 +865,7 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 
 	for (const auto& sample : report.samples) {
 		StringBuilder context_suffix_builder;
-		if (!sample.context_path.empty()) {
+		if (sample.context_path.isValid()) {
 			context_suffix_builder.append(" in ");
 			context_suffix_builder.append(sample.context_path);
 		}
