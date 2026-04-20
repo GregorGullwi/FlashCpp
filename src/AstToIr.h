@@ -32,6 +32,38 @@ public:
 	void generateCollectedTemplateInstantiations();
 	void normalizePendingSemanticRoots();
 
+	// Shared codegen bridge for Phase-5 lazy member materialization.
+	//
+	// If the lazy member registry still holds an entry for
+	// (struct_name, member_name[, is_const_member]) this:
+	//   - calls parser_->instantiateLazyMemberFunction(...),
+	//   - calls normalizePendingSemanticRoots(),
+	//   - marks the registry entry instantiated,
+	//   - returns the freshly-instantiated ASTNode.
+	// If no materialization was needed (or parser_ is null, or the registry
+	// had no matching entry) returns std::nullopt.
+	//
+	// Pass is_const_member = std::nullopt to match either const-qualified or
+	// non-const-qualified entries (the "Any" variant). Otherwise matches the
+	// exact const-ness.
+	//
+	// This is the single codegen entry point that is still permitted to drive
+	// parser_->instantiateLazyMemberFunction(...). Once Phase 5 finishes moving
+	// materialization fully into sema, this helper is where the remaining
+	// consistency-check vs. hard-error logic will live.
+	std::optional<ASTNode> materializeLazyMemberIfNeeded(
+		StringHandle struct_name,
+		StringHandle member_name,
+		std::optional<bool> is_const_member);
+
+	// Queue a freshly-materialized member function/constructor body for
+	// deferred codegen. Builds the namespace stack from `qualified_name_for_ns`
+	// (falling back to the owning struct's qualified name when empty).
+	void queueDeferredMemberFunctionFromNode(
+		StringHandle struct_name,
+		ASTNode function_node,
+		std::string_view qualified_name_for_ns);
+
 	void reserveInstructions(size_t capacity) {
 		ir_.reserve(capacity);
 	}

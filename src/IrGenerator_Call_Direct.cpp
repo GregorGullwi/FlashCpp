@@ -951,19 +951,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 											   StringHandle member_handle,
 											   std::string_view qualified_name_for_ns,
 											   size_t expected_param_count) -> const FunctionDeclarationNode* {
-		if (!parser_ || !struct_name_handle.isValid() || !member_handle.isValid()) {
-			return nullptr;
-		}
-		if (!LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(struct_name_handle, member_handle)) {
-			return nullptr;
-		}
-		auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(struct_name_handle, member_handle);
-		if (!lazy_info_opt.has_value()) {
-			return nullptr;
-		}
-		auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
-		normalizePendingSemanticRoots();
-		LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_name_handle, member_handle, lazy_info_opt->identity.is_const_method);
+		auto instantiated_func = materializeLazyMemberIfNeeded(struct_name_handle, member_handle, std::nullopt);
 		if (!instantiated_func.has_value() || !instantiated_func->is<FunctionDeclarationNode>()) {
 			return nullptr;
 		}
@@ -972,14 +960,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			return nullptr;
 		}
 
-		DeferredMemberFunctionInfo deferred_info;
-		deferred_info.struct_name = struct_name_handle;
-		deferred_info.function_node = *instantiated_func;
-		buildNamespaceStack(qualified_name_for_ns, deferred_info.namespace_stack);
-		if (deferred_info.namespace_stack.empty()) {
-			buildNamespaceStack(StringTable::getStringView(struct_name_handle), deferred_info.namespace_stack);
-		}
-		deferred_member_functions_.push_back(std::move(deferred_info));
+		queueDeferredMemberFunctionFromNode(struct_name_handle, *instantiated_func, qualified_name_for_ns);
 		return &fd;
 	};
 

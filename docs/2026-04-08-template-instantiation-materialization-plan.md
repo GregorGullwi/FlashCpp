@@ -16,8 +16,9 @@ Its purpose is to answer two questions clearly:
 - **Phase 2:** Done. Alias-template materialization is centralized through shared helpers.
 - **Phase 3:** Done. Late-materialized roots now have an explicit register/normalize lifecycle.
 - **Phase 4:** Done. Dependent placeholder state is explicit via `DependentPlaceholderKind`.
-- **Phase 5:** **Started, not finished.**
-  - The first constructor-materialization slice is done.
+- **Phase 5:** **In progress.**
+  - The first constructor-materialization slice is done (sema materializes stmt-decl ctors).
+  - The remaining codegen bridges are now funneled through a **single shared helper** (`AstToIr::materializeLazyMemberIfNeeded`), shrinking the surface for the next sema-ownership move.
   - The broader parser/sema ownership move is still open.
 - **Phase 6:** Not done. A separate explicit-deduction mapping issue is still open.
 
@@ -60,12 +61,17 @@ The main remaining surfaces are:
 - `src/IrGenerator_Call_Indirect.cpp`
 - `src/IrGenerator_MemberAccess.cpp`
 
-These files still contain codegen-triggered `instantiateLazyMemberFunction(...)` bridges plus normalization/queueing logic. That means ownership is still mixed:
+These files used to contain six ad-hoc `parser_->instantiateLazyMemberFunction(...)` bridges with subtly different normalize/mark/queue logic. They have now been funneled through two shared codegen helpers:
+
+- `AstToIr::materializeLazyMemberIfNeeded(struct, member, optional<is_const>)`
+- `AstToIr::queueDeferredMemberFunctionFromNode(struct, node, qualified_name_for_ns)`
+
+Concrete effect: codegen's lazy-member materialization surface is now **one** location (`IrGenerator_Helpers.cpp`) instead of six. Ownership is still mixed:
 
 - sema owns some materialization already
-- codegen still owns some “make the body exist now” fallbacks
+- codegen still owns some "make the body exist now" fallbacks — but only through the single shared helper
 
-That mixed model is the real remaining Phase 5 work.
+The mixed model is still the real remaining Phase 5 work, but the cleanup is now a single-point change instead of six.
 
 ### What Phase 5 should mean now
 
@@ -79,19 +85,16 @@ The remaining files above do not.
 
 ## Clear next steps
 
-1. **Audit the remaining codegen bridges one file at a time**
-   - start with `IrGenerator_Visitors_TypeInit.cpp`
-   - then `IrGenerator_Call_Direct.cpp`
-   - then `IrGenerator_Call_Indirect.cpp`
-   - then `IrGenerator_MemberAccess.cpp`
+1. **Audit the remaining codegen bridge (now a single helper)**
+   - `AstToIr::materializeLazyMemberIfNeeded` in `IrGenerator_Helpers.cpp` is the one remaining surface.
+   - Callers: `IrGenerator_Visitors_TypeInit.cpp`, `IrGenerator_Call_Direct.cpp`, `IrGenerator_Call_Indirect.cpp`, `IrGenerator_MemberAccess.cpp`.
 
-2. **For each surface, move materialization earlier**
+2. **For each caller, move materialization earlier**
    - make parser/sema publish the selected callable/member before IR lowering needs it
    - keep codegen as a consumer, not a fallback materializer
 
-3. **Delete local codegen fallback logic once the sema invariant is in place**
-   - especially local lazy-instantiation + deferred-member queueing paths
-   - keep only consistency checks / hard failures if a supposedly normalized node is still unresolved
+3. **Delete the codegen bridge once the sema invariant is in place**
+   - the shared helper then collapses to a consistency check / hard failure if a supposedly normalized node is still unresolved
 
 4. **Re-run the existing template-heavy regression cluster after each slice**
    - pending sema normalization
@@ -109,8 +112,8 @@ If you want the shortest accurate summary:
 
 - **Done:** Phases 1-4
 - **In progress:** Phase 5
-- **Done inside Phase 5:** stmt-decl constructor materialization slice
-- **Next work:** remove the remaining codegen-triggered lazy-member materialization bridges
+- **Done inside Phase 5:** stmt-decl constructor materialization slice; codegen lazy-member bridges consolidated into a single shared helper (`AstToIr::materializeLazyMemberIfNeeded`)
+- **Next work:** move materialization of the remaining codegen-consumed lazy members into sema, then delete the shared codegen bridge
 - **Separate later follow-up:** Phase 6 explicit-deduction mapping cleanup
 
 ## Regression coverage worth keeping close
@@ -136,8 +139,8 @@ Linux validation was re-run during this audit:
 
 Current baseline:
 
-- **2166** compile+link+runtime passing tests
-- **146** `_fail` tests failing as expected
+- **2170** compile+link+runtime passing tests
+- **147** `_fail` tests failing as expected
 - overall result: **SUCCESS**
 
 ## Related docs
