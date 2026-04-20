@@ -5330,15 +5330,10 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
 
 	// Resolve a matching lazy-member entry. When the caller is indifferent to
-	// const-ness, fall back to the "Any" variants so both const and non-const
-	// candidates are considered.
-	const bool needs = is_const_member.has_value()
-		? lazy_registry.needsInstantiation(struct_name, member_name, *is_const_member)
-		: lazy_registry.needsInstantiationAny(struct_name, member_name);
-	if (!needs) {
-		return std::nullopt;
-	}
-
+	// const-ness, fall back to the "Any" variant so both const and non-const
+	// candidates are considered. getLazyMemberInfo / getLazyMemberInfoAny already
+	// return nullopt when nothing is registered or the entry was already marked
+	// instantiated, so no separate needsInstantiation pre-check is needed.
 	auto lazy_info_opt = is_const_member.has_value()
 		? lazy_registry.getLazyMemberInfo(struct_name, member_name, *is_const_member)
 		: lazy_registry.getLazyMemberInfoAny(struct_name, member_name);
