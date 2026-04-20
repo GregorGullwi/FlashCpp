@@ -40,6 +40,36 @@ std::string buildMsvcTypeDescriptorSymbol(std::string_view mangled_type_name) {
 	return std::string(type_desc_symbol_sv);
 }
 
+// Map a built-in/arithmetic TypeCategory to its MSVC RTTI Type Descriptor
+// code (the bit that appears between ".?A"-less prefix and the "@" terminator
+// and is also embedded in the ??_R0 symbol name). Returns an empty view for
+// categories that don't correspond to a standard MSVC built-in mangling.
+std::string_view getMsvcBuiltinTypeCode(TypeCategory cat) {
+	using namespace std::literals;
+	switch (cat) {
+	case TypeCategory::Void:              return "X"sv;
+	case TypeCategory::Bool:              return "_N"sv;
+	case TypeCategory::Char:              return "D"sv;
+	case TypeCategory::UnsignedChar:      return "E"sv;
+	case TypeCategory::WChar:             return "_W"sv;
+	case TypeCategory::Char8:             return "_Q"sv; // C++20 char8_t
+	case TypeCategory::Char16:            return "_S"sv;
+	case TypeCategory::Char32:            return "_U"sv;
+	case TypeCategory::Short:             return "F"sv;
+	case TypeCategory::UnsignedShort:     return "G"sv;
+	case TypeCategory::Int:               return "H"sv;
+	case TypeCategory::UnsignedInt:       return "I"sv;
+	case TypeCategory::Long:              return "J"sv;
+	case TypeCategory::UnsignedLong:      return "K"sv;
+	case TypeCategory::LongLong:          return "_J"sv;
+	case TypeCategory::UnsignedLongLong:  return "_K"sv;
+	case TypeCategory::Float:             return "M"sv;
+	case TypeCategory::Double:            return "N"sv;
+	case TypeCategory::LongDouble:        return "O"sv;
+	default:                              return {};
+	}
+}
+
 uint32_t getMsvcClassHierarchyAttributes(std::string_view class_name) {
 	const TypeInfo* type_info = findTypeByName(StringTable::getOrInternStringHandle(class_name));
 	const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
@@ -673,43 +703,11 @@ std::string ObjectFileWriter::get_or_create_builtin_throwinfo(TypeCategory type)
 	auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
 
 	// Ensure RTTI type descriptor for int exists: ??_R0H@8
-	const std::string type_desc_symbol_name = "??_R0H@8";
+	// Delegate to the shared emitMsvcTypeDescriptor path so that
+	// symbol_index_cache_ is populated — avoids duplicate symbols when
+	// both throw(int) and typeid(int) appear in the same TU.
+	const std::string type_desc_symbol_name = get_or_create_builtin_type_descriptor(TypeCategory::Int);
 	auto* type_desc_symbol = coffi_.get_symbol(type_desc_symbol_name);
-	if (!type_desc_symbol) {
-		uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-
-		std::vector<char> type_desc_data;
-		// vftable pointer (8 bytes) - relocated to type_info vftable
-		type_desc_data.resize(16, 0);
-		// Mangled built-in type name for int
-		type_desc_data.push_back('.');
-		type_desc_data.push_back('H');
-		type_desc_data.push_back(0);
-
-		add_data(type_desc_data, SectionType::RDATA);
-
-		type_desc_symbol = coffi_.add_symbol(type_desc_symbol_name);
-		type_desc_symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		type_desc_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		type_desc_symbol->set_section_number(rdata_section->get_index() + 1);
-		type_desc_symbol->set_value(type_desc_offset);
-
-		// Relocate vftable pointer to type_info::vftable
-		auto* type_info_vftable = coffi_.get_symbol("??_7type_info@@6B@");
-		if (!type_info_vftable) {
-			type_info_vftable = coffi_.add_symbol("??_7type_info@@6B@");
-			type_info_vftable->set_value(0);
-			type_info_vftable->set_section_number(0);
-			type_info_vftable->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-			type_info_vftable->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		}
-
-		COFFI::rel_entry_generic td_vft_reloc;
-		td_vft_reloc.virtual_address = type_desc_offset;
-		td_vft_reloc.symbol_table_index = type_info_vftable->get_index();
-		td_vft_reloc.type = IMAGE_REL_AMD64_ADDR64;
-		rdata_section->add_relocation_entry(&td_vft_reloc);
-	}
 
 	// Emit CatchableType: _CT??_R0H@84 (0x24 bytes)
 	const std::string catchable_type_symbol_name = "_CT??_R0H@84";
@@ -795,14 +793,24 @@ std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view cla
 	return get_or_create_type_descriptor(class_name, {});
 }
 
-std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view class_name, TypeIndex type_index) {
-	std::string mangled_class_name = buildMsvcTypeDescriptorName(class_name, type_index);
-	std::string type_desc_symbol = buildMsvcTypeDescriptorSymbol(mangled_class_name);
+// Shared emission path for MSVC Type Descriptors.
+// `mangled_type_name` is the value stored at the tail of the descriptor (and
+// whose tail — minus the leading category prefix character — appears inside
+// the descriptor's symbol name between "??_R0" and "@8"). Examples:
+//   class MyClass   -> mangled ".?AVMyClass@@",  symbol "??_R0?AVMyClass@@@8"
+//   int             -> mangled ".H",             symbol "??_R0H@8"
+//   bool            -> mangled "._N",            symbol "??_R0_N@8"
+static std::string emitMsvcTypeDescriptor(ObjectFileWriter& writer,
+										  COFFI::coffi& coffi,
+										  std::unordered_map<std::string, uint32_t, ObjectFileCommon::StringViewHash, std::equal_to<>>& symbol_cache,
+										  const std::unordered_map<SectionType, int32_t>& section_index_map,
+										  std::string_view mangled_type_name) {
+	std::string type_desc_symbol = buildMsvcTypeDescriptorSymbol(mangled_type_name);
 
 	// Check if the type descriptor was already emitted
-	auto td_cache_it = symbol_index_cache_.find(type_desc_symbol);
-	if (td_cache_it != symbol_index_cache_.end()) {
-		auto* existing_sym = coffi_.get_symbol(td_cache_it->second);
+	auto td_cache_it = symbol_cache.find(type_desc_symbol);
+	if (td_cache_it != symbol_cache.end()) {
+		auto* existing_sym = coffi.get_symbol(td_cache_it->second);
 		// Only reuse if the symbol has a definition (section_number > 0)
 		if (existing_sym && existing_sym->get_section_number() > 0) {
 			if (g_enable_debug_output)
@@ -812,31 +820,31 @@ std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view cla
 	}
 
 	// Type descriptor not found or was only an external reference - create it
-	auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
+	auto rdata_section = coffi.get_sections()[section_index_map.at(SectionType::RDATA)];
 	uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 
 	std::vector<char> type_desc_data;
-	type_desc_data.reserve(16 + mangled_class_name.size() + 1);	// 8+8 header + name + null
-	// vtable pointer (8 bytes) - null
+	type_desc_data.reserve(16 + mangled_type_name.size() + 1); // 8+8 header + name + null
+	// vtable pointer (8 bytes) - null, patched by relocation below
 	ObjectFileCommon::appendZeros(type_desc_data, 8);
 	// spare pointer (8 bytes) - null
 	ObjectFileCommon::appendZeros(type_desc_data, 8);
 	// mangled name (null-terminated)
-	for (char c : mangled_class_name)
+	for (char c : mangled_type_name)
 		type_desc_data.push_back(c);
 	type_desc_data.push_back(0);
 
-	add_data(type_desc_data, SectionType::RDATA);
-	auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
+	writer.add_data(type_desc_data, SectionType::RDATA);
+	auto type_desc_sym = coffi.add_symbol(type_desc_symbol);
 	type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
 	type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 	type_desc_sym->set_section_number(rdata_section->get_index() + 1);
 	type_desc_sym->set_value(type_desc_offset);
 
 	// Relocate vftable pointer to type_info::vftable
-	auto* type_info_vftable = coffi_.get_symbol("??_7type_info@@6B@");
+	auto* type_info_vftable = coffi.get_symbol("??_7type_info@@6B@");
 	if (!type_info_vftable) {
-		type_info_vftable = coffi_.add_symbol("??_7type_info@@6B@");
+		type_info_vftable = coffi.add_symbol("??_7type_info@@6B@");
 		type_info_vftable->set_value(0);
 		type_info_vftable->set_section_number(0);
 		type_info_vftable->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
@@ -850,13 +858,33 @@ std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view cla
 	rdata_section->add_relocation_entry(&td_vft_reloc);
 
 	// Update cache
-	symbol_index_cache_[type_desc_symbol] = type_desc_sym->get_index();
+	symbol_cache[type_desc_symbol] = type_desc_sym->get_index();
 
 	if (g_enable_debug_output)
 		std::cerr << "Created ??_R0 Type Descriptor '" << type_desc_symbol << "' at offset "
 				  << type_desc_offset << std::endl;
 
 	return type_desc_symbol;
+}
+
+std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view class_name, TypeIndex type_index) {
+	std::string mangled_class_name = buildMsvcTypeDescriptorName(class_name, type_index);
+	return emitMsvcTypeDescriptor(*this, coffi_, symbol_index_cache_, sectiontype_to_index, mangled_class_name);
+}
+
+std::string ObjectFileWriter::get_or_create_builtin_type_descriptor(TypeCategory cat) {
+	std::string_view code = getMsvcBuiltinTypeCode(cat);
+	if (code.empty()) {
+		return {};
+	}
+	// The descriptor body is "." + code (e.g. ".H" for int, "._N" for bool).
+	// buildMsvcTypeDescriptorSymbol strips the leading '.', so the resulting
+	// symbol name is e.g. "??_R0H@8" / "??_R0_N@8".
+	std::string_view mangled_type_name = StringBuilder()
+											 .append("."sv)
+											 .append(code)
+											 .commit();
+	return emitMsvcTypeDescriptor(*this, coffi_, symbol_index_cache_, sectiontype_to_index, mangled_type_name);
 }
 
 // Helper: get or create symbol index for a function name (cached for O(1) repeated lookups)
