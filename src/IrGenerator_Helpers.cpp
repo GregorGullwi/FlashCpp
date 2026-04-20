@@ -1,7 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
-#include "TemplateRegistry_Lazy.h"
 
 void AstToIr::normalizePendingSemanticRoots() {
 	if (!sema_) {
@@ -15,35 +14,21 @@ std::optional<ASTNode> AstToIr::materializeLazyMemberIfNeeded(
 	StringHandle struct_name,
 	StringHandle member_name,
 	std::optional<bool> is_const_member) {
-	if (!parser_ || !struct_name.isValid() || !member_name.isValid()) {
+	// Phase 5: codegen no longer owns the lazy-member materialization logic.
+	// This bridge forwards to the sema-owned helper so that registry lookup,
+	// `parser_->instantiateLazyMemberFunction(...)`, pending-root normalization,
+	// and the "mark instantiated" bookkeeping all live in one place
+	// (`SemanticAnalysis::ensureMemberFunctionMaterialized`).
+	//
+	// Remaining callers in IrGenerator_Call_Direct / _Call_Indirect /
+	// _MemberAccess / _Visitors_TypeInit still invoke this bridge as a
+	// "make the body exist now" fallback; the next Phase 5 slices move each of
+	// those call sites into sema so this bridge can be deleted outright.
+	if (!sema_) {
 		return std::nullopt;
 	}
 
-	auto& registry = LazyMemberInstantiationRegistry::getInstance();
-
-	// Resolve a matching lazy-member entry. If the caller is indifferent to
-	// const-ness, fall back to the "Any" variants.
-	const bool needs = is_const_member.has_value()
-		? registry.needsInstantiation(struct_name, member_name, *is_const_member)
-		: registry.needsInstantiationAny(struct_name, member_name);
-	if (!needs) {
-		return std::nullopt;
-	}
-
-	auto lazy_info_opt = is_const_member.has_value()
-		? registry.getLazyMemberInfo(struct_name, member_name, *is_const_member)
-		: registry.getLazyMemberInfoAny(struct_name, member_name);
-	if (!lazy_info_opt.has_value()) {
-		return std::nullopt;
-	}
-
-	auto instantiated = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
-	normalizePendingSemanticRoots();
-	// Mark using the const-ness of the actual lazy entry we resolved, so that
-	// both the specific-const and any-const call patterns stay consistent with
-	// what parser_->instantiateLazyMemberFunction() just materialized.
-	registry.markInstantiated(struct_name, member_name, lazy_info_opt->identity.is_const_method);
-	return instantiated;
+	return sema_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
 }
 
 void AstToIr::queueDeferredMemberFunctionFromNode(
