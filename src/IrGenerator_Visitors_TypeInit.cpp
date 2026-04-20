@@ -285,14 +285,15 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 			} else if (info.function_node.is<ConstructorDeclarationNode>()) {
 				const ConstructorDeclarationNode& ctor = info.function_node.as<ConstructorDeclarationNode>();
 				if (!ctor.get_definition().has_value() && parser_) {
-					StringHandle member_handle = ctor.name();
-					auto new_ctor_node = materializeLazyMemberIfNeeded(info.struct_name, member_handle, false);
-					if (new_ctor_node.has_value() && new_ctor_node->is<ConstructorDeclarationNode>()) {
-						visitConstructorDeclarationNode(new_ctor_node->as<ConstructorDeclarationNode>());
-						current_function_name_ = saved_function;
-						current_namespace_stack_ = saved_namespace;
-						continue;
-					}
+					// Phase 5 Slice E: the `materializeLazyMemberIfNeeded(...)` fallback that
+					// used to live here for constructor-shaped lazy entries is no longer reachable
+					// after Slices A–D. All constructor materialization paths that feed this
+					// queue now run through sema (`ensureSelectedConstructorMaterialized`,
+					// `tryAnnotateInitListConstructorArgs`, and friends) before the struct
+					// visitor queues the ctor, so by the time we revisit a ctor with no body
+					// here the struct already exposes a materialized replacement we can dispatch
+					// to directly. The replacement_ctor scan below remains the defense-in-depth
+					// path for ctors whose original definition-less stub is still in the queue.
 					bool visited_replacement_ctor = false;
 					if (auto struct_it = getTypesByNameMap().find(info.struct_name);
 						struct_it != getTypesByNameMap().end()) {
@@ -507,10 +508,15 @@ void AstToIr::generateStaticMemberDeclarations() {
 				if (auto call_info = CallInfo::tryFrom(expr)) {
 					StringHandle func_name_handle = call_info->declaration->identifier_token().handle();
 
-					if (parser_) {
-						// std::nullopt: any-const match (this path does not know the callable's const-ness).
-						(void)materializeLazyMemberIfNeeded(struct_info->name, func_name_handle, std::nullopt);
-					}
+					// Phase 5 Slice D: the first ConstExpr::Evaluator pass above is invoked
+					// with ctx.parser/ctx.sema, and now routes its own lazy member-function
+					// materialization through SemanticAnalysis::ensureMemberFunctionMaterialized
+					// (see ConstExprEvaluator_Members.cpp). Codegen no longer needs a
+					// materialize-and-retry fallback here; by the time we reach the retry
+					// path the selected static member's body is already present on the
+					// struct. The retry itself still performs the symbol-table rebind and
+					// template-binding rebuild that make the static call resolvable from the
+					// static-initializer context.
 
 					const ASTNode* member_function_node = nullptr;
 					const FunctionDeclarationNode* member_function_decl = nullptr;

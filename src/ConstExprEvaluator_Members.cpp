@@ -1669,8 +1669,16 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		return result;
 	}
 
-	if (context.parser && LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(
-							  context.struct_info->name, function_name_handle)) {
+	// Phase 5 Slice D: route lazy member-function materialization through the
+	// sema-owned helper so the evaluator no longer drives the
+	// instantiate/normalize/mark bookkeeping directly. Fall back to the parser
+	// path only when sema is not wired up (e.g., very early speculative
+	// evaluation before a SemanticAnalysis is attached to the context).
+	if (context.sema) {
+		(void)context.sema->ensureMemberFunctionMaterialized(
+			context.struct_info->name, function_name_handle, std::nullopt);
+	} else if (context.parser && LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(
+									 context.struct_info->name, function_name_handle)) {
 		auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(
 			context.struct_info->name, function_name_handle);
 		if (lazy_info_opt.has_value()) {
