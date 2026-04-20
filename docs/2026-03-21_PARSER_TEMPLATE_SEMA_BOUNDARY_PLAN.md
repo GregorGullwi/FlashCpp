@@ -616,9 +616,9 @@ Latest slice:
   body only, matching the eager substitution work already done for constructor
   initializer lists in `Parser_Templates_Inst_ClassTemplate.cpp` and
   `Parser_Templates_Lazy.cpp`
-- `tests/test_ool_template_ctor_pack_boundary_ret0.cpp`: regression coverage
-  for an out-of-line variadic template constructor whose base initializer uses
-  `args...` on the deferred-body path
+- `tests/test_ool_template_ctor_initializer_boundary_ret0.cpp`: regression
+  coverage for an out-of-line template constructor whose member initializer
+  surface is already concrete on the deferred-body path
 
 **Planned work:**
 
@@ -654,7 +654,7 @@ Latest slice:
      substitution vs. sema-owned constant evaluation)
 
 **Test result:** baseline + post-change full Linux regression suite passed on
-2026-04-20 (`bash tests/run_all_tests.sh`, 2166 files).
+2026-04-20 (`bash tests/run_all_tests.sh`, 2167 files).
 
 ## Exit criteria
 
