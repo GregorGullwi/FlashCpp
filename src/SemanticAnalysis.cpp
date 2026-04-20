@@ -3772,9 +3772,19 @@ void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode
 // when no matching conversion operator exists in the source struct.
 // Mirrors the operator-existence logic in AstToIr::findConversionOperator, but is
 // sema-owned and avoids interning new strings (uses string_view comparison only).
+//
+// Phase 5 (Slice A): when a matching conversion operator is discovered, this helper
+// also eagerly materializes its lazy body via `ensureMemberFunctionMaterialized` when
+// `sema` is provided. This removes the need for codegen's `emitConversionOperatorCall`
+// to trigger lazy materialization as a "make the body exist now" fallback: by the time
+// codegen runs the struct visitor, the instantiated body already lives on the struct
+// and gets queued for deferred codegen through the normal path. Passing sema=nullptr
+// preserves the original existence-only behavior for callers that must not mutate
+// registry state (none currently, but kept explicit for safety).
 static bool structHasConversionOperatorTo(
 	const CanonicalTypeDesc& from_desc,
 	const CanonicalTypeDesc& to_desc,
+	SemanticAnalysis* sema,
 	int depth = 0) {
 	// Guard against infinite recursion in pathological inheritance graphs.
 	static constexpr int kMaxInheritanceDepth = 8;
@@ -3792,8 +3802,26 @@ static bool structHasConversionOperatorTo(
 
 	// Scan direct member functions for an exact conversion target match.
 	for (const auto& mf : struct_info->member_functions) {
-		if (mf.conversion_target_type == canonical_target_type)
-			return true;
+		if (mf.conversion_target_type != canonical_target_type)
+			continue;
+
+		// Phase 5 Slice A: if the matched conversion operator is still a lazy
+		// stub, materialize it now in sema so codegen does not need to. The
+		// lazy registry key uses the canonical member name (e.g. "operator int"
+		// for a LazyWrapper<int> instantiation), which is exactly mf.getName().
+		// ensureMemberFunctionMaterialized is idempotent and cheap when the
+		// entry is already marked instantiated, so calling it unconditionally
+		// here is safe for non-lazy conversion operators too.
+		if (sema && struct_info->name.isValid() && mf.getName().isValid()) {
+			const bool needs_materialization =
+				mf.function_decl.is<FunctionDeclarationNode>() &&
+				!mf.function_decl.as<FunctionDeclarationNode>().get_definition().has_value();
+			if (needs_materialization) {
+				sema->ensureMemberFunctionMaterialized(
+					struct_info->name, mf.getName(), /*is_const_member=*/mf.is_const());
+			}
+		}
+		return true;
 	}
 
 	// Recurse into non-deferred base classes (inherited conversion operators).
@@ -3803,7 +3831,7 @@ static bool structHasConversionOperatorTo(
 		CanonicalTypeDesc base_from_desc;
 		base_from_desc.type_index = nativeTypeIndex(TypeCategory::Struct);
 		base_from_desc.type_index = base.type_index;
-		if (structHasConversionOperatorTo(base_from_desc, to_desc, depth + 1))
+		if (structHasConversionOperatorTo(base_from_desc, to_desc, sema, depth + 1))
 			return true;
 	}
 	return false;
@@ -3891,7 +3919,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// slots_filled stats and misrepresents the actual operator availability.
 	// Codegen already handles null conv_op safely, so this is a stats/accuracy fix only.
 	if (plan.rank == ConversionRank::UserDefined) {
-		if (!structHasConversionOperatorTo(from_desc, to_desc)) {
+		if (!structHasConversionOperatorTo(from_desc, to_desc, this)) {
 			FLASH_LOG(General, Debug,
 					  "SemanticAnalysis: skipping UserDefined annotation — "
 					  "no conversion operator found in struct source type");
