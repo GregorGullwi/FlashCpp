@@ -5171,6 +5171,25 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	return func_decl;
 }
 
+const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
+	const FunctionDeclarationNode* func_decl) {
+	if (!func_decl || func_decl->get_definition().has_value() || func_decl->is_implicit()) {
+		return func_decl;
+	}
+	std::string_view parent_sv = func_decl->parent_struct_name();
+	if (parent_sv.empty()) {
+		return func_decl;
+	}
+	StringHandle parent_handle = StringTable::getOrInternStringHandle(parent_sv);
+	StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
+	const bool is_const = func_decl->is_const_member_function();
+	auto materialized = ensureMemberFunctionMaterialized(parent_handle, member_handle, is_const);
+	if (materialized.has_value() && materialized->is<FunctionDeclarationNode>()) {
+		return &materialized->as<FunctionDeclarationNode>();
+	}
+	return func_decl;
+}
+
 void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const CallInfo& call_info,
 														 const void* call_key,
 														 const char* context_description) {
@@ -5184,30 +5203,10 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const CallInfo& call_in
 	}
 
 	// Phase 5 Slices B & C: if the selected call target is a lazily-registered
-	// template member whose body has not been materialized yet, materialize it
-	// here in sema so codegen's normal struct visitor emits IR for the real
-	// body instead of relying on codegen-side "make the body exist now"
-	// fallbacks (`IrGenerator_Call_Direct.cpp::instantiateAndQueueLazyMember`
-	// for static/free direct calls; `IrGenerator_Call_Indirect.cpp::
-	// instantiateLazySelectedMember` for member/virtual calls).
-	// `ensureMemberFunctionMaterialized` is idempotent and returns std::nullopt
-	// for non-lazy / already-materialized members, so this is safe to call
-	// unconditionally for any target that still has no definition. When it
-	// succeeds, we re-point `func_decl` at the materialized body so downstream
-	// consumers (the cached `resolved_direct_call_table_` entry, argument
-	// annotation) reflect the real definition.
-	if (func_decl && !func_decl->get_definition().has_value() && !func_decl->is_implicit()) {
-		std::string_view parent_sv = func_decl->parent_struct_name();
-		if (!parent_sv.empty()) {
-			StringHandle parent_handle = StringTable::getOrInternStringHandle(parent_sv);
-			StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
-			const bool is_const = func_decl->is_const_member_function();
-			auto materialized = ensureMemberFunctionMaterialized(parent_handle, member_handle, is_const);
-			if (materialized.has_value() && materialized->is<FunctionDeclarationNode>()) {
-				func_decl = &materialized->as<FunctionDeclarationNode>();
-			}
-		}
-	}
+	// template member stub, materialize it here in sema so codegen's normal
+	// struct visitor emits IR for the real body instead of relying on
+	// codegen-side fallbacks. See `tryMaterializeLazyCallTarget` for details.
+	func_decl = tryMaterializeLazyCallTarget(func_decl);
 
 	const FunctionDeclarationNode* resolved_op_call = getResolvedOpCall(call_key);
 	const bool cache_as_direct_call =
