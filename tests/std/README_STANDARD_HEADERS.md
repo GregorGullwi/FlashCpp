@@ -7,32 +7,32 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1369ms |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~479ms (retested 2026-04-18). Now parses successfully - gets past earlier noexcept issues, but static_assert fails on semantic (is_integral trait evaluation returns wrong value).
+| `<type_traits>` | `test_std_type_traits.cpp` | ❌ Semantic Error | ~1142ms (retested 2026-04-20). Header parsing succeeds, but the targeted test fails `static_assert(std::is_integral<int>::value)`. Distilled expected-failure repro: `tests/test_std_type_traits_is_integral_any_of_fail.cpp`. |
 | `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | ~609ms (retested 2026-04-11). Targeted test still compiles, but bare `#include <compare>` now fails with "Ambiguous constructor call" during codegen of a namespace-level node. |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
-| `<initializer_list>` | N/A | ✅ Compiled | ~32ms |
+| `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~639ms. The header still compiles, but `std::ratio_less` remains blocked because non-type default template arguments that depend on qualified constexpr members (for example `__ratio_less_impl`'s bool defaults) are still not fully instantiated/evaluated. |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | ~2238ms (retested 2026-04-14). The old `::template _Is_nothrow_invocable_r<_Rx>` base lookup stop and the later `_Function_args<_Ret CALL_OPT(_Types...) ...>` partial-specialization parse stop are both fixed. MSVC `<type_traits>` now gets further and fails at `less::operator() const noexcept(...)` with "Expected '{', ';', '= default', or '= delete' after member function declaration". |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | ~2861ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
 | `<utility>` | `test_std_utility.cpp` | ❌ Codegen Error | ~830ms (retested 2026-04-11). Targeted test now fails with codegen errors from template deduction / Non-type parameter issues. |
-| `<concepts>` | `test_std_concepts.cpp` | ❌ Parse Error | ~659ms (retested 2026-04-18). Fixed line 38 blocker (added `_is_convertible_to` trait). Now fails at line 254: pack expansion in requires expression.
+| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~1460ms (retested 2026-04-11). Call to deleted function 'swap' in `stl_pair.h:308`. Blocked by eager inline member body parsing during implicit template class instantiation (std::pair::swap tries to swap const members). |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~2192ms (retested 2026-04-11). Call to deleted function 'swap' — same `stl_pair.h:308` blocker as `<string_view>`. |
-| `<array>` | `test_std_array.cpp` | ❌ Parse Error | ~2121ms (retested 2026-04-14). The old `::template _Is_nothrow_invocable_r<_Rx>` base lookup stop and the later `_Function_args<_Ret CALL_OPT(_Types...) ...>` partial-specialization parse stop are both fixed. MSVC `<type_traits>` now gets further and fails at `less::operator() const noexcept(...)` with "Expected '{', ';', '= default', or '= delete' after member function declaration". |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2051ms (retested 2026-04-11). "Operator- not defined for operand types". |
+| `<array>` | `test_std_array.cpp` | ❌ Parse Error | ~2554ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | ~3882ms (retested 2026-04-20). The simple std-style `(max)` / `(min)` focused regression now passes (`tests/test_std_algorithm_max_ret3.cpp`), but the real header now stops earlier in MSVC `<utility>:82` on parenthesized function-template declaration parsing. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~1564ms (retested 2026-04-11). "unsupported PackExpansionExprNode reached semantic analysis". |
-| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~1500ms (retested 2026-04-19). "No matching function for call to '__stdio_common_vfwprintf'" in UCRT headers during overload resolution. Not a crash as previously reported. |
+| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2337ms (retested 2026-04-20). Still stops in UCRT with "No matching function for call to '__stdio_common_vfwprintf'" during overload resolution; not a crash. Distilled expected-failure repro: `tests/test_ucrt_vfwprintf_const_pointer_alias_arg_fail.cpp`. |
 | `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
 | `<list>` | `test_std_list.cpp` | 💥 Crash | ~1987ms (retested 2026-04-11). |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
 | `<memory>` | `test_std_memory.cpp` | 💥 Crash | ~5108ms (retested 2026-04-11). |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | ~3009ms (retested 2026-04-14). The old `::template _Is_nothrow_invocable_r<_Rx>` base lookup stop and the later `_Function_args<_Ret CALL_OPT(_Types...) ...>` partial-specialization parse stop are both fixed. MSVC `<type_traits>` now gets further and fails at `less::operator() const noexcept(...)` with "Expected '{', ';', '= default', or '= delete' after member function declaration". |
-| `<map>` | `test_std_map.cpp` | ❌ Parse Error | ~2482ms (retested 2026-04-14). The old `::template _Is_nothrow_invocable_r<_Rx>` base lookup stop and the later `_Function_args<_Ret CALL_OPT(_Types...) ...>` partial-specialization parse stop are both fixed. MSVC `<type_traits>` now gets further and fails at `less::operator() const noexcept(...)` with "Expected '{', ';', '= default', or '= delete' after member function declaration". |
+| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | ~3723ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". |
+| `<map>` | `test_std_map.cpp` | ❌ Parse Error | ~2988ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2906ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~4559ms (retested 2026-04-11). |
@@ -47,7 +47,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<typeindex>` | N/A | ❌ Codegen Error | ~640ms (retested 2026-04-11). "Cannot use copy initialization with explicit constructor". |
 | `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | ~2299ms (retested 2026-04-11). Targeted test now fails with codegen errors. |
 | `<iterator>` | `test_std_iterator.cpp` | ❌ Compile Error | ~2481ms (retested 2026-04-11). Call to deleted function 'swap'. |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | ~2527ms (retested 2026-04-14). The old `::template _Is_nothrow_invocable_r<_Rx>` base lookup stop and the later `_Function_args<_Ret CALL_OPT(_Types...) ...>` partial-specialization parse stop are both fixed. MSVC `<type_traits>` now gets further and fails at `less::operator() const noexcept(...)` with "Expected '{', ';', '= default', or '= delete' after member function declaration". |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | ~3170ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
 | `<csignal>` | N/A | ✅ Compiled | ~140ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~16ms (C++23) |
@@ -99,17 +99,27 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+#### 2026-04-20 Targeted Retests
+
+- Rebuilt `x64\Sharded\FlashCppMSVC.exe` and re-ran the newest focused regressions: `tests/test_static_member_pack_expansion_boundary_ret0.cpp`, `tests/test_constexpr_comma_operator_ret0.cpp`, `tests/test_std_initializer_list_direct_brace_ret0.cpp`, `tests/test_std_concepts_pack_expansion_ret42.cpp`, and `tests/test_std_algorithm_max_ret3.cpp`; all passed.
+- `<concepts>` now compiles. The previous line 254 blocker, a pack expansion inside a requires expression, is covered by `tests/test_std_concepts_pack_expansion_ret42.cpp`.
+- `<type_traits>` still parses but fails semantically at `static_assert(std::is_integral<int>::value)`. The distilled expected-failure repro is `tests/std/test_std_type_traits_is_integral_any_of_fail.cpp`: variable-template partial specialization feeds another variable template, then that value is used as a non-type base-template argument.
+- `<array>`, `<optional>`, `<variant>`, `<functional>`, `<map>`, and `<algorithm>` now share a higher-impact parse blocker in MSVC `<utility>:82`: declarations like `constexpr Ty(max)(initializer_list<Ty>, Predicate);` are rejected with "Expected '(' for parameter list". The isolated expected-failure repro is `tests/std/test_std_utility_parenthesized_func_template_decl_fail.cpp`.
+- `<vector>` still stops in UCRT overload resolution on `__stdio_common_vfwprintf`; the targeted retest confirms this is not a crash. The distilled expected-failure repro is `tests/std/test_ucrt_vfwprintf_const_pointer_alias_arg_fail.cpp`, which reduces the failure to passing `_locale_t const` to `_locale_t` where `_locale_t` is a pointer alias.
+
 #### 2026-04-19 Fix: nullptr literal support for void* parameters
 
 Fixed `nullptr` literal matching for `void*` and `const void*` parameters. Regression test: `tests/test_nullptr_void_ptr_arg_ret0.cpp`.
 
-### Summary (2026-03-14, updated)
+### Summary (older full sweep; targeted updates through 2026-04-20)
 
 **Total headers tested:** 96
 **Compiling successfully (parse + codegen):** 55 (57%)
 **Codegen errors (parsing succeeds but codegen fails):** 18 (including many headers now failing with Itanium mangling issues after alloc_traits.h fix unblocked parsing)
 **Parse errors:** 10
 **Crashes:** 4 in the last full sweep (deep template-instantiation paths; see the targeted retest note below for newer per-header updates)
+
+The aggregate counts above are still from the older full sweep. The table and dated retest notes include newer targeted updates, but the counts should not be treated as refreshed until `tests/std/test_standard_headers.ps1` or an equivalent full sweep is rerun without the temporary early-stop limit.
 
 #### 2026-04-08 Retests
 
@@ -148,7 +158,7 @@ Fixed `nullptr` literal matching for `void*` and `const void*` parameters. Regre
 
 - **Global namespace prefix in expression contexts**: Fixed by template argument parser lookahead improvements. The focused test `tests/test_noexcept_complex_expr_ret0.cpp` now compiles successfully with the current Sharded build.
 - **Added `_is_convertible_to` builtin type trait**: MSVC uses this in `<concepts>` line 38 and `<type_traits>`. Adding it to the trait map fixes the parser error at these locations. Test: `tests/test_volatile_qualified_conv_ret0.cpp`.
-- `<concepts>` now passes line 38 but hits new blocker at line 254 (pack expansion in requires expression).
+- `<concepts>` now passes line 38 but hits new blocker at line 254 (pack expansion in requires expression). Superseded by the 2026-04-20 retest: that blocker is now fixed and the header compiles.
 - `<type_traits>` now parses past the earlier errors but fails on semantic (is_integral static_assert).
 
 #### 2026-04-07 Retests
@@ -160,42 +170,56 @@ Fixed `nullptr` literal matching for `void*` and `const void*` parameters. Regre
 
 - 2026-04-06: `<tuple>`, `<string>`, `<ranges>`, and `<stdexcept>`
 - 2026-04-05: `<ratio>`, `<chrono>`, and `<shared_mutex>`
-- 2026-04-04: `<optional>`, `<variant>`, `<algorithm>`, and `<vector>`
+- 2026-04-04: `<optional>` and `<variant>` history before the newer 2026-04-20 targeted retest; `<algorithm>` and `<vector>` have newer targeted results in the table.
 
 The overall header counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
+
+### Recommended Next Work
+
+1. **Fix parenthesized function-template declarations.** This is the best next std-header include blocker because it is now the first hard error for `<array>`, `<optional>`, `<variant>`, `<functional>`, `<map>`, and `<algorithm>` on the current MSVC 14.44 headers. The isolated expected-failure test is `tests/test_std_utility_parenthesized_func_template_decl_fail.cpp`; it reproduces the MSVC `<utility>:82` shape without including `<utility>`.
+
+   Target pattern:
+
+   ```cpp
+   template <class Ty, class Predicate>
+   constexpr Ty(max)(initializer_list<Ty>, Predicate);
+   ```
+
+   When this is fixed, rename the repro from `_fail.cpp` to a `_ret0.cpp` test and re-run the affected headers above.
+
+2. **Then fix variable-template values used as base-class non-type arguments.** This is the next semantic blocker for `<type_traits>` and a source of recoverable warnings in `<concepts>`. The distilled expected-failure test is `tests/test_std_type_traits_is_integral_any_of_fail.cpp`; it reduces the MSVC `is_integral` failure to `is_same_v<T, T>` feeding `is_integral_v<T>`, which then feeds `bool_constant<is_integral_v<T>>`.
+
+3. **Fix top-level const on pointer aliases during overload resolution.** This is the isolated UCRT blocker behind `<vector>`'s `__stdio_common_vfwprintf` failure. The distilled expected-failure test is `tests/test_ucrt_vfwprintf_const_pointer_alias_arg_fail.cpp`; it reduces the real `_locale_t const _Locale` wrapper argument to a call that expects `_locale_t`, where `_locale_t` aliases `void*`.
 
 ### Known Blockers
 
 The most impactful blockers preventing more headers from compiling, ordered by impact:
 
-As of the 2026-04-18 targeted retest, the global namespace prefix blocker is FIXED. The focused test passes with the current Sharded build.
+As of the 2026-04-20 targeted retest, the global namespace prefix blocker and the `<concepts>` requires-expression pack expansion blocker are fixed. The earlier `Template<...>::template Member<...>` base lookup gap and the bare non-member calling-convention function-type partial-specialization gap are also fixed.
 
-As of the 2026-04-14 targeted retest, the earlier `Template<...>::template Member<...>` base lookup gap and the bare non-member calling-convention function-type partial-specialization gap are both fixed. `<array>`, `<optional>`, `<variant>`, `<functional>`, and `<map>` now stop later in MSVC `<type_traits>` at `less::operator() const noexcept(...)`, while `<set>` / `<ranges>` still fail even later in Windows UCRT overload-resolution fallout.
+1. **Parenthesized function-template declarations**: MSVC `<utility>` declares overloads such as `constexpr Ty(max)(initializer_list<Ty>, Predicate);`. FlashCpp currently rejects this with "Expected '(' for parameter list". This is the highest-impact include blocker because it is the first hard error for `<array>`, `<optional>`, `<variant>`, `<functional>`, `<map>`, and `<algorithm>`. Isolated repro: `tests/test_std_utility_parenthesized_func_template_decl_fail.cpp`.
 
-1. **Template deduction / semantic follow-on failures after the earlier mangling blockers**: In the 2026-03-31 targeted retest, `<algorithm>` no longer failed first on unresolved- `auto` mangling. It now gets further and then fails on concepts/ranges diagnostics followed by explicit-constructor copy-initialization errors. The same family of deeper issues likely explains several headers previously bucketed under the stale unresolved- `auto` note.
+2. **Variable-template values used as base-class non-type arguments**: `<type_traits>` parses, but `std::is_integral<int>::value` evaluates false in the targeted test. The distilled pattern is `is_same_v<T, T>` feeding `is_integral_v<T>`, then `bool_constant<is_integral_v<T>>` inheritance. Isolated repro: `tests/test_std_type_traits_is_integral_any_of_fail.cpp`.
 
-2. **Function pointer signature propagation through template instantiation metadata (fixed 2026-03-31)**: Function pointer signatures were being dropped in lazy member instantiation, outer-template bindings, and free-function template instantiation. This previously caused the Itanium mangler to crash on headers such as `<string>` and `<stdexcept>`. After the fix, those headers progress past the mangling crash and now fail later on unrelated issues.
+3. **Top-level const on pointer aliases during overload resolution**: UCRT inline wrappers pass `_locale_t const` to declarations expecting `_locale_t`, where `_locale_t` is a pointer alias. FlashCpp currently treats that top-level const as call-incompatible and rejects `__stdio_common_vfwprintf`. Isolated repro: `tests/test_ucrt_vfwprintf_const_pointer_alias_arg_fail.cpp`.
 
-   - Core fix areas: `Parser_Templates_Lazy.cpp`, `Parser_Templates_Inst_Deduction.cpp`, and `TypeInfo::TemplateArgInfo` / outer-template binding serialization.
-   - Regression test: `tests/test_funcptr_lazy_member_signature_ret0.cpp`.
+4. **Deferred template-base placeholder materialization / inherited-member follow-ons**: Some dependent base arguments now materialize correctly, and chained member access no longer immediately erases concrete payload types back to `type_index=0`, but later CRTP/deferred-body codegen still has remaining gaps where instantiated payload structs are not always recovered as full structs and inherited members are not fully reconstructed. `<optional>` now reaches the later `_Optional_payload<...>` / `_M_engaged` failures with concrete type index `2758`, but those deferred paths still lose struct info or inherited `_M_engaged` lookup during codegen.
 
-3. **Deferred template-base placeholder materialization / inherited-member follow-ons**: Some dependent base arguments now materialize correctly, and chained member access no longer immediately erases concrete payload types back to `type_index=0`, but later CRTP/deferred-body codegen still has remaining gaps where instantiated payload structs are not always recovered as full structs and inherited members are not fully reconstructed. `<optional>` now reaches the later `_Optional_payload<...>` / `_M_engaged` failures with concrete type index `2758`, but those deferred paths still lose struct info or inherited `_M_engaged` lookup during codegen.
+5. **Late atomic implementation follow-ons after the scoped-enum overload/cast fix**: Pointer-style `__atomic_add_fetch` / `__atomic_fetch_sub`, namespace-qualified explicit function-template calls such as `std::__atomic_impl::__compare_exchange<_AtomicRef>(...)`, `__builtin_memcpy`, and the earlier `memory_order | __memory_order_modifier(...)` scoped-enum stop now all get past parsing/sema. `<atomic>` still fails later in codegen on `_M_do_wait`, missing default-argument recovery, dependent `__compare_exchange` payload sizing, and `memory_order_seq_cst` symbol recovery; `<latch>` now fails later in the same stack on `_M_do_wait`, `__mutex_base` constructor recovery, integer-conversion gaps, and `memory_order_relaxed` symbol recovery. Affects: `<atomic>`, `<latch>`.
 
-4. **Late atomic implementation follow-ons after the scoped-enum overload/cast fix**: Pointer-style `__atomic_add_fetch` / `__atomic_fetch_sub`, namespace-qualified explicit function-template calls such as `std::__atomic_impl::__compare_exchange<_AtomicRef>(...)`, `__builtin_memcpy`, and the earlier `memory_order | __memory_order_modifier(...)` scoped-enum stop now all get past parsing/sema. `<atomic>` still fails later in codegen on `_M_do_wait`, missing default-argument recovery, dependent `__compare_exchange` payload sizing, and `memory_order_seq_cst` symbol recovery; `<latch>` now fails later in the same stack on `_M_do_wait`, `__mutex_base` constructor recovery, integer-conversion gaps, and `memory_order_relaxed` symbol recovery. Affects: `<atomic>`, `<latch>`.
+6. **Late chrono/time-point semantic follow-ons after the statement-disambiguation fix**: `<chrono>` no longer stops first on `duration::operator+=` / `operator-=` being misparsed as declarations when the namespace-scope alias `__r` shadows the member name. The next blocker is deeper template/sema handling around `chrono::time_point`, including a non-dependent-name `__time_point` error and repeated ratio/time-point static-assert fallout; `<shared_mutex>` now rides that stack further and then fails later in codegen on `_S_epoch_diff`. Affects: `<chrono>`, `<shared_mutex>`.
 
-5. **Late chrono/time-point semantic follow-ons after the statement-disambiguation fix**: `<chrono>` no longer stops first on `duration::operator+=` / `operator-=` being misparsed as declarations when the namespace-scope alias `__r` shadows the member name. The next blocker is deeper template/sema handling around `chrono::time_point`, including a non-dependent-name `__time_point` error and repeated ratio/time-point static-assert fallout; `<shared_mutex>` now rides that stack further and then fails later in codegen on `_S_epoch_diff`. Affects: `<chrono>`, `<shared_mutex>`.
+7. **Iterator / ranges downstream follow-on failures after the latest operator fixes**: The simple free-operator-template gap is fixed, but libstdc++ headers still hit later failures around iterator arithmetic / comparisons (`Operator-`, `Operator!=`, `_S_empty`, `_S_size`), `make_move_iterator`, and missing struct type info for some helper types. Affects: `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<iostream>`.
 
-6. **Iterator / ranges downstream follow-on failures after the latest operator fixes**: The simple free-operator-template gap is fixed, but libstdc++ headers still hit later failures around iterator arithmetic / comparisons (`Operator-`, `Operator!=`, `_S_empty`, `_S_size`), `make_move_iterator`, and missing struct type info for some helper types. Affects: `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<iostream>`.
+8. **Variant visitation / mangling follow-ons after the pattern-struct boundary fix**: `<variant>` no longer stops on unexpanded `PackExpansionExprNode` nodes from parser-owned `$pattern__` structs, but it now exposes later template-instantiation gaps around `__get`, `__emplace`, `_S_apply_all_alts`, and an eventual Itanium mangling `unknown type` abort. Affects: `<variant>`.
 
-7. **Variant visitation / mangling follow-ons after the pattern-struct boundary fix**: `<variant>` no longer stops on unexpanded `PackExpansionExprNode` nodes from parser-owned `$pattern__` structs, but it now exposes later template-instantiation gaps around `__get`, `__emplace`, `_S_apply_all_alts`, and an eventual Itanium mangling `unknown type` abort. Affects: `<variant>`.
+9. **Ambiguous overload resolution**: `__to_unsigned_like` in ranges has multiple overloads that the overload resolver treats as ambiguous. Affects: `<ranges>`.
 
-8. **Ambiguous overload resolution**: `__to_unsigned_like` in ranges has multiple overloads that the overload resolver treats as ambiguous. Affects: `<ranges>`.
+10. **Stack overflow during deep template instantiation**: Headers like `<barrier>`, and `<chrono>` trigger 6000-7500+ template instantiations that exhaust the stack. Affects: `<barrier>`, `<chrono>`, `<condition_variable>`.
 
-9. **Stack overflow during deep template instantiation**: Headers like `<barrier>`, and `<chrono>` trigger 6000-7500+ template instantiations that exhaust the stack. Affects: `<barrier>`, `<chrono>`, `<condition_variable>`.
+11. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). Affects: `<vector>`, `<list>`, `<map>`.
 
-10. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). Affects: `<vector>`, `<list>`, `<map>`.
-
-11. **Late iostream-family codegen / IR lowering crash**: After the InstantiationContext fix below, `<iostream>` gets through parsing and much deeper into codegen before crashing in `IROperandHelpers::toIrValue` after `_S_empty`/`_S_size`/`move` failures. `<sstream>` / `<fstream>` still need targeted retests to see whether they now fail in the same later phase. Affects: `<iostream>`, likely `<sstream>`, `<fstream>`.
+12. **Late iostream-family codegen / IR lowering crash**: After the InstantiationContext fix below, `<iostream>` gets through parsing and much deeper into codegen before crashing in `IROperandHelpers::toIrValue` after `_S_empty`/`_S_size`/`move` failures. `<sstream>` / `<fstream>` still need targeted retests to see whether they now fail in the same later phase. Affects: `<iostream>`, likely `<sstream>`, `<fstream>`.
 
 ### Recent Fixes (2026-04-10)
 
