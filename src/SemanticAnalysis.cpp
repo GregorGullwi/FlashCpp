@@ -3897,6 +3897,22 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 					  "no conversion operator found in struct source type");
 			return false;
 		}
+		// Phase 5: trigger lazy materialization earlier in sema so codegen gets an already-materialized body.
+		const TypeInfo* from_type_info = tryGetTypeInfo(from_desc.type_index);
+		if (from_type_info && from_type_info->isTemplateInstantiation()) {
+			const TypeIndex canonical_target_type =
+				canonicalize_conversion_target_type(to_desc.type_index, to_desc.category());
+			const StructTypeInfo* struct_info = from_type_info->getStructInfo();
+			if (struct_info && canonical_target_type.is_valid()) {
+				for (const auto& mf : struct_info->member_functions) {
+					if (mf.conversion_target_type == canonical_target_type) {
+						ensureMemberFunctionMaterialized(
+							from_type_info->name(), mf.getName(), mf.is_const());
+						break;
+					}
+				}
+			}
+		}
 	}
 
 	ImplicitCastInfo cast_info;
@@ -4479,6 +4495,16 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 	op_call_table_[call_key] = best_match;
 	stats_.op_calls_resolved++;
 
+	// Phase 5: trigger lazy materialization earlier in sema so codegen gets an already-materialized body.
+	if (!best_match->get_definition().has_value() && callee_type_info->isTemplateInstantiation()) {
+		static const StringHandle kOperatorCallHandle =
+			StringTable::getOrInternStringHandle("operator()");
+		ensureMemberFunctionMaterialized(
+			callee_type_info->name(),
+			kOperatorCallHandle,
+			std::nullopt);
+	}
+
 	FLASH_LOG_FORMAT(General, Debug,
 					 "SemanticAnalysis: resolved operator() for '{}' -> {} params",
 					 callee_decl.identifier_token().value(),
@@ -4852,6 +4878,11 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 			return false;
 		}
 		if (searchStructMembers(type_info->getStructInfo())) {
+			// Phase 5: trigger lazy materialization earlier in sema so codegen gets an already-materialized body.
+			if (func_decl && !func_decl->get_definition().has_value() &&
+				type_info->isTemplateInstantiation()) {
+				ensureMemberFunctionMaterialized(type_info->name(), func_name_handle, std::nullopt);
+			}
 			return true;
 		}
 		if (type_info->isTemplateInstantiation()) {

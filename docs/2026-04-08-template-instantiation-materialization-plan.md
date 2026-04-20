@@ -1,7 +1,7 @@
 # Template Instantiation / Materialization Status
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-20 (Phase 5: lazy-member materialization helper moved into sema)
+**Last Updated:** 2026-04-20 (Phase 5: sema-owned materialization at call-resolution and conversion sites)
 
 This document is now a short status audit, not a historical scratchpad.
 Its purpose is to answer two questions clearly:
@@ -20,7 +20,11 @@ Its purpose is to answer two questions clearly:
   - The first constructor-materialization slice is done (sema materializes stmt-decl ctors).
   - The remaining codegen bridges are now funneled through a **single shared helper** (`AstToIr::materializeLazyMemberIfNeeded`), shrinking the surface for the next sema-ownership move.
   - **The shared helper itself is now sema-owned.** `AstToIr::materializeLazyMemberIfNeeded` is a thin forwarder to `SemanticAnalysis::ensureMemberFunctionMaterialized`; registry lookup, `parser_.instantiateLazyMemberFunction(...)`, pending-root normalization, and the "mark instantiated" bookkeeping all live in sema now. `ensureSelectedConstructorMaterialized` also routes through this unified helper.
-  - The broader parser/sema ownership move (pushing materialization earlier at each individual codegen call site) is still open.
+  - **Three new sema-side materialization triggers are now in place** (the second Phase 5 slice):
+    - `tryRecoverCallDeclFromStructMembers` — after resolving a template-instantiation member to a stub, calls `ensureMemberFunctionMaterialized` so codegen sees an already-materialized body.
+    - `tryAnnotateConversion` — after confirming that a matching conversion operator exists on a template instantiation type, calls `ensureMemberFunctionMaterialized` for the selected operator before the conversion slot is written.
+    - `tryResolveCallableOperatorImpl` — after selecting `operator()` on a template instantiation type, calls `ensureMemberFunctionMaterialized` for the selected overload.
+  - The remaining codegen fallbacks in `IrGenerator_Visitors_TypeInit.cpp` (deferred member queue, static initializer) are still in place as belt-and-suspenders guards.
 - **Phase 6:** Not done. A separate explicit-deduction mapping issue is still open.
 
 ## What is clearly landed
@@ -57,47 +61,34 @@ Phase 5 is now the remaining ownership cleanup: shrink the places where codegen 
 
 The main remaining surfaces are:
 
-- `src/IrGenerator_Visitors_TypeInit.cpp`
-- `src/IrGenerator_Call_Direct.cpp`
-- `src/IrGenerator_Call_Indirect.cpp`
-- `src/IrGenerator_MemberAccess.cpp`
+- `src/IrGenerator_Visitors_TypeInit.cpp` (deferred member queue fallback and static initializer fallback — kept intentionally)
+- `src/IrGenerator_Call_Direct.cpp` — `instantiateAndQueueLazyMember` codegen fallback
+- `src/IrGenerator_Call_Indirect.cpp` — `instantiateLazySelectedMember` codegen fallback
+- `src/IrGenerator_MemberAccess.cpp` — conversion operator lazy instantiation codegen fallback
 
-These files used to contain six ad-hoc `parser_->instantiateLazyMemberFunction(...)` bridges with subtly different normalize/mark/queue logic. They have now been funneled through two shared codegen helpers:
+The three most important sema-side triggers are now in place (second Phase 5 slice):
+- `tryRecoverCallDeclFromStructMembers` materializes stubs found during member-call resolution.
+- `tryAnnotateConversion` materializes the matching conversion operator during conversion annotation.
+- `tryResolveCallableOperatorImpl` materializes `operator()` during callable-object resolution.
 
-- `AstToIr::materializeLazyMemberIfNeeded(struct, member, optional<is_const>)`
-- `AstToIr::queueDeferredMemberFunctionFromNode(struct, node, qualified_name_for_ns)`
-
-`materializeLazyMemberIfNeeded` itself is now just a forwarder to the sema-owned `SemanticAnalysis::ensureMemberFunctionMaterialized`, so the registry/normalize/mark logic lives in exactly one place — inside sema.
-
-Concrete effect: codegen's lazy-member materialization surface is now **one** forwarding location (`IrGenerator_Helpers.cpp`) instead of six, and the actual work happens in sema. Ownership is still mixed at the call sites:
-
-- sema owns the helper and the stmt-decl constructor path
-- codegen still owns some "make the body exist now" fallbacks — but only through the single shared forwarder
-
-The mixed model at the call sites is still the real remaining Phase 5 work, but the cleanup is now a single-point change instead of six.
-
-### What Phase 5 should mean now
-
-Phase 5 should no longer be described as a broad or abstract boundary discussion.
-It is now a concrete cleanup with one target invariant:
-
-- **Codegen should consume already-materialized declarations instead of deciding when lazy template members get instantiated.**
-
-The stmt-decl constructor path already satisfies that invariant.
-The remaining files above do not.
+The codegen fallback paths (`materializeLazyMemberIfNeeded` calls in `IrGenerator_Call_Direct`,
+`IrGenerator_Call_Indirect`, and `IrGenerator_MemberAccess`) are now defensive guards:
+sema should have already materialized the body before codegen reaches them.
 
 ## Clear next steps
 
-1. **Audit the remaining codegen bridge (now a thin sema forwarder)**
-   - `AstToIr::materializeLazyMemberIfNeeded` in `IrGenerator_Helpers.cpp` forwards to `SemanticAnalysis::ensureMemberFunctionMaterialized`; this is the one remaining surface.
-   - Callers: `IrGenerator_Visitors_TypeInit.cpp`, `IrGenerator_Call_Direct.cpp`, `IrGenerator_Call_Indirect.cpp`, `IrGenerator_MemberAccess.cpp`.
+1. **The three key sema-side materialization triggers are in place (second Phase 5 slice)**
+   - `tryRecoverCallDeclFromStructMembers` — materializes stubs at member-call resolution time.
+   - `tryAnnotateConversion` — materializes conversion operators at conversion annotation time.
+   - `tryResolveCallableOperatorImpl` — materializes `operator()` at callable-object resolution time.
+   - Codegen fallbacks in `IrGenerator_Call_Direct`, `IrGenerator_Call_Indirect`, `IrGenerator_MemberAccess` are now defensive; sema should have already done the work.
 
-2. **For each caller, move materialization earlier**
-   - make parser/sema publish the selected callable/member before IR lowering needs it
-   - keep codegen as a consumer, not a fallback materializer
+2. **Promote codegen fallbacks to hard assertions (optional future cleanup)**
+   - Once confidence is high that sema always materializes before codegen, the `materializeLazyMemberIfNeeded` calls in the three codegen files above can be changed to consistency checks that assert `get_definition().has_value()`.
+   - The `IrGenerator_Visitors_TypeInit.cpp` deferred-queue and static-initializer fallbacks should be kept permanently (they handle edge cases outside the sema-call-resolution path).
 
-3. **Delete the codegen bridge once the sema invariant is in place**
-   - the shared helper then collapses to a consistency check / hard failure if a supposedly normalized node is still unresolved
+3. **Delete the codegen bridge once the sema invariant is proven**
+   - `AstToIr::materializeLazyMemberIfNeeded` in `IrGenerator_Helpers.cpp` collapses to a hard failure if a supposedly normalized node is still unresolved.
 
 4. **Re-run the existing template-heavy regression cluster after each slice**
    - pending sema normalization
@@ -115,8 +106,8 @@ If you want the shortest accurate summary:
 
 - **Done:** Phases 1-4
 - **In progress:** Phase 5
-- **Done inside Phase 5:** stmt-decl constructor materialization slice; codegen lazy-member bridges consolidated into a single shared helper (`AstToIr::materializeLazyMemberIfNeeded`); that helper is now a thin forwarder to the sema-owned `SemanticAnalysis::ensureMemberFunctionMaterialized`, which also backs `ensureSelectedConstructorMaterialized`
-- **Next work:** push materialization of the remaining codegen-consumed lazy members into sema at each call site, then delete the codegen forwarder
+- **Done inside Phase 5:** stmt-decl constructor materialization slice; codegen lazy-member bridges consolidated into a single shared helper (`AstToIr::materializeLazyMemberIfNeeded`); that helper is now a thin forwarder to the sema-owned `SemanticAnalysis::ensureMemberFunctionMaterialized`, which also backs `ensureSelectedConstructorMaterialized`; **second slice landed**: sema now triggers `ensureMemberFunctionMaterialized` at the three key call-resolution and conversion-annotation sites (`tryRecoverCallDeclFromStructMembers`, `tryAnnotateConversion`, `tryResolveCallableOperatorImpl`)
+- **Next work:** promote remaining codegen fallbacks in `IrGenerator_Call_Direct`, `IrGenerator_Call_Indirect`, `IrGenerator_MemberAccess` from materializing helpers to consistency assertions; then delete the forwarding bridge
 - **Separate later follow-up:** Phase 6 explicit-deduction mapping cleanup
 
 ## Regression coverage worth keeping close
@@ -132,17 +123,18 @@ The following tests are the most relevant guardrails for this area:
 - `tests/test_conv_op_sema_phase5_ret42.cpp`
 - `tests/test_phase5_nested_templates_ret42.cpp`
 - `tests/test_phase5_multi_level_ret45.cpp`
+- `tests/test_phase5_sema_materialization_ret7.cpp` ← new: exercises all three sema triggers
 
-## Validation baseline refreshed on 2026-04-20
+## Validation baseline refreshed on 2026-04-20 (second Phase 5 slice)
 
-Linux validation was re-run during this audit:
+Linux validation was re-run after the second Phase 5 slice:
 
 - `make main CXX=clang++`
 - `bash ./tests/run_all_tests.sh`
 
 Current baseline:
 
-- **2170** compile+link+runtime passing tests
+- **2171** compile+link+runtime passing tests (includes new `test_phase5_sema_materialization_ret7.cpp`)
 - **147** `_fail` tests failing as expected
 - overall result: **SUCCESS**
 
