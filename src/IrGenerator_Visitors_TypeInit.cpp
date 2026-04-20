@@ -285,14 +285,15 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 			} else if (info.function_node.is<ConstructorDeclarationNode>()) {
 				const ConstructorDeclarationNode& ctor = info.function_node.as<ConstructorDeclarationNode>();
 				if (!ctor.get_definition().has_value() && parser_) {
-					StringHandle member_handle = ctor.name();
-					auto new_ctor_node = materializeLazyMemberIfNeeded(info.struct_name, member_handle, false);
-					if (new_ctor_node.has_value() && new_ctor_node->is<ConstructorDeclarationNode>()) {
-						visitConstructorDeclarationNode(new_ctor_node->as<ConstructorDeclarationNode>());
-						current_function_name_ = saved_function;
-						current_namespace_stack_ = saved_namespace;
-						continue;
-					}
+					// Phase 5 Slice E: the `materializeLazyMemberIfNeeded(...)` fallback that
+					// used to live here for constructor-shaped lazy entries is no longer reachable
+					// after Slices A–D. All constructor materialization paths that feed this
+					// queue now run through sema (`ensureSelectedConstructorMaterialized`,
+					// `tryAnnotateInitListConstructorArgs`, and friends) before the struct
+					// visitor queues the ctor, so by the time we revisit a ctor with no body
+					// here the struct already exposes a materialized replacement we can dispatch
+					// to directly. The replacement_ctor scan below remains the defense-in-depth
+					// path for ctors whose original definition-less stub is still in the queue.
 					bool visited_replacement_ctor = false;
 					if (auto struct_it = getTypesByNameMap().find(info.struct_name);
 						struct_it != getTypesByNameMap().end()) {
