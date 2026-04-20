@@ -75,14 +75,10 @@ The Windows implementation now uses proper MSVC RTTI structures and runtime:
 
 ### Future Enhancements
 
-1. **`<typeinfo>` header support / vtable back-substitution**: Parsing `<typeinfo>`
-   causes FlashCpp to emit a local vtable for `std::type_info`. The virtual-function
-   slots (`__do_catch`, `__do_upcast`) in that vtable are referenced with the full
-   mangled name `PKSt9type_info` instead of the correct Itanium ABI back-substitution
-   `PKS_`, producing undefined-reference linker errors. Until this name-mangling bug
-   is fixed, tests must use raw `const void*` pointer comparison instead of
-   `std::type_info::operator==`. Once fixed, all RTTI tests should include `<typeinfo>`
-   and use the standard API. (See `docs/KNOWN_ISSUES.md`)
+1. ~~**`<typeinfo>` header support / vtable back-substitution**~~ **DONE** — `ItaniumManglingCtx`
+   tracks substitutions and emits `S_`/`S<n>_` back-references per ABI §5.1.8.
+   Multi-component non-std type names also gain the required `N...E` wrapper in
+   parameter positions. See `tests/test_rtti_typeinfo_std_ret0.cpp`.
 
 2. **vfDelta Calculation**: The `__RTDynamicCast` call currently passes 0 for the
    `vfDelta` parameter. For complex virtual inheritance scenarios, this could be

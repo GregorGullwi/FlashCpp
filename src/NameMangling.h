@@ -448,6 +448,151 @@ void appendParameterTypeCode(OutputType& output, const TypeSpecifierNode& type_n
 }
 
 // ============================================================================
+// Itanium C++ ABI Substitution Support (Itanium C++ ABI §5.1.8)
+// ============================================================================
+
+// Concept to detect output types that support Itanium substitution tracking.
+// Types satisfying this concept must implement tryEmitSubstitution and addSubstitution.
+// Note: addSubstitution takes std::string (by value) so that callers can move strings in.
+// The concept tests with a std::string lvalue to match that signature.
+template <typename T>
+concept ItaniumSubsAware = requires(T& t, std::string_view sv, std::string s) {
+	{ t.tryEmitSubstitution(sv) } -> std::same_as<bool>;
+	t.addSubstitution(std::move(s));
+};
+
+// Compute the "substitution key" for a qualified type name.
+// This is the encoding WITHOUT N...E wrapping (used as the key in the substitution table).
+// Per Itanium ABI: substitution candidates are stored as prefixes (without the outer N...E).
+//   - Single-component, not std: "7MyClass"
+//   - std::X (two-component starting with std): "St7MyClass"
+//   - Multi-component non-std: "3foo7MyClass" (no N...E)
+inline std::string computeItaniumTypeSubstitutionKey(std::string_view qualified_name) {
+std::array<std::string_view, 16> components{};
+size_t count = 0;
+size_t start = 0;
+while (start < qualified_name.size() && count < components.size()) {
+size_t end = qualified_name.find("::", start);
+if (end == std::string_view::npos)
+end = qualified_name.size();
+components[count++] = qualified_name.substr(start, end - start);
+start = (end == qualified_name.size()) ? end : end + 2;
+}
+
+std::string key;
+for (size_t i = 0; i < count; ++i) {
+if (components[i] == "std") {
+key += "St";
+} else if (components[i].empty()) {
+key += "12_GLOBAL__N_1";
+} else {
+key += std::to_string(components[i].size());
+key += components[i];
+}
+}
+return key;  // No N...E wrapping — see comment above
+}
+
+// Itanium mangling context that wraps a StringBuilder and tracks substitution candidates.
+// Used in generateMangledName for the Itanium path to emit correct S_/S0_/... back-references.
+class ItaniumManglingCtx {
+public:
+explicit ItaniumManglingCtx(StringBuilder& sb) : sb_(sb) {}
+
+// Forward all output operators to the underlying StringBuilder
+ItaniumManglingCtx& operator+=(std::string_view sv) { sb_.append(sv); return *this; }
+ItaniumManglingCtx& operator+=(char c)              { sb_.append(c);  return *this; }
+ItaniumManglingCtx& operator+=(int64_t v)           { sb_.append(v);  return *this; }
+ItaniumManglingCtx& operator+=(uint64_t v)          { sb_.append(v);  return *this; }
+
+// Try to emit a back-reference for `key` if it is in the substitution table.
+// Returns true and emits S_/S0_/.../Sn_ if found; returns false otherwise.
+bool tryEmitSubstitution(std::string_view key) {
+for (size_t i = 0; i < subs_.size(); ++i) {
+if (subs_[i] == key) {
+sb_.append('S');
+if (i > 0) {
+// S_ = index 0, S0_ = index 1, S1_ = index 2, ...
+// Encode i-1 in base-36: digits 0-9 then A-Z
+size_t n = i - 1;
+if (n < 10) {
+sb_.append(static_cast<char>('0' + static_cast<char>(n)));
+} else {
+sb_.append(static_cast<char>('A' + static_cast<char>(n - 10)));
+}
+}
+sb_.append('_');
+return true;
+}
+}
+return false;
+}
+
+// Add a new substitution candidate. Duplicates are silently ignored.
+void addSubstitution(std::string key) {
+for (const auto& s : subs_) {
+if (s == key) return;
+}
+subs_.push_back(std::move(key));
+}
+
+private:
+StringBuilder& sb_;
+std::vector<std::string> subs_;
+};
+
+// Pre-populate the substitution table for a member function from its class context.
+// Per Itanium C++ ABI §5.1.8, each prefix of the nested name (up to but NOT including
+// the function name itself) is a substitution candidate.  Predefined substitutions like
+// "St" (std::) are NOT added to the user table.
+//
+// Examples:
+//   namespace_path=["std"], struct_name="type_info" -> adds "St9type_info" as S_
+//   namespace_path=["foo"], struct_name="Bar"       -> adds "3foo" as S_, "3foo3Bar" as S0_
+//   namespace_path=[],      struct_name="Foo"       -> adds "3Foo" as S_
+inline void populateSubstitutionsFromClassContext(
+ItaniumManglingCtx& ctx,
+std::string_view struct_name,
+const std::vector<std::string_view>& namespace_path) {
+std::string accumulated;
+
+for (const auto& ns : namespace_path) {
+if (ns == "std") {
+// "St" is predefined — do NOT add to user table, but include in accumulated prefix
+accumulated += "St";
+} else if (ns.empty()) {
+accumulated += "12_GLOBAL__N_1";
+ctx.addSubstitution(accumulated);
+} else {
+accumulated += std::to_string(ns.size());
+accumulated += ns;
+ctx.addSubstitution(accumulated);
+}
+}
+
+// Process struct name components (may contain "::" for nested classes)
+size_t start = 0;
+while (start < struct_name.size()) {
+size_t end = struct_name.find("::", start);
+if (end == std::string_view::npos)
+end = struct_name.size();
+std::string_view component = struct_name.substr(start, end - start);
+if (!component.empty()) {
+if (component == "std") {
+// "St" is predefined — do not add to user table
+accumulated += "St";
+} else {
+accumulated += std::to_string(component.size());
+accumulated += component;
+// Add after each class component (these ARE user substitution candidates)
+ctx.addSubstitution(accumulated);
+}
+}
+start = (end == struct_name.size()) ? end : end + 2;
+}
+}
+
+// ============================================================================
 // Itanium C++ ABI Name Mangling Helpers
 // ============================================================================
 
@@ -579,47 +724,27 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 	case TypeCategory::UserDefined:
 	case TypeCategory::TypeAlias:
 	case TypeCategory::Enum: {
-			// For structs/classes/enums, use the type name
-			// For nested types, we need to split the name into components
-			// e.g., "Outer::Inner" should be encoded as "6Outer5Inner", not "12Outer::Inner"
+			// Use appendItaniumQualifiedTypeName which correctly adds the N...E nested-name
+			// wrapper for multi-component non-std types per the Itanium C++ ABI.
+			// e.g., "foo::Bar"       -> "N3foo3BarE"   (N...E required for qualified types)
+			//        "std::type_info" -> "St9type_info"  (std shorthand, no N...E)
+			//        "MyClass"        -> "7MyClass"
 		if (normalized.type_index().index() >= getTypeInfoCount()) {
 			throw CompileError("Itanium name mangling: unknown struct/enum type index — cannot generate valid symbol");
 		}
 		const TypeInfo& type_info = getTypeInfo(normalized.type_index());
-		auto struct_name = StringTable::getStringView(type_info.name());
+		auto struct_name_sv = StringTable::getStringView(type_info.name());
 
-			// Check if this is a nested class (contains "::")
-		if (struct_name.find("::") != std::string_view::npos) {
-				// Split and encode each component separately
-			size_t start = 0;
-			while (start < struct_name.size()) {
-				size_t end = struct_name.find("::", start);
-				if (end == std::string_view::npos) {
-					end = struct_name.size();
-				}
-
-				std::string_view component = struct_name.substr(start, end - start);
-				if (!component.empty()) {
-						// Use "St" substitution for std namespace per Itanium C++ ABI
-					if (component == "std") {
-						output += "St";
-					} else {
-						output += std::to_string(component.size());
-						output += component;
-					}
-				}
-
-				start = (end == struct_name.size()) ? end : end + 2;	 // Skip "::"
+		if constexpr (ItaniumSubsAware<OutputType>) {
+				// Substitution-aware path: compute key, check table, emit back-ref or encode+add.
+				// The key is the encoding WITHOUT N...E (the canonical prefix form per ABI §5.1.8).
+			std::string key = computeItaniumTypeSubstitutionKey(struct_name_sv);
+			if (!output.tryEmitSubstitution(key)) {
+				appendItaniumQualifiedTypeName(output, struct_name_sv);
+				output.addSubstitution(std::move(key));
 			}
 		} else {
-				// Simple class name, encode as-is
-				// Check for "std" substitution
-			if (struct_name == "std") {
-				output += "St";
-			} else {
-				output += std::to_string(struct_name.size());
-				output += struct_name;
-			}
+			appendItaniumQualifiedTypeName(output, struct_name_sv);
 		}
 		break;
 	}
@@ -1293,8 +1418,14 @@ inline MangledName generateMangledName(
 
 	// Check mangling style and use appropriate mangler
 	if (g_mangling_style == ManglingStyle::Itanium) {
-		// Use Itanium C++ ABI name mangling
-		generateItaniumMangledName(builder, func_name, return_type, param_types,
+		// Use Itanium C++ ABI name mangling with substitution tracking.
+		// Pre-populate the substitution table with the class-context prefixes so that
+		// parameter types matching the enclosing class use S_/S0_/... back-references.
+		ItaniumManglingCtx ctx(builder);
+		if (!struct_name.empty() || !namespace_path.empty()) {
+			populateSubstitutionsFromClassContext(ctx, struct_name, namespace_path);
+		}
+		generateItaniumMangledName(ctx, func_name, return_type, param_types,
 								   is_variadic, struct_name, namespace_path, is_const_method, constructor_variant);
 		return MangledName(builder.commit());
 	}
@@ -1424,8 +1555,12 @@ inline MangledName generateMangledName(
 
 	// Check mangling style and use appropriate mangler
 	if (g_mangling_style == ManglingStyle::Itanium) {
-		// Use Itanium C++ ABI name mangling
-		generateItaniumMangledName(builder, func_name, return_type, param_nodes,
+		// Use Itanium C++ ABI name mangling with substitution tracking.
+		ItaniumManglingCtx ctx(builder);
+		if (!struct_name.empty() || !namespace_path.empty()) {
+			populateSubstitutionsFromClassContext(ctx, struct_name, namespace_path);
+		}
+		generateItaniumMangledName(ctx, func_name, return_type, param_nodes,
 								   is_variadic, struct_name, namespace_path, is_const_method, constructor_variant);
 		return MangledName(builder.commit());
 	}

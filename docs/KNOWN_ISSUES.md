@@ -1,34 +1,29 @@
 # Known Issues
 
-## `#include <typeinfo>` fails to link — vtable back-substitution bug
+## ~~`#include <typeinfo>` fails to link — vtable back-substitution bug~~ **FIXED**
 
-**Symptom:** Compiling any TU that includes `<typeinfo>` produces an object file
-that fails to link with undefined-reference errors:
+**Status:** Fixed in this commit. The Itanium name mangler now tracks substitutions
+and emits correct `S_`/`S<n>_` back-references per ABI §5.1.8.
 
-```
-undefined reference to `std::type_info::__do_catch(std::type_info const*, void**, unsigned int) const'
-undefined reference to `std::type_info::__do_upcast(...) const'
-```
+**What was wrong:**
+- Multi-component non-std type names (e.g. `__cxxabiv1::__class_type_info`) were missing
+  the `N...E` nested-name wrapper in parameter positions.
+- The `PKSt9type_info` parameter of `__do_catch` was emitted without a back-substitution,
+  so the linker got `_ZNKSt9type_info10__do_catchEPKSt9type_infoPPvj` instead of the
+  ABI-correct `_ZNKSt9type_info10__do_catchEPKS_PPvj`.
 
-**Root cause:** When FlashCpp parses `<typeinfo>` it sees the `std::type_info`
-class definition and emits a local vtable for it (symbol `_ZTVSt9type_info`).
-The virtual-function pointer slots in that vtable are filled by emitting
-references to `_ZNKSt9type_info10__do_catchEPKSt9type_infoPPvj` and
-`_ZNKSt9type_info11__do_upcastEPK10__cxxabiv117__class_type_infoPPv`.
+**What was changed:**
+- Added `ItaniumManglingCtx` class to `NameMangling.h` that wraps `StringBuilder`
+  and maintains a substitution table.
+- Added `ItaniumSubsAware` concept and `if constexpr` branch in `appendItaniumTypeCode`
+  that emits `S_`/`S<n>_` when a type was already encoded.
+- Added `populateSubstitutionsFromClassContext` to pre-seed the substitution table
+  with the enclosing class context (so parameter types matching the class itself get `S_`).
+- Fixed `appendItaniumQualifiedTypeName` to emit `N...E` for multi-component non-std types.
+- Both `generateMangledName` overloads now create an `ItaniumManglingCtx` and pass it
+  through to all sub-calls on the Itanium path.
 
-However, libstdc++ exports these symbols with an Itanium ABI back-substitution:
-`_ZNKSt9type_info10__do_catchEPKS_PPvj` (note `PKS_` = pointer-to-const-self,
-back-substitution for `type_info`). The names do not match, so the linker
-reports undefined references even though the symbols exist in the library.
-
-**Impact:** Tests that use `typeid` must not include `<typeinfo>` and must
-compare results via raw `const void*` pointer identity instead of
-`std::type_info::operator==`. All RTTI regression tests in `tests/` follow
-this pattern currently.
-
-**Fix needed:** The name mangler must track substitutions and emit `S_` (or
-the appropriate `S<n>_` back-reference) when a type that was already encoded
-appears again in the same mangled name, per Itanium C++ ABI §5.1.8.
+**Regression test:** `tests/test_rtti_typeinfo_std_ret0.cpp`
 
 ## Alias-chain dependent-bool resolution loses size_bits (Phase 2)
 
