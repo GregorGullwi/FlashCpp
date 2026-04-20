@@ -3837,39 +3837,14 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		if (!init_func.get_definition().has_value()) {
 			StringHandle canonical_name = conv_op.getName();
 			const bool conv_is_const = conv_op.is_const();
-			if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
-					source_type_info.name(), canonical_name, conv_is_const)) {
-				auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
-					source_type_info.name(), canonical_name, conv_is_const);
-				if (lazy_info_opt.has_value()) {
-					auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
-					normalizePendingSemanticRoots();
-					LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-						source_type_info.name(), canonical_name, conv_is_const);
-					// Queue the materialized body for deferred codegen (mirrors IrGenerator_Call_Direct).
-					if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-						DeferredMemberFunctionInfo deferred_info;
-						deferred_info.struct_name = source_type_info.name();
-						deferred_info.function_node = *instantiated_func;
-						// Build namespace stack from the struct's qualified name.
-						std::string_view qualified = StringTable::getStringView(source_type_info.name());
-						size_t ns_end = qualified.rfind("::");
-						if (ns_end != std::string_view::npos) {
-							std::string_view ns_part = qualified.substr(0, ns_end);
-							size_t start = 0;
-							while (start < ns_part.size()) {
-								size_t pos = ns_part.find("::", start);
-								if (pos == std::string_view::npos) {
-									deferred_info.namespace_stack.emplace_back(ns_part.substr(start));
-									break;
-								}
-								deferred_info.namespace_stack.emplace_back(ns_part.substr(start, pos - start));
-								start = pos + 2;
-							}
-						}
-						deferred_member_functions_.push_back(std::move(deferred_info));
-					}
-				}
+			auto instantiated_func = materializeLazyMemberIfNeeded(
+				source_type_info.name(), canonical_name, conv_is_const);
+			// Queue the materialized body for deferred codegen (mirrors IrGenerator_Call_Direct).
+			if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+				queueDeferredMemberFunctionFromNode(
+					source_type_info.name(),
+					*instantiated_func,
+					StringTable::getStringView(source_type_info.name()));
 			}
 		}
 	}

@@ -268,23 +268,16 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 			if (info.function_node.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func = info.function_node.as<FunctionDeclarationNode>();
 				// If the function has no body, it may be a lazily-registered template member.
-				// Trigger lazy instantiation via the parser so the body becomes available.
+				// Trigger lazy instantiation via the shared codegen bridge so the body becomes available.
 				if (!func.get_definition().has_value() && !func.is_implicit() && parser_) {
 					StringHandle member_handle = func.decl_node().identifier_token().handle();
 					const bool is_const_func = func.is_const_member_function();
-					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(info.struct_name, member_handle, is_const_func)) {
-						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(info.struct_name, member_handle, is_const_func);
-						if (lazy_info_opt.has_value()) {
-							auto new_func_node = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
-							normalizePendingSemanticRoots();
-							if (new_func_node.has_value() && new_func_node->is<FunctionDeclarationNode>()) {
-								LazyMemberInstantiationRegistry::getInstance().markInstantiated(info.struct_name, member_handle, is_const_func);
-								visitFunctionDeclarationNode(new_func_node->as<FunctionDeclarationNode>());
-								current_function_name_ = saved_function;
-								current_namespace_stack_ = saved_namespace;
-								continue;
-							}
-						}
+					auto new_func_node = materializeLazyMemberIfNeeded(info.struct_name, member_handle, is_const_func);
+					if (new_func_node.has_value() && new_func_node->is<FunctionDeclarationNode>()) {
+						visitFunctionDeclarationNode(new_func_node->as<FunctionDeclarationNode>());
+						current_function_name_ = saved_function;
+						current_namespace_stack_ = saved_namespace;
+						continue;
 					}
 				}
 				normalizePendingSemanticRoots();
@@ -293,19 +286,12 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 				const ConstructorDeclarationNode& ctor = info.function_node.as<ConstructorDeclarationNode>();
 				if (!ctor.get_definition().has_value() && parser_) {
 					StringHandle member_handle = ctor.name();
-					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(info.struct_name, member_handle, false)) {
-						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(info.struct_name, member_handle, false);
-						if (lazy_info_opt.has_value()) {
-							auto new_ctor_node = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
-							normalizePendingSemanticRoots();
-							if (new_ctor_node.has_value() && new_ctor_node->is<ConstructorDeclarationNode>()) {
-								LazyMemberInstantiationRegistry::getInstance().markInstantiated(info.struct_name, member_handle, false);
-								visitConstructorDeclarationNode(new_ctor_node->as<ConstructorDeclarationNode>());
-								current_function_name_ = saved_function;
-								current_namespace_stack_ = saved_namespace;
-								continue;
-							}
-						}
+					auto new_ctor_node = materializeLazyMemberIfNeeded(info.struct_name, member_handle, false);
+					if (new_ctor_node.has_value() && new_ctor_node->is<ConstructorDeclarationNode>()) {
+						visitConstructorDeclarationNode(new_ctor_node->as<ConstructorDeclarationNode>());
+						current_function_name_ = saved_function;
+						current_namespace_stack_ = saved_namespace;
+						continue;
 					}
 					bool visited_replacement_ctor = false;
 					if (auto struct_it = getTypesByNameMap().find(info.struct_name);
@@ -521,12 +507,9 @@ void AstToIr::generateStaticMemberDeclarations() {
 				if (auto call_info = CallInfo::tryFrom(expr)) {
 					StringHandle func_name_handle = call_info->declaration->identifier_token().handle();
 
-					if (parser_ && LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(struct_info->name, func_name_handle)) {
-						if (auto lazy_info = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(struct_info->name, func_name_handle)) {
-							parser_->instantiateLazyMemberFunction(*lazy_info);
-							normalizePendingSemanticRoots();
-							LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_info->name, func_name_handle, lazy_info->identity.is_const_method);
-						}
+					if (parser_) {
+						// std::nullopt: any-const match (this path does not know the callable's const-ness).
+						(void)materializeLazyMemberIfNeeded(struct_info->name, func_name_handle, std::nullopt);
 					}
 
 					const ASTNode* member_function_node = nullptr;
