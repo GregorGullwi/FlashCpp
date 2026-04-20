@@ -329,6 +329,14 @@ private:
 		const StructTypeInfo& struct_info,
 		const ConstructorDeclarationNode* ctor);
 
+	// Phase 5 helper: if `func_decl` is a lazily-registered template member stub
+	// (no definition, not implicit, belongs to a named parent struct), attempt to
+	// materialize it via `ensureMemberFunctionMaterialized` and return the
+	// resulting fully-defined FunctionDeclarationNode*. Returns `func_decl`
+	// unchanged when the target is already materialized, not lazy, or anonymous.
+	const FunctionDeclarationNode* tryMaterializeLazyCallTarget(
+		const FunctionDeclarationNode* func_decl);
+
 	// Annotate InitializerListNode elements used as constructor arguments
 	// with their parameter-type conversions (for direct-init syntax like `Type obj(args...)`).
 	void tryAnnotateInitListConstructorArgs(const InitializerListNode& init_list, const StructTypeInfo& struct_info);
