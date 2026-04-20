@@ -1491,38 +1491,35 @@ void AstToIr::visitEnumDeclarationNode(const EnumDeclarationNode& node) {
 }
 
 void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
-		// If no definition and not explicit, check if implicit
-	if (!node.get_definition().has_value()) {
-		if (node.is_implicit()) {
-				// Implicit constructors might not have a body if trivial, but we must emit the symbol
-				// so the linker can find it if referenced.
-				// Proceed to generate an empty function body.
-		} else {
-			return;
-		}
+	// If no definition and not explicit, check if implicit
+	// Implicit constructors might not have a body if trivial, but we must emit the symbol
+	// so the linker can find it if referenced.
+	// Proceed to generate an empty function body.
+	if (!node.get_definition().has_value() && !node.is_implicit()) {
+		return;
 	}
 
-		// Phase 16: track whether sema normalized this constructor body.
+	// Phase 16: track whether sema normalized this constructor body.
 	sema_normalized_current_function_ = false;
 	if (sema_ && node.get_definition().has_value()) {
 		sema_normalized_current_function_ = sema_->hasNormalizedBody(
 			static_cast<const void*>(&(*node.get_definition())));
 	}
 
-		// Reset the temporary variable counter for each new constructor
-		// Constructors are always member functions, so reserve TempVar(1) for 'this'
+	// Reset the temporary variable counter for each new constructor
+	// Constructors are always member functions, so reserve TempVar(1) for 'this'
 	var_counter = TempVar(2);
 
-		// Clear global TempVar metadata to prevent stale data from bleeding into this function
+	// Clear global TempVar metadata to prevent stale data from bleeding into this function
 	GlobalTempVarMetadataStorage::instance().clear();
 
-		// Set current function name for static local variable mangling
+	// Set current function name for static local variable mangling
 	current_function_name_ = node.name();
 	static_local_names_.clear();
 
-		// Create constructor declaration with typed payload
+	// Create constructor declaration with typed payload
 	FunctionDeclOp ctor_decl_op;
-		// For nested classes, use current_struct_name_ which contains the fully qualified name
+	// For nested classes, use current_struct_name_ which contains the fully qualified name
 	std::string_view struct_name_for_ctor = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : StringTable::getStringView(node.struct_name());
 	const TypeInfo* enclosing_type_info = nullptr;
 	if (auto enclosing_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
@@ -1534,8 +1531,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		enclosing_struct_info != nullptr &&
 		!enclosing_struct_info->virtual_bases.empty();
 
-		// Extract just the last component of the class name for the constructor function name
-		// For "Outer::Inner", we want "Inner" as the function name
+	// Extract just the last component of the class name for the constructor function name
+	// For "Outer::Inner", we want "Inner" as the function name
 	std::string_view ctor_function_name = struct_name_for_ctor;
 	std::string_view parent_class_name;	// For mangling - all components except the last
 	size_t last_colon = struct_name_for_ctor.rfind("::");
@@ -1553,17 +1550,17 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	ctor_decl_op.return_pointer_depth = PointerDepth{};	// Pointer depth is 0 for void
 	ctor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for constructors
 	ctor_decl_op.is_variadic = false;  // Constructors are never variadic
-		// Constructors defined inside class body are implicitly inline (C++ standard)
-		// Mark them as inline so they get weak linkage in the object file
+	// Constructors defined inside class body are implicitly inline (C++ standard)
+	// Mark them as inline so they get weak linkage in the object file
 	ctor_decl_op.is_inline = true;
 
-		// Generate mangled name for constructor
-		// For template instantiations, use struct_name_for_ctor which has the correct instantiated name
-		// (e.g., "Base_char" instead of "Base")
+	// Generate mangled name for constructor
+	// For template instantiations, use struct_name_for_ctor which has the correct instantiated name
+	// (e.g., "Base_char" instead of "Base")
 	{
 		std::vector<std::string_view> empty_namespace_path;
 
-			// Use the appropriate mangling based on the style
+		// Use the appropriate mangling based on the style
 		if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::MSVC) {
 				// MSVC uses dedicated constructor mangling (??0ClassName@@...)
 			ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(
@@ -1855,7 +1852,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		}
 	}
 
-		// Skip duplicate constructor definitions (e.g. when a static member call queues all struct members)
+	// Skip duplicate constructor definitions (e.g. when a static member call queues all struct members)
 	if (generated_function_names_.count(ctor_decl_op.mangled_name) > 0) {
 		FLASH_LOG(Codegen, Debug, "Skipping duplicate constructor definition: ", StringTable::getStringView(ctor_decl_op.mangled_name));
 		return;
@@ -1867,8 +1864,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 
 	enterConstructorScope(base_ctor_mangled_name);
 
-		// C++11 Delegating constructor: if present, ONLY call the target constructor
-		// No base class or member initialization should happen
+	// C++11 Delegating constructor: if present, ONLY call the target constructor
+	// No base class or member initialization should happen
 	if (node.delegating_initializer().has_value()) {
 		const auto& delegating_init = node.delegating_initializer().value();
 		if (!enclosing_struct_info) {
@@ -1891,26 +1888,26 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 
-			// Delegating constructors don't execute the body or initialize members
-			// Just return
+		// Delegating constructors don't execute the body or initialize members
+		// Just return
 		emitVoidReturn(node.name_token());
 		return;
 	}
 
-		// C++ construction order:
-		// 1. Base class constructors (in declaration order)
-		// 2. Member variables (in declaration order)
-		// 3. Constructor body
+	// C++ construction order:
+	// 1. Base class constructors (in declaration order)
+	// 2. Member variables (in declaration order)
+	// 3. Constructor body
 
-		// Look up the struct type to get base class and member information
-		// Use struct_name_for_ctor (fully qualified) instead of node.struct_name()
+	// Look up the struct type to get base class and member information
+	// Use struct_name_for_ctor (fully qualified) instead of node.struct_name()
 	auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
 	if (struct_type_it != getTypesByNameMap().end()) {
 		const TypeInfo* struct_type_info = struct_type_it->second;
 		const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 		if (struct_info) {
-				// Step 1: Call base class constructors (in declaration order)
+			// Step 1: Call base class constructors (in declaration order)
 			for (const auto& base : struct_info->base_classes) {
 				if (emit_split_ctor_variants && base.is_virtual) {
 					continue;
@@ -1927,7 +1924,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				// Build constructor call: Base::Base(this, args...)
 				ConstructorCallOp ctor_op;
 				ctor_op.object = StringTable::getOrInternStringHandle("this");
-					// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
+				// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
 				assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 				ctor_op.base_class_offset = static_cast<int>(base.offset);
 				ctor_op.call_base_object_variant = shouldCallBaseObjectVariant(base_struct_info);
@@ -1945,21 +1942,21 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						resolveCodegenConstructorFromArgs(*base_struct_info, base_init->arguments);
 					appendConstructorCallArguments(ctor_op, resolved_ctor, base_init->arguments, node.name_token());
 					finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
-						// If there's an explicit initializer, generate the constructor call
+					// If there's an explicit initializer, generate the constructor call
 					ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 				}
-					// If no explicit initializer and this is NOT an implicit copy/move constructor,
-					// call default constructor (no args)
-					// For implicit copy/move constructors, the base constructor call is generated
-					// in the implicit constructor generation code below
-					// Note: implicit DEFAULT constructors (0 params) SHOULD call base default constructors
+				// If no explicit initializer and this is NOT an implicit copy/move constructor,
+				// call default constructor (no args)
+				// For implicit copy/move constructors, the base constructor call is generated
+				// in the implicit constructor generation code below
+				// Note: implicit DEFAULT constructors (0 params) SHOULD call base default constructors
 				else {
 					bool is_implicit_default_ctor = node.is_implicit() && node.parameter_nodes().size() == 0;
 					if (!node.is_implicit() || is_implicit_default_ctor) {
-							// Only call base default constructor if the base class actually has constructors
-							// This avoids link errors when inheriting from classes without constructors
+						// Only call base default constructor if the base class actually has constructors
+						// This avoids link errors when inheriting from classes without constructors
 						if (base_struct_info && base_struct_info->hasAnyConstructor()) {
-								// Call default constructor with no arguments
+							// Call default constructor with no arguments
 							fillInDefaultConstructorArguments(ctor_op, *base_struct_info);
 							finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
@@ -1968,43 +1965,43 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				}
 			}
 
-				// Step 1.5: Initialize vptr if this class has virtual functions
-				// This must happen after base constructor calls (which set up base vptr)
-				// but before member initialization
+			// Step 1.5: Initialize vptr if this class has virtual functions
+			// This must happen after base constructor calls (which set up base vptr)
+			// but before member initialization
 			if (!(node.is_implicit() && (is_implicit_copy_constructor || is_implicit_move_constructor))) {
 				emitVptrStores(struct_info, struct_type_info, !emit_split_ctor_variants);
 			}
 		}
 	}
 
-		// Step 2: Generate IR for member initializers (executed before constructor body)
-		// Look up the struct type to get member information
-		// Use struct_name_for_ctor (fully qualified) instead of node.struct_name()
+	// Step 2: Generate IR for member initializers (executed before constructor body)
+	// Look up the struct type to get member information
+	// Use struct_name_for_ctor (fully qualified) instead of node.struct_name()
 	struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
 	if (struct_type_it != getTypesByNameMap().end()) {
 		const TypeInfo* struct_type_info = struct_type_it->second;
 		const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 		if (struct_info) {
-				// If this is an implicit constructor, generate appropriate initialization
+			// If this is an implicit constructor, generate appropriate initialization
 			if (node.is_implicit()) {
-					// Check if this is a copy or move constructor (has one parameter that is a reference)
+				// Check if this is a copy or move constructor (has one parameter that is a reference)
 				if (is_implicit_copy_constructor || is_implicit_move_constructor) {
-						// Implicit copy/move constructor: call base class copy/move constructors first, then memberwise copy/move from 'other' to 'this'
+					// Implicit copy/move constructor: call base class copy/move constructors first, then memberwise copy/move from 'other' to 'this'
 
-						// Step 1: Call base class copy/move constructors (in declaration order)
+					// Step 1: Call base class copy/move constructors (in declaration order)
 					for (const auto& base : struct_info->base_classes) {
 						if (emit_split_ctor_variants && base.is_virtual) {
 							continue;
 						}
-							// Get base class type info
+						// Get base class type info
 						const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 						if (!base_type_info) {
 							continue;  // Invalid base type index
 						}
 
-							// Only call base copy/move constructor if the base class actually has constructors
-							// This avoids link errors when inheriting from classes without constructors
+						// Only call base copy/move constructor if the base class actually has constructors
+						// This avoids link errors when inheriting from classes without constructors
 						const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 						if (!base_struct_info || !base_struct_info->hasAnyConstructor()) {
 							continue;  // Skip if base has no constructors
@@ -2021,13 +2018,13 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							ctor_op.resolved_constructor =
 								&base_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
 						}
-							// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
+						// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
 						assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 						ctor_op.base_class_offset = static_cast<int>(base.offset);
 						ctor_op.source_base_class_offset = static_cast<int>(base.offset);
 						ctor_op.call_base_object_variant = shouldCallBaseObjectVariant(base_struct_info);
-							// Add 'other' parameter for copy/move constructor
-							// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling
+						// Add 'other' parameter for copy/move constructor
+						// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling
 						TypedValue other_arg;
 						other_arg.setType(TypeCategory::Struct);	 // Parameter type (struct reference)
 						other_arg.ir_type = IrType::Struct;
@@ -2046,7 +2043,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 					}
 
-						// Step 2: Memberwise copy/move from 'other' to 'this'
+					// Step 2: Memberwise copy/move from 'other' to 'this'
 					for (const auto& member : struct_info->members) {
 						if (member.type_index.category() == TypeCategory::Struct) {
 							const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
@@ -2092,7 +2089,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							}
 						}
 
-							// First, load the member from 'other'
+						// First, load the member from 'other'
 						TempVar member_value = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = member_value;
@@ -2106,8 +2103,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), node.name_token()));
 
-							// Then, store the member to 'this'
-							// Format: [member_type, member_size, object_name, member_name, offset, value]
+						// Then, store the member to 'this'
+						// Format: [member_type, member_size, object_name, member_name, offset, value]
 						MemberStoreOp member_store;
 						member_store.value.setType(member.type_index.category());
 						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
@@ -2122,356 +2119,356 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 					}
 					emitVptrStores(struct_info, struct_type_info, !emit_split_ctor_variants);
 				} else {
-						// Implicit default constructor: use default member initializers or zero-initialize
+					// Implicit default constructor: use default member initializers or zero-initialize
 
-						// C++20 [class.default.ctor]/2: the implicitly-declared default constructor is
-						// defined as deleted if any non-static data member of class type M has a
-						// user-declared constructor but no default constructor.
-						// In that case skip generating the body entirely — the function is effectively deleted.
-						bool is_implicitly_deleted = false;
-						for (const auto& member : struct_info->members) {
-							if (member.type_index.category() == TypeCategory::Struct) {
-								const TypeInfo* mti = tryGetTypeInfo(member.type_index);
-								if (mti && mti->struct_info_ &&
-									mti->struct_info_->hasUserDefinedConstructor() &&
-									!mti->struct_info_->hasConstructor()) {
-									is_implicitly_deleted = true;
-									break;
-								}
-							}
-						}
-
-						if (!is_implicitly_deleted) {
-
-						// Step 1: Handle bitfield members - combine into single per-unit stores
-					{
-						std::unordered_map<size_t, unsigned long long> combined_bitfield_values;
-						std::unordered_set<size_t> bitfield_offsets;
-						for (const auto& member : struct_info->members) {
-							if (member.bitfield_width.has_value()) {
-								bitfield_offsets.insert(member.offset);
-								unsigned long long val = 0;
-								if (member.default_initializer.has_value()) {
-									ConstExpr::EvaluationContext ctx(gSymbolTable);
-									auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
-									if (eval_result.success()) {
-										if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
-											val = *ull_val;
-										} else if (const auto* ll_val = std::get_if<long long>(&eval_result.value)) {
-											val = static_cast<unsigned long long>(*ll_val);
-										} else if (const auto* b_val = std::get_if<bool>(&eval_result.value)) {
-											val = *b_val ? 1ULL : 0ULL;
-										}
-									}
-								}
-								size_t width = *member.bitfield_width;
-								unsigned long long mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
-								combined_bitfield_values[member.offset] |= ((val & mask) << member.bitfield_bit_offset);
-							}
-						}
-						for (auto offset : bitfield_offsets) {
-							for (const auto& member : struct_info->members) {
-								if (member.offset == offset && member.bitfield_width.has_value()) {
-									MemberStoreOp combined_store;
-									combined_store.value.setType(member.type_index.category());
-									combined_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-									combined_store.value.value = combined_bitfield_values[offset];
-									combined_store.object = StringTable::getOrInternStringHandle("this");
-									combined_store.member_name = member.getName();
-									combined_store.offset = static_cast<int>(offset);
-									combined_store.ref_qualifier = CVReferenceQualifier::None;
-									combined_store.struct_type_info = nullptr;
-									ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(combined_store), node.name_token()));
-									break;
-								}
+					// C++20 [class.default.ctor]/2: the implicitly-declared default constructor is
+					// defined as deleted if any non-static data member of class type M has a
+					// user-declared constructor but no default constructor.
+					// In that case skip generating the body entirely — the function is effectively deleted.
+					bool is_implicitly_deleted = false;
+					for (const auto& member : struct_info->members) {
+						if (member.type_index.category() == TypeCategory::Struct) {
+							const TypeInfo* mti = tryGetTypeInfo(member.type_index);
+							if (mti && mti->struct_info_ &&
+								mti->struct_info_->hasUserDefinedConstructor() &&
+								!mti->struct_info_->hasConstructor()) {
+								is_implicitly_deleted = true;
+								break;
 							}
 						}
 					}
 
+					if (!is_implicitly_deleted) {
+
+						// Step 1: Handle bitfield members - combine into single per-unit stores
+						{
+							std::unordered_map<size_t, unsigned long long> combined_bitfield_values;
+							std::unordered_set<size_t> bitfield_offsets;
+							for (const auto& member : struct_info->members) {
+								if (member.bitfield_width.has_value()) {
+									bitfield_offsets.insert(member.offset);
+									unsigned long long val = 0;
+									if (member.default_initializer.has_value()) {
+										ConstExpr::EvaluationContext ctx(gSymbolTable);
+										auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
+										if (eval_result.success()) {
+											if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
+												val = *ull_val;
+											} else if (const auto* ll_val = std::get_if<long long>(&eval_result.value)) {
+												val = static_cast<unsigned long long>(*ll_val);
+											} else if (const auto* b_val = std::get_if<bool>(&eval_result.value)) {
+												val = *b_val ? 1ULL : 0ULL;
+											}
+										}
+									}
+									size_t width = *member.bitfield_width;
+									unsigned long long mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+									combined_bitfield_values[member.offset] |= ((val & mask) << member.bitfield_bit_offset);
+								}
+							}
+							for (auto offset : bitfield_offsets) {
+								for (const auto& member : struct_info->members) {
+									if (member.offset == offset && member.bitfield_width.has_value()) {
+										MemberStoreOp combined_store;
+										combined_store.value.setType(member.type_index.category());
+										combined_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+										combined_store.value.value = combined_bitfield_values[offset];
+										combined_store.object = StringTable::getOrInternStringHandle("this");
+										combined_store.member_name = member.getName();
+										combined_store.offset = static_cast<int>(offset);
+										combined_store.ref_qualifier = CVReferenceQualifier::None;
+										combined_store.struct_type_info = nullptr;
+										ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(combined_store), node.name_token()));
+										break;
+									}
+								}
+							}
+						}
+
 						// Step 2: Handle non-bitfield members
-					for (const auto& member : struct_info->members) {
-						if (member.bitfield_width.has_value())
-							continue; // handled above
+						for (const auto& member : struct_info->members) {
+							if (member.bitfield_width.has_value())
+								continue; // handled above
+
 							// Generate MemberStore IR to initialize the member
 							// Format: [member_type, member_size, object_name, member_name, offset, value]
-
 							// Determine the initial value
-						IrValue member_value;
+							IrValue member_value;
 							// Check if member has a default initializer (C++11 feature)
-						if (member.default_initializer.has_value()) {
-							const ASTNode& init_node = member.default_initializer.value();
-							if (init_node.has_value() && init_node.is<ExpressionNode>()) {
+							if (member.default_initializer.has_value()) {
+								const ASTNode& init_node = member.default_initializer.value();
+								if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 									// Use the default member initializer
-								ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+									ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 									// Extract just the value (third element of init_operands)
-								if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
-									member_value = *temp_var;
-								} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
-									member_value = *ull_val;
-								} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
-									member_value = *d_val;
-								} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
-									member_value = *string;
-								} else {
-									member_value = 0ULL;	 // fallback
-								}
-							} else if (init_node.has_value() && init_node.is<InitializerListNode>()) {
-									// Handle brace initializers like `B b1 = { .a = 1 };`
-								const InitializerListNode& init_list = init_node.as<InitializerListNode>();
-								const auto& initializers = init_list.initializers();
-
-								if (member.is_array && !member.array_dimensions.empty()) {
-									const size_t declared_count = member.array_dimensions[0];
-									const size_t element_size = declared_count > 0 ? member.size / declared_count : member.size;
-									const bool elem_is_fp = isFloatingPointType(member.memberType());
-
-									for (size_t i = 0; i < declared_count; ++i) {
-										IrValue elem_val = elem_is_fp ? IrValue{0.0} : IrValue{0ULL};
-										if (i < initializers.size() && initializers[i].is<ExpressionNode>()) {
-											ExprResult elem_op = visitExpressionNode(initializers[i].as<ExpressionNode>());
-											if (const auto* tmp = std::get_if<TempVar>(&elem_op.value)) {
-												elem_val = *tmp;
-											} else if (const auto* ull = std::get_if<unsigned long long>(&elem_op.value)) {
-												elem_val = *ull;
-											} else if (const auto* dbl = std::get_if<double>(&elem_op.value)) {
-												elem_val = *dbl;
-											} else if (const auto* sh = std::get_if<StringHandle>(&elem_op.value)) {
-												elem_val = *sh;
-											}
-										}
-										MemberStoreOp elem_store;
-										elem_store.value.setType(member.memberType());
-										assert(element_size * 8 <= static_cast<size_t>(std::numeric_limits<int>::max()));
-										elem_store.value.size_in_bits = SizeInBits{static_cast<int>(element_size * 8)};
-										elem_store.value.value = elem_val;
-										elem_store.object = StringTable::getOrInternStringHandle("this");
-										elem_store.member_name = member.getName();
-										assert(member.offset + i * element_size <= static_cast<size_t>(std::numeric_limits<int>::max()));
-										elem_store.offset = static_cast<int>(member.offset + i * element_size);
-										elem_store.ref_qualifier = CVReferenceQualifier::None;
-										elem_store.struct_type_info = nullptr;
-										ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(elem_store), node.name_token()));
+									if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+										member_value = *temp_var;
+									} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+										member_value = *ull_val;
+									} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+										member_value = *d_val;
+									} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+										member_value = *string;
+									} else {
+										throw InternalError(std::string("Could not extract the value from init_operands for ") + std::string(struct_info->getName().view()) + std::string(".") + std::string(member.getName().view()));
 									}
-									continue;
-								}
+								} else if (init_node.has_value() && init_node.is<InitializerListNode>()) {
+									// Handle brace initializers like `B b1 = { .a = 1 };`
+									const InitializerListNode& init_list = init_node.as<InitializerListNode>();
+									const auto& initializers = init_list.initializers();
 
-									// For struct members with brace initializers, we need to handle them specially
-									// Get the type info for this member
-								TypeIndex member_type_index = member.type_index;
-								if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index)) {
+									if (member.is_array && !member.array_dimensions.empty()) {
+										const size_t declared_count = member.array_dimensions[0];
+										const size_t element_size = declared_count > 0 ? member.size / declared_count : member.size;
+										const bool elem_is_fp = isFloatingPointType(member.memberType());
 
-										// If this is a struct type, we need to initialize its members
-									if (member_type_info->struct_info_ && !member_type_info->struct_info_->members.empty()) {
-											// Build a map of member names to initializer expressions
-										std::unordered_map<StringHandle, const ASTNode*> member_values;
-										size_t positional_index = 0;
-
-										for (size_t i = 0; i < initializers.size(); ++i) {
-											if (init_list.is_designated(i)) {
-													// Designated initializer - use member name
-												StringHandle member_name = init_list.member_name(i);
-												member_values[member_name] = &initializers[i];
-											} else {
-													// Positional initializer - map to member by index
-												if (positional_index < member_type_info->struct_info_->members.size()) {
-													StringHandle member_name = member_type_info->struct_info_->members[positional_index].getName();
-													member_values[member_name] = &initializers[i];
-													positional_index++;
+										for (size_t i = 0; i < declared_count; ++i) {
+											IrValue elem_val = elem_is_fp ? IrValue{0.0} : IrValue{0ULL};
+											if (i < initializers.size() && initializers[i].is<ExpressionNode>()) {
+												ExprResult elem_op = visitExpressionNode(initializers[i].as<ExpressionNode>());
+												if (const auto* tmp = std::get_if<TempVar>(&elem_op.value)) {
+													elem_val = *tmp;
+												} else if (const auto* ull = std::get_if<unsigned long long>(&elem_op.value)) {
+													elem_val = *ull;
+												} else if (const auto* dbl = std::get_if<double>(&elem_op.value)) {
+													elem_val = *dbl;
+												} else if (const auto* sh = std::get_if<StringHandle>(&elem_op.value)) {
+													elem_val = *sh;
 												}
 											}
+											MemberStoreOp elem_store;
+											elem_store.value.setType(member.memberType());
+											assert(element_size * 8 <= static_cast<size_t>(std::numeric_limits<int>::max()));
+											elem_store.value.size_in_bits = SizeInBits{static_cast<int>(element_size * 8)};
+											elem_store.value.value = elem_val;
+											elem_store.object = StringTable::getOrInternStringHandle("this");
+											elem_store.member_name = member.getName();
+											assert(member.offset + i * element_size <= static_cast<size_t>(std::numeric_limits<int>::max()));
+											elem_store.offset = static_cast<int>(member.offset + i * element_size);
+											elem_store.ref_qualifier = CVReferenceQualifier::None;
+											elem_store.struct_type_info = nullptr;
+											ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(elem_store), node.name_token()));
 										}
+										continue;
+									}
 
-											// Generate nested member stores for each member of the nested struct
-										for (const StructMember& nested_member : member_type_info->struct_info_->members) {
-												// Determine initial value for nested member
-											std::optional<IrValue> nested_member_value;
-											StringHandle nested_member_name_handle = nested_member.getName();
+										// For struct members with brace initializers, we need to handle them specially
+										// Get the type info for this member
+									TypeIndex member_type_index = member.type_index;
+									if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index)) {
 
-											if (member_values.count(nested_member_name_handle)) {
-												const ASTNode& init_expr = *member_values[nested_member_name_handle];
+											// If this is a struct type, we need to initialize its members
+										if (member_type_info->struct_info_ && !member_type_info->struct_info_->members.empty()) {
+												// Build a map of member names to initializer expressions
+											std::unordered_map<StringHandle, const ASTNode*> member_values;
+											size_t positional_index = 0;
 
-													// Check if this is a nested braced initializer (two-level nesting)
-												if (init_expr.is<InitializerListNode>()) {
-														// Handle nested braced initializers using the recursive helper
-													const InitializerListNode& nested_init_list = init_expr.as<InitializerListNode>();
+											for (size_t i = 0; i < initializers.size(); ++i) {
+												if (init_list.is_designated(i)) {
+														// Designated initializer - use member name
+													StringHandle member_name = init_list.member_name(i);
+													member_values[member_name] = &initializers[i];
+												} else {
+														// Positional initializer - map to member by index
+													if (positional_index < member_type_info->struct_info_->members.size()) {
+														StringHandle member_name = member_type_info->struct_info_->members[positional_index].getName();
+														member_values[member_name] = &initializers[i];
+														positional_index++;
+													}
+												}
+											}
 
-														// Get the type info for the nested member
-													TypeIndex nested_member_type_index = nested_member.type_index;
-													if (const TypeInfo* nested_member_type_info = tryGetTypeInfo(nested_member_type_index)) {
+												// Generate nested member stores for each member of the nested struct
+											for (const StructMember& nested_member : member_type_info->struct_info_->members) {
+													// Determine initial value for nested member
+												std::optional<IrValue> nested_member_value;
+												StringHandle nested_member_name_handle = nested_member.getName();
 
-															// If this is a struct type, use the recursive helper
-														if (nested_member_type_info->struct_info_ && !nested_member_type_info->struct_info_->members.empty()) {
-															generateNestedMemberStores(
-																*nested_member_type_info->struct_info_,
-																nested_init_list,
-																StringTable::getOrInternStringHandle("this"),
-																static_cast<int>(member.offset + nested_member.offset),
-																node.name_token());
-															continue;  // Skip the nested member store
-														} else {
-																// For non-struct types with single-element initializer lists
-															const auto& nested_initializers = nested_init_list.initializers();
-															if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
-																ExprResult nested_init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
-																if (const auto* temp_var = std::get_if<TempVar>(&nested_init_operands.value)) {
-																	nested_member_value = *temp_var;
-																} else if (const auto* ull_val = std::get_if<unsigned long long>(&nested_init_operands.value)) {
-																	nested_member_value = *ull_val;
-																} else if (const auto* d_val = std::get_if<double>(&nested_init_operands.value)) {
-																	nested_member_value = *d_val;
-																} else if (const auto* string = std::get_if<StringHandle>(&nested_init_operands.value)) {
-																	nested_member_value = *string;
+												if (member_values.count(nested_member_name_handle)) {
+													const ASTNode& init_expr = *member_values[nested_member_name_handle];
+
+														// Check if this is a nested braced initializer (two-level nesting)
+													if (init_expr.is<InitializerListNode>()) {
+															// Handle nested braced initializers using the recursive helper
+														const InitializerListNode& nested_init_list = init_expr.as<InitializerListNode>();
+
+															// Get the type info for the nested member
+														TypeIndex nested_member_type_index = nested_member.type_index;
+														if (const TypeInfo* nested_member_type_info = tryGetTypeInfo(nested_member_type_index)) {
+
+																// If this is a struct type, use the recursive helper
+															if (nested_member_type_info->struct_info_ && !nested_member_type_info->struct_info_->members.empty()) {
+																generateNestedMemberStores(
+																	*nested_member_type_info->struct_info_,
+																	nested_init_list,
+																	StringTable::getOrInternStringHandle("this"),
+																	static_cast<int>(member.offset + nested_member.offset),
+																	node.name_token());
+																continue;  // Skip the nested member store
+															} else {
+																	// For non-struct types with single-element initializer lists
+																const auto& nested_initializers = nested_init_list.initializers();
+																if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
+																	ExprResult nested_init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
+																	if (const auto* temp_var = std::get_if<TempVar>(&nested_init_operands.value)) {
+																		nested_member_value = *temp_var;
+																	} else if (const auto* ull_val = std::get_if<unsigned long long>(&nested_init_operands.value)) {
+																		nested_member_value = *ull_val;
+																	} else if (const auto* d_val = std::get_if<double>(&nested_init_operands.value)) {
+																		nested_member_value = *d_val;
+																	} else if (const auto* string = std::get_if<StringHandle>(&nested_init_operands.value)) {
+																		nested_member_value = *string;
+																	}
 																}
 															}
 														}
+													} else if (init_expr.is<ExpressionNode>()) {
+														ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+														if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+															nested_member_value = *temp_var;
+														} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+															nested_member_value = *ull_val;
+														} else if (const auto* d_val_ptr = std::get_if<double>(&init_operands.value)) {
+															nested_member_value = *d_val_ptr;
+														} else if (const auto* string_ptr = std::get_if<StringHandle>(&init_operands.value)) {
+															nested_member_value = *string_ptr;
+														}
 													}
-												} else if (init_expr.is<ExpressionNode>()) {
-													ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
-													if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
-														nested_member_value = *temp_var;
-													} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
-														nested_member_value = *ull_val;
-													} else if (const auto* d_val_ptr = std::get_if<double>(&init_operands.value)) {
-														nested_member_value = *d_val_ptr;
-													} else if (const auto* string_ptr = std::get_if<StringHandle>(&init_operands.value)) {
-														nested_member_value = *string_ptr;
-													}
+												}
+
+												if (nested_member_value.has_value()) {
+													// Generate nested member store
+													MemberStoreOp nested_member_store;
+													nested_member_store.value.setType(nested_member.type_index.category());
+													nested_member_store.value.size_in_bits = SizeInBits{static_cast<int>(nested_member.size * 8)};
+													nested_member_store.value.value = nested_member_value.value();
+													nested_member_store.object = StringTable::getOrInternStringHandle("this");
+													nested_member_store.member_name = nested_member.getName();
+													// Calculate offset: parent member offset + nested member offset
+													nested_member_store.offset = static_cast<int>(member.offset + nested_member.offset);
+													nested_member_store.ref_qualifier = ((nested_member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((nested_member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+													nested_member_store.struct_type_info = nullptr;
+
+													ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(nested_member_store), node.name_token()));
 												}
 											}
 
-											if (nested_member_value.has_value()) {
-													// Generate nested member store
-												MemberStoreOp nested_member_store;
-												nested_member_store.value.setType(nested_member.type_index.category());
-												nested_member_store.value.size_in_bits = SizeInBits{static_cast<int>(nested_member.size * 8)};
-												nested_member_store.value.value = nested_member_value.value();
-												nested_member_store.object = StringTable::getOrInternStringHandle("this");
-												nested_member_store.member_name = nested_member.getName();
-													// Calculate offset: parent member offset + nested member offset
-												nested_member_store.offset = static_cast<int>(member.offset + nested_member.offset);
-												nested_member_store.ref_qualifier = ((nested_member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((nested_member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-												nested_member_store.struct_type_info = nullptr;
-
-												ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(nested_member_store), node.name_token()));
-											}
-										}
-
 											// Skip the outer member store since we've already generated nested stores
-										continue;
-									} else {
+											continue;
+										} else {
 											// For non-struct types with single-element initializer lists
-										if (initializers.size() == 1 && initializers[0].is<ExpressionNode>()) {
-											ExprResult init_operands = visitExpressionNode(initializers[0].as<ExpressionNode>());
-											if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
-												member_value = *temp_var;
-											} else if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&init_operands.value)) {
-												member_value = *ull_val_ptr;
-											} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
-												member_value = *d_val;
-											} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
-												member_value = *string;
+											if (initializers.size() == 1 && initializers[0].is<ExpressionNode>()) {
+												ExprResult init_operands = visitExpressionNode(initializers[0].as<ExpressionNode>());
+												if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+													member_value = *temp_var;
+												} else if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&init_operands.value)) {
+													member_value = *ull_val_ptr;
+												} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+													member_value = *d_val;
+												} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+													member_value = *string;
+												} else {
+													member_value = 0ULL;
+												}
 											} else {
 												member_value = 0ULL;
 											}
-										} else {
-											member_value = 0ULL;
 										}
+									} else {
+										member_value = 0ULL;
 									}
 								} else {
-									member_value = 0ULL;
+										// Default initializer exists but isn't an expression, zero-initialize
+									if (member.type_index.category() == TypeCategory::Int || member.type_index.category() == TypeCategory::Long ||
+										member.type_index.category() == TypeCategory::Short || member.type_index.category() == TypeCategory::Char) {
+										member_value = 0ULL;	 // Zero for integer types
+									} else if (member.type_index.category() == TypeCategory::Float || member.type_index.category() == TypeCategory::Double) {
+										member_value = 0.0;	// Zero for floating-point types
+									} else if (member.type_index.category() == TypeCategory::Bool) {
+										member_value = 0ULL;	 // False for bool (0)
+									} else {
+										member_value = 0ULL;	 // Default to zero
+									}
 								}
 							} else {
-									// Default initializer exists but isn't an expression, zero-initialize
-								if (member.type_index.category() == TypeCategory::Int || member.type_index.category() == TypeCategory::Long ||
-									member.type_index.category() == TypeCategory::Short || member.type_index.category() == TypeCategory::Char) {
-									member_value = 0ULL;	 // Zero for integer types
-								} else if (member.type_index.category() == TypeCategory::Float || member.type_index.category() == TypeCategory::Double) {
-									member_value = 0.0;	// Zero for floating-point types
-								} else if (member.type_index.category() == TypeCategory::Bool) {
-									member_value = 0ULL;	 // False for bool (0)
-								} else {
-									member_value = 0ULL;	 // Default to zero
+									// Check if this is a struct type with a constructor
+								bool is_struct_with_constructor = false;
+								if (member.type_index.category() == TypeCategory::Struct) {
+									const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+									if (member_type_info && member_type_info->struct_info_ && member_type_info->struct_info_->hasAnyConstructor()) {
+										is_struct_with_constructor = true;
+									}
 								}
-							}
-						} else {
-								// Check if this is a struct type with a constructor
-							bool is_struct_with_constructor = false;
-							if (member.type_index.category() == TypeCategory::Struct) {
-								const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
-								if (member_type_info && member_type_info->struct_info_ && member_type_info->struct_info_->hasAnyConstructor()) {
-									is_struct_with_constructor = true;
-								}
-							}
 
-							if (is_struct_with_constructor) {
+								if (is_struct_with_constructor) {
 									// Call the nested struct's default constructor instead of zero-initializing
-								const TypeInfo& member_type_info = getTypeInfo(member.type_index);
-								ConstructorCallOp ctor_op;
-								ctor_op.object = StringTable::getOrInternStringHandle("this");
+									const TypeInfo& member_type_info = getTypeInfo(member.type_index);
+									ConstructorCallOp ctor_op;
+									ctor_op.object = StringTable::getOrInternStringHandle("this");
 									// No arguments for default constructor
 									// Use base_class_offset to specify the member's offset within the parent struct
-								assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
-								ctor_op.base_class_offset = static_cast<int>(member.offset);
-								if (member_type_info.struct_info_) {
-									fillInDefaultConstructorArguments(ctor_op, *member_type_info.struct_info_);
-									finalizeConstructorCallOp(ctor_op, *member_type_info.struct_info_, node.name_token());
-								}
-								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
-								continue;  // Skip the MemberStore since constructor handles initialization
-							} else {
-									// Zero-initialize based on type
-								if (member.type_index.category() == TypeCategory::Int || member.type_index.category() == TypeCategory::Long ||
-									member.type_index.category() == TypeCategory::Short || member.type_index.category() == TypeCategory::Char) {
-									member_value = 0ULL;	 // Zero for integer types
-								} else if (member.type_index.category() == TypeCategory::Float || member.type_index.category() == TypeCategory::Double) {
-									member_value = 0.0;	// Zero for floating-point types
-								} else if (member.type_index.category() == TypeCategory::Bool) {
-									member_value = 0ULL;	 // False for bool (0)
+									assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
+									ctor_op.base_class_offset = static_cast<int>(member.offset);
+									if (member_type_info.struct_info_) {
+										fillInDefaultConstructorArguments(ctor_op, *member_type_info.struct_info_);
+										finalizeConstructorCallOp(ctor_op, *member_type_info.struct_info_, node.name_token());
+									}
+									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+									continue;  // Skip the MemberStore since constructor handles initialization
 								} else {
-									member_value = 0ULL;	 // Default to zero
+									// Zero-initialize based on type
+									if (member.type_index.category() == TypeCategory::Int || member.type_index.category() == TypeCategory::Long ||
+										member.type_index.category() == TypeCategory::Short || member.type_index.category() == TypeCategory::Char) {
+										member_value = 0ULL;	 // Zero for integer types
+									} else if (member.type_index.category() == TypeCategory::Float || member.type_index.category() == TypeCategory::Double) {
+										member_value = 0.0;	// Zero for floating-point types
+									} else if (member.type_index.category() == TypeCategory::Bool) {
+										member_value = 0ULL;	 // False for bool (0)
+									} else {
+										member_value = 0ULL;	 // Default to zero
+									}
 								}
 							}
+
+							MemberStoreOp member_store;
+							member_store.value.setType(member.type_index.category());
+							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+							member_store.value.value = member_value;
+							member_store.object = StringTable::getOrInternStringHandle("this");
+							member_store.member_name = member.getName();
+							member_store.offset = static_cast<int>(member.offset);
+							member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+							member_store.struct_type_info = nullptr;
+
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 						}
-
-						MemberStoreOp member_store;
-						member_store.value.setType(member.type_index.category());
-						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-						member_store.value.value = member_value;
-						member_store.object = StringTable::getOrInternStringHandle("this");
-						member_store.member_name = member.getName();
-						member_store.offset = static_cast<int>(member.offset);
-						member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-						member_store.struct_type_info = nullptr;
-
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
-					}
-				} // if (!is_implicitly_deleted)
+					} // if (!is_implicitly_deleted)
 				} // end implicit default ctor else
 			} else {
-					// User-defined constructor: initialize all members
-					// Precedence: explicit initializer > default initializer > zero-initialize
+				// User-defined constructor: initialize all members
+				// Precedence: explicit initializer > default initializer > zero-initialize
 
-					// Build a map of explicit member initializers for quick lookup
+				// Build a map of explicit member initializers for quick lookup
 				std::unordered_map<std::string, const MemberInitializer*> explicit_inits;
 				for (const auto& initializer : node.member_initializers()) {
 					explicit_inits[std::string(initializer.member_name)] = &initializer;
 				}
 
-					// Initialize all members
+				// Initialize all members
 				for (const auto& member : struct_info->members) {
-						// Generate MemberStore IR to initialize the member
+					// Generate MemberStore IR to initialize the member
 
-						// Determine the initial value
+					// Determine the initial value
 					IrValue member_value;
-						// Check for explicit initializer first (highest precedence)
+					// Check for explicit initializer first (highest precedence)
 					auto explicit_it = explicit_inits.find(std::string(StringTable::getStringView(member.getName())));
 					if (explicit_it != explicit_inits.end()) {
-							// Special handling for reference members initialized with reference variables/parameters
-							// When initializing a reference member (int& ref) with a reference parameter (int& r),
-							// we need to use the pointer value that the parameter holds, not dereference it
+						// Special handling for reference members initialized with reference variables/parameters
+						// When initializing a reference member (int& ref) with a reference parameter (int& r),
+						// we need to use the pointer value that the parameter holds, not dereference it
 						bool handled_as_reference_init = false;
 						if (member.is_reference() || member.is_rvalue_reference()) {
-								// Check if the initializer is a simple identifier
+							// Check if the initializer is a simple identifier
 							const ASTNode& init_expr = explicit_it->second->initializer_expr;
 							if (init_expr.is<ExpressionNode>()) {
 								const auto& expr_node = init_expr.as<ExpressionNode>();
@@ -2479,7 +2476,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									const auto& id_node = std::get<IdentifierNode>(expr_node);
 									auto init_name = StringTable::getOrInternStringHandle(id_node.name());
 
-										// Look up the identifier in the symbol table
+									// Look up the identifier in the symbol table
 									std::optional<ASTNode> init_symbol = symbol_table.lookup(init_name);
 									if (init_symbol.has_value() && init_symbol->is<DeclarationNode>()) {
 										const auto& init_decl = init_symbol->as<DeclarationNode>();
@@ -2497,11 +2494,11 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						}
 
 						if (!handled_as_reference_init) {
-								// Use explicit initializer from constructor initializer list.
+							// Use explicit initializer from constructor initializer list.
 							const ASTNode& init_expr_node = explicit_it->second->initializer_expr;
 							if (init_expr_node.is<InitializerListNode>()) {
-									// Array member brace-init (e.g., data{a, b, c}):
-									// emit one MemberStore per element at the correct byte offset.
+								// Array member brace-init (e.g., data{a, b, c}):
+								// emit one MemberStore per element at the correct byte offset.
 								if (member.is_array && !member.array_dimensions.empty()) {
 									const InitializerListNode& init_list = init_expr_node.as<InitializerListNode>();
 									const size_t declared_count = member.array_dimensions[0];
@@ -2538,7 +2535,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									}
 									continue;  // per-element stores emitted; skip single MemberStore below
 								}
-									// Empty brace-init on non-array member (e.g., int x{}): value-initialize to zero.
+								// Empty brace-init on non-array member (e.g., int x{}): value-initialize to zero.
 								if (init_expr_node.as<InitializerListNode>().size() == 0) {
 									member_value = isFloatingPointType(member.memberType()) ? IrValue{0.0} : IrValue{0ULL};
 								} else if ((is_struct_type(member.type_index.category()))) {
@@ -2667,12 +2664,12 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						}
 
 						if (is_struct_with_constructor) {
-								// Call the nested struct's default constructor instead of zero-initializing
+							// Call the nested struct's default constructor instead of zero-initializing
 							const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 							ConstructorCallOp ctor_op;
 							ctor_op.object = StringTable::getOrInternStringHandle("this");
-								// No arguments for default constructor
-								// Use base_class_offset to specify the member's offset within the parent struct
+							// No arguments for default constructor
+							// Use base_class_offset to specify the member's offset within the parent struct
 							assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
 							ctor_op.base_class_offset = static_cast<int>(member.offset);
 							if (member_type_info.struct_info_) {
@@ -2714,10 +2711,10 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		}
 	}
 
-		// Visit the constructor body
+	// Visit the constructor body
 	const BlockNode& block = node.get_definition().value().as<BlockNode>();
-		// Pre-scan: populate label_scope_depth_map_ so that any goto inside the
-		// constructor body emits the correct scope-exit destructors.
+	// Pre-scan: populate label_scope_depth_map_ so that any goto inside the
+	// constructor body emits the correct scope-exit destructors.
 	label_scope_depth_map_.clear();
 	block.get_statements().visit([&](const ASTNode& stmt) {
 		prescanLabels(stmt, scope_stack_.size());
@@ -2726,11 +2723,11 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		visit(statement);
 	});
 
-		// Add implicit return for constructor (constructors don't have explicit return statements)
+	// Add implicit return for constructor (constructors don't have explicit return statements)
 	emitVoidReturn(node.name_token());
 
 	symbol_table.exit_scope();
-		// Don't clear current_function_name_ here - let the top-level visitor manage it
+	// Don't clear current_function_name_ here - let the top-level visitor manage it
 }
 
 void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& node) {
