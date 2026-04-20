@@ -12,6 +12,7 @@
 
 namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
+constexpr std::string_view kAnonymousNamespaceContext = "<anonymous namespace>";
 
 // Placeholder return-type finalization requires every return statement in the
 // body to deduce to the same full type identity, including cv/reference and
@@ -350,6 +351,7 @@ namespace {
 struct PostParseBoundarySample {
 	const char* node_kind = "";
 	Token token;
+	StringHandle context_path;
 };
 
 struct PostParseBoundaryReport {
@@ -361,14 +363,14 @@ struct PostParseBoundaryReport {
 		return fold_expression_count != 0 || pack_expansion_count != 0;
 	}
 
-	void recordFold(const Token& token) {
+	void recordFold(const Token& token, StringHandle context_path) {
 		++fold_expression_count;
-		recordSample("FoldExpressionNode", token);
+		recordSample("FoldExpressionNode", token, context_path);
 	}
 
-	void recordPackExpansion(const Token& token) {
+	void recordPackExpansion(const Token& token, StringHandle context_path) {
 		++pack_expansion_count;
-		recordSample("PackExpansionExprNode", token);
+		recordSample("PackExpansionExprNode", token, context_path);
 	}
 
 	const PostParseBoundarySample* firstSample(std::string_view node_kind) const {
@@ -381,11 +383,11 @@ struct PostParseBoundaryReport {
 	}
 
 private:
-	void recordSample(const char* node_kind, const Token& token) {
+	void recordSample(const char* node_kind, const Token& token, StringHandle context_path) {
 		if (samples.size() >= 8) {
 			return;
 		}
-		samples.push_back(PostParseBoundarySample{node_kind, token});
+		samples.push_back(PostParseBoundarySample{node_kind, token, context_path});
 	}
 };
 
@@ -399,6 +401,35 @@ public:
 	}
 
 private:
+	bool pushContext(std::string_view context_name) {
+		if (context_name.empty()) {
+			return false;
+		}
+		context_stack_.push_back(StringTable::getOrInternStringHandle(context_name));
+		return true;
+	}
+
+	void popContext(bool pushed) {
+		if (pushed) {
+			context_stack_.pop_back();
+		}
+	}
+
+	StringHandle currentContextPath() const {
+		if (context_stack_.empty()) {
+			return {};
+		}
+
+		StringBuilder path_builder;
+		for (size_t index = 0; index < context_stack_.size(); ++index) {
+			if (index != 0) {
+				path_builder.append("::");
+			}
+			path_builder.append(context_stack_[index]);
+		}
+		return StringTable::getOrInternStringHandle(path_builder.commit());
+	}
+
 	void visit(const ASTNode& node) {
 		if (!node.has_value()) {
 			return;
@@ -411,29 +442,33 @@ private:
 
 		if (node.is<FunctionDeclarationNode>()) {
 			const auto& func = node.as<FunctionDeclarationNode>();
-			// Skip functions with deferred template bodies - their bodies intentionally
-			// contain PackExpansionExprNode that will be resolved during lazy instantiation.
-			// Also skip function bodies generally: template member functions like emplace<_Args...>
-			// legitimately retain PackExpansionExprNode for their own variadic template parameters,
-			// which are only resolved when the function is called with concrete args.
-			if (func.has_template_body_position()) {
+			const bool pushed = pushContext(func.decl_node().identifier_token().value());
+			// Skip functions whose bodies still belong to template parsing/substitution:
+			// deferred bodies will be reparsed during lazy instantiation, and template
+			// pattern nodes intentionally still contain pre-substitution helper nodes.
+			if (func.has_template_body_position() || func.is_template_pattern()) {
+				popContext(pushed);
 				return;
 			}
-			// Only check parameters, not the body (bodies of template functions may have
-			// pack expansions from the function's own variadic params, which are expected).
 			for (const auto& param : func.parameter_nodes()) {
 				visit(param);
 			}
+			if (func.get_definition().has_value()) {
+				visit(*func.get_definition());
+			}
+			popContext(pushed);
 			return;
 		}
 
 		if (node.is<ConstructorDeclarationNode>()) {
 			const auto& ctor = node.as<ConstructorDeclarationNode>();
+			const bool pushed = pushContext(StringTable::getStringView(ctor.name()));
 			// If this constructor has a deferred (template) body position, it is an
 			// uninstantiated template constructor. Its member/base initializers intentionally
 			// contain PackExpansionExprNode that will be resolved during lazy instantiation.
 			// Skip visiting them here to avoid false-positive boundary violations.
 			if (ctor.has_template_body_position() || ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos) {
+				popContext(pushed);
 				return;
 			}
 			for (const auto& param : ctor.parameter_nodes()) {
@@ -455,19 +490,23 @@ private:
 			if (ctor.get_definition().has_value()) {
 				visit(*ctor.get_definition());
 			}
+			popContext(pushed);
 			return;
 		}
 
 		if (node.is<DestructorDeclarationNode>()) {
 			const auto& dtor = node.as<DestructorDeclarationNode>();
+			const bool pushed = pushContext(StringTable::getStringView(dtor.name()));
 			if (dtor.get_definition().has_value()) {
 				visit(*dtor.get_definition());
 			}
+			popContext(pushed);
 			return;
 		}
 
 		if (node.is<StructDeclarationNode>()) {
 			const auto& decl = node.as<StructDeclarationNode>();
+			const bool pushed = pushContext(StringTable::getStringView(decl.name()));
 			for (const auto& member : decl.members()) {
 				visit(member.declaration);
 				if (member.default_initializer.has_value()) {
@@ -491,13 +530,17 @@ private:
 					visit(*static_member.initializer);
 				}
 			}
+			popContext(pushed);
 			return;
 		}
 
 		if (node.is<NamespaceDeclarationNode>()) {
-			for (const auto& decl : node.as<NamespaceDeclarationNode>().declarations()) {
+			const auto& namespace_node = node.as<NamespaceDeclarationNode>();
+			const bool pushed = pushContext(namespace_node.is_anonymous() ? kAnonymousNamespaceContext : namespace_node.name());
+			for (const auto& decl : namespace_node.declarations()) {
 				visit(decl);
 			}
+			popContext(pushed);
 			return;
 		}
 
@@ -753,7 +796,7 @@ private:
 				}
 				visit(e.body());
 			} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
-				report_.recordFold(e.get_token());
+				report_.recordFold(e.get_token(), currentContextPath());
 				if (e.init_expr().has_value()) {
 					visit(*e.init_expr());
 				}
@@ -761,7 +804,7 @@ private:
 					visit(*e.pack_expr());
 				}
 			} else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
-				report_.recordPackExpansion(e.get_token());
+				report_.recordPackExpansion(e.get_token(), currentContextPath());
 				visit(e.pattern());
 			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				visit(e.expr());
@@ -793,6 +836,7 @@ private:
 	}
 
 	PostParseBoundaryReport report_;
+	std::vector<StringHandle> context_stack_;
 };
 
 void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
@@ -821,9 +865,18 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 				  " PackExpansionExprNode instances on the sema-owned AST surface; pack expansion is unsupported there before semantic normalization");
 	}
 
-	for (const auto& sample : report.samples) {
-		FLASH_LOG(General, Error,
-				  "  sample ", sample.node_kind, " at ", sample.token.line(), ":", sample.token.column());
+	if (IS_FLASH_LOG_ENABLED(General, Error)) {
+		for (const auto& sample : report.samples) {
+			StringBuilder context_suffix_builder;
+			if (sample.context_path.isValid()) {
+				context_suffix_builder.append(" in ");
+				context_suffix_builder.append(sample.context_path);
+			}
+			const std::string context_suffix(context_suffix_builder.commit());
+			FLASH_LOG(General, Error,
+					  "  sample ", sample.node_kind, " at ", sample.token.line(), ":", sample.token.column(),
+					  context_suffix);
+		}
 	}
 
 	if (report.samples.size() < total_violations) {

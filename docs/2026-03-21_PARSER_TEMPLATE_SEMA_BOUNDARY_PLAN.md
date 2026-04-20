@@ -1,15 +1,16 @@
 # Parser / Template-Substitution / Sema Boundary Plan
 
-> **Status (2026-04-16 update):** The core boundary hardening work (Phases 1-6) is **complete**. All exit criteria have been met:
+> **Status (2026-04-20 update):** The core boundary hardening work (Phases 1-6) is **complete**. All exit criteria have been met:
 > - The legal post-parse AST surface is documented
 > - `FoldExpressionNode` and `PackExpansionExprNode` are treated as invariant violations
 > - Sema no longer depends on `parser_.get_expression_type(...)` calls
 > - Codegen fold/pack handlers are assertion-only
 > - The boundary between parser/template-substitution and sema is well-defined
 >
-> **Phase 7** (in planning) focuses on observability, validation, and test coverage to ensure
-> these boundary guarantees remain robust as the codebase evolves. See the Phase 7 section
-> below for planned work items.
+> **Phase 7** is now **in progress** and continues to focus on observability,
+> validation, and test coverage so these boundary guarantees remain robust as the
+> codebase evolves. Recent work tightened the pre-sema boundary checker over
+> concrete function bodies and added context-rich boundary samples.
 
 ## Problem
 
@@ -370,11 +371,27 @@ immediate-struct-only member-function lookup:
 - `tests/test_inherited_callable_operator_ret0.cpp`: regression test for a
   derived functor inheriting both one-arg and two-arg `operator()` overloads
   from its base class
+- `PostParseBoundaryChecker` now descends into concrete
+  `FunctionDeclarationNode` bodies as well as their parameter lists, matching
+  the existing constructor/destructor enforcement and shrinking the
+  function-body surface that Phase 7 still has to skip
+- boundary violation samples now include enclosing namespace/struct/function
+  context paths so surviving fold/pack nodes are easier to trace back to the
+  leaking template-instantiation site
+- `tests/test_static_member_pack_expansion_boundary_ret0.cpp`: regression test
+  for a class-template static member function whose concrete instantiated body
+  must satisfy the strengthened pre-sema boundary check after pack expansion
+  substitution
 
 **Test result:** focused regression pass for
 `test_inherited_callable_operator_ret0.cpp`,
-`test_callable_sema_resolved_ret0.cpp`, and
-`test_operator_call_ambiguous_fail.cpp`.
+`test_callable_sema_resolved_ret0.cpp`,
+`test_operator_call_ambiguous_fail.cpp`,
+`test_static_member_pack_expansion_boundary_ret0.cpp`,
+`test_member_call_pack_expansion_ret0.cpp`,
+`test_pack_expansion_fn_call_ret42.cpp`, and
+`test_pending_sema_normalization_ret0.cpp`; full Linux regression suite also
+passed (`tests/run_all_tests.sh`, 2165 files).
 
 ### Workstream 1: make post-parse AST legality explicit
 
@@ -564,13 +581,17 @@ Current narrow follow-up after the nested-class slice:
 With sema-owned expression typing now largely complete, the next narrow follow-up
 work should stay on the remaining parser/template-owned boundary surfaces:
 
-1. audit surviving `PackExpansionExprNode` creation sites and expansion sites so
-   the post-parse boundary checker can stop skipping broader function-body
-   regions than necessary
+1. audit the remaining constructor/template-pattern
+   `PackExpansionExprNode` survivor paths so the pre-sema checker can narrow its
+   remaining constructor/template skip regions just as it now does for ordinary
+   function bodies
 2. audit the remaining parser-owned fold-expression survivor paths and decide
    which ones should become earlier parser/substitution diagnostics instead of
    invariant failures
-3. keep late-materialization/codegen fallback recovery aligned with sema-owned
+3. extend the new context-rich boundary samples into aggregate counts by
+   enclosing scope/root so template-substitution leaks are observable without
+   reproducing them under a debugger
+4. keep late-materialization/codegen fallback recovery aligned with sema-owned
    lookup improvements whenever a new inherited-member or deferred-instantiation
    lookup path is tightened
 ### Phase 7: observability, validation, and robustness
@@ -618,7 +639,9 @@ observable and ensure the boundary invariants remain robust as the codebase evol
    - Document the dual-context nature of `ConstExprEvaluator` (parser-owned template
      substitution vs. sema-owned constant evaluation)
 
-**Test result:** TBD (Phase 7 in planning)
+**Test result:** concrete function-body boundary tightening + context-rich
+sample logging landed; focused pack-expansion/pending-sema regressions and the
+full Linux test suite passed on 2026-04-20.
 
 ## Exit criteria
 
