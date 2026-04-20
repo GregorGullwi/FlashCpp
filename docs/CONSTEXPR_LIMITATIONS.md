@@ -1044,6 +1044,7 @@ Some parsed expression kinds are not yet fully handled by the constexpr evaluato
 
 - `noexcept(expr)`
 - `offsetof(T, member)` for direct and straightforward nested data-member access (for example `offsetof(T, inner.value)`)
+- comma operator expressions (for example `(x = 2, x + 40)`)
 - `throw` expressions now behave correctly in constant evaluation: untaken `?:` / short-circuit branches are skipped, and an evaluated `throw` produces a dedicated not-constant-expression diagnostic
 
 **Partial support:**
@@ -1116,6 +1117,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ `noexcept(expr)` in constexpr evaluation
 - ✅ `offsetof(T, member)` for direct and straightforward nested data-member access in constexpr evaluation
 - ✅ `throw` expressions now produce a dedicated not-constant-expression diagnostic when evaluated, while untaken `?:` / short-circuit branches continue to work
+- ✅ comma operator expressions now work in constexpr evaluation, including left-operand side effects followed by a right-operand result
 - ✅ `break` and `continue` statements in constexpr for/while loops
 - ✅ `switch` statements with case labels, default label, fall-through, and `break` in constexpr functions
 - ✅ Range-based for loops over local arrays (primitive and struct element types) in constexpr functions

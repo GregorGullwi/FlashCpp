@@ -3380,6 +3380,8 @@ EvalResult Evaluator::apply_binary_op(
 		return EvalResult::from_bool(lhs.as_bool() && rhs.as_bool());
 	} else if (op == "||") {
 		return EvalResult::from_bool(lhs.as_bool() || rhs.as_bool());
+	} else if (op == ",") {
+		return rhs;
 	}
 
 	// Unsupported operator
