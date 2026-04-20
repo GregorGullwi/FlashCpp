@@ -827,7 +827,6 @@ propagate as substitution failure before candidate selection.
 ## Related docs
 
 - `docs\2026-04-06-template-constexpr-sema-audit-plan.md`
-- `docs\2026-04-06-constructor-overload-resolution-refactor.md`
 - `docs\2026-04-04-codegen-name-lookup-investigation.md`
 - `docs\2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`
 
