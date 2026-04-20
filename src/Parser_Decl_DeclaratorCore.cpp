@@ -148,7 +148,7 @@ ParseResult Parser::parse_type_and_name() {
 						 std::string(current_token_.value()),
 						 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 
-		parse_calling_convention();
+		last_calling_convention_ = parse_calling_convention(last_calling_convention_);
 
 		// Check if next token is '*' (function pointer pattern) or '&' (reference to array pattern)
 		if (peek() == "*"_tok) {
@@ -254,25 +254,7 @@ ParseResult Parser::parse_type_and_name() {
 			Token class_name_token = peek_info();
 			advance(); // consume class name
 
-			if (peek() == ")"_tok) {
-				restore_token_position(ptrmf_check_pos);
-				restore_token_position(saved_pos);
-				auto result = parse_declarator(type_spec, Linkage::None);
-				if (!result.is_error()) {
-					if (auto decl_node = result.node()) {
-						if (decl_node->is<DeclarationNode>() && custom_alignment.has_value()) {
-							decl_node->as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
-						} else if (decl_node->is<FunctionDeclarationNode>() && custom_alignment.has_value()) {
-							DeclarationNode& inner_decl = decl_node->as<FunctionDeclarationNode>().decl_node();
-							inner_decl.set_custom_alignment(custom_alignment.value());
-						}
-					}
-					discard_saved_token(saved_pos);
-					discard_saved_token(ptrmf_check_pos);
-					return result;
-				}
-				restore_token_position(saved_pos);
-			} else if (peek() == "::"_tok) {
+			if (peek() == "::"_tok) {
 				advance(); // consume '::'
 
 				if (peek() == "*"_tok) {
@@ -421,7 +403,7 @@ ParseResult Parser::parse_type_and_name() {
 		SaveHandle saved_pos = save_token_position();
 		advance(); // consume '('
 
-		parse_calling_convention();
+		last_calling_convention_ = parse_calling_convention(last_calling_convention_);
 
 		if (peek() == "*"_tok) {
 			// Looks like a function pointer with pointer return type: type* (*name)(params)
@@ -458,7 +440,7 @@ ParseResult Parser::parse_type_and_name() {
 		SaveHandle saved_pos = save_token_position();
 		advance(); // consume '('
 
-		parse_calling_convention();
+		last_calling_convention_ = parse_calling_convention(last_calling_convention_);
 
 		if (peek() == "*"_tok) {
 			// Looks like a function pointer with reference return type: type& (*name)(params)
@@ -571,6 +553,8 @@ ParseResult Parser::parse_type_and_name() {
 			// Save position in case this is actually a parenthesized type or cast expression
 			SaveHandle paren_pos = save_token_position();
 			advance(); // consume '('
+
+			last_calling_convention_ = parse_calling_convention(last_calling_convention_);
 
 			// Check if the next token is an identifier (the function name)
 			if (peek().is_identifier()) {
@@ -852,19 +836,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 	if (peek() == "("_tok) {
 		advance(); // consume '('
 
-		parse_calling_convention();
-
-		if (peek().is_identifier()) {
-			Token identifier_token = peek_info();
-			advance();
-
-			if (peek() != ")"_tok) {
-				return ParseResult::error("Expected ')' after parenthesized declarator identifier", current_token_);
-			}
-			advance(); // consume ')'
-
-			return parse_postfix_declarator(base_type, identifier_token, linkage);
-		}
+		CallingConvention calling_conv = parse_calling_convention(CallingConvention::Default);
 
 		// Expect '*' for function pointer
 		if (peek() != "*"_tok) {
@@ -941,6 +913,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 				signature.return_reference_qualifier = base_type.reference_qualifier();
 				signature.parameter_type_indices = return_param_types;
 				signature.linkage = linkage;
+				signature.calling_convention = calling_conv;
 				function_ptr_type.set_function_signature(signature);
 				base_type = function_ptr_type;
 

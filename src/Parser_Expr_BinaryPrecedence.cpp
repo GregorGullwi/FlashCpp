@@ -1953,9 +1953,7 @@ Linkage Parser::parse_declspec_attributes() {
 }
 
 // Parse calling convention keywords and return the calling convention
-CallingConvention Parser::parse_calling_convention() {
-	CallingConvention calling_conv = CallingConvention::Default;
-
+CallingConvention Parser::parse_calling_convention(CallingConvention calling_conv) {
 	while (!peek().is_eof() &&
 		   (peek().is_keyword() || peek().is_identifier())) {
 		std::string_view token_val = peek_info().value();
@@ -1979,7 +1977,7 @@ Parser::AttributeInfo Parser::parse_attributes() {
 
 	skip_cpp_attributes();  // C++ [[...]] and GCC __attribute__(...) specifications
 	info.linkage = parse_declspec_attributes();
-	info.calling_convention = parse_calling_convention();
+	info.calling_convention = parse_calling_convention(info.calling_convention);
 
 	// Handle potential interleaved attributes (e.g., __declspec(...) [[nodiscard]] __declspec(...))
 	if (!peek().is_eof() && (peek() == "["_tok || peek_info().value() == "__attribute__")) {

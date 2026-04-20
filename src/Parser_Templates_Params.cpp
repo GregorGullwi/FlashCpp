@@ -1384,7 +1384,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		CallingConvention direct_function_calling_convention = CallingConvention::Default;
 		if (peek().is_identifier()) {
 			SaveHandle calling_convention_pos = save_token_position();
-			direct_function_calling_convention = parse_calling_convention();
+			direct_function_calling_convention = parse_calling_convention(direct_function_calling_convention);
 			if (direct_function_calling_convention == CallingConvention::Default || peek() != "("_tok) {
 				restore_token_position(calling_convention_pos);
 				direct_function_calling_convention = CallingConvention::Default;
@@ -1405,7 +1405,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// Skip optional calling convention before ptr-operator, consistent with
 			// parse_declarator() and parse_type_and_name() which call parse_calling_convention()
 			// at the same position. Handles patterns like: _Ret (__cdecl _Arg0::*)(_Types...)
-			CallingConvention paren_calling_convention = parse_calling_convention();
+			CallingConvention paren_calling_convention = parse_calling_convention(CallingConvention::Default);
 
 			// Detect what's inside: *, &, &&, or _Class::* (member pointer)
 			bool is_ptr = false;

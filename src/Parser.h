@@ -1798,22 +1798,21 @@ public:	// Public methods for template instantiation
 		const InlineVector<ASTNode, 4>& template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args);
 
-		// Helper to extract type from an expression for overload resolution.
-		// Public so codegen/constexpr consumers can reuse the parser's type deduction.
+	// Helper to extract type from an expression for overload resolution.
+	// Public so codegen/constexpr consumers can reuse the parser's type deduction.
 	std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
 
 private:	 // Resume private methods
-		// Helper: copy mangled name, substitute+copy template arguments, copy qualified name
-		// from old_call to new_call. Reduces duplication in substituteTemplateParameters.
+
 
 	void register_builtin_functions();  // Register compiler builtin functions
 	ParseResult parse_block();
 	ParseResult parse_statement_or_declaration();
 	ParseResult parse_variable_declaration();
-	FlashCpp::DeclarationSpecifiers parse_declaration_specifiers();	// Phase 1: Shared specifier parsing
-	bool looks_like_function_parameters();  // Phase 2: Detect if '(' starts function params vs direct init
+	FlashCpp::DeclarationSpecifiers parse_declaration_specifiers();	//  Shared specifier parsing
+	bool looks_like_function_parameters();  // Detect if '(' starts function params vs direct init
 	bool looks_like_elaborated_type_variable_declaration();  // Disambiguate 'struct Foo f = ...' from 'struct Foo { ... }'
-		// Phase 3: Consolidated initialization helpers
+
 	std::optional<ASTNode> parse_direct_initialization();  // Parse Type var(args) - returns initializer node
 	std::optional<ASTNode> parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier);	 // Parse Type var = expr or Type var = {args}
 	void prepareArrayTypeForBraceInitializer(const DeclarationNode& decl_node, TypeSpecifierNode& type_specifier);
@@ -1828,34 +1827,34 @@ private:	 // Resume private methods
 																			const Token& token) const;
 	ParseResult parse_brace_initializer(const TypeSpecifierNode& type_specifier);  // Add brace initializer parser
 	static bool isFoldOperatorToken(std::string_view op);
-	ParseResult parse_for_loop();  // Add this line
-	ParseResult parse_while_loop();	// Add while-loop parser
-	ParseResult parse_do_while_loop();  // Add do-while-loop parser
-	ParseResult parse_if_statement();  // Add if-statement parser
-	ParseResult parse_switch_statement();  // Add switch-statement parser
+	ParseResult parse_for_loop();
+	ParseResult parse_while_loop();
+	ParseResult parse_do_while_loop();
+	ParseResult parse_if_statement();
+	ParseResult parse_switch_statement();
 	ParseResult parse_return_statement();
-	ParseResult parse_break_statement();	 // Add break-statement parser
-	ParseResult parse_continue_statement();	// Add continue-statement parser
-	ParseResult parse_goto_statement();	// Add goto-statement parser
-	ParseResult parse_label_statement();	 // Add label-statement parser
-	ParseResult parse_lambda_expression();  // Add lambda expression parser
-	ParseResult parse_try_statement();  // Add try-catch statement parser
-	ParseResult parse_throw_statement();	 // Add throw statement parser
+	ParseResult parse_break_statement();
+	ParseResult parse_continue_statement();
+	ParseResult parse_goto_statement();
+	ParseResult parse_label_statement();
+	ParseResult parse_lambda_expression();
+	ParseResult parse_try_statement();
+	ParseResult parse_throw_statement();
 	ParseResult parse_function_body(bool is_ctor_or_dtor = false);  // Parse function body: '{...}' or function-try-block 'try {...} catch...'
-		// Parse one catch clause at the current token position into catch_clauses.
-		// Returns an error ParseResult on failure, or an empty success otherwise.
+	// Parse one catch clause at the current token position into catch_clauses.
+	// Returns an error ParseResult on failure, or an empty success otherwise.
 	ParseResult parse_one_catch_clause(std::vector<ASTNode>& catch_clauses);
-		// Wrap try_body + catch_clauses into a BlockNode containing a single TryStatementNode.
-		// Both parse_function_body() and parse_delayed_function_body() use this.
-		// Set is_ctor_or_dtor=true for constructor/destructor function-try-blocks so that the IR
-		// generator can emit the C++20 [except.handle]/15 implicit rethrow at each handler end.
+	// Wrap try_body + catch_clauses into a BlockNode containing a single TryStatementNode.
+	// Both parse_function_body() and parse_delayed_function_body() use this.
+	// Set is_ctor_or_dtor=true for constructor/destructor function-try-blocks so that the IR
+	// generator can emit the C++20 [except.handle]/15 implicit rethrow at each handler end.
 	ASTNode make_try_block_body(ASTNode try_body, std::vector<ASTNode> catch_clauses, Token try_token, bool is_ctor_or_dtor = false);
 
-		// Windows SEH (Structured Exception Handling) parsers
+	// Windows SEH (Structured Exception Handling) parsers
 	ParseResult parse_seh_try_statement();  // Parse __try/__except or __try/__finally
 	ParseResult parse_seh_leave_statement();	 // Parse __leave statement
 
-		// Helper functions for auto type deduction
+	// Helper functions for auto type deduction
 	TypeCategory deduce_type_from_expression(const ASTNode& expr);
 	void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
 	std::optional<TypeSpecifierNode> deduce_lambda_return_type(const LambdaExpressionNode& lambda);
@@ -1864,21 +1863,21 @@ private:	 // Resume private methods
 	void process_deferred_lambda_deductions();  // Process deferred lambda return type deductions
 	bool are_types_compatible(const TypeSpecifierNode& type1, const TypeSpecifierNode& type2) const;	 // Check if two types are compatible
 	std::string type_to_string(const TypeSpecifierNode& type) const;	 // Convert type to string for error messages
-		// Note: Use global ::get_type_size_bits() from AstNodeTypes.h for type sizes
+	// Note: Use global ::get_type_size_bits() from AstNodeTypes.h for type sizes
 	int getStructTypeSizeBits(TypeIndex type_index) const;
 
-		// Helper functions for std::initializer_list support
-		// Check if a type is std::initializer_list<T>, returns element type index if so
+	// Helper functions for std::initializer_list support
+	// Check if a type is std::initializer_list<T>, returns element type index if so
 	std::optional<TypeIndex> is_initializer_list_type(const TypeSpecifierNode& type_spec) const;
-		// Find a constructor that takes std::initializer_list<T> as its parameter
+	// Find a constructor that takes std::initializer_list<T> as its parameter
 	std::optional<std::pair<const StructMemberFunction*, TypeIndex>>
 	find_initializer_list_constructor(const StructTypeInfo& struct_info) const;
 
-		// Helper function for counting pack elements in template parameter packs
+	// Helper function for counting pack elements in template parameter packs
 	size_t count_pack_elements(std::string_view pack_name) const;
 
-		// Get pack size from pack_param_info_ (more reliable than count_pack_elements during nested instantiation)
-		// Returns std::nullopt if pack name is not found (unknown pack)
+	// Get pack size from pack_param_info_ (more reliable than count_pack_elements during nested instantiation)
+	// Returns std::nullopt if pack name is not found (unknown pack)
 	std::optional<size_t> get_pack_size(std::string_view pack_name) const {
 		for (const auto& info : pack_param_info_) {
 			if (info.original_name == pack_name) {
@@ -1890,13 +1889,13 @@ private:	 // Resume private methods
 
 	std::vector<ASTNode> expandPackExpressionArgument(const ASTNode& pattern);
 
-		// Replace a pack parameter identifier in an expression pattern with its expanded name
-		// e.g., replace "args" with "args_0" in a pattern like identity(args)
+	// Replace a pack parameter identifier in an expression pattern with its expanded name
+	// e.g., replace "args" with "args_0" in a pattern like identity(args)
 	ASTNode replacePackIdentifierInExpr(const ASTNode& expr, std::string_view pack_name, size_t element_index);
 
-		// Expand a PackExpansionExprNode into substituted call arguments.
-		// Returns true when the node was recognized and consumed; empty packs
-		// legitimately contribute zero arguments.
+	// Expand a PackExpansionExprNode into substituted call arguments.
+	// Returns true when the node was recognized and consumed; empty packs
+	// legitimately contribute zero arguments.
 	bool expandPackExpansionArgs(
 		const PackExpansionExprNode& pack_expansion,
 		const InlineVector<ASTNode, 4>& template_params,
@@ -1921,14 +1920,14 @@ private:	 // Resume private methods
 		ConceptDefinition	  // Concept definition context
 	};
 
-		// Minimum precedence to accept all operators (assignment has lowest precedence = 3)
+	// Minimum precedence to accept all operators (assignment has lowest precedence = 3)
 	static constexpr int MIN_PRECEDENCE = 0;
-		// Default precedence excludes comma operator (precedence 1) to prevent it from being
-		// treated as an operator in contexts where it's a separator (declarations, arguments, etc.)
+	// Default precedence excludes comma operator (precedence 1) to prevent it from being
+	// treated as an operator in contexts where it's a separator (declarations, arguments, etc.)
 	static constexpr int DEFAULT_PRECEDENCE = 2;
-		// NOTE: ExpressionContext is required (no default) to prevent bugs where context
-		// is accidentally not passed in recursive calls (e.g., ternary branch parsing).
-		// Use ExpressionContext::Normal for most cases; TemplateTypeArg when inside <...>.
+	// NOTE: ExpressionContext is required (no default) to prevent bugs where context
+	// is accidentally not passed in recursive calls (e.g., ternary branch parsing).
+	// Use ExpressionContext::Normal for most cases; TemplateTypeArg when inside <...>.
 	ParseResult parse_expression(int precedence, ExpressionContext context);
 	ParseResult parse_expression_statement() { return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal); }	 // Wrapper for keyword map
 	ParseResult parse_primary_expression(ExpressionContext context);
@@ -1941,12 +1940,12 @@ private:	 // Resume private methods
 	ParseResult parse_member_postfix(std::optional<ASTNode>& result, const Token& operator_start_token);
 	ParseResult parse_unary_expression(ExpressionContext context);
 	ParseResult parse_qualified_operator_call(const Token& context_token, const std::vector<StringType<32>>& namespaces);  // Parse operator symbol + call after 'operator' keyword consumed
-		// Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
-		// Handles all operator forms: symbols (+, =, <<, etc.), (), [], new/delete, user-defined literals, and conversion operators.
-		// On success returns std::nullopt and sets operator_name_out; on error returns a ParseResult with the error.
+	// Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
+	// Handles all operator forms: symbols (+, =, <<, etc.), (), [], new/delete, user-defined literals, and conversion operators.
+	// On success returns std::nullopt and sets operator_name_out; on error returns a ParseResult with the error.
 	std::optional<ParseResult> parse_operator_name(const Token& operator_keyword_token, std::string_view& operator_name_out);
 
-		// C++ cast operators helper
+	// C++ cast operators helper
 	enum class CppCastKind {
 		Static,
 		Dynamic,
@@ -1957,34 +1956,34 @@ private:	 // Resume private methods
 
 	ParseResult parse_qualified_identifier_after_template(const Token& template_base_token, bool* had_template_keyword = nullptr);  // Parse Template<T>::member
 
-		// Helper to parse template brace initialization: Template<Args>{}
-		// Returns ParseResult with ConstructorCallNode on success
+	// Helper to parse template brace initialization: Template<Args>{}
+	// Returns ParseResult with ConstructorCallNode on success
 	ParseResult parse_template_brace_initialization(
 		const std::vector<TemplateTypeArg>& template_args,
 		std::string_view template_name,
 		const Token& identifier_token);
 
-		// Helper to parse member template function calls: Template<T>::member<U>()
-		// Returns:
-		// - std::nullopt if not a function call (no '(' found after member name)
-		// - ParseResult with success if function call was parsed successfully
-		// - ParseResult with error if parsing failed
+	// Helper to parse member template function calls: Template<T>::member<U>()
+	// Returns:
+	// - std::nullopt if not a function call (no '(' found after member name)
+	// - ParseResult with success if function call was parsed successfully
+	// - ParseResult with error if parsing failed
 	std::optional<ParseResult> try_parse_member_template_function_call(
 		std::string_view instantiated_class_name,
 		std::string_view member_name,
 		const Token& member_token);
 
-		// Utility functions
+	// Utility functions
 	bool consume_punctuator(const std::string_view& value);
 	bool consume_keyword(const std::string_view& value);
 
-		// Attribute parsing result
+	// Attribute parsing result
 	struct AttributeInfo {
 		Linkage linkage = Linkage::None;
 		CallingConvention calling_convention = CallingConvention::Default;
 	};
 
-		// Attribute handling
+	// Attribute handling
 	void skip_cpp_attributes();					// Skip C++ standard [[...]] attributes
 	CppAttributeInfo skip_cpp_attributes_with_info();	 // Skip C++ standard [[...]] attributes and return detected flags
 	void skip_gcc_attributes();					// Skip GCC __attribute__((...)) specifications
@@ -1999,14 +1998,14 @@ private:	 // Resume private methods
 	bool parse_constructor_exception_specifier(); // Parse noexcept or throw() and return true if noexcept
 	void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
 	void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
-		// Parse trailing return type (-> type) with the given parameters visible for decltype expressions.
-		// Expects the '->' token to be the next token. Consumes it, registers params in a temporary scope,
+	// Parse trailing return type (-> type) with the given parameters visible for decltype expressions.
+	// Expects the '->' token to be the next token. Consumes it, registers params in a temporary scope,
 	// calls parse_type_specifier + consume_pointer_ref_modifiers, then pops the scope.
 	// Returns ParseResult::error on failure, or success with a TypeSpecifierNode.
 	ParseResult parse_trailing_return_type_with_params(const std::vector<ASTNode>& params);
 	ParseResult parse_member_trailing_return_type(FunctionDeclarationNode& func_decl);
 
-		// Helper to parse static member functions (reduces code duplication)
+	// Helper to parse static member functions (reduces code duplication)
 	bool parse_static_member_function(
 		ParseResult& type_and_name_result,
 		bool is_static_constexpr,
@@ -2018,7 +2017,7 @@ private:	 // Resume private methods
 		bool add_to_struct_info,
 		bool add_to_ast_nodes);
 
-		// Helper to parse entire static member block (data or function) - reduces code duplication
+	// Helper to parse entire static member block (data or function) - reduces code duplication
 	ParseResult parse_static_member_block(
 		StringHandle struct_name_handle,
 		StructDeclarationNode& struct_ref,
@@ -2030,21 +2029,21 @@ private:	 // Resume private methods
 
 	Linkage parse_declspec_attributes();			 // Parse Microsoft __declspec(...) and return linkage
 	AttributeInfo parse_attributes();			  // Parse all types of attributes and return linkage + calling convention
-	CallingConvention parse_calling_convention(); // Parse calling convention keywords
+	[[nodiscard]] CallingConvention parse_calling_convention(CallingConvention calling_conv); // Parse calling convention keywords
 
-		// Helper to build __PRETTY_FUNCTION__ signature from FunctionDeclarationNode
+	// Helper to build __PRETTY_FUNCTION__ signature from FunctionDeclarationNode
 	std::string buildPrettyFunctionSignature(const FunctionDeclarationNode& func_node) const;
 	int get_operator_precedence(const std::string_view& op);
 	std::optional<size_t> parse_alignas_specifier();	 // Parse alignas(n) and return alignment value
 
-		// Check if an identifier name is a template parameter in current scope
+	// Check if an identifier name is a template parameter in current scope
 	bool is_template_parameter(std::string_view name) const;
 
-		// Check if a base class name is a template parameter (used for template parameter inheritance)
+	// Check if a base class name is a template parameter (used for template parameter inheritance)
 	bool is_base_class_template_parameter(std::string_view base_class_name) const;
 
-		// Helper: Validate and add a base class (consolidates lookup, validation, and registration)
-		// Returns ParseResult::success() on success, or error if validation fails
+	// Helper: Validate and add a base class (consolidates lookup, validation, and registration)
+	// Returns ParseResult::success() on success, or error if validation fails
 	ParseResult validate_and_add_base_class(
 		std::string_view base_class_name,
 		StructDeclarationNode& struct_ref,
@@ -2053,30 +2052,30 @@ private:	 // Resume private methods
 		bool is_virtual_base,
 		const Token& error_token);
 
-		// Helper: After parsing template arguments for a base class specifier, consume
-		// optional ::member type access and ... pack expansion in the correct order.
-		// Centralizes the parsing so all call sites get consistent behavior.
-		// Returns std::nullopt if '::' is found but not followed by an identifier (parse error).
+	// Helper: After parsing template arguments for a base class specifier, consume
+	// optional ::member type access and ... pack expansion in the correct order.
+	// Centralizes the parsing so all call sites get consistent behavior.
+	// Returns std::nullopt if '::' is found but not followed by an identifier (parse error).
 	std::optional<BaseClassPostTemplateInfo> consume_base_class_qualifiers_after_template_args();
 	const TypeInfo* resolveBaseClassMemberTypeChain(
 		std::string_view base_class_name,
 		const std::vector<QualifiedTypeMemberAccess>& member_type_chain);
 
-		// Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
-		// Shared across all base class deferral sites.
+	// Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
+	// Shared across all base class deferral sites.
 	static std::vector<TemplateArgumentNodeInfo> build_template_arg_infos(
 		const std::vector<TemplateTypeArg>& template_args,
 		const std::vector<ASTNode>& template_arg_nodes);
 
-		// Helper: Parse base class list for a member struct template (already consumed ':').
-		// All base classes are stored as deferred entries since the struct is inside a template body.
+	// Helper: Parse base class list for a member struct template (already consumed ':').
+	// All base classes are stored as deferred entries since the struct is inside a template body.
 	ParseResult parse_member_struct_template_base_class_list(
 		StructDeclarationNode& struct_ref,
 		bool is_class);
 
-		// Helper: Parse an optional access specifier keyword (public/protected/private) at the
-		// current position. If one is present it is consumed and the out parameter is updated.
-		// Returns true if an access specifier was consumed, false otherwise.
+	// Helper: Parse an optional access specifier keyword (public/protected/private) at the
+	// current position. If one is present it is consumed and the out parameter is updated.
+	// Returns true if an access specifier was consumed, false otherwise.
 	bool parse_base_access_specifier(AccessSpecifier& out_access) {
 		if (!peek().is_keyword())
 			return false;
@@ -2099,11 +2098,11 @@ private:	 // Resume private methods
 		return false;
 	}
 
-		// Helper: Look up a type alias including inherited ones from base classes
-		// Returns the TypeInfo pointer if found, nullptr otherwise
-		// Uses depth limit to prevent infinite recursion in malformed input
+	// Helper: Look up a type alias including inherited ones from base classes
+	// Returns the TypeInfo pointer if found, nullptr otherwise
+	// Uses depth limit to prevent infinite recursion in malformed input
 	const TypeInfo* lookup_inherited_type_alias(StringHandle struct_name, StringHandle member_name, int depth = 0);
-		// Convenience overload for string_view parameters
+	// Convenience overload for string_view parameters
 	const TypeInfo* lookup_inherited_type_alias(std::string_view struct_name, std::string_view member_name, int depth = 0) {
 		return lookup_inherited_type_alias(
 			StringTable::getOrInternStringHandle(struct_name),
@@ -2111,11 +2110,11 @@ private:	 // Resume private methods
 			depth);
 	}
 
-		// Helper: Look up a template function including inherited ones from base classes
-		// Returns the vector of all template overloads if found, nullptr otherwise
-		// Uses depth limit to prevent infinite recursion in malformed input
+	// Helper: Look up a template function including inherited ones from base classes
+	// Returns the vector of all template overloads if found, nullptr otherwise
+	// Uses depth limit to prevent infinite recursion in malformed input
 	const std::vector<ASTNode>* lookup_inherited_template(StringHandle struct_name, std::string_view template_name, int depth = 0);
-		// Convenience overload for string_view parameters
+	// Convenience overload for string_view parameters
 	const std::vector<ASTNode>* lookup_inherited_template(std::string_view struct_name, std::string_view template_name, int depth = 0) {
 		return lookup_inherited_template(
 			StringTable::getOrInternStringHandle(struct_name),
@@ -2123,8 +2122,8 @@ private:	 // Resume private methods
 			depth);
 	}
 
-		// Substitute template parameter in a type specification
-		// Handles complex transformations like const T& -> const int&, T* -> int*, etc.
+	// Substitute template parameter in a type specification
+	// Handles complex transformations like const T& -> const int&, T* -> int*, etc.
 	TypeIndex substitute_template_parameter(
 		const TypeSpecifierNode& original_type,
 		const InlineVector<ASTNode, 4>& template_params,
