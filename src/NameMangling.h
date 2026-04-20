@@ -121,19 +121,19 @@ inline void appendItaniumQualifiedTypeName(OutputType& output, std::string_view 
 		return;
 	}
 
-	std::array<std::string_view, 16> components{};
-	size_t component_count = 0;
+	// Collect all components without a fixed-size limit.
+	std::vector<std::string_view> components;
 	size_t start = 0;
-	while (start < qualified_name.size() && component_count < components.size()) {
+	while (start < qualified_name.size()) {
 		size_t end = qualified_name.find("::", start);
 		if (end == std::string_view::npos) {
 			end = qualified_name.size();
 		}
-		components[component_count++] = qualified_name.substr(start, end - start);
+		components.push_back(qualified_name.substr(start, end - start));
 		start = (end == qualified_name.size()) ? end : end + 2;
 	}
 
-	if (component_count == 1) {
+	if (components.size() == 1) {
 		if (components[0] == "std") {
 			output += "St";
 		} else {
@@ -143,7 +143,7 @@ inline void appendItaniumQualifiedTypeName(OutputType& output, std::string_view 
 		return;
 	}
 
-	if (components[0] == "std" && component_count == 2) {
+	if (components[0] == "std" && components.size() == 2) {
 		output += "St";
 		output += std::to_string(components[1].size());
 		output += components[1];
@@ -151,12 +151,12 @@ inline void appendItaniumQualifiedTypeName(OutputType& output, std::string_view 
 	}
 
 	output += 'N';
-	for (size_t i = 0; i < component_count; ++i) {
-		if (components[i] == "std") {
+	for (const auto& comp : components) {
+		if (comp == "std") {
 			output += "St";
 		} else {
-			output += std::to_string(components[i].size());
-			output += components[i];
+			output += std::to_string(comp.size());
+			output += comp;
 		}
 	}
 	output += 'E';
@@ -468,29 +468,56 @@ concept ItaniumSubsAware = requires(T& t, std::string_view sv, std::string s) {
 //   - std::X (two-component starting with std): "St7MyClass"
 //   - Multi-component non-std: "3foo7MyClass" (no N...E)
 inline std::string computeItaniumTypeSubstitutionKey(std::string_view qualified_name) {
-	std::array<std::string_view, 16> components{};
-	size_t count = 0;
+	// Build the key on-the-fly without a fixed-size component limit.
+	// The key is the encoding WITHOUT N...E wrapping — see comment above.
+	std::string key;
 	size_t start = 0;
-	while (start < qualified_name.size() && count < components.size()) {
+	while (start < qualified_name.size()) {
 		size_t end = qualified_name.find("::", start);
 		if (end == std::string_view::npos)
 			end = qualified_name.size();
-		components[count++] = qualified_name.substr(start, end - start);
-		start = (end == qualified_name.size()) ? end : end + 2;
-	}
-
-	std::string key;
-	for (size_t i = 0; i < count; ++i) {
-		if (components[i] == "std") {
+		std::string_view comp = qualified_name.substr(start, end - start);
+		if (comp == "std") {
 			key += "St";
-		} else if (components[i].empty()) {
+		} else if (comp.empty()) {
 			key += "12_GLOBAL__N_1";
 		} else {
-			key += std::to_string(components[i].size());
-			key += components[i];
+			key += std::to_string(comp.size());
+			key += comp;
 		}
+		start = (end == qualified_name.size()) ? end : end + 2;
 	}
-	return key;  // No N...E wrapping — see comment above
+	return key;
+}
+
+// Register every component prefix of a qualified type name as a substitution candidate.
+// Per Itanium C++ ABI §5.1.8, when a new N...E name is encoded for the first time, each
+// prefix of that name (except the predefined "St" abbreviation) is added to the user table.
+// For "A::B::C" this adds: "1A", "1A1B", "1A1B1C".
+// For "std::vector" this adds: "St6vector" (prefix "St" is predefined, not added).
+// OutputType must satisfy ItaniumSubsAware (has addSubstitution).
+template <typename OutputType>
+inline void addItaniumTypeSubstitutionPrefixes(OutputType& output, std::string_view qualified_name) {
+	std::string accumulated;
+	size_t start = 0;
+	while (start < qualified_name.size()) {
+		size_t end = qualified_name.find("::", start);
+		if (end == std::string_view::npos)
+			end = qualified_name.size();
+		std::string_view comp = qualified_name.substr(start, end - start);
+		if (comp == "std") {
+			// "St" is predefined — do NOT add to user table, but track in accumulated prefix.
+			accumulated += "St";
+		} else if (comp.empty()) {
+			accumulated += "12_GLOBAL__N_1";
+			output.addSubstitution(accumulated);
+		} else {
+			accumulated += std::to_string(comp.size());
+			accumulated += comp;
+			output.addSubstitution(accumulated);
+		}
+		start = (end == qualified_name.size()) ? end : end + 2;
+	}
 }
 
 // Itanium mangling context that wraps a StringBuilder and tracks substitution candidates.
@@ -755,12 +782,14 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		auto struct_name_sv = StringTable::getStringView(type_info.name());
 
 		if constexpr (ItaniumSubsAware<OutputType>) {
-				// Substitution-aware path: compute key, check table, emit back-ref or encode+add.
+				// Substitution-aware path: compute full key, check table, emit back-ref or encode+add.
 				// The key is the encoding WITHOUT N...E (the canonical prefix form per ABI §5.1.8).
 			std::string key = computeItaniumTypeSubstitutionKey(struct_name_sv);
 			if (!output.tryEmitSubstitution(key)) {
 				appendItaniumQualifiedTypeName(output, struct_name_sv);
-				output.addSubstitution(std::move(key));
+				// Register all component prefixes as substitution candidates per ABI §5.1.8.
+				// e.g., "A::B::C" adds "1A", "1A1B", "1A1B1C" — addSubstitution deduplicates.
+				addItaniumTypeSubstitutionPrefixes(output, struct_name_sv);
 			}
 		} else {
 			appendItaniumQualifiedTypeName(output, struct_name_sv);
