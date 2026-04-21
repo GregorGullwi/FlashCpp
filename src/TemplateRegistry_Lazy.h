@@ -147,16 +147,22 @@ public:
 		markOdrUsed(instantiated_class_name, member_function_name, /*is_const=*/true);
 	}
 
-	bool isOdrUsed(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) const {
-		instantiated_class_name = normalizeClassName(instantiated_class_name);
+	// Helper to generate registry key from class name, member name, and const-ness.
+	// Key format: "instantiated_class_name::member_function_name[$const]"
+	// Shared by lazy_members_ operations and odr_used_ operations.
+	static StringHandle makeKey(StringHandle class_name, StringHandle member_name, bool is_const) {
+		class_name = normalizeClassName(class_name);
 		StringBuilder key_builder;
-		key_builder.append(instantiated_class_name).append("::").append(member_function_name);
+		key_builder.append(class_name).append("::").append(member_name);
 		if (is_const)
 			key_builder.append("$const");
-		std::string_view key = key_builder.commit();
-		auto handle = StringTable::getOrInternStringHandle(key);
-		return odr_used_.find(handle) != odr_used_.end();
+		return StringTable::getOrInternStringHandle(key_builder.commit());
 	}
+
+
+	bool isOdrUsed(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) const {
+		return odr_used_.find(makeKey(instantiated_class_name, member_function_name, is_const)) != odr_used_.end();
+ 	}
 
 	bool isOdrUsedAny(StringHandle instantiated_class_name, StringHandle member_function_name) const {
 		return isOdrUsed(instantiated_class_name, member_function_name, /*is_const=*/false)

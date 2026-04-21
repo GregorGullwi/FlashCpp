@@ -5221,30 +5221,21 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	// sure the instantiation's body exists by the time codegen asks.
 	if (!member_context_stack_.empty()) {
 		const TypeInfo* current_type_info = tryGetTypeInfo(member_context_stack_.back());
-		if (current_type_info && current_type_info->getStructInfo()) {
+		if (current_type_info && current_type_info->getStructInfo() && current_type_info->isTemplateInstantiation()) {
 			StringHandle current_struct_name = current_type_info->name();
 			StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
-			if (current_struct_name.isValid() && member_handle.isValid()) {
-				const bool is_const = func_decl->is_const_member_function();
-				auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
-				// Guard: only remap when the current struct differs from the
-				// resolved call's parent. If they match, the normal lazy path
-				// below (or the "already materialized" path) will handle it.
-				std::string_view parent_sv_guard = func_decl->parent_struct_name();
-				const bool different_owner = !parent_sv_guard.empty()
-					&& parent_sv_guard != StringTable::getStringView(current_struct_name);
-				if (different_owner
-						&& lazy_registry.needsInstantiation(current_struct_name, member_handle, is_const)) {
-					// Mark only; the drain pass in SemanticAnalysis (running
-					// after normalizePendingSemanticRoots) picks up ODR-used
-					// residuals via its fixpoint loop over
-					// snapshotOdrUsedLazyEntries(). Synchronously calling
-					// ensureMemberFunctionMaterialized here causes a
-					// re-entrant cycle: materialization reparses and
-					// normalizes the body, which hits another call that lands
-					// back in this helper, ad infinitum.
-					lazy_registry.markOdrUsed(current_struct_name, member_handle, is_const);
-				}
+			const bool is_const = func_decl->is_const_member_function();
+			auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+			if (lazy_registry.needsInstantiation(current_struct_name, member_handle, is_const)) {
+				// Mark only; the drain pass in SemanticAnalysis (running
+				// after normalizePendingSemanticRoots) picks up ODR-used
+				// residuals via its fixpoint loop over
+				// snapshotOdrUsedLazyEntries(). Synchronously calling
+				// ensureMemberFunctionMaterialized here causes a
+				// re-entrant cycle: materialization reparses and
+				// normalizes the body, which hits another call that lands
+				// back in this helper, ad infinitum.
+				lazy_registry.markOdrUsed(current_struct_name, member_handle, is_const);
 			}
 		}
 	}
