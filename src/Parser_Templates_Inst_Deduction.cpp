@@ -2279,15 +2279,15 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		// This handles the case where a deleted overload explicitly catches
 		// a class of inputs (e.g., pair<const F,S>) that should not be swappable.
 		//
-		// TODO (item #2 follow-up): once the enable_if<false> reparse path
+		// TODO (item #3 follow-up): once the enable_if<false> reparse path
 		// reliably fails for every shape of dependent return type (currently
-		// it misses some e.g. `pair<First, Second>&` when the enable_if is
-		// inside a typename-qualified name whose outer template is already
-		// resolvable with placeholder args), this heuristic can be narrowed
-		// to "all best-spec candidates are `= delete`". The data-model
-		// prerequisite (`FunctionDeclarationNode::mark_failed_substitution`)
-		// is already in place; what's missing is wiring every reparse-failure
-		// site to that mutator and tightening the reparse guard.
+		// it misses some e.g. `pair<First, Second>&` when the enable_if
+		// predicate is a compound boolean like `!is_const<F> && !is_const<S>`
+		// and parses through without tripping is_incomplete_instantiation_),
+		// this heuristic can be narrowed to "all best-spec candidates are
+		// `= delete`". Items #1 and #2 of the plan (per-overload failure
+		// memoization and mark_failed_substitution wiring) are done; what
+		// remains is tightening the reparse guard for that specific shape.
 		if (any_deleted_at_best) {
 			FLASH_LOG_FORMAT(Templates, Debug,
 				"[depth={}]: SFINAE failure for '{}': deleted candidate at best specificity={}",
@@ -2821,7 +2821,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 		if (return_type_result.is_error()) {
 			// SFINAE: Return type parsing failed - this is a substitution failure.
-			// Memoize under a per-overload key (template_name + args + param_count)
+			// Memoize under a per-overload key (template_name + args + overload_id,
+			// where overload_id is the address of the source FunctionDeclarationNode)
 			// so the next probe for this same overload short-circuits at the
 			// entry fast-path instead of reparsing.  We can't call the node-level
 			// `mark_failed_substitution` mutator here because `new_func_ref` has
