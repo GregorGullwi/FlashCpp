@@ -4613,6 +4613,32 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 
+						// Fallback: try as variable template before giving up on constexpr evaluation.
+						// For references like `is_integral_v<T>` where is_integral_v is a variable template,
+						// try_instantiate_template_explicit (function-template path) returns nullopt, and the
+						// generic try_evaluate_constant_expression fallback below would re-evaluate the
+						// ORIGINAL node whose template args still reference the unsubstituted template
+						// parameter (e.g., Ty), leading to inconsistent concrete_args during partial-spec
+						// lookup. Instantiate the variable template directly with the already-substituted
+						// function template args so the initializer is evaluated in a fully concrete context.
+						if (!has_dependent_template_args && !substituted_func_template_args.empty()) {
+							std::string_view func_name = func_call.called_from().value();
+							auto var_template_node = try_instantiate_variable_template(func_name, substituted_func_template_args);
+							if (var_template_node.has_value() && var_template_node->is<VariableDeclarationNode>()) {
+								const VariableDeclarationNode& var_decl = var_template_node->as<VariableDeclarationNode>();
+								if (var_decl.initializer().has_value()) {
+									if (auto value = try_evaluate_constant_expression(*var_decl.initializer())) {
+										FLASH_LOG_FORMAT(Templates, Debug, "Evaluated variable template '{}' to value {}",
+														 func_name, value->value);
+										TemplateTypeArg val_arg(value->value, value->type);
+										val_arg.is_pack = arg_info.is_pack;
+										resolved_args.push_back(val_arg);
+										continue;
+									}
+								}
+							}
+						}
+
 						// Fallback: try to evaluate the expression directly
 						if (auto value = try_evaluate_constant_expression(arg_info.node)) {
 							TemplateTypeArg val_arg(value->value, value->type);
