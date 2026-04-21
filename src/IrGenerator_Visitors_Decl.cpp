@@ -1250,31 +1250,19 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 						}
 					}
 					if (!fn_has_auto) {
+							// Phase 5 Slices F-L: sema's end-of-normalization drain
+							// (AST-walk pass + ODR-use fixpoint pass) materializes every
+							// lazy member reachable from the top-level AST plus every
+							// sema-proven ODR-used residual before codegen runs. By the
+							// time this loop runs, any member listed in
+							// node.member_functions() that can be materialized already
+							// has a body. If fn still has no body here, it is either
+							// implicit (handled by visitFunctionDeclarationNode's
+							// implicit-member paths) or a template pattern/SFINAE-only
+							// stub that must not be emitted — visitFunctionDeclarationNode
+							// handles both cases by early-returning. No defensive
+							// materialization fallback needed here.
 						visitFunctionDeclarationNode(fn);
-							// Phase 5 Slices F-I: the lazy-member "materialize-and-queue"
-							// branch that used to live here is now dead code. Sema's
-							// end-of-normalization drain materializes every reachable
-							// struct's lazy members (AST-walk pass) plus every ODR-used
-							// residual (ODR-use pass); by the time this loop runs, any
-							// member listed in node.member_functions() that can be
-							// materialized already has a body. Audit across the full
-							// 2201-test corpus showed 0 first-materializer hits here.
-							// If fn still has no body at this point, it is either
-							// implicit (handled elsewhere) or a template pattern that
-							// sema intentionally did not instantiate (e.g., SFINAE-only
-							// reachable), and must not be queued.
-						if (!fn.get_definition().has_value() && !fn.is_implicit() && parser_) {
-							if (IS_FLASH_LOG_ENABLED(Codegen, Debug)) {
-								StringHandle member_handle = member_func.getName();
-								const bool is_const_func = fn.is_const_member_function();
-								if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle, is_const_func)) {
-									FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name,
-										" - WARNING: lazy member '",
-										fn.decl_node().identifier_token().value(),
-										"' still un-materialized at struct-visitor; sema drain missed it");
-								}
-							}
-						}
 					} else {
 						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping member function with auto params (will be instantiated on call)");
 					}
@@ -1293,21 +1281,12 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 						}
 					}
 					if (!ctor_has_auto) {
+						// Phase 5 Slices F-L: sema's drain materializes every reachable
+						// lazy constructor before codegen. If ctor still has no body
+						// here it is either implicit (handled by visitConstructorDeclarationNode)
+						// or an uninstantiated SFINAE-only stub; no defensive materialization
+						// fallback needed.
 						visitConstructorDeclarationNode(ctor);
-						// Phase 5 Slices F-J: sema's end-of-normalization drain materializes
-						// every reachable struct's lazy members (AST-walk pass) plus every
-						// ODR-used residual. By the time this loop runs, any constructor
-						// listed in node.member_functions() that can be materialized
-						// already has a body. The previous lazy-stub queueing here is dead.
-						if (!ctor.get_definition().has_value() && !ctor.is_implicit() && parser_) {
-							if (IS_FLASH_LOG_ENABLED(Codegen, Debug)) {
-								StringHandle member_handle = member_func.getName();
-								if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle, false)) {
-									FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name,
-										" - WARNING: lazy constructor still un-materialized at struct-visitor; sema drain missed it");
-								}
-							}
-						}
 					} else {
 						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping template constructor with auto params (will be instantiated on call)");
 					}
