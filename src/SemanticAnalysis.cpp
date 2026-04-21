@@ -5188,7 +5188,68 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 
 const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	const FunctionDeclarationNode* func_decl) {
-	if (!func_decl || func_decl->get_definition().has_value() || func_decl->is_implicit()) {
+	if (!func_decl) {
+		return func_decl;
+	}
+
+	// Phase 5 Slice H: intra-instantiation call-target remap.
+	//
+	// When a call expression inside a substituted member body references a
+	// sibling member (e.g., `other.method(helper())` inside
+	// `Box<int>::compute`), sema's overload resolution resolves that call to
+	// the **template pattern's** FunctionDeclarationNode (e.g., `Box::helper`,
+	// `Box::method`) because the pattern is what declares those members. The
+	// pattern's declarations have bodies (the template source), so the
+	// "is this a lazy stub?" check below would normally short-circuit.
+	//
+	// But codegen must emit a call to the *instantiation's* member
+	// (`Box$hash::helper`), whose body has `T` substituted. If we leave this
+	// unhandled here, the codegen-side `materializeLazyMemberIfNeeded`
+	// forwarder ends up being the first materializer for that instantiation
+	// member.
+	//
+	// We remap here: if `member_context_stack_` shows we're currently
+	// normalizing a member of some instantiation `I`, and the lazy registry
+	// has an entry for `I::member_name[$const]`, then this call really
+	// targets `I`'s member. Mark it ODR-used and materialize it, so codegen
+	// sees a fully-materialized body on the instantiation at lowering time.
+	//
+	// We do *not* swap the returned `func_decl` pointer: the pattern
+	// declaration is what every subsequent annotation step (parameter-type
+	// coercion, cache-as-direct-call) already expects. Codegen remaps to the
+	// instantiation based on the receiver type; sema's job here is to make
+	// sure the instantiation's body exists by the time codegen asks.
+	if (!member_context_stack_.empty()) {
+		const TypeInfo* current_type_info = tryGetTypeInfo(member_context_stack_.back());
+		if (current_type_info && current_type_info->getStructInfo()) {
+			StringHandle current_struct_name = current_type_info->name();
+			StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
+			if (current_struct_name.isValid() && member_handle.isValid()) {
+				const bool is_const = func_decl->is_const_member_function();
+				auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+				// Guard: only remap when the current struct differs from the
+				// resolved call's parent. If they match, the normal lazy path
+				// below (or the "already materialized" path) will handle it.
+				std::string_view parent_sv_guard = func_decl->parent_struct_name();
+				const bool different_owner = !parent_sv_guard.empty()
+					&& parent_sv_guard != StringTable::getStringView(current_struct_name);
+				if (different_owner
+						&& lazy_registry.needsInstantiation(current_struct_name, member_handle, is_const)) {
+					// Mark only; the drain pass in SemanticAnalysis (running
+					// after normalizePendingSemanticRoots) picks up ODR-used
+					// residuals via its fixpoint loop over
+					// snapshotOdrUsedLazyEntries(). Synchronously calling
+					// ensureMemberFunctionMaterialized here causes a
+					// re-entrant cycle: materialization reparses and
+					// normalizes the body, which hits another call that lands
+					// back in this helper, ad infinitum.
+					lazy_registry.markOdrUsed(current_struct_name, member_handle, is_const);
+				}
+			}
+		}
+	}
+
+	if (func_decl->get_definition().has_value() || func_decl->is_implicit()) {
 		return func_decl;
 	}
 	std::string_view parent_sv = func_decl->parent_struct_name();
