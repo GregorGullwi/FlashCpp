@@ -183,6 +183,13 @@ public:
 		StringHandle member_name,
 		std::optional<bool> is_const_member);
 
+	// Phase 5 Slice F: Drain any remaining lazy-member registry entries by
+	// materializing them before codegen's struct-visitor runs. This preempts
+	// the last codegen-first materialization path (`IrGenerator_Visitors_Decl`'s
+	// per-member loop) so that lazy-member ownership lives entirely in sema.
+	// Returns the number of entries materialized by this call.
+	size_t drainLazyMemberRegistry();
+
 private:
 	// Top-level dispatch
 	void normalizeTopLevelNode(const ASTNode& node);
