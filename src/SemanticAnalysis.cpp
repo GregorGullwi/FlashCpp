@@ -5534,6 +5534,46 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 		}
 	}
 
+	// Phase 5 Slice G: second pass — materialize any still-lazy members
+	// whose key is explicitly marked as ODR-used by sema annotation sites
+	// (see `LazyMemberInstantiationRegistry::markOdrUsed`). This catches
+	// instantiations that live only via `StructTypeInfo` / lazy-registry
+	// references and are not reachable from `parser_.get_nodes()`, which
+	// the first pass cannot see. Because SFINAE-probed instantiations never
+	// pass through the sema sites that call `markOdrUsed`, their ODR-use
+	// bit stays false and they are safely skipped here, preserving the
+	// invariant that Slice F documented.
+	//
+	// Like the first pass, wrap in a fixpoint loop: materializing a body
+	// may register new lazy entries and may mark additional members as
+	// ODR-used (e.g., a newly-substituted body selects a call target via
+	// sema annotation before codegen runs).
+	while (true) {
+		auto snapshot = lazy_registry.snapshotOdrUsedLazyEntries();
+		if (snapshot.empty()) {
+			break;
+		}
+		size_t before = total_materialized;
+		for (const auto& entry : snapshot) {
+			// Re-check needsInstantiation because a prior iteration may
+			// have already materialized this key (e.g., transitively via
+			// another member's body).
+			if (!lazy_registry.needsInstantiation(entry.instantiated_owner_name,
+					entry.member_name, entry.is_const_method)) {
+				continue;
+			}
+			auto result = ensureMemberFunctionMaterialized(
+				entry.instantiated_owner_name, entry.member_name,
+				std::optional<bool>(entry.is_const_method));
+			if (result.has_value()) {
+				++total_materialized;
+			}
+		}
+		if (total_materialized == before) {
+			break;
+		}
+	}
+
 	return total_materialized;
 }
 

@@ -169,6 +169,29 @@ The following tests are the most relevant guardrails for this area:
 - `tests/test_phase5_nested_templates_ret42.cpp`
 - `tests/test_phase5_multi_level_ret45.cpp`
 
+## Validation baseline refreshed on 2026-04-21 (Slice G: ODR-use drain extension + audit log)
+
+Landed on top of the Slice G foundation:
+- `LazyMemberInstantiationRegistry::snapshotOdrUsedLazyEntries()` — returns a snapshot of `(owner, member, is_const)` triples for lazy entries currently marked ODR-used. Snapshot (not live view) because materialization mutates the map.
+- `SemanticAnalysis::drainLazyMemberRegistry` gained a second fixpoint pass after the AST-walk pass that materializes the ODR-used residuals via `ensureMemberFunctionMaterialized`. Safe against SFINAE-probed instantiations by construction: they never flow through a sema annotation site that calls `markOdrUsed`.
+- `AstToIr::materializeLazyMemberIfNeeded` gained a debug-level audit log (`Codegen:Debug`) that fires when the forwarder is still the first materializer for a lazy member.
+
+Audit results (run against the full test corpus with `--log-level=Codegen:debug`):
+- **4 tests, 10 first-materializer hits remain.** All hits are inner calls inside freshly-materialized bodies (e.g. calls to `method` / `helper` inside `Box<int>::compute()`'s body).
+- Root cause: `drainLazyMemberRegistry` runs *after* `normalizePendingSemanticRoots`, so the freshly-substituted bodies created by the drain never get their internal `tryAnnotateCallArgConversions` pass. That means calls inside those bodies never reach `tryMaterializeLazyCallTarget`, never get `markOdrUsed`, and are left for the codegen-side forwarder to resolve on demand.
+- This is the clear next architectural step: interleave sema annotation with the drain (either run `normalizePendingSemanticRoots` after the drain, or loop sema+drain to a fixpoint) so that newly-substituted bodies also get annotated before codegen runs. That would either eliminate the forwarder hits entirely or narrow them to an even smaller residual worth diagnosing.
+
+Run:
+
+- `.\build_flashcpp.bat`
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+
+Current baseline (unchanged by the drain extension):
+
+- **2201** compile+link+runtime passing tests
+- **148** `_fail` tests failing as expected
+- overall result: **SUCCESS**
+
 ## Validation baseline refreshed on 2026-04-21 (Slice G foundation: explicit ODR-use plumbing)
 
 Windows validation was re-run after landing:

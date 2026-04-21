@@ -179,6 +179,35 @@ public:
 		return odr_used_.size();
 	}
 
+	// Snapshot a list of (instantiated_owner_name, member_name, is_const_method)
+	// triples for every lazy entry whose key is currently in `odr_used_`.
+	//
+	// Returns a snapshot rather than yielding live iterators because the caller
+	// will typically invoke materialization, which mutates `lazy_members_`
+	// (via `markInstantiated`) and may register new entries. The triples use
+	// the *unnormalized* owner name as stored on the LazyMemberFunctionInfo's
+	// identity, so the caller can feed them back through
+	// `ensureMemberFunctionMaterialized` without needing to re-derive scope.
+	struct OdrUsedLazyEntry {
+		StringHandle instantiated_owner_name;
+		StringHandle member_name;
+		bool is_const_method;
+	};
+	std::vector<OdrUsedLazyEntry> snapshotOdrUsedLazyEntries() const {
+		std::vector<OdrUsedLazyEntry> out;
+		out.reserve(lazy_members_.size());
+		for (const auto& [key_handle, info] : lazy_members_) {
+			if (odr_used_.find(key_handle) != odr_used_.end()) {
+				OdrUsedLazyEntry entry{};
+				entry.instantiated_owner_name = info.identity.instantiated_owner_name;
+				entry.member_name = effectiveLookupName(info.identity);
+				entry.is_const_method = info.identity.is_const_method;
+				out.push_back(entry);
+			}
+		}
+		return out;
+	}
+
 private:
 	LazyMemberInstantiationRegistry() = default;
 

@@ -41,7 +41,25 @@ std::optional<ASTNode> AstToIr::materializeLazyMemberIfNeeded(
 	if (!sema_) {
 		return std::nullopt;
 	}
-	return sema_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
+	// Phase 5 Slice G audit: log when this forwarder is still the first
+	// materializer for a lazy member (needsInstantiation==true on entry).
+	// Useful for measuring residual work after the ODR-use drain extension
+	// landed. The log is emitted at debug level under the "Codegen" category
+	// so it is silent in normal builds; run with
+	// `--log-level=Codegen:debug` to see it.
+	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+	bool was_first_materializer = is_const_member.has_value()
+		? lazy_registry.needsInstantiation(struct_name, member_name, *is_const_member)
+		: lazy_registry.needsInstantiationAny(struct_name, member_name);
+	auto result = sema_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
+	if (was_first_materializer && result.has_value()) {
+		FLASH_LOG_FORMAT(Codegen, Debug,
+			"materializeLazyMemberIfNeeded: forwarder was first materializer for {}::{}{}",
+			StringTable::getStringView(struct_name),
+			StringTable::getStringView(member_name),
+			is_const_member.value_or(false) ? " (const)" : "");
+	}
+	return result;
 }
 
 void AstToIr::queueDeferredMemberFunctionFromNode(
