@@ -185,6 +185,14 @@ public:
 		StringHandle member_name,
 		std::optional<bool> is_const_member);
 
+	// Phase 5 Slice G item #4: mark a resolved operator overload (member
+	// function) as ODR-used in the lazy-member registry so the end-of-sema
+	// drain materializes it. Safe no-op if the overload isn't a lazy-member
+	// entry. Used from binary/unary/subscript/arrow/call operator
+	// annotation sites after the parser resolved the overload.
+	void markResolvedOperatorOverloadOdrUsed(
+		const StructMemberFunction& member_overload);
+
 	// Phase 5 Slice F: Drain any remaining lazy-member registry entries by
 	// materializing them before codegen's struct-visitor runs. This preempts
 	// the last codegen-first materialization path (`IrGenerator_Visitors_Decl`'s

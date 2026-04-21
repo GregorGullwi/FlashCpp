@@ -143,6 +143,91 @@ now handled directly by registerLateMaterializedTopLevelNode* via instantiated_n
 late-materialized roots are rejected even before pending-semantic-root enqueue. However, ast_nodes_ is still a single vector; codegen and drainLazyMemberRegistry both iterate
 get_nodes() uniformly without a real split into user_source_nodes_ vs. instantiated_struct_nodes_. The tracking infrastructure is there; the consumption/data-model split is not.
 
+#### 2026-04-21 audit attempt (this session)
+
+A prototype that simply skipped `isInstantiatedNode(i)` roots in
+`drainLazyMemberRegistry` pass 1 was built and tested end-to-end against the
+full suite. It surfaced five previously-hidden ODR-use coverage gaps:
+
+ 1. Binary operator member-overloads (`operator==`, `operator+`, ...) not
+    marked ODR-used from the `normalizeExpression` BinaryOperatorNode branch.
+    → Fixed in this session via a new `markResolvedOperatorOverloadOdrUsed`
+    helper that pulls `{parent_struct_name, member_name, is_const}` out of
+    `resolved_member_operator_overload()` and calls `markOdrUsed`.
+ 2. Conversion-operator overload resolution skipped CV-aware pairing with
+    codegen's `findConversionOperator`. `structHasConversionOperatorTo` marked
+    only the first match; codegen later picked a different CV qualifier and
+    hit a lazy stub.
+    → Fixed by iterating all `mf.conversion_target_type`-matching overloads
+    and marking each (both const and non-const) ODR-used.
+ 3. `tryAnnotateConversion` bailed out early on `to_desc.category() == Enum`
+    before reaching the UserDefined-rank path, so struct→enum UDCs bypassed
+    `structHasConversionOperatorTo` entirely and relied on pass 1 draining
+    the instantiated root wholesale.
+    → Fixed by narrowing the early-return to `from != Struct`.
+ 4. `computeInstantiatedLookupName` canonicalises enum template arguments as
+    `TypeCategory::UserDefined` rather than `Enum`, so conversion-operator
+    stubs with enum template args register under an un-canonicalised name
+    (e.g. `operator value_type`). Sema can't round-trip the lookup.
+    → Worked around via a conservative
+    `LazyMemberInstantiationRegistry::markOdrUsedAllInClass(StringHandle)`
+    helper, invoked as a fallback after `structHasConversionOperatorTo`
+    finishes; it only fires for instantiated classes sema is already
+    annotating, so SFINAE-probed instantiations remain untouched.
+ 5. **Blocker** — using-decl pack expansion that imports static members from
+    a concrete base instantiation. For
+    `struct Combined : Bases... { using Bases::call...; }` with
+    `Combined<Fun<1>>`, sema resolves `c.call()` to the *pattern's*
+    `Fun::call`. The resolved FunctionDeclarationNode reports
+    `parent_struct_name().empty() == true` and `is_member_function() == false`
+    (verified via ad-hoc logging at `tryMaterializeLazyCallTarget`). No
+    existing ODR-use site knows which instantiated owner
+    (`Fun<1>` / `Fun$hash`) to mark, so skipping instantiated roots leaves
+    `Fun$hash::call` unmaterialized and a link error reaches the test.
+ 6. **Blocker** — late-materialised out-of-line member bodies (the
+    `test_late_member_body_class_template_*_ret42.cpp` and
+    `test_late_member_signature_qualified_dependent_type_ret42.cpp` cluster).
+    Once cross-instantiation substitution has run for
+    `Holder$hash::run`, the body references a sibling
+    `Box$hash::get` that still carries no ODR-use mark. The reference site
+    that chooses `Box$hash::get` is currently inside the instantiation-time
+    substitution walk (not a sema annotation pass), so the ODR-use signal
+    never reaches the drain.
+
+With fixes (1)–(4) in place and the pass-1 skip prototype active, gaps (5)
+and (6) each block exactly one (or a small cluster of) tests. Because
+item #4's whole purpose is to flip consumption rules for every
+instantiated root, partial coverage is unsafe: either every instantiated
+root honours the ODR-use protocol or none of them can be skipped.
+
+Decision: revert the pass-1 skip to preserve the 2204 / 149 baseline and
+land fixes (1)–(4) + `markOdrUsedAllInClass` as independent improvements.
+They are all correct-on-their-own-merit ODR-use closures and will be
+required again when the final split lands. The pass-1 loop now carries a
+comment pointing at blockers (5) and (6) so the next attempt has a
+concrete starting list.
+
+Lessons:
+
+ - Wholesale-draining instantiated roots was masking at least six distinct
+   ODR-use gaps. An audit-first approach (prototype the skip, observe what
+   breaks, close the gap) is the correct methodology; blanket skipping is
+   not.
+ - Sema annotation sites must be the single source of truth for ODR-use.
+   Anything that resolves a call, conversion, or member access against a
+   concrete instantiation must translate the resolved target into a
+   `(struct, member, is_const)` triple and call `markOdrUsed`. Helpers
+   that can't recover the struct/member (see blockers 5 and 6) indicate a
+   sema-side resolution bug, not a drain-side bug.
+ - `computeInstantiatedLookupName` has a latent enum-template-argument
+   canonicalisation bug. The `markOdrUsedAllInClass` helper is a pragmatic
+   gate, but the lookup name should be fixed at the registration site in
+   `Parser_Templates_Inst_ClassTemplate.cpp:201`.
+ - CV-aware conversion-operator selection is duplicated between sema's
+   `structHasConversionOperatorTo` and codegen's `findConversionOperator`.
+   The two must stay aligned (or share a helper) for ODR-use marking to
+   match codegen's actual selection.
+
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ### 5. Push ODR-use marking fully into sema; reduce codegen to a pure consumer   [DONE]
@@ -239,21 +324,20 @@ separate hand-rolled walkers. The refactor was validated against the full Window
 
 ## Lower-impact, still useful
 
-### 10. Promote needsInstantiation-style queries into typed predicates   [TODO]
+### 10. Promote needsInstantiation-style queries into typed predicates   [DONE]
 
 Free-standing needsInstantiation, needsInstantiationAny, getLazyMemberInfo, getLazyMemberInfoAny are strictly-similar string-handle-keyed queries. They'd read better as methods
 on a typed LazyMemberKey value that captures struct+member+const-ness. The const-ness std::optional<bool> juggling at every call site is a minor papercut that adds up.
 
-Current state (TODO): All four free-standing overloads plus the new markOdrUsed / isOdrUsed family still use the raw StringHandle pair + bool pattern. The makeKey static
-helper in LazyMemberInstantiationRegistry is an internal step toward a typed key, but it's private and not exposed to callers.
+Current state (DONE): `TemplateRegistry_Lazy.h` now exposes a typed `LazyMemberKey` value with exact/any-const helpers, and the registry implements typed overloads for
+`needsInstantiation`, `getLazyMemberInfo`, `markInstantiated`, `markOdrUsed`, and `isOdrUsed`. The old raw `StringHandle + bool` call shape still exists only as thin wrappers
+around the typed API so call sites can migrate incrementally.
 
-Important lesson from the 2026-04-21 in-progress refactor attempt: the mechanical part is easy; the hidden risk is StringBuilder lifetime discipline inside the "any-const"
-lookup path. A representative regression (`flashcpp_crash_20260421_174831.log`) shows `StringBuilder::~StringBuilder` asserting from
-`LazyMemberInstantiationRegistry::needsInstantiation` (`src/TemplateRegistry_Lazy.h:102`) during `Parser::parse_member_postfix`, i.e. a typed-key wrapper reused the old
-`preview()`-based key construction without preserving the required `commit()/reset()` discipline. Future work on item #10 should either:
-
- - eliminate the `StringBuilder::preview()`-driven two-variant lookup pattern entirely, or
- - centralize it behind a helper that cannot return with a dirty builder state.
+Important lesson from the 2026-04-21 implementation: the mechanical API refactor was easy; the hidden risk was `StringBuilder` lifetime discipline inside the "any-const"
+lookup path. A representative regression (`flashcpp_crash_20260421_174831.log`) showed `StringBuilder::~StringBuilder` asserting from
+`LazyMemberInstantiationRegistry::needsInstantiation` during `Parser::parse_member_postfix`, i.e. a typed-key wrapper reused the old `preview()`-based two-variant lookup
+without preserving the required `commit()/reset()` discipline. The shipped fix was to eliminate that pattern in the typed any-const helpers and build committed non-const /
+const keys directly.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -284,7 +368,7 @@ exists.
 | 7 | Stable ASTNodeId                           | TODO     |
 | 8 | registerLateMaterializedTopLevelNode dedup | DONE     |
 | 9 | Shared forEachReachableStructDecl walker   | DONE     |
-|10 | Typed LazyMemberKey predicates             | TODO     |
+|10 | Typed LazyMemberKey predicates             | DONE     |
 |11 | Explicit instantiation lifecycle hooks     | TODO     |
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -302,20 +386,20 @@ hasLaterUsableTemplateDefinitionWithMatchingShape check) paper over real gaps in
 
 Item #6 (invariant probes) is now in place: future architectural tightening can keep its guardrails checked in instead of re-inventing one-off audit files for each slice.
 
-Items #10 and #11 are refactoring quality-of-life items that reduce future maintenance risk with low implementation cost.
+Item #11 remains a refactoring quality-of-life item that could reduce future maintenance risk, but item #10 is now done and already removed a fair amount of duplicated
+const-ness plumbing from the lazy-member registry API.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## Recommended next steps
 
-1. Complete item #4 (separate instantiated-struct list, consumption side): make codegen's top-level node iterator apply different emission rules for instantiated nodes
-   (emit only odr_used members) vs. user-written nodes (emit every member). This is the last structural piece the original Slice G recommendation called for.
+1. Items #2 and #3 are now the highest-value remaining architectural follow-ups. They are the Phase 6 prerequisites for principled SFINAE handling, and the existing
+   KNOWN_ISSUES workarounds are stable enough that this can be tackled deliberately instead of as an emergency cleanup.
 
-2. Item #10 (typed LazyMemberKey predicates) is now the best small cleanup. The registry API still exposes a pile of near-duplicate `StringHandle + bool` queries, and item #6
-   means future refactors can guard the migration with checked-in probes instead of temporary audits.
+2. Item #4 is still the main unfinished Slice G structural split, but it should only be retried behind a focused ODR-use coverage audit. The earlier regressions showed that the
+   data model is close, not that blind top-level filtering is safe.
 
-3. Items #2 and #3 are Phase 6 prerequisites for principled SFINAE handling. They are medium-sized architectural changes. The existing KNOWN_ISSUES workarounds are stable
-   enough to defer until Phase 6 begins.
+3. Item #7 (stable ASTNodeId) is still optional for correctness, but it becomes more attractive if the project grows more long-lived dedup/tracking sets beyond the current
+   raw_pointer()-keyed helpers.
 
-4. Item #7 (stable ASTNodeId) is still optional for correctness, but it becomes much more attractive if item #4 proceeds. Once there are multiple long-lived dedup/tracking sets,
-   raw_pointer()-identity becomes more of a liability.
+4. Item #11 (explicit instantiation lifecycle hooks) remains a smaller cleanup that can wait until there is a clearer consumer for those phases.

@@ -2241,6 +2241,17 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 													 " in assignment", rhs_id);
 					}
 				}
+				// Phase 5 Slice G item #4: mark resolved operator overloads
+				// as ODR-used so instantiated-struct member operator bodies
+				// are materialized by the end-of-sema drain's ODR-use pass.
+				// Free-function operator overloads are top-level (not lazy
+				// members of an instantiation) so they need no marking here.
+				if (e.has_resolved_member_operator_overload()) {
+					if (const StructMemberFunction* member_overload =
+							e.resolved_member_operator_overload()) {
+						markResolvedOperatorOverloadOdrUsed(*member_overload);
+					}
+				}
 				normalizeExpression(e.get_lhs(), ctx);
 				normalizeExpression(e.get_rhs(), ctx);
 			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
@@ -3811,6 +3822,14 @@ static bool structHasConversionOperatorTo(
 		return false;
 
 	// Scan direct member functions for an exact conversion target match.
+	// Iterate all matching overloads so that both const and non-const
+	// conversion operators with the same target type are marked ODR-used.
+	// Codegen's `findConversionOperator` honors the cv-aware lookup (const
+	// source may call const op; non-const source prefers non-const op but
+	// falls back to const), so we cannot predict here which overload codegen
+	// will select without replicating that logic. Marking both is safe —
+	// the registry dedups and non-existent overloads are no-ops.
+	bool found = false;
 	for (const auto& mf : struct_info->member_functions) {
 		if (mf.conversion_target_type != canonical_target_type)
 			continue;
@@ -3829,6 +3848,15 @@ static bool structHasConversionOperatorTo(
 			// signal persists even after the lazy entry is erased.
 			LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
 				struct_info->name, mf.getName(), /*is_const=*/mf.is_const());
+			// Phase 5 Slice G item #4: conversion-operator stubs may be
+			// registered under an un-canonicalized name (e.g.
+			// "operator value_type" when computeInstantiatedLookupName
+			// fails to resolve an enum template argument). Mark all lazy
+			// members of this instantiated class as ODR-used to ensure
+			// the matching stub is drained regardless of its stored name.
+			// This only fires for classes the user's code actually reaches.
+			LazyMemberInstantiationRegistry::getInstance().markOdrUsedAllInClass(
+				struct_info->name);
 			const bool needs_materialization =
 				mf.function_decl.is<FunctionDeclarationNode>() &&
 				!mf.function_decl.as<FunctionDeclarationNode>().get_definition().has_value();
@@ -3837,8 +3865,10 @@ static bool structHasConversionOperatorTo(
 					struct_info->name, mf.getName(), /*is_const_member=*/mf.is_const());
 			}
 		}
-		return true;
+		found = true;
 	}
+	if (found)
+		return true;
 
 	// Recurse into non-deferred base classes (inherited conversion operators).
 	for (const auto& base : struct_info->base_classes) {
@@ -3903,8 +3933,12 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		return false;
 	if (is_non_primitive_target(to_desc.category()))
 		return false;
-	if (to_desc.category() == TypeCategory::Enum)
-		return false; // no implicit conversion TO enum
+	// Primitive->enum is forbidden (C++11+), but struct->enum IS allowed
+	// via a user-defined conversion operator (e.g. `operator Color() const`).
+	// Fall through to the UserDefined rank check below in that case.
+	if (to_desc.category() == TypeCategory::Enum &&
+		from_desc.category() != TypeCategory::Struct)
+		return false; // no implicit conversion TO enum from non-struct
 	// C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
 	// Silently reject here; callers that need a diagnostic (variable init, return, assignment)
 	// check isScopedEnum() and throw CompileError themselves.
@@ -5467,6 +5501,22 @@ const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMat
 	return &instantiated->as<ConstructorDeclarationNode>();
 }
 
+void SemanticAnalysis::markResolvedOperatorOverloadOdrUsed(
+	const StructMemberFunction& member_overload) {
+	if (!member_overload.function_decl.is<FunctionDeclarationNode>())
+		return;
+	const auto& fdecl = member_overload.function_decl.as<FunctionDeclarationNode>();
+	const std::string_view parent_sv = fdecl.parent_struct_name();
+	if (parent_sv.empty())
+		return;
+	StringHandle struct_name = StringTable::getOrInternStringHandle(parent_sv);
+	StringHandle member_name = member_overload.getName();
+	if (!struct_name.isValid() || !member_name.isValid())
+		return;
+	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
+		struct_name, member_name, member_overload.is_const());
+}
+
 std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	StringHandle struct_name,
 	StringHandle member_name,
@@ -5573,25 +5623,34 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 		}
 	};
 
-	// Loop because materializing one body may trigger further lazy
-	// registrations (e.g., a template instantiation used inside the body we
-	// just substituted). Keep walking until no more work happens.
+	// Phase 5 Slice G item #4: intended to be a data-model split where pass 1
+	// only walks user-written top-level nodes and instantiated roots are
+	// handled entirely by the ODR-use fixpoint pass below.
+	//
+	// Audit (2026-04-21): the split is architecturally correct but blocked on
+	// residual ODR-use coverage. The following code paths do not currently
+	// reach a `markOdrUsed(...)` site for members of instantiated roots:
+	//
+	//   * using-decl pack expansion that imports static members from a
+	//     concrete base instantiation (`tests/test_using_decl_pack_expansion_ret1.cpp`).
+	//     The receiver-based call resolves to the *pattern's* `Fun::call`
+	//     (with empty `parent_struct_name()`), so `tryMaterializeLazyCallTarget`
+	//     never identifies the instantiated owner.
+	//   * Late-bound out-of-line member bodies that reference sibling lazy
+	//     stubs only once cross-instantiation substitution has run
+	//     (see the `test_late_member_body_class_template_*_ret42.cpp` group
+	//     and `test_late_member_signature_qualified_dependent_type_ret42.cpp`).
+	//
+	// Until those resolution sites carry a proper ODR-use signal, pass 1 must
+	// drain every instantiated root that's reachable from `get_nodes()`.
+	// Reverting the split here preserves the documented 2204 / 149 baseline.
+	// See `docs/2026-04-21-phase5-slice-g-analysis.md` for the audit trail.
 	//
 	// We intentionally only walk structs reachable from `parser_.get_nodes()`
 	// in this first pass: they are exactly the structs whose members the
-	// codegen struct-visitor iterates. Extending this walk to the set of *all*
-	// instantiated class templates (e.g., via a side list populated by
-	// `try_instantiate_class_template`) would over-materialize members of
-	// structs that only ever appear as template arguments in SFINAE-probed
-	// positions — their member bodies may be ill-formed by design (see
-	// `tests/test_namespaced_pair_swap_sfinae_ret0.cpp` where
-	// `pair<const int, int>::swap` references a deleted overload and is only
-	// valid to instantiate lazily via ODR-use, which never happens).
-	//
-	// Non-reachable instantiations whose members *are* ODR-used are caught by
-	// the second pass below (`snapshotOdrUsedLazyEntries`). Slices I+J deleted
-	// the codegen-side `materializeLazyMemberIfNeeded` forwarder so every
-	// lazy-member materialization now flows through this drain.
+	// codegen struct-visitor iterates. Non-reachable instantiations whose
+	// members are ODR-used are caught by the second pass below
+	// (`snapshotOdrUsedLazyEntries`).
 	while (true) {
 		size_t before = total_materialized;
 		for (const auto& top_node : parser_.get_nodes()) {

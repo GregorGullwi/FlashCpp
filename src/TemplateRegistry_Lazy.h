@@ -260,6 +260,28 @@ public:
 				member_function_name));
 	}
 
+	// Phase 5 Slice G item #4: mark every registered lazy member whose
+	// `identity.instantiated_owner_name` matches `instantiated_class_name`
+	// as ODR-used. This is a conservative escape hatch for call sites that
+	// have determined the instantiated class is ODR-reached but cannot
+	// reliably reproduce the stub's internal member-name key (notably
+	// conversion operators where `computeInstantiatedLookupName` may fail
+	// to canonicalize enum template arguments, leaving the stub registered
+	// under a template-parameter-dependent name like "operator value_type"
+	// instead of "operator Color"). See
+	// `tests/test_lazy_conv_op_enum_type_ret0.cpp` for the motivating case.
+	//
+	// Semantically this is a superset of the old pass-1 wholesale drain for
+	// the given struct only. Structs that are never ODR-reached (e.g.,
+	// SFINAE-probed instantiations) stay untouched.
+	void markOdrUsedAllInClass(StringHandle instantiated_class_name) {
+		for (const auto& [key_handle, info] : lazy_members_) {
+			if (info.identity.instantiated_owner_name == instantiated_class_name) {
+				odr_used_.insert(key_handle);
+			}
+		}
+	}
+
 
 	bool isOdrUsed(const LazyMemberKey& key) const {
 		if (key.is_const_method.has_value()) {
