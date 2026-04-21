@@ -23,6 +23,29 @@ struct LazyMemberFunctionInfo {
 	bool is_final = false;					   // Final flag
 };
 
+struct LazyMemberKey {
+	StringHandle instantiated_class_name;
+	StringHandle member_function_name;
+	std::optional<bool> is_const_method;
+
+	static LazyMemberKey exact(
+		StringHandle instantiated_class_name,
+		StringHandle member_function_name,
+		bool is_const_method) {
+		return {instantiated_class_name, member_function_name, is_const_method};
+	}
+
+	static LazyMemberKey anyConst(
+		StringHandle instantiated_class_name,
+		StringHandle member_function_name) {
+		return {instantiated_class_name, member_function_name, std::nullopt};
+	}
+
+	bool hasExactConstness() const {
+		return is_const_method.has_value();
+	}
+};
+
 // Registry for tracking uninstantiated template member functions
 // Allows lazy (on-demand) instantiation for better compilation performance
 class LazyMemberInstantiationRegistry {
@@ -33,8 +56,7 @@ public:
 	}
 
 	// Append the shared "instantiated_class_name::member_function_name" prefix.
-	// Callers that also need the const-qualified variant can inspect preview()
-	// before appending "$const".
+	// Prefer makeKey(...) for finished lookup keys.
 	static StringBuilder& appendMemberKeyPrefix(StringBuilder& key_builder, StringHandle class_name, StringHandle member_name) {
 		class_name = normalizeClassName(class_name);
 		return key_builder.append(class_name).append("::").append(member_name);
@@ -60,50 +82,73 @@ public:
 	}
 
 	// Check if a member function needs lazy instantiation
+	bool needsInstantiation(const LazyMemberKey& key) const {
+		if (key.is_const_method.has_value()) {
+			auto handle = makeKey(
+				key.instantiated_class_name,
+				key.member_function_name,
+				*key.is_const_method);
+			return lazy_members_.find(handle) != lazy_members_.end();
+		}
+
+		auto non_const_handle = makeKey(
+			key.instantiated_class_name,
+			key.member_function_name,
+			false);
+		if (lazy_members_.find(non_const_handle) != lazy_members_.end()) {
+			return true;
+		}
+
+		auto const_handle = makeKey(
+			key.instantiated_class_name,
+			key.member_function_name,
+			true);
+		return lazy_members_.find(const_handle) != lazy_members_.end();
+	}
+
 	bool needsInstantiation(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) const {
-		auto handle = makeKey(instantiated_class_name, member_function_name, is_const);
-		return lazy_members_.find(handle) != lazy_members_.end();
+		return needsInstantiation(
+			LazyMemberKey::exact(
+				instantiated_class_name,
+				member_function_name,
+				is_const));
 	}
 
 	// Check either the non-const or const variant — for call sites that don't yet know is_const.
 	bool needsInstantiationAny(StringHandle instantiated_class_name, StringHandle member_function_name) const {
-		StringBuilder key_builder;
-		appendMemberKeyPrefix(key_builder, instantiated_class_name, member_function_name);
-		auto non_const_handle = StringTable::getOrInternStringHandle(key_builder.preview());
-		if (lazy_members_.find(non_const_handle) != lazy_members_.end()) {
-			key_builder.reset();
-			return true;
-		}
-
-		key_builder.append("$const");
-		auto const_handle = StringTable::getOrInternStringHandle(key_builder);
-		return lazy_members_.find(const_handle) != lazy_members_.end();
+		return needsInstantiation(
+			LazyMemberKey::anyConst(
+				instantiated_class_name,
+				member_function_name));
 	}
 
 	// Get lazy member info for instantiation
-	std::optional<LazyMemberFunctionInfo> getLazyMemberInfo(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
-		auto handle = makeKey(instantiated_class_name, member_function_name, is_const);
-		auto it = lazy_members_.find(handle);
-		if (it != lazy_members_.end()) {
-			return it->second;
+	std::optional<LazyMemberFunctionInfo> getLazyMemberInfo(const LazyMemberKey& key) {
+		if (key.is_const_method.has_value()) {
+			auto handle = makeKey(
+				key.instantiated_class_name,
+				key.member_function_name,
+				*key.is_const_method);
+			auto it = lazy_members_.find(handle);
+			if (it != lazy_members_.end()) {
+				return it->second;
+			}
+			return std::nullopt;
 		}
-		return std::nullopt;
-	}
 
-	// Get lazy member info without knowing is_const — tries non-const first, then const.
-	// For call sites that haven't yet determined which overload they need.
-	std::optional<LazyMemberFunctionInfo> getLazyMemberInfoAny(StringHandle instantiated_class_name, StringHandle member_function_name) {
-		StringBuilder key_builder;
-		appendMemberKeyPrefix(key_builder, instantiated_class_name, member_function_name);
-		auto non_const_handle = StringTable::getOrInternStringHandle(key_builder.preview());
+		auto non_const_handle = makeKey(
+			key.instantiated_class_name,
+			key.member_function_name,
+			false);
 		auto it = lazy_members_.find(non_const_handle);
 		if (it != lazy_members_.end()) {
-			key_builder.reset();
 			return it->second;
 		}
 
-		key_builder.append("$const");
-		auto const_handle = StringTable::getOrInternStringHandle(key_builder);
+		auto const_handle = makeKey(
+			key.instantiated_class_name,
+			key.member_function_name,
+			true);
 		it = lazy_members_.find(const_handle);
 		if (it != lazy_members_.end()) {
 			return it->second;
@@ -111,10 +156,41 @@ public:
 		return std::nullopt;
 	}
 
+	std::optional<LazyMemberFunctionInfo> getLazyMemberInfo(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
+		return getLazyMemberInfo(
+			LazyMemberKey::exact(
+				instantiated_class_name,
+				member_function_name,
+				is_const));
+	}
+
+	// Get lazy member info without knowing is_const — tries non-const first, then const.
+	// For call sites that haven't yet determined which overload they need.
+	std::optional<LazyMemberFunctionInfo> getLazyMemberInfoAny(StringHandle instantiated_class_name, StringHandle member_function_name) {
+		return getLazyMemberInfo(
+			LazyMemberKey::anyConst(
+				instantiated_class_name,
+				member_function_name));
+	}
+
 	// Mark a member function as instantiated (remove from lazy registry)
-	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
-		auto handle = makeKey(instantiated_class_name, member_function_name, is_const);
+	void markInstantiated(const LazyMemberKey& key) {
+		if (!key.is_const_method.has_value()) {
+			return;
+		}
+		auto handle = makeKey(
+			key.instantiated_class_name,
+			key.member_function_name,
+			*key.is_const_method);
 		lazy_members_.erase(handle);
+	}
+
+	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
+		markInstantiated(
+			LazyMemberKey::exact(
+				instantiated_class_name,
+				member_function_name,
+				is_const));
 	}
 
 	// ------------------------------------------------------------------
@@ -146,8 +222,31 @@ public:
 	// variant. Callers that truly don't know const-ness (ctor/dtor, or
 	// early lookup before overload resolution) may use the `...Any` helpers
 	// which record/query both variants.
+	void markOdrUsed(const LazyMemberKey& key) {
+		if (key.is_const_method.has_value()) {
+			odr_used_.insert(makeKey(
+				key.instantiated_class_name,
+				key.member_function_name,
+				*key.is_const_method));
+			return;
+		}
+
+		odr_used_.insert(makeKey(
+			key.instantiated_class_name,
+			key.member_function_name,
+			false));
+		odr_used_.insert(makeKey(
+			key.instantiated_class_name,
+			key.member_function_name,
+			true));
+	}
+
 	void markOdrUsed(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
-		odr_used_.insert(makeKey(instantiated_class_name, member_function_name, is_const));
+		markOdrUsed(
+			LazyMemberKey::exact(
+				instantiated_class_name,
+				member_function_name,
+				is_const));
 	}
 
 	// Mark both const and non-const variants as ODR-used. Prefer the precise
@@ -155,30 +254,71 @@ public:
 	// const-agnostic (ctor/dtor) or when the call site has not yet
 	// determined const-ness.
 	void markOdrUsedAny(StringHandle instantiated_class_name, StringHandle member_function_name) {
-		StringBuilder key_builder;
-		appendMemberKeyPrefix(key_builder, instantiated_class_name, member_function_name);
-		odr_used_.insert(StringTable::getOrInternStringHandle(key_builder.preview()));
-		key_builder.append("$const");
-		odr_used_.insert(StringTable::getOrInternStringHandle(key_builder));
+		markOdrUsed(
+			LazyMemberKey::anyConst(
+				instantiated_class_name,
+				member_function_name));
+	}
+
+	// Phase 5 Slice G item #4: mark every registered lazy member whose
+	// `identity.instantiated_owner_name` matches `instantiated_class_name`
+	// as ODR-used. This is a conservative escape hatch for call sites that
+	// have determined the instantiated class is ODR-reached but cannot
+	// reliably reproduce the stub's internal member-name key (notably
+	// conversion operators where `computeInstantiatedLookupName` may fail
+	// to canonicalize enum template arguments, leaving the stub registered
+	// under a template-parameter-dependent name like "operator value_type"
+	// instead of "operator Color"). See
+	// `tests/test_lazy_conv_op_enum_type_ret0.cpp` for the motivating case.
+	//
+	// Semantically this is a superset of the old pass-1 wholesale drain for
+	// the given struct only. Structs that are never ODR-reached (e.g.,
+	// SFINAE-probed instantiations) stay untouched.
+	void markOdrUsedAllInClass(StringHandle instantiated_class_name) {
+		for (const auto& [key_handle, info] : lazy_members_) {
+			if (info.identity.instantiated_owner_name == instantiated_class_name) {
+				odr_used_.insert(key_handle);
+			}
+		}
 	}
 
 
-	bool isOdrUsed(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) const {
-		return odr_used_.find(makeKey(instantiated_class_name, member_function_name, is_const)) != odr_used_.end();
-	}
+	bool isOdrUsed(const LazyMemberKey& key) const {
+		if (key.is_const_method.has_value()) {
+			return odr_used_.find(makeKey(
+				key.instantiated_class_name,
+				key.member_function_name,
+				*key.is_const_method)) != odr_used_.end();
+		}
 
-	bool isOdrUsedAny(StringHandle instantiated_class_name, StringHandle member_function_name) const {
-		StringBuilder key_builder;
-		appendMemberKeyPrefix(key_builder, instantiated_class_name, member_function_name);
-		auto non_const_handle = StringTable::getOrInternStringHandle(key_builder.preview());
+		auto non_const_handle = makeKey(
+			key.instantiated_class_name,
+			key.member_function_name,
+			false);
 		if (odr_used_.find(non_const_handle) != odr_used_.end()) {
-			key_builder.reset();
 			return true;
 		}
 
-		key_builder.append("$const");
-		auto const_handle = StringTable::getOrInternStringHandle(key_builder);
+		auto const_handle = makeKey(
+			key.instantiated_class_name,
+			key.member_function_name,
+			true);
 		return odr_used_.find(const_handle) != odr_used_.end();
+	}
+
+	bool isOdrUsed(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) const {
+		return isOdrUsed(
+			LazyMemberKey::exact(
+				instantiated_class_name,
+				member_function_name,
+				is_const));
+	}
+
+	bool isOdrUsedAny(StringHandle instantiated_class_name, StringHandle member_function_name) const {
+		return isOdrUsed(
+			LazyMemberKey::anyConst(
+				instantiated_class_name,
+				member_function_name));
 	}
 
 	// Clear all lazy members (for testing)

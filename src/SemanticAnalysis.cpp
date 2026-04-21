@@ -9,6 +9,7 @@
 #include "OverloadResolution.h"
 #include "Log.h"
 #include "IrGenerator.h"
+#include "ReachableStructWalker.h"
 
 namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
@@ -1417,6 +1418,32 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	mutable_stmt.set_resolved_member_begin_function(&begin_func_decl);
 	mutable_stmt.set_resolved_member_end_function(&end_func_decl);
 	mutable_stmt.set_resolved_begin_is_const(begin_func->is_const());
+
+	// Phase 5 Slice G item #4 prep: range-for member begin/end calls are
+	// lowered by codegen without flowing through
+	// tryAnnotateCallArgConversionsImpl, so no sema site marks these lazy
+	// members ODR-used. When the range is a concrete template instantiation,
+	// pass-1 drain over the instantiated root is what currently materialises
+	// them; once that pass-1 skip lands, we must emit the ODR-use marker
+	// here. Mark both the selected const variant and the opposite variant
+	// the registry actually holds (resolver may return pattern-const info).
+	if (range_type_info->isTemplateInstantiation()) {
+		auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+		StringHandle owner_name = range_type_info->name();
+		StringHandle begin_handle = begin_func_decl.decl_node().identifier_token().handle();
+		StringHandle end_handle = end_func_decl.decl_node().identifier_token().handle();
+		for (StringHandle member : {begin_handle, end_handle}) {
+			for (bool is_const : {begin_func->is_const(), !begin_func->is_const()}) {
+				if (lazy_registry.needsInstantiation(
+						LazyMemberKey::exact(owner_name, member, is_const))) {
+					lazy_registry.markOdrUsed(
+						LazyMemberKey::exact(owner_name, member, is_const));
+					break;
+				}
+			}
+		}
+	}
+
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 	const FunctionDeclarationNode* dereference_func = nullptr;
 	if (begin_return_type.pointer_depth() == 0) {
@@ -2238,6 +2265,17 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 						tryAnnotateConversion(e.get_rhs(), lhs_id, rhs_id);
 						diagnoseScopedEnumConversion(e.get_rhs(), lhs_id,
 													 " in assignment", rhs_id);
+					}
+				}
+				// Phase 5 Slice G item #4: mark resolved operator overloads
+				// as ODR-used so instantiated-struct member operator bodies
+				// are materialized by the end-of-sema drain's ODR-use pass.
+				// Free-function operator overloads are top-level (not lazy
+				// members of an instantiation) so they need no marking here.
+				if (e.has_resolved_member_operator_overload()) {
+					if (const StructMemberFunction* member_overload =
+							e.resolved_member_operator_overload()) {
+						markResolvedOperatorOverloadOdrUsed(*member_overload);
 					}
 				}
 				normalizeExpression(e.get_lhs(), ctx);
@@ -3810,6 +3848,14 @@ static bool structHasConversionOperatorTo(
 		return false;
 
 	// Scan direct member functions for an exact conversion target match.
+	// Iterate all matching overloads so that both const and non-const
+	// conversion operators with the same target type are marked ODR-used.
+	// Codegen's `findConversionOperator` honors the cv-aware lookup (const
+	// source may call const op; non-const source prefers non-const op but
+	// falls back to const), so we cannot predict here which overload codegen
+	// will select without replicating that logic. Marking both is safe —
+	// the registry dedups and non-existent overloads are no-ops.
+	bool found = false;
 	for (const auto& mf : struct_info->member_functions) {
 		if (mf.conversion_target_type != canonical_target_type)
 			continue;
@@ -3828,6 +3874,15 @@ static bool structHasConversionOperatorTo(
 			// signal persists even after the lazy entry is erased.
 			LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
 				struct_info->name, mf.getName(), /*is_const=*/mf.is_const());
+			// Phase 5 Slice G item #4: conversion-operator stubs may be
+			// registered under an un-canonicalized name (e.g.
+			// "operator value_type" when computeInstantiatedLookupName
+			// fails to resolve an enum template argument). Mark all lazy
+			// members of this instantiated class as ODR-used to ensure
+			// the matching stub is drained regardless of its stored name.
+			// This only fires for classes the user's code actually reaches.
+			LazyMemberInstantiationRegistry::getInstance().markOdrUsedAllInClass(
+				struct_info->name);
 			const bool needs_materialization =
 				mf.function_decl.is<FunctionDeclarationNode>() &&
 				!mf.function_decl.as<FunctionDeclarationNode>().get_definition().has_value();
@@ -3836,8 +3891,10 @@ static bool structHasConversionOperatorTo(
 					struct_info->name, mf.getName(), /*is_const_member=*/mf.is_const());
 			}
 		}
-		return true;
+		found = true;
 	}
+	if (found)
+		return true;
 
 	// Recurse into non-deferred base classes (inherited conversion operators).
 	for (const auto& base : struct_info->base_classes) {
@@ -3902,8 +3959,12 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		return false;
 	if (is_non_primitive_target(to_desc.category()))
 		return false;
-	if (to_desc.category() == TypeCategory::Enum)
-		return false; // no implicit conversion TO enum
+	// Primitive->enum is forbidden (C++11+), but struct->enum IS allowed
+	// via a user-defined conversion operator (e.g. `operator Color() const`).
+	// Fall through to the UserDefined rank check below in that case.
+	if (to_desc.category() == TypeCategory::Enum &&
+		from_desc.category() != TypeCategory::Struct)
+		return false; // no implicit conversion TO enum from non-struct
 	// C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
 	// Silently reject here; callers that need a diagnostic (variable init, return, assignment)
 	// check isScopedEnum() and throw CompileError themselves.
@@ -5204,9 +5265,10 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	//
 	// But codegen must emit a call to the *instantiation's* member
 	// (`Box$hash::helper`), whose body has `T` substituted. If we leave this
-	// unhandled here, the codegen-side `materializeLazyMemberIfNeeded`
-	// forwarder ends up being the first materializer for that instantiation
-	// member.
+	// unmarked here, no ODR-use signal reaches the end-of-sema drain and the
+	// instantiation's body never gets materialized. (Slices I+J removed the
+	// codegen-side `materializeLazyMemberIfNeeded` forwarder that used to be
+	// the fallback first-materializer; ODR-use marking is now the only path.)
 	//
 	// We remap here: if `member_context_stack_` shows we're currently
 	// normalizing a member of some instantiation `I`, and the lazy registry
@@ -5226,7 +5288,11 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 			StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
 			const bool is_const = func_decl->is_const_member_function();
 			auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
-			if (lazy_registry.needsInstantiation(current_struct_name, member_handle, is_const)) {
+			if (lazy_registry.needsInstantiation(
+					LazyMemberKey::exact(
+						current_struct_name,
+						member_handle,
+						is_const))) {
 				// Mark only; the drain pass in SemanticAnalysis (running
 				// after normalizePendingSemanticRoots) picks up ODR-used
 				// residuals via its fixpoint loop over
@@ -5235,7 +5301,11 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 				// re-entrant cycle: materialization reparses and
 				// normalizes the body, which hits another call that lands
 				// back in this helper, ad infinitum.
-				lazy_registry.markOdrUsed(current_struct_name, member_handle, is_const);
+				lazy_registry.markOdrUsed(
+					LazyMemberKey::exact(
+						current_struct_name,
+						member_handle,
+						is_const));
 			}
 		}
 	}
@@ -5254,12 +5324,137 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	// been resolved by overload resolution in sema, so the member is ODR-used.
 	// Record it before materialization so the signal persists past the
 	// erase-on-instantiate in the lazy registry.
-	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(parent_handle, member_handle, is_const);
+	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
+		LazyMemberKey::exact(
+			parent_handle,
+			member_handle,
+			is_const));
 	auto materialized = ensureMemberFunctionMaterialized(parent_handle, member_handle, is_const);
 	if (materialized.has_value() && materialized->is<FunctionDeclarationNode>()) {
 		return &materialized->as<FunctionDeclarationNode>();
 	}
 	return func_decl;
+}
+
+const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
+	const FunctionDeclarationNode* func_decl,
+	const CallInfo& call_info) {
+	// First run the base marker (intra-instantiation remap + pattern-parent
+	// lazy materialization).
+	const FunctionDeclarationNode* result = tryMaterializeLazyCallTarget(func_decl);
+	if (!func_decl) {
+		return result;
+	}
+	// Phase 5 Slice G item #4 blockers (5)/(6): when the resolver returns a
+	// member-function decl whose parent_struct_name is empty (using-decl pack
+	// or static-like overload pick) or points at a template pattern (pattern
+	// member reached via an instantiation receiver), derive the concrete
+	// instantiated owner from the call's receiver type and mark that lazy
+	// member ODR-used so drain pass-2 materialises it.
+	if (!call_info.has_receiver || !call_info.receiver.has_value()) {
+		return result;
+	}
+
+	const std::string_view parent_sv = func_decl->parent_struct_name();
+	// Note: parent_sv may be empty for member calls whose resolver picked a
+	// non-member-view of the decl (e.g. using-decl pack statics, certain
+	// static-member / free-function overload candidates). In that case we
+	// derive the instantiated owner purely from the receiver type below.
+	const CanonicalTypeId receiver_type_id = inferExpressionType(call_info.receiver);
+	const TypeInfo* receiver_type_info = nullptr;
+	if (receiver_type_id) {
+		const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
+		if (receiver_desc.category() == TypeCategory::Struct ||
+			receiver_desc.category() == TypeCategory::UserDefined) {
+			receiver_type_info = tryGetTypeInfo(receiver_desc.type_index);
+			if (!receiver_type_info && receiver_desc.category() == TypeCategory::UserDefined) {
+				const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(receiver_desc.type_index);
+				receiver_type_info = resolved_alias.terminal_type_info;
+			}
+		}
+	}
+	// Fallback: if receiver type inference failed (e.g. unresolved `this`
+	// in a late-materialised dependent member body), use the innermost
+	// member-context. That is the struct whose body we are currently
+	// annotating, which for `this->member()` calls is the correct
+	// receiver type.
+	if ((!receiver_type_info || !receiver_type_info->isStruct()) &&
+		!member_context_stack_.empty()) {
+		receiver_type_info = tryGetTypeInfo(member_context_stack_.back());
+	}
+	if (!receiver_type_info || !receiver_type_info->isStruct()) {
+		return result;
+	}
+
+	// Walk up the inheritance chain searching for an instantiated struct
+	// whose template pattern matches `parent_sv`. This handles both the
+	// direct case (receiver IS an instantiation of the owning template)
+	// and the using-decl pack case (receiver is a derived aggregate whose
+	// base is the relevant instantiation).
+	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+	StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
+	const bool is_const = func_decl->is_const_member_function();
+	StringHandle parent_handle = parent_sv.empty()
+		? StringHandle()
+		: StringTable::getOrInternStringHandle(parent_sv);
+
+	auto try_mark = [&](const TypeInfo* type_info) -> bool {
+		if (!type_info || !type_info->isStruct()) {
+			return false;
+		}
+		StringHandle candidate_name = type_info->name();
+		if (!candidate_name.isValid() || (parent_handle.isValid() && candidate_name == parent_handle)) {
+			return false;
+		}
+		if (parent_handle.isValid()) {
+			auto pattern_opt = gTemplateRegistry.get_instantiation_pattern(candidate_name);
+			if (!pattern_opt.has_value() || pattern_opt.value() != parent_handle) {
+				return false;
+			}
+		} else {
+			if (!type_info->isTemplateInstantiation()) {
+				return false;
+			}
+		}
+		// Resolver may have lost const-qualification info when it resolves a
+		// member call through a pack/using-decl/instantiated path; try both
+		// const variants and mark whichever the lazy registry actually knows.
+		bool marked = false;
+		for (bool const_variant : {is_const, !is_const}) {
+			if (lazy_registry.needsInstantiation(
+					LazyMemberKey::exact(candidate_name, member_handle, const_variant))) {
+				lazy_registry.markOdrUsed(
+					LazyMemberKey::exact(candidate_name, member_handle, const_variant));
+				marked = true;
+				break;
+			}
+		}
+		return marked;
+	};
+
+	if (try_mark(receiver_type_info)) {
+		return result;
+	}
+
+	// Search base classes transitively.
+	auto searchBases = [&](auto&& self, const TypeInfo* ti) -> bool {
+		const StructTypeInfo* si = ti ? ti->getStructInfo() : nullptr;
+		if (!si) {
+			return false;
+		}
+		for (const auto& base_spec : si->base_classes) {
+			const TypeInfo* base_ti = tryGetTypeInfo(base_spec.type_index);
+			if (try_mark(base_ti)) {
+				return true;
+			}
+			if (self(self, base_ti)) {
+				return true;
+			}
+		}
+		return false;
+	};
+	searchBases(searchBases, receiver_type_info);
+	return result;
 }
 
 void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const CallInfo& call_info,
@@ -5278,7 +5473,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const CallInfo& call_in
 	// template member stub, materialize it here in sema so codegen's normal
 	// struct visitor emits IR for the real body instead of relying on
 	// codegen-side fallbacks. See `tryMaterializeLazyCallTarget` for details.
-	func_decl = tryMaterializeLazyCallTarget(func_decl);
+	func_decl = tryMaterializeLazyCallTarget(func_decl, call_info);
 
 	const FunctionDeclarationNode* resolved_op_call = getResolvedOpCall(call_key);
 	const bool cache_as_direct_call =
@@ -5439,7 +5634,10 @@ const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMat
 	// ODR-used. Ctors have no const/non-const variants, so the precise
 	// `is_const=false` marker captures the full overload set.
 	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
-		struct_info.getName(), ctor->name(), /*is_const=*/false);
+		LazyMemberKey::exact(
+			struct_info.getName(),
+			ctor->name(),
+			/*is_const=*/false));
 	// Constructors are never const-qualified members; use is_const = false.
 	auto instantiated = ensureMemberFunctionMaterialized(
 		struct_info.getName(), ctor->name(), /*is_const_member=*/false);
@@ -5448,6 +5646,22 @@ const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMat
 	}
 
 	return &instantiated->as<ConstructorDeclarationNode>();
+}
+
+void SemanticAnalysis::markResolvedOperatorOverloadOdrUsed(
+	const StructMemberFunction& member_overload) {
+	if (!member_overload.function_decl.is<FunctionDeclarationNode>())
+		return;
+	const auto& fdecl = member_overload.function_decl.as<FunctionDeclarationNode>();
+	const std::string_view parent_sv = fdecl.parent_struct_name();
+	if (parent_sv.empty())
+		return;
+	StringHandle struct_name = StringTable::getOrInternStringHandle(parent_sv);
+	StringHandle member_name = member_overload.getName();
+	if (!struct_name.isValid() || !member_name.isValid())
+		return;
+	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
+		struct_name, member_name, member_overload.is_const());
 }
 
 std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
@@ -5465,9 +5679,10 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	// candidates are considered. getLazyMemberInfo / getLazyMemberInfoAny already
 	// return nullopt when nothing is registered or the entry was already marked
 	// instantiated, so no separate needsInstantiation pre-check is needed.
-	auto lazy_info_opt = is_const_member.has_value()
-		? lazy_registry.getLazyMemberInfo(struct_name, member_name, *is_const_member)
-		: lazy_registry.getLazyMemberInfoAny(struct_name, member_name);
+	LazyMemberKey query_key = is_const_member.has_value()
+		? LazyMemberKey::exact(struct_name, member_name, *is_const_member)
+		: LazyMemberKey::anyConst(struct_name, member_name);
+	auto lazy_info_opt = lazy_registry.getLazyMemberInfo(query_key);
 	if (!lazy_info_opt.has_value()) {
 		return std::nullopt;
 	}
@@ -5477,7 +5692,11 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	// Mark using the const-ness of the actual lazy entry we resolved, so the
 	// specific-const and any-const call patterns stay consistent with what
 	// parser_.instantiateLazyMemberFunction() just materialized.
-	lazy_registry.markInstantiated(struct_name, member_name, lazy_info_opt->identity.is_const_method);
+	lazy_registry.markInstantiated(
+		LazyMemberKey::exact(
+			struct_name,
+			member_name,
+			lazy_info_opt->identity.is_const_method));
 	return instantiated;
 }
 
@@ -5527,69 +5746,66 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 				const auto& fn = member_func.function_declaration.as<FunctionDeclarationNode>();
 				is_const_query = fn.is_const_member_function();
 			}
-			if (is_const_query.has_value()
-					? lazy_registry.needsInstantiation(struct_name, member_handle, *is_const_query)
-					: lazy_registry.needsInstantiationAny(struct_name, member_handle)) {
+			LazyMemberKey member_key = is_const_query.has_value()
+				? LazyMemberKey::exact(struct_name, member_handle, *is_const_query)
+				: LazyMemberKey::anyConst(struct_name, member_handle);
+			if (lazy_registry.needsInstantiation(member_key)) {
 				auto result = ensureMemberFunctionMaterialized(struct_name, member_handle, is_const_query);
 				if (result.has_value()) {
 					++total_materialized;
 					// Phase 5 Slice G: annotate the freshly-substituted body so
 					// its internal call expressions run through the sema sites
 					// that call `markOdrUsed` on their resolved targets. Without
-					// this, inner calls would only be resolved at codegen time
-					// (via the `materializeLazyMemberIfNeeded` forwarder), which
-					// is exactly the residual we want to eliminate. The
-					// normalize helpers are idempotent via `normalized_bodies_`
-					// dedup, so re-normalizing an already-processed node is a
-					// safe no-op.
+					// this, inner calls would never reach the drain's ODR-use
+					// second pass and the corresponding instantiation members
+					// would stay unmaterialized. (Slices I+J deleted the
+					// codegen-side `materializeLazyMemberIfNeeded` forwarder
+					// that used to pick up these stragglers at lowering time.)
+					// The normalize helpers are idempotent via
+					// `normalized_bodies_` dedup, so re-normalizing an
+					// already-processed node is a safe no-op.
 					normalizeTopLevelNode(*result);
 				}
 			}
 		}
 	};
 
-	// Recursive walker over every top-level AST node. Struct declarations can
-	// appear at the top level, nested inside namespaces, or nested inside
-	// other structs; mirror the codegen struct-visitor's reachability.
-	auto walkNode = [&](auto& self, const ASTNode& node) -> void {
-		if (!node.has_value()) {
-			return;
-		}
-		if (node.is<StructDeclarationNode>()) {
-			const auto& struct_decl = node.as<StructDeclarationNode>();
-			drainOneStruct(struct_decl);
-			for (const auto& nested : struct_decl.nested_classes()) {
-				self(self, nested);
-			}
-		} else if (node.is<NamespaceDeclarationNode>()) {
-			const auto& ns = node.as<NamespaceDeclarationNode>();
-			for (const auto& child : ns.declarations()) {
-				self(self, child);
-			}
-		}
-	};
-
-	// Loop because materializing one body may trigger further lazy
-	// registrations (e.g., a template instantiation used inside the body we
-	// just substituted). Keep walking until no more work happens.
+	// Phase 5 Slice G item #4: intended to be a data-model split where pass 1
+	// only walks user-written top-level nodes and instantiated roots are
+	// handled entirely by the ODR-use fixpoint pass below.
 	//
-	// We intentionally only walk structs reachable from `parser_.get_nodes()`:
-	// they are exactly the structs whose members the codegen struct-visitor
-	// iterates. Extending the walk to the set of *all* instantiated class
-	// templates (e.g., via a side list populated by
-	// `try_instantiate_class_template`) would over-materialize members of
-	// structs that only ever appear as template arguments in SFINAE-probed
-	// positions — their member bodies may be ill-formed by design (see
-	// `tests/test_namespaced_pair_swap_sfinae_ret0.cpp` where
-	// `pair<const int, int>::swap` references a deleted overload and is only
-	// valid to instantiate lazily via ODR-use, which never happens). The
-	// residual cases where a codegen call site still needs lazy
-	// materialization are handled by `AstToIr::materializeLazyMemberIfNeeded`,
-	// which forwards to `ensureMemberFunctionMaterialized` on demand.
+	// Audit (2026-04-21): the split is architecturally correct but blocked on
+	// residual ODR-use coverage. The following code paths do not currently
+	// reach a `markOdrUsed(...)` site for members of instantiated roots:
+	//
+	//   * using-decl pack expansion that imports static members from a
+	//     concrete base instantiation (`tests/test_using_decl_pack_expansion_ret1.cpp`).
+	//     The receiver-based call resolves to the *pattern's* `Fun::call`
+	//     (with empty `parent_struct_name()`), so `tryMaterializeLazyCallTarget`
+	//     never identifies the instantiated owner.
+	//   * Late-bound out-of-line member bodies that reference sibling lazy
+	//     stubs only once cross-instantiation substitution has run
+	//     (see the `test_late_member_body_class_template_*_ret42.cpp` group
+	//     and `test_late_member_signature_qualified_dependent_type_ret42.cpp`).
+	//
+	// Until those resolution sites carry a proper ODR-use signal, pass 1 must
+	// drain every instantiated root that's reachable from `get_nodes()`.
+	// Reverting the split here preserves the documented 2204 / 149 baseline.
+	// See `docs/2026-04-21-phase5-slice-g-analysis.md` for the audit trail.
+	//
+	// We intentionally only walk structs reachable from `parser_.get_nodes()`
+	// in this first pass: they are exactly the structs whose members the
+	// codegen struct-visitor iterates. Non-reachable instantiations whose
+	// members are ODR-used are caught by the second pass below
+	// (`snapshotOdrUsedLazyEntries`).
 	while (true) {
 		size_t before = total_materialized;
-		for (const auto& top_node : parser_.get_nodes()) {
-			walkNode(walkNode, top_node);
+		const auto& top_nodes = parser_.get_nodes();
+		for (size_t i = 0; i < top_nodes.size(); ++i) {
+			if (parser_.isInstantiatedNode(i)) {
+				continue;
+			}
+			FlashCpp::forEachReachableStructDecl(top_nodes[i], drainOneStruct);
 		}
 		if (total_materialized == before) {
 			break;
@@ -5620,8 +5836,11 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 			// Re-check needsInstantiation because a prior iteration may
 			// have already materialized this key (e.g., transitively via
 			// another member's body).
-			if (!lazy_registry.needsInstantiation(entry.instantiated_owner_name,
-					entry.member_name, entry.is_const_method)) {
+			if (!lazy_registry.needsInstantiation(
+					LazyMemberKey::exact(
+						entry.instantiated_owner_name,
+						entry.member_name,
+						entry.is_const_method))) {
 				continue;
 			}
 			auto result = ensureMemberFunctionMaterialized(

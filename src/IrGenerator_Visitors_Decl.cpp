@@ -1146,13 +1146,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		// This allows nested contexts (like local struct member functions) to work properly
 }
 
-void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
+bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 		// Struct declarations themselves don't generate IR - they just define types
 		// The type information is already registered in the global type system
 
 		// Skip pattern structs - they're templates and shouldn't generate code
 	if (gTemplateRegistry.isPatternStructName(node.name())) {
-		return;
+		return false;
 	}
 
 		// Skip structs with incomplete instantiation - they have unresolved template params
@@ -1160,19 +1160,21 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 		auto incomplete_it = getTypesByNameMap().find(node.name());
 		if (incomplete_it != getTypesByNameMap().end() && incomplete_it->second->is_incomplete_instantiation_) {
 			FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(node.name()), "' (incomplete instantiation)");
-			return;
+			return false;
 		}
 	}
+
+	StructCodegenFrame frame;
+	frame.saved_enclosing_function = current_function_name_;
+	frame.saved_enclosing_function_mangled = current_function_mangled_name_;
+	frame.saved_struct_name = current_struct_name_;
+	struct_codegen_frame_stack_.push_back(frame);
 
 	std::string_view struct_name = StringTable::getStringView(node.name());
 
 		// Generate member functions for both global and local structs
 		// Save the enclosing function context so member function visits don't clobber it
-	StringHandle saved_enclosing_function = current_function_name_;
-	StringHandle saved_struct_name = current_struct_name_;
-
-		// Check if this is a local struct (declared inside a function)
-	bool is_local_struct = current_function_name_.isValid();
+	bool is_local_struct = frame.saved_enclosing_function.isValid();
 
 		// Set struct context so member functions know which struct they belong to
 		// NOTE: We don't clear this until the next struct - the string must persist
@@ -1180,10 +1182,10 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 		// For nested classes, we need to use the fully qualified name from TypeInfo
 		// If current_struct_name_ is valid, this is a nested class, so construct fully qualified name
 	StringHandle lookup_name;
-	if (current_struct_name_.isValid()) {
+	if (frame.saved_struct_name.isValid()) {
 			// This is a nested class - construct fully qualified name like "Outer::Inner"
 		StringBuilder qualified_name_builder;
-		qualified_name_builder.append(StringTable::getStringView(current_struct_name_))
+		qualified_name_builder.append(StringTable::getStringView(frame.saved_struct_name))
 			.append("::")
 			.append(struct_name);
 		lookup_name = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
@@ -1223,13 +1225,14 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 		for (const auto& member_func : node.member_functions()) {
 			LocalStructMemberInfo info;
 			info.struct_name = current_struct_name_;
-			info.enclosing_function_name = saved_enclosing_function;
+			info.enclosing_function_name = frame.saved_enclosing_function;
 			info.member_function_node = member_func.function_declaration;
 			collected_local_struct_members_.push_back(std::move(info));
 		}
 	} else {
 		FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - visiting members immediately, count=", node.member_functions().size());
 		for (const auto& member_func : node.member_functions()) {
+			const StringHandle member_name = member_func.getName();
 				// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
 			FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - processing member function, is_constructor=", member_func.is_constructor);
 			try {
@@ -1250,6 +1253,20 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 						}
 					}
 					if (!fn_has_auto) {
+						if (!fn.get_definition().has_value() && !fn.is_implicit() &&
+							current_struct_name_.isValid() && member_name.isValid() &&
+							LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
+								LazyMemberKey::exact(
+									current_struct_name_,
+									member_name,
+									fn.is_const_member_function()))) {
+							FLASH_INVARIANT_PROBE(
+								Phase5StructDrain,
+								"codegen reached a still-lazy member function",
+								"struct=", StringTable::getStringView(current_struct_name_),
+								" member=", StringTable::getStringView(member_name),
+								" const=", fn.is_const_member_function());
+						}
 							// Phase 5 Slices F-L: sema's end-of-normalization drain
 							// (AST-walk pass + ODR-use fixpoint pass) materializes every
 							// lazy member reachable from the top-level AST plus every
@@ -1281,6 +1298,18 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 						}
 					}
 					if (!ctor_has_auto) {
+						if (!ctor.get_definition().has_value() &&
+							current_struct_name_.isValid() && member_name.isValid() &&
+							LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
+								LazyMemberKey::anyConst(
+									current_struct_name_,
+									member_name))) {
+							FLASH_INVARIANT_PROBE(
+								Phase5StructDrain,
+								"codegen reached a still-lazy constructor",
+								"struct=", StringTable::getStringView(current_struct_name_),
+								" ctor=", StringTable::getStringView(member_name));
+						}
 						// Phase 5 Slices F-L: sema's drain materializes every reachable
 						// lazy constructor before codegen. If ctor still has no body
 						// here it is either implicit (handled by visitConstructorDeclarationNode)
@@ -1333,26 +1362,15 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 		}
 	}  // End of if-else for local vs global struct
 
-		// Clear current_function_name_ before visiting nested classes
-		// Nested classes should not be treated as local structs even if we're inside
-		// a member function context (e.g., after visiting constructors which set current_function_name_)
-		// Nested classes are always at class scope, not function scope
+		// Nested classes are always at class scope, not function scope. Clear
+		// function context before the shared reachable-struct walker descends.
 	current_function_name_ = StringHandle();
 	current_function_mangled_name_ = StringHandle();
+	return true;
+}
 
-		// Save current_struct_name_ before visiting nested classes so each nested class
-		// gets the correct parent context (important when there are multiple nested classes)
-	StringHandle parent_struct_name = current_struct_name_;
-
-			// Visit nested classes recursively
-	for (const auto& nested_class_node : node.nested_classes()) {
-		if (nested_class_node.is<StructDeclarationNode>()) {
-			FLASH_LOG(Codegen, Debug, "  Visiting nested class");
-					// Restore parent context before each nested class visit
-			current_struct_name_ = parent_struct_name;
-			visitStructDeclarationNode(nested_class_node.as<StructDeclarationNode>());
-		}
-	}
+void AstToIr::endStructDeclarationCodegen(const StructDeclarationNode& node) {
+	assert(!struct_codegen_frame_stack_.empty() && "unbalanced struct codegen frame stack");
 
 			// Generate global storage for static members
 	StringHandle static_member_lookup_name = current_struct_name_.isValid()
@@ -1416,17 +1434,26 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 			}
 		}
 	}
-			// Clear current_struct_name_ for top-level structs
 
-	if (current_struct_name_.isValid()) {
-		std::string_view current_name = StringTable::getStringView(current_struct_name_);
-		if (current_name.find("::") == std::string_view::npos) {
-			current_struct_name_ = StringHandle();
-		}
+	const StructCodegenFrame frame = struct_codegen_frame_stack_.back();
+	struct_codegen_frame_stack_.pop_back();
+	current_function_name_ = frame.saved_enclosing_function;
+	current_function_mangled_name_ = frame.saved_enclosing_function_mangled;
+	current_struct_name_ = frame.saved_struct_name;
+}
+
+void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
+	if (!beginStructDeclarationCodegen(node)) {
+		return;
 	}
-		// Restore the enclosing function and struct context
-	current_function_name_ = saved_enclosing_function;
-	current_struct_name_ = saved_struct_name;
+	for (const auto& nested_class_node : node.nested_classes()) {
+		if (!nested_class_node.is<StructDeclarationNode>()) {
+			continue;
+		}
+		FLASH_LOG(Codegen, Debug, "  Visiting nested class");
+		visitStructDeclarationNode(nested_class_node.as<StructDeclarationNode>());
+	}
+	endStructDeclarationCodegen(node);
 }
 
 void AstToIr::visitEnumDeclarationNode(const EnumDeclarationNode& node) {

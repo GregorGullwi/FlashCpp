@@ -176,12 +176,22 @@ public:
 	//
 	// Returns the materialized ASTNode (FunctionDeclarationNode or
 	// ConstructorDeclarationNode) on success, or std::nullopt when no matching
-	// lazy entry needs instantiation. Codegen consumers forward here through
-	// the thin `AstToIr::materializeLazyMemberIfNeeded` bridge.
+	// lazy entry needs instantiation. After Phase 5 Slices I+J there is no
+	// codegen-side forwarder; all lazy-member materialization goes through
+	// either sema annotation sites (see `markOdrUsed`) or the end-of-sema
+	// drain in `drainLazyMemberRegistry`.
 	std::optional<ASTNode> ensureMemberFunctionMaterialized(
 		StringHandle struct_name,
 		StringHandle member_name,
 		std::optional<bool> is_const_member);
+
+	// Phase 5 Slice G item #4: mark a resolved operator overload (member
+	// function) as ODR-used in the lazy-member registry so the end-of-sema
+	// drain materializes it. Safe no-op if the overload isn't a lazy-member
+	// entry. Used from binary/unary/subscript/arrow/call operator
+	// annotation sites after the parser resolved the overload.
+	void markResolvedOperatorOverloadOdrUsed(
+		const StructMemberFunction& member_overload);
 
 	// Phase 5 Slice F: Drain any remaining lazy-member registry entries by
 	// materializing them before codegen's struct-visitor runs. This preempts
@@ -343,6 +353,17 @@ private:
 	// unchanged when the target is already materialized, not lazy, or anonymous.
 	const FunctionDeclarationNode* tryMaterializeLazyCallTarget(
 		const FunctionDeclarationNode* func_decl);
+
+	// Phase 5 Slice G item #4: receiver-aware variant. When the resolved
+	// `func_decl` carries a template-pattern parent_struct_name (e.g.
+	// `Box` rather than `Box$hash`), the receiver's TypeInfo gives us the
+	// concrete instantiation. This marks the instantiated owner's lazy
+	// member ODR-used so the drain's pass 2 can materialize it — closing
+	// the coverage gap around late-materialized cross-struct member calls
+	// inside substituted instantiation bodies.
+	const FunctionDeclarationNode* tryMaterializeLazyCallTarget(
+		const FunctionDeclarationNode* func_decl,
+		const struct CallInfo& call_info);
 
 	// Annotate InitializerListNode elements used as constructor arguments
 	// with their parameter-type conversions (for direct-init syntax like `Type obj(args...)`).
