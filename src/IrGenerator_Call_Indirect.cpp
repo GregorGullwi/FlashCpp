@@ -1082,38 +1082,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				searchBaseClasses(searchBaseClasses, struct_info);
 			}
 
-			auto instantiateLazySelectedMember = [&](StringHandle owner_name, StringHandle member_name, bool is_const_member) {
-				if (!type_info->isTemplateInstantiation()) {
-					return;
-				}
-				auto instantiated_func = materializeLazyMemberIfNeeded(owner_name, member_name, is_const_member);
-				if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-					materialized_member_func_decl = &instantiated_func->as<FunctionDeclarationNode>();
-					queueDeferredMemberFunctionFromNode(
-						owner_name,
-						*instantiated_func,
-						StringTable::getStringView(owner_name));
-				}
-			};
-
-			if (!func_decl.get_definition().has_value()) {
-				instantiateLazySelectedMember(
-					type_info->name(),
-					func_decl_node.identifier_token().handle(),
-					func_decl.is_const_member_function());
-			}
-
-			if (parser_ &&
-				called_member_func &&
-				called_member_func->function_decl.is<FunctionDeclarationNode>()) {
-				const auto& selected_member_func = called_member_func->function_decl.as<FunctionDeclarationNode>();
-				if (!selected_member_func.get_definition().has_value()) {
-					instantiateLazySelectedMember(
-						type_info->name(),
-						called_member_func->getName(),
-					called_member_func->is_const());
-				}
-			}
+			// Phase 5 Slice K: historical `instantiateLazySelectedMember` fallback
+			// removed — sema's end-of-normalization drain has already materialized
+			// every reachable instantiation's members by the time we reach codegen.
+			// An audit across the full 2201-test corpus confirmed 0 first-materializer
+			// hits at this site.
 
 			const FunctionDeclarationNode* resolved_member_func =
 				materialized_member_func_decl ? materialized_member_func_decl : &func_decl;

@@ -10,32 +10,6 @@ void AstToIr::normalizePendingSemanticRoots() {
 	sema_->normalizePendingSemanticRoots();
 }
 
-std::optional<ASTNode> AstToIr::materializeLazyMemberIfNeeded(
-	StringHandle struct_name,
-	StringHandle member_name,
-	std::optional<bool> is_const_member) {
-	// Phase 5 Slices F-H completed: codegen no longer owns lazy-member
-	// materialization at all. Sema drives it end-to-end:
-	//   * AST-walk pass in `SemanticAnalysis::drainLazyMemberRegistry` covers
-	//     every reachable struct's lazy members.
-	//   * The second pass (`snapshotOdrUsedLazyEntries()`) drains any
-	//     ODR-used residuals, including intra-instantiation sibling calls
-	//     flagged by `tryMaterializeLazyCallTarget`.
-	// Post-drain, every lazy entry either has a body or is never ODR-used.
-	//
-	// This helper is retained as a thin null-safe forwarder so the codegen
-	// call sites can remain agnostic about whether sema is wired up (e.g.,
-	// during unit-test harnessing). Audit across the full test corpus shows
-	// `ensureMemberFunctionMaterialized` returns `std::nullopt` for every
-	// call made from here — i.e., sema has always materialized first. If a
-	// future change reintroduces first-materialization on this path, re-
-	// enable the `Codegen:Debug` audit log below to locate the offender.
-	if (!sema_) {
-		return std::nullopt;
-	}
-	return sema_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
-}
-
 void AstToIr::queueDeferredMemberFunctionFromNode(
 	StringHandle struct_name,
 	ASTNode function_node,
