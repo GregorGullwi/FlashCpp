@@ -267,19 +267,15 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 		try {
 			if (info.function_node.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func = info.function_node.as<FunctionDeclarationNode>();
-				// If the function has no body, it may be a lazily-registered template member.
-				// Trigger lazy instantiation via the shared codegen bridge so the body becomes available.
-				if (!func.get_definition().has_value() && !func.is_implicit() && parser_) {
-					StringHandle member_handle = func.decl_node().identifier_token().handle();
-					const bool is_const_func = func.is_const_member_function();
-					auto new_func_node = materializeLazyMemberIfNeeded(info.struct_name, member_handle, is_const_func);
-					if (new_func_node.has_value() && new_func_node->is<FunctionDeclarationNode>()) {
-						visitFunctionDeclarationNode(new_func_node->as<FunctionDeclarationNode>());
-						current_function_name_ = saved_function;
-						current_namespace_stack_ = saved_namespace;
-						continue;
-					}
-				}
+				// Phase 5 Slice E: the function-shaped `materializeLazyMemberIfNeeded`
+				// fallback that used to live here is now dead. All paths that feed this
+				// queue materialize the lazy body earlier (the struct visitor in
+				// `IrGenerator_Visitors_Decl.cpp`, the `queueDeferredMemberFunctions`
+				// lambda in `IrGenerator_Call_Direct.cpp`, and the per-call
+				// `queueDeferredMemberFunctionFromNode` sites in
+				// `IrGenerator_Call_Direct.cpp`, `IrGenerator_Call_Indirect.cpp`, and
+				// `IrGenerator_MemberAccess.cpp`), so by the time a function node is
+				// dequeued here it already has a definition.
 				normalizePendingSemanticRoots();
 				visitFunctionDeclarationNode(func);
 			} else if (info.function_node.is<ConstructorDeclarationNode>()) {

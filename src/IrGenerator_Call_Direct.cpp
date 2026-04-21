@@ -939,9 +939,28 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			buildNamespaceStack(StringTable::getStringView(struct_name), ns_stack);
 		}
 		for (const auto& member_func : struct_info->member_functions) {
+			ASTNode queued_node = member_func.function_decl;
+			// Phase 5 Slice E: if this entry is still a lazy stub (no body yet)
+			// and the lazy registry has a matching entry, materialize it eagerly
+			// through the sema-owned bridge so the deferred queue always
+			// contains bodies. This removes the need for a function-shaped
+			// materialize-and-retry fallback in `generateDeferredMemberFunctions`.
+			if (queued_node.is<FunctionDeclarationNode>()) {
+				const auto& fn_entry = queued_node.as<FunctionDeclarationNode>();
+				if (!fn_entry.get_definition().has_value() && !fn_entry.is_implicit() && parser_) {
+					StringHandle member_handle = member_func.getName();
+					const bool is_const_func = fn_entry.is_const_member_function();
+					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(struct_name, member_handle, is_const_func)) {
+						auto materialized = materializeLazyMemberIfNeeded(struct_name, member_handle, is_const_func);
+						if (materialized.has_value() && materialized->is<FunctionDeclarationNode>()) {
+							queued_node = *materialized;
+						}
+					}
+				}
+			}
 			DeferredMemberFunctionInfo deferred_info;
 			deferred_info.struct_name = struct_name;
-			deferred_info.function_node = member_func.function_decl;
+			deferred_info.function_node = queued_node;
 			deferred_info.namespace_stack = ns_stack;
 			deferred_member_functions_.push_back(std::move(deferred_info));
 		}
