@@ -403,6 +403,43 @@ public:
 	}
 
 	const auto& get_nodes() { return ast_nodes_; }
+
+	// Returns true if the node at `index` in `get_nodes()` was added via the
+	// late-materialization helpers (`registerLateMaterializedTopLevelNode*`),
+	// i.e., it is a template instantiation / synthesized root rather than a
+	// user-written top-level declaration. See the lifecycle contract below.
+	bool isInstantiatedNode(size_t index) const {
+		return index < ast_node_is_instantiated_.size()
+			&& ast_node_is_instantiated_[index] != 0;
+	}
+
+	// Number of user-written top-level nodes (added during initial parsing).
+	size_t userNodeCount() const {
+		size_t n = 0;
+		for (size_t i = 0; i < ast_node_is_instantiated_.size(); ++i) {
+			if (ast_node_is_instantiated_[i] == 0) {
+				++n;
+			}
+		}
+		// Account for any tail entries that predate tracking (shouldn't happen
+		// in practice because all append sites go through appendUserNode, but
+		// treat trailing unmarked entries as user nodes).
+		if (ast_nodes_.size() > ast_node_is_instantiated_.size()) {
+			n += ast_nodes_.size() - ast_node_is_instantiated_.size();
+		}
+		return n;
+	}
+
+	// Number of late-materialized / instantiated top-level nodes.
+	size_t instantiatedNodeCount() const {
+		size_t n = 0;
+		for (size_t i = 0; i < ast_node_is_instantiated_.size(); ++i) {
+			if (ast_node_is_instantiated_[i] != 0) {
+				++n;
+			}
+		}
+		return n;
+	}
 	std::vector<ASTNode> takePendingSemanticRoots() {
 		std::vector<ASTNode> pending_roots = std::move(pending_semantic_roots_);
 		pending_semantic_root_keys_.clear();
@@ -452,6 +489,14 @@ private:
 	Token current_token_;
 	Token injected_token_;  // Phase 5: For >> splitting in nested templates (Uninitialized = empty)
 	std::vector<ASTNode> ast_nodes_;
+	// Parallel to ast_nodes_: ast_node_is_instantiated_[i] is non-zero when
+	// ast_nodes_[i] was added via registerLateMaterializedTopLevelNode* (i.e.,
+	// it is a template instantiation / late-materialized root). User-written
+	// nodes pushed during initial parsing have their bit set to 0.
+	//
+	// Maintained in lockstep with ast_nodes_ via the appendUserNode /
+	// registerLateMaterializedTopLevelNode* / eraseTopLevelNodeAt helpers.
+	std::vector<uint8_t> ast_node_is_instantiated_;
 	std::vector<ASTNode> pending_semantic_roots_;
 	std::unordered_set<const void*> pending_semantic_root_keys_;
 	SemanticAnalysis* active_sema_ = nullptr;
@@ -1652,11 +1697,34 @@ public:
 	// lookup, constexpr evaluation, or codegen-side lazy generation.
 	// ====================================================================
 
+	/// Append a user-written (non-instantiated) top-level AST node. Maintains
+	/// the parallel `ast_node_is_instantiated_` vector in lockstep. Callers
+	/// that currently use `ast_nodes_.push_back(...)` during initial parsing
+	/// should migrate to this helper.
+	void appendUserNode(const ASTNode& node) {
+		ast_nodes_.push_back(node);
+		ast_node_is_instantiated_.push_back(0);
+	}
+
+	/// Erase the top-level AST node at `index`, keeping the parallel
+	/// instantiation-tag vector in sync. Used by token-save rollback.
+	void eraseTopLevelNodeAt(size_t index) {
+		if (index >= ast_nodes_.size()) {
+			return;
+		}
+		ast_nodes_.erase(ast_nodes_.begin() + static_cast<std::ptrdiff_t>(index));
+		if (index < ast_node_is_instantiated_.size()) {
+			ast_node_is_instantiated_.erase(
+				ast_node_is_instantiated_.begin() + static_cast<std::ptrdiff_t>(index));
+		}
+	}
+
 	/// Register a late-materialized AST node for codegen and sema processing.
 	/// Does NOT normalize immediately - use for batched registration.
 	/// After batched registration, call normalizePendingSemanticRootsIfAvailable().
 	void registerLateMaterializedTopLevelNode(const ASTNode& node) {
 		ast_nodes_.push_back(node);
+		ast_node_is_instantiated_.push_back(1);
 		enqueuePendingSemanticRoot(node);
 	}
 
@@ -1664,6 +1732,7 @@ public:
 	/// Does NOT normalize immediately - use for dependencies that must be processed first.
 	void registerLateMaterializedTopLevelNodeFront(const ASTNode& node) {
 		ast_nodes_.insert(ast_nodes_.begin(), node);
+		ast_node_is_instantiated_.insert(ast_node_is_instantiated_.begin(), 1);
 		enqueuePendingSemanticRoot(node);
 	}
 

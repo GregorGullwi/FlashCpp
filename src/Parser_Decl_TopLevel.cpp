@@ -119,7 +119,7 @@ ParseResult Parser::parse_top_level_node() {
 	auto try_parse_and_push = [&](ParseResult result) -> ParseResult {
 		if (!result.is_error()) {
 			if (auto node = result.node()) {
-				ast_nodes_.push_back(*node);
+				appendUserNode(*node);
 			}
 			return saved_position.success();
 		}
@@ -172,17 +172,17 @@ ParseResult Parser::parse_top_level_node() {
 		auto result = parse_struct_declaration();
 		if (!result.is_error()) {
 			if (auto node = result.node()) {
-				ast_nodes_.push_back(*node);
+				appendUserNode(*node);
 			}
 			// Add any pending variable declarations from the struct definition
 			for (auto& var_node : pending_struct_variables_) {
-				ast_nodes_.push_back(var_node);
+				appendUserNode(var_node);
 			}
 			pending_struct_variables_.clear();
 			// Add hidden friend function definitions after the struct node so the
 			// IR converter sees the struct type before compiling the friend bodies.
 			for (auto& fn : pending_hidden_friend_defs_) {
-				ast_nodes_.push_back(fn);
+				appendUserNode(fn);
 			}
 			pending_hidden_friend_defs_.clear();
 			return saved_position.success();
@@ -236,7 +236,7 @@ ParseResult Parser::parse_top_level_node() {
 						if (node->is<BlockNode>()) {
 							const BlockNode& block = node->as<BlockNode>();
 							block.get_statements().visit([&](const ASTNode& stmt) {
-								ast_nodes_.push_back(stmt);
+								appendUserNode(stmt);
 							});
 						}
 					}
@@ -261,7 +261,7 @@ ParseResult Parser::parse_top_level_node() {
 
 			// Add the node to the AST if it exists
 			if (auto decl_node = decl_result.node()) {
-				ast_nodes_.push_back(*decl_node);
+				appendUserNode(*decl_node);
 			}
 
 			return saved_position.success();
@@ -286,7 +286,7 @@ ParseResult Parser::parse_top_level_node() {
 	auto result = parse_declaration_or_function_definition();
 	if (!result.is_error()) {
 		if (auto node = result.node()) {
-			ast_nodes_.push_back(*node);
+			appendUserNode(*node);
 		}
 		return saved_position.success();
 	}

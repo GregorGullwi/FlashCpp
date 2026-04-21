@@ -852,7 +852,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 		} else {
 			// Move this node to discarded list to keep it alive, then remove from ast_nodes_
 			ast_discarded_nodes_.push_back(std::move(node));
-			ast_nodes_.erase(ast_nodes_.begin() + static_cast<std::ptrdiff_t>(i));
+			eraseTopLevelNodeAt(i);
 		}
 	}
 }
