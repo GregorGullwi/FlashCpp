@@ -1261,7 +1261,9 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 								// sema-owned bridge before queueing. With this in place, the queued
 								// node always has a definition and `generateDeferredMemberFunctions`
 								// no longer needs a function-shaped materialize-and-retry fallback.
-								auto materialized = materializeLazyMemberIfNeeded(current_struct_name_, member_handle, is_const_func);
+								auto materialized = sema_
+									? sema_->ensureMemberFunctionMaterialized(current_struct_name_, member_handle, is_const_func)
+									: std::optional<ASTNode>{};
 								const ASTNode queued_node =
 									(materialized.has_value() && materialized->is<FunctionDeclarationNode>())
 										? *materialized

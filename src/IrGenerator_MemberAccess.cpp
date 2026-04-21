@@ -3837,8 +3837,9 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		if (!init_func.get_definition().has_value()) {
 			StringHandle canonical_name = conv_op.getName();
 			const bool conv_is_const = conv_op.is_const();
-			auto instantiated_func = materializeLazyMemberIfNeeded(
-				source_type_info.name(), canonical_name, conv_is_const);
+			auto instantiated_func = sema_
+				? sema_->ensureMemberFunctionMaterialized(source_type_info.name(), canonical_name, conv_is_const)
+				: std::optional<ASTNode>{};
 			// Queue the materialized body for deferred codegen (mirrors IrGenerator_Call_Direct).
 			if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 				queueDeferredMemberFunctionFromNode(

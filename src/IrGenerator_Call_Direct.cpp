@@ -951,7 +951,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					StringHandle member_handle = member_func.getName();
 					const bool is_const_func = fn_entry.is_const_member_function();
 					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(struct_name, member_handle, is_const_func)) {
-						auto materialized = materializeLazyMemberIfNeeded(struct_name, member_handle, is_const_func);
+						auto materialized = sema_
+							? sema_->ensureMemberFunctionMaterialized(struct_name, member_handle, is_const_func)
+							: std::optional<ASTNode>{};
 						if (materialized.has_value() && materialized->is<FunctionDeclarationNode>()) {
 							queued_node = *materialized;
 						}
@@ -970,7 +972,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 											   StringHandle member_handle,
 											   std::string_view qualified_name_for_ns,
 											   size_t expected_param_count) -> const FunctionDeclarationNode* {
-		auto instantiated_func = materializeLazyMemberIfNeeded(struct_name_handle, member_handle, std::nullopt);
+		auto instantiated_func = sema_
+			? sema_->ensureMemberFunctionMaterialized(struct_name_handle, member_handle, std::nullopt)
+			: std::optional<ASTNode>{};
 		if (!instantiated_func.has_value() || !instantiated_func->is<FunctionDeclarationNode>()) {
 			return nullptr;
 		}

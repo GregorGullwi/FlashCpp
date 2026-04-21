@@ -1086,7 +1086,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				if (!type_info->isTemplateInstantiation()) {
 					return;
 				}
-				auto instantiated_func = materializeLazyMemberIfNeeded(owner_name, member_name, is_const_member);
+				auto instantiated_func = sema_
+					? sema_->ensureMemberFunctionMaterialized(owner_name, member_name, is_const_member)
+					: std::optional<ASTNode>{};
 				if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 					materialized_member_func_decl = &instantiated_func->as<FunctionDeclarationNode>();
 					queueDeferredMemberFunctionFromNode(
