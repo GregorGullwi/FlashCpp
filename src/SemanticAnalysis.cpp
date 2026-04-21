@@ -5310,6 +5310,120 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	return func_decl;
 }
 
+const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
+	const FunctionDeclarationNode* func_decl,
+	const CallInfo& call_info) {
+	// First run the base marker (intra-instantiation remap + pattern-parent
+	// lazy materialization).
+	const FunctionDeclarationNode* result = tryMaterializeLazyCallTarget(func_decl);
+	if (!func_decl) {
+		return result;
+	}
+	// Phase 5 Slice G item #4 blockers (5)/(6): when the resolver returns a
+	// member-function decl whose parent_struct_name is empty (using-decl pack
+	// or static-like overload pick) or points at a template pattern (pattern
+	// member reached via an instantiation receiver), derive the concrete
+	// instantiated owner from the call's receiver type and mark that lazy
+	// member ODR-used so drain pass-2 materialises it.
+	if (!call_info.has_receiver || !call_info.receiver.has_value()) {
+		return result;
+	}
+
+	const std::string_view parent_sv = func_decl->parent_struct_name();
+	// Note: parent_sv may be empty for member calls whose resolver picked a
+	// non-member-view of the decl (e.g. using-decl pack statics, certain
+	// static-member / free-function overload candidates). In that case we
+	// derive the instantiated owner purely from the receiver type below.
+
+	const CanonicalTypeId receiver_type_id = inferExpressionType(call_info.receiver);
+	if (!receiver_type_id) {
+		return result;
+	}
+	const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
+	if (receiver_desc.category() != TypeCategory::Struct &&
+		receiver_desc.category() != TypeCategory::UserDefined) {
+		return result;
+	}
+	const TypeInfo* receiver_type_info = tryGetTypeInfo(receiver_desc.type_index);
+	if (!receiver_type_info && receiver_desc.category() == TypeCategory::UserDefined) {
+		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(receiver_desc.type_index);
+		receiver_type_info = resolved_alias.terminal_type_info;
+	}
+	if (!receiver_type_info || !receiver_type_info->isStruct()) {
+		return result;
+	}
+
+	// Walk up the inheritance chain searching for an instantiated struct
+	// whose template pattern matches `parent_sv`. This handles both the
+	// direct case (receiver IS an instantiation of the owning template)
+	// and the using-decl pack case (receiver is a derived aggregate whose
+	// base is the relevant instantiation).
+	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+	StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
+	const bool is_const = func_decl->is_const_member_function();
+	StringHandle parent_handle = parent_sv.empty()
+		? StringHandle()
+		: StringTable::getOrInternStringHandle(parent_sv);
+
+	auto try_mark = [&](const TypeInfo* type_info) -> bool {
+		if (!type_info || !type_info->isStruct()) {
+			return false;
+		}
+		StringHandle candidate_name = type_info->name();
+		if (!candidate_name.isValid() || (parent_handle.isValid() && candidate_name == parent_handle)) {
+			return false;
+		}
+		if (parent_handle.isValid()) {
+			auto pattern_opt = gTemplateRegistry.get_instantiation_pattern(candidate_name);
+			if (!pattern_opt.has_value() || pattern_opt.value() != parent_handle) {
+				return false;
+			}
+		} else {
+			if (!type_info->isTemplateInstantiation()) {
+				return false;
+			}
+		}
+		// Resolver may have lost const-qualification info when it resolves a
+		// member call through a pack/using-decl/instantiated path; try both
+		// const variants and mark whichever the lazy registry actually knows.
+		bool marked = false;
+		for (bool const_variant : {is_const, !is_const}) {
+			if (lazy_registry.needsInstantiation(
+					LazyMemberKey::exact(candidate_name, member_handle, const_variant))) {
+				lazy_registry.markOdrUsed(
+					LazyMemberKey::exact(candidate_name, member_handle, const_variant));
+				marked = true;
+				break;
+			}
+		}
+		return marked;
+	};
+
+	if (try_mark(receiver_type_info)) {
+		return result;
+	}
+
+	// Search base classes transitively.
+	auto searchBases = [&](auto&& self, const TypeInfo* ti) -> bool {
+		const StructTypeInfo* si = ti ? ti->getStructInfo() : nullptr;
+		if (!si) {
+			return false;
+		}
+		for (const auto& base_spec : si->base_classes) {
+			const TypeInfo* base_ti = tryGetTypeInfo(base_spec.type_index);
+			if (try_mark(base_ti)) {
+				return true;
+			}
+			if (self(self, base_ti)) {
+				return true;
+			}
+		}
+		return false;
+	};
+	searchBases(searchBases, receiver_type_info);
+	return result;
+}
+
 void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const CallInfo& call_info,
 														 const void* call_key,
 														 const char* context_description) {
@@ -5326,7 +5440,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const CallInfo& call_in
 	// template member stub, materialize it here in sema so codegen's normal
 	// struct visitor emits IR for the real body instead of relying on
 	// codegen-side fallbacks. See `tryMaterializeLazyCallTarget` for details.
-	func_decl = tryMaterializeLazyCallTarget(func_decl);
+	func_decl = tryMaterializeLazyCallTarget(func_decl, call_info);
 
 	const FunctionDeclarationNode* resolved_op_call = getResolvedOpCall(call_key);
 	const bool cache_as_direct_call =
@@ -5653,8 +5767,9 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 	// (`snapshotOdrUsedLazyEntries`).
 	while (true) {
 		size_t before = total_materialized;
-		for (const auto& top_node : parser_.get_nodes()) {
-			FlashCpp::forEachReachableStructDecl(top_node, drainOneStruct);
+		const auto& top_nodes = parser_.get_nodes();
+		for (size_t i = 0; i < top_nodes.size(); ++i) {
+			FlashCpp::forEachReachableStructDecl(top_nodes[i], drainOneStruct);
 		}
 		if (total_materialized == before) {
 			break;

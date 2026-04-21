@@ -207,6 +207,55 @@ required again when the final split lands. The pass-1 loop now carries a
 comment pointing at blockers (5) and (6) so the next attempt has a
 concrete starting list.
 
+#### 2026-04-22 follow-up: receiver-aware ODR-use
+
+Added `tryMaterializeLazyCallTarget(func_decl, call_info)` in
+`SemanticAnalysis.cpp` (overload of the existing pattern-parent helper).
+When the resolver returns a member-function decl with either (a) an empty
+`parent_struct_name` (using-decl pack / free-function-view resolution) or
+(b) a parent that names a template pattern, the new overload derives the
+concrete instantiated owner from the call's receiver type, walks the
+receiver's inheritance chain, and marks the matching lazy member
+ODR-used. It also defends against the resolver having lost const-
+qualification by trying both `is_const` variants. Wired through
+`tryAnnotateCallArgConversionsImpl`. Declaration in `SemanticAnalysis.h`.
+
+Gained coverage (re-enabling the pass-1 skip prototype with this helper):
+
+ - `test_late_member_body_class_template_paths_ret42.cpp`
+ - `test_late_member_body_class_template_functional_style_ret42.cpp`
+ - `test_late_member_signature_qualified_dependent_type_ret42.cpp`
+ - `test_using_decl_pack_expansion_ret1.cpp`
+
+All four tests now link cleanly under the pass-1 skip prototype.
+
+Still missing with the skip enabled (observed link errors, net −3 vs.
+baseline):
+
+ - `test_constexpr_range_begin_end_ret0.cpp` — range-based-for over an
+   instantiated struct. `normalizeRangedForLoopDecl` in
+   `SemanticAnalysis.cpp` resolves `begin`/`end` member functions but
+   never calls `markOdrUsed` on the concrete instantiation. Fix: after
+   `set_resolved_member_begin_function` / `_end_function`, mark both
+   members ODR-used on `range_type_info->name()` when it is a template
+   instantiation.
+ - `test_deferred_base_placeholder_codegen_ret0.cpp` — `optional<T>::has_value`
+   body calls `_M_payload._M_is_engaged()`. The late-materialised
+   member body's `this->member` / `sub_obj.member` calls do not pass
+   through `tryAnnotateCallArgConversionsImpl` for the inner receiver,
+   so the receiver-aware helper is never invoked.
+ - `test_dependent_base_this_lookup_ret0.cpp` — `Derived<T>::f` calls
+   `this->get()` on `Base<T>`. Same gap as above — the call annotation
+   pass simply does not run on the late-materialised body under the
+   skip prototype. Need to investigate where / whether sema is re-
+   running on the cloned body.
+
+Decision (unchanged): keep the pass-1 skip disabled; keep the receiver-
+aware helper, it is a correct and independent ODR-use closure. Commit
+the improvement and leave item #4 at PARTIAL. The next session should
+target the three failures above — each has a concrete fix pointer in
+the list above.
+
 Lessons:
 
  - Wholesale-draining instantiated roots was masking at least six distinct

@@ -354,6 +354,17 @@ private:
 	const FunctionDeclarationNode* tryMaterializeLazyCallTarget(
 		const FunctionDeclarationNode* func_decl);
 
+	// Phase 5 Slice G item #4: receiver-aware variant. When the resolved
+	// `func_decl` carries a template-pattern parent_struct_name (e.g.
+	// `Box` rather than `Box$hash`), the receiver's TypeInfo gives us the
+	// concrete instantiation. This marks the instantiated owner's lazy
+	// member ODR-used so the drain's pass 2 can materialize it — closing
+	// the coverage gap around late-materialized cross-struct member calls
+	// inside substituted instantiation bodies.
+	const FunctionDeclarationNode* tryMaterializeLazyCallTarget(
+		const FunctionDeclarationNode* func_decl,
+		const struct CallInfo& call_info);
+
 	// Annotate InitializerListNode elements used as constructor arguments
 	// with their parameter-type conversions (for direct-init syntax like `Type obj(args...)`).
 	void tryAnnotateInitListConstructorArgs(const InitializerListNode& init_list, const StructTypeInfo& struct_info);
