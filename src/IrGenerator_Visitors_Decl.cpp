@@ -1294,14 +1294,18 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 					}
 					if (!ctor_has_auto) {
 						visitConstructorDeclarationNode(ctor);
+						// Phase 5 Slices F-J: sema's end-of-normalization drain materializes
+						// every reachable struct's lazy members (AST-walk pass) plus every
+						// ODR-used residual. By the time this loop runs, any constructor
+						// listed in node.member_functions() that can be materialized
+						// already has a body. The previous lazy-stub queueing here is dead.
 						if (!ctor.get_definition().has_value() && !ctor.is_implicit() && parser_) {
-							StringHandle member_handle = member_func.getName();
-							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle, false)) {
-								DeferredMemberFunctionInfo deferred_info;
-								deferred_info.struct_name = current_struct_name_;
-								deferred_info.function_node = func_decl;
-								deferred_member_functions_.push_back(std::move(deferred_info));
-								FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - queued lazy constructor for deferred instantiation");
+							if (IS_FLASH_LOG_ENABLED(Codegen, Debug)) {
+								StringHandle member_handle = member_func.getName();
+								if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle, false)) {
+									FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name,
+										" - WARNING: lazy constructor still un-materialized at struct-visitor; sema drain missed it");
+								}
 							}
 						}
 					} else {
