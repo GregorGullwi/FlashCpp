@@ -325,6 +325,46 @@ public:
 		return getInstantiation(key);
 	}
 
+	// -------- Per-overload SFINAE failure memo --------
+	//
+	// TemplateInstantiationKey hashes `template_name + args` across all overloads
+	// of a given template function, so storing a FailedSubstitution node under it
+	// would be returned as a cache hit for an unrelated overload.  This separate
+	// set discriminates by a caller-supplied opaque "overload id" — in practice
+	// the address of the overload's FunctionDeclarationNode, which is stable for
+	// the lifetime of the compilation — so two overloads of the same template
+	// name with identical arity and identical deduced args (the exact case that
+	// a mere parameter-count discriminator fails to separate) are still memoised
+	// independently.  Only SFINAE paths in try_instantiate_single_template touch
+	// it; successful-instantiation lookup is unchanged.
+	struct FailedInstantiationKey {
+		FlashCpp::TemplateInstantiationKey base_key;
+		uintptr_t overload_id = 0;
+
+		bool operator==(const FailedInstantiationKey& other) const {
+			return overload_id == other.overload_id && base_key == other.base_key;
+		}
+	};
+
+	struct FailedInstantiationKeyHash {
+		size_t operator()(const FailedInstantiationKey& k) const {
+			size_t h = FlashCpp::TemplateInstantiationKeyHash{}(k.base_key);
+			h ^= std::hash<uintptr_t>{}(k.overload_id) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			return h;
+		}
+	};
+
+	void markFailedInstantiation(const FlashCpp::TemplateInstantiationKey& key,
+								 uintptr_t overload_id) {
+		failed_instantiations_.insert(FailedInstantiationKey{key, overload_id});
+	}
+
+	bool isFailedInstantiation(const FlashCpp::TemplateInstantiationKey& key,
+							   uintptr_t overload_id) const {
+		return failed_instantiations_.find(FailedInstantiationKey{key, overload_id}) !=
+			   failed_instantiations_.end();
+	}
+
 	// Helper to convert TypeCategory to string for mangling
 	static std::string_view typeToString(TypeCategory cat) {
 		switch (cat) {
@@ -797,6 +837,7 @@ public:
 		templates_.clear();
 		template_parameters_.clear();
 		instantiations_.clear();
+		failed_instantiations_.clear();
 		out_of_line_variables_.clear();
 		out_of_line_members_.clear();
 		out_of_line_nested_classes_.clear();
@@ -894,6 +935,9 @@ private:
 	// TypeIndex-based template instantiation cache
 	// Uses TemplateInstantiationKey for O(1) lookup without string concatenation
 	std::unordered_map<FlashCpp::TemplateInstantiationKey, ASTNode, FlashCpp::TemplateInstantiationKeyHash> instantiations_;
+
+	// Per-overload SFINAE substitution-failure memo.  See markFailedInstantiation.
+	std::unordered_set<FailedInstantiationKey, FailedInstantiationKeyHash> failed_instantiations_;
 
 	// Map from class name to out-of-line member function definitions (StringHandle key for efficient lookup)
 	std::unordered_map<StringHandle, std::vector<OutOfLineMemberFunction>, TransparentStringHash, TransparentStringEqual> out_of_line_members_;

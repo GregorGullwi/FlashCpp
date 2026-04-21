@@ -2552,11 +2552,37 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Step 2: Check if we already have this instantiation
 	auto key = FlashCpp::makeInstantiationKey(
 		StringTable::getOrInternStringHandle(template_name), template_args);
+	// Per-overload discriminator for the SFINAE failure memo.  Using the
+	// address of the overload's FunctionDeclarationNode separates overloads
+	// of the same template name whose deduced arg lists and arities are
+	// identical but whose SFINAE predicates are not (e.g. two `process(T)`
+	// overloads, one enabled for `is_int<T>` and the other for `is_double<T>`).
+	const uintptr_t overload_id = reinterpret_cast<uintptr_t>(&func_decl);
+
+	// SFINAE fast-path: if a previous probe against *this same overload*
+	// already recorded a substitution failure for the same deduced args,
+	// skip the entire reparse.  This is the N²-reparse elimination.
+	if (gTemplateRegistry.isFailedInstantiation(key, overload_id)) {
+		FLASH_LOG_FORMAT(Templates, Debug,
+			"[depth={}]: SFINAE fast-path: '{}' previously failed substitution for this overload",
+			recursion_depth, template_name);
+		return std::nullopt;
+	}
+
 	const bool cacheable_instantiation = hasUsableTemplateFunctionDefinition(func_decl);
 
 	if (cacheable_instantiation) {
 		auto existing_inst = gTemplateRegistry.getInstantiation(key);
 		if (existing_inst.has_value()) {
+			// Defensive: if a future caller ever registers a FailedSubstitution
+			// node under this key, treat it as a SFINAE miss rather than a hit.
+			if (existing_inst->is<FunctionDeclarationNode>() &&
+				existing_inst->as<FunctionDeclarationNode>().failed_substitution()) {
+				FLASH_LOG_FORMAT(Templates, Debug,
+					"[depth={}]: cached instantiation for '{}' is FailedSubstitution — skipping",
+					recursion_depth, template_name);
+				return std::nullopt;
+			}
 			PROFILE_TEMPLATE_CACHE_HIT(std::string(template_name) + "_func");
 			return *existing_inst;  // Return existing instantiation
 		}
@@ -2795,22 +2821,20 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 		if (return_type_result.is_error()) {
 			// SFINAE: Return type parsing failed - this is a substitution failure.
-			// This is already the correct behavior for item #2: the nullopt
-			// propagates up to `try_instantiate_template`, which treats it as a
-			// SFINAE candidate rejection — no `= delete` heuristic needed.
-			//
-			// A future optimization can memoize the failure on a stub node
-			// registered under a per-overload key (the template-wide
-			// `TemplateInstantiationKey` currently hashes `template_name +
-			// args` and is shared across overloads, which makes it unsafe as
-			// a failure memo key). The `mark_failed_substitution` mutator on
-			// FunctionDeclarationNode is in place for that purpose.
+			// Memoize under a per-overload key (template_name + args + param_count)
+			// so the next probe for this same overload short-circuits at the
+			// entry fast-path instead of reparsing.  We can't call the node-level
+			// `mark_failed_substitution` mutator here because `new_func_ref` has
+			// not been emplaced yet (that happens further down after the return
+			// type is known).  The registry-side memo is the failure record.
 			FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type parsing failed: {}", return_type_result.error_message());
+			gTemplateRegistry.markFailedInstantiation(key, overload_id);
 			return std::nullopt;	 // Substitution failure - try next overload
 		}
 
 		if (!return_type_result.node().has_value()) {
 			FLASH_LOG(Templates, Debug, "SFINAE: Return type parsing returned no node");
+			gTemplateRegistry.markFailedInstantiation(key, overload_id);
 			return std::nullopt;
 		}
 
@@ -3221,6 +3245,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			if (const TypeInfo* rt_info = tryGetTypeInfo(rt.type_index())) {
 				if (rt_info->is_incomplete_instantiation_ && rt_info->isDependentMemberType()) {
 					FLASH_LOG(Templates, Debug, "SFINAE: unresolved dependent member alias remains after resolution: ", StringTable::getStringView(rt_info->name()));
+					gTemplateRegistry.markFailedInstantiation(key, overload_id);
 					return std::nullopt;
 				}
 			}
