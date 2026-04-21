@@ -3822,6 +3822,12 @@ static bool structHasConversionOperatorTo(
 		// entry is already marked instantiated, so calling it unconditionally
 		// here is safe for non-lazy conversion operators too.
 		if (sema && struct_info->name.isValid() && mf.getName().isValid()) {
+			// Phase 5 Slice G: the conversion operator was selected by
+			// overload resolution in a non-SFINAE annotation path, so this
+			// is a real ODR-use. Record it before materialization so the
+			// signal persists even after the lazy entry is erased.
+			LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
+				struct_info->name, mf.getName(), /*is_const=*/mf.is_const());
 			const bool needs_materialization =
 				mf.function_decl.is<FunctionDeclarationNode>() &&
 				!mf.function_decl.as<FunctionDeclarationNode>().get_definition().has_value();
@@ -5182,7 +5188,59 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 
 const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	const FunctionDeclarationNode* func_decl) {
-	if (!func_decl || func_decl->get_definition().has_value() || func_decl->is_implicit()) {
+	if (!func_decl) {
+		return func_decl;
+	}
+
+	// Phase 5 Slice H: intra-instantiation call-target remap.
+	//
+	// When a call expression inside a substituted member body references a
+	// sibling member (e.g., `other.method(helper())` inside
+	// `Box<int>::compute`), sema's overload resolution resolves that call to
+	// the **template pattern's** FunctionDeclarationNode (e.g., `Box::helper`,
+	// `Box::method`) because the pattern is what declares those members. The
+	// pattern's declarations have bodies (the template source), so the
+	// "is this a lazy stub?" check below would normally short-circuit.
+	//
+	// But codegen must emit a call to the *instantiation's* member
+	// (`Box$hash::helper`), whose body has `T` substituted. If we leave this
+	// unhandled here, the codegen-side `materializeLazyMemberIfNeeded`
+	// forwarder ends up being the first materializer for that instantiation
+	// member.
+	//
+	// We remap here: if `member_context_stack_` shows we're currently
+	// normalizing a member of some instantiation `I`, and the lazy registry
+	// has an entry for `I::member_name[$const]`, then this call really
+	// targets `I`'s member. Mark it ODR-used and materialize it, so codegen
+	// sees a fully-materialized body on the instantiation at lowering time.
+	//
+	// We do *not* swap the returned `func_decl` pointer: the pattern
+	// declaration is what every subsequent annotation step (parameter-type
+	// coercion, cache-as-direct-call) already expects. Codegen remaps to the
+	// instantiation based on the receiver type; sema's job here is to make
+	// sure the instantiation's body exists by the time codegen asks.
+	if (!member_context_stack_.empty()) {
+		const TypeInfo* current_type_info = tryGetTypeInfo(member_context_stack_.back());
+		if (current_type_info && current_type_info->getStructInfo() && current_type_info->isTemplateInstantiation()) {
+			StringHandle current_struct_name = current_type_info->name();
+			StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
+			const bool is_const = func_decl->is_const_member_function();
+			auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+			if (lazy_registry.needsInstantiation(current_struct_name, member_handle, is_const)) {
+				// Mark only; the drain pass in SemanticAnalysis (running
+				// after normalizePendingSemanticRoots) picks up ODR-used
+				// residuals via its fixpoint loop over
+				// snapshotOdrUsedLazyEntries(). Synchronously calling
+				// ensureMemberFunctionMaterialized here causes a
+				// re-entrant cycle: materialization reparses and
+				// normalizes the body, which hits another call that lands
+				// back in this helper, ad infinitum.
+				lazy_registry.markOdrUsed(current_struct_name, member_handle, is_const);
+			}
+		}
+	}
+
+	if (func_decl->get_definition().has_value() || func_decl->is_implicit()) {
 		return func_decl;
 	}
 	std::string_view parent_sv = func_decl->parent_struct_name();
@@ -5192,6 +5250,11 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	StringHandle parent_handle = StringTable::getOrInternStringHandle(parent_sv);
 	StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
 	const bool is_const = func_decl->is_const_member_function();
+	// Phase 5 Slice G: this helper is only reached after the call target has
+	// been resolved by overload resolution in sema, so the member is ODR-used.
+	// Record it before materialization so the signal persists past the
+	// erase-on-instantiate in the lazy registry.
+	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(parent_handle, member_handle, is_const);
 	auto materialized = ensureMemberFunctionMaterialized(parent_handle, member_handle, is_const);
 	if (materialized.has_value() && materialized->is<FunctionDeclarationNode>()) {
 		return &materialized->as<FunctionDeclarationNode>();
@@ -5371,6 +5434,12 @@ const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMat
 		return ctor;
 	}
 
+	// Phase 5 Slice G: the constructor was selected by overload resolution
+	// (see `tryMaterializeLazyConstructorTarget`-style call sites), so it is
+	// ODR-used. Ctors have no const/non-const variants, so the precise
+	// `is_const=false` marker captures the full overload set.
+	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
+		struct_info.getName(), ctor->name(), /*is_const=*/false);
 	// Constructors are never const-qualified members; use is_const = false.
 	auto instantiated = ensureMemberFunctionMaterialized(
 		struct_info.getName(), ctor->name(), /*is_const_member=*/false);
@@ -5464,6 +5533,16 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 				auto result = ensureMemberFunctionMaterialized(struct_name, member_handle, is_const_query);
 				if (result.has_value()) {
 					++total_materialized;
+					// Phase 5 Slice G: annotate the freshly-substituted body so
+					// its internal call expressions run through the sema sites
+					// that call `markOdrUsed` on their resolved targets. Without
+					// this, inner calls would only be resolved at codegen time
+					// (via the `materializeLazyMemberIfNeeded` forwarder), which
+					// is exactly the residual we want to eliminate. The
+					// normalize helpers are idempotent via `normalized_bodies_`
+					// dedup, so re-normalizing an already-processed node is a
+					// safe no-op.
+					normalizeTopLevelNode(*result);
 				}
 			}
 		}
@@ -5511,6 +5590,51 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 		size_t before = total_materialized;
 		for (const auto& top_node : parser_.get_nodes()) {
 			walkNode(walkNode, top_node);
+		}
+		if (total_materialized == before) {
+			break;
+		}
+	}
+
+	// Phase 5 Slice G: second pass — materialize any still-lazy members
+	// whose key is explicitly marked as ODR-used by sema annotation sites
+	// (see `LazyMemberInstantiationRegistry::markOdrUsed`). This catches
+	// instantiations that live only via `StructTypeInfo` / lazy-registry
+	// references and are not reachable from `parser_.get_nodes()`, which
+	// the first pass cannot see. Because SFINAE-probed instantiations never
+	// pass through the sema sites that call `markOdrUsed`, their ODR-use
+	// bit stays false and they are safely skipped here, preserving the
+	// invariant that Slice F documented.
+	//
+	// Like the first pass, wrap in a fixpoint loop: materializing a body
+	// may register new lazy entries and may mark additional members as
+	// ODR-used (e.g., a newly-substituted body selects a call target via
+	// sema annotation before codegen runs).
+	while (true) {
+		auto snapshot = lazy_registry.snapshotOdrUsedLazyEntries();
+		if (snapshot.empty()) {
+			break;
+		}
+		size_t before = total_materialized;
+		for (const auto& entry : snapshot) {
+			// Re-check needsInstantiation because a prior iteration may
+			// have already materialized this key (e.g., transitively via
+			// another member's body).
+			if (!lazy_registry.needsInstantiation(entry.instantiated_owner_name,
+					entry.member_name, entry.is_const_method)) {
+				continue;
+			}
+			auto result = ensureMemberFunctionMaterialized(
+				entry.instantiated_owner_name, entry.member_name,
+				std::optional<bool>(entry.is_const_method));
+			if (result.has_value()) {
+				++total_materialized;
+				// Same rationale as the AST-walk pass: annotate the freshly-
+				// substituted body so its internal calls route through
+				// `markOdrUsed` and get picked up by the next fixpoint iteration
+				// rather than ending up as codegen-time forwarder residuals.
+				normalizeTopLevelNode(*result);
+			}
 		}
 		if (total_materialized == before) {
 			break;
