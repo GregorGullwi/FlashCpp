@@ -530,7 +530,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			FunctionDeclarationNode& spec_func = spec_node.as<FunctionDeclarationNode>();
 
 			// If the specialization has a body position and no definition yet, parse it now
-			if (spec_func.has_template_body_position() && !spec_func.get_definition().has_value()) {
+			if (spec_func.has_template_body_position() && spec_func.needs_body_materialization()) {
 				FLASH_LOG(Templates, Debug, "Parsing specialization body for ", specialization_lookup_name.view());
 
 				// Look up the struct type index and node for the member function context

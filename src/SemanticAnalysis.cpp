@@ -3885,7 +3885,7 @@ static bool structHasConversionOperatorTo(
 				struct_info->name);
 			const bool needs_materialization =
 				mf.function_decl.is<FunctionDeclarationNode>() &&
-				!mf.function_decl.as<FunctionDeclarationNode>().get_definition().has_value();
+				mf.function_decl.as<FunctionDeclarationNode>().needs_body_materialization();
 			if (needs_materialization) {
 				sema->ensureMemberFunctionMaterialized(
 					struct_info->name, mf.getName(), /*is_const_member=*/mf.is_const());

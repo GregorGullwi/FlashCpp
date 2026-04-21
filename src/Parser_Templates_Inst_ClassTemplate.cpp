@@ -6098,8 +6098,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						auto* nested_func_decl = get_function_decl_node_mut(nested_func_node);
 						const auto& out_of_line_decl = out_of_line_member.function_node.as<FunctionDeclarationNode>().decl_node();
 						if (nested_func_decl != nullptr &&
-							!nested_func_decl->get_definition().has_value() &&
-							!nested_func_decl->has_template_body_position() &&
+							!nested_func_decl->has_any_body_source() &&
 							nested_template_func.template_parameters().size() == out_of_line_member.inner_template_params.size() &&
 							nested_func_decl->decl_node().identifier_token().value() == out_of_line_decl.identifier_token().value()) {
 							nested_func_decl->set_template_body_position(out_of_line_member.body_start);

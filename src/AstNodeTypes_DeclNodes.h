@@ -2298,10 +2298,12 @@ public:
 
 	// Category B: "is this a still-bodyless candidate that instantiation
 	// should try to materialise?" A FailedSubstitution decl must NOT be
-	// re-probed (that's the whole point of caching the failure), and a
-	// `= delete` decl has no body to materialise by definition.
+	// re-probed (that's the whole point of caching the failure). Deleted
+	// decls are intentionally NOT excluded here — Category B callers
+	// replicate the = delete flag onto the cloned instantiation and
+	// already treat bodyless-deleted decls as a no-op downstream.
 	bool needs_body_materialization() const {
-		return !is_materialized() && !failed_substitution() && !is_deleted_;
+		return !is_materialized() && !failed_substitution();
 	}
 
 	// Category E: "is there any source we can recover a body from?" — either

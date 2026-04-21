@@ -378,7 +378,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	const FunctionDeclarationNode& func_decl = lazy_info.identity.original_member_node.as<FunctionDeclarationNode>();
 	const DeclarationNode& decl = func_decl.decl_node();
 
-	if (!func_decl.get_definition().has_value() && !func_decl.has_template_body_position()) {
+	if (!func_decl.has_any_body_source()) {
 		FLASH_LOG(Templates, Error, "Lazy member function has no definition and no deferred body position");
 		return std::nullopt;
 	}
