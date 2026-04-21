@@ -1251,29 +1251,28 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 					}
 					if (!fn_has_auto) {
 						visitFunctionDeclarationNode(fn);
-							// If the function was skipped (lazy stub - no body yet), queue it for
-							// deferred lazy instantiation so the body gets generated.
+							// Phase 5 Slices F-I: the lazy-member "materialize-and-queue"
+							// branch that used to live here is now dead code. Sema's
+							// end-of-normalization drain materializes every reachable
+							// struct's lazy members (AST-walk pass) plus every ODR-used
+							// residual (ODR-use pass); by the time this loop runs, any
+							// member listed in node.member_functions() that can be
+							// materialized already has a body. Audit across the full
+							// 2201-test corpus showed 0 first-materializer hits here.
+							// If fn still has no body at this point, it is either
+							// implicit (handled elsewhere) or a template pattern that
+							// sema intentionally did not instantiate (e.g., SFINAE-only
+							// reachable), and must not be queued.
 						if (!fn.get_definition().has_value() && !fn.is_implicit() && parser_) {
-							StringHandle member_handle = member_func.getName();
-							const bool is_const_func = fn.is_const_member_function();
-							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle, is_const_func)) {
-								// Phase 5 Slice E: materialize the lazy body eagerly through the
-								// sema-owned bridge before queueing. With this in place, the queued
-								// node always has a definition and `generateDeferredMemberFunctions`
-								// no longer needs a function-shaped materialize-and-retry fallback.
-								auto materialized = sema_
-									? sema_->ensureMemberFunctionMaterialized(current_struct_name_, member_handle, is_const_func)
-									: std::optional<ASTNode>{};
-								const ASTNode queued_node =
-									(materialized.has_value() && materialized->is<FunctionDeclarationNode>())
-										? *materialized
-										: func_decl;
-								DeferredMemberFunctionInfo deferred_info;
-								deferred_info.struct_name = current_struct_name_;
-								deferred_info.function_node = queued_node;
-								deferred_member_functions_.push_back(std::move(deferred_info));
-								FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - queued lazy member function '",
-										  fn.decl_node().identifier_token().value(), "' for deferred instantiation");
+							if (IS_FLASH_LOG_ENABLED(Codegen, Debug)) {
+								StringHandle member_handle = member_func.getName();
+								const bool is_const_func = fn.is_const_member_function();
+								if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle, is_const_func)) {
+									FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name,
+										" - WARNING: lazy member '",
+										fn.decl_node().identifier_token().value(),
+										"' still un-materialized at struct-visitor; sema drain missed it");
+								}
 							}
 						}
 					} else {
