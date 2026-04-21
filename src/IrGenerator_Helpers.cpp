@@ -14,54 +14,24 @@ std::optional<ASTNode> AstToIr::materializeLazyMemberIfNeeded(
 	StringHandle struct_name,
 	StringHandle member_name,
 	std::optional<bool> is_const_member) {
-	// Phase 5 steps 2-3: codegen no longer owns the lazy-member
-	// materialization logic. This bridge is a thin forwarder to the sema-owned
-	// helper (`SemanticAnalysis::ensureMemberFunctionMaterialized`), which
-	// performs registry lookup, `parser_->instantiateLazyMemberFunction(...)`,
-	// pending-root normalization, and the "mark instantiated" bookkeeping in a
-	// single place.
+	// Phase 5 Slices F-H completed: codegen no longer owns lazy-member
+	// materialization at all. Sema drives it end-to-end:
+	//   * AST-walk pass in `SemanticAnalysis::drainLazyMemberRegistry` covers
+	//     every reachable struct's lazy members.
+	//   * The second pass (`snapshotOdrUsedLazyEntries()`) drains any
+	//     ODR-used residuals, including intra-instantiation sibling calls
+	//     flagged by `tryMaterializeLazyCallTarget`.
+	// Post-drain, every lazy entry either has a body or is never ODR-used.
 	//
-	// Slice F (see `SemanticAnalysis::drainLazyMemberRegistry`) additionally
-	// drains every reachable struct's lazy members at end of sema, so by the
-	// time codegen runs the struct-visitor, the common case is that sema has
-	// already materialized the body and this forwarder only serves as a
-	// consistency check: `ensureMemberFunctionMaterialized` returns
-	// `std::nullopt` when there is nothing left to do.
-	//
-	// A small residual set of instantiated structs is not reachable from the
-	// top-level AST walk (they live only through references held by the lazy
-	// registry / `StructTypeInfo`). For those paths this forwarder still
-	// serves as the first materialization site — but all the actual logic
-	// remains in sema, and the forwarder cannot be deleted outright without
-	// regressing those tests. See the plan doc for why an unconditional
-	// "drain every instantiated struct" extension of `drainLazyMemberRegistry`
-	// is not a safe generalization (it over-materializes members of structs
-	// that only ever flow through SFINAE-probed template-argument positions,
-	// whose member bodies may be ill-formed by design).
+	// This helper is retained as a thin null-safe forwarder so the codegen
+	// call sites can remain agnostic about whether sema is wired up (e.g.,
+	// during unit-test harnessing). Audit across the full test corpus shows
+	// `ensureMemberFunctionMaterialized` returns `std::nullopt` for every
+	// call made from here — i.e., sema has always materialized first. If a
+	// future change reintroduces first-materialization on this path, re-
+	// enable the `Codegen:Debug` audit log below to locate the offender.
 	if (!sema_) {
 		return std::nullopt;
-	}
-	// Phase 5 Slice G audit: log when this forwarder is still the first
-	// materializer for a lazy member (needsInstantiation==true on entry).
-	// Useful for measuring residual work after the ODR-use drain extension
-	// landed. The log is emitted at debug level under the "Codegen" category
-	// so it is silent in normal builds; run with
-	// `--log-level=Codegen:debug` to see it. Gated on IS_FLASH_LOG_ENABLED so
-	// the registry lookup is skipped entirely in the common (non-debug) path.
-	if (IS_FLASH_LOG_ENABLED(Codegen, Debug)) {
-		auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
-		bool was_first_materializer = is_const_member.has_value()
-			? lazy_registry.needsInstantiation(struct_name, member_name, *is_const_member)
-			: lazy_registry.needsInstantiationAny(struct_name, member_name);
-		auto result = sema_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
-		if (was_first_materializer && result.has_value()) {
-			FLASH_LOG_FORMAT(Codegen, Debug,
-				"materializeLazyMemberIfNeeded: forwarder was first materializer for {}::{}{}",
-				StringTable::getStringView(struct_name),
-				StringTable::getStringView(member_name),
-				is_const_member.value_or(false) ? " (const)" : "");
-		}
-		return result;
 	}
 	return sema_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
 }
