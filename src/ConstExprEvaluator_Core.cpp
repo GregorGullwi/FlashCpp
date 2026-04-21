@@ -3267,7 +3267,7 @@ EvalResult Evaluator::evaluate_callable_object(
 		}
 
 		if (is_constexpr_callable(resolved_call_operator) &&
-			resolved_call_operator->get_definition().has_value()) {
+			resolved_call_operator->is_materialized()) {
 			return resolved_call_operator;
 		}
 

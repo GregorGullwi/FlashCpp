@@ -304,7 +304,7 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 				visitFunctionDeclarationNode(func);
 			} else if (info.function_node.is<ConstructorDeclarationNode>()) {
 				const ConstructorDeclarationNode& ctor = info.function_node.as<ConstructorDeclarationNode>();
-				if (!ctor.get_definition().has_value() && parser_) {
+				if (!ctor.is_materialized() && parser_) {
 					// Phase 5 Slice E: the `materializeLazyMemberIfNeeded(...)` fallback that
 					// used to live here for constructor-shaped lazy entries is no longer reachable
 					// after Slices A–D. All constructor materialization paths that feed this
@@ -323,7 +323,7 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 									continue;
 								}
 								const auto& replacement_ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-								if (!replacement_ctor.get_definition().has_value()) {
+								if (!replacement_ctor.is_materialized()) {
 									continue;
 								}
 								if (replacement_ctor.name() == ctor.name() &&
@@ -546,7 +546,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 						}
 
 						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-						if (!func_decl.is_static() || !func_decl.get_definition().has_value() ||
+						if (!func_decl.is_static() || !func_decl.is_materialized() ||
 							func_decl.parameter_nodes().size() != call_info->arguments->size()) {
 							continue;
 						}

@@ -13,7 +13,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// Constructors/destructors for nested template types are also materialized lazily.
 	if (lazy_info.identity.kind == DeferredMemberIdentity::Kind::Constructor && lazy_info.identity.original_member_node.is<ConstructorDeclarationNode>()) {
 		const ConstructorDeclarationNode& ctor_decl = lazy_info.identity.original_member_node.as<ConstructorDeclarationNode>();
-		if (!ctor_decl.get_definition().has_value() && !ctor_decl.has_template_body_position()) {
+		if (!ctor_decl.has_any_body_source()) {
 			FLASH_LOG(Templates, Error, "Lazy constructor has no definition and no deferred body position");
 			return std::nullopt;
 		}
@@ -203,7 +203,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
 
 		std::optional<ASTNode> body_to_substitute;
-		if (ctor_decl.get_definition().has_value()) {
+		if (ctor_decl.is_materialized()) {
 			body_to_substitute = ctor_decl.get_definition();
 		} else if (ctor_decl.has_template_body_position()) {
 			FlashCpp::TemplateParameterScope template_scope;
@@ -323,7 +323,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	if (lazy_info.identity.kind == DeferredMemberIdentity::Kind::Destructor && lazy_info.identity.original_member_node.is<DestructorDeclarationNode>()) {
 		const DestructorDeclarationNode& dtor_decl = lazy_info.identity.original_member_node.as<DestructorDeclarationNode>();
-		if (!dtor_decl.get_definition().has_value()) {
+		if (!dtor_decl.is_materialized()) {
 			FLASH_LOG(Templates, Error, "Lazy destructor has no definition");
 			return std::nullopt;
 		}
@@ -378,7 +378,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	const FunctionDeclarationNode& func_decl = lazy_info.identity.original_member_node.as<FunctionDeclarationNode>();
 	const DeclarationNode& decl = func_decl.decl_node();
 
-	if (!func_decl.get_definition().has_value() && !func_decl.has_template_body_position()) {
+	if (!func_decl.has_any_body_source()) {
 		FLASH_LOG(Templates, Error, "Lazy member function has no definition and no deferred body position");
 		return std::nullopt;
 	}
@@ -607,7 +607,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	std::optional<ASTNode> body_to_substitute;
 
 	const bool has_saved_body_position = func_decl.has_template_body_position();
-	const bool has_parsed_body = func_decl.get_definition().has_value();
+	const bool has_parsed_body = func_decl.is_materialized();
 	if (has_saved_body_position && has_parsed_body) {
 		FLASH_LOG(Templates, Debug,
 				  "Lazy member function has both parsed body and saved body position; reparsing with concrete template bindings");
@@ -729,7 +729,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	new_func_ref.set_is_const_member_function(lazy_info.identity.is_const_method);
 	new_func_ref.set_is_volatile_member_function(hasCVQualifier(lazy_info.identity.cv_qualifier, CVQualifier::Volatile));
 
-	if (new_func_ref.get_definition().has_value()) {
+	if (new_func_ref.is_materialized()) {
 		finalize_function_after_definition(new_func_ref);
 	} else {
 		// This is essential so the call expression can carry the correct mangled name

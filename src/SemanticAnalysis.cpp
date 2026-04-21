@@ -454,7 +454,7 @@ private:
 			for (const auto& param : func.parameter_nodes()) {
 				visit(param);
 			}
-			if (func.get_definition().has_value()) {
+			if (func.is_materialized()) {
 				visit(*func.get_definition());
 			}
 			popContext(pushed);
@@ -486,7 +486,7 @@ private:
 					visit(arg);
 				}
 			}
-			if (ctor.get_definition().has_value()) {
+			if (ctor.is_materialized()) {
 				visit(*ctor.get_definition());
 			} else if (ctor.has_template_body_position()) {
 				// Instantiated out-of-line template constructors may already have concrete
@@ -500,7 +500,7 @@ private:
 		if (node.is<DestructorDeclarationNode>()) {
 			const auto& dtor = node.as<DestructorDeclarationNode>();
 			const bool pushed = pushContext(StringTable::getStringView(dtor.name()));
-			if (dtor.get_definition().has_value()) {
+			if (dtor.is_materialized()) {
 				visit(*dtor.get_definition());
 			}
 			popContext(pushed);
@@ -3885,7 +3885,7 @@ static bool structHasConversionOperatorTo(
 				struct_info->name);
 			const bool needs_materialization =
 				mf.function_decl.is<FunctionDeclarationNode>() &&
-				!mf.function_decl.as<FunctionDeclarationNode>().get_definition().has_value();
+				mf.function_decl.as<FunctionDeclarationNode>().needs_body_materialization();
 			if (needs_materialization) {
 				sema->ensureMemberFunctionMaterialized(
 					struct_info->name, mf.getName(), /*is_const_member=*/mf.is_const());
@@ -5310,7 +5310,7 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 		}
 	}
 
-	if (func_decl->get_definition().has_value() || func_decl->is_implicit()) {
+	if (func_decl->is_materialized() || func_decl->is_implicit()) {
 		return func_decl;
 	}
 	std::string_view parent_sv = func_decl->parent_struct_name();
@@ -5625,7 +5625,7 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMaterialized(
 	const StructTypeInfo& struct_info,
 	const ConstructorDeclarationNode* ctor) {
-	if (!ctor || ctor->get_definition().has_value() || ctor->is_implicit()) {
+	if (!ctor || ctor->is_materialized() || ctor->is_implicit()) {
 		return ctor;
 	}
 

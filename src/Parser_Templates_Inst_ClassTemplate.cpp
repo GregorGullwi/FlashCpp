@@ -2445,7 +2445,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					size_t saved_pack_info = pack_param_info_.size();
 					substituteAndCopyParams(orig_ctor.parameter_nodes(), new_ctor_ref, template_params, template_args);
 					substituteAndCopyInitializers(orig_ctor, new_ctor_ref, template_params, template_args);
-					if (orig_ctor.get_definition().has_value()) {
+					if (orig_ctor.is_materialized()) {
 						new_ctor_ref.set_definition(substituteTemplateParameters(*orig_ctor.get_definition(), template_params, template_args));
 					}
 					pack_param_info_.resize(saved_pack_info);
@@ -2519,7 +2519,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Ensure is_const_member_function is set from pattern so propagateAstProperties derives cv_qualifier.
 					new_func_ref.set_is_const_member_function(mem_func.is_const());
 					new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
-					if (orig_func.get_definition().has_value()) {
+					if (orig_func.is_materialized()) {
 						ASTNode substituted_body = substituteTemplateParameters(
 							*orig_func.get_definition(),
 							template_params,
@@ -3320,7 +3320,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituteAndCopyInitializers(orig_ctor, new_ctor_ref, template_params, template_args_for_pattern);
 
 					// Copy definition if present (with template parameter substitution)
-					if (orig_ctor.get_definition().has_value()) {
+					if (orig_ctor.is_materialized()) {
 						new_ctor_ref.set_definition(substituteTemplateParameters(*orig_ctor.get_definition(), template_params, template_args_for_pattern));
 					}
 					pack_param_info_.resize(saved_pack_info);
@@ -3401,7 +3401,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::string_view pname = template_params[i].as<TemplateParameterNode>().name();
 						deduced_args[pname] = template_args_for_pattern[i];
 					}
-					if (orig_func.get_definition().has_value()) {
+					if (orig_func.is_materialized()) {
 						FLASH_LOG(Templates, Debug, "Copying function definition to new function");
 						ASTNode substituted_body = *orig_func.get_definition();
 						if (!template_args_for_pattern.empty()) {
@@ -3481,7 +3481,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					copy_function_properties(new_func, orig_func);
 					pack_param_info_.resize(saved_pack_info);
-					if (new_func.get_definition().has_value()) {
+					if (new_func.is_materialized()) {
 						finalize_function_after_definition(new_func);
 					}
 
@@ -4579,7 +4579,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
 
 								FLASH_LOG_FORMAT(Templates, Debug, "Instantiated function: is_constexpr={}, has_definition={}",
-												 func_decl.is_constexpr(), func_decl.get_definition().has_value());
+												 func_decl.is_constexpr(), func_decl.is_materialized());
 
 								// Check if the function is constexpr
 								if (func_decl.is_constexpr()) {
@@ -4589,7 +4589,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 									// For now, if the function body is just "return true;" or "return false;", we can evaluate it
 									// This handles the common type_traits pattern
-									if (func_decl.get_definition().has_value()) {
+									if (func_decl.is_materialized()) {
 										const ASTNode& body_node = *func_decl.get_definition();
 										FLASH_LOG_FORMAT(Templates, Debug, "Function body is BlockNode: {}", body_node.is<BlockNode>());
 										if (body_node.is<BlockNode>()) {
@@ -6081,7 +6081,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							(out_of_line_ctor_stub_decl->parameter_nodes().size() == ctor_decl.parameter_nodes().size() &&
 							 (nested_out_of_line_members.size() == 1 ||
 							  constructorDeclarationsHaveMatchingParameterShape(ctor_decl, *out_of_line_ctor_stub_decl)));
-						if (!ctor_decl.get_definition().has_value() &&
+						if (!ctor_decl.is_materialized() &&
 							!ctor_decl.has_template_body_position() &&
 							template_param_count_matches &&
 							out_of_line_ctor_stub_matches) {
@@ -6098,8 +6098,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						auto* nested_func_decl = get_function_decl_node_mut(nested_func_node);
 						const auto& out_of_line_decl = out_of_line_member.function_node.as<FunctionDeclarationNode>().decl_node();
 						if (nested_func_decl != nullptr &&
-							!nested_func_decl->get_definition().has_value() &&
-							!nested_func_decl->has_template_body_position() &&
+							!nested_func_decl->has_any_body_source() &&
 							nested_template_func.template_parameters().size() == out_of_line_member.inner_template_params.size() &&
 							nested_func_decl->decl_node().identifier_token().value() == out_of_line_decl.identifier_token().value()) {
 							nested_func_decl->set_template_body_position(out_of_line_member.body_start);
@@ -6663,7 +6662,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// PHASE 2 deferred-body replay block later in this function decides whether their
 			// deferred bodies should be materialized immediately.
 			if (is_implicit_instantiation &&
-				(func_decl.get_definition().has_value() || func_decl.has_template_body_position())) {
+				func_decl.has_any_body_source()) {
 				// Register this member function for lazy instantiation
 				LazyMemberFunctionInfo lazy_info;
 				{
@@ -6924,7 +6923,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// EAGER INSTANTIATION PATH (original code)
 			// If the function has a definition or deferred body, we need to substitute template parameters
-			if (func_decl.get_definition().has_value() || func_decl.has_template_body_position()) {
+			if (func_decl.has_any_body_source()) {
 				// Substitute return type
 				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
 				ASTNode substituted_return_type_node = substituteTemplateParameters(
@@ -7062,7 +7061,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Get the function body - either from definition or by re-parsing from saved position
 				std::optional<ASTNode> body_to_substitute;
 
-				if (func_decl.get_definition().has_value()) {
+				if (func_decl.is_materialized()) {
 					// Use the already-parsed definition
 					FLASH_LOG(Templates, Debug, "Function has definition, using parsed body");
 					body_to_substitute = func_decl.get_definition();
@@ -7158,7 +7157,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				copy_function_properties(new_func_ref, func_decl);
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
-				if (new_func_ref.get_definition().has_value()) {
+				if (new_func_ref.is_materialized()) {
 					finalize_function_after_definition(new_func_ref);
 				}
 
@@ -7345,7 +7344,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				copy_function_properties(new_func_ref, func_decl);
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
-				if (new_func_ref.get_definition().has_value()) {
+				if (new_func_ref.is_materialized()) {
 					finalize_function_after_definition(new_func_ref);
 				}
 
@@ -7383,7 +7382,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// because they're needed for object creation
 
 			// EAGER INSTANTIATION PATH (original code)
-			if (ctor_decl.get_definition().has_value() || ctor_decl.has_template_body_position() || ctor_decl.has_template_parameters()) {
+			if (ctor_decl.has_any_body_source() || ctor_decl.has_template_parameters()) {
 				try {
 					// Create a new constructor declaration with substituted body
 					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
@@ -7413,7 +7412,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituteAndCopyParams(ctor_decl.parameter_nodes(), new_ctor_ref, template_params, template_args_to_use);
 
 					std::optional<ASTNode> substituted_body;
-					if (ctor_decl.get_definition().has_value()) {
+					if (ctor_decl.is_materialized()) {
 						substituted_body = substituteTemplateParameters(
 							*ctor_decl.get_definition(),
 							template_params,
@@ -7465,7 +7464,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// because they're needed for object destruction
 
 			// EAGER INSTANTIATION PATH (original code)
-			if (dtor_decl.get_definition().has_value()) {
+			if (dtor_decl.is_materialized()) {
 				try {
 					ASTNode substituted_body = substituteTemplateParameters(
 						*dtor_decl.get_definition(),
@@ -7688,7 +7687,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				copy_function_properties(new_func_ref, func_decl);
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
-				if (func_decl.get_definition().has_value())
+				if (func_decl.is_materialized())
 					new_func_ref.set_definition(*func_decl.get_definition());
 				if (func_decl.has_template_body_position())
 					new_func_ref.set_template_body_position(func_decl.template_body_position());
@@ -7997,7 +7996,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							for (auto& info_func : struct_type_info.struct_info_->member_functions) {
 								if (info_func.is_constructor && info_func.function_decl.is<ConstructorDeclarationNode>()) {
 									auto& info_ctor = info_func.function_decl.as<ConstructorDeclarationNode>();
-									if (info_ctor.name() == ctor.name() && !info_ctor.get_definition().has_value()) {
+									if (info_ctor.name() == ctor.name() && !info_ctor.is_materialized()) {
 										info_ctor.set_definition(substituted_body);
 										break;
 									}

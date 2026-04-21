@@ -2605,7 +2605,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								const FunctionDeclarationNode& func_decl = member_lookup->as<FunctionDeclarationNode>();
 								StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
 								auto inst_type_it = getTypesByNameMap().find(class_name_handle);
-								if (!func_decl.get_definition().has_value() && inst_type_it != getTypesByNameMap().end() && inst_type_it->second->isTemplateInstantiation()) {
+								if (!func_decl.is_materialized() && inst_type_it != getTypesByNameMap().end() && inst_type_it->second->isTemplateInstantiation()) {
 									StringHandle member_name_handle = member_token.handle();
 									const bool member_is_const = func_decl.is_const_member_function();
 									LazyMemberKey member_key = LazyMemberKey::exact(
@@ -3565,7 +3565,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// Get the DeclarationNode
 				if (identifierType.has_value() && identifierType->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
-					if (!func_decl.get_definition().has_value()) {
+					if (!func_decl.is_materialized()) {
 						std::string_view qualified_scope = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
 						StringHandle class_name_handle = StringTable::getOrInternStringHandle(qualified_scope);
 						auto scope_type_it = getTypesByNameMap().find(class_name_handle);

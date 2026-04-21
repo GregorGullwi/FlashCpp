@@ -2261,9 +2261,71 @@ public:
 	bool set_definition(ASTNode block_node) {
 		if (definition_block_.has_value())
 			return false;
+		// A decl that previously failed substitution must not be re-materialised.
+		// `set_definition` is the Materialized transition; any attempt to set a
+		// body after a recorded substitution failure is a bug in the caller.
+		assert(body_state_tag_ != BodyStateTag::FailedSubstitution);
 
 		definition_block_.emplace(block_node);
+		body_state_tag_ = BodyStateTag::Materialized;
 		return true;
+	}
+
+	// Body-state query API (item #2: shape/body phase split).
+	// The body of a function-template instantiation can be in one of three
+	// states:
+	//   NotMaterialized     — shape exists, body not yet produced. Default.
+	//   Materialized        — body was parsed / substituted successfully.
+	//   FailedSubstitution  — body substitution was attempted and failed.
+	//                         A SFINAE probe caches the failure here so that a
+	//                         later probe short-circuits without reparsing,
+	//                         and so that a non-SFINAE (ODR) use can promote
+	//                         the stored reason to a hard error.
+	enum class BodyStateTag : uint8_t {
+		NotMaterialized = 0,
+		Materialized = 1,
+		FailedSubstitution = 2,
+	};
+
+	BodyStateTag body_state_tag() const { return body_state_tag_; }
+
+	// Category A / C: "is the parsed body ready?" — consumers (codegen, eval,
+	// write-once guards). Equivalent mask to `get_definition().has_value()`.
+	bool is_materialized() const { return body_state_tag_ == BodyStateTag::Materialized; }
+
+	// Category D / SFINAE memo: was substitution attempted and rejected?
+	bool failed_substitution() const { return body_state_tag_ == BodyStateTag::FailedSubstitution; }
+
+	// Category B: "is this a still-bodyless candidate that instantiation
+	// should try to materialise?" A FailedSubstitution decl must NOT be
+	// re-probed (that's the whole point of caching the failure). Deleted
+	// decls are intentionally NOT excluded here — Category B callers
+	// replicate the = delete flag onto the cloned instantiation and
+	// already treat bodyless-deleted decls as a no-op downstream.
+	bool needs_body_materialization() const {
+		return !is_materialized() && !failed_substitution();
+	}
+
+	// Category E: "is there any source we can recover a body from?" — either
+	// we already parsed it, or we saved the token position to reparse it.
+	// A FailedSubstitution decl has neither usable source.
+	bool has_any_body_source() const {
+		return is_materialized() || (has_template_body_ && !failed_substitution());
+	}
+
+	// Diagnostic payload for a cached substitution failure. Empty when the
+	// decl is not in the FailedSubstitution state.
+	StringHandle substitution_failure_reason() const { return substitution_failure_reason_; }
+
+	// Record a substitution failure on a freshly-cloned instantiation node.
+	// The decl must be in NotMaterialized state — we never retroactively
+	// invalidate an already-materialised body, and we never overwrite an
+	// earlier failure (first failure wins for diagnostic stability).
+	void mark_failed_substitution(StringHandle reason) {
+		assert(body_state_tag_ == BodyStateTag::NotMaterialized);
+		assert(!definition_block_.has_value());
+		body_state_tag_ = BodyStateTag::FailedSubstitution;
+		substitution_failure_reason_ = reason;
 	}
 
 	// Member function support
@@ -2427,6 +2489,8 @@ private:
 	std::vector<int64_t> non_type_template_args_;  // Non-type template arguments (e.g., 0 for get<0>)
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
+	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
+	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution
 };
 
 

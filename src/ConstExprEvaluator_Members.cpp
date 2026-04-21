@@ -237,7 +237,7 @@ bool Evaluator::isConstexprMemberLookupCandidate(
 	if (lookup_mode == Evaluator::MemberFunctionLookupMode::ConstexprEvaluable) {
 		bool can_evaluate = func_decl.is_constexpr() || func_decl.is_consteval() ||
 							(context.storage_duration == ConstExpr::StorageDuration::Static);
-		if (!can_evaluate || !func_decl.get_definition().has_value()) {
+		if (!can_evaluate || !func_decl.is_materialized()) {
 			return false;
 		}
 	}
@@ -1488,7 +1488,7 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 		true);
 
 	if ((!match.function && !match.ambiguous) ||
-		(match.function && !match.function->get_definition().has_value())) {
+		(match.function && !match.function->is_materialized())) {
 		// Try the base template's struct info for template instantiations.
 		auto struct_type_it = getTypesByNameMap().find(struct_info->name);
 		if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isTemplateInstantiation()) {

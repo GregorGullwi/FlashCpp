@@ -35,9 +35,26 @@ placeholder) rather than failing the substitution.
 highest specificity level is `= delete`, the entire group is treated as a SFINAE
 failure. This matches the intent of `= delete` overloads that explicitly catch
 "error" cases (e.g., `swap` on `pair<const F, S>`).
-**Proper fix needed:** The SFINAE instantiation path should detect `enable_if<false>`
-return types and propagate them as substitution failures, eliminating the need for
-the tie-breaking heuristic.
+**Partial progress (item #2 data-model prerequisite, 2026-04-21):** The shape/body
+phase split from `docs/2026-04-21-phase5-slice-g-analysis.md` item #2 is now in
+place at the data-model level. `FunctionDeclarationNode` exposes a three-state
+`BodyStateTag` (`NotMaterialized` / `Materialized` / `FailedSubstitution`) with
+`is_materialized()`, `failed_substitution()`, `needs_body_materialization()`,
+`has_any_body_source()`, and `mark_failed_substitution(reason)`. Category B
+instantiation-driver sites on `FunctionDeclarationNode` now route through
+`needs_body_materialization()` / `has_any_body_source()`, which short-circuit on
+a `FailedSubstitution` node so a cached failure is never re-probed. Attempting to
+remove the `= delete` tie-break heuristic while exercising this test confirmed
+that the reparse-failure path in `try_instantiate_single_template` does not yet
+catch every shape of `enable_if<false>` return type (specifically, `pair<First,
+Second>&` forms where the outer template is already resolvable with placeholder
+args). The heuristic therefore stays, but the infrastructure is now ready to
+narrow it once every reparse-failure site calls `mark_failed_substitution` and
+the reparse guard is tightened to cover the remaining shapes.
+**Proper fix needed:** The SFINAE instantiation path should detect
+`enable_if<false>` return types and propagate them as substitution failures via
+the new `mark_failed_substitution` mutator, eliminating the need for the
+tie-breaking heuristic.
 
 ## Non-SFINAE function-template overload selection uses "first match" instead of most-specific
 

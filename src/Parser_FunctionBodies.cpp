@@ -835,7 +835,7 @@ StructMemberFunction* Parser::find_ctor_dtor_for_definition(
 				continue;
 			if (member.function_decl.is<DestructorDeclarationNode>()) {
 				const DestructorDeclarationNode& dtor = member.function_decl.as<DestructorDeclarationNode>();
-				if (dtor.get_definition().has_value())
+				if (dtor.is_materialized())
 					continue;  // already defined
 			}
 			return &member;
@@ -847,7 +847,7 @@ StructMemberFunction* Parser::find_ctor_dtor_for_definition(
 		if (!member.function_decl.is<ConstructorDeclarationNode>())
 			continue;
 		const ConstructorDeclarationNode& ctor = member.function_decl.as<ConstructorDeclarationNode>();
-		if (ctor.get_definition().has_value())
+		if (ctor.is_materialized())
 			continue;  // already defined
 		if (ctor.parameter_nodes().size() != param_count)
 			continue;
