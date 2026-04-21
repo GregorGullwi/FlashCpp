@@ -46,20 +46,24 @@ std::optional<ASTNode> AstToIr::materializeLazyMemberIfNeeded(
 	// Useful for measuring residual work after the ODR-use drain extension
 	// landed. The log is emitted at debug level under the "Codegen" category
 	// so it is silent in normal builds; run with
-	// `--log-level=Codegen:debug` to see it.
-	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
-	bool was_first_materializer = is_const_member.has_value()
-		? lazy_registry.needsInstantiation(struct_name, member_name, *is_const_member)
-		: lazy_registry.needsInstantiationAny(struct_name, member_name);
-	auto result = sema_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
-	if (was_first_materializer && result.has_value()) {
-		FLASH_LOG_FORMAT(Codegen, Debug,
-			"materializeLazyMemberIfNeeded: forwarder was first materializer for {}::{}{}",
-			StringTable::getStringView(struct_name),
-			StringTable::getStringView(member_name),
-			is_const_member.value_or(false) ? " (const)" : "");
+	// `--log-level=Codegen:debug` to see it. Gated on IS_FLASH_LOG_ENABLED so
+	// the registry lookup is skipped entirely in the common (non-debug) path.
+	if (IS_FLASH_LOG_ENABLED(Codegen, Debug)) {
+		auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+		bool was_first_materializer = is_const_member.has_value()
+			? lazy_registry.needsInstantiation(struct_name, member_name, *is_const_member)
+			: lazy_registry.needsInstantiationAny(struct_name, member_name);
+		auto result = sema_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
+		if (was_first_materializer && result.has_value()) {
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"materializeLazyMemberIfNeeded: forwarder was first materializer for {}::{}{}",
+				StringTable::getStringView(struct_name),
+				StringTable::getStringView(member_name),
+				is_const_member.value_or(false) ? " (const)" : "");
+		}
+		return result;
 	}
-	return result;
+	return sema_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
 }
 
 void AstToIr::queueDeferredMemberFunctionFromNode(
