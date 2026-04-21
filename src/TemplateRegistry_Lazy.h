@@ -99,9 +99,74 @@ public:
 		lazy_members_.erase(handle);
 	}
 
+	// ------------------------------------------------------------------
+	// Explicit ODR-use tracking (Phase 5 Slice G)
+	// ------------------------------------------------------------------
+	//
+	// `odr_used_` records lazy-member keys that sema has identified as
+	// actually used by user code (the C++ notion of ODR-use: named in a
+	// potentially-evaluated expression, selected as a call target, chosen
+	// by overload resolution, etc.). This set is intentionally *independent*
+	// of `lazy_members_` so the signal persists across materialization:
+	// `markInstantiated` erases the map entry, but the ODR-use record stays
+	// so later passes can still answer "was this member ever ODR-used?".
+	//
+	// Invariants:
+	//   * `markOdrUsed` is only called from non-speculative, non-SFINAE
+	//     sema sites that have proven the member is actually needed.
+	//   * `ensureMemberFunctionMaterialized` does *not* auto-mark — it is a
+	//     generic materialization helper reachable from codegen/constexpr
+	//     forwarders whose semantics are "make the body exist", which is
+	//     weaker than "sema proved ODR-use".
+	//   * The SFINAE-probed instantiation hazard (e.g. `pair<const int, int>`
+	//     inside `is_swappable<...>`) is preserved: those paths never run
+	//     through sema annotation sites, so the ODR-use bit stays false and
+	//     any drain that filters by `isOdrUsed` safely skips them.
+	//
+	// Note on const/non-const variants: overload sets are per-const-ness,
+	// so `markOdrUsed(..., is_const=false)` does NOT also imply the const
+	// variant. Callers that truly don't know const-ness (ctor/dtor, or
+	// early lookup before overload resolution) may use the `...Any` helpers
+	// which record/query both variants.
+	void markOdrUsed(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
+		instantiated_class_name = normalizeClassName(instantiated_class_name);
+		StringBuilder key_builder;
+		key_builder.append(instantiated_class_name).append("::").append(member_function_name);
+		if (is_const)
+			key_builder.append("$const");
+		std::string_view key = key_builder.commit();
+		odr_used_.insert(StringTable::getOrInternStringHandle(key));
+	}
+
+	// Mark both const and non-const variants as ODR-used. Prefer the precise
+	// overload above; use this only when the member kind is inherently
+	// const-agnostic (ctor/dtor) or when the call site has not yet
+	// determined const-ness.
+	void markOdrUsedAny(StringHandle instantiated_class_name, StringHandle member_function_name) {
+		markOdrUsed(instantiated_class_name, member_function_name, /*is_const=*/false);
+		markOdrUsed(instantiated_class_name, member_function_name, /*is_const=*/true);
+	}
+
+	bool isOdrUsed(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) const {
+		instantiated_class_name = normalizeClassName(instantiated_class_name);
+		StringBuilder key_builder;
+		key_builder.append(instantiated_class_name).append("::").append(member_function_name);
+		if (is_const)
+			key_builder.append("$const");
+		std::string_view key = key_builder.commit();
+		auto handle = StringTable::getOrInternStringHandle(key);
+		return odr_used_.find(handle) != odr_used_.end();
+	}
+
+	bool isOdrUsedAny(StringHandle instantiated_class_name, StringHandle member_function_name) const {
+		return isOdrUsed(instantiated_class_name, member_function_name, /*is_const=*/false)
+			|| isOdrUsed(instantiated_class_name, member_function_name, /*is_const=*/true);
+	}
+
 	// Clear all lazy members (for testing)
 	void clear() {
 		lazy_members_.clear();
+		odr_used_.clear();
 	}
 
 	// Get count of uninstantiated members (for diagnostics)
@@ -109,11 +174,21 @@ public:
 		return lazy_members_.size();
 	}
 
+	// Get count of members marked ODR-used (for diagnostics/audits)
+	size_t getOdrUsedCount() const {
+		return odr_used_.size();
+	}
+
 private:
 	LazyMemberInstantiationRegistry() = default;
 
 	// Map from "instantiated_class::member_function" to lazy instantiation info
 	std::unordered_map<StringHandle, LazyMemberFunctionInfo, TransparentStringHash, std::equal_to<>> lazy_members_;
+
+	// Keys (same format as `lazy_members_`) that sema has proven to be
+	// ODR-used. Persists across `markInstantiated` — see the block comment
+	// above `markOdrUsed` for the invariants this set upholds.
+	std::unordered_set<StringHandle, TransparentStringHash, std::equal_to<>> odr_used_;
 };
 
 // Global lazy member instantiation registry

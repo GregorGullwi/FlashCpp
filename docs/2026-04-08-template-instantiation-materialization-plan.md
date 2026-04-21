@@ -1,7 +1,7 @@
 # Template Instantiation / Materialization Status
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-22 (Phase 5 Slice F finalized; Phase 6 positional-fallback fix for explicit variadic deduction)
+**Last Updated:** 2026-04-21 (Phase 5 Slice G foundation: explicit ODR-use tracking in lazy registry)
 
 This document is now a short status audit, not a historical scratchpad.
 Its purpose is to answer two questions clearly:
@@ -25,6 +25,7 @@ Its purpose is to answer two questions clearly:
   - **Slice D (constexpr static-member fallback) is done.** `ConstExpr::Evaluator::find_current_struct_member_function_candidate` no longer drives lazy-member materialization directly. When the evaluation context has sema attached it forwards to `SemanticAnalysis::ensureMemberFunctionMaterialized`; the parser-path (`instantiateLazyMemberFunction` + `normalizePendingSemanticRoots` + `markInstantiated`) is preserved only as a pre-sema fallback. Because the first evaluator pass now materializes on its own, the codegen-side retry in `IrGenerator_Visitors_TypeInit.cpp` no longer seeds the retry with its own `materializeLazyMemberIfNeeded` call — it now only owns its symbol-table rebind + template-binding rebuild.
   - **Slice E (deferred-queue fallbacks) is done.** The ctor-shaped fallback was previously verified dead and deleted. The function-shaped fallback has now been eliminated too: lazy function bodies are materialized through `materializeLazyMemberIfNeeded` at the three sites that feed body-less stubs into `deferred_member_functions_` — the struct visitor's per-member loop in `IrGenerator_Visitors_Decl.cpp`, the `queueDeferredMemberFunctions` lambda in `IrGenerator_Call_Direct.cpp` that snapshots a resolved owner struct's member list, and the per-call `queueDeferredMemberFunctionFromNode` sites in `IrGenerator_Call_Direct.cpp` / `IrGenerator_Call_Indirect.cpp` / `IrGenerator_MemberAccess.cpp` (already materialized). An audit guard that replaced the fallback with a hard failure confirmed zero regressions across the 2171-test suite, after which the fallback in `generateDeferredMemberFunctions` was removed outright.
   - **Slice F (end-of-sema lazy-member drain) landed.** A new helper `SemanticAnalysis::drainLazyMemberRegistry` runs at the tail of `SemanticAnalysis::run` (after `normalizePendingSemanticRoots`). It walks every reachable `StructDeclarationNode` from `parser_.get_nodes()` (recursing into namespaces and nested classes), and for each member listed in that struct's AST `member_functions()` that still has a lazy-registry entry, it calls `ensureMemberFunctionMaterialized`. This mirrors the struct-visitor's per-member filter exactly, so it never over-materializes SFINAE-only instantiations whose members are not ODR-used. The codegen-side `AstToIr::materializeLazyMemberIfNeeded` is no longer a first materializer on the common path — it is a thin forwarder into sema that no-ops when sema has already materialized. A small residual set of instantiated structs (held only through `StructTypeInfo` / lazy-registry references and not reachable from the top-level AST walk) still triggers first-time materialization via the forwarder; this is intentional — unconditionally draining every instantiated struct over-materializes SFINAE-probed template-argument instantiations whose member bodies are ill-formed by design (see step 3 under "Clear next steps").
+  - **Slice G foundation (explicit ODR-use plumbing) landed.** `LazyMemberInstantiationRegistry` now carries a separate `odr_used_` set (keyed the same way as `lazy_members_`) with `markOdrUsed` / `markOdrUsedAny` / `isOdrUsed` / `isOdrUsedAny` APIs. The set **persists across `markInstantiated`** so later passes can answer "was this member ever ODR-used?" independently of whether it was materialized. Three non-speculative sema sites now call `markOdrUsed` before invoking `ensureMemberFunctionMaterialized`: `structHasConversionOperatorTo` (Slice A), `tryMaterializeLazyCallTarget` (Slice B/C), and `ensureSelectedConstructorMaterialized` (ctor selection path). The helper itself is **deliberately not** auto-marking — the bit is meant to record "sema proved ODR-use", which is a stronger signal than "someone asked for materialization" and is needed to keep SFINAE-probed-only instantiations (e.g. `pair<const int, int>` inside `is_swappable`) out of any future drain that filters on this bit. The constexpr-evaluator site (`find_current_struct_member_function_candidate`) is *not yet* marking; it can be reached speculatively (e.g. `is_speculative` context for template-argument disambiguation), so it needs a guarded version in a later commit. Baseline preserved at 2201 pass / 148 expected-fail.
 - **Phase 6:** In progress.
   - The explicit-deduction mapping bug around `positional_deduced_call_arg_index` is fixed: positional fallback now only runs for trailing parameters after a **function-parameter pack**, and it skips call-argument slots already consumed by direct pre-deduction. This closes the bad `template<typename... Rest, typename U> f(Identity<U>::type)` acceptance path where a pure template-parameter pack (with no function-parameter pack) could incorrectly deduce `U` from the first call argument. Regression covered by `tests/test_explicit_variadic_pack_nondeduced_tail_fail.cpp`.
   - Broader explicit-deduction cleanup is still open.
@@ -102,11 +103,24 @@ The remaining files above do not.
 
 ## Clear next steps
 
-1. **Audit the remaining codegen bridge (now a thin sema forwarder)**
+1. **Slice G foundation landed 2026-04-21** — explicit ODR-use bit plumbed through the lazy registry.
+   - `LazyMemberInstantiationRegistry` carries an independent `odr_used_` set keyed identically to `lazy_members_`. `markOdrUsed` / `isOdrUsed` (plus `...Any` variants) provide a signal that **persists across** `markInstantiated`, so later passes can distinguish "has been materialized" from "was ever ODR-used".
+   - Three non-speculative sema sites mark ODR-use **before** materializing:
+     - `structHasConversionOperatorTo` (Slice A path) — conversion operator selected by overload resolution.
+     - `tryMaterializeLazyCallTarget` (Slice B/C path) — direct/indirect call target resolved.
+     - `ensureSelectedConstructorMaterialized` — constructor selected.
+   - Deliberately **not** marking inside `ensureMemberFunctionMaterialized` itself: the helper is reachable from codegen / constexpr forwarders whose "please materialize" semantics are weaker than "sema proved ODR-use". Keeping the helper neutral preserves the strong signal needed to safely skip SFINAE-probed-only instantiations in any future drain extension.
+   - The constexpr evaluator site (`find_current_struct_member_function_candidate`) is **not yet** marking — that code path can run under `EvaluationContext::is_speculative` (used for `<`-is-template-vs-less-than disambiguation), which must be gated first.
+
+2. **Next concrete step (not yet landed): drain-by-ODR-use pass.**
+   - Extend `drainLazyMemberRegistry` with a second loop after the AST-walk pass that iterates any remaining `needsInstantiation=true` entries whose key is in `odr_used_`, and materializes them. This is the mechanism that can safely handle ODR-used structs **not** reachable from `parser_.get_nodes()` without regressing the SFINAE hazard: only keys that sema explicitly marked are considered, SFINAE probes never mark, so they stay lazy.
+   - Validate that this reduces the number of first-materializations happening through `AstToIr::materializeLazyMemberIfNeeded` — add a temporary debug log in the forwarder to measure.
+
+3. **Audit the remaining codegen bridge (now a thin sema forwarder)**
    - `AstToIr::materializeLazyMemberIfNeeded` in `IrGenerator_Helpers.cpp` forwards to `SemanticAnalysis::ensureMemberFunctionMaterialized`; this is the one remaining surface.
    - Callers: `IrGenerator_Visitors_TypeInit.cpp`, `IrGenerator_Call_Direct.cpp`, `IrGenerator_Call_Indirect.cpp`, `IrGenerator_MemberAccess.cpp` (conv-op fallback only).
 
-2. **For each remaining caller, move materialization earlier**
+4. **For each remaining caller, move materialization earlier**
    - make parser/sema publish the selected callable/member before IR lowering needs it
    - keep codegen as a consumer, not a fallback materializer
    - suggested next slices:
@@ -115,18 +129,18 @@ The remaining files above do not.
      - **Slice D — constexpr static-member fallback** (`IrGenerator_Visitors_TypeInit.cpp:512`): **done** — the evaluator routes its lazy-member materialization through `SemanticAnalysis::ensureMemberFunctionMaterialized` when sema is attached, and the codegen-side retry no longer primes with `materializeLazyMemberIfNeeded`.
      - **Slice E — deferred-queue fallbacks** (`IrGenerator_Visitors_TypeInit.cpp:275/289`): **done** — both the ctor-shaped (line 289) and function-shaped (line 275) fallbacks are gone. Lazy function/ctor bodies are now materialized by the sites that feed `deferred_member_functions_` (`IrGenerator_Visitors_Decl.cpp` struct-visitor loop, `IrGenerator_Call_Direct.cpp` `queueDeferredMemberFunctions` snapshot, and the per-call sites that already used `materializeLazyMemberIfNeeded`). The deferred-queue entry-point in `generateDeferredMemberFunctions` is now purely a consumer.
 
-3. **Delete the codegen bridge once the sema invariant is in place**
+5. **Delete the codegen bridge once the sema invariant is in place**
    - the shared helper has been **collapsed to a consistency check / forwarder** form: `AstToIr::materializeLazyMemberIfNeeded` simply forwards to `SemanticAnalysis::ensureMemberFunctionMaterialized`, which returns `std::nullopt` whenever sema has already materialized the target. On the common path (any struct reachable from `parser_.get_nodes()` through namespaces / nested classes) Slice F's end-of-sema drain has already done the work, so the forwarder is a no-op consistency check.
-   - **Outright deletion is intentionally parked.** A residual set of instantiated structs lives only through `StructTypeInfo` / lazy-registry references and is not reachable from the top-level AST walk. The obvious generalization — have `try_instantiate_class_template` track every freshly-instantiated struct in a side list and have `drainLazyMemberRegistry` walk that list too — was implemented and tested; it regressed `tests/test_namespaced_pair_swap_sfinae_ret0.cpp`. The reason is architectural: a class-template instantiation that appears only as a **template argument** feeding a SFINAE probe (e.g., `pair<const int, int>` passed to `is_swappable<...>`) is *not* in SFINAE context at the point where it is instantiated, so an `!in_sfinae_context_` gate does not help. Its member bodies (`pair<const int, int>::swap` in that test) may be ill-formed by design and are only valid to instantiate lazily through actual ODR-use — which never happens in the SFINAE-probe case. Draining all such structs over-materializes those bodies and breaks linking with references to deleted / unresolved overloads.
-   - The practical resolution: keep the forwarder as a safe fallback for the 4 residual tests where a codegen call site really does need to drive first-materialization for an unreachable struct. The forwarder contains no materialization logic of its own; it is a thin call into `SemanticAnalysis::ensureMemberFunctionMaterialized`. This preserves the "sema owns materialization" invariant that Slices A–E established.
+   - **Outright deletion remains parked** until the drain-by-ODR-use pass (step 2 above) lands and an audit shows zero residual first-materializations flowing through the forwarder. With ODR-use plumbing in place from 2026-04-21, the path is clearer: mark the missing sites, extend the drain, then delete.
+   - The earlier side-list experiment (track every freshly-instantiated struct, drain blindly) regressed `tests/test_namespaced_pair_swap_sfinae_ret0.cpp`. The drain-by-ODR-use design avoids that because SFINAE-probed instantiations never run through sema annotation sites and so never mark ODR-use.
 
-4. **Re-run the existing template-heavy regression cluster after each slice**
+6. **Re-run the existing template-heavy regression cluster after each slice**
    - pending sema normalization
    - nested template constructor materialization
    - conversion-operator lazy materialization
    - phase-5 constexpr/member-binding regressions
 
-5. **Only after the ownership cleanup is stable, continue Phase 6 cleanup**
+7. **Only after the ownership cleanup is stable, continue Phase 6 cleanup**
    - the `positional_deduced_call_arg_index` bug in `src/Parser_Templates_Inst_Deduction.cpp` is fixed (2026-04-22): positional fallback is now gated on `has_variadic_func_pack` (not `has_variadic_pack`), and it skips call-argument slots recorded in `deduction_info->pre_deduced_arg_indices`. Regression coverage: `tests/test_explicit_variadic_pack_nondeduced_tail_fail.cpp`.
    - broader explicit-deduction architecture still needs a follow-up audit
    - this remains separate from the Phase 5 ownership cleanup
@@ -154,6 +168,29 @@ The following tests are the most relevant guardrails for this area:
 - `tests/test_conv_op_sema_phase5_ret42.cpp`
 - `tests/test_phase5_nested_templates_ret42.cpp`
 - `tests/test_phase5_multi_level_ret45.cpp`
+
+## Validation baseline refreshed on 2026-04-21 (Slice G foundation: explicit ODR-use plumbing)
+
+Windows validation was re-run after landing:
+- `LazyMemberInstantiationRegistry::markOdrUsed` / `isOdrUsed` / `odr_used_` set (with `...Any` variants and `clear()` integration) in `src/TemplateRegistry_Lazy.h`.
+- `markOdrUsed` calls at three non-speculative sema sites:
+  - `structHasConversionOperatorTo` in `src/SemanticAnalysis.cpp` (Slice A / tryAnnotateConversion path).
+  - `tryMaterializeLazyCallTarget` in `src/SemanticAnalysis.cpp` (Slice B/C / direct + indirect call target).
+  - `ensureSelectedConstructorMaterialized` in `src/SemanticAnalysis.cpp` (ctor selection).
+- `ensureMemberFunctionMaterialized` intentionally left neutral — it is reachable from codegen / constexpr forwarders whose semantics are weaker than "sema proved ODR-use".
+
+Run:
+
+- `.\build_flashcpp.bat`
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
+
+Current baseline:
+
+- **2201** compile+link+runtime passing tests
+- **148** `_fail` tests failing as expected
+- overall result: **SUCCESS**
+
+The foundation is in place for the drain-by-ODR-use extension to land as a separate follow-up commit (see step 2 under "Clear next steps").
 
 ## Validation baseline refreshed on 2026-04-22 (Slice F finalization; Phase 6 positional-fallback fix)
 

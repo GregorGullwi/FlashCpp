@@ -3822,6 +3822,12 @@ static bool structHasConversionOperatorTo(
 		// entry is already marked instantiated, so calling it unconditionally
 		// here is safe for non-lazy conversion operators too.
 		if (sema && struct_info->name.isValid() && mf.getName().isValid()) {
+			// Phase 5 Slice G: the conversion operator was selected by
+			// overload resolution in a non-SFINAE annotation path, so this
+			// is a real ODR-use. Record it before materialization so the
+			// signal persists even after the lazy entry is erased.
+			LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
+				struct_info->name, mf.getName(), /*is_const=*/mf.is_const());
 			const bool needs_materialization =
 				mf.function_decl.is<FunctionDeclarationNode>() &&
 				!mf.function_decl.as<FunctionDeclarationNode>().get_definition().has_value();
@@ -5192,6 +5198,11 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	StringHandle parent_handle = StringTable::getOrInternStringHandle(parent_sv);
 	StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
 	const bool is_const = func_decl->is_const_member_function();
+	// Phase 5 Slice G: this helper is only reached after the call target has
+	// been resolved by overload resolution in sema, so the member is ODR-used.
+	// Record it before materialization so the signal persists past the
+	// erase-on-instantiate in the lazy registry.
+	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(parent_handle, member_handle, is_const);
 	auto materialized = ensureMemberFunctionMaterialized(parent_handle, member_handle, is_const);
 	if (materialized.has_value() && materialized->is<FunctionDeclarationNode>()) {
 		return &materialized->as<FunctionDeclarationNode>();
@@ -5371,6 +5382,12 @@ const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMat
 		return ctor;
 	}
 
+	// Phase 5 Slice G: the constructor was selected by overload resolution
+	// (see `tryMaterializeLazyConstructorTarget`-style call sites), so it is
+	// ODR-used. Ctors have no const/non-const variants, so the precise
+	// `is_const=false` marker captures the full overload set.
+	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
+		struct_info.getName(), ctor->name(), /*is_const=*/false);
 	// Constructors are never const-qualified members; use is_const = false.
 	auto instantiated = ensureMemberFunctionMaterialized(
 		struct_info.getName(), ctor->name(), /*is_const_member=*/false);
