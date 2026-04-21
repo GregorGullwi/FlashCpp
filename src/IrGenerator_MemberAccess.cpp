@@ -3826,32 +3826,12 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	if (!conv_op.function_decl.is<FunctionDeclarationNode>())
 		return std::nullopt;
 
-	// Slice 4: trigger lazy instantiation of the conversion operator body if it is still a stub.
-	// The lazy registry key is effectiveLookupName (e.g., "operator int" for LazyWrapper<int>),
-	// which equals conv_op.getName().  The stub's identifier_token holds the un-substituted
-	// original name ("operator user_defined"), so we must use conv_op.getName() here.
-	// instantiateLazyMemberFunction() updates conv_op.function_decl in-place so that the
-	// subsequent `func_decl` binding already sees the materialized body.
-	if (parser_) {
-		const auto& init_func = conv_op.function_decl.as<FunctionDeclarationNode>();
-		if (!init_func.get_definition().has_value()) {
-			StringHandle canonical_name = conv_op.getName();
-			const bool conv_is_const = conv_op.is_const();
-			auto instantiated_func = sema_
-				? sema_->ensureMemberFunctionMaterialized(source_type_info.name(), canonical_name, conv_is_const)
-				: std::optional<ASTNode>{};
-			// Queue the materialized body for deferred codegen (mirrors IrGenerator_Call_Direct).
-			if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-				queueDeferredMemberFunctionFromNode(
-					source_type_info.name(),
-					*instantiated_func,
-					StringTable::getStringView(source_type_info.name()));
-			}
-		}
-	}
+	// Phase 5 Slice K: historical lazy-conversion-operator materialize-and-queue
+	// fallback removed. Sema's `tryAnnotateConversion` now eagerly materializes the
+	// matching conversion-operator lazy stub through `ensureMemberFunctionMaterialized`
+	// at sema time, and the end-of-normalization drain covers any residuals. An audit
+	// across the full 2201-test corpus confirmed 0 first-materializer hits here.
 
-	// Re-read func_decl: instantiateLazyMemberFunction() may have updated conv_op.function_decl
-	// in-place (replacing the signature-only stub with the materialized body).
 	if (!conv_op.function_decl.is<FunctionDeclarationNode>())
 		return std::nullopt;
 	const auto& func_decl = conv_op.function_decl.as<FunctionDeclarationNode>();

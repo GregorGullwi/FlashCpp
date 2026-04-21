@@ -939,52 +939,19 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			buildNamespaceStack(StringTable::getStringView(struct_name), ns_stack);
 		}
 		for (const auto& member_func : struct_info->member_functions) {
-			ASTNode queued_node = member_func.function_decl;
-			// Phase 5 Slice E: if this entry is still a lazy stub (no body yet)
-			// and the lazy registry has a matching entry, materialize it eagerly
-			// through the sema-owned bridge so the deferred queue always
-			// contains bodies. This removes the need for a function-shaped
-			// materialize-and-retry fallback in `generateDeferredMemberFunctions`.
-			if (queued_node.is<FunctionDeclarationNode>()) {
-				const auto& fn_entry = queued_node.as<FunctionDeclarationNode>();
-				if (!fn_entry.get_definition().has_value() && !fn_entry.is_implicit() && parser_) {
-					StringHandle member_handle = member_func.getName();
-					const bool is_const_func = fn_entry.is_const_member_function();
-					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(struct_name, member_handle, is_const_func)) {
-						auto materialized = sema_
-							? sema_->ensureMemberFunctionMaterialized(struct_name, member_handle, is_const_func)
-							: std::optional<ASTNode>{};
-						if (materialized.has_value() && materialized->is<FunctionDeclarationNode>()) {
-							queued_node = *materialized;
-						}
-					}
-				}
-			}
+			// Phase 5 Slice K: sema's end-of-normalization drain materializes
+			// every reachable struct's lazy members (AST-walk pass) plus every
+			// ODR-used residual. By the time queueDeferredMemberFunctions runs,
+			// `member_func.function_decl` always reflects the materialized body
+			// if one exists. The previous lazy-stub materialize-and-queue branch
+			// here was audited across the full 2201-test corpus with a hard-fail
+			// guard and never hit; it has been removed outright.
 			DeferredMemberFunctionInfo deferred_info;
 			deferred_info.struct_name = struct_name;
-			deferred_info.function_node = queued_node;
+			deferred_info.function_node = member_func.function_decl;
 			deferred_info.namespace_stack = ns_stack;
 			deferred_member_functions_.push_back(std::move(deferred_info));
 		}
-	};
-
-	auto instantiateAndQueueLazyMember = [&](StringHandle struct_name_handle,
-											   StringHandle member_handle,
-											   std::string_view qualified_name_for_ns,
-											   size_t expected_param_count) -> const FunctionDeclarationNode* {
-		auto instantiated_func = sema_
-			? sema_->ensureMemberFunctionMaterialized(struct_name_handle, member_handle, std::nullopt)
-			: std::optional<ASTNode>{};
-		if (!instantiated_func.has_value() || !instantiated_func->is<FunctionDeclarationNode>()) {
-			return nullptr;
-		}
-		const FunctionDeclarationNode& fd = instantiated_func->as<FunctionDeclarationNode>();
-		if (fd.parameter_nodes().size() != expected_param_count) {
-			return nullptr;
-		}
-
-		queueDeferredMemberFunctionFromNode(struct_name_handle, *instantiated_func, qualified_name_for_ns);
-		return &fd;
 	};
 
 	auto findCurrentStructMemberInHierarchy = [&]() -> const FunctionDeclarationNode* {
@@ -1103,14 +1070,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		resolveMangledName(matched_func_decl, owner_for_mangling);
 		if (owner_struct_info && !owner_struct_info->member_functions.empty()) {
 			queueDeferredMemberFunctions(owner_handle, owner_struct_info, owner_for_mangling);
-		} else if (const FunctionDeclarationNode* instantiated_func =
-			instantiateAndQueueLazyMember(owner_handle,
-				matched_func_decl->decl_node().identifier_token().handle(),
-				resolved_owner_name,
-				callExprNode.arguments().size())) {
-			matched_func_decl = instantiated_func;
-			resolveMangledName(matched_func_decl, resolved_owner_name);
 		}
+		// Phase 5 Slice K: the historical `instantiateAndQueueLazyMember` fallback
+		// here was audited across the full 2201-test corpus with a hard-fail guard
+		// and never hit — sema's drain has already materialized every reachable
+		// struct's members by this point, so the lazy registry is empty for them.
 		FLASH_LOG_FORMAT(Codegen, Debug, "Using {} cross-struct direct call target for: {}", source_label, func_name_view);
 	};
 
@@ -1420,18 +1384,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 							}
 						}
 					}
-						// If member_functions is empty (lazy-instantiated template), check
-						// LazyMemberInstantiationRegistry and trigger instantiation now.
-					if (!matched_func_decl) {
-						StringHandle struct_name_handle = direct_type_info->name();
-						StringHandle member_handle = StringTable::getOrInternStringHandle(member_name_direct);
-						if (const FunctionDeclarationNode* instantiated_func =
-								instantiateAndQueueLazyMember(struct_name_handle, member_handle, resolved_struct_part, direct_expected_param_count)) {
-							matched_func_decl = instantiated_func;
-							resolveMangledName(matched_func_decl, resolved_struct_part);
-							FLASH_LOG_FORMAT(Codegen, Debug, "Resolved lazy member '{}::{}' via LazyMemberInstantiationRegistry -> {}", resolved_struct_part, member_name_direct, function_name);
-						}
-					}
+						// If member_functions is empty (lazy-instantiated template), the
+						// Phase 5 Slice K audit confirmed that sema's drain has already
+						// materialized members by this point. The previous lazy-registry
+						// fallback here never hit across the full corpus and has been
+						// removed.
 				}
 			}
 		}
