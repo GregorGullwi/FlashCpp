@@ -26,6 +26,9 @@ The core architectural recommendation from this document has largely landed alre
    and codegen's AST walk.
  - Item #6 below is now finished on this branch too: `Log.h` exposes `FLASH_INVARIANT_PROBE` / `FLASH_INVARIANT_PROBE_FORMAT` with off/log/fail modes, and codegen uses a
    `Phase5StructDrain` probe to catch any future regression where a still-lazy member or constructor reaches the struct visitor.
+ - Item #4 below is now finished on this branch (2026-04-21 follow-up): `drainLazyMemberRegistry` pass 1 now skips `isInstantiatedNode(i)` roots;
+   instantiated-struct members materialise only via the ODR-use snapshot pass 2. Closing the six coverage gaps (binary operator overloads, CV-aware conversion operators, struct→enum UDC,
+   `markOdrUsedAllInClass`, receiver-aware `tryMaterializeLazyCallTarget`, range-for begin/end, `member_context_stack_` fallback for `this->member()`) was what unlocked it.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -112,7 +115,7 @@ first match instead of most-specific" KNOWN_ISSUES entry would also benefit from
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-### 4. Give late-materialized instantiations their own first-class list, separate from ast_nodes_   [PARTIAL]
+### 4. Give late-materialized instantiations their own first-class list, separate from ast_nodes_   [DONE]
 
 The ast_nodes_ vector is currently doing double duty:
 
@@ -255,6 +258,61 @@ aware helper, it is a correct and independent ODR-use closure. Commit
 the improvement and leave item #4 at PARTIAL. The next session should
 target the three failures above — each has a concrete fix pointer in
 the list above.
+
+#### 2026-04-21 follow-up: item #4 LANDED
+
+All three blockers above closed; pass-1 skip of `isInstantiatedNode(i)`
+in `drainLazyMemberRegistry` is now ENABLED and the full suite stays
+green at 2204 pass / 149 expected-fail.
+
+Fixes landed:
+
+ 1. **Range-for begin/end ODR-use** (`SemanticAnalysis.cpp`
+    `normalizeRangedForLoopDecl`, after `set_resolved_member_begin_function`).
+    When `range_type_info->isTemplateInstantiation()`, mark both
+    `begin` and `end` lazy members ODR-used on the concrete owner,
+    trying the selected const variant first and falling back to the
+    opposite to defend against resolver-const-qualification drift.
+    Mirrors the receiver-aware helper's const-variant strategy.
+ 2. **`member_context_stack_` fallback in receiver-aware helper**
+    (`SemanticAnalysis.cpp` `tryMaterializeLazyCallTarget(func_decl,
+    call_info)`). When `inferExpressionType(call_info.receiver)`
+    returns an invalid id — which is what happens for `this->member()`
+    inside a late-materialised dependent body where the `this`
+    expression is not yet type-resolved — fall back to
+    `tryGetTypeInfo(member_context_stack_.back())`. That stack already
+    carries the innermost struct whose body we are annotating, which
+    is the correct receiver type for implicit- and explicit-`this`
+    calls. Covers both `test_dependent_base_this_lookup_ret0.cpp`
+    (Derived<T>::f calling Base<T>::get) and
+    `test_deferred_base_placeholder_codegen_ret0.cpp`
+    (optional<T>::has_value calling optional_payload<T>::_M_is_engaged
+    via a sub-object receiver that also resolves through the fallback).
+
+The drain-pass-1 `if (parser_.isInstantiatedNode(i)) continue;` is now
+permanent. Codegen and drainLazyMemberRegistry now have different
+consumption rules for user-written roots vs. instantiated roots:
+
+ - User-written roots (`!isInstantiatedNode(i)`): drained wholesale in
+   pass 1 — every member is materialised because the user wrote them.
+ - Instantiated roots: drained only through pass 2
+   (`snapshotOdrUsedLazyEntries`) — only members that sema-side sites
+   have explicitly marked ODR-used materialise. SFINAE probes never
+   reach the markers, so their candidate instantiations stay dormant.
+
+Lessons (updated):
+
+ - The six ODR-use gaps that the prototype surfaced were all real
+   bugs, not artefacts of the skip. Closing them individually was the
+   correct path.
+ - `member_context_stack_` is an under-used oracle. It already holds
+   the currently-normalised struct context and is trivial to consult
+   as a fallback when expression-typing fails. Any future ODR-use
+   site that needs "which struct am I inside right now?" should use
+   it directly.
+ - `isTemplateInstantiation()` is the right guard for distinguishing
+   an instantiated owner from a user-written struct. Gating
+   `markOdrUsed` on that bit keeps SFINAE-safe.
 
 Lessons:
 
@@ -411,7 +469,7 @@ exists.
 | 1 | Explicit ODR-use bit on lazy registry      | DONE     |
 | 2 | Shape / body phase split + variant state   | TODO     |
 | 3 | InstantiationContext threading             | TODO     |
-| 4 | Separate instantiated-struct list          | PARTIAL  |
+| 4 | Separate instantiated-struct list          | DONE     |
 | 5 | Sema owns ODR-use; codegen pure consumer   | DONE     |
 | 6 | FLASH_INVARIANT_PROBE infrastructure       | DONE     |
 | 7 | Stable ASTNodeId                           | TODO     |
@@ -427,8 +485,13 @@ exists.
 Items #1, #5, #8, and #9 are done. Together they deliver the core Slice G promise: sema marks every needed member, drains it, and codegen is a pure consumer. The
 materializeLazyMemberIfNeeded forwarder no longer exists as live code.
 
-Item #4 is partially done — the parallel tracking vector is there, the clean consumption split is not. Completing it (making codegen apply different emission rules for user
-nodes vs. instantiated nodes) would make "what should be emitted for this instantiation?" an answerable data-structure question rather than an inference from AST reachability.
+Item #4 is now done (2026-04-21 follow-up): the drain-pass-1 loop skips
+instantiated roots, and pass-2 ODR-use snapshot drives their member
+materialisation. Codegen can now treat user-written and instantiated
+roots under fundamentally different rules — user-written roots emit
+everything they declared, instantiated roots emit only what sema
+marked ODR-used. This closes the "what should be emitted for this
+instantiation?" question at the data-structure level.
 
 Items #2 and #3 remain the principled long-term fix for the SFINAE corner cases still listed in KNOWN_ISSUES. The workarounds in place (= delete tie-breaking heuristic,
 hasLaterUsableTemplateDefinitionWithMatchingShape check) paper over real gaps in the data model. Phase 6 work on deduction-rule cleanup will benefit from both of these.

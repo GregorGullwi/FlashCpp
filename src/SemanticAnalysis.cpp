@@ -1418,6 +1418,32 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	mutable_stmt.set_resolved_member_begin_function(&begin_func_decl);
 	mutable_stmt.set_resolved_member_end_function(&end_func_decl);
 	mutable_stmt.set_resolved_begin_is_const(begin_func->is_const());
+
+	// Phase 5 Slice G item #4 prep: range-for member begin/end calls are
+	// lowered by codegen without flowing through
+	// tryAnnotateCallArgConversionsImpl, so no sema site marks these lazy
+	// members ODR-used. When the range is a concrete template instantiation,
+	// pass-1 drain over the instantiated root is what currently materialises
+	// them; once that pass-1 skip lands, we must emit the ODR-use marker
+	// here. Mark both the selected const variant and the opposite variant
+	// the registry actually holds (resolver may return pattern-const info).
+	if (range_type_info->isTemplateInstantiation()) {
+		auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+		StringHandle owner_name = range_type_info->name();
+		StringHandle begin_handle = begin_func_decl.decl_node().identifier_token().handle();
+		StringHandle end_handle = end_func_decl.decl_node().identifier_token().handle();
+		for (StringHandle member : {begin_handle, end_handle}) {
+			for (bool is_const : {begin_func->is_const(), !begin_func->is_const()}) {
+				if (lazy_registry.needsInstantiation(
+						LazyMemberKey::exact(owner_name, member, is_const))) {
+					lazy_registry.markOdrUsed(
+						LazyMemberKey::exact(owner_name, member, is_const));
+					break;
+				}
+			}
+		}
+	}
+
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 	const FunctionDeclarationNode* dereference_func = nullptr;
 	if (begin_return_type.pointer_depth() == 0) {
@@ -5334,20 +5360,27 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	// non-member-view of the decl (e.g. using-decl pack statics, certain
 	// static-member / free-function overload candidates). In that case we
 	// derive the instantiated owner purely from the receiver type below.
-
 	const CanonicalTypeId receiver_type_id = inferExpressionType(call_info.receiver);
-	if (!receiver_type_id) {
-		return result;
+	const TypeInfo* receiver_type_info = nullptr;
+	if (receiver_type_id) {
+		const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
+		if (receiver_desc.category() == TypeCategory::Struct ||
+			receiver_desc.category() == TypeCategory::UserDefined) {
+			receiver_type_info = tryGetTypeInfo(receiver_desc.type_index);
+			if (!receiver_type_info && receiver_desc.category() == TypeCategory::UserDefined) {
+				const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(receiver_desc.type_index);
+				receiver_type_info = resolved_alias.terminal_type_info;
+			}
+		}
 	}
-	const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
-	if (receiver_desc.category() != TypeCategory::Struct &&
-		receiver_desc.category() != TypeCategory::UserDefined) {
-		return result;
-	}
-	const TypeInfo* receiver_type_info = tryGetTypeInfo(receiver_desc.type_index);
-	if (!receiver_type_info && receiver_desc.category() == TypeCategory::UserDefined) {
-		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(receiver_desc.type_index);
-		receiver_type_info = resolved_alias.terminal_type_info;
+	// Fallback: if receiver type inference failed (e.g. unresolved `this`
+	// in a late-materialised dependent member body), use the innermost
+	// member-context. That is the struct whose body we are currently
+	// annotating, which for `this->member()` calls is the correct
+	// receiver type.
+	if ((!receiver_type_info || !receiver_type_info->isStruct()) &&
+		!member_context_stack_.empty()) {
+		receiver_type_info = tryGetTypeInfo(member_context_stack_.back());
 	}
 	if (!receiver_type_info || !receiver_type_info->isStruct()) {
 		return result;
@@ -5769,6 +5802,9 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 		size_t before = total_materialized;
 		const auto& top_nodes = parser_.get_nodes();
 		for (size_t i = 0; i < top_nodes.size(); ++i) {
+			if (parser_.isInstantiatedNode(i)) {
+				continue;
+			}
 			FlashCpp::forEachReachableStructDecl(top_nodes[i], drainOneStruct);
 		}
 		if (total_materialized == before) {
