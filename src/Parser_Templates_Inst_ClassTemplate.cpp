@@ -581,17 +581,22 @@ static void instantiateDeferredStaticInitializerCalls(
 			}
 		}
 
-		if (!needs_instantiation || !lazy_registry.needsInstantiationAny(owner_name, member_name)) {
+		LazyMemberKey member_key = LazyMemberKey::anyConst(owner_name, member_name);
+		if (!needs_instantiation || !lazy_registry.needsInstantiation(member_key)) {
 			return;
 		}
 
-		auto lazy_info = lazy_registry.getLazyMemberInfoAny(owner_name, member_name);
+		auto lazy_info = lazy_registry.getLazyMemberInfo(member_key);
 		if (!lazy_info.has_value()) {
 			return;
 		}
 
 		parser->instantiateLazyMemberFunction(*lazy_info);
-		lazy_registry.markInstantiated(owner_name, member_name, lazy_info->identity.is_const_method);
+		lazy_registry.markInstantiated(
+			LazyMemberKey::exact(
+				owner_name,
+				member_name,
+				lazy_info->identity.is_const_method));
 	});
 }
 

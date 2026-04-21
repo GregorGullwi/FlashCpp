@@ -246,13 +246,18 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	if (!instantiated_func.has_value() && !in_sfinae_context_) {
 		StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_class_name);
 		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		LazyMemberKey member_key = LazyMemberKey::anyConst(class_name_handle, member_name_handle);
 		FLASH_LOG(Templates, Debug, "Checking lazy instantiation for: ", instantiated_class_name, "::", member_name);
-		if (LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(class_name_handle, member_name_handle)) {
+		if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
 			FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for qualified call: ", instantiated_class_name, "::", member_name);
-			auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(class_name_handle, member_name_handle);
+			auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(member_key);
 			if (lazy_info_opt.has_value()) {
 				instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
-				LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, member_name_handle, lazy_info_opt->identity.is_const_method);
+				LazyMemberInstantiationRegistry::getInstance().markInstantiated(
+					LazyMemberKey::exact(
+						class_name_handle,
+						member_name_handle,
+						lazy_info_opt->identity.is_const_method));
 			}
 		}
 		// If the hash-based name didn't match (dependent vs concrete hash mismatch),
@@ -267,13 +272,18 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 						StringTable::getStringView(type_info_ptr->baseTemplateName()) == base_tmpl &&
 						StringTable::getStringView(name_handle) != instantiated_class_name) {
 						StringHandle alt_class_handle = name_handle;
-						if (LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(alt_class_handle, member_name_handle)) {
+						LazyMemberKey alt_member_key = LazyMemberKey::anyConst(alt_class_handle, member_name_handle);
+						if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(alt_member_key)) {
 							FLASH_LOG(Templates, Debug, "Lazy instantiation triggered via base template match: ",
 									  StringTable::getStringView(alt_class_handle), "::", member_name);
-							auto lazy_info_opt2 = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(alt_class_handle, member_name_handle);
+							auto lazy_info_opt2 = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(alt_member_key);
 							if (lazy_info_opt2.has_value()) {
 								instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt2);
-								LazyMemberInstantiationRegistry::getInstance().markInstantiated(alt_class_handle, member_name_handle, lazy_info_opt2->identity.is_const_method);
+								LazyMemberInstantiationRegistry::getInstance().markInstantiated(
+									LazyMemberKey::exact(
+										alt_class_handle,
+										member_name_handle,
+										lazy_info_opt2->identity.is_const_method));
 								// Update instantiated_class_name to the correct one for mangling
 								instantiated_class_name = StringTable::getStringView(alt_class_handle);
 								break;

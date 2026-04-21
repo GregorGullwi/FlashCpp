@@ -247,6 +247,14 @@ on a typed LazyMemberKey value that captures struct+member+const-ness. The const
 Current state (TODO): All four free-standing overloads plus the new markOdrUsed / isOdrUsed family still use the raw StringHandle pair + bool pattern. The makeKey static
 helper in LazyMemberInstantiationRegistry is an internal step toward a typed key, but it's private and not exposed to callers.
 
+Important lesson from the 2026-04-21 in-progress refactor attempt: the mechanical part is easy; the hidden risk is StringBuilder lifetime discipline inside the "any-const"
+lookup path. A representative regression (`flashcpp_crash_20260421_174831.log`) shows `StringBuilder::~StringBuilder` asserting from
+`LazyMemberInstantiationRegistry::needsInstantiation` (`src/TemplateRegistry_Lazy.h:102`) during `Parser::parse_member_postfix`, i.e. a typed-key wrapper reused the old
+`preview()`-based key construction without preserving the required `commit()/reset()` discipline. Future work on item #10 should either:
+
+ - eliminate the `StringBuilder::preview()`-driven two-variant lookup pattern entirely, or
+ - centralize it behind a helper that cannot return with a dirty builder state.
+
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ### 11. Explicit lifecycle hooks for instantiations   [TODO]

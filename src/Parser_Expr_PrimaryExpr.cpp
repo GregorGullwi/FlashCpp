@@ -2608,15 +2608,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								if (!func_decl.get_definition().has_value() && inst_type_it != getTypesByNameMap().end() && inst_type_it->second->isTemplateInstantiation()) {
 									StringHandle member_name_handle = member_token.handle();
 									const bool member_is_const = func_decl.is_const_member_function();
+									LazyMemberKey member_key = LazyMemberKey::exact(
+										class_name_handle,
+										member_name_handle,
+										member_is_const);
 									if (!in_sfinae_context_ &&
-										LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle, member_is_const)) {
-										auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, member_name_handle, member_is_const);
+										LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
+										auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(member_key);
 										if (lazy_info_opt.has_value()) {
 											auto instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
 											if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 												member_lookup = instantiated_func;
 												decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
-												LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, member_name_handle, lazy_info_opt->identity.is_const_method);
+												LazyMemberInstantiationRegistry::getInstance().markInstantiated(
+													LazyMemberKey::exact(
+														class_name_handle,
+														member_name_handle,
+														lazy_info_opt->identity.is_const_method));
 											}
 										}
 									}
@@ -3564,14 +3572,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						if (scope_type_it != getTypesByNameMap().end() && scope_type_it->second->isTemplateInstantiation()) {
 							StringHandle member_name_handle = qual_id.identifier_token().handle();
 							const bool member_is_const = identifierType->as<FunctionDeclarationNode>().is_const_member_function();
+							LazyMemberKey member_key = LazyMemberKey::exact(
+								class_name_handle,
+								member_name_handle,
+								member_is_const);
 							if (!in_sfinae_context_ &&
-								LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle, member_is_const)) {
-								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, member_name_handle, member_is_const);
+								LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
+								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(member_key);
 								if (lazy_info_opt.has_value()) {
 									auto instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
 									if (instantiated_func.has_value()) {
 										identifierType = *instantiated_func;
-										LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, member_name_handle, lazy_info_opt->identity.is_const_method);
+										LazyMemberInstantiationRegistry::getInstance().markInstantiated(
+											LazyMemberKey::exact(
+												class_name_handle,
+												member_name_handle,
+												lazy_info_opt->identity.is_const_method));
 									}
 								}
 							}

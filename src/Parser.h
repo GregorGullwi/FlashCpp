@@ -413,6 +413,16 @@ public:
 			&& ast_node_is_instantiated_[index] != 0;
 	}
 
+	// Returns true when the node at `index` is a late-materialized top-level
+	// struct root. These are tracked separately from user-written source nodes
+	// for codegen/drain consumption even though they still live in ast_nodes_
+	// for parser/sema lifecycle purposes.
+	bool isInstantiatedStructNode(size_t index) const {
+		return isInstantiatedNode(index)
+			&& index < ast_nodes_.size()
+			&& ast_nodes_[index].is<StructDeclarationNode>();
+	}
+
 	// Number of user-written top-level nodes (added during initial parsing).
 	size_t userNodeCount() const {
 		size_t n = 0;

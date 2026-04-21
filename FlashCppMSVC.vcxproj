@@ -452,6 +452,7 @@
     <ClInclude Include="src\ObjectFileCommon.h" />
     <ClInclude Include="src\OverloadResolution.h" />
     <ClInclude Include="src\Parser.h" />
+    <ClInclude Include="src\ReachableStructWalker.h" />
     <ClInclude Include="src\ParserInternal.h" />
     <ClInclude Include="src\ParserScopeGuards.h" />
     <ClInclude Include="src\ParserTemplateClassShared.h" />
