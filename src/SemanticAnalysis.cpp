@@ -5493,6 +5493,20 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 	// Loop because materializing one body may trigger further lazy
 	// registrations (e.g., a template instantiation used inside the body we
 	// just substituted). Keep walking until no more work happens.
+	//
+	// We intentionally only walk structs reachable from `parser_.get_nodes()`:
+	// they are exactly the structs whose members the codegen struct-visitor
+	// iterates. Extending the walk to the set of *all* instantiated class
+	// templates (e.g., via a side list populated by
+	// `try_instantiate_class_template`) would over-materialize members of
+	// structs that only ever appear as template arguments in SFINAE-probed
+	// positions — their member bodies may be ill-formed by design (see
+	// `tests/test_namespaced_pair_swap_sfinae_ret0.cpp` where
+	// `pair<const int, int>::swap` references a deleted overload and is only
+	// valid to instantiate lazily via ODR-use, which never happens). The
+	// residual cases where a codegen call site still needs lazy
+	// materialization are handled by `AstToIr::materializeLazyMemberIfNeeded`,
+	// which forwards to `ensureMemberFunctionMaterialized` on demand.
 	while (true) {
 		size_t before = total_materialized;
 		for (const auto& top_node : parser_.get_nodes()) {

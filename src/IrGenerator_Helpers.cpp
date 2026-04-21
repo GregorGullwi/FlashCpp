@@ -26,15 +26,21 @@ std::optional<ASTNode> AstToIr::materializeLazyMemberIfNeeded(
 	// time codegen runs the struct-visitor, the common case is that sema has
 	// already materialized the body and this forwarder only serves as a
 	// consistency check: `ensureMemberFunctionMaterialized` returns
-	// `std::nullopt` when there is nothing left to do. A few instantiated
-	// structs are not reachable from the top-level AST walk (they live only
-	// through references held by the lazy registry / StructTypeInfo), so for
-	// those paths this forwarder still serves as the first materialization
-	// site — but all the actual logic remains in sema.
+	// `std::nullopt` when there is nothing left to do.
+	//
+	// A small residual set of instantiated structs is not reachable from the
+	// top-level AST walk (they live only through references held by the lazy
+	// registry / `StructTypeInfo`). For those paths this forwarder still
+	// serves as the first materialization site — but all the actual logic
+	// remains in sema, and the forwarder cannot be deleted outright without
+	// regressing those tests. See the plan doc for why an unconditional
+	// "drain every instantiated struct" extension of `drainLazyMemberRegistry`
+	// is not a safe generalization (it over-materializes members of structs
+	// that only ever flow through SFINAE-probed template-argument positions,
+	// whose member bodies may be ill-formed by design).
 	if (!sema_) {
 		return std::nullopt;
 	}
-
 	return sema_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
 }
 
