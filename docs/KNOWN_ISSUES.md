@@ -1,40 +1,5 @@
 # Known Issues
 
-## Variable-template values can evaluate incorrectly when used as base-class non-type arguments
-
-**Repro:**
-```cpp
-template <class, class>
-constexpr bool is_same_v = false;
-
-template <class T>
-constexpr bool is_same_v<T, T> = true;
-
-template <class Ty>
-constexpr bool is_integral_v = is_same_v<Ty, int>;
-
-template <bool Value>
-struct bool_constant {
-	static constexpr bool value = Value;
-};
-
-template <class Ty>
-struct is_integral : bool_constant<is_integral_v<Ty>> {};
-
-static_assert(is_integral<int>::value);
-```
-**Symptom:** The `static_assert` fails even though `is_same_v<int, int>`
-should select the partial specialization and evaluate to `true`.
-**Impact:** MSVC `<type_traits>` parses, but `std::is_integral<int>::value`
-evaluates incorrectly. This also causes recoverable `is_integral_v`
-instantiation warnings while compiling headers such as `<concepts>`.
-**Root cause:** Variable-template partial-specialization results are not
-reliably propagated when one variable template feeds another and the final value
-is used as a non-type template argument in a base class.
-**Fix approach:** Ensure variable-template instantiation/evaluation resolves
-the selected partial specialization before substituting the value into
-base-specifier template arguments such as `bool_constant<is_integral_v<T>>`.
-
 ## Function-template forward-declaration + definition instantiation picks wrong overload
 
 **Status:** Partially resolved. The `hasLaterUsableTemplateDefinitionWithMatchingShape` check
