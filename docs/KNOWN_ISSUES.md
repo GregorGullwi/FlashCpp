@@ -130,35 +130,8 @@ Replace the size-based guard with an explicit predicate `TypeSpecifierNode::is_d
 
 ## MSVC standard headers can fail on `this` pointer comparisons in member functions
 
-**Repro:** Including the full MSVC `<typeinfo>` header stack currently pulls in
-`std::exception::operator=(const exception&)`, which contains:
-```cpp
-if (this == &_Other) {
-	return *this;
-}
-```
-**Symptom:** FlashCpp rejects this with `Operator== not defined for operand types`
-while compiling the standard library, which blocks tests that rely on
-`std::type_info` comparisons through `<typeinfo>`.
-**Root cause:** In binary-operator codegen, pointer-to-struct expressions like
-`this` still carry `TypeCategory::Struct`, and the struct comparison fallback path
-ignores `pointer_depth`. That causes pointer equality to be misrouted through
-user-defined/synthesized struct comparison handling instead of builtin pointer
-comparison.
-**Workaround:** Keep RTTI tests self-contained and compare the raw RTTI identity
-returned by `typeid(...)` instead of pulling in the full MSVC `<typeinfo>` header
-implementation.
-  
-## Implicit Derived*→PrivateBase* pointer conversion not rejected
+*(Fixed: see `tests/test_this_pointer_equality_ret0.cpp`. Binary-operator codegen
+now checks `ExprResult::pointer_depth` before routing to the user-defined
+operator lookup path, so pointer equality is always handled as a builtin
+comparison per [expr.eq]/3.)*
 
-**Status:** Fixed 2026-04-21. Regression covered by
-`tests/test_derived_to_private_base_pointer_conv_fail.cpp` and the positive
-counterpart `tests/test_derived_to_public_base_pointer_conv_ret0.cpp`.
-**Fix:** Added `isTransitivelyDerivedFromAnyAccess` helper alongside the
-existing public-only `isTransitivelyDerivedFrom` in `OverloadResolution.h`, and
-wired an accessibility check into the struct-pointer variable-initialization
-path in `IrGenerator_Stmt_Decl.cpp`. When the declaration's pointee type is an
-inaccessible (private/protected) base of the initializer's pointee type the IR
-generator now throws `CompileError` with a `[conv.ptr]/3` citation, matching
-the behavior of overload resolution which already rejected such conversions via
-the public-only derived-from check.

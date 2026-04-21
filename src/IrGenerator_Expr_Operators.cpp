@@ -1415,7 +1415,10 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		return isIrStructType(toIrType(base_type)) && type_spec.type_index().is_valid();
 	};
 
-	auto requiresUserDefinedBinaryOperatorByBase = [](TypeIndex type_index) {
+	auto requiresUserDefinedBinaryOperatorByBase = [](TypeIndex type_index, PointerDepth pointer_depth) {
+		if (pointer_depth.is_pointer()) {
+			return false;
+		}
 		TypeCategory resolved = resolve_type_alias(type_index);
 		return isIrStructType(toIrType(resolved)) && type_index.is_valid();
 	};
@@ -1850,12 +1853,23 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		}
 
 		bool requires_user_defined_operator = false;
-		if (concrete_type_specs.has_value()) {
+		// Pointers never require a user-defined binary operator regardless of
+		// which path (concrete-type-specs vs. type-index fallback) supplied the
+		// operand types. sema's TypeSpecifierNode for expressions like `this`
+		// or `&other` has occasionally been observed with pointer_depth==0 while
+		// the runtime ExprResult correctly carries pointer_depth>0; gate on the
+		// ExprResult here so builtin pointer comparison isn't misrouted into
+		// struct-operator lookup. (C++20 [expr.eq]/3.)
+		const bool either_operand_is_pointer =
+			lhsExprResult.pointer_depth.is_pointer() || rhsExprResult.pointer_depth.is_pointer();
+		if (either_operand_is_pointer) {
+			requires_user_defined_operator = false;
+		} else if (concrete_type_specs.has_value()) {
 			requires_user_defined_operator =
 				requiresUserDefinedBinaryOperator(concrete_type_specs->first) || requiresUserDefinedBinaryOperator(concrete_type_specs->second);
 		} else {
 			requires_user_defined_operator =
-				requiresUserDefinedBinaryOperatorByBase(lhs_type_index) || requiresUserDefinedBinaryOperatorByBase(rhs_type_index);
+				requiresUserDefinedBinaryOperatorByBase(lhs_type_index, lhsExprResult.pointer_depth) || requiresUserDefinedBinaryOperatorByBase(rhs_type_index, rhsExprResult.pointer_depth);
 		}
 
 		can_try_spaceship_rewrite =
