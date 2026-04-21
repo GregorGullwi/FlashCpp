@@ -1,4 +1,22 @@
-1. Add an explicit odr_used bit on lazy member registry entries
+# Phase 5 Slice G — Analysis and Status
+# Evaluated: 2026-04-21
+
+This document was originally written as a forward-looking recommendation after Slice F landed.
+It has been updated in place with the current implementation status of each item.
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+## Status legend
+
+  [DONE]    Fully implemented and tested (2173/2173 tests green).
+  [PARTIAL] Structurally present but the clean-split described below is not yet realised.
+  [TODO]    Not yet started.
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+## High-impact architectural changes
+
+### 1. Add an explicit odr_used bit on lazy member registry entries   [DONE]
 
 Every site that currently calls ensureMemberFunctionMaterialized already knows why it's asking: a direct call, a member call, a conversion, a constexpr evaluation, a vtable
 seed, an address-of. Turn that into a two-step protocol:
@@ -11,20 +29,27 @@ seed, an address-of. Turn that into a two-step protocol:
 The drain filter becomes odr_used && !materialized instead of the current needsInstantiation (which is really just "was-cloned && !materialized"). This is principled and makes
 three things possible:
 
- - Drain can safely walk every instantiated struct — it only touches members explicitly marked ODR-used. The SFINAE-probed pair<const int, int>::swap is never marked ODR-used, 
-so the drain skips it automatically.
- - The codegen forwarder becomes deletable: sites that today call materializeLazyMemberIfNeeded as a first-materializer move their markOdrUsed(...) calls into sema annotation 
-passes (Slices B/C already did this for some paths); the final drain then materializes them.
+ - Drain can safely walk every instantiated struct — it only touches members explicitly marked ODR-used. The SFINAE-probed pair<const int, int>::swap is never marked ODR-used,
+   so the drain skips it automatically.
+ - The codegen forwarder becomes deletable: sites that today call materializeLazyMemberIfNeeded as a first-materializer move their markOdrUsed(...) calls into sema annotation
+   passes (Slices B/C already did this for some paths); the final drain then materializes them.
  - Diagnostics improve: the reason is preserved, so "why did this member fail to instantiate?" has an answer ("ODR-used from call at foo.cpp:42").
 
-2. Split class-template instantiation into shape and body phases with distinct failure modes
+Current state (DONE): LazyMemberInstantiationRegistry now carries a separate odr_used_ set (TemplateRegistry_Lazy.h). markOdrUsed / markOdrUsedAny / isOdrUsed / isOdrUsedAny
+/ snapshotOdrUsedLazyEntries are all implemented. Multiple sema sites in SemanticAnalysis.cpp call markOdrUsed. drainLazyMemberRegistry runs a two-pass fixpoint: an AST-walk
+pass (mirrors the old struct-visitor scope) followed by an ODR-use snapshot pass that picks up residuals not reachable from parser_.get_nodes(). The odr_used_ set persists
+across markInstantiated so later passes can still answer "was this member ever ODR-used?".
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+### 2. Split class-template instantiation into shape and body phases with distinct failure modes   [TODO]
 
 Today, try_instantiate_class_template and instantiateLazyMemberFunction mix two fundamentally different responsibilities:
 
- - Shape substitution — applying the template argument map to member declarations to produce the new struct's layout, signatures, nested types. Must succeed whenever the class 
-is well-formed; failure is a hard error.
- - Body substitution — applying the map to each member's body tokens and re-parsing. Can fail legitimately (the body might reference an overload that doesn't exist for this 
-specialization). Failure should be ODR-use-triggered: SFINAE-only probes swallow it, real ODR uses promote it to a compile error.
+ - Shape substitution — applying the template argument map to member declarations to produce the new struct's layout, signatures, nested types. Must succeed whenever the class
+   is well-formed; failure is a hard error.
+ - Body substitution — applying the map to each member's body tokens and re-parsing. Can fail legitimately (the body might reference an overload that doesn't exist for this
+   specialization). Failure should be ODR-use-triggered: SFINAE-only probes swallow it, real ODR uses promote it to a compile error.
 
 The current data model makes "shape done, body pending" a state expressible only via "member FunctionDeclarationNode has no definition yet". That's a one-bit state. What we
 actually need is a proper variant:
@@ -42,7 +67,12 @@ This gives us:
  - A place to cache SFINAE failures so a repeat probe doesn't redo the reparse.
  - A principled way to distinguish "library didn't ask" from "library asked and it failed".
 
-3. Introduce an InstantiationContext value that propagates through instantiation machinery
+Current state (TODO): FunctionDeclarationNode still uses the one-bit get_definition().has_value() test everywhere. No variant state has been introduced. The existing
+"SFINAE enable_if<false> not causing substitution failure in return type" KNOWN_ISSUES entry is a direct consequence of this gap.
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+### 3. Introduce an InstantiationContext value that propagates through instantiation machinery   [TODO]
 
 Right now instantiation knows whether it's in SFINAE via a parser-global in_sfinae_context_ flag. That's a single bit of implicit state. It couldn't catch the pair<const int,
 int> case because the struct was instantiated before the SFINAE probe started.
@@ -57,19 +87,24 @@ Replace the flag with a value threaded through every call to try_instantiate_cla
 
 Benefits:
 
- - Every instantiated struct can record the contexts it was ever instantiated under (a set of {SFINAE, HardError, ShapeOnly}). The drain's "is this struct safe to drain all 
-members of?" question becomes an explicit data query, not an implicit side effect of AST reachability.
+ - Every instantiated struct can record the contexts it was ever instantiated under (a set of {SFINAE, HardError, ShapeOnly}). The drain's "is this struct safe to drain all
+   members of?" question becomes an explicit data query, not an implicit side effect of AST reachability.
  - Diagnostics get proper instantiation backtraces for free (every chained parent contributes a frame).
  - Specialization for shape-only vs. body requests becomes a type-system question, not a manual flag check.
 
-4. Give late-materialized instantiations their own first-class list, separate from ast_nodes_
+Current state (TODO): Parser.h still has in_sfinae_context_ as a plain bool. No InstantiationContext struct exists. The "non-SFINAE function-template overload selection uses
+first match instead of most-specific" KNOWN_ISSUES entry would also benefit from the richer context chain.
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+### 4. Give late-materialized instantiations their own first-class list, separate from ast_nodes_   [PARTIAL]
 
 The ast_nodes_ vector is currently doing double duty:
 
  - Source-order list of user-written top-level declarations (its original job).
  - Splice target for late-materialized class-template instantiations (via registerLateMaterializedTopLevelNode).
 
-The latter caused real bugs this session — duplicate push → LNK2005 — and makes the "what should codegen emit fully vs. on-demand" question unanswerable from the data structure
+The latter caused real bugs this session — duplicate push -> LNK2005 — and makes the "what should codegen emit fully vs. on-demand" question unanswerable from the data structure
 alone.
 
 Clean split:
@@ -84,26 +119,43 @@ Codegen then runs two passes with different filters:
  - user_source_nodes_: emit every member (user asked for it by writing it).
  - instantiated_struct_nodes_: emit only odr_used members.
 
-This is exactly the distinction Slice F was groping for; making it explicit in the data model kills an entire class of "accidental proxy" bugs. It also makes 
+This is exactly the distinction Slice F was groping for; making it explicit in the data model kills an entire class of "accidental proxy" bugs. It also makes
 registerLateMaterializedTopLevelNode unnecessary as an ad-hoc hook.
 
-5. Push ODR-use marking fully into sema; reduce codegen to a pure consumer
+Current state (PARTIAL): A parallel ast_node_is_instantiated_ vector (std::vector<uint8_t>) exists in Parser.h, maintained in lockstep with ast_nodes_ by
+appendUserNode / registerLateMaterializedTopLevelNode* / eraseTopLevelNodeAt. The queries isInstantiatedNode(i), userNodeCount(), and instantiatedNodeCount() work. Dedup is
+handled via enqueuePendingSemanticRoot / pending_semantic_root_keys_ (so item 8 below is also done as a side-effect). However, ast_nodes_ is still a single vector; codegen
+and drainLazyMemberRegistry both iterate get_nodes() uniformly without filtering by isInstantiatedNode(). The full clean split (separate user_source_nodes_ /
+instantiated_struct_nodes_ with different emission rules at codegen) has not been done. The tracking infrastructure is there; the consumption side is not.
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+### 5. Push ODR-use marking fully into sema; reduce codegen to a pure consumer   [DONE]
 
 Slices A-E moved the materialization earlier (from codegen to sema annotation). The next step is to move the ODR-use signaling earlier too. Concretely:
 
- - tryAnnotateConversion, tryAnnotateCallArgConversionsImpl, tryAnnotateMemberAccessImpl, and the constexpr evaluator should all call markOdrUsed(...) at the point they 
-identify a target.
+ - tryAnnotateConversion, tryAnnotateCallArgConversionsImpl, tryAnnotateMemberAccessImpl, and the constexpr evaluator should all call markOdrUsed(...) at the point they
+   identify a target.
  - The struct-visitor in IrGenerator_Visitors_Decl.cpp stops being a materializer; it only iterates what sema has already prepared.
  - generateDeferredMemberFunctions stops having any materialization logic.
  - AstToIr::materializeLazyMemberIfNeeded disappears.
 
 With ODR-use explicit (change #1), sema drain is the single materialization site. Codegen becomes 100% a consumer.
 
+Current state (DONE): The struct-visitor in IrGenerator_Visitors_Decl.cpp no longer contains any materializeLazyMemberIfNeeded fallback — its comments explicitly state "No
+defensive materialization fallback needed here" (lines ~1253-1264). generateDeferredMemberFunctions in IrGenerator_Visitors_TypeInit.cpp still exists and is called from
+FlashCppMain.cpp, but its comments confirm the old materialization fallback is dead ("the function-shaped materializeLazyMemberIfNeeded fallback that used to live here is now
+dead"). AstToIr::materializeLazyMemberIfNeeded no longer exists as a declared or defined function — remaining references to it in comments are historical notes about its past
+role. Multiple SemanticAnalysis.cpp sema annotation sites call markOdrUsed. All 2173 tests pass.
+
+Note: stale comment noise ("materialization are handled by AstToIr::materializeLazyMemberIfNeeded" etc.) remains in SemanticAnalysis.cpp and SemanticAnalysis.h. It does not
+affect correctness but should be cleaned up to avoid confusing future readers.
+
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-Medium-impact changes
+## Medium-impact changes
 
-6. Reusable invariant-probe infrastructure
+### 6. Reusable invariant-probe infrastructure   [TODO]
 
 The audit guard in materializeLazyMemberIfNeeded (writing to audit_phase5f.log, later turned into a hard-fail guard) was the single most effective tool in this whole slice. It
 told us empirically which tests still violated the invariant we were trying to establish.
@@ -122,7 +174,12 @@ With a few modes:
 Every slice that tightens an invariant would benefit. Right now each slice reinvents the instrumentation, and we remove it before commit — meaning we have zero regression
 coverage that the invariant holds going forward.
 
-7. Stable ASTNodeId instead of raw_pointer() identity
+Current state (TODO): No FLASH_INVARIANT_PROBE macro exists. Log.h has FLASH_LOG / FLASH_LOG_FORMAT / IS_FLASH_LOG_ENABLED, which cover the "log" mode informally, but there
+is no structured invariant concept with off/log/fail modes.
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+### 7. Stable ASTNodeId instead of raw_pointer() identity   [TODO]
 
 I needed node identity this session (dedup in registerLateMaterializedTopLevelNode). raw_pointer() works but it's an implementation detail of ChunkedAnyVector and it's not a
 typed concept. A real ASTNodeId (monotonically assigned at node creation, stored inside the node) would:
@@ -131,12 +188,21 @@ typed concept. A real ASTNodeId (monotonically assigned at node creation, stored
  - Survive hypothetical future refactors of the underlying storage.
  - Allow persistent caches (e.g., "already-materialized" sets) that are not tied to raw addresses.
 
-8. Make registerLateMaterializedTopLevelNode dedup-by-default
+Current state (TODO): Dedup in Parser.h still uses const void* raw pointers (pending_semantic_root_keys_). No typed ASTNodeId concept exists.
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+### 8. Make registerLateMaterializedTopLevelNode dedup-by-default   [DONE]
 
 Even without #7, the helper should always dedup. Multiple instantiation paths (partial-spec success, primary-template success, base-class helper recursion) can all reach the
 same freshly-created struct. Silently double-pushing causes LNK2005s that are painful to diagnose. Dedup should be the contract, not the caller's responsibility.
 
-9. Centralize the "what is a top-level struct for codegen purposes?" walker
+Current state (DONE): registerLateMaterializedTopLevelNode calls enqueuePendingSemanticRoot, which guards with pending_semantic_root_keys_ (an unordered_set<const void*>)
+so the same node is never enqueued twice. The contract is the function's, not the caller's.
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+### 9. Centralize the "what is a top-level struct for codegen purposes?" walker   [TODO]
 
 Today both drainLazyMemberRegistry and the codegen struct-visitor implement their own "recurse namespaces + nested classes + structs" traversal. They have to match exactly or
 else sema drains something codegen won't emit (under-draining: harmless) or codegen emits something sema didn't drain (over-emitting: LNK errors).
@@ -144,47 +210,85 @@ else sema drains something codegen won't emit (under-draining: harmless) or code
 A shared forEachReachableStructDecl(parser, callback) utility would eliminate the drift risk. This is a very small refactor that prevents a whole class of "sema and codegen
 disagree about what's reachable" bugs.
 
+Current state (TODO): drainLazyMemberRegistry (SemanticAnalysis.cpp ~5554-5570) and visitStructDeclarationNode / IrGenerator_Visitors_Decl.cpp each have independent
+namespace-and-nested-class recursive walkers. They currently agree in practice (all tests pass), but there is no structural guarantee.
+
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-Lower-impact, still useful
+## Lower-impact, still useful
 
-10. Promote needsInstantiation-style queries into typed predicates
+### 10. Promote needsInstantiation-style queries into typed predicates   [TODO]
 
 Free-standing needsInstantiation, needsInstantiationAny, getLazyMemberInfo, getLazyMemberInfoAny are strictly-similar string-handle-keyed queries. They'd read better as methods
 on a typed LazyMemberKey value that captures struct+member+const-ness. The const-ness std::optional<bool> juggling at every call site is a minor papercut that adds up.
 
-11. Explicit lifecycle hooks for instantiations
+Current state (TODO): All four free-standing overloads plus the new markOdrUsed / isOdrUsed family still use the raw StringHandle pair + bool pattern. The makeKey static
+helper in LazyMemberInstantiationRegistry is an internal step toward a typed key, but it's private and not exposed to callers.
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+### 11. Explicit lifecycle hooks for instantiations   [TODO]
 
 normalizePendingSemanticRoots has become the "hey sema, look at what just appeared" generic hook. It's called from parser, sema, codegen, and constexpr evaluator at slightly
-different moments. A more structured lifecycle —
+different moments. A more structured lifecycle:
 
- instantiationDiscovered(struct) → shapeMaterialized(struct) → memberOdrUsed(struct, member) → memberMaterialized(struct, member)
+ instantiationDiscovered(struct) -> shapeMaterialized(struct) -> memberOdrUsed(struct, member) -> memberMaterialized(struct, member)
 
-— with explicit listeners would make it obvious which phase each consumer cares about. Today each consumer has to infer it from empirical debugging.
+with explicit listeners would make it obvious which phase each consumer cares about. Today each consumer has to infer it from empirical debugging.
 
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-What this buys us, in order
-
-If we do #1 (explicit ODR-use) + #4 (separate instantiated-struct list) + #5 (sema owns ODR-use marking), the Slice F forwarder can be deleted outright with no regression risk:
-sema marks exactly what codegen will need, drains it, and codegen becomes a straight consumer.
-
-If we also do #2 (shape/body split) + #3 (InstantiationContext), we finally have a principled answer to every future SFINAE corner case, and the constexpr / dependent /
-nested-class bug cluster that keeps surfacing in Phase 5 work becomes mostly a mechanical consequence of the new data model.
-
-#6 (invariant probes) is the force-multiplier: it turns every future architectural tightening from "write audit, run tests, remove audit, repeat" into "flip the probe mode,
-trust the CI".
+Current state (TODO): normalizePendingSemanticRootsIfAvailable / normalizePendingSemanticRoots remain the single generic hook. No structured lifecycle or listener pattern
+exists.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-My honest recommendation
+## Summary table
 
-For next concrete work, I would not jump straight into Phase 6's broader explicit-deduction architecture cleanup. I'd do #1 + #4 first, as a "Phase 5 Slice G" sort of
-deliverable. They are:
+| # | Item                                       | Status   |
+|---|--------------------------------------------|----------|
+| 1 | Explicit ODR-use bit on lazy registry      | DONE     |
+| 2 | Shape / body phase split + variant state   | TODO     |
+| 3 | InstantiationContext threading             | TODO     |
+| 4 | Separate instantiated-struct list          | PARTIAL  |
+| 5 | Sema owns ODR-use; codegen pure consumer   | DONE     |
+| 6 | FLASH_INVARIANT_PROBE infrastructure       | TODO     |
+| 7 | Stable ASTNodeId                           | TODO     |
+| 8 | registerLateMaterializedTopLevelNode dedup | DONE     |
+| 9 | Shared forEachReachableStructDecl walker   | TODO     |
+|10 | Typed LazyMemberKey predicates             | TODO     |
+|11 | Explicit instantiation lifecycle hooks     | TODO     |
 
- - Small enough to land cleanly (new bit on lazy entries, new parser side-list, shuffle a few call sites).
- - Sufficient on their own to delete the materializeLazyMemberIfNeeded forwarder and retire its audit-guard pattern.
- - A prerequisite for any future template-related work that wants to reason precisely about "what should be emitted for this instantiation?" — including Phase 6, which is going
- to benefit from the same ODR-use-vs-probe distinction.
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-Then Phase 6 on top of that foundation becomes less about architecture and more about the deduction-rule cleanup that was the stated goal all along.
+## What this buys us, in order
+
+Items #1, #5, and #8 are done. Together they deliver the core Slice G promise: sema marks every needed member, drains it, and codegen is a pure consumer. The
+materializeLazyMemberIfNeeded forwarder no longer exists as live code.
+
+Item #4 is partially done — the parallel tracking vector is there, the clean consumption split is not. Completing it (making codegen apply different emission rules for user
+nodes vs. instantiated nodes) would make "what should be emitted for this instantiation?" an answerable data-structure question rather than an inference from AST reachability.
+
+Items #2 and #3 remain the principled long-term fix for the SFINAE corner cases still listed in KNOWN_ISSUES. The workarounds in place (= delete tie-breaking heuristic,
+hasLaterUsableTemplateDefinitionWithMatchingShape check) paper over real gaps in the data model. Phase 6 work on deduction-rule cleanup will benefit from both of these.
+
+Item #6 (invariant probes) is the force-multiplier: it turns every future architectural tightening from "write audit, run tests, remove audit, repeat" into "flip the probe
+mode, trust the CI".
+
+Items #9, #10, and #11 are refactoring quality-of-life items that reduce future maintenance risk with low implementation cost.
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+## Recommended next steps
+
+1. Complete item #4 (separate instantiated-struct list, consumption side): make codegen's top-level node iterator apply different emission rules for instantiated nodes
+   (emit only odr_used members) vs. user-written nodes (emit every member). This is the last structural piece the original Slice G recommendation called for.
+
+2. Clean up stale comments referencing AstToIr::materializeLazyMemberIfNeeded in SemanticAnalysis.cpp and SemanticAnalysis.h. The function is gone; the comments are
+   misleading noise.
+
+3. Item #9 (shared forEachReachableStructDecl walker) is small and eliminates a concrete drift risk between sema drain and codegen traversal. A good candidate for the next
+   incremental PR before starting Phase 6.
+
+4. Items #2 and #3 are Phase 6 prerequisites for principled SFINAE handling. They are medium-sized architectural changes. The existing KNOWN_ISSUES workarounds are stable
+   enough to defer until Phase 6 begins.
+
+5. Item #6 (FLASH_INVARIANT_PROBE) should be done at the start of any Phase 6 slice, not at the end, so invariant tightening is CI-enforceable from day one.
