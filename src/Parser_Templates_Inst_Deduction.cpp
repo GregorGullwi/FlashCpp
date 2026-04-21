@@ -120,13 +120,13 @@ static void mergeAliasAndUseSiteTypeSpec(
 
 static bool hasUsableTemplateFunctionDefinition(const FunctionDeclarationNode& func_decl) {
 	return func_decl.has_template_body_position() ||
-		   func_decl.get_definition().has_value() ||
+		   func_decl.is_materialized() ||
 		   func_decl.is_deleted();
 }
 
 static bool hasTemplateFunctionBodyDefinition(const FunctionDeclarationNode& func_decl) {
 	return func_decl.has_template_body_position() ||
-		   func_decl.get_definition().has_value();
+		   func_decl.is_materialized();
 }
 
 static bool sameTypeSpecifierShape(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
@@ -2077,7 +2077,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 		copy_function_properties(new_func_ref, func_decl);
 
-		if (new_func_ref.get_definition().has_value()) {
+		if (new_func_ref.is_materialized()) {
 			finalize_function_after_definition(new_func_ref);
 		} else {
 			compute_and_set_mangled_name(new_func_ref);

@@ -27,7 +27,7 @@ inline std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStat
 
 			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 			if (func_decl.is_static()) {
-				if (func_decl.get_definition().has_value()) {
+				if (func_decl.is_materialized()) {
 					return {&func_decl, candidate_struct};
 				}
 				if (!function_decl_without_definition) {

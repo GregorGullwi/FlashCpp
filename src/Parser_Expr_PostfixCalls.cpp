@@ -921,7 +921,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				const DeclarationNode* decl_ptr = qualified_symbol.has_value() ? getDeclarationNode(*qualified_symbol) : nullptr;
 				if (qualified_symbol.has_value() && qualified_symbol->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = qualified_symbol->as<FunctionDeclarationNode>();
-					if (!func_decl.get_definition().has_value()) {
+					if (!func_decl.is_materialized()) {
 						StringBuilder class_scope_builder;
 						for (size_t i = 0; i < namespaces.size(); ++i) {
 							if (i > 0) {

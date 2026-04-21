@@ -486,7 +486,7 @@ private:
 					visit(arg);
 				}
 			}
-			if (ctor.get_definition().has_value()) {
+			if (ctor.is_materialized()) {
 				visit(*ctor.get_definition());
 			} else if (ctor.has_template_body_position()) {
 				// Instantiated out-of-line template constructors may already have concrete
@@ -500,7 +500,7 @@ private:
 		if (node.is<DestructorDeclarationNode>()) {
 			const auto& dtor = node.as<DestructorDeclarationNode>();
 			const bool pushed = pushContext(StringTable::getStringView(dtor.name()));
-			if (dtor.get_definition().has_value()) {
+			if (dtor.is_materialized()) {
 				visit(*dtor.get_definition());
 			}
 			popContext(pushed);
@@ -5625,7 +5625,7 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMaterialized(
 	const StructTypeInfo& struct_info,
 	const ConstructorDeclarationNode* ctor) {
-	if (!ctor || ctor->get_definition().has_value() || ctor->is_implicit()) {
+	if (!ctor || ctor->is_materialized() || ctor->is_implicit()) {
 		return ctor;
 	}
 

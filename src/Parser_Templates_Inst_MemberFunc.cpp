@@ -336,7 +336,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 				continue;
 			}
 			const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-			if (ctor.has_template_parameters() || !ctor.get_definition().has_value()) {
+			if (ctor.has_template_parameters() || !ctor.is_materialized()) {
 				continue;
 			}
 			if (ctor.mangled_name() == mangled_name) {
@@ -613,7 +613,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			if (spec_func.has_non_type_template_args()) {
 				inst_func_ref.set_non_type_template_args(spec_func.non_type_template_args());
 			}
-			if (spec_func.get_definition().has_value()) {
+			if (spec_func.is_materialized()) {
 				inst_func_ref.set_definition(*spec_func.get_definition());
 				finalize_function_after_definition(inst_func_ref, true);
 			} else {
@@ -1304,7 +1304,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// Update the saved position to include this new node so it doesn't get erased
 	saved_tokens_[current_pos].ast_nodes_size_ = ast_nodes_.size();
 
-	if (new_func_ref.get_definition().has_value()) {
+	if (new_func_ref.is_materialized()) {
 		finalize_function_after_definition(new_func_ref);
 	} else {
 		compute_and_set_mangled_name(new_func_ref);

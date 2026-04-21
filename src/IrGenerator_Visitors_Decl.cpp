@@ -1298,7 +1298,7 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 						}
 					}
 					if (!ctor_has_auto) {
-						if (!ctor.get_definition().has_value() &&
+						if (!ctor.is_materialized() &&
 							current_struct_name_.isValid() && member_name.isValid() &&
 							LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
 								LazyMemberKey::anyConst(
@@ -1516,13 +1516,13 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	// Implicit constructors might not have a body if trivial, but we must emit the symbol
 	// so the linker can find it if referenced.
 	// Proceed to generate an empty function body.
-	if (!node.get_definition().has_value() && !node.is_implicit()) {
+	if (!node.is_materialized() && !node.is_implicit()) {
 		return;
 	}
 
 	// Phase 16: track whether sema normalized this constructor body.
 	sema_normalized_current_function_ = false;
-	if (sema_ && node.get_definition().has_value()) {
+	if (sema_ && node.is_materialized()) {
 		sema_normalized_current_function_ = sema_->hasNormalizedBody(
 			static_cast<const void*>(&(*node.get_definition())));
 	}
@@ -2752,7 +2752,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 }
 
 void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& node) {
-	if (!node.get_definition().has_value())
+	if (!node.is_materialized())
 		return;
 
 		// Phase 16: track whether sema normalized this destructor body.

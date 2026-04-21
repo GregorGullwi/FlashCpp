@@ -1754,7 +1754,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			}
 
 			// Copy definition if present
-			if (orig_ctor.get_definition().has_value()) {
+			if (orig_ctor.is_materialized()) {
 				new_ctor_ref.set_definition(*orig_ctor.get_definition());
 			}
 
@@ -1782,7 +1782,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			}
 
 			// Copy definition if present
-			if (orig_dtor.get_definition().has_value()) {
+			if (orig_dtor.is_materialized()) {
 				new_dtor_ref.set_definition(*orig_dtor.get_definition());
 			}
 
@@ -1802,7 +1802,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				new_func.add_parameter_node(param);
 			}
 			copy_function_properties(new_func, orig_func);
-			if (orig_func.get_definition().has_value()) {
+			if (orig_func.is_materialized()) {
 				new_func.set_definition(*orig_func.get_definition());
 			}
 
@@ -1817,7 +1817,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				mem_func.is_override,
 				mem_func.is_final);
 
-			if (new_func.get_definition().has_value()) {
+			if (new_func.is_materialized()) {
 				finalize_function_after_definition(new_func);
 			} else {
 				compute_and_set_mangled_name(new_func);
