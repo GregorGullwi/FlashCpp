@@ -14,20 +14,33 @@ std::optional<ASTNode> AstToIr::materializeLazyMemberIfNeeded(
 	StringHandle struct_name,
 	StringHandle member_name,
 	std::optional<bool> is_const_member) {
-	// Phase 5: codegen no longer owns the lazy-member materialization logic.
-	// This bridge forwards to the sema-owned helper so that registry lookup,
-	// `parser_->instantiateLazyMemberFunction(...)`, pending-root normalization,
-	// and the "mark instantiated" bookkeeping all live in one place
-	// (`SemanticAnalysis::ensureMemberFunctionMaterialized`).
+	// Phase 5 steps 2-3: codegen no longer owns the lazy-member
+	// materialization logic. This bridge is a thin forwarder to the sema-owned
+	// helper (`SemanticAnalysis::ensureMemberFunctionMaterialized`), which
+	// performs registry lookup, `parser_->instantiateLazyMemberFunction(...)`,
+	// pending-root normalization, and the "mark instantiated" bookkeeping in a
+	// single place.
 	//
-	// Remaining callers in IrGenerator_Call_Direct / _Call_Indirect /
-	// _MemberAccess / _Visitors_TypeInit still invoke this bridge as a
-	// "make the body exist now" fallback; the next Phase 5 slices move each of
-	// those call sites into sema so this bridge can be deleted outright.
+	// Slice F (see `SemanticAnalysis::drainLazyMemberRegistry`) additionally
+	// drains every reachable struct's lazy members at end of sema, so by the
+	// time codegen runs the struct-visitor, the common case is that sema has
+	// already materialized the body and this forwarder only serves as a
+	// consistency check: `ensureMemberFunctionMaterialized` returns
+	// `std::nullopt` when there is nothing left to do.
+	//
+	// A small residual set of instantiated structs is not reachable from the
+	// top-level AST walk (they live only through references held by the lazy
+	// registry / `StructTypeInfo`). For those paths this forwarder still
+	// serves as the first materialization site — but all the actual logic
+	// remains in sema, and the forwarder cannot be deleted outright without
+	// regressing those tests. See the plan doc for why an unconditional
+	// "drain every instantiated struct" extension of `drainLazyMemberRegistry`
+	// is not a safe generalization (it over-materializes members of structs
+	// that only ever flow through SFINAE-probed template-argument positions,
+	// whose member bodies may be ill-formed by design).
 	if (!sema_) {
 		return std::nullopt;
 	}
-
 	return sema_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
 }
 

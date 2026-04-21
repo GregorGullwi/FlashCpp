@@ -946,6 +946,15 @@ void SemanticAnalysis::run() {
 
 	normalizePendingSemanticRoots();
 
+	// Phase 5 Slice F: materialize every remaining lazy-member registry entry
+	// here, before codegen begins. Any newly-materialized bodies may themselves
+	// introduce further pending sema roots (e.g., nested template usages inside
+	// the freshly-substituted body), so re-drain the pending-root queue after
+	// the registry drain to keep sema output consistent.
+	if (drainLazyMemberRegistry() > 0) {
+		normalizePendingSemanticRoots();
+	}
+
 	resolveRemainingAutoReturns();
 
 	FLASH_LOG(General, Debug, "SemanticAnalysis: pass complete - ",
@@ -5401,6 +5410,114 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	// parser_.instantiateLazyMemberFunction() just materialized.
 	lazy_registry.markInstantiated(struct_name, member_name, lazy_info_opt->identity.is_const_method);
 	return instantiated;
+}
+
+size_t SemanticAnalysis::drainLazyMemberRegistry() {
+	// Phase 5 Slice F: Materialize every lazy-member registry entry whose
+	// owning struct has the corresponding member listed in its AST
+	// `member_functions()` vector. This matches the scope of codegen's
+	// struct-visitor in `IrGenerator_Visitors_Decl.cpp`, which iterates each
+	// struct's AST member list and materializes the remaining lazy stubs
+	// found there. Doing the same work at end-of-sema makes sema the owner
+	// of lazy-member materialization decisions: by the time codegen begins,
+	// every lazy stub that the struct-visitor would have materialized has
+	// already been materialized through `ensureMemberFunctionMaterialized`,
+	// so the codegen bridge is no longer the first materializer.
+	//
+	// We deliberately do NOT drain the entire lazy registry: some registered
+	// entries correspond to template instantiations that were touched only
+	// in SFINAE / decltype contexts. Those entries never appear in any
+	// struct's AST member list (they are instantiation-time artifacts that
+	// would have failed substitution under strict ODR-use), so the
+	// struct-visitor wouldn't touch them either. Eagerly materializing them
+	// here would synthesize bodies that reference uncallable overloads and
+	// break linking. Matching the struct-visitor's filter preserves behavior.
+	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+	size_t total_materialized = 0;
+
+	// Helper: materialize every lazy member listed in the given struct's AST
+	// member_functions() vector. Mirrors the struct-visitor's per-member
+	// check (needsInstantiation + ensureMemberFunctionMaterialized) but
+	// without any codegen-side bookkeeping.
+	auto drainOneStruct = [&](const StructDeclarationNode& struct_decl) {
+		StringHandle struct_name = struct_decl.name();
+		if (!struct_name.isValid()) {
+			return;
+		}
+		for (const auto& member_func : struct_decl.member_functions()) {
+			StringHandle member_handle = member_func.getName();
+			if (!member_handle.isValid()) {
+				continue;
+			}
+			// Const-ness is only meaningful for FunctionDeclarationNode stubs.
+			// For ctor/dtor the lazy key is keyed on the canonical name only,
+			// so `ensureMemberFunctionMaterialized` with `nullopt` picks the
+			// right entry through the "any-const" lookup path.
+			std::optional<bool> is_const_query = std::nullopt;
+			if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+				const auto& fn = member_func.function_declaration.as<FunctionDeclarationNode>();
+				is_const_query = fn.is_const_member_function();
+			}
+			if (is_const_query.has_value()
+					? lazy_registry.needsInstantiation(struct_name, member_handle, *is_const_query)
+					: lazy_registry.needsInstantiationAny(struct_name, member_handle)) {
+				auto result = ensureMemberFunctionMaterialized(struct_name, member_handle, is_const_query);
+				if (result.has_value()) {
+					++total_materialized;
+				}
+			}
+		}
+	};
+
+	// Recursive walker over every top-level AST node. Struct declarations can
+	// appear at the top level, nested inside namespaces, or nested inside
+	// other structs; mirror the codegen struct-visitor's reachability.
+	auto walkNode = [&](auto& self, const ASTNode& node) -> void {
+		if (!node.has_value()) {
+			return;
+		}
+		if (node.is<StructDeclarationNode>()) {
+			const auto& struct_decl = node.as<StructDeclarationNode>();
+			drainOneStruct(struct_decl);
+			for (const auto& nested : struct_decl.nested_classes()) {
+				self(self, nested);
+			}
+		} else if (node.is<NamespaceDeclarationNode>()) {
+			const auto& ns = node.as<NamespaceDeclarationNode>();
+			for (const auto& child : ns.declarations()) {
+				self(self, child);
+			}
+		}
+	};
+
+	// Loop because materializing one body may trigger further lazy
+	// registrations (e.g., a template instantiation used inside the body we
+	// just substituted). Keep walking until no more work happens.
+	//
+	// We intentionally only walk structs reachable from `parser_.get_nodes()`:
+	// they are exactly the structs whose members the codegen struct-visitor
+	// iterates. Extending the walk to the set of *all* instantiated class
+	// templates (e.g., via a side list populated by
+	// `try_instantiate_class_template`) would over-materialize members of
+	// structs that only ever appear as template arguments in SFINAE-probed
+	// positions — their member bodies may be ill-formed by design (see
+	// `tests/test_namespaced_pair_swap_sfinae_ret0.cpp` where
+	// `pair<const int, int>::swap` references a deleted overload and is only
+	// valid to instantiate lazily via ODR-use, which never happens). The
+	// residual cases where a codegen call site still needs lazy
+	// materialization are handled by `AstToIr::materializeLazyMemberIfNeeded`,
+	// which forwards to `ensureMemberFunctionMaterialized` on demand.
+	while (true) {
+		size_t before = total_materialized;
+		for (const auto& top_node : parser_.get_nodes()) {
+			walkNode(walkNode, top_node);
+		}
+		if (total_materialized == before) {
+			break;
+		}
+	}
+
+	return total_materialized;
 }
 
 void SemanticAnalysis::tryAnnotateInitListConstructorArgs(

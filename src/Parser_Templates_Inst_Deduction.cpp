@@ -1282,6 +1282,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		std::vector<size_t> template_param_arg_counts(template_params.size(), 0);
 		size_t explicit_idx = 0;	 // Track position in explicit_types
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
+		std::unordered_set<size_t> pre_deduced_arg_indices;
 		// Build a name-to-arg deduction map whenever call arg types are available,
 		// regardless of whether the template has variadic parameters.
 		// buildDeductionMapFromCallArgs now safely skips parameter-pack function slots,
@@ -1296,13 +1297,14 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			if (!deduction_info.has_value()) {
 				continue;
 			}
+			pre_deduced_arg_indices = std::move(deduction_info->pre_deduced_arg_indices);
 			param_name_to_arg = std::move(deduction_info->param_name_to_arg);
 		}
 		// Positional fallback for trailing non-pack params that appear after a variadic
 		// function-parameter pack (e.g., template<...Rest, T> func(Rest..., T last)).
 		// Such trailing params are not reached by the direct-param pre-deduction above.
 		size_t positional_deduced_call_arg_index = SIZE_MAX;
-		if (current_explicit_call_arg_types_ != nullptr && (has_variadic_pack || has_variadic_func_pack)) {
+		if (current_explicit_call_arg_types_ != nullptr && has_variadic_func_pack) {
 			positional_deduced_call_arg_index = 0;
 			if (has_variadic_func_pack &&
 				current_explicit_call_arg_types_->size() >= required_function_args_after_pack) {
@@ -1310,6 +1312,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					current_explicit_call_arg_types_->size() - required_function_args_after_pack;
 			}
 		}
+		auto skipPreDeducedCallArgIndices = [&]() {
+			while (positional_deduced_call_arg_index < current_explicit_call_arg_types_->size() &&
+				   pre_deduced_arg_indices.count(positional_deduced_call_arg_index)) {
+				++positional_deduced_call_arg_index;
+			}
+		};
 		bool overload_mismatch = false;
 		for (size_t i = 0; i < template_params.size(); ++i) {
 			if (!template_params[i].is<TemplateParameterNode>()) {
@@ -1402,6 +1410,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						template_param_arg_starts[i] = arg_start_index;
 						template_param_arg_counts[i] = template_args.size() - arg_start_index;
 						continue;
+					}
+					if (!param.has_default() &&
+						current_explicit_call_arg_types_ != nullptr &&
+						positional_deduced_call_arg_index != SIZE_MAX &&
+						positional_deduced_call_arg_index < current_explicit_call_arg_types_->size()) {
+						skipPreDeducedCallArgIndices();
 					}
 					if (!param.has_default() &&
 						current_explicit_call_arg_types_ != nullptr &&
