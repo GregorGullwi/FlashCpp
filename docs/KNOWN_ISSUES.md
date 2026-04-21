@@ -1,35 +1,5 @@
 # Known Issues
 
-## `#include <typeinfo>` fails to link — vtable back-substitution bug
-
-**Symptom:** Compiling any TU that includes `<typeinfo>` produces an object file
-that fails to link with undefined-reference errors:
-
-```
-undefined reference to `std::type_info::__do_catch(std::type_info const*, void**, unsigned int) const'
-undefined reference to `std::type_info::__do_upcast(...) const'
-```
-
-**Root cause:** When FlashCpp parses `<typeinfo>` it sees the `std::type_info`
-class definition and emits a local vtable for it (symbol `_ZTVSt9type_info`).
-The virtual-function pointer slots in that vtable are filled by emitting
-references to `_ZNKSt9type_info10__do_catchEPKSt9type_infoPPvj` and
-`_ZNKSt9type_info11__do_upcastEPK10__cxxabiv117__class_type_infoPPv`.
-
-However, libstdc++ exports these symbols with an Itanium ABI back-substitution:
-`_ZNKSt9type_info10__do_catchEPKS_PPvj` (note `PKS_` = pointer-to-const-self,
-back-substitution for `type_info`). The names do not match, so the linker
-reports undefined references even though the symbols exist in the library.
-
-**Impact:** Tests that use `typeid` must not include `<typeinfo>` and must
-compare results via raw `const void*` pointer identity instead of
-`std::type_info::operator==`. All RTTI regression tests in `tests/` follow
-this pattern currently.
-
-**Fix needed:** The name mangler must track substitutions and emit `S_` (or
-the appropriate `S<n>_` back-reference) when a type that was already encoded
-appears again in the same mangled name, per Itanium C++ ABI §5.1.8.
-
 ## Alias-chain dependent-bool resolution loses size_bits (Phase 2)
 
 **Test:** `test_alias_chain_dependent_bool_ret1.cpp`
