@@ -176,8 +176,10 @@ public:
 	//
 	// Returns the materialized ASTNode (FunctionDeclarationNode or
 	// ConstructorDeclarationNode) on success, or std::nullopt when no matching
-	// lazy entry needs instantiation. Codegen consumers forward here through
-	// the thin `AstToIr::materializeLazyMemberIfNeeded` bridge.
+	// lazy entry needs instantiation. After Phase 5 Slices I+J there is no
+	// codegen-side forwarder; all lazy-member materialization goes through
+	// either sema annotation sites (see `markOdrUsed`) or the end-of-sema
+	// drain in `drainLazyMemberRegistry`.
 	std::optional<ASTNode> ensureMemberFunctionMaterialized(
 		StringHandle struct_name,
 		StringHandle member_name,

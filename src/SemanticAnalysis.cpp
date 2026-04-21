@@ -5204,9 +5204,10 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	//
 	// But codegen must emit a call to the *instantiation's* member
 	// (`Box$hash::helper`), whose body has `T` substituted. If we leave this
-	// unhandled here, the codegen-side `materializeLazyMemberIfNeeded`
-	// forwarder ends up being the first materializer for that instantiation
-	// member.
+	// unmarked here, no ODR-use signal reaches the end-of-sema drain and the
+	// instantiation's body never gets materialized. (Slices I+J removed the
+	// codegen-side `materializeLazyMemberIfNeeded` forwarder that used to be
+	// the fallback first-materializer; ODR-use marking is now the only path.)
 	//
 	// We remap here: if `member_context_stack_` shows we're currently
 	// normalizing a member of some instantiation `I`, and the lazy registry
@@ -5536,12 +5537,14 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 					// Phase 5 Slice G: annotate the freshly-substituted body so
 					// its internal call expressions run through the sema sites
 					// that call `markOdrUsed` on their resolved targets. Without
-					// this, inner calls would only be resolved at codegen time
-					// (via the `materializeLazyMemberIfNeeded` forwarder), which
-					// is exactly the residual we want to eliminate. The
-					// normalize helpers are idempotent via `normalized_bodies_`
-					// dedup, so re-normalizing an already-processed node is a
-					// safe no-op.
+					// this, inner calls would never reach the drain's ODR-use
+					// second pass and the corresponding instantiation members
+					// would stay unmaterialized. (Slices I+J deleted the
+					// codegen-side `materializeLazyMemberIfNeeded` forwarder
+					// that used to pick up these stragglers at lowering time.)
+					// The normalize helpers are idempotent via
+					// `normalized_bodies_` dedup, so re-normalizing an
+					// already-processed node is a safe no-op.
 					normalizeTopLevelNode(*result);
 				}
 			}
@@ -5573,19 +5576,21 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 	// registrations (e.g., a template instantiation used inside the body we
 	// just substituted). Keep walking until no more work happens.
 	//
-	// We intentionally only walk structs reachable from `parser_.get_nodes()`:
-	// they are exactly the structs whose members the codegen struct-visitor
-	// iterates. Extending the walk to the set of *all* instantiated class
-	// templates (e.g., via a side list populated by
+	// We intentionally only walk structs reachable from `parser_.get_nodes()`
+	// in this first pass: they are exactly the structs whose members the
+	// codegen struct-visitor iterates. Extending this walk to the set of *all*
+	// instantiated class templates (e.g., via a side list populated by
 	// `try_instantiate_class_template`) would over-materialize members of
 	// structs that only ever appear as template arguments in SFINAE-probed
 	// positions — their member bodies may be ill-formed by design (see
 	// `tests/test_namespaced_pair_swap_sfinae_ret0.cpp` where
 	// `pair<const int, int>::swap` references a deleted overload and is only
-	// valid to instantiate lazily via ODR-use, which never happens). The
-	// residual cases where a codegen call site still needs lazy
-	// materialization are handled by `AstToIr::materializeLazyMemberIfNeeded`,
-	// which forwards to `ensureMemberFunctionMaterialized` on demand.
+	// valid to instantiate lazily via ODR-use, which never happens).
+	//
+	// Non-reachable instantiations whose members *are* ODR-used are caught by
+	// the second pass below (`snapshotOdrUsedLazyEntries`). Slices I+J deleted
+	// the codegen-side `materializeLazyMemberIfNeeded` forwarder so every
+	// lazy-member materialization now flows through this drain.
 	while (true) {
 		size_t before = total_materialized;
 		for (const auto& top_node : parser_.get_nodes()) {
