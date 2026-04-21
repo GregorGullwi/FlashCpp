@@ -428,8 +428,46 @@ public:
 	bool set_definition(ASTNode block_node) {
 		if (definition_block_.has_value())
 			return false;
+		assert(body_state_tag_ != BodyStateTag::FailedSubstitution);
 		definition_block_.emplace(block_node);
+		body_state_tag_ = BodyStateTag::Materialized;
 		return true;
+	}
+
+	// Body-state query API — mirrors FunctionDeclarationNode (item #2).
+	enum class BodyStateTag : uint8_t {
+		NotMaterialized = 0,
+		Materialized = 1,
+		FailedSubstitution = 2,
+	};
+
+	BodyStateTag body_state_tag() const { return body_state_tag_; }
+
+	// Category A / C: body is parsed and ready.
+	bool is_materialized() const { return body_state_tag_ == BodyStateTag::Materialized; }
+
+	// Substitution failure was recorded; the decl must not be re-probed.
+	bool failed_substitution() const { return body_state_tag_ == BodyStateTag::FailedSubstitution; }
+
+	// Category B: is there still a body to materialise?
+	bool needs_body_materialization() const {
+		return !is_materialized() && !failed_substitution();
+	}
+
+	// Category E: is there any source we can recover a body from?
+	bool has_any_body_source() const {
+		return is_materialized() || (has_template_body_ && !failed_substitution());
+	}
+
+	// Diagnostic payload for a cached substitution failure.
+	StringHandle substitution_failure_reason() const { return substitution_failure_reason_; }
+
+	// Record a substitution failure on a freshly-cloned instantiation node.
+	void mark_failed_substitution(StringHandle reason) {
+		assert(body_state_tag_ == BodyStateTag::NotMaterialized);
+		assert(!definition_block_.has_value());
+		body_state_tag_ = BodyStateTag::FailedSubstitution;
+		substitution_failure_reason_ = reason;
 	}
 
 	// Pre-computed mangled name for consistent access across all compiler stages
@@ -532,6 +570,8 @@ private:
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 	TypeIndex owning_type_index_{};
+	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
+	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution
 };
 
 // Destructor declaration node
@@ -552,8 +592,48 @@ public:
 	bool set_definition(ASTNode block_node) {
 		if (definition_block_.has_value())
 			return false;
+		assert(body_state_tag_ != BodyStateTag::FailedSubstitution);
 		definition_block_.emplace(block_node);
+		body_state_tag_ = BodyStateTag::Materialized;
 		return true;
+	}
+
+	// Body-state query API — mirrors FunctionDeclarationNode (item #2).
+	enum class BodyStateTag : uint8_t {
+		NotMaterialized = 0,
+		Materialized = 1,
+		FailedSubstitution = 2,
+	};
+
+	BodyStateTag body_state_tag() const { return body_state_tag_; }
+
+	// Category A / C: body is parsed and ready.
+	bool is_materialized() const { return body_state_tag_ == BodyStateTag::Materialized; }
+
+	// Substitution failure was recorded; the decl must not be re-probed.
+	bool failed_substitution() const { return body_state_tag_ == BodyStateTag::FailedSubstitution; }
+
+	// Category B: is there still a body to materialise?
+	bool needs_body_materialization() const {
+		return !is_materialized() && !failed_substitution();
+	}
+
+	// Category E: is there any source we can recover a body from?
+	// DestructorDeclarationNode has no saved token-stream body position, so
+	// the only source is a fully-parsed block.
+	bool has_any_body_source() const {
+		return is_materialized();
+	}
+
+	// Diagnostic payload for a cached substitution failure.
+	StringHandle substitution_failure_reason() const { return substitution_failure_reason_; }
+
+	// Record a substitution failure on a freshly-cloned instantiation node.
+	void mark_failed_substitution(StringHandle reason) {
+		assert(body_state_tag_ == BodyStateTag::NotMaterialized);
+		assert(!definition_block_.has_value());
+		body_state_tag_ = BodyStateTag::FailedSubstitution;
+		substitution_failure_reason_ = reason;
 	}
 
 	// Pre-computed mangled name for consistent access across all compiler stages
@@ -621,6 +701,8 @@ private:
 	std::optional<ASTNode> noexcept_expression_;	 // For explicit noexcept(expr)
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
+	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
+	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution
 };
 
 // Anonymous union member information - stored during parsing, processed during layout
