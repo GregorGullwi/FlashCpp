@@ -1333,7 +1333,7 @@ ParseResult Parser::parse_typedef_declaration() {
 
 		// Add enum declaration to AST
 		gSymbolTable.insert(enum_name_for_typedef, enum_node);
-		ast_nodes_.push_back(enum_node);
+		appendUserNode(enum_node);
 
 		// Create type specifier for the typedef
 		type_spec = TypeSpecifierNode(TypeCategory::Enum, TypeQualifier::None, underlying_size, typedef_keyword, CVQualifier::None);

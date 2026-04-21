@@ -526,7 +526,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 			// Check for declaration only (;) or function definition ({)
 			if (consume(";"_tok)) {
-				ast_nodes_.push_back(func_node);
+				appendUserNode(func_node);
 				return saved_position.success(func_node);
 			}
 
@@ -561,7 +561,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				{}						  // template_param_names (empty for non-template)
 			});
 
-			ast_nodes_.push_back(func_node);
+			appendUserNode(func_node);
 			return saved_position.success(func_node);
 		}
 

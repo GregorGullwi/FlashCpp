@@ -1713,7 +1713,7 @@ bool Parser::parse_static_member_function(
 	}
 
 	if (add_to_ast_nodes) {
-		ast_nodes_.push_back(member_func_node);
+		appendUserNode(member_func_node);
 	}
 
 	return true;	 // Successfully handled as a function

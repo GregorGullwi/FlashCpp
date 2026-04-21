@@ -2013,7 +2013,7 @@ ParseResult Parser::parse_template_declaration() {
 
 						// Add to AST for code generation
 						// Full specializations are not template patterns - they need their constructors emitted
-						ast_nodes_.push_back(ctor_node);
+						appendUserNode(ctor_node);
 						continue;
 					} else {
 						// Not a constructor, restore position
@@ -2314,7 +2314,7 @@ ParseResult Parser::parse_template_declaration() {
 
 					// Add to AST for code generation
 					// Full specializations are not template patterns - they need their member functions emitted
-					ast_nodes_.push_back(member_func_node);
+					appendUserNode(member_func_node);
 				} else {
 					// This is a data member
 					std::optional<ASTNode> default_initializer;
@@ -2603,7 +2603,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Push destructor bodies to ast_nodes_ now (after restore, so they won't be erased).
 			for (auto& dtor_ast : pending_dtor_ast_nodes) {
-				ast_nodes_.push_back(std::move(dtor_ast));
+				appendUserNode(std::move(dtor_ast));
 			}
 
 			// Register the specialization
