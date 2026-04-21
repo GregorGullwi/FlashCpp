@@ -9,6 +9,7 @@
 #include "OverloadResolution.h"
 #include "Log.h"
 #include "IrGenerator.h"
+#include "ReachableStructWalker.h"
 
 namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
@@ -5551,27 +5552,6 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 		}
 	};
 
-	// Recursive walker over every top-level AST node. Struct declarations can
-	// appear at the top level, nested inside namespaces, or nested inside
-	// other structs; mirror the codegen struct-visitor's reachability.
-	auto walkNode = [&](auto& self, const ASTNode& node) -> void {
-		if (!node.has_value()) {
-			return;
-		}
-		if (node.is<StructDeclarationNode>()) {
-			const auto& struct_decl = node.as<StructDeclarationNode>();
-			drainOneStruct(struct_decl);
-			for (const auto& nested : struct_decl.nested_classes()) {
-				self(self, nested);
-			}
-		} else if (node.is<NamespaceDeclarationNode>()) {
-			const auto& ns = node.as<NamespaceDeclarationNode>();
-			for (const auto& child : ns.declarations()) {
-				self(self, child);
-			}
-		}
-	};
-
 	// Loop because materializing one body may trigger further lazy
 	// registrations (e.g., a template instantiation used inside the body we
 	// just substituted). Keep walking until no more work happens.
@@ -5594,7 +5574,7 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 	while (true) {
 		size_t before = total_materialized;
 		for (const auto& top_node : parser_.get_nodes()) {
-			walkNode(walkNode, top_node);
+			FlashCpp::forEachReachableStructDecl(top_node, drainOneStruct);
 		}
 		if (total_materialized == before) {
 			break;

@@ -99,6 +99,12 @@ private:
 		TypeCategory bindingType() const { return type_index.category(); }
 	};
 
+	struct StructCodegenFrame {
+		StringHandle saved_enclosing_function;
+		StringHandle saved_enclosing_function_mangled;
+		StringHandle saved_struct_name;
+	};
+
 	// Generate aggregate initialization of a struct from an InitializerListNode as a default argument.
 	// Emits ConstructorCallOp + MemberStoreOps for the struct, returns a TypedValue for the temporary.
 	std::optional<TypedValue> generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type);
@@ -152,6 +158,7 @@ private:
 		std::string_view error_context);
 
 	std::vector<std::vector<ScopeVariableInfo>> scope_stack_;
+	InlineVector<StructCodegenFrame, 8> struct_codegen_frame_stack_;
 
 	void enterScope() {
 		scope_stack_.push_back({});
@@ -228,7 +235,10 @@ private:
 	bool function_has_typed_catch_ = false;
 
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node);
+	bool beginStructDeclarationCodegen(const StructDeclarationNode& node);
+	void endStructDeclarationCodegen(const StructDeclarationNode& node);
 	void visitStructDeclarationNode(const StructDeclarationNode& node);
+	void visitNonStructOrNamespaceNode(const ASTNode& node);
 	void visitEnumDeclarationNode([[maybe_unused]] const EnumDeclarationNode& node);
 	void visitConstructorDeclarationNode(const ConstructorDeclarationNode& node);
 	void visitDestructorDeclarationNode(const DestructorDeclarationNode& node);

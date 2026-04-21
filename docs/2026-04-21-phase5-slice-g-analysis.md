@@ -22,6 +22,10 @@ The core architectural recommendation from this document has largely landed alre
  - Slices I+J (`53327120`) deleted the last live `AstToIr::materializeLazyMemberIfNeeded` forwarder and simplified the codegen struct visitor into a pure consumer.
  - Item #8 below was finished afterwards on this branch (`bd49098c`): `registerLateMaterializedTopLevelNode*` now dedups by `raw_pointer()` identity instead of relying on callers not to double-push.
  - The stale post-forwarder comments called out below have also been cleaned up (`da472bdc`).
+ - Item #9 below is now finished on this branch as well: `ReachableStructWalker.h` provides the shared reachable-struct traversal used by both `SemanticAnalysis::drainLazyMemberRegistry`
+   and codegen's AST walk.
+ - Item #6 below is now finished on this branch too: `Log.h` exposes `FLASH_INVARIANT_PROBE` / `FLASH_INVARIANT_PROBE_FORMAT` with off/log/fail modes, and codegen uses a
+   `Phase5StructDrain` probe to catch any future regression where a still-lazy member or constructor reaches the struct visitor.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -163,7 +167,7 @@ the stale bridge-era comments in SemanticAnalysis.cpp / SemanticAnalysis.h have 
 
 ## Medium-impact changes
 
-### 6. Reusable invariant-probe infrastructure   [TODO]
+### 6. Reusable invariant-probe infrastructure   [DONE]
 
 The audit guard in materializeLazyMemberIfNeeded (writing to audit_phase5f.log, later turned into a hard-fail guard) was the single most effective tool in this whole slice. It
 told us empirically which tests still violated the invariant we were trying to establish.
@@ -182,8 +186,15 @@ With a few modes:
 Every slice that tightens an invariant would benefit. Right now each slice reinvents the instrumentation, and we remove it before commit — meaning we have zero regression
 coverage that the invariant holds going forward.
 
-Current state (TODO): No FLASH_INVARIANT_PROBE macro exists. Log.h has FLASH_LOG / FLASH_LOG_FORMAT / IS_FLASH_LOG_ENABLED, which cover the "log" mode informally, but there
-is no structured invariant concept with off/log/fail modes.
+Current state (DONE): `src/Log.h` now provides `FLASH_INVARIANT_PROBE(name, ...)` and `FLASH_INVARIANT_PROBE_FORMAT(name, fmt, ...)` backed by a compile-time
+`FLASHCPP_INVARIANT_PROBE_MODE` switch:
+
+ - `0` = off (compiled out)
+ - `1` = log (append to `audit_<probe>.log` and emit a warning)
+ - `2` = fail (throw `InternalError`)
+
+The first concrete use is `Phase5StructDrain` in `IrGenerator_Visitors_Decl.cpp`, which trips if codegen ever reaches a still-lazy member function or constructor that should
+have been drained by sema already. Current baseline remains green at 2204 pass / 149 expected-fail.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -211,7 +222,7 @@ double-pushed into the top-level list nor double-enqueued for sema normalization
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-### 9. Centralize the "what is a top-level struct for codegen purposes?" walker   [TODO]
+### 9. Centralize the "what is a top-level struct for codegen purposes?" walker   [DONE]
 
 Today both drainLazyMemberRegistry and the codegen struct-visitor implement their own "recurse namespaces + nested classes + structs" traversal. They have to match exactly or
 else sema drains something codegen won't emit (under-draining: harmless) or codegen emits something sema didn't drain (over-emitting: LNK errors).
@@ -219,8 +230,10 @@ else sema drains something codegen won't emit (under-draining: harmless) or code
 A shared forEachReachableStructDecl(parser, callback) utility would eliminate the drift risk. This is a very small refactor that prevents a whole class of "sema and codegen
 disagree about what's reachable" bugs.
 
-Current state (TODO): drainLazyMemberRegistry (SemanticAnalysis.cpp ~5554-5570) and visitStructDeclarationNode / IrGenerator_Visitors_Decl.cpp each have independent
-namespace-and-nested-class recursive walkers. They currently agree in practice (all tests pass), but there is no structural guarantee.
+Current state (DONE): `src/ReachableStructWalker.h` now owns the shared recursion over namespaces + structs + nested classes. `SemanticAnalysis::drainLazyMemberRegistry`
+uses `FlashCpp::forEachReachableStructDecl(top_node, drainOneStruct)`, and codegen's top-level `AstToIr::visit` uses `FlashCpp::walkReachableStructDecls(...)` with namespace
+enter/exit hooks plus struct enter/exit hooks (`beginStructDeclarationCodegen` / `endStructDeclarationCodegen`). This preserves codegen's context-sensitive behavior while removing the
+separate hand-rolled walkers. The refactor was validated against the full Windows baseline: 2204 pass / 149 expected-fail.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -259,10 +272,10 @@ exists.
 | 3 | InstantiationContext threading             | TODO     |
 | 4 | Separate instantiated-struct list          | PARTIAL  |
 | 5 | Sema owns ODR-use; codegen pure consumer   | DONE     |
-| 6 | FLASH_INVARIANT_PROBE infrastructure       | TODO     |
+| 6 | FLASH_INVARIANT_PROBE infrastructure       | DONE     |
 | 7 | Stable ASTNodeId                           | TODO     |
 | 8 | registerLateMaterializedTopLevelNode dedup | DONE     |
-| 9 | Shared forEachReachableStructDecl walker   | TODO     |
+| 9 | Shared forEachReachableStructDecl walker   | DONE     |
 |10 | Typed LazyMemberKey predicates             | TODO     |
 |11 | Explicit instantiation lifecycle hooks     | TODO     |
 
@@ -270,7 +283,7 @@ exists.
 
 ## What this buys us, in order
 
-Items #1, #5, and #8 are done. Together they deliver the core Slice G promise: sema marks every needed member, drains it, and codegen is a pure consumer. The
+Items #1, #5, #8, and #9 are done. Together they deliver the core Slice G promise: sema marks every needed member, drains it, and codegen is a pure consumer. The
 materializeLazyMemberIfNeeded forwarder no longer exists as live code.
 
 Item #4 is partially done — the parallel tracking vector is there, the clean consumption split is not. Completing it (making codegen apply different emission rules for user
@@ -279,10 +292,9 @@ nodes vs. instantiated nodes) would make "what should be emitted for this instan
 Items #2 and #3 remain the principled long-term fix for the SFINAE corner cases still listed in KNOWN_ISSUES. The workarounds in place (= delete tie-breaking heuristic,
 hasLaterUsableTemplateDefinitionWithMatchingShape check) paper over real gaps in the data model. Phase 6 work on deduction-rule cleanup will benefit from both of these.
 
-Item #6 (invariant probes) is the force-multiplier: it turns every future architectural tightening from "write audit, run tests, remove audit, repeat" into "flip the probe
-mode, trust the CI".
+Item #6 (invariant probes) is now in place: future architectural tightening can keep its guardrails checked in instead of re-inventing one-off audit files for each slice.
 
-Items #9, #10, and #11 are refactoring quality-of-life items that reduce future maintenance risk with low implementation cost.
+Items #10 and #11 are refactoring quality-of-life items that reduce future maintenance risk with low implementation cost.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -291,14 +303,11 @@ Items #9, #10, and #11 are refactoring quality-of-life items that reduce future 
 1. Complete item #4 (separate instantiated-struct list, consumption side): make codegen's top-level node iterator apply different emission rules for instantiated nodes
    (emit only odr_used members) vs. user-written nodes (emit every member). This is the last structural piece the original Slice G recommendation called for.
 
-2. Item #9 (shared forEachReachableStructDecl walker) is small and eliminates a concrete drift risk between sema drain and codegen traversal. A good candidate for the next
-   incremental PR before starting Phase 6.
+2. Item #10 (typed LazyMemberKey predicates) is now the best small cleanup. The registry API still exposes a pile of near-duplicate `StringHandle + bool` queries, and item #6
+   means future refactors can guard the migration with checked-in probes instead of temporary audits.
 
-3. Item #6 (FLASH_INVARIANT_PROBE) is now the best small cross-cutting follow-up after item #9. The Slice F/G audits proved their value; formalizing them would make future
-   invariant tightening CI-enforceable instead of a one-off local debugging exercise.
-
-4. Items #2 and #3 are Phase 6 prerequisites for principled SFINAE handling. They are medium-sized architectural changes. The existing KNOWN_ISSUES workarounds are stable
+3. Items #2 and #3 are Phase 6 prerequisites for principled SFINAE handling. They are medium-sized architectural changes. The existing KNOWN_ISSUES workarounds are stable
    enough to defer until Phase 6 begins.
 
-5. Item #7 (stable ASTNodeId) is still optional for correctness, but it becomes much more attractive if item #4 proceeds. Once there are multiple long-lived dedup/tracking sets,
+4. Item #7 (stable ASTNodeId) is still optional for correctness, but it becomes much more attractive if item #4 proceeds. Once there are multiple long-lived dedup/tracking sets,
    raw_pointer()-identity becomes more of a liability.

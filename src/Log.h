@@ -1,11 +1,16 @@
 // ===== src/Log.h (header-only) =====
 
 #pragma once
+#include "CompileError.h"
 #include <iostream>
 #include <string_view>
+#include <string>
 #include <cstdint>
 #include <array>
+#include <cctype>
+#include <fstream>
 #include <format>
+#include <sstream>
 
 namespace FlashCpp {
 
@@ -59,6 +64,14 @@ enum class LogLevel : uint8_t {
 // Set this via compiler flag: -DFLASHCPP_DEFAULT_RUNTIME_LEVEL=2
 #ifndef FLASHCPP_DEFAULT_RUNTIME_LEVEL
 #define FLASHCPP_DEFAULT_RUNTIME_LEVEL 2	 // Both Debug and Release default to Info level (General category always enabled regardless of level)
+#endif
+
+// Invariant probe mode:
+//   0 = off  (compiled out)
+//   1 = log  (append to audit_<probe>.log and emit a warning)
+//   2 = fail (throw InternalError)
+#ifndef FLASHCPP_INVARIANT_PROBE_MODE
+#define FLASHCPP_INVARIANT_PROBE_MODE 0
 #endif
 
 // ANSI color codes for terminal output
@@ -328,6 +341,89 @@ constexpr bool isLogEnabled() {
 template <typename... Args>
 inline void flash_log_unused(Args&&...) {}
 
+inline std::string sanitizeInvariantProbeName(std::string_view probe_name) {
+	std::string sanitized;
+	sanitized.reserve(probe_name.size());
+	for (char ch : probe_name) {
+		unsigned char uch = static_cast<unsigned char>(ch);
+		if (std::isalnum(uch) || ch == '_' || ch == '-') {
+			sanitized.push_back(ch);
+		} else {
+			sanitized.push_back('_');
+		}
+	}
+	if (sanitized.empty()) {
+		sanitized = "unnamed";
+	}
+	return sanitized;
+}
+
+template <typename... Args>
+inline std::string buildInvariantProbeMessage(
+	std::string_view probe_name,
+	std::string_view message,
+	Args&&... args) {
+	std::ostringstream out;
+	out << "[INVARIANT][" << probe_name << "] " << message;
+	((out << " " << std::forward<Args>(args)), ...);
+	return out.str();
+}
+
+inline void appendInvariantProbeLog(std::string_view probe_name, const std::string& text) {
+	std::string filename = "audit_" + sanitizeInvariantProbeName(probe_name) + ".log";
+	std::ofstream file(filename, std::ios::app);
+	if (!file) {
+		Logger<LogLevel::Warning, LogCategory::General>::log(
+			"[INVARIANT][", probe_name, "] failed to open log file ", filename);
+		return;
+	}
+	file << text << "\n";
+}
+
+template <typename... Args>
+inline void logInvariantProbe(
+	std::string_view probe_name,
+	std::string_view message,
+	Args&&... args) {
+	std::string text = buildInvariantProbeMessage(
+		probe_name,
+		message,
+		std::forward<Args>(args)...);
+	appendInvariantProbeLog(probe_name, text);
+	Logger<LogLevel::Warning, LogCategory::General>::log(text);
+}
+
+template <typename... Args>
+[[noreturn]] inline void failInvariantProbe(
+	std::string_view probe_name,
+	std::string_view message,
+	Args&&... args) {
+	throw InternalError(buildInvariantProbeMessage(
+		probe_name,
+		message,
+		std::forward<Args>(args)...));
+}
+
+template <typename... Args>
+inline void logInvariantProbeFormatted(
+	std::string_view probe_name,
+	std::string_view fmt,
+	Args&&... args) {
+	logInvariantProbe(
+		probe_name,
+		std::vformat(fmt, std::make_format_args(args...)));
+}
+
+template <typename... Args>
+[[noreturn]] inline void failInvariantProbeFormatted(
+	std::string_view probe_name,
+	std::string_view fmt,
+	Args&&... args) {
+	throw InternalError(buildInvariantProbeMessage(
+		probe_name,
+		std::vformat(fmt, std::make_format_args(args...))));
+}
+
 // FLASH_LOG macro - completely eliminated at preprocessing when level is disabled
 // Now with runtime check BEFORE evaluating arguments to avoid expensive string construction
 #if FLASHCPP_LOG_LEVEL >= 4	// Trace
@@ -509,5 +605,28 @@ inline void flash_log_unused(Args&&...) {}
 
 // Main FLASH_LOG_FORMAT macro that dispatches based on level
 #define FLASH_LOG_FORMAT(cat, level, fmt, ...) FLASH_LOG_FORMAT_##level##_IMPL(cat, fmt, __VA_ARGS__)
+
+#if FLASHCPP_INVARIANT_PROBE_MODE == 0
+#define FLASH_INVARIANT_PROBE(name, ...) ::FlashCpp::flash_log_unused(__VA_ARGS__)
+#define FLASH_INVARIANT_PROBE_FORMAT(name, ...) ::FlashCpp::flash_log_unused(__VA_ARGS__)
+#elif FLASHCPP_INVARIANT_PROBE_MODE == 1
+#define FLASH_INVARIANT_PROBE(name, message, ...) \
+	do { \
+		::FlashCpp::logInvariantProbe(#name, message, __VA_ARGS__); \
+	} while (0)
+#define FLASH_INVARIANT_PROBE_FORMAT(name, fmt, ...) \
+	do { \
+		::FlashCpp::logInvariantProbeFormatted(#name, fmt, __VA_ARGS__); \
+	} while (0)
+#else
+#define FLASH_INVARIANT_PROBE(name, message, ...) \
+	do { \
+		::FlashCpp::failInvariantProbe(#name, message, __VA_ARGS__); \
+	} while (0)
+#define FLASH_INVARIANT_PROBE_FORMAT(name, fmt, ...) \
+	do { \
+		::FlashCpp::failInvariantProbeFormatted(#name, fmt, __VA_ARGS__); \
+	} while (0)
+#endif
 
 } // namespace FlashCpp

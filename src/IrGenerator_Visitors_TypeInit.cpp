@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "CallNodeHelpers.h"
+#include "ReachableStructWalker.h"
 #include "RebindStaticMemberAst.h"
 
 AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
@@ -20,6 +21,36 @@ void AstToIr::visit(const ASTNode& node) {
 		return;
 	}
 
+	if (node.is<StructDeclarationNode>() || node.is<NamespaceDeclarationNode>()) {
+		// Top-level/file-scope structs and namespace-contained structs should never
+		// inherit a stale enclosing-struct context from a previously visited node.
+		// The shared reachable-struct walker handles true nested-class context via
+		// beginStructDeclarationCodegen/endStructDeclarationCodegen; clear only the
+		// ambient root-level context here.
+		current_struct_name_ = StringHandle();
+	}
+
+	FlashCpp::walkReachableStructDecls(
+		node,
+		[this](const StructDeclarationNode& struct_node) {
+			return beginStructDeclarationCodegen(struct_node);
+		},
+		[this](const StructDeclarationNode& struct_node) {
+			endStructDeclarationCodegen(struct_node);
+		},
+		[this](const NamespaceDeclarationNode& ns) {
+			current_namespace_stack_.push_back(std::string(ns.name()));
+			return true;
+		},
+		[this](const NamespaceDeclarationNode&) {
+			current_namespace_stack_.pop_back();
+		},
+		[this](const ASTNode& other_node) {
+			visitNonStructOrNamespaceNode(other_node);
+		});
+}
+
+void AstToIr::visitNonStructOrNamespaceNode(const ASTNode& node) {
 	if (node.is<FunctionDeclarationNode>()) {
 		visitFunctionDeclarationNode(node.as<FunctionDeclarationNode>());
 		// Clear function context after completing a top-level function
@@ -65,15 +96,8 @@ void AstToIr::visit(const ASTNode& node) {
 	} else if (node.is<ExpressionNode>()) {
 		visitExpressionNode(node.as<ExpressionNode>());
 		emitAndClearFullExpressionTempDestructors();
-	} else if (node.is<StructDeclarationNode>()) {
-		// Clear struct context for top-level structs to prevent them from being
-		// mistakenly treated as nested classes of the previous struct
-		current_struct_name_ = StringHandle();
-		visitStructDeclarationNode(node.as<StructDeclarationNode>());
 	} else if (node.is<EnumDeclarationNode>()) {
 		visitEnumDeclarationNode(node.as<EnumDeclarationNode>());
-	} else if (node.is<NamespaceDeclarationNode>()) {
-		visitNamespaceDeclarationNode(node.as<NamespaceDeclarationNode>());
 	} else if (node.is<UsingDirectiveNode>()) {
 		visitUsingDirectiveNode(node.as<UsingDirectiveNode>());
 	} else if (node.is<UsingDeclarationNode>()) {
