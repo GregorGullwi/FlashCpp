@@ -5481,6 +5481,16 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 				auto result = ensureMemberFunctionMaterialized(struct_name, member_handle, is_const_query);
 				if (result.has_value()) {
 					++total_materialized;
+					// Phase 5 Slice G: annotate the freshly-substituted body so
+					// its internal call expressions run through the sema sites
+					// that call `markOdrUsed` on their resolved targets. Without
+					// this, inner calls would only be resolved at codegen time
+					// (via the `materializeLazyMemberIfNeeded` forwarder), which
+					// is exactly the residual we want to eliminate. The
+					// normalize helpers are idempotent via `normalized_bodies_`
+					// dedup, so re-normalizing an already-processed node is a
+					// safe no-op.
+					normalizeTopLevelNode(*result);
 				}
 			}
 		}
@@ -5567,6 +5577,11 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 				std::optional<bool>(entry.is_const_method));
 			if (result.has_value()) {
 				++total_materialized;
+				// Same rationale as the AST-walk pass: annotate the freshly-
+				// substituted body so its internal calls route through
+				// `markOdrUsed` and get picked up by the next fixpoint iteration
+				// rather than ending up as codegen-time forwarder residuals.
+				normalizeTopLevelNode(*result);
 			}
 		}
 		if (total_materialized == before) {
