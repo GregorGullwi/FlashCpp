@@ -8,9 +8,20 @@ It has been updated in place with the current implementation status of each item
 
 ## Status legend
 
-  [DONE]    Fully implemented and tested (2173/2173 tests green).
+  [DONE]    Fully implemented and verified on the current Windows baseline (2204 pass / 149 expected-fail).
   [PARTIAL] Structurally present but the clean-split described below is not yet realised.
   [TODO]    Not yet started.
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+## Progress since the original write-up
+
+The core architectural recommendation from this document has largely landed already:
+
+ - Slice G-H (`79790edd`) introduced explicit lazy-member ODR-use tracking plus the sema-side remap for intra-instantiation member calls.
+ - Slices I+J (`53327120`) deleted the last live `AstToIr::materializeLazyMemberIfNeeded` forwarder and simplified the codegen struct visitor into a pure consumer.
+ - Item #8 below was finished afterwards on this branch (`bd49098c`): `registerLateMaterializedTopLevelNode*` now dedups by `raw_pointer()` identity instead of relying on callers not to double-push.
+ - The stale post-forwarder comments called out below have also been cleaned up (`da472bdc`).
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -124,9 +135,9 @@ registerLateMaterializedTopLevelNode unnecessary as an ad-hoc hook.
 
 Current state (PARTIAL): A parallel ast_node_is_instantiated_ vector (std::vector<uint8_t>) exists in Parser.h, maintained in lockstep with ast_nodes_ by
 appendUserNode / registerLateMaterializedTopLevelNode* / eraseTopLevelNodeAt. The queries isInstantiatedNode(i), userNodeCount(), and instantiatedNodeCount() work. Dedup is
-handled via enqueuePendingSemanticRoot / pending_semantic_root_keys_ (so item 8 below is also done as a side-effect). However, ast_nodes_ is still a single vector; codegen
-and drainLazyMemberRegistry both iterate get_nodes() uniformly without filtering by isInstantiatedNode(). The full clean split (separate user_source_nodes_ /
-instantiated_struct_nodes_ with different emission rules at codegen) has not been done. The tracking infrastructure is there; the consumption side is not.
+now handled directly by registerLateMaterializedTopLevelNode* via instantiated_node_keys_ (an unordered_set<const void*> keyed by ASTNode::raw_pointer()), so duplicate
+late-materialized roots are rejected even before pending-semantic-root enqueue. However, ast_nodes_ is still a single vector; codegen and drainLazyMemberRegistry both iterate
+get_nodes() uniformly without a real split into user_source_nodes_ vs. instantiated_struct_nodes_. The tracking infrastructure is there; the consumption/data-model split is not.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -145,11 +156,8 @@ With ODR-use explicit (change #1), sema drain is the single materialization site
 Current state (DONE): The struct-visitor in IrGenerator_Visitors_Decl.cpp no longer contains any materializeLazyMemberIfNeeded fallback — its comments explicitly state "No
 defensive materialization fallback needed here" (lines ~1253-1264). generateDeferredMemberFunctions in IrGenerator_Visitors_TypeInit.cpp still exists and is called from
 FlashCppMain.cpp, but its comments confirm the old materialization fallback is dead ("the function-shaped materializeLazyMemberIfNeeded fallback that used to live here is now
-dead"). AstToIr::materializeLazyMemberIfNeeded no longer exists as a declared or defined function — remaining references to it in comments are historical notes about its past
-role. Multiple SemanticAnalysis.cpp sema annotation sites call markOdrUsed. All 2173 tests pass.
-
-Note: stale comment noise ("materialization are handled by AstToIr::materializeLazyMemberIfNeeded" etc.) remains in SemanticAnalysis.cpp and SemanticAnalysis.h. It does not
-affect correctness but should be cleaned up to avoid confusing future readers.
+dead"). AstToIr::materializeLazyMemberIfNeeded no longer exists as a declared or defined function. Multiple SemanticAnalysis.cpp sema annotation sites call markOdrUsed, and
+the stale bridge-era comments in SemanticAnalysis.cpp / SemanticAnalysis.h have been cleaned up. Current baseline remains green at 2204 pass / 149 expected-fail.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -188,7 +196,7 @@ typed concept. A real ASTNodeId (monotonically assigned at node creation, stored
  - Survive hypothetical future refactors of the underlying storage.
  - Allow persistent caches (e.g., "already-materialized" sets) that are not tied to raw addresses.
 
-Current state (TODO): Dedup in Parser.h still uses const void* raw pointers (pending_semantic_root_keys_). No typed ASTNodeId concept exists.
+Current state (TODO): Dedup in Parser.h still uses const void* raw pointers (both pending_semantic_root_keys_ and instantiated_node_keys_). No typed ASTNodeId concept exists.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -197,8 +205,9 @@ Current state (TODO): Dedup in Parser.h still uses const void* raw pointers (pen
 Even without #7, the helper should always dedup. Multiple instantiation paths (partial-spec success, primary-template success, base-class helper recursion) can all reach the
 same freshly-created struct. Silently double-pushing causes LNK2005s that are painful to diagnose. Dedup should be the contract, not the caller's responsibility.
 
-Current state (DONE): registerLateMaterializedTopLevelNode calls enqueuePendingSemanticRoot, which guards with pending_semantic_root_keys_ (an unordered_set<const void*>)
-so the same node is never enqueued twice. The contract is the function's, not the caller's.
+Current state (DONE): registerLateMaterializedTopLevelNode and registerLateMaterializedTopLevelNodeFront now both dedup directly through Parser.h's
+instantiated_node_keys_ set before mutating ast_nodes_. Duplicate calls still forward to enqueuePendingSemanticRoot(node) (itself dedup'd), so the same node is neither
+double-pushed into the top-level list nor double-enqueued for sema normalization. The contract is the helper's, not the caller's.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -282,13 +291,14 @@ Items #9, #10, and #11 are refactoring quality-of-life items that reduce future 
 1. Complete item #4 (separate instantiated-struct list, consumption side): make codegen's top-level node iterator apply different emission rules for instantiated nodes
    (emit only odr_used members) vs. user-written nodes (emit every member). This is the last structural piece the original Slice G recommendation called for.
 
-2. Clean up stale comments referencing AstToIr::materializeLazyMemberIfNeeded in SemanticAnalysis.cpp and SemanticAnalysis.h. The function is gone; the comments are
-   misleading noise.
-
-3. Item #9 (shared forEachReachableStructDecl walker) is small and eliminates a concrete drift risk between sema drain and codegen traversal. A good candidate for the next
+2. Item #9 (shared forEachReachableStructDecl walker) is small and eliminates a concrete drift risk between sema drain and codegen traversal. A good candidate for the next
    incremental PR before starting Phase 6.
+
+3. Item #6 (FLASH_INVARIANT_PROBE) is now the best small cross-cutting follow-up after item #9. The Slice F/G audits proved their value; formalizing them would make future
+   invariant tightening CI-enforceable instead of a one-off local debugging exercise.
 
 4. Items #2 and #3 are Phase 6 prerequisites for principled SFINAE handling. They are medium-sized architectural changes. The existing KNOWN_ISSUES workarounds are stable
    enough to defer until Phase 6 begins.
 
-5. Item #6 (FLASH_INVARIANT_PROBE) should be done at the start of any Phase 6 slice, not at the end, so invariant tightening is CI-enforceable from day one.
+5. Item #7 (stable ASTNodeId) is still optional for correctness, but it becomes much more attractive if item #4 proceeds. Once there are multiple long-lived dedup/tracking sets,
+   raw_pointer()-identity becomes more of a liability.
