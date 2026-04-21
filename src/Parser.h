@@ -497,6 +497,13 @@ private:
 	// Maintained in lockstep with ast_nodes_ via the appendUserNode /
 	// registerLateMaterializedTopLevelNode* / eraseTopLevelNodeAt helpers.
 	std::vector<uint8_t> ast_node_is_instantiated_;
+	// Dedup set for late-materialized (instantiated) top-level nodes.
+	// Keyed by ASTNode::raw_pointer() which is stable for the node's lifetime
+	// (ChunkedAnyVector storage). Prevents duplicate pushes of the same
+	// instantiated struct/function, which would cause LNK2005 "symbol defined
+	// multiple times" at link time when codegen iterates the list. See
+	// docs/2026-04-21-phase5-slice-g-analysis.md item #8.
+	std::unordered_set<const void*> instantiated_node_keys_;
 	std::vector<ASTNode> pending_semantic_roots_;
 	std::unordered_set<const void*> pending_semantic_root_keys_;
 	SemanticAnalysis* active_sema_ = nullptr;
@@ -1712,6 +1719,9 @@ public:
 		if (index >= ast_nodes_.size()) {
 			return;
 		}
+		if (const void* key = ast_nodes_[index].raw_pointer()) {
+			instantiated_node_keys_.erase(key);
+		}
 		ast_nodes_.erase(ast_nodes_.begin() + static_cast<std::ptrdiff_t>(index));
 		if (index < ast_node_is_instantiated_.size()) {
 			ast_node_is_instantiated_.erase(
@@ -1722,7 +1732,22 @@ public:
 	/// Register a late-materialized AST node for codegen and sema processing.
 	/// Does NOT normalize immediately - use for batched registration.
 	/// After batched registration, call normalizePendingSemanticRootsIfAvailable().
+	///
+	/// Idempotent: if `node` has already been registered as a late-materialized
+	/// top-level node (same ASTNode::raw_pointer()), this is a no-op. Multiple
+	/// instantiation paths (partial-spec success, primary-template success,
+	/// base-class helper recursion) may reach the same freshly-created struct;
+	/// silently double-pushing would produce LNK2005 at codegen time.
 	void registerLateMaterializedTopLevelNode(const ASTNode& node) {
+		if (const void* key = node.raw_pointer()) {
+			auto [_, inserted] = instantiated_node_keys_.insert(key);
+			if (!inserted) {
+				// Still make sure sema sees it (enqueuePendingSemanticRoot is
+				// itself dedup'd, so this is safe).
+				enqueuePendingSemanticRoot(node);
+				return;
+			}
+		}
 		ast_nodes_.push_back(node);
 		ast_node_is_instantiated_.push_back(1);
 		enqueuePendingSemanticRoot(node);
@@ -1730,7 +1755,15 @@ public:
 
 	/// Register a late-materialized AST node at the front of the node list.
 	/// Does NOT normalize immediately - use for dependencies that must be processed first.
+	/// Idempotent by raw_pointer() identity (see registerLateMaterializedTopLevelNode).
 	void registerLateMaterializedTopLevelNodeFront(const ASTNode& node) {
+		if (const void* key = node.raw_pointer()) {
+			auto [_, inserted] = instantiated_node_keys_.insert(key);
+			if (!inserted) {
+				enqueuePendingSemanticRoot(node);
+				return;
+			}
+		}
 		ast_nodes_.insert(ast_nodes_.begin(), node);
 		ast_node_is_instantiated_.insert(ast_node_is_instantiated_.begin(), 1);
 		enqueuePendingSemanticRoot(node);
