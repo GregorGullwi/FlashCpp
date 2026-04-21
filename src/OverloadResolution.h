@@ -283,6 +283,27 @@ inline bool isTransitivelyDerivedFrom(TypeIndex source_idx, TypeIndex base_idx) 
 	return false;
 }
 
+// Like isTransitivelyDerivedFrom, but ignores access specifiers. Useful to
+// distinguish "unrelated types" from "related but inaccessible base" so the
+// caller can emit an access-specific diagnostic per C++20 [conv.ptr]/3.
+inline bool isTransitivelyDerivedFromAnyAccess(TypeIndex source_idx, TypeIndex base_idx) {
+	if (!source_idx.is_valid() || !base_idx.is_valid())
+		return false;
+	const TypeInfo* source_type = tryGetTypeInfo(source_idx);
+	if (!source_type)
+		return false;
+	const StructTypeInfo* source = source_type->getStructInfo();
+	if (!source)
+		return false;
+	for (const auto& b : source->base_classes) {
+		if (b.type_index == base_idx)
+			return true;
+		if (isTransitivelyDerivedFromAnyAccess(b.type_index, base_idx))
+			return true;
+	}
+	return false;
+}
+
 // Check if target_struct has a converting constructor whose first parameter accepts
 // source_type and whose remaining parameters are all defaulted, OR if source derives
 // from target (implicit derived-to-base conversion).

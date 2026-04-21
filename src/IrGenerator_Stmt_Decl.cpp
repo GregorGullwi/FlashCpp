@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "CallNodeHelpers.h"
 #include "IrGenerator.h"
+#include "OverloadResolution.h"
 #include "SemanticAnalysis.h"
 
 namespace {
@@ -1991,6 +1992,26 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								}
 							}
 						}
+					}
+
+						// Pointer derived-to-base conversion in variable init: verify the
+						// base is publicly accessible per C++20 [conv.ptr]/3. Overload
+						// resolution already enforces this via isTransitivelyDerivedFrom,
+						// but direct variable initialization bypasses overload resolution
+						// and silently emits the pointer adjustment in the back end.
+					if (need_conversion && init_cat == TypeCategory::Struct &&
+						type_node.pointer_depth() > 0 && init_operands.pointer_depth.is_pointer() &&
+						init_type_index.is_valid() && type_node.type_index().is_valid() &&
+						init_type_index != type_node.type_index() &&
+						!isTransitivelyDerivedFrom(init_type_index, type_node.type_index()) &&
+						isTransitivelyDerivedFromAnyAccess(init_type_index, type_node.type_index())) {
+						const TypeInfo* src_info = tryGetTypeInfo(init_type_index);
+						const TypeInfo* tgt_info = tryGetTypeInfo(type_node.type_index());
+						std::string src_name = src_info ? std::string(StringTable::getStringView(src_info->name())) : std::string("<unknown>");
+						std::string tgt_name = tgt_info ? std::string(StringTable::getStringView(tgt_info->name())) : std::string("<unknown>");
+						throw CompileError(
+							"Cannot initialize '" + tgt_name + "*' with pointer to '" + src_name +
+								"': '" + tgt_name + "' is an inaccessible base of '" + src_name + "' [conv.ptr]/3");
 					}
 				}
 
