@@ -501,7 +501,7 @@ int main_impl(int argc, char* argv[]) {
 			ASTNode node_handle = ast[node_index];
 			if (show_debug && node_handle.is<FunctionDeclarationNode>()) {
 				const auto& func = node_handle.as<FunctionDeclarationNode>();
-				bool has_def = func.get_definition().has_value();
+				bool has_def = func.is_materialized();
 				FLASH_LOG(Codegen, Debug, "Visiting FunctionDeclarationNode: ", func.decl_node().identifier_token().value(),
 						  " has_definition=", has_def);
 				if (has_def) {

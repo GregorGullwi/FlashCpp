@@ -2278,6 +2278,16 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		// If any best-specificity candidate is deleted → SFINAE failure.
 		// This handles the case where a deleted overload explicitly catches
 		// a class of inputs (e.g., pair<const F,S>) that should not be swappable.
+		//
+		// TODO (item #2 follow-up): once the enable_if<false> reparse path
+		// reliably fails for every shape of dependent return type (currently
+		// it misses some e.g. `pair<First, Second>&` when the enable_if is
+		// inside a typename-qualified name whose outer template is already
+		// resolvable with placeholder args), this heuristic can be narrowed
+		// to "all best-spec candidates are `= delete`". The data-model
+		// prerequisite (`FunctionDeclarationNode::mark_failed_substitution`)
+		// is already in place; what's missing is wiring every reparse-failure
+		// site to that mutator and tightening the reparse guard.
 		if (any_deleted_at_best) {
 			FLASH_LOG_FORMAT(Templates, Debug,
 				"[depth={}]: SFINAE failure for '{}': deleted candidate at best specificity={}",
@@ -2784,7 +2794,17 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		restore_lexer_position_only(current_pos);
 
 		if (return_type_result.is_error()) {
-			// SFINAE: Return type parsing failed - this is a substitution failure
+			// SFINAE: Return type parsing failed - this is a substitution failure.
+			// This is already the correct behavior for item #2: the nullopt
+			// propagates up to `try_instantiate_template`, which treats it as a
+			// SFINAE candidate rejection — no `= delete` heuristic needed.
+			//
+			// A future optimization can memoize the failure on a stub node
+			// registered under a per-overload key (the template-wide
+			// `TemplateInstantiationKey` currently hashes `template_name +
+			// args` and is shared across overloads, which makes it unsafe as
+			// a failure memo key). The `mark_failed_substitution` mutator on
+			// FunctionDeclarationNode is in place for that purpose.
 			FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type parsing failed: {}", return_type_result.error_message());
 			return std::nullopt;	 // Substitution failure - try next overload
 		}

@@ -216,7 +216,7 @@ public:
 								}
 								// Same signature found - replace forward declaration with definition if needed
 								// If the new one has a definition and the existing one doesn't, replace it
-								if (new_func->get_definition().has_value() && !existing_func->get_definition().has_value()) {
+								if (new_func->is_materialized() && !existing_func->is_materialized()) {
 									existing_nodes[i] = node;
 
 									// Also update the namespace_symbols_ map if we're in a namespace or global scope

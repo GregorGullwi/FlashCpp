@@ -546,7 +546,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 						}
 
 						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-						if (!func_decl.is_static() || !func_decl.get_definition().has_value() ||
+						if (!func_decl.is_static() || !func_decl.is_materialized() ||
 							func_decl.parameter_nodes().size() != call_info->arguments->size()) {
 							continue;
 						}

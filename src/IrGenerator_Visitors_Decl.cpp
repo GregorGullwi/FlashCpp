@@ -32,13 +32,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	if (node.is_template_pattern()) {
 		return;
 	}
-	if (!node.get_definition().has_value() && !node.is_implicit()) {
+	if (!node.is_materialized() && !node.is_implicit()) {
 		return;
 	}
 
-		// Phase 15: track whether sema normalized this function body.
+	// Phase 15: track whether sema normalized this function body.
 	sema_normalized_current_function_ = false;
-	if (sema_ && node.get_definition().has_value()) {
+	if (sema_ && node.is_materialized()) {
 		sema_normalized_current_function_ = sema_->hasNormalizedBody(
 			static_cast<const void*>(&(*node.get_definition())));
 	}
@@ -1253,7 +1253,7 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 						}
 					}
 					if (!fn_has_auto) {
-						if (!fn.get_definition().has_value() && !fn.is_implicit() &&
+						if (!fn.is_materialized() && !fn.is_implicit() &&
 							current_struct_name_.isValid() && member_name.isValid() &&
 							LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
 								LazyMemberKey::exact(
@@ -1330,7 +1330,7 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 					const auto& tmpl = func_decl.as<TemplateFunctionDeclarationNode>();
 					if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
 						const auto& inner_func = tmpl.function_declaration().as<FunctionDeclarationNode>();
-						if (inner_func.get_definition().has_value()) {
+						if (inner_func.is_materialized()) {
 								// Check if any parameter has unresolved Auto type
 							bool has_auto_param = false;
 							for (const auto& p : inner_func.parameter_nodes()) {

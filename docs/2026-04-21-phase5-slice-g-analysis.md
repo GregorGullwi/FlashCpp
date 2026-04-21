@@ -60,7 +60,7 @@ across markInstantiated so later passes can still answer "was this member ever O
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-### 2. Split class-template instantiation into shape and body phases with distinct failure modes   [TODO]
+### 2. Split class-template instantiation into shape and body phases with distinct failure modes   [PARTIAL]
 
 Today, try_instantiate_class_template and instantiateLazyMemberFunction mix two fundamentally different responsibilities:
 
@@ -85,8 +85,30 @@ This gives us:
  - A place to cache SFINAE failures so a repeat probe doesn't redo the reparse.
  - A principled way to distinguish "library didn't ask" from "library asked and it failed".
 
-Current state (TODO): FunctionDeclarationNode still uses the one-bit get_definition().has_value() test everywhere. No variant state has been introduced. The existing
-"SFINAE enable_if<false> not causing substitution failure in return type" KNOWN_ISSUES entry is a direct consequence of this gap.
+Current state (PARTIAL, 2026-04-21): the data-model prerequisite is in place.
+`FunctionDeclarationNode` now carries a three-state `BodyStateTag`
+(`NotMaterialized` / `Materialized` / `FailedSubstitution`) encoded as a tag +
+optional-body + optional-reason (equivalent to the conceptual variant, but
+without forcing every AST walker through `std::visit`; `get_definition()` keeps
+its existing ABI so Category A / C consumers are unchanged). Five queries and
+one failure mutator are exposed on the node: `is_materialized()`,
+`failed_substitution()`, `needs_body_materialization()` (used by instantiation
+drivers — returns false when the node already failed substitution, so a cached
+failure is never re-probed), `has_any_body_source()`, `substitution_failure_reason()`,
+and `mark_failed_substitution(reason)`. Category B instantiation-driver sites
+on `FunctionDeclarationNode` now route through the new helpers. The SFINAE
+failure-memo / overload-scoring changes are intentionally **not** part of this
+slice — attempting to narrow the `any_deleted_at_best` tie-break heuristic
+regresses `test_namespaced_pair_swap_sfinae_ret0.cpp` because
+`try_instantiate_single_template`'s reparse-failure path does not yet cover
+every shape of `enable_if<false>` (specifically, `pair<First, Second>&` forms
+where the outer template resolves with placeholder args). Wiring every
+reparse-failure site to `mark_failed_substitution` and tightening the reparse
+guard to catch those remaining shapes is the next increment; once that lands,
+the `any_deleted_at_best` block can be narrowed to its legitimate
+"all-candidates-are-`= delete`" meaning and the related KNOWN_ISSUES entry
+closed. See `KNOWN_ISSUES.md` → "SFINAE enable_if<false> not causing
+substitution failure in return type" for the residual workaround.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -467,7 +489,7 @@ exists.
 | # | Item                                       | Status   |
 |---|--------------------------------------------|----------|
 | 1 | Explicit ODR-use bit on lazy registry      | DONE     |
-| 2 | Shape / body phase split + variant state   | TODO     |
+| 2 | Shape / body phase split + variant state   | PARTIAL  |
 | 3 | InstantiationContext threading             | TODO     |
 | 4 | Separate instantiated-struct list          | DONE     |
 | 5 | Sema owns ODR-use; codegen pure consumer   | DONE     |
@@ -493,7 +515,9 @@ everything they declared, instantiated roots emit only what sema
 marked ODR-used. This closes the "what should be emitted for this
 instantiation?" question at the data-structure level.
 
-Items #2 and #3 remain the principled long-term fix for the SFINAE corner cases still listed in KNOWN_ISSUES. The workarounds in place (= delete tie-breaking heuristic,
+Items #2 and #3 remain the principled long-term fix for the SFINAE corner cases still listed in KNOWN_ISSUES. Item #2's data-model prerequisite (three-state
+`BodyStateTag` on `FunctionDeclarationNode` plus `needs_body_materialization` / `mark_failed_substitution` API) is in place as of 2026-04-21; the remaining work is wiring every
+reparse-failure site in `try_instantiate_single_template` to the new mutator so the `= delete` tie-break heuristic can be narrowed. The workarounds in place (= delete tie-breaking heuristic,
 hasLaterUsableTemplateDefinitionWithMatchingShape check) paper over real gaps in the data model. Phase 6 work on deduction-rule cleanup will benefit from both of these.
 
 Item #6 (invariant probes) is now in place: future architectural tightening can keep its guardrails checked in instead of re-inventing one-off audit files for each slice.

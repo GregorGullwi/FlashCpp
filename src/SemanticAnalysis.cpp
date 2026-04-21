@@ -454,7 +454,7 @@ private:
 			for (const auto& param : func.parameter_nodes()) {
 				visit(param);
 			}
-			if (func.get_definition().has_value()) {
+			if (func.is_materialized()) {
 				visit(*func.get_definition());
 			}
 			popContext(pushed);
@@ -5310,7 +5310,7 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 		}
 	}
 
-	if (func_decl->get_definition().has_value() || func_decl->is_implicit()) {
+	if (func_decl->is_materialized() || func_decl->is_implicit()) {
 		return func_decl;
 	}
 	std::string_view parent_sv = func_decl->parent_struct_name();
