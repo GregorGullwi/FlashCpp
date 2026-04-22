@@ -384,6 +384,34 @@ after which overload 3 is returned un-registered and codegen does not see it.
 Fall back to Fix B or C if Fix A turns out to regress other tests by over-
 classifying types as still-dependent.
 
+##### 2026-04-22 implementation follow-up: Fix A landed, Fix B deferred
+
+The shipped fix for KNOWN_ISSUES#2 ended up being:
+
+ 1. the non-SFINAE specificity-sort change in
+    `src/Parser_Templates_Inst_Deduction.cpp`, plus
+ 2. Fix A (`typeSpecStillUsesDependentPlaceholder` recursive hardening in
+    `src/AstNodeTypes_DeclNodes.h`).
+
+That combination:
+
+ - fixes the direct partial-ordering repro (`f(T)` vs `f(T*)`),
+ - preserves `test_namespaced_pair_swap_sfinae_ret0.cpp`,
+ - preserves `test_template_dependent_default_args_ret0.cpp`, and
+ - passes the full Linux test suite.
+
+Fix B was prototyped next as a stricter source-level reclassification in
+`try_instantiate_class_template` (marking more arguments dependent before the
+dependent-instantiation bailout).  While conceptually attractive, that version
+regressed at least:
+
+ - `test_std_swap_enable_if_alias_base_ret0.cpp`
+ - `test_sizeof_typename_nested_req_ret0.cpp`
+
+by deferring legitimate trait/alias instantiations too early.  So item #3's
+broader `InstantiationContext` redesign remains valuable as architectural
+cleanup, but it is no longer the recommended path for this specific bug.
+
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 The ast_nodes_ vector is currently doing double duty:

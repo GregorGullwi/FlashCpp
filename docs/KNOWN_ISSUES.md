@@ -27,6 +27,8 @@ defined after its declaration be treated as the same entity.
 
 ## Non-SFINAE function-template overload selection uses "first match" instead of most-specific
 
+**Status:** Resolved on 2026-04-22.
+
 **Symptom:** In non-SFINAE call sites, `try_instantiate_template` returns the first
 overload that instantiates successfully rather than the most-specialized one.  C++20
 [temp.func.order] requires the most-specialized template to be preferred.
@@ -87,14 +89,28 @@ mechanistic trace (file-line precise) is recorded under
    `test_template_dependent_default_args_ret0.cpp` by turning legitimate
    dependent `typename decay_like<T>::type` defaults into silent failures.
 
-**Conclusion:** Attempting the fix confirmed the KNOWN_ISSUES description is correct
-(the minimal repro is fixed immediately).  A second investigation pass on
-2026-04-22 (instrumented specificity-sort prototype run against the failing test)
-relocated the leak from `registerLazyMember`
-(`src/Parser_Templates_Inst_ClassTemplate.cpp:6796`, which was the previous
+**Final fix:** The issue was fixed by landing both of the changes that the
+2026-04-22 investigation identified as the smallest safe combination:
+
+ 1. **Stable specificity-ordered iteration** in the non-SFINAE path of
+    `try_instantiate_template` (`src/Parser_Templates_Inst_Deduction.cpp`), so
+    the most-specialized viable overload is tried first and source order still
+    breaks ties.
+ 2. **Recursive dependent-placeholder detection** in
+    `typeSpecStillUsesDependentPlaceholder`
+    (`src/AstNodeTypes_DeclNodes.h`), so a substituted type like
+    `pair<First, Second>` is still treated as unresolved when its stored
+    template arguments bottom out in dependent placeholders.
+
+This was enough to fix the minimal repro and preserve the pair/SFINAE case
+without regressing the full Linux suite.
+
+The investigation that led to the final fix first relocated the leak from
+`registerLazyMember`
+(`src/Parser_Templates_Inst_ClassTemplate.cpp:6796`, which was an intermediate
 hypothesis) to **`registerAndNormalizeLateMaterializedTopLevelNode` at
 `src/Parser_Templates_Inst_Deduction.cpp:3698`**, inside
-`try_instantiate_single_template`.  The log diagnostic immediately above it makes
+`try_instantiate_single_template`.  The log diagnostic immediately above it made
 the divergence unambiguous:
 
 ```
@@ -113,18 +129,13 @@ template, but whose TypeInfo is created with `placeholder_kind_ = None`.
 `has_unresolved_params` evaluates to `false`, and line 3698 registers the
 ill-formed instantiation for codegen.
 
-This **narrows the fix target considerably**: rather than waiting for the full
-`InstantiationContext` design (Slice G item #3), three much more surgical fix
-candidates exist — see `docs/2026-04-21-phase5-slice-g-analysis.md` § 3
-"2026-04-22 follow-up" for the precise call-chain trace and the three candidate
-fix sites (A: predicate extension in `AstNodeTypes_DeclNodes.h:1728`,
-B: dependent-arg re-classification in
-`Parser_Templates_Inst_ClassTemplate.cpp:872`,
-C: conditional `is_dependent` propagation at
-`Parser_Templates_Substitution.cpp:455`).  Fix A has the smallest blast radius
-(only two call sites).  KNOWN_ISSUES#2 is **not** blocked on the broader
-`InstantiationContext` redesign; it can be unblocked by one of these surgical
-fixes plus the specificity-sort change.
+The broader `InstantiationContext` redesign is still a worthwhile long-term
+cleanup, but it was **not** required to resolve this issue.  A later prototype
+of the stronger source-level reclassification fix (candidate B in the analysis
+doc) regressed `test_std_swap_enable_if_alias_base_ret0.cpp` and
+`test_sizeof_typename_nested_req_ret0.cpp`, so the landed solution keeps the
+smaller recursive predicate hardening (candidate A) and the specificity-sort
+change.
 
 ## Unresolved-type detection relies on fragile heuristic (`UserDefined && size_in_bits() == 0`)
 
@@ -142,6 +153,5 @@ consistently to all `TypeSpecifierNode` use-sites.
 **Fix approach:** Add a `bool is_dependent_` field to `TypeSpecifierNode` (or reuse
 `DependentPlaceholderKind`) set at placeholder creation and cleared on resolution.
 Replace the size-based guard with an explicit predicate `TypeSpecifierNode::is_dependent()`.
-
 
 
