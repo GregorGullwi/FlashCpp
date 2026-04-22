@@ -709,14 +709,14 @@ private:
 		ShapeOnly
 	};
 
-		// Track if we're in SFINAE context (template argument substitution)
-		// When true, type resolution errors should be treated as substitution failures instead of hard errors
+	// Track if we're in SFINAE context (template argument substitution)
+	// When true, type resolution errors should be treated as substitution failures instead of hard errors
 	bool in_sfinae_context_ = false;
 	TemplateInstantiationMode template_instantiation_mode_ = TemplateInstantiationMode::HardUse;
 
-		// SFINAE type substitution map: maps template parameter name handles to concrete type indices.
-		// Populated during SFINAE trailing return type re-parse so the expression parser can resolve
-		// template parameter types (e.g., U → WithoutFoo) for member access validation.
+	// SFINAE type substitution map: maps template parameter name handles to concrete type indices.
+	// Populated during SFINAE trailing return type re-parse so the expression parser can resolve
+	// template parameter types (e.g., U → WithoutFoo) for member access validation.
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual> sfinae_type_map_;
 
 		// Last parsed trailing requires clause from caller-specific requires handling
