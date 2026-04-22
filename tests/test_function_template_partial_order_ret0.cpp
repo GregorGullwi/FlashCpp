@@ -12,5 +12,6 @@ int f(T* x) {
 
 int main() {
 	int i = 0;
-	return f(&i);
+	if (f(&i) != 42) return 1;
+	return 0;
 }

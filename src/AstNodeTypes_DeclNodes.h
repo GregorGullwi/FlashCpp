@@ -1731,10 +1731,10 @@ inline bool TypeSpecifierNode::matches_signature(const TypeSpecifierNode& other)
 inline bool templateArgInfoContainsDependentPlaceholderImpl(const TypeInfo::TemplateArgInfo& arg_info, size_t depth_limit);
 
 inline size_t dependentPlaceholderTraversalDepthLimit() {
-	// Any acyclic dependency chain through TypeInfo/template-arg metadata must be
-	// shorter than the total number of registered TypeInfo entries.  Clamp to at
-	// least 1 so tiny translation units still get a usable traversal budget.
-	return std::max<size_t>(size_t{1}, getTypeInfoCount());
+	// Use a fixed safe recursion budget so pathological graphs cannot scale stack
+	// usage with translation-unit size. Valid template/type nesting should remain
+	// far below this limit.
+	return 256;
 }
 
 inline bool typeInfoStillUsesDependentPlaceholderImpl(const TypeInfo& type_info, size_t depth_limit) {
@@ -1756,8 +1756,8 @@ inline bool typeInfoStillUsesDependentPlaceholderImpl(const TypeInfo& type_info,
 	return false;
 }
 
-inline bool typeIndexContainsDependentPlaceholder(TypeIndex type_index) {
-	if (!type_index.is_valid()) {
+inline bool typeIndexContainsDependentPlaceholder(TypeIndex type_index, size_t depth_limit) {
+	if (depth_limit == 0 || !type_index.is_valid()) {
 		return false;
 	}
 
@@ -1765,9 +1765,13 @@ inline bool typeIndexContainsDependentPlaceholder(TypeIndex type_index) {
 		resolved_alias.terminal_type_info != nullptr) {
 		return typeInfoStillUsesDependentPlaceholderImpl(
 			*resolved_alias.terminal_type_info,
-			dependentPlaceholderTraversalDepthLimit());
+			depth_limit);
 	}
 	return false;
+}
+
+inline bool typeIndexContainsDependentPlaceholder(TypeIndex type_index) {
+	return typeIndexContainsDependentPlaceholder(type_index, dependentPlaceholderTraversalDepthLimit());
 }
 
 inline bool templateArgInfoContainsDependentPlaceholderImpl(const TypeInfo::TemplateArgInfo& arg_info, size_t depth_limit) {

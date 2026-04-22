@@ -2230,18 +2230,19 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		overload_iteration_order.push_back(overload_idx);
 	}
 	if (!outer_sfinae_context) {
-		auto get_specificity = [&](const ASTNode& node) {
-			return node.is<TemplateFunctionDeclarationNode>()
-				? computeTemplateFunctionSpecificity(node.as<TemplateFunctionDeclarationNode>())
-				: -1;
-		};
+		std::vector<int> specificity_scores;
+		specificity_scores.reserve(all_templates->size());
+		for (const auto& node : *all_templates) {
+			specificity_scores.push_back(
+				node.is<TemplateFunctionDeclarationNode>()
+					? computeTemplateFunctionSpecificity(node.as<TemplateFunctionDeclarationNode>())
+					: -1);
+		}
 		std::stable_sort(
 			overload_iteration_order.begin(),
 			overload_iteration_order.end(),
 			[&](size_t lhs_idx, size_t rhs_idx) {
-				const ASTNode& lhs = (*all_templates)[lhs_idx];
-				const ASTNode& rhs = (*all_templates)[rhs_idx];
-				return get_specificity(lhs) > get_specificity(rhs);
+				return specificity_scores[lhs_idx] > specificity_scores[rhs_idx];
 			});
 	}
 
