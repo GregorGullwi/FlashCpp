@@ -23,7 +23,7 @@ template <typename T = int>
 T get_default(T v) { return v; }
 
 int main() {
-	int x = repeated_add<int, 4>(10);   // T=int explicit, N=4 explicit: 10*4 = 40
+	int x = repeated_add<int, 4>(10);   // T=int explicit, N=4 explicit: 10 added 4 times = 40
 	int y = convert_and_add<int>(1, 1); // Ret=int explicit, T=int deduced:  1+1 = 2
 	int z = get_default<int>(0);        // T=int explicit override of default: 0
 	return x + y + z;                   // 40 + 2 + 0 = 42

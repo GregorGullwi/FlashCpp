@@ -522,7 +522,10 @@ int main_impl(int argc, char* argv[]) {
 					node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
 				}
 				FLASH_LOG(General, Error, "Compile error in '", node_desc, "': ", e.what());
-				g_parser_instantiation_notes.clear();  // Clear stale parse-phase notes
+				// Clear any stale parse-phase instantiation notes here without printing them.
+				// These notes describe parse-time template context that is unrelated to this
+				// codegen-phase error, so attaching them would be misleading.
+				g_parser_instantiation_notes.clear();
 				has_compile_errors = true;
 			} catch (const std::bad_any_cast& e) {
 				// Log and skip nodes that cause bad_any_cast during IR conversion

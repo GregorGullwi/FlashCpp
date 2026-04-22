@@ -752,9 +752,7 @@ private:
 			: parser_(p),
 			  prev_ctx_(p.current_instantiation_ctx_),
 			  prev_mode_(p.template_instantiation_mode_) {
-			ctx_.mode = mode;
-			ctx_.origin_name = origin;
-			ctx_.parent = prev_ctx_;
+			ctx_ = {mode, origin, prev_ctx_};
 			parser_.current_instantiation_ctx_ = &ctx_;
 			parser_.template_instantiation_mode_ = mode;
 		}
