@@ -417,7 +417,7 @@ struct TemplatePattern {
 				return false;
 			}
 			if (pattern_arg.cv_qualifier != concrete_arg.cv_qualifier) {
-				FLASH_LOG(Templates, Trace, "  FAILED: cv_qualifier mismatch pattern=", static_cast<int>(pattern_arg.cv_qualifier), " concrete=", static_cast<int>(concrete_arg.cv_qualifier));
+				FLASH_LOG(Templates, Trace, "  FAILED: cv_qualifier mismatch");
 				return false;
 			}
 			if (pattern_arg.is_array != concrete_arg.is_array) {

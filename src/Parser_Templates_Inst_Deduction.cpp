@@ -91,11 +91,6 @@ static TypeInfo& registerTemplateTypeBinding(
 	// backed by TypeIndex{0, typeEnum()} so that resolveAliasTypeInfo can reach
 	// the primitive type via nativeTypeIndex() and pick up the aliasTypeSpecifier.
 	if (arg.cv_qualifier != CVQualifier::None) {
-		FLASH_LOG_FORMAT(Templates, Debug,
-			"registerTemplateTypeBinding(prim): param='{}' cv={} type={} — NEW cv path",
-			StringTable::getStringView(param_name),
-			static_cast<int>(arg.cv_qualifier),
-			static_cast<int>(arg.typeEnum()));
 		TypeSpecifierNode alias_spec(
 			TypeIndex{0, arg.typeEnum()},
 			static_cast<unsigned char>(get_type_size_bits(arg.typeEnum())),

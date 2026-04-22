@@ -19,42 +19,38 @@ int useMixed(C<T, N>& c) {               // full definition
 **Symptom (resolved):** Link error: undefined reference to `useMixed(...)`.
 The `hasLaterUsableTemplateDefinitionWithMatchingShape` check now defers body-less
 matches in non-SFINAE context, so later full definitions are preferred.
-**Residual issue:** The `enable_if<false>` substitution failure in complex SFINAE
-scenarios (see below) can still result in incorrect overload selection when two
-overloads have equal structural specificity but different enable_if conditions.
+**Residual issue:** None related to `enable_if<false>` substitution failure;
+that was resolved by preserving `cv_qualifier` through template type bindings
+(see the entry below). Other partial-ordering gaps in non-SFINAE overload
+selection are tracked separately.
 **Standards note:** C++20 [temp.decls]/1 requires that a function template
 defined after its declaration be treated as the same entity.
 
 ## SFINAE enable_if<false> not causing substitution failure in return type
 
-**Test:** `test_namespaced_pair_swap_sfinae_ret0.cpp` now passes with workaround.
-**Symptom:** When a function template has `enable_if<false_condition>::type` as its
-return type, FlashCpp may still consider the instantiation successful (as a bodyless
-placeholder) rather than failing the substitution.
-**Workaround applied:** In SFINAE overload selection, if any candidate at the
-highest specificity level is `= delete`, the entire group is treated as a SFINAE
-failure. This matches the intent of `= delete` overloads that explicitly catch
-"error" cases (e.g., `swap` on `pair<const F, S>`).
-**Partial progress (item #2 data-model prerequisite, 2026-04-21):** The shape/body
-phase split from `docs/2026-04-21-phase5-slice-g-analysis.md` item #2 is now in
-place at the data-model level. `FunctionDeclarationNode` exposes a three-state
-`BodyStateTag` (`NotMaterialized` / `Materialized` / `FailedSubstitution`) with
-`is_materialized()`, `failed_substitution()`, `needs_body_materialization()`,
-`has_any_body_source()`, and `mark_failed_substitution(reason)`. Category B
-instantiation-driver sites on `FunctionDeclarationNode` now route through
-`needs_body_materialization()` / `has_any_body_source()`, which short-circuit on
-a `FailedSubstitution` node so a cached failure is never re-probed. Attempting to
-remove the `= delete` tie-break heuristic while exercising this test confirmed
-that the reparse-failure path in `try_instantiate_single_template` does not yet
-catch every shape of `enable_if<false>` return type (specifically, `pair<First,
-Second>&` forms where the outer template is already resolvable with placeholder
-args). The heuristic therefore stays, but the infrastructure is now ready to
-narrow it once every reparse-failure site calls `mark_failed_substitution` and
-the reparse guard is tightened to cover the remaining shapes.
-**Proper fix needed:** The SFINAE instantiation path should detect
-`enable_if<false>` return types and propagate them as substitution failures via
-the new `mark_failed_substitution` mutator, eliminating the need for the
-tie-breaking heuristic.
+**Status:** Resolved (2026-04-22). `test_namespaced_pair_swap_sfinae_ret0.cpp`
+passes without the heuristic workaround.
+**Root cause (historical):** `registerTemplateTypeBinding` dropped the
+`cv_qualifier` on the bound `TemplateTypeArg` when registering the type alias,
+so `is_const<First>` with `First=const int` silently saw plain `int` and the
+`is_const<const T>` specialization failed to match. That made
+`enable_if<!is_const<F>::value && !is_const<S>::value, void>::type` succeed
+(predicate evaluated to `true` instead of `false`), so the `enable_if<false>`
+return-type substitution failure that ought to have removed the non-deleted
+overload never fired.
+**Fix:** Both paths of `registerTemplateTypeBinding` now attach a
+`TypeSpecifierNode` carrying the `cv_qualifier` when the bound argument is
+cv-qualified. `parse_type_specifier` composes the alias-chain's `cv_qualifier`
+with any explicit cv from the token stream at two existing resolution points
+(direct `TypeInfo` lookup and the typedef/alias-chain path), so subsequent
+pattern matching sees the concrete qualification.
+**Tie-break narrowing:** With the cv-propagation fix in place, the former
+"any best-specificity candidate is `= delete` ⇒ SFINAE failure" heuristic in
+`try_instantiate_template` has been narrowed to its legitimate meaning:
+SFINAE failure now requires **all** best-specificity candidates to be deleted.
+A mix of deleted and non-deleted at the same specificity picks the non-deleted
+one; the deleted overloads stay present as explicit sentinels for other input
+shapes without short-circuiting resolution for the viable shape.
 
 ## Non-SFINAE function-template overload selection uses "first match" instead of most-specific
 

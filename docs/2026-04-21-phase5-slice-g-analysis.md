@@ -85,7 +85,7 @@ This gives us:
  - A place to cache SFINAE failures so a repeat probe doesn't redo the reparse.
  - A principled way to distinguish "library didn't ask" from "library asked and it failed".
 
-Current state (PARTIAL, 2026-04-21): the data-model prerequisite is in place.
+Current state (PARTIAL, 2026-04-22): the data-model prerequisite is in place.
 `FunctionDeclarationNode` now carries a three-state `BodyStateTag`
 (`NotMaterialized` / `Materialized` / `FailedSubstitution`) encoded as a tag +
 optional-body + optional-reason (equivalent to the conceptual variant, but
@@ -96,19 +96,25 @@ one failure mutator are exposed on the node: `is_materialized()`,
 drivers — returns false when the node already failed substitution, so a cached
 failure is never re-probed), `has_any_body_source()`, `substitution_failure_reason()`,
 and `mark_failed_substitution(reason)`. Category B instantiation-driver sites
-on `FunctionDeclarationNode` now route through the new helpers. The SFINAE
-failure-memo / overload-scoring changes are intentionally **not** part of this
-slice — attempting to narrow the `any_deleted_at_best` tie-break heuristic
-regresses `test_namespaced_pair_swap_sfinae_ret0.cpp` because
-`try_instantiate_single_template`'s reparse-failure path does not yet cover
-every shape of `enable_if<false>` (specifically, `pair<First, Second>&` forms
-where the outer template resolves with placeholder args). Wiring every
-reparse-failure site to `mark_failed_substitution` and tightening the reparse
-guard to catch those remaining shapes is the next increment; once that lands,
-the `any_deleted_at_best` block can be narrowed to its legitimate
-"all-candidates-are-`= delete`" meaning and the related KNOWN_ISSUES entry
-closed. See `KNOWN_ISSUES.md` → "SFINAE enable_if<false> not causing
-substitution failure in return type" for the residual workaround.
+on `FunctionDeclarationNode` now route through the new helpers.
+
+Follow-up slice (2026-04-22): the `any_deleted_at_best` tie-break heuristic in
+`try_instantiate_template` has now been narrowed to its legitimate
+"all-best-specificity-candidates-are-`= delete`" meaning. The unlock was
+preserving `cv_qualifier` through template type bindings:
+`registerTemplateTypeBinding` (both the user-defined and primitive paths) now
+attaches a `TypeSpecifierNode` carrying the qualifier, and
+`parse_type_specifier` composes the alias-chain `cv_qualifier` with any
+explicit cv from the token stream. With that in place, `is_const<First>` where
+`First=const int` correctly matches the `is_const<const T>` specialization, so
+`enable_if<!is_const<F>::value && !is_const<S>::value, void>::type` collapses to
+substitution failure through the existing reparse-failure path rather than
+silently succeeding. The `test_namespaced_pair_swap_sfinae_ret0.cpp` regression
+that previously blocked this narrowing no longer occurs, and the related
+KNOWN_ISSUES entry has been closed. Per-overload failure memoization via
+`mark_failed_substitution` at every reparse site is still a desirable follow-up
+(it would avoid redoing the reparse on repeat probes) but is no longer on the
+critical path for correctness.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
