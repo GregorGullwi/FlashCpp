@@ -20,48 +20,10 @@ int useMixed(C<T, N>& c) {               // full definition
 The `hasLaterUsableTemplateDefinitionWithMatchingShape` check now defers body-less
 matches in non-SFINAE context, so later full definitions are preferred.
 **Residual issue:** None related to `enable_if<false>` substitution failure;
-that was resolved by preserving `cv_qualifier` through template type bindings
-(see the entry below). Other partial-ordering gaps in non-SFINAE overload
-selection are tracked separately.
+that was resolved by preserving `cv_qualifier` through template type bindings.
+Other partial-ordering gaps in non-SFINAE overload selection are tracked separately.
 **Standards note:** C++20 [temp.decls]/1 requires that a function template
 defined after its declaration be treated as the same entity.
-
-## SFINAE enable_if<false> not causing substitution failure in return type
-
-**Status:** Resolved (2026-04-22). `test_namespaced_pair_swap_sfinae_ret0.cpp`
-passes without the heuristic workaround.
-**Root cause (historical):** `registerTemplateTypeBinding` dropped the
-`cv_qualifier` on the bound `TemplateTypeArg` when registering the type alias,
-so `is_const<First>` with `First=const int` silently saw plain `int` and the
-`is_const<const T>` specialization failed to match. That made
-`enable_if<!is_const<F>::value && !is_const<S>::value, void>::type` succeed
-(predicate evaluated to `true` instead of `false`), so the `enable_if<false>`
-return-type substitution failure that ought to have removed the non-deleted
-overload never fired.
-**Fix:** Both paths of `registerTemplateTypeBinding` now attach a
-`TypeSpecifierNode` carrying the `cv_qualifier` when the bound argument is
-cv-qualified. `parse_type_specifier` composes the alias-chain's `cv_qualifier`
-with any explicit cv from the token stream at two existing resolution points
-(direct `TypeInfo` lookup and the typedef/alias-chain path), so subsequent
-pattern matching sees the concrete qualification.
-**Tie-break narrowing:** With the cv-propagation fix in place, the former
-"any best-specificity candidate is `= delete` ⇒ SFINAE failure" heuristic in
-`try_instantiate_template` has been narrowed to its legitimate meaning:
-SFINAE failure now requires **all** best-specificity candidates to be deleted.
-A mix of deleted and non-deleted at the same specificity picks the non-deleted
-one; the deleted overloads stay present as explicit sentinels for other input
-shapes without short-circuiting resolution for the viable shape.
-**Tie-break simplification (2026-04-22):** Empirical verification with
-`Templates:debug` logs confirmed the reparse-failure path now rejects the
-non-deleted `swap(pair<F, S>&, pair<F, S>&)` overload on its own, so the
-remaining `sfinae_candidates` at best specificity contain only the `= delete`
-sentinel. The full test suite (2174 tests) passes when the explicit
-"all-deleted ⇒ SFINAE failure" block is neutralised, as long as we still
-return `nullopt` when no non-deleted candidate exists at best specificity. The
-tracking pair `all_best_deleted` / `saw_best` was therefore removed; the
-remaining check is `if (!best_non_deleted) return nullopt;`, which is exactly
-C++17 [temp.deduct.call] semantics (selecting a deleted function in the
-immediate context of a decltype/SFINAE probe is itself a substitution failure).
 
 ## Non-SFINAE function-template overload selection uses "first match" instead of most-specific
 
@@ -98,10 +60,5 @@ consistently to all `TypeSpecifierNode` use-sites.
 `DependentPlaceholderKind`) set at placeholder creation and cleared on resolution.
 Replace the size-based guard with an explicit predicate `TypeSpecifierNode::is_dependent()`.
 
-## MSVC standard headers can fail on `this` pointer comparisons in member functions
 
-*(Fixed: see `tests/test_this_pointer_equality_ret0.cpp`. Binary-operator codegen
-now checks `ExprResult::pointer_depth` before routing to the user-defined
-operator lookup path, so pointer equality is always handled as a builtin
-comparison per [expr.eq]/3.)*
 
