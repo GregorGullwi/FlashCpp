@@ -139,18 +139,40 @@ change.
 
 ## Unresolved-type detection relies on fragile heuristic (`UserDefined && size_in_bits() == 0`)
 
-**Location:** `try_instantiate_single_template` codegen guard
-(`src/Parser_Templates_Inst_Deduction.cpp`).
-**Symptom:** Template instantiations whose parameter types still hold dependent
-placeholders are blocked from codegen by checking `TypeCategory::UserDefined &&
-size_in_bits() == 0`.  This heuristic can misfire on legitimate zero-size structs
-(e.g., empty tag types, `std::monostate`) or miss placeholders stored under a
-different category.
-**Root cause:** There is no explicit `is_dependent` / `is_placeholder` flag on
-`TypeSpecifierNode`; resolution status is inferred from size.
-`DependentPlaceholderKind` already exists on `TypeInfo` but is not propagated
-consistently to all `TypeSpecifierNode` use-sites.
-**Fix approach:** Add a `bool is_dependent_` field to `TypeSpecifierNode` (or reuse
-`DependentPlaceholderKind`) set at placeholder creation and cleared on resolution.
-Replace the size-based guard with an explicit predicate `TypeSpecifierNode::is_dependent()`.
+**Status:** Resolved on 2026-04-22 (closed as part of KNOWN_ISSUES#2's fix, commit 59cf7ed).
+
+**Original symptom:** Template instantiations whose parameter types still hold
+dependent placeholders were blocked from codegen by checking
+`TypeCategory::UserDefined && size_in_bits() == 0`.  That heuristic could misfire
+on legitimate zero-size structs (e.g., empty tag types, `std::monostate`) or miss
+placeholders stored under a different category.
+**Original root cause:** There was no explicit `is_dependent` / `is_placeholder`
+flag on `TypeSpecifierNode`; resolution status was inferred from size.
+`DependentPlaceholderKind` already existed on `TypeInfo` but was not consulted by
+the codegen guard.
+**Landed fix:** The chosen path was the "reuse `DependentPlaceholderKind`" option
+from the original fix approach.  Both template-instantiation codegen guards — the
+one in `try_instantiate_single_template`
+(`src/Parser_Templates_Inst_Deduction.cpp:3709`, inside the
+`has_unresolved_params` lambda) and the mirror check in
+`src/FlashCppMain.cpp:545` — now call
+`typeSpecStillUsesDependentPlaceholder(pt)` instead of the size-based heuristic.
+The predicate itself (`src/AstNodeTypes_DeclNodes.h`, `typeSpecStillUsesDependentPlaceholder` →
+`typeIndexContainsDependentPlaceholder` → `templateArgInfoContainsDependentPlaceholder`)
+recursively walks a type's stored template-arg infos so a substituted
+`pair<First, Second>` whose args still bottom out in dependent placeholders is
+correctly classified as not-yet-concrete.  This was the "Fix A" recorded in
+§3 of `docs/2026-04-21-phase5-slice-g-analysis.md`; it landed alongside the
+non-SFINAE specificity-sort to resolve KNOWN_ISSUES#2, and by construction it
+also replaces every size-based codegen guard that this entry tracked.
+**Residual risk:** Other `size_in_bits() == 0` heuristics still exist at sites
+that are *not* the template-instantiation codegen guard (sizeof-vs-expression
+disambiguation in `src/Parser_Expr_PrimaryUnary.cpp`, alias-size resolution in
+`src/NameMangling.h`, statement-level type-completeness checks in
+`src/Parser_Statements.cpp` and `src/IrGenerator_MemberAccess.cpp`, and the
+constexpr evaluator's type probe in `src/ConstExprEvaluator_Core.cpp`).  These
+are deliberately scoped local heuristics for their own disambiguation problems
+and are not part of the codegen-guard class this issue described; if any of them
+later misfire on a dependent-placeholder type, migrate that specific call site
+to `typeSpecStillUsesDependentPlaceholder` as a follow-up.
 

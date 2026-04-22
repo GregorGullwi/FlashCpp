@@ -412,6 +412,15 @@ by deferring legitimate trait/alias instantiations too early.  So item #3's
 broader `InstantiationContext` redesign remains valuable as architectural
 cleanup, but it is no longer the recommended path for this specific bug.
 
+**Side effect:** Fix A also closes KNOWN_ISSUES.md entry #3 ("Unresolved-type
+detection relies on fragile heuristic `UserDefined && size_in_bits() == 0`").
+The two codegen guards that entry described — the `has_unresolved_params`
+lambda in `try_instantiate_single_template`
+(`src/Parser_Templates_Inst_Deduction.cpp:3709`) and its mirror at
+`src/FlashCppMain.cpp:545` — now both call `typeSpecStillUsesDependentPlaceholder`,
+which is exactly the "reuse `DependentPlaceholderKind`" option from that entry's
+proposed fix approach.  KNOWN_ISSUES#3 has been updated to Resolved.
+
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 The ast_nodes_ vector is currently doing double duty:
