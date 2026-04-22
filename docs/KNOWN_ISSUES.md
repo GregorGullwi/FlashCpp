@@ -51,6 +51,17 @@ SFINAE failure now requires **all** best-specificity candidates to be deleted.
 A mix of deleted and non-deleted at the same specificity picks the non-deleted
 one; the deleted overloads stay present as explicit sentinels for other input
 shapes without short-circuiting resolution for the viable shape.
+**Tie-break simplification (2026-04-22):** Empirical verification with
+`Templates:debug` logs confirmed the reparse-failure path now rejects the
+non-deleted `swap(pair<F, S>&, pair<F, S>&)` overload on its own, so the
+remaining `sfinae_candidates` at best specificity contain only the `= delete`
+sentinel. The full test suite (2174 tests) passes when the explicit
+"all-deleted ⇒ SFINAE failure" block is neutralised, as long as we still
+return `nullopt` when no non-deleted candidate exists at best specificity. The
+tracking pair `all_best_deleted` / `saw_best` was therefore removed; the
+remaining check is `if (!best_non_deleted) return nullopt;`, which is exactly
+C++17 [temp.deduct.call] semantics (selecting a deleted function in the
+immediate context of a decltype/SFINAE probe is itself a substitution failure).
 
 ## Non-SFINAE function-template overload selection uses "first match" instead of most-specific
 

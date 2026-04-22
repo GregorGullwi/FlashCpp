@@ -116,6 +116,23 @@ KNOWN_ISSUES entry has been closed. Per-overload failure memoization via
 (it would avoid redoing the reparse on repeat probes) but is no longer on the
 critical path for correctness.
 
+Item 2c cleanup (2026-04-22, immediately after the narrowing): empirical
+verification with `Templates:debug` logs confirmed that the reparse-failure
+path in `try_instantiate_single_template` now rejects the non-deleted
+`swap(pair<First, Second>&, pair<First, Second>&)` overload on its own
+(`SFINAE: Return type parsing failed: SFINAE substitution failure:
+enable_if$…::type`), leaving only the `= delete` sentinel in the
+`sfinae_candidates` vector. Running the full suite with the explicit
+"all-deleted ⇒ SFINAE failure" block neutralised — while still returning
+`nullopt` when no non-deleted candidate exists at best specificity — passed
+all 2174 tests. The tie-break block was therefore simplified: the
+`all_best_deleted` / `saw_best` tracking pair was removed, and the single
+remaining check is `if (!best_non_deleted) return nullopt;`. Semantically
+this is C++17 [temp.deduct.call] behaviour: selecting a deleted function in
+the immediate context of a decltype/SFINAE probe is itself a substitution
+failure, so what used to read like a tie-break heuristic is now just
+standard overload resolution expressed in one line.
+
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ### 3. Introduce an InstantiationContext value that propagates through instantiation machinery   [TODO]

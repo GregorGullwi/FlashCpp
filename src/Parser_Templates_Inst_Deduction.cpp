@@ -2295,31 +2295,21 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 				best_specificity = candidate.specificity;
 			}
 		}
-		// Collect all candidates at the best specificity level.
-		bool all_best_deleted = true;
-		bool saw_best = false;
+		// Collect the best non-deleted candidate (if any) at the best specificity level.
+		// If every best-specificity candidate is `= delete`, treat it as a SFINAE failure:
+		// per C++17 [temp.deduct.call], selecting a deleted function in the immediate
+		// context of a decltype/SFINAE probe is itself a substitution failure. The
+		// reparse path has already rejected overloads whose return-type substitution
+		// failed (e.g. `enable_if<false>::type`), so any `= delete` candidate that
+		// reaches this collection step is a genuine explicit SFINAE sentinel.
 		const SfinaeCandidateEntry* best_non_deleted = nullptr;
 		for (const auto& candidate : sfinae_candidates) {
-			if (candidate.specificity == best_specificity) {
-				saw_best = true;
-				if (!candidate.is_deleted) {
-					all_best_deleted = false;
-					if (!best_non_deleted) {
-						best_non_deleted = &candidate;
-					}
-				}
+			if (candidate.specificity == best_specificity && !candidate.is_deleted) {
+				best_non_deleted = &candidate;
+				break;
 			}
 		}
-		// SFINAE failure only when *every* best-specificity candidate is `= delete`.
-		// A non-deleted candidate at best specificity is the correct match; a mix of
-		// deleted and non-deleted means the non-deleted one wins (the deleted overloads
-		// are explicit SFINAE sentinels for a different input shape).
-		// Previously any-deleted fired even when a viable non-deleted overload existed at
-		// the same specificity level. Now that registerTemplateTypeBinding preserves
-		// cv_qualifier so is_const<const T> correctly matches, enable_if<false>
-		// substitution failures are caught in the reparse path before reaching here,
-		// so the remaining candidates at best specificity are all genuinely viable.
-		if (saw_best && all_best_deleted) {
+		if (!best_non_deleted) {
 			FLASH_LOG_FORMAT(Templates, Debug,
 				"[depth={}]: SFINAE failure for '{}': all best-specificity candidates are = delete (specificity={})",
 				recursion_depth, template_name, best_specificity);
