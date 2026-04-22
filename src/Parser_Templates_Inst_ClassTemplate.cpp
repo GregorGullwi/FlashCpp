@@ -1504,7 +1504,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		bool force_eager_instantiation) -> std::string_view {
 		auto result = try_instantiate_class_template(base_template_name, base_args, force_eager_instantiation);
 		if (result.has_value() && result->is<StructDeclarationNode>()) {
-			registerAndNormalizeLateMaterializedTopLevelNode(*result);
+			if (shouldCommitTemplateInstantiationArtifacts()) {
+				registerAndNormalizeLateMaterializedTopLevelNode(*result);
+			}
 		}
 		std::string_view resolved_name = get_instantiated_class_name(base_template_name, base_args);
 		if ((!result.has_value() || !result->is<StructDeclarationNode>()) && !base_template_name.empty()) {
@@ -1908,7 +1910,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Register the mapping from instantiated name to pattern name
 			// This allows member alias lookup to find the correct specialization
-			gTemplateRegistry.register_instantiation_pattern(instantiated_name, pattern_struct.name(), StringTable::getOrInternStringHandle(template_name));
+			if (shouldCommitTemplateInstantiationArtifacts()) {
+				gTemplateRegistry.register_instantiation_pattern(
+					instantiated_name,
+					pattern_struct.name(),
+					StringTable::getOrInternStringHandle(template_name));
+			}
 
 			// Get template parameters from the pattern (partial specialization), NOT the primary template
 			// The pattern stores its own template parameters (e.g., <typename First, typename... Rest>)
@@ -4410,7 +4417,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											  "', attempting instantiation with ", template_args_to_use.size(), " args");
 									auto instantiated = try_instantiate_class_template(type_name, template_args_to_use);
 									if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
-										registerAndNormalizeLateMaterializedTopLevelNode(*instantiated);
+										if (shouldCommitTemplateInstantiationArtifacts()) {
+											registerAndNormalizeLateMaterializedTopLevelNode(*instantiated);
+										}
 									}
 									std::string_view inst_name = get_instantiated_class_name(type_name, template_args_to_use);
 									auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
@@ -6941,7 +6950,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 				OuterTemplateBinding outer_binding;
 				collectOuterTemplateBindings(template_params, template_args_to_use, outer_binding.param_names, outer_binding.param_args);
-				gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
+				if (shouldCommitTemplateInstantiationArtifacts()) {
+					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
+				}
 
 				// Skip to next function - body will be instantiated on-demand
 				continue;
