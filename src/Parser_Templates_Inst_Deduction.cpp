@@ -2685,7 +2685,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 			FLASH_LOG(Parser, Error, "  template arguments: ", args_str);
 
-			// Don't create instantiation - constraint failed
+			// Don't create instantiation - constraint failed.
+			// Memoize under a per-overload key so repeat SFINAE probes for the
+			// same (template_name, args, overload) tuple short-circuit at the
+			// entry fast-path instead of re-evaluating the requires-clause.
+			// The failure is deterministic in those keys: the requires-clause
+			// is a pure predicate over the deduced template arguments.
+			gTemplateRegistry.markFailedInstantiation(key, overload_id);
 
 			return std::nullopt;
 		}
@@ -2722,8 +2728,15 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					concept_failed = true;
 				}
 			});
-		if (concept_failed)
+		if (concept_failed) {
+			// Memoize under the per-overload key: the concept predicate is
+			// pure in the deduced template arguments, so a repeat probe for
+			// this same (template_name, args, overload) tuple will fail
+			// identically.  Short-circuiting at the entry fast-path avoids
+			// redoing concept evaluation on every SFINAE retry.
+			gTemplateRegistry.markFailedInstantiation(key, overload_id);
 			return std::nullopt;
+		}
 	}
 
 	// Save the mangled name - we'll set it on the function node after creation
