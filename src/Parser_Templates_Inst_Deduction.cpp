@@ -3547,6 +3547,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 	}
 
+	const bool commit_instantiation = shouldCommitTemplateInstantiationArtifacts();
+	bool body_reparse_failed = false;
+
 	// Handle the function body
 	// Check if the template has a body position stored for re-parsing
 	if (func_decl.has_template_body_position()) {
@@ -3598,6 +3601,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					.commit());
 			new_func_ref.mark_failed_substitution(body_reparse_failure_reason);
 			gTemplateRegistry.markFailedInstantiation(key, overload_id);
+			body_reparse_failed = true;
 			FLASH_LOG(Templates, Debug, "Marked template instantiation as failed substitution after body reparse: ",
 					  StringTable::getStringView(body_reparse_failure_reason));
 		}
@@ -3614,6 +3618,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 		// Restore outer pack parameter info (must happen on both branches)
 		pack_param_info_ = std::move(saved_outer_pack_param_info);
+	}
+
+	if (body_reparse_failed) {
+		if (cacheable_instantiation && commit_instantiation) {
+			gTemplateRegistry.registerInstantiation(key, new_func_node);
+		}
+		return std::nullopt;
 	}
 
 	copy_function_properties(new_func_ref, func_decl);
@@ -3692,7 +3703,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Register the instantiation
-	const bool commit_instantiation = shouldCommitTemplateInstantiationArtifacts();
 	if (cacheable_instantiation && commit_instantiation) {
 		gTemplateRegistry.registerInstantiation(key, new_func_node);
 	}

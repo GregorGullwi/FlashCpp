@@ -937,6 +937,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const StructDeclarationNode* cached_struct =
 				cached->is<StructDeclarationNode>() ? &cached->as<StructDeclarationNode>() : nullptr;
 			bool cached_is_shape_only = cached_struct && cached_struct->is_shape_only();
+			bool cached_failed_substitution = cached_struct && cached_struct->is_failed_substitution();
 			bool current_wants_full = (template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly);
 			if (cached_is_shape_only && current_wants_full) {
 				FLASH_LOG_FORMAT(Templates, Debug,
@@ -945,7 +946,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Fall through to re-instantiate
 			} else {
 				FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} args", template_name, template_args.size());
-				return std::nullopt; // Already instantiated - return nullopt to indicate success
+				if (cached_is_shape_only || cached_failed_substitution) {
+					return cached;
+				}
+				return std::nullopt; // Already instantiated and committed globally
 			}
 		}
 	}
