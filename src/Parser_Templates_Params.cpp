@@ -157,8 +157,7 @@ ParseResult Parser::parse_template_parameter() {
 			// parse_type_specifier() handles both simple names (MyContainer) and
 			// namespace-qualified names (my_ns::NsContainer, std::vector) via
 			// its qualified identifier resolution infrastructure.
-			FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
-			template_instantiation_mode_ = TemplateInstantiationMode::ShapeOnly;
+			ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::ShapeOnly, StringHandle{});
 			auto default_type_result = parse_type_specifier();
 			if (default_type_result.is_error()) {
 				discard_saved_token(default_pos);
@@ -276,8 +275,7 @@ ParseResult Parser::parse_template_parameter() {
 				SaveHandle default_pos = save_token_position();
 
 				// Parse the default type
-				FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
-				template_instantiation_mode_ = TemplateInstantiationMode::ShapeOnly;
+				ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::ShapeOnly, StringHandle{});
 				auto default_type_result = parse_type_specifier();
 				if (default_type_result.is_error()) {
 					discard_saved_token(default_pos);
@@ -363,8 +361,7 @@ ParseResult Parser::parse_template_parameter() {
 				SaveHandle default_pos = save_token_position();
 
 				// Parse the default type
-				FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
-				template_instantiation_mode_ = TemplateInstantiationMode::ShapeOnly;
+				ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::ShapeOnly, StringHandle{});
 				auto default_type_result = parse_type_specifier();
 				if (default_type_result.is_error()) {
 					discard_saved_token(default_pos);

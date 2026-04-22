@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <chrono>
+#include <exception>
 #include <limits>
 #include <optional>
 #include <sstream>
@@ -345,6 +346,12 @@ inline std::vector<std::string_view> buildTemplateParamNames(
 // Declared here (not in TemplateRegistry_Types.h) to avoid a dependency on
 // ConstExprEvaluator.h from the template-registry header.
 TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_result);
+
+// Thread-local instantiation backtrace.  Unlike current_instantiation_ctx_ (which is RAII
+// and clears during stack unwinding), this string persists through exception propagation
+// so that catch sites can report it.  Populated by ScopedParserInstantiationContext on
+// the first destructor invocation during unwinding; cleared by the catch site after use.
+inline thread_local std::string g_parser_instantiation_notes;
 
 class Parser {
 	// Friend classes that need access to private members
@@ -735,27 +742,58 @@ private:
 		const ParserInstantiationContext* parent = nullptr; // Enclosing instantiation (for backtraces)
 	};
 
-	// RAII guard that pushes a ParserInstantiationContext onto the parser's context stack
-	// and restores the previous context on destruction.
+	// RAII guard that pushes a ParserInstantiationContext onto the parser's context stack,
+	// sets template_instantiation_mode_, and restores both on destruction.
+	// On the first destructor invocation during stack unwinding, captures the instantiation
+	// backtrace into g_parser_instantiation_notes for use by catch sites.
 	class ScopedParserInstantiationContext {
 	public:
 		ScopedParserInstantiationContext(Parser& p, TemplateInstantiationMode mode, StringHandle origin)
-			: parser_(p), prev_ctx_(p.current_instantiation_ctx_) {
+			: parser_(p),
+			  prev_ctx_(p.current_instantiation_ctx_),
+			  prev_mode_(p.template_instantiation_mode_) {
 			ctx_.mode = mode;
 			ctx_.origin_name = origin;
 			ctx_.parent = prev_ctx_;
 			parser_.current_instantiation_ctx_ = &ctx_;
+			parser_.template_instantiation_mode_ = mode;
 		}
 		~ScopedParserInstantiationContext() {
+			// Capture backtrace on the first destructor invocation during unwinding.
+			// std::uncaught_exceptions() > 0 means we're inside an active exception.
+			// The empty-check ensures we capture only once (innermost guard first).
+			if (std::uncaught_exceptions() > 0 && g_parser_instantiation_notes.empty()) {
+				g_parser_instantiation_notes = buildInstantiationNotes(parser_.current_instantiation_ctx_);
+			}
 			parser_.current_instantiation_ctx_ = prev_ctx_;
+			parser_.template_instantiation_mode_ = prev_mode_;
 		}
 		ScopedParserInstantiationContext(const ScopedParserInstantiationContext&) = delete;
 		ScopedParserInstantiationContext& operator=(const ScopedParserInstantiationContext&) = delete;
 	private:
 		Parser& parser_;
 		const ParserInstantiationContext* prev_ctx_;
+		TemplateInstantiationMode prev_mode_;
 		ParserInstantiationContext ctx_;
 	};
+
+	// Format an "in instantiation of …" backtrace from the given context chain.
+	// Only includes frames whose origin_name is valid (mode-only guards pass StringHandle{}).
+	// Returns empty string if ctx is null or no valid origin is found.
+	static std::string buildInstantiationNotes(const ParserInstantiationContext* ctx) {
+		if (ctx == nullptr) return {};
+		std::string notes;
+		const ParserInstantiationContext* c = ctx;
+		while (c != nullptr) {
+			if (c->origin_name.isValid()) {
+				notes += "\n  note: in instantiation of '";
+				notes += StringTable::getStringView(c->origin_name);
+				notes += "' requested here";
+			}
+			c = c->parent;
+		}
+		return notes;
+	}
 
 	// SFINAE type substitution map: maps template parameter name handles to concrete type indices.
 	// Populated during SFINAE trailing return type re-parse so the expression parser can resolve

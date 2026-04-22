@@ -194,8 +194,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		// Phase 1: try the template registry (covers most non-ADL templates)
 		// Must enter SfinaeProbe mode so substitution failures return nullopt
 		// instead of throwing a hard CompileError (same as Phase 2 below).
-		FlashCpp::ScopedState guard_instantiation_mode_phase1(template_instantiation_mode_);
-		template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
+		ScopedParserInstantiationContext guard_instantiation_mode_phase1(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
 		if (std::optional<ASTNode> instantiated = try_instantiate_template(op_name, arg_types); instantiated.has_value()) {
 			if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
 				addSuccessfulCandidate(*func_decl, OperatorTemplateCandidateSource::Registry, 0);
@@ -216,8 +215,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				continue;
 			}
 
-			FlashCpp::ScopedState guard_instantiation_mode_phase2(template_instantiation_mode_);
-			template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
+			ScopedParserInstantiationContext guard_instantiation_mode_phase2(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
 			std::optional<ASTNode> instantiated = try_instantiate_single_template(
 				candidate,
 				op_name,
