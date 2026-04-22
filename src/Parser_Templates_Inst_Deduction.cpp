@@ -5,6 +5,8 @@
 #include "TemplateRegistry_Pattern.h"
 #include "TypeTraitEvaluator.h"
 
+#include <numeric>
+
 template <typename ParamContainer, typename ArgContainer>
 static void propagateFunctionSignatureFromTemplateArg(
 	TypeSpecifierNode& substituted_type,
@@ -2224,8 +2226,30 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	};
 	std::vector<SfinaeCandidateEntry> sfinae_candidates;
 
+	std::vector<size_t> overload_iteration_order;
+	overload_iteration_order.resize(all_templates->size());
+	std::iota(overload_iteration_order.begin(), overload_iteration_order.end(), size_t{0});
+	if (!outer_sfinae_context) {
+		constexpr int kNonFunctionTemplateScore = -1;
+
+		std::vector<int> scores;
+		scores.reserve(all_templates->size());
+		for (const auto& node : *all_templates) {
+			scores.push_back(node.is<TemplateFunctionDeclarationNode>()
+				? computeTemplateFunctionSpecificity(node.as<TemplateFunctionDeclarationNode>())
+				: kNonFunctionTemplateScore);
+		}
+		std::stable_sort(
+			overload_iteration_order.begin(),
+			overload_iteration_order.end(),
+			[&](size_t lhs_idx, size_t rhs_idx) {
+				return scores[lhs_idx] > scores[rhs_idx];
+			});
+	}
+
 	std::optional<ASTNode> deferred_forward_declaration_result;
-	for (size_t overload_idx = 0; overload_idx < all_templates->size(); ++overload_idx) {
+	for (size_t sorted_idx = 0; sorted_idx < overload_iteration_order.size(); ++sorted_idx) {
+		size_t overload_idx = overload_iteration_order[sorted_idx];
 		const ASTNode& template_node = (*all_templates)[overload_idx];
 
 		if (!template_node.is<TemplateFunctionDeclarationNode>()) {

@@ -1725,17 +1725,79 @@ inline bool TypeSpecifierNode::matches_signature(const TypeSpecifierNode& other)
 	return true;
 }
 
-inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_spec) {
-	TypeIndex type_index = type_spec.type_index();
+// Internal recursive worker behind templateArgInfoContainsDependentPlaceholder().
+// The explicit depth limit keeps malformed/self-referential type graphs from
+// recursing forever while the public wrapper chooses a traversal budget.
+inline bool templateArgInfoContainsDependentPlaceholderImpl(const TypeInfo::TemplateArgInfo& arg_info, size_t depth_limit);
+
+inline size_t getDependentPlaceholderTraversalBudget() {
+	// Use a fixed safe recursion budget so pathological graphs cannot scale stack
+	// usage with translation-unit size. Valid template/type nesting should remain
+	// far below this limit.
+	return 256;
+}
+
+inline bool typeInfoStillUsesDependentPlaceholderImpl(const TypeInfo& type_info, size_t depth_limit) {
+	if (depth_limit == 0) {
+		// Exhausting the traversal budget means we could not prove the type is fully
+		// concrete. Treat it as still dependent so late materialization/codegen does
+		// not commit a potentially malformed instantiation. Invalid TypeIndex values
+		// below remain non-dependent because they do not represent traversable type
+		// structure at all.
+		return true;
+	}
+	if (type_info.isDependentPlaceholder()) {
+		return true;
+	}
+	if (!type_info.isTemplateInstantiation()) {
+		return false;
+	}
+
+	for (const auto& nested_arg : type_info.templateArgs()) {
+		if (templateArgInfoContainsDependentPlaceholderImpl(nested_arg, depth_limit - 1)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+inline bool typeIndexContainsDependentPlaceholder(TypeIndex type_index, size_t depth_limit) {
+	if (depth_limit == 0) {
+		return true;
+	}
 	if (!type_index.is_valid()) {
 		return false;
 	}
 
 	if (const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_index);
 		resolved_alias.terminal_type_info != nullptr) {
-		return resolved_alias.terminal_type_info->isDependentPlaceholder();
+		return typeInfoStillUsesDependentPlaceholderImpl(
+			*resolved_alias.terminal_type_info,
+			depth_limit);
 	}
 	return false;
+}
+
+inline bool typeIndexContainsDependentPlaceholder(TypeIndex type_index) {
+	return typeIndexContainsDependentPlaceholder(type_index, getDependentPlaceholderTraversalBudget());
+}
+
+inline bool templateArgInfoContainsDependentPlaceholderImpl(const TypeInfo::TemplateArgInfo& arg_info, size_t depth_limit) {
+	if (depth_limit == 0) {
+		return true;
+	}
+	if (arg_info.dependent_name.isValid() || arg_info.dependent_expr.has_value()) {
+		return true;
+	}
+	return typeIndexContainsDependentPlaceholder(arg_info.type_index, depth_limit);
+}
+
+inline bool templateArgInfoContainsDependentPlaceholder(const TypeInfo::TemplateArgInfo& arg_info) {
+	return templateArgInfoContainsDependentPlaceholderImpl(arg_info, getDependentPlaceholderTraversalBudget());
+}
+
+inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_spec) {
+	return typeIndexContainsDependentPlaceholder(type_spec.type_index());
 }
 
 inline TypeIndex getCanonicalConversionTargetType(const TypeSpecifierNode& type_spec) {

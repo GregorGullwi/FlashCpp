@@ -176,9 +176,243 @@ Benefits:
 Current state (TODO): Parser.h still has in_sfinae_context_ as a plain bool. No InstantiationContext struct exists. The "non-SFINAE function-template overload selection uses
 first match instead of most-specific" KNOWN_ISSUES entry would also benefit from the richer context chain.
 
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#### 2026-04-22 audit: KNOWN_ISSUES#2 is blocked on this item
 
-### 4. Give late-materialized instantiations their own first-class list, separate from ast_nodes_   [DONE]
+An attempt at landing the KNOWN_ISSUES#2 fix (specificity-sorted iteration in the
+non-SFINAE path of `try_instantiate_template`) was prototyped end-to-end. It
+immediately fixes the minimal `f(T) vs f(T*)` partial-ordering repro recorded in
+KNOWN_ISSUES.md, but regresses exactly one full-suite test —
+`test_namespaced_pair_swap_sfinae_ret0.cpp`. The regression is not a flaw in the
+specificity-sort itself; it is a direct manifestation of this item's underlying
+problem.
+
+##### Precise mechanistic trace (obtained 2026-04-22 via `--log-level=Templates:debug`)
+
+`is_swappable<T>` is defined as
+`struct is_swappable : decltype(detail::test<T>(0)) { };`
+where `detail::test<T>(int)` is a function template whose first overload has a
+SFINAE default template argument
+`= decltype(swap(declval<T&>(), declval<T&>()))`.
+
+The key observation is that FlashCpp eagerly parses that default-template-argument
+expression *at function-template-declaration time*, with `in_sfinae_context_ = false`
+and with `T` still a dependent template parameter.  The parse reaches the `swap(...)`
+call and invokes `try_instantiate_template` with arguments that are formally
+dependent but syntactically concrete enough to match the pair-specialised overload:
+
+ - Baseline (source-order first-match): the iteration visits `swap(Type&, Type&)`
+   overloads first.  Overload 0 is a bodyless forward declaration → deferred via
+   `hasLaterUsableTemplateDefinitionWithMatchingShape`.  Overload 1 (`= delete`)
+   fails substitution via `enable_if<false>`.  Overload 2 (the 1-arg definition
+   with body) succeeds, but the substitution log shows
+   `has_body=true, has_unresolved_params=true, registering=false` — i.e. the
+   deduced `T` is still a dependent `TemplateParameterNode`, so no lazy-member
+   registration happens and no body is materialised.  The eager declaration-time
+   parse is essentially a no-op.
+
+ - Prototype (specificity-sorted, highest first): the iteration visits
+   `swap(pair<F,S>&, pair<F,S>&)` (specificity 10) before `swap(Type&, Type&)`
+   (specificity 2).  It matches: `F` and `S` bind to the dependent placeholder
+   class-template instantiation `pair$4fd731b6b39f3d10`, which is a real
+   `TypeCategory::Struct`/`Instantiation` node, not a bare `TemplateParameterNode`.
+   That is concrete enough to make substitution report
+   `has_body=true, has_unresolved_params=false, registering=true`.  Its body
+   `{ left.swap(right); }` references `pair::swap`, which triggers
+   `registerLazyMember` in
+   `src/Parser_Templates_Inst_ClassTemplate.cpp:6796` for
+   `pair$4fd731b6b39f3d10::swap`.  When the later SFINAE probe actually
+   instantiates `pair<const int, int>`, that lazy registration fires and tries to
+   codegen a `pair<const int, int>::swap` body whose `swap(first, other.first)`
+   would bind to the `= delete` overload — producing a hard IR failure rather
+   than a SFINAE substitution failure.
+
+##### Why the obvious narrow fix ("wrap default-template-argument parsing in SFINAE")
+##### does not work
+
+Setting `in_sfinae_context_ = true` around `parse_type_specifier()` for the
+default type inside `Parser::parse_template_parameter` (the three sites at
+`src/Parser_Templates_Params.cpp:162, 277, 362`) was also tried.  It does not
+actually fix the pair/swap test — `in_sfinae_context_` only changes the behaviour
+of `try_instantiate_template`'s top-level iteration (collect-and-pick-best) and
+a handful of diagnostic paths, *not* the substitution-time
+`registerLazyMember` call that is the real side effect.  Worse, it regresses
+`test_template_dependent_default_args_ret0.cpp` (`common_impl<T, U, T, U>`
+partial specialisation with defaults `D1 = decay_like<T>::type,
+D2 = decay_like<U>::type`): legitimate dependent-name resolution inside the
+default now silently fails instead of being deferred, so the partial
+specialisation does not match and the test returns 1 instead of 42.
+
+So the blocker is *not* "which bit to flip at the parse boundary" — it is that
+body-materialisation side effects (most concretely, `registerLazyMember` at
+`src/Parser_Templates_Inst_ClassTemplate.cpp:6796`) fire unconditionally during
+substitution whenever the substituted arguments look concrete, regardless of why
+that substitution is being performed.
+
+##### Concrete next steps once InstantiationContext lands
+
+This audit gives item #3 a very specific minimum spec to satisfy in order to
+unblock KNOWN_ISSUES#2:
+
+ 1. `InstantiationContext` must carry at least two semantic modes:
+    `SfinaeProbe` (no commits) and `HardUse` (commit all side effects).  A third
+    `ShapeOnly` mode — "deduce signature, do not materialise bodies" — is the
+    mode a declaration-time default-template-argument parse should use.
+ 2. The context must thread through `try_instantiate_single_template`'s
+    substitution all the way into the `registerLazyMember` call at
+    `src/Parser_Templates_Inst_ClassTemplate.cpp:6796` (and the nested-type
+    sibling at `src/ParserTemplateClassShared.h:199`).  `ShapeOnly` must suppress
+    that registration.
+ 3. The non-SFINAE specificity-sort prototype can then land unchanged: the
+    declaration-time decltype parse runs with `ShapeOnly`, picks the
+    pair-specialised overload, deduces its signature, and returns *without*
+    materialising pair::swap; the later real SFINAE probe at `is_swappable`'s
+    base-class resolution still runs with `SfinaeProbe` and correctly turns the
+    `= delete` into a substitution failure.
+
+Items #2 (body/shape split for class templates) and #3 (InstantiationContext)
+thus need to land together — item #2 is essentially already done for class
+template bodies via `Using LAZY instantiation`, but the decision of *when to
+promote lazy → materialised* is currently implicit, driven by "were you reached
+during a non-SFINAE substitution?", which is exactly the bit that leaks.
+
+**Dependency:** KNOWN_ISSUES.md entry "Non-SFINAE function-template overload
+selection uses 'first match' instead of most-specific" is blocked on this item.
+See the KNOWN_ISSUES entry for the minimal repro.
+
+##### 2026-04-22 follow-up: the actual leak point, located precisely
+
+The analysis in "Precise mechanistic trace" above was close but incorrectly
+identified `registerLazyMember` at `src/Parser_Templates_Inst_ClassTemplate.cpp:6796`
+as the leak.  A second, log-driven experiment (specificity-sort prototype
+instrumented and run against the failing test) narrowed the commit point to a
+different line.
+
+The real leak is **`registerAndNormalizeLateMaterializedTopLevelNode` at
+`src/Parser_Templates_Inst_Deduction.cpp:3698`**, inside
+`try_instantiate_single_template`.  The diagnostic immediately above it
+(`'{}': has_body={}, has_unresolved_params={}, registering={}` at
+`Parser_Templates_Inst_Deduction.cpp:3693`) makes the divergence unambiguous:
+
+```text
+# Baseline (source-order first-match), overload 2 wins:
+'swap': has_body=true, has_unresolved_params=true, registering=false
+
+# Specificity-sort, overload 3 wins:
+'swap': has_body=true, has_unresolved_params=false, registering=true
+```
+
+The gate is `func_definition.has_value() && !has_unresolved_params`
+(lines 3697–3699).  `has_unresolved_params` is computed by
+`typeSpecStillUsesDependentPlaceholder` (see `AstNodeTypes_DeclNodes.h:1728`),
+which only returns `true` when the terminal TypeInfo has
+`placeholder_kind_ != DependentPlaceholderKind::None`.
+
+Under specificity-sort, substitution of overload 3's parameter type
+`pair<First, Second>&` walks the following chain (from the instrumented log):
+
+ 1. `substitute_template_parameter: type_index=72, type_name='pair$4afba87c38672bed'` —
+    reading the dependent placeholder that was registered earlier for the
+    function-template parameter.
+ 2. `try_instantiate_class_template: template='stdlike::pair', args=2, force_eager=0`
+    on the substituted args.  **The args' `is_dependent` flag is now `false`**,
+    even though `First` and `Second` are still bare template parameters of the
+    enclosing swap function template.  The early "args are dependent" bail-out
+    at `src/Parser_Templates_Inst_ClassTemplate.cpp:872-909` is therefore
+    skipped.
+ 3. The full instantiation path runs and creates
+    `pair$88c28e0e468cba3f` as an ordinary `DependentPlaceholderKind::None`
+    struct in the type system (line 711 "Using LAZY instantiation" —
+    the class-level lazy-member registration is fine and not the leak).
+ 4. `Resolved template placeholder 'pair$4afba87c38672bed' -> 'pair$88c28e0e468cba3f'` —
+    the outer-function's parameter-type alias gets rewired to this
+    "concrete-but-actually-still-dependent" struct.
+ 5. `typeSpecStillUsesDependentPlaceholder` returns `false` for the parameter
+    type, `has_unresolved_params` becomes `false`, and line 3698 registers the
+    instantiation for codegen.  Codegen later fails with
+    `Type with no runtime size reached codegen in reference identifier lvalue
+    lowering (type=28, pointer_depth=0)`.
+
+##### Surgical-fix candidates (in order of narrowness)
+
+Now that the leak is pinned to one specific type-classification question —
+"is a `pair<First, Second>` struct whose template arguments are raw template-
+parameter references still a dependent placeholder?" — three much narrower
+fixes are available than the full `InstantiationContext` redesign:
+
+ **Fix A (narrowest — one predicate):** Extend
+ `typeSpecStillUsesDependentPlaceholder` (`AstNodeTypes_DeclNodes.h:1728`) to
+ also report `true` when the terminal TypeInfo is a
+ `TemplateInstantiationInfo` whose stored template-arg infos reference any
+ still-dependent name (i.e. any arg whose resolved type is itself a
+ template-parameter type or a `DependentArgs` placeholder).  This is a pure
+ type-system predicate extension — no new plumbing — and would make line 3698
+ correctly decline to register `pair$88c28e0e468cba3f` for codegen.
+
+ **Fix B (middle — one call site):** In `try_instantiate_class_template`
+ (`Parser_Templates_Inst_ClassTemplate.cpp:872`), before concluding "args are
+ not dependent, proceed to full instantiation," walk each arg's resolved type
+ and mark the arg `is_dependent=true` if it resolves to a template-parameter
+ type or a `DependentArgs` placeholder.  This fixes the classification at the
+ source rather than papering over it downstream, and would also cause the
+ placeholder itself to be created with `DependentPlaceholderKind::DependentArgs`
+ via the existing bail-out path at lines 872–909.
+
+ **Fix C (one-line substitution site):** In the substitution path that fills in
+ the `TemplateTypeArg` passed to `try_instantiate_class_template` from
+ overload 3's parameter type, propagate `is_dependent` from the source arg.
+ `src/Parser_Templates_Substitution.cpp:455` currently unconditionally clears
+ it (`arg.is_dependent = false`); the clearing should be conditional on the
+ substituted type being concrete.
+
+None of A/B/C require `InstantiationContext` threading.  The
+`InstantiationContext` design is still the right long-term shape for Slice G
+item #3 (it gives principled handling of many other SFINAE-adjacent cases), but
+it is **not** a prerequisite for unblocking KNOWN_ISSUES#2.
+
+##### Recommendation
+
+Investigate Fix A first: it's a one-file predicate change with the clearest
+blast radius (only affects sites that already call
+`typeSpecStillUsesDependentPlaceholder`, of which there are only two —
+`Parser_Templates_Inst_Deduction.cpp:3685` and `FlashCppMain.cpp:545`).
+Validate by re-running the specificity-sort prototype with Fix A applied: the
+expected log change is the line
+`'swap': has_body=true, has_unresolved_params=false, registering=true`
+flipping to
+`'swap': has_body=true, has_unresolved_params=true, registering=false`,
+after which overload 3 is returned un-registered and codegen does not see it.
+Fall back to Fix B or C if Fix A turns out to regress other tests by over-
+classifying types as still-dependent.
+
+##### 2026-04-22 implementation follow-up: Fix A landed, Fix B deferred
+
+The shipped fix for KNOWN_ISSUES#2 ended up being:
+
+ 1. the non-SFINAE specificity-sort change in
+    `src/Parser_Templates_Inst_Deduction.cpp`, plus
+ 2. Fix A (`typeSpecStillUsesDependentPlaceholder` recursive hardening in
+    `src/AstNodeTypes_DeclNodes.h`).
+
+That combination:
+
+ - fixes the direct partial-ordering repro (`f(T)` vs `f(T*)`),
+ - preserves `test_namespaced_pair_swap_sfinae_ret0.cpp`,
+ - preserves `test_template_dependent_default_args_ret0.cpp`, and
+ - passes the full Linux test suite.
+
+Fix B was prototyped next as a stricter source-level reclassification in
+`try_instantiate_class_template` (marking more arguments dependent before the
+dependent-instantiation bailout).  While conceptually attractive, that version
+regressed at least:
+
+ - `test_std_swap_enable_if_alias_base_ret0.cpp`
+ - `test_sizeof_typename_nested_req_ret0.cpp`
+
+by deferring legitimate trait/alias instantiations too early.  So item #3's
+broader `InstantiationContext` redesign remains valuable as architectural
+cleanup, but it is no longer the recommended path for this specific bug.
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 The ast_nodes_ vector is currently doing double duty:
 
@@ -571,7 +805,9 @@ const-ness plumbing from the lazy-member registry API.
 ## Recommended next steps
 
 1. Items #2 and #3 are now the highest-value remaining architectural follow-ups. They are the Phase 6 prerequisites for principled SFINAE handling, and the existing
-   KNOWN_ISSUES workarounds are stable enough that this can be tackled deliberately instead of as an emergency cleanup.
+   KNOWN_ISSUES workarounds are stable enough that this can be tackled deliberately instead of as an emergency cleanup. The 2026-04-22 audit under item #3
+   confirms empirically that KNOWN_ISSUES#2 (non-SFINAE partial ordering) is blocked on item #3 (`InstantiationContext` threading): the specificity-sorted
+   non-SFINAE selection itself is a one-function change, but it cannot land alone without regressing the pair/swap SFINAE cluster.
 
 2. Item #4 is still the main unfinished Slice G structural split, but it should only be retried behind a focused ODR-use coverage audit. The earlier regressions showed that the
    data model is close, not that blind top-level filtering is safe.
