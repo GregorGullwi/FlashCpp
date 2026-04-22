@@ -1582,6 +1582,15 @@ private:
 	bool shouldCommitTemplateInstantiationArtifacts() const {
 		return template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly;
 	}
+	TemplateInstantiationMode selectTemplateInstantiationMode(bool outer_sfinae_context) const {
+		if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
+			return TemplateInstantiationMode::ShapeOnly;
+		}
+		if (outer_sfinae_context) {
+			return TemplateInstantiationMode::SfinaeProbe;
+		}
+		return TemplateInstantiationMode::HardUse;
+	}
 	std::optional<ASTNode> lookupLateMaterializedOwningStructRoot(StringHandle struct_name) const {
 		std::string_view struct_name_view = StringTable::getStringView(struct_name);
 		if (struct_name_view.empty()) {

@@ -128,7 +128,7 @@ void registerNestedMemberFunctionsForLazy(
 	StringHandle qualified_name,
 	const TParams& template_params,
 	const TArgs& template_args,
-	bool register_lazy_members) {
+	bool should_register_lazy_members) {
 	for (const StructMemberFunctionDecl& mem_func : nested_struct.member_functions()) {
 		if (mem_func.is_constructor || mem_func.is_destructor) {
 			if (mem_func.is_constructor)
@@ -152,7 +152,7 @@ void registerNestedMemberFunctionsForLazy(
 				mem_func.is_destructor,
 				template_params,
 				template_args);
-			if (register_lazy_members) {
+			if (should_register_lazy_members) {
 				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
 			}
 		} else if (const FunctionDeclarationNode* func_decl = get_function_decl_node(mem_func.function_declaration)) {
@@ -168,7 +168,7 @@ void registerNestedMemberFunctionsForLazy(
 				template_params,
 				template_args);
 
-			if (register_lazy_members) {
+			if (should_register_lazy_members) {
 				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
 			}
 
