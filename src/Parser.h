@@ -709,9 +709,6 @@ private:
 		ShapeOnly
 	};
 
-	// Track if we're in SFINAE context (template argument substitution)
-	// When true, type resolution errors should be treated as substitution failures instead of hard errors
-	bool in_sfinae_context_ = false;
 	TemplateInstantiationMode template_instantiation_mode_ = TemplateInstantiationMode::HardUse;
 
 	// SFINAE type substitution map: maps template parameter name handles to concrete type indices.

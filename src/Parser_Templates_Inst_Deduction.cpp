@@ -456,12 +456,11 @@ bool Parser::tryAppendDefaultTemplateArg(
 			return false;
 		}
 
-		bool prev_sfinae_context = in_sfinae_context_;
 		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 		FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-		in_sfinae_context_ = true;
-		ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
+		FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
+		template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
 		parsing_template_depth_ = 0;
 		clearCurrentTemplateParameters();
 		sfinae_type_map_.clear();
@@ -489,12 +488,11 @@ bool Parser::tryAppendDefaultTemplateArg(
 	};
 	if (param.kind() == TemplateParameterKind::Type) {
 		if (param.has_default_value_position() && !template_args.empty()) {
-			bool prev_sfinae_context = in_sfinae_context_;
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-			in_sfinae_context_ = true;
-			ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
+			FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
+			template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
 			parsing_template_depth_ = 0;
 			clearCurrentTemplateParameters();
 			sfinae_type_map_.clear();
@@ -1574,12 +1572,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// may resolve to concrete types (e.g., bool) even when they contain dependent expressions.
 	// The re-parse with concrete template arguments will fail if substitution is invalid.
 		if (func_decl.has_trailing_return_type_position()) {
-			bool prev_sfinae_context = in_sfinae_context_;
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-			in_sfinae_context_ = true;
-			ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
+			FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
+			template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
 			parsing_template_depth_ = 0;	 // suppress template body context during SFINAE
 			clearCurrentTemplateParameters();  // No dependent names during SFINAE
 			sfinae_type_map_.clear();
@@ -2216,7 +2213,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// Try each template overload in order.
 	// For SFINAE: collect all viable matches and return the most specific one.
 	// For non-SFINAE: return the first successful non-deferred match.
-	bool outer_sfinae_context = in_sfinae_context_;
+	bool outer_sfinae_context = template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe;
 
 	struct SfinaeCandidateEntry {
 		ASTNode result;
@@ -2261,10 +2258,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Trying template overload {} for '{}'",
 						 recursion_depth, overload_idx, template_name);
 
-		// Enable SFINAE context for this instantiation attempt
-		bool prev_sfinae_context = in_sfinae_context_;
-		in_sfinae_context_ = true;
-		ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
+		// Enter the mode appropriate for this instantiation attempt.
 		FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
 		template_instantiation_mode_ = selectTemplateInstantiationMode(outer_sfinae_context);
 
@@ -2817,7 +2811,11 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	FLASH_LOG_FORMAT(Templates, Debug, "Should re-parse: {}", should_reparse);
 
 	if (should_reparse) {
-		FLASH_LOG_FORMAT(Templates, Debug, "Re-parsing function declaration for SFINAE validation, in_sfinae_context={}", in_sfinae_context_);
+		FLASH_LOG_FORMAT(
+			Templates,
+			Debug,
+			"Re-parsing function declaration for SFINAE validation, sfinae_probe={}",
+			template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe);
 
 		// Cycle detection for trailing return type re-parsing: when evaluating a
 		// function's decltype trailing return type, encountering the same function

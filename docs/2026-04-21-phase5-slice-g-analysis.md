@@ -175,20 +175,29 @@ Benefits:
  - Diagnostics get proper instantiation backtraces for free (every chained parent contributes a frame).
  - Specialization for shape-only vs. body requests becomes a type-system question, not a manual flag check.
 
-Current state (PARTIAL, 2026-04-22): Parser.h still has `in_sfinae_context_` as
-the main SFINAE switch, but it now also carries a parser-side
-`TemplateInstantiationMode` scaffold (`HardUse` / `SfinaeProbe` / `ShapeOnly`).
+Current state (PARTIAL, 2026-04-22, wrap-up after Phase C / Item #3): the
+parser-side authority is now the three-state
+`TemplateInstantiationMode` scaffold (`HardUse` / `SfinaeProbe` /
+`ShapeOnly`) alone; `Parser.h` no longer carries `in_sfinae_context_`.
 The three declaration-time default-template-argument parse sites in
 `Parser_Templates_Params.cpp` enter `ShapeOnly`; `try_instantiate_template`
 preserves that mode across per-overload attempts instead of downgrading it back
-to ordinary hard-use instantiation; and shape-only function instantiations now
-suppress the commit points that should not escape eager default parsing
-(`gTemplateRegistry.registerInstantiation`, `gSymbolTable.insertGlobal`,
-`registerAndNormalizeLateMaterializedTopLevelNode`, plus lazy-member registry
-writes for member and nested-member functions). This is deliberately only a
-first slice: class-template cache / queue commits still use the old implicit
-rules, and the substitution stack still reasons mostly through the legacy bool,
-so the richer context has not yet been threaded end-to-end.
+to ordinary hard-use instantiation; and shape-only function/class-template
+instantiations now suppress the commit points that should not escape eager
+default parsing (`gTemplateRegistry.registerInstantiation`,
+`gSymbolTable.insertGlobal`, `registerAndNormalizeLateMaterializedTopLevelNode`,
+class-template pattern / outer-binding commits, plus lazy-member registry writes
+for member and nested-member functions). The former `in_sfinae_context_` read
+sites were split explicitly: `HardUse`-only gates still protect lazy
+materialisation and hard diagnostics, while `SfinaeProbe`-only sites are the
+ones that truly depend on concrete reparse state such as `sfinae_type_map_`.
+The scoped writers in `Parser_Templates_Inst_Deduction.cpp`,
+`Parser_Templates_Inst_MemberFunc.cpp`, `Parser_Templates_Concepts.cpp`, and
+`Parser_Expr_BinaryPrecedence.cpp` now use `FlashCpp::ScopedState` on
+`template_instantiation_mode_`, with `SfinaeProbe` as the temporary override.
+What remains partial is the larger design goal from this section: there is still
+no first-class threaded `InstantiationContext` object carrying origin/provenance
+and parent-chain diagnostics through the entire instantiation stack.
 
 #### 2026-04-22 audit: KNOWN_ISSUES#2 is blocked on this item
 

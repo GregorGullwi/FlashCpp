@@ -233,14 +233,11 @@ ParseResult Parser::parse_requires_expression() {
 		return ParseResult::error("Expected '{' to begin requires expression body", current_token_);
 	}
 
-	// Enable SFINAE context for the requires expression body
+	// Enter SfinaeProbe mode for the requires expression body.
 	// In requires expressions, function lookup failures and type errors should not produce errors -
 	// they indicate that the constraint is not satisfied (the expression is invalid)
-	bool prev_sfinae_context = in_sfinae_context_;
-	in_sfinae_context_ = true;
-
-	// RAII guard to restore SFINAE context on all code paths
-	ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
+	FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
+	template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
 
 	// Parse requirements (expressions that must be valid)
 	std::vector<ASTNode> requirements;

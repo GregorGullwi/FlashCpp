@@ -619,7 +619,11 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		return std::nullopt;
 	}
 
-	FLASH_LOG_FORMAT(Templates, Debug, "parse_explicit_template_arguments called, in_sfinae_context={}", in_sfinae_context_);
+	FLASH_LOG_FORMAT(
+		Templates,
+		Debug,
+		"parse_explicit_template_arguments called, sfinae_probe={}",
+		template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe);
 
 	// Save position in case this isn't template arguments
 	auto saved_pos = save_token_position();
@@ -792,10 +796,17 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// 1. During SFINAE context (template instantiation with concrete arguments)
 			// 2. When NOT parsing a template body (e.g., global scope type alias like `using X = holder<1 ? 2 : 3>`)
 			// Only skip evaluation during template DECLARATION when template parameters are not yet instantiated
-			bool should_try_constant_eval = in_sfinae_context_ || parsing_template_depth_ == 0;
+			bool should_try_constant_eval =
+				template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe || parsing_template_depth_ == 0;
 			if (should_try_constant_eval) {
-				FLASH_LOG(Templates, Debug, "Trying to evaluate non-literal expression as constant (in_sfinae=",
-						  in_sfinae_context_, ", parsing_template_body=", parsing_template_depth_ > 0, ")");
+				FLASH_LOG(
+					Templates,
+					Debug,
+					"Trying to evaluate non-literal expression as constant (sfinae_probe=",
+					template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe,
+					", parsing_template_body=",
+					parsing_template_depth_ > 0,
+					")");
 				auto const_value = try_evaluate_constant_expression(*expr_result.node());
 				if (const_value.has_value()) {
 					// Successfully evaluated as a constant expression
@@ -1692,7 +1703,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		TemplateTypeArg arg(type_node);
 		arg.is_pack = is_pack_expansion;
 		arg.member_pointer_kind = member_pointer_kind;
-		if (in_sfinae_context_ &&
+		if (template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe &&
 			(type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias)) {
 			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_node.token().value());
 			for (const auto& subst : template_param_substitutions_) {
@@ -1712,8 +1723,13 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		//    we're NOT in SFINAE context (during SFINAE, template params are substituted)
 		// 2. Its is_incomplete_instantiation_ flag is set (composite type with unresolved template parameters)
 		// 3. It's a UserDefined type with type_index=0 (placeholder)
-		FLASH_LOG_FORMAT(Templates, Debug, "Checking dependency for template argument: type={}, type_index={}, in_sfinae_context={}",
-						 static_cast<int>(type_node.type()), type_node.type_index(), in_sfinae_context_);
+		FLASH_LOG_FORMAT(
+			Templates,
+			Debug,
+			"Checking dependency for template argument: type={}, type_index={}, sfinae_probe={}",
+			static_cast<int>(type_node.type()),
+			type_node.type_index(),
+			template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe);
 		if (!arg.is_value &&
 			(type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias || type_node.category() == TypeCategory::Template)) {
 			// BUGFIX: Use the original token value instead of looking up via type_index
@@ -1759,7 +1775,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// During SFINAE context (re-parsing), template parameters are substituted with concrete types
 				// so we should NOT mark them as dependent
 				bool is_template_param = false;
-				if (!in_sfinae_context_) {
+				if (template_instantiation_mode_ != TemplateInstantiationMode::SfinaeProbe) {
 					for (const auto& param_name : currentTemplateParamNames()) {
 						std::string_view param_sv = StringTable::getStringView(param_name);
 						if (type_name == param_sv || matches_identifier(type_name, param_sv)) {
@@ -1773,7 +1789,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					arg.is_dependent = true;
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
-				} else if (!in_sfinae_context_) {
+				} else if (template_instantiation_mode_ != TemplateInstantiationMode::SfinaeProbe) {
 					// Also check the full type name from gTypeInfo for composite/qualified types
 					std::string_view check_name = !full_type_name.empty() ? full_type_name : type_name;
 
@@ -1817,7 +1833,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// In a template body, if the struct is a registered template and we're using template params, it's dependent
 		// BUT: If this is a template template argument (passing a template class as an argument), it's NOT dependent
 		// even if we're in a template body. A template class like HasType used as a template argument is concrete.
-		if (!arg.is_dependent && type_node.category() == TypeCategory::Struct && parsing_template_depth_ > 0 && !in_sfinae_context_) {
+		if (!arg.is_dependent &&
+			type_node.category() == TypeCategory::Struct &&
+			parsing_template_depth_ > 0 &&
+			template_instantiation_mode_ != TemplateInstantiationMode::SfinaeProbe) {
 			TypeIndex idx = type_node.type_index();
 			if (const TypeInfo* type_info = tryGetTypeInfo(idx)) {
 				std::string_view type_name = StringTable::getStringView(type_info->name());

@@ -2058,7 +2058,7 @@ ParseResult Parser::parse_type_specifier() {
 
 					// SFINAE: If we're in a substitution context and can't find the nested type,
 					// this is a substitution failure, not a hard error
-					if (in_sfinae_context_) {
+					if (template_instantiation_mode_ != TemplateInstantiationMode::HardUse) {
 						FLASH_LOG_FORMAT(Parser, Debug, "SFINAE: Substitution failure - unknown nested type: {}", qualified_type_name);
 						// Return a placeholder type that will cause instantiation to fail
 						// The caller (try_instantiate_single_template) will catch this and try the next overload
@@ -2215,10 +2215,11 @@ ParseResult Parser::parse_type_specifier() {
 		// Check if the identifier is a template parameter (e.g., _Tp in template<typename _Tp>)
 		// This must be checked BEFORE looking up in getTypesByNameMap() to handle patterns like:
 		// __has_trivial_destructor(_Tp) where _Tp is a template parameter
-		// IMPORTANT: Skip this check during SFINAE context (in_sfinae_context_), because in that case
+		// IMPORTANT: Skip this check during SfinaeProbe mode, because in that case
 		// the template parameters have been substituted with concrete types in getTypesByNameMap(), and we
 		// should use the substituted types instead of creating dependent type placeholders.
-		if (isTemplateBodyWithActiveParameters() && !in_sfinae_context_) {
+		if (isTemplateBodyWithActiveParameters() &&
+			template_instantiation_mode_ != TemplateInstantiationMode::SfinaeProbe) {
 			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
 			for (const auto& param_name : currentTemplateParamNames()) {
 				if (param_name == type_name_handle) {
@@ -2491,7 +2492,7 @@ ParseResult Parser::parse_decltype_specifier() {
 		bool is_recursion_error = expr_result.error_message().find("recursion depth") != std::string::npos ||
 								  expr_result.error_message().find("recursion") != std::string::npos;
 		bool should_recover = isTemplateParameterTrackingActive() &&
-							  (!in_sfinae_context_ || is_recursion_error);
+							  (template_instantiation_mode_ != TemplateInstantiationMode::SfinaeProbe || is_recursion_error);
 		if (should_recover) {
 			FLASH_LOG(Templates, Debug, "Creating dependent type for failed decltype expression in template context");
 			// Restore position to start of expression for reliable paren counting
@@ -2532,7 +2533,8 @@ ParseResult Parser::parse_decltype_specifier() {
 			// In template context, create dependent type and skip to closing paren.
 			// Restore to position before the failed parse_expression to ensure
 			// reliable paren depth counting (mirrors the first-expression recovery above).
-			if (isTemplateParameterTrackingActive() && !in_sfinae_context_) {
+			if (isTemplateParameterTrackingActive() &&
+				template_instantiation_mode_ != TemplateInstantiationMode::SfinaeProbe) {
 				restore_token_position(comma_expr_pos);
 				int paren_depth = 1;
 				while (!peek().is_eof() && paren_depth > 0) {
