@@ -867,16 +867,49 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
-	// Check if any template arguments are dependent (contain template parameters)
+	// Check if any template arguments are still dependent after substitution.
+	// This includes arguments whose explicit is_dependent flag was cleared during
+	// rebinding, but whose resolved TypeInfo is still a dependent placeholder or
+	// a template instantiation containing dependent placeholder arguments.
+	std::vector<TemplateTypeArg> normalized_dependent_args;
+	for (size_t arg_index = 0; arg_index < template_args.size(); ++arg_index) {
+		const TemplateTypeArg& arg = template_args[arg_index];
+		bool is_effectively_dependent =
+			arg.is_dependent ||
+			arg.dependent_name.isValid() ||
+			arg.dependent_expr.has_value() ||
+			typeIndexStillUsesDependentPlaceholder(arg.type_index);
+		if (!is_effectively_dependent) {
+			continue;
+		}
+		if (normalized_dependent_args.empty()) {
+			normalized_dependent_args = template_args;
+		}
+
+		TemplateTypeArg& normalized_arg = normalized_dependent_args[arg_index];
+		normalized_arg.is_dependent = true;
+		if (!normalized_arg.is_value &&
+			!normalized_arg.dependent_name.isValid() &&
+			normalized_arg.type_index.is_valid()) {
+			if (const TypeInfo* arg_type_info = tryGetTypeInfo(normalized_arg.type_index)) {
+				normalized_arg.dependent_name = arg_type_info->name();
+			}
+		}
+	}
+
 	// If so, we cannot instantiate the template yet - it's a dependent type
-	for (const auto& arg : template_args) {
-		if (arg.is_dependent) {
+	if (!normalized_dependent_args.empty()) {
+		const auto& effective_template_args = normalized_dependent_args;
+		for (const auto& arg : effective_template_args) {
+			if (!arg.is_dependent) {
+				continue;
+			}
 			FLASH_LOG_FORMAT(Templates, Debug, "Skipping instantiation of {} - template arguments are dependent", template_name);
 
 			// Register a placeholder TypeInfo for the dependent instantiated name
 			// so that extractBaseTemplateName() can identify it via TypeInfo metadata
 			// without needing string parsing (find('$')).
-			std::string_view inst_name = get_instantiated_class_name(template_name, template_args);
+			std::string_view inst_name = get_instantiated_class_name(template_name, effective_template_args);
 			StringHandle inst_handle = StringTable::getOrInternStringHandle(inst_name);
 			if (getTypesByNameMap().find(inst_handle) == getTypesByNameMap().end()) {
 				TypeInfo& type_info = add_empty_type_entry();
@@ -884,13 +917,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				type_info.is_incomplete_instantiation_ = true;
 				type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 				type_info.name_ = inst_handle;
-				auto template_args_info = convertToTemplateArgInfo(template_args);
+				auto template_args_info = convertToTemplateArgInfo(effective_template_args);
 				InlineVector<StringHandle, 4> placeholder_param_names;
 				if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 					template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 					placeholder_param_names = collectParamNameHandles(
 						template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
-						template_args.size());
+						effective_template_args.size());
 				}
 				type_info.setTemplateInstantiationInfo(
 					QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),

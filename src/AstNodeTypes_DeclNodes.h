@@ -1725,17 +1725,57 @@ inline bool TypeSpecifierNode::matches_signature(const TypeSpecifierNode& other)
 	return true;
 }
 
-inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_spec) {
-	TypeIndex type_index = type_spec.type_index();
+inline bool templateArgInfoStillUsesDependentPlaceholderImpl(const TypeInfo::TemplateArgInfo& arg_info, size_t depth_limit);
+
+inline bool typeInfoStillUsesDependentPlaceholderImpl(const TypeInfo& type_info, size_t depth_limit) {
+	if (depth_limit == 0) {
+		return false;
+	}
+	if (type_info.isDependentPlaceholder()) {
+		return true;
+	}
+	if (!type_info.isTemplateInstantiation()) {
+		return false;
+	}
+
+	for (const auto& nested_arg : type_info.templateArgs()) {
+		if (templateArgInfoStillUsesDependentPlaceholderImpl(nested_arg, depth_limit - 1)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+inline bool typeIndexStillUsesDependentPlaceholder(TypeIndex type_index) {
 	if (!type_index.is_valid()) {
 		return false;
 	}
 
 	if (const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_index);
 		resolved_alias.terminal_type_info != nullptr) {
-		return resolved_alias.terminal_type_info->isDependentPlaceholder();
+		return typeInfoStillUsesDependentPlaceholderImpl(
+			*resolved_alias.terminal_type_info,
+			getTypeInfoCount());
 	}
 	return false;
+}
+
+inline bool templateArgInfoStillUsesDependentPlaceholder(const TypeInfo::TemplateArgInfo& arg_info) {
+	return templateArgInfoStillUsesDependentPlaceholderImpl(arg_info, getTypeInfoCount());
+}
+
+inline bool templateArgInfoStillUsesDependentPlaceholderImpl(const TypeInfo::TemplateArgInfo& arg_info, size_t depth_limit) {
+	if (depth_limit == 0) {
+		return false;
+	}
+	if (arg_info.dependent_name.isValid() || arg_info.dependent_expr.has_value()) {
+		return true;
+	}
+	return typeIndexStillUsesDependentPlaceholder(arg_info.type_index);
+}
+
+inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_spec) {
+	return typeIndexStillUsesDependentPlaceholder(type_spec.type_index());
 }
 
 inline TypeIndex getCanonicalConversionTargetType(const TypeSpecifierNode& type_spec) {

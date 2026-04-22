@@ -2224,8 +2224,31 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	};
 	std::vector<SfinaeCandidateEntry> sfinae_candidates;
 
-	std::optional<ASTNode> deferred_forward_declaration_result;
+	std::vector<size_t> overload_iteration_order;
+	overload_iteration_order.reserve(all_templates->size());
 	for (size_t overload_idx = 0; overload_idx < all_templates->size(); ++overload_idx) {
+		overload_iteration_order.push_back(overload_idx);
+	}
+	if (!outer_sfinae_context) {
+		std::stable_sort(
+			overload_iteration_order.begin(),
+			overload_iteration_order.end(),
+			[&](size_t lhs_idx, size_t rhs_idx) {
+				const ASTNode& lhs = (*all_templates)[lhs_idx];
+				const ASTNode& rhs = (*all_templates)[rhs_idx];
+				int lhs_specificity = lhs.is<TemplateFunctionDeclarationNode>()
+					? computeTemplateFunctionSpecificity(lhs.as<TemplateFunctionDeclarationNode>())
+					: -1;
+				int rhs_specificity = rhs.is<TemplateFunctionDeclarationNode>()
+					? computeTemplateFunctionSpecificity(rhs.as<TemplateFunctionDeclarationNode>())
+					: -1;
+				return lhs_specificity > rhs_specificity;
+			});
+	}
+
+	std::optional<ASTNode> deferred_forward_declaration_result;
+	for (size_t overload_order_index = 0; overload_order_index < overload_iteration_order.size(); ++overload_order_index) {
+		size_t overload_idx = overload_iteration_order[overload_order_index];
 		const ASTNode& template_node = (*all_templates)[overload_idx];
 
 		if (!template_node.is<TemplateFunctionDeclarationNode>()) {
