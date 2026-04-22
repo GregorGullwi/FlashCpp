@@ -33,15 +33,62 @@ overload that instantiates successfully rather than the most-specialized one.  C
 **Impact:** If multiple overloads are viable for a given call, the one declared first
 wins regardless of specificity.  This silently produces wrong behavior rather than a
 compile error, making it hard to detect.
+**Minimal repro:**
+```cpp
+template <typename T> int f(T x) { (void)x; return 7; }
+template <typename T> int f(T* x) { (void)x; return 42; }
+
+int main() {
+    int i = 0;
+    return f(&i); // Should return 42 (T* more specific); currently returns 7.
+}
+```
 **Root cause:** The non-SFINAE path in `try_instantiate_template` has a fast-return
 after the first success.  The existing `hasLaterUsableTemplateDefinitionWithMatchingShape`
 deferral only addresses the forward-declaration case, not the general partial-ordering
 problem.
 **Fix approach:** Apply the same `computeTemplateFunctionSpecificity` scoring used in
-SFINAE selection to the non-SFINAE path as well, collecting all viable candidates before
-selecting the best one.  The two paths would then share a single `selectBestCandidate`
-helper, with SFINAE differing only in what happens when no candidate matches (silently
-return `nullopt` vs. error).
+SFINAE selection to the non-SFINAE path as well.  Iterating in specificity-sorted order
+(stable, ties preserve source order) and returning the first success gives
+[temp.func.order] semantics without collecting all candidates — the first success in
+sorted order is already the most-specialized viable overload.
+
+**2026-04-22 attempt and findings:** The specificity-sorted iteration was implemented
+and immediately fixes the minimal repro above (returns 42).  The single full-suite
+regression it produces is `test_namespaced_pair_swap_sfinae_ret0.cpp`, and the root
+cause is orthogonal to this issue:
+
+ - That test exercises `is_swappable<pair<const int, int>>::value` via
+   `decltype(swap(declval<pair&>(), declval<pair&>()))` in a default template argument.
+   Under proper partial ordering, `swap(pair<F,S>&, pair<F,S>&)` (the pair-specialised
+   overload) is the best match; in the immediate SFINAE context, the `= delete`
+   pair-specialisation yields substitution failure per [temp.deduct.call] and
+   `is_swappable` correctly becomes `false_type`.
+ - The baseline passes the test "accidentally" because first-match selection picks
+   the bodyless `swap(Type&, Type&)` forward declaration (with `Type = pair<const int, int>`)
+   instead of the pair-specialised overload, which avoids ever materialising
+   `pair<const int, int>::swap` and hides the ill-formed `swap(const int&, const int&)`
+   call inside it.
+ - With specificity-sorted iteration, the pair-specialised overload is correctly picked
+   at one non-SFINAE call site; its body materialisation then pulls in
+   `pair<const int, int>::swap`, whose body contains the ill-formed inner `swap` call,
+   and codegen trips on the dependent-type that remains.
+ - The non-SFINAE call in question should have been happening inside a SFINAE probe
+   (it comes from a `decltype(...)` default-template-argument expression), but
+   FlashCpp evaluates part of that expression in non-SFINAE context before the probe
+   is wrapped.  This is precisely the symptom `InstantiationContext` threading
+   (Slice G item #3) is designed to cure: a single `in_sfinae_context_` bit cannot
+   distinguish "caller is in SFINAE" from "this particular sub-evaluation is not",
+   and the leak is what causes the body to be eagerly materialised.
+
+**Conclusion:** Attempting the fix confirmed the KNOWN_ISSUES description is correct
+(the minimal repro is fixed immediately), and also confirmed the Slice G analysis
+prognosis that items #2 and #3 must land together for principled SFINAE handling.
+The KNOWN_ISSUES#2 fix is therefore **blocked on Slice G item #3**
+(`InstantiationContext` threading).  Once item #3 makes
+`decltype`-in-default-template-argument evaluations reliably SFINAE, the
+specificity-sorted non-SFINAE path can land without regressing the `swap`/`is_swappable`
+suite.
 
 ## Unresolved-type detection relies on fragile heuristic (`UserDefined && size_in_bits() == 0`)
 

@@ -176,6 +176,49 @@ Benefits:
 Current state (TODO): Parser.h still has in_sfinae_context_ as a plain bool. No InstantiationContext struct exists. The "non-SFINAE function-template overload selection uses
 first match instead of most-specific" KNOWN_ISSUES entry would also benefit from the richer context chain.
 
+#### 2026-04-22 audit: KNOWN_ISSUES#2 is blocked on this item
+
+An attempt at landing the KNOWN_ISSUES#2 fix (specificity-sorted iteration in the
+non-SFINAE path of `try_instantiate_template`) was prototyped end-to-end. It
+immediately fixes the minimal `f(T) vs f(T*)` partial-ordering repro recorded in
+KNOWN_ISSUES.md, but regresses exactly one full-suite test —
+`test_namespaced_pair_swap_sfinae_ret0.cpp`. The regression is not a flaw in the
+specificity-sort itself; it is a direct manifestation of this item's underlying
+problem:
+
+ - The test's `decltype(swap(declval<pair&>(), declval<pair&>()))` default-template-
+   argument expression is, conceptually, a SFINAE probe. Under proper partial
+   ordering the `swap(pair<F,S>&, pair<F,S>&) = delete` overload wins and the
+   `= delete` sentinel becomes a substitution failure per [temp.deduct.call].
+ - FlashCpp currently evaluates a sub-step of that expression in *non-SFINAE
+   context* before the SFINAE wrap kicks in, because `in_sfinae_context_` is a
+   single parser-global bit that cannot represent "the caller is in SFINAE, but
+   this sub-evaluation currently isn't".
+ - With first-match overload selection, that leaked non-SFINAE call harmlessly
+   picks the bodyless `swap(Type&, Type&)` forward declaration with
+   `Type = pair<const int, int>`, so no pair::swap body is ever materialised and
+   the subsequent SFINAE probe still correctly concludes
+   `is_swappable = false_type`.
+ - With specificity-sorted selection, the same leaked non-SFINAE call correctly
+   picks the pair-specialised `swap(pair<F,S>&, pair<F,S>&)` overload, whose body
+   (`left.swap(right)`) forces `pair<const int, int>::swap` to materialise.
+   That body contains the ill-formed inner `swap(const int&, const int&)` call,
+   and codegen trips on the dependent type when lowering it to IR.
+
+The fundamental fix for both items is the same one item #3 prescribes: an
+`InstantiationContext` value threaded through every substitution / instantiation
+call, so that the `decltype`-default-argument sub-evaluation carries
+`InstantiationMode::SfinaeProbe` rather than inheriting the caller's raw
+`in_sfinae_context_` bit. With that in place, the pair-specialised overload
+still wins per partial ordering, but it wins *as a SFINAE probe*, so its body is
+never eagerly materialised and the existing SFINAE failure path handles the
+`= delete` sentinel correctly.
+
+**Dependency:** KNOWN_ISSUES.md entry "Non-SFINAE function-template overload
+selection uses 'first match' instead of most-specific" is now explicitly
+blocked on this item. See the KNOWN_ISSUES entry for the minimal repro and the
+detailed trace of the non-SFINAE leak.
+
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ### 4. Give late-materialized instantiations their own first-class list, separate from ast_nodes_   [DONE]
@@ -571,7 +614,9 @@ const-ness plumbing from the lazy-member registry API.
 ## Recommended next steps
 
 1. Items #2 and #3 are now the highest-value remaining architectural follow-ups. They are the Phase 6 prerequisites for principled SFINAE handling, and the existing
-   KNOWN_ISSUES workarounds are stable enough that this can be tackled deliberately instead of as an emergency cleanup.
+   KNOWN_ISSUES workarounds are stable enough that this can be tackled deliberately instead of as an emergency cleanup. The 2026-04-22 audit under item #3
+   confirms empirically that KNOWN_ISSUES#2 (non-SFINAE partial ordering) is blocked on item #3 (`InstantiationContext` threading): the specificity-sorted
+   non-SFINAE selection itself is a one-function change, but it cannot land alone without regressing the pair/swap SFINAE cluster.
 
 2. Item #4 is still the main unfinished Slice G structural split, but it should only be retried behind a focused ODR-use coverage audit. The earlier regressions showed that the
    data model is close, not that blind top-level filtering is safe.
