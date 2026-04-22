@@ -279,9 +279,112 @@ during a non-SFINAE substitution?", which is exactly the bit that leaks.
 selection uses 'first match' instead of most-specific" is blocked on this item.
 See the KNOWN_ISSUES entry for the minimal repro.
 
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##### 2026-04-22 follow-up: the actual leak point, located precisely
 
-### 4. Give late-materialized instantiations their own first-class list, separate from ast_nodes_   [DONE]
+The analysis in "Precise mechanistic trace" above was close but incorrectly
+identified `registerLazyMember` at `src/Parser_Templates_Inst_ClassTemplate.cpp:6796`
+as the leak.  A second, log-driven experiment (specificity-sort prototype
+instrumented and run against the failing test) narrowed the commit point to a
+different line.
+
+The real leak is **`registerAndNormalizeLateMaterializedTopLevelNode` at
+`src/Parser_Templates_Inst_Deduction.cpp:3698`**, inside
+`try_instantiate_single_template`.  The diagnostic immediately above it
+(`'{}': has_body={}, has_unresolved_params={}, registering={}` at
+`Parser_Templates_Inst_Deduction.cpp:3693`) makes the divergence unambiguous:
+
+```
+# Baseline (source-order first-match), overload 2 wins:
+'swap': has_body=true, has_unresolved_params=true, registering=false
+
+# Specificity-sort, overload 3 wins:
+'swap': has_body=true, has_unresolved_params=false, registering=true
+```
+
+The gate is `func_definition.has_value() && !has_unresolved_params`
+(lines 3697–3699).  `has_unresolved_params` is computed by
+`typeSpecStillUsesDependentPlaceholder` (see `AstNodeTypes_DeclNodes.h:1728`),
+which only returns `true` when the terminal TypeInfo has
+`placeholder_kind_ != DependentPlaceholderKind::None`.
+
+Under specificity-sort, substitution of overload 3's parameter type
+`pair<First, Second>&` walks the following chain (from the instrumented log):
+
+ 1. `substitute_template_parameter: type_index=72, type_name='pair$4afba87c38672bed'` —
+    reading the dependent placeholder that was registered earlier for the
+    function-template parameter.
+ 2. `try_instantiate_class_template: template='stdlike::pair', args=2, force_eager=0`
+    on the substituted args.  **The args' `is_dependent` flag is now `false`**,
+    even though `First` and `Second` are still bare template parameters of the
+    enclosing swap function template.  The early "args are dependent" bail-out
+    at `src/Parser_Templates_Inst_ClassTemplate.cpp:872-909` is therefore
+    skipped.
+ 3. The full instantiation path runs and creates
+    `pair$88c28e0e468cba3f` as an ordinary `DependentPlaceholderKind::None`
+    struct in the type system (line 711 "Using LAZY instantiation" —
+    the class-level lazy-member registration is fine and not the leak).
+ 4. `Resolved template placeholder 'pair$4afba87c38672bed' -> 'pair$88c28e0e468cba3f'` —
+    the outer-function's parameter-type alias gets rewired to this
+    "concrete-but-actually-still-dependent" struct.
+ 5. `typeSpecStillUsesDependentPlaceholder` returns `false` for the parameter
+    type, `has_unresolved_params` becomes `false`, and line 3698 registers the
+    instantiation for codegen.  Codegen later fails with
+    `Type with no runtime size reached codegen in reference identifier lvalue
+    lowering (type=28, pointer_depth=0)`.
+
+##### Surgical-fix candidates (in order of narrowness)
+
+Now that the leak is pinned to one specific type-classification question —
+"is a `pair<First, Second>` struct whose template arguments are raw template-
+parameter references still a dependent placeholder?" — three much narrower
+fixes are available than the full `InstantiationContext` redesign:
+
+ **Fix A (narrowest — one predicate):** Extend
+ `typeSpecStillUsesDependentPlaceholder` (`AstNodeTypes_DeclNodes.h:1728`) to
+ also report `true` when the terminal TypeInfo is a
+ `TemplateInstantiationInfo` whose stored template-arg infos reference any
+ still-dependent name (i.e. any arg whose resolved type is itself a
+ template-parameter type or a `DependentArgs` placeholder).  This is a pure
+ type-system predicate extension — no new plumbing — and would make line 3698
+ correctly decline to register `pair$88c28e0e468cba3f` for codegen.
+
+ **Fix B (middle — one call site):** In `try_instantiate_class_template`
+ (`Parser_Templates_Inst_ClassTemplate.cpp:872`), before concluding "args are
+ not dependent, proceed to full instantiation," walk each arg's resolved type
+ and mark the arg `is_dependent=true` if it resolves to a template-parameter
+ type or a `DependentArgs` placeholder.  This fixes the classification at the
+ source rather than papering over it downstream, and would also cause the
+ placeholder itself to be created with `DependentPlaceholderKind::DependentArgs`
+ via the existing bail-out path at lines 872–909.
+
+ **Fix C (one-line substitution site):** In the substitution path that fills in
+ the `TemplateTypeArg` passed to `try_instantiate_class_template` from
+ overload 3's parameter type, propagate `is_dependent` from the source arg.
+ `src/Parser_Templates_Substitution.cpp:455` currently unconditionally clears
+ it (`arg.is_dependent = false`); the clearing should be conditional on the
+ substituted type being concrete.
+
+None of A/B/C require `InstantiationContext` threading.  The
+`InstantiationContext` design is still the right long-term shape for Slice G
+item #3 (it gives principled handling of many other SFINAE-adjacent cases), but
+it is **not** a prerequisite for unblocking KNOWN_ISSUES#2.
+
+##### Recommendation
+
+Investigate Fix A first: it's a one-file predicate change with the clearest
+blast radius (only affects sites that already call
+`typeSpecStillUsesDependentPlaceholder`, of which there are only two —
+`Parser_Templates_Inst_Deduction.cpp:3685` and `FlashCppMain.cpp:545`).
+Validate by re-running the specificity-sort prototype with Fix A applied: the
+expected log change is the line
+`'swap': has_body=true, has_unresolved_params=false, registering=true`
+flipping to
+`'swap': has_body=true, has_unresolved_params=true, registering=false`,
+after which overload 3 is returned un-registered and codegen does not see it.
+Fall back to Fix B or C if Fix A turns out to regress other tests by over-
+classifying types as still-dependent.
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 The ast_nodes_ vector is currently doing double duty:
 

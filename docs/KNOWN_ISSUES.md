@@ -88,24 +88,43 @@ mechanistic trace (file-line precise) is recorded under
    dependent `typename decay_like<T>::type` defaults into silent failures.
 
 **Conclusion:** Attempting the fix confirmed the KNOWN_ISSUES description is correct
-(the minimal repro is fixed immediately), and pinpointed the exact side-effect that
-blocks a narrow landing: `registerLazyMember` in
-`src/Parser_Templates_Inst_ClassTemplate.cpp:6796` fires unconditionally during
-substitution whenever the deduced arguments are concrete-looking, regardless of
-the *intent* of the enclosing evaluation (declaration-time decltype probe vs.
-real use site).  The KNOWN_ISSUES#2 fix is therefore **blocked on Slice G items
-#2 and #3 landing together**:
+(the minimal repro is fixed immediately).  A second investigation pass on
+2026-04-22 (instrumented specificity-sort prototype run against the failing test)
+relocated the leak from `registerLazyMember`
+(`src/Parser_Templates_Inst_ClassTemplate.cpp:6796`, which was the previous
+hypothesis) to **`registerAndNormalizeLateMaterializedTopLevelNode` at
+`src/Parser_Templates_Inst_Deduction.cpp:3698`**, inside
+`try_instantiate_single_template`.  The log diagnostic immediately above it makes
+the divergence unambiguous:
 
- 1. `InstantiationContext` (#3) must supply a `ShapeOnly` mode.
- 2. That mode must propagate into the `registerLazyMember` site (#2, body/shape
-    split for class templates).
- 3. Default-template-argument parses at declaration time run with `ShapeOnly` →
-    the pair-specialised overload still wins under specificity-sort, but its
-    body is not materialised.
+```
+# Baseline (source-order first-match), overload 2 wins:
+'swap': has_body=true, has_unresolved_params=true, registering=false
 
-See `docs/2026-04-21-phase5-slice-g-analysis.md` § 3 "2026-04-22 audit" for the
-concrete line-level spec of what `InstantiationContext` needs to do to unblock
-this entry.
+# Specificity-sort, overload 3 wins:
+'swap': has_body=true, has_unresolved_params=false, registering=true
+```
+
+Under specificity-sort, substitution of overload 3's parameter type
+`pair<First, Second>&` produces a new struct `pair$88c28e0e468cba3f` whose
+template args are still bare template parameters of the enclosing swap function
+template, but whose TypeInfo is created with `placeholder_kind_ = None`.
+`typeSpecStillUsesDependentPlaceholder` therefore returns `false`,
+`has_unresolved_params` evaluates to `false`, and line 3698 registers the
+ill-formed instantiation for codegen.
+
+This **narrows the fix target considerably**: rather than waiting for the full
+`InstantiationContext` design (Slice G item #3), three much more surgical fix
+candidates exist — see `docs/2026-04-21-phase5-slice-g-analysis.md` § 3
+"2026-04-22 follow-up" for the precise call-chain trace and the three candidate
+fix sites (A: predicate extension in `AstNodeTypes_DeclNodes.h:1728`,
+B: dependent-arg re-classification in
+`Parser_Templates_Inst_ClassTemplate.cpp:872`,
+C: conditional `is_dependent` propagation at
+`Parser_Templates_Substitution.cpp:455`).  Fix A has the smallest blast radius
+(only two call sites).  KNOWN_ISSUES#2 is **not** blocked on the broader
+`InstantiationContext` redesign; it can be unblocked by one of these surgical
+fixes plus the specificity-sort change.
 
 ## Unresolved-type detection relies on fragile heuristic (`UserDefined && size_in_bits() == 0`)
 
