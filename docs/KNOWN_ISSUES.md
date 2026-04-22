@@ -55,40 +55,57 @@ sorted order is already the most-specialized viable overload.
 
 **2026-04-22 attempt and findings:** The specificity-sorted iteration was implemented
 and immediately fixes the minimal repro above (returns 42).  The single full-suite
-regression it produces is `test_namespaced_pair_swap_sfinae_ret0.cpp`, and the root
-cause is orthogonal to this issue:
+regression it produces is `test_namespaced_pair_swap_sfinae_ret0.cpp`.  The full
+mechanistic trace (file-line precise) is recorded under
+`docs/2026-04-21-phase5-slice-g-analysis.md` § 3 "2026-04-22 audit"; summary below.
 
- - That test exercises `is_swappable<pair<const int, int>>::value` via
-   `decltype(swap(declval<pair&>(), declval<pair&>()))` in a default template argument.
-   Under proper partial ordering, `swap(pair<F,S>&, pair<F,S>&)` (the pair-specialised
-   overload) is the best match; in the immediate SFINAE context, the `= delete`
-   pair-specialisation yields substitution failure per [temp.deduct.call] and
-   `is_swappable` correctly becomes `false_type`.
- - The baseline passes the test "accidentally" because first-match selection picks
-   the bodyless `swap(Type&, Type&)` forward declaration (with `Type = pair<const int, int>`)
-   instead of the pair-specialised overload, which avoids ever materialising
-   `pair<const int, int>::swap` and hides the ill-formed `swap(const int&, const int&)`
-   call inside it.
- - With specificity-sorted iteration, the pair-specialised overload is correctly picked
-   at one non-SFINAE call site; its body materialisation then pulls in
-   `pair<const int, int>::swap`, whose body contains the ill-formed inner `swap` call,
-   and codegen trips on the dependent-type that remains.
- - The non-SFINAE call in question should have been happening inside a SFINAE probe
-   (it comes from a `decltype(...)` default-template-argument expression), but
-   FlashCpp evaluates part of that expression in non-SFINAE context before the probe
-   is wrapped.  This is precisely the symptom `InstantiationContext` threading
-   (Slice G item #3) is designed to cure: a single `in_sfinae_context_` bit cannot
-   distinguish "caller is in SFINAE" from "this particular sub-evaluation is not",
-   and the leak is what causes the body to be eagerly materialised.
+ - The failing test parses `is_swappable<T>`'s
+   `decltype(detail::test<T>(0))` base class, where `detail::test`'s first overload
+   has a SFINAE default template argument
+   `= decltype(swap(declval<T&>(), declval<T&>()))`.  FlashCpp eagerly evaluates
+   that default-template-argument expression *at function-template-declaration
+   time*, with `in_sfinae_context_ = false` and `T` still dependent.
+ - Source-order first-match picks the 1-arg definition `swap(Type&, Type&)`
+   whose deduced `T` remains a bare `TemplateParameterNode`.  Substitution logs
+   `has_unresolved_params=true, registering=false` — the declaration-time parse
+   is a no-op.
+ - Specificity-sorted picks the pair-specialised `swap(pair<F,S>&, pair<F,S>&)`
+   whose deduced args are the dependent *placeholder class-template instantiation*
+   `pair$…` (a real `Struct` node).  Substitution logs
+   `has_unresolved_params=false, registering=true`, the body
+   `{ left.swap(right); }` is walked, and `registerLazyMember` at
+   `src/Parser_Templates_Inst_ClassTemplate.cpp:6796` commits
+   `pair$…::swap` to the lazy-member registry.  Later, when the real SFINAE
+   probe instantiates `pair<const int, int>`, that registration fires and
+   codegen trips on the ill-formed inner `swap(const int&, const int&)`.
+ - The obvious narrow fix ("set `in_sfinae_context_ = true` around
+   `parse_type_specifier()` in the three default-template-argument parse sites
+   at `src/Parser_Templates_Params.cpp:162, 277, 362`") was also tried on
+   2026-04-22.  It does *not* fix the pair/swap test — `in_sfinae_context_`
+   controls only `try_instantiate_template`'s top-level iteration, not the
+   substitution-time `registerLazyMember` call — and regresses
+   `test_template_dependent_default_args_ret0.cpp` by turning legitimate
+   dependent `typename decay_like<T>::type` defaults into silent failures.
 
 **Conclusion:** Attempting the fix confirmed the KNOWN_ISSUES description is correct
-(the minimal repro is fixed immediately), and also confirmed the Slice G analysis
-prognosis that items #2 and #3 must land together for principled SFINAE handling.
-The KNOWN_ISSUES#2 fix is therefore **blocked on Slice G item #3**
-(`InstantiationContext` threading).  Once item #3 makes
-`decltype`-in-default-template-argument evaluations reliably SFINAE, the
-specificity-sorted non-SFINAE path can land without regressing the `swap`/`is_swappable`
-suite.
+(the minimal repro is fixed immediately), and pinpointed the exact side-effect that
+blocks a narrow landing: `registerLazyMember` in
+`src/Parser_Templates_Inst_ClassTemplate.cpp:6796` fires unconditionally during
+substitution whenever the deduced arguments are concrete-looking, regardless of
+the *intent* of the enclosing evaluation (declaration-time decltype probe vs.
+real use site).  The KNOWN_ISSUES#2 fix is therefore **blocked on Slice G items
+#2 and #3 landing together**:
+
+ 1. `InstantiationContext` (#3) must supply a `ShapeOnly` mode.
+ 2. That mode must propagate into the `registerLazyMember` site (#2, body/shape
+    split for class templates).
+ 3. Default-template-argument parses at declaration time run with `ShapeOnly` →
+    the pair-specialised overload still wins under specificity-sort, but its
+    body is not materialised.
+
+See `docs/2026-04-21-phase5-slice-g-analysis.md` § 3 "2026-04-22 audit" for the
+concrete line-level spec of what `InstantiationContext` needs to do to unblock
+this entry.
 
 ## Unresolved-type detection relies on fragile heuristic (`UserDefined && size_in_bits() == 0`)
 

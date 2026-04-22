@@ -184,40 +184,100 @@ immediately fixes the minimal `f(T) vs f(T*)` partial-ordering repro recorded in
 KNOWN_ISSUES.md, but regresses exactly one full-suite test —
 `test_namespaced_pair_swap_sfinae_ret0.cpp`. The regression is not a flaw in the
 specificity-sort itself; it is a direct manifestation of this item's underlying
-problem:
+problem.
 
- - The test's `decltype(swap(declval<pair&>(), declval<pair&>()))` default-template-
-   argument expression is, conceptually, a SFINAE probe. Under proper partial
-   ordering the `swap(pair<F,S>&, pair<F,S>&) = delete` overload wins and the
-   `= delete` sentinel becomes a substitution failure per [temp.deduct.call].
- - FlashCpp currently evaluates a sub-step of that expression in *non-SFINAE
-   context* before the SFINAE wrap kicks in, because `in_sfinae_context_` is a
-   single parser-global bit that cannot represent "the caller is in SFINAE, but
-   this sub-evaluation currently isn't".
- - With first-match overload selection, that leaked non-SFINAE call harmlessly
-   picks the bodyless `swap(Type&, Type&)` forward declaration with
-   `Type = pair<const int, int>`, so no pair::swap body is ever materialised and
-   the subsequent SFINAE probe still correctly concludes
-   `is_swappable = false_type`.
- - With specificity-sorted selection, the same leaked non-SFINAE call correctly
-   picks the pair-specialised `swap(pair<F,S>&, pair<F,S>&)` overload, whose body
-   (`left.swap(right)`) forces `pair<const int, int>::swap` to materialise.
-   That body contains the ill-formed inner `swap(const int&, const int&)` call,
-   and codegen trips on the dependent type when lowering it to IR.
+##### Precise mechanistic trace (obtained 2026-04-22 via `--log-level=Templates:debug`)
 
-The fundamental fix for both items is the same one item #3 prescribes: an
-`InstantiationContext` value threaded through every substitution / instantiation
-call, so that the `decltype`-default-argument sub-evaluation carries
-`InstantiationMode::SfinaeProbe` rather than inheriting the caller's raw
-`in_sfinae_context_` bit. With that in place, the pair-specialised overload
-still wins per partial ordering, but it wins *as a SFINAE probe*, so its body is
-never eagerly materialised and the existing SFINAE failure path handles the
-`= delete` sentinel correctly.
+`is_swappable<T>` is defined as
+`struct is_swappable : decltype(detail::test<T>(0)) { };`
+where `detail::test<T>(int)` is a function template whose first overload has a
+SFINAE default template argument
+`= decltype(swap(declval<T&>(), declval<T&>()))`.
+
+The key observation is that FlashCpp eagerly parses that default-template-argument
+expression *at function-template-declaration time*, with `in_sfinae_context_ = false`
+and with `T` still a dependent template parameter.  The parse reaches the `swap(...)`
+call and invokes `try_instantiate_template` with arguments that are formally
+dependent but syntactically concrete enough to match the pair-specialised overload:
+
+ - Baseline (source-order first-match): the iteration visits `swap(Type&, Type&)`
+   overloads first.  Overload 0 is a bodyless forward declaration → deferred via
+   `hasLaterUsableTemplateDefinitionWithMatchingShape`.  Overload 1 (`= delete`)
+   fails substitution via `enable_if<false>`.  Overload 2 (the 1-arg definition
+   with body) succeeds, but the substitution log shows
+   `has_body=true, has_unresolved_params=true, registering=false` — i.e. the
+   deduced `T` is still a dependent `TemplateParameterNode`, so no lazy-member
+   registration happens and no body is materialised.  The eager declaration-time
+   parse is essentially a no-op.
+
+ - Prototype (specificity-sorted, highest first): the iteration visits
+   `swap(pair<F,S>&, pair<F,S>&)` (specificity 10) before `swap(Type&, Type&)`
+   (specificity 2).  It matches: `F` and `S` bind to the dependent placeholder
+   class-template instantiation `pair$4fd731b6b39f3d10`, which is a real
+   `TypeCategory::Struct`/`Instantiation` node, not a bare `TemplateParameterNode`.
+   That is concrete enough to make substitution report
+   `has_body=true, has_unresolved_params=false, registering=true`.  Its body
+   `{ left.swap(right); }` references `pair::swap`, which triggers
+   `registerLazyMember` in
+   `src/Parser_Templates_Inst_ClassTemplate.cpp:6796` for
+   `pair$4fd731b6b39f3d10::swap`.  When the later SFINAE probe actually
+   instantiates `pair<const int, int>`, that lazy registration fires and tries to
+   codegen a `pair<const int, int>::swap` body whose `swap(first, other.first)`
+   would bind to the `= delete` overload — producing a hard IR failure rather
+   than a SFINAE substitution failure.
+
+##### Why the obvious narrow fix ("wrap default-template-argument parsing in SFINAE")
+##### does not work
+
+Setting `in_sfinae_context_ = true` around `parse_type_specifier()` for the
+default type inside `Parser::parse_template_parameter` (the three sites at
+`src/Parser_Templates_Params.cpp:162, 277, 362`) was also tried.  It does not
+actually fix the pair/swap test — `in_sfinae_context_` only changes the behaviour
+of `try_instantiate_template`'s top-level iteration (collect-and-pick-best) and
+a handful of diagnostic paths, *not* the substitution-time
+`registerLazyMember` call that is the real side effect.  Worse, it regresses
+`test_template_dependent_default_args_ret0.cpp` (`common_impl<T, U, T, U>`
+partial specialisation with defaults `D1 = decay_like<T>::type,
+D2 = decay_like<U>::type`): legitimate dependent-name resolution inside the
+default now silently fails instead of being deferred, so the partial
+specialisation does not match and the test returns 1 instead of 42.
+
+So the blocker is *not* "which bit to flip at the parse boundary" — it is that
+body-materialisation side effects (most concretely, `registerLazyMember` at
+`src/Parser_Templates_Inst_ClassTemplate.cpp:6796`) fire unconditionally during
+substitution whenever the substituted arguments look concrete, regardless of why
+that substitution is being performed.
+
+##### Concrete next steps once InstantiationContext lands
+
+This audit gives item #3 a very specific minimum spec to satisfy in order to
+unblock KNOWN_ISSUES#2:
+
+ 1. `InstantiationContext` must carry at least two semantic modes:
+    `SfinaeProbe` (no commits) and `HardUse` (commit all side effects).  A third
+    `ShapeOnly` mode — "deduce signature, do not materialise bodies" — is the
+    mode a declaration-time default-template-argument parse should use.
+ 2. The context must thread through `try_instantiate_single_template`'s
+    substitution all the way into the `registerLazyMember` call at
+    `src/Parser_Templates_Inst_ClassTemplate.cpp:6796` (and the nested-type
+    sibling at `src/ParserTemplateClassShared.h:199`).  `ShapeOnly` must suppress
+    that registration.
+ 3. The non-SFINAE specificity-sort prototype can then land unchanged: the
+    declaration-time decltype parse runs with `ShapeOnly`, picks the
+    pair-specialised overload, deduces its signature, and returns *without*
+    materialising pair::swap; the later real SFINAE probe at `is_swappable`'s
+    base-class resolution still runs with `SfinaeProbe` and correctly turns the
+    `= delete` into a substitution failure.
+
+Items #2 (body/shape split for class templates) and #3 (InstantiationContext)
+thus need to land together — item #2 is essentially already done for class
+template bodies via `Using LAZY instantiation`, but the decision of *when to
+promote lazy → materialised* is currently implicit, driven by "were you reached
+during a non-SFINAE substitution?", which is exactly the bit that leaks.
 
 **Dependency:** KNOWN_ISSUES.md entry "Non-SFINAE function-template overload
-selection uses 'first match' instead of most-specific" is now explicitly
-blocked on this item. See the KNOWN_ISSUES entry for the minimal repro and the
-detailed trace of the non-SFINAE leak.
+selection uses 'first match' instead of most-specific" is blocked on this item.
+See the KNOWN_ISSUES entry for the minimal repro.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
