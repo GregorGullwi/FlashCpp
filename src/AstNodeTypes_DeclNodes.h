@@ -1739,7 +1739,7 @@ inline size_t maxDependentPlaceholderDepth() {
 
 inline bool typeInfoStillUsesDependentPlaceholderImpl(const TypeInfo& type_info, size_t depth_limit) {
 	if (depth_limit == 0) {
-		return false;
+		return true;
 	}
 	if (type_info.isDependentPlaceholder()) {
 		return true;
@@ -1757,7 +1757,10 @@ inline bool typeInfoStillUsesDependentPlaceholderImpl(const TypeInfo& type_info,
 }
 
 inline bool typeIndexContainsDependentPlaceholder(TypeIndex type_index, size_t depth_limit) {
-	if (depth_limit == 0 || !type_index.is_valid()) {
+	if (depth_limit == 0) {
+		return true;
+	}
+	if (!type_index.is_valid()) {
 		return false;
 	}
 
@@ -1776,7 +1779,7 @@ inline bool typeIndexContainsDependentPlaceholder(TypeIndex type_index) {
 
 inline bool templateArgInfoContainsDependentPlaceholderImpl(const TypeInfo::TemplateArgInfo& arg_info, size_t depth_limit) {
 	if (depth_limit == 0) {
-		return false;
+		return true;
 	}
 	if (arg_info.dependent_name.isValid() || arg_info.dependent_expr.has_value()) {
 		return true;
