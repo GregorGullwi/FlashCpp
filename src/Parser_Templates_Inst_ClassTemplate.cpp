@@ -918,6 +918,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
 	FlashCpp::TemplateInstantiationKey cache_key =
 		FlashCpp::makeInstantiationKey(template_name_handle, template_args);
+	bool current_wants_full = (template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly);
+	auto cached_shape_only_needs_upgrade = [&]() {
+		if (!current_wants_full) {
+			return false;
+		}
+		auto cached = gTemplateRegistry.getInstantiation(cache_key);
+		return cached.has_value() &&
+			   cached->is<StructDeclarationNode>() &&
+			   cached->as<StructDeclarationNode>().is_shape_only();
+	};
 	bool can_use_raw_cache_key = true;
 	if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 		template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
@@ -938,7 +948,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				cached->is<StructDeclarationNode>() ? &cached->as<StructDeclarationNode>() : nullptr;
 			bool cached_is_shape_only = cached_struct && cached_struct->is_shape_only();
 			bool cached_failed_substitution = cached_struct && cached_struct->is_failed_substitution();
-			bool current_wants_full = (template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly);
 			if (cached_is_shape_only && current_wants_full) {
 				FLASH_LOG_FORMAT(Templates, Debug,
 					"Cache hit for '{}' is ShapeOnly but current mode is full — re-entering instantiation",
@@ -1613,8 +1622,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Check if we already have this instantiation
 	auto existing_type = getTypesByNameMap().find(instantiated_name);
 	if (existing_type != getTypesByNameMap().end()) {
+		if (cached_shape_only_needs_upgrade()) {
+			FLASH_LOG_FORMAT(Templates, Debug,
+				"Type-map hit for '{}' is backed by a ShapeOnly instantiation — re-entering full instantiation",
+				StringTable::getStringView(instantiated_name));
+		} else {
 		PROFILE_TEMPLATE_CACHE_HIT(std::string(template_name));
 		return std::nullopt;
+		}
 	}
 	PROFILE_TEMPLATE_CACHE_MISS(std::string(template_name));
 
@@ -1879,8 +1894,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (original_instantiated_name != instantiated_name) {
 				getTypesByNameMap()[original_instantiated_name] = existing_type_with_defaults->second;
 			}
-			FLASH_LOG(Templates, Debug, "Found existing instantiation with filled-in defaults");
-			return std::nullopt;
+			if (cached_shape_only_needs_upgrade()) {
+				FLASH_LOG(Templates, Debug, "Found ShapeOnly instantiation with filled-in defaults; re-entering full instantiation");
+			} else {
+				FLASH_LOG(Templates, Debug, "Found existing instantiation with filled-in defaults");
+				return std::nullopt;
+			}
 		}
 	}
 
@@ -4117,11 +4136,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Check if we already have this instantiation (after filling defaults)
 	existing_type = getTypesByNameMap().find(instantiated_name);
 	if (existing_type != getTypesByNameMap().end()) {
-		FLASH_LOG(Templates, Debug, "Type already exists, returning nullopt");
-		// Already instantiated, return the existing struct node
-		// We need to find the struct node in the AST
-		// For now, just return nullopt and let the type lookup handle it
-		return std::nullopt;
+		if (cached_shape_only_needs_upgrade()) {
+			FLASH_LOG(Templates, Debug, "Type already exists from ShapeOnly instantiation, continuing to upgrade");
+		} else {
+			FLASH_LOG(Templates, Debug, "Type already exists, returning nullopt");
+			// Already instantiated, return the existing struct node
+			// We need to find the struct node in the AST
+			// For now, just return nullopt and let the type lookup handle it
+			return std::nullopt;
+		}
 	}
 
 	// Resolve the namespace where the template was DECLARED, not where it's being instantiated.
