@@ -2266,11 +2266,13 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		in_sfinae_context_ = true;
 		ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
 		FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
-		if (template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly) {
-			template_instantiation_mode_ = outer_sfinae_context
+		const bool preserve_shape_only_mode =
+			template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly;
+		template_instantiation_mode_ = preserve_shape_only_mode
+			? TemplateInstantiationMode::ShapeOnly
+			: (outer_sfinae_context
 				? TemplateInstantiationMode::SfinaeProbe
-				: TemplateInstantiationMode::HardUse;
-		}
+				: TemplateInstantiationMode::HardUse);
 
 		// Try to instantiate this specific template
 		std::optional<ASTNode> result = try_instantiate_single_template(

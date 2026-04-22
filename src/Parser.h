@@ -701,8 +701,11 @@ private:
 	bool instantiating_lazy_member_ = false;
 
 	enum class TemplateInstantiationMode {
+		// Ordinary instantiation request: commit cache, symbol-table, and AST/lazy-member side effects.
 		HardUse,
+		// SFINAE-driven probe: substitution failures are soft and the caller may try another overload.
 		SfinaeProbe,
+		// Declaration-time shape probe: compute types/signatures only and suppress commit-time side effects.
 		ShapeOnly
 	};
 
