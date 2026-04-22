@@ -1703,8 +1703,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		TemplateTypeArg arg(type_node);
 		arg.is_pack = is_pack_expansion;
 		arg.member_pointer_kind = member_pointer_kind;
-		if (template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe &&
-			(type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias)) {
+		if (type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias) {
 			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_node.token().value());
 			for (const auto& subst : template_param_substitutions_) {
 				if (subst.is_value_param && subst.param_name == type_name_handle) {
