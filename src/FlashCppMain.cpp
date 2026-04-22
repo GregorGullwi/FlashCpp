@@ -407,7 +407,7 @@ int main_impl(int argc, char* argv[]) {
 		} catch (const CompileError& e) {
 			// Phase 1 violations (e.g. non-dependent name not visible at template definition)
 			// are thrown as CompileError from within template instantiation during parsing.
-			std::string notes = std::move(g_parser_instantiation_notes);
+			std::string notes = g_parser_instantiation_notes;
 			g_parser_instantiation_notes.clear();
 			FLASH_LOG(Parser, Error, "error: ", e.what(), notes);
 			std::cerr << "error: " << e.what() << notes << std::endl;
@@ -441,7 +441,7 @@ int main_impl(int argc, char* argv[]) {
 		try {
 			sema.run();
 		} catch (const CompileError& e) {
-			std::string notes = std::move(g_parser_instantiation_notes);
+			std::string notes = g_parser_instantiation_notes;
 			g_parser_instantiation_notes.clear();
 			FLASH_LOG(General, Error, "error: ", e.what(), notes);
 			std::cerr << "error: " << e.what() << notes << std::endl;
