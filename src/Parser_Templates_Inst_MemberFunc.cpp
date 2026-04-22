@@ -142,6 +142,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	qualified_name_sb.append(struct_name).append("::").append(member_name);
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(qualified_name_sb);
 
+	// Push a parser-level instantiation context for provenance tracking and backtraces.
+	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, qualified_name);
+
 	// Look up the template in the registry
 	auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
 
