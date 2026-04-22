@@ -113,7 +113,7 @@ hypothesis) to **`registerAndNormalizeLateMaterializedTopLevelNode` at
 `try_instantiate_single_template`.  The log diagnostic immediately above it made
 the divergence unambiguous:
 
-```
+```text
 # Baseline (source-order first-match), overload 2 wins:
 'swap': has_body=true, has_unresolved_params=true, registering=false
 
@@ -153,5 +153,4 @@ consistently to all `TypeSpecifierNode` use-sites.
 **Fix approach:** Add a `bool is_dependent_` field to `TypeSpecifierNode` (or reuse
 `DependentPlaceholderKind`) set at placeholder creation and cleared on resolution.
 Replace the size-based guard with an explicit predicate `TypeSpecifierNode::is_dependent()`.
-
 

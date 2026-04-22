@@ -293,7 +293,7 @@ The real leak is **`registerAndNormalizeLateMaterializedTopLevelNode` at
 (`'{}': has_body={}, has_unresolved_params={}, registering={}` at
 `Parser_Templates_Inst_Deduction.cpp:3693`) makes the divergence unambiguous:
 
-```
+```text
 # Baseline (source-order first-match), overload 2 wins:
 'swap': has_body=true, has_unresolved_params=true, registering=false
 
