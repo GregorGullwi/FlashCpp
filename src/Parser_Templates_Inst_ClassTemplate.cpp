@@ -929,8 +929,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	if (can_use_raw_cache_key) {
 		auto cached = gTemplateRegistry.getInstantiation(cache_key);
 		if (cached.has_value()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} args", template_name, template_args.size());
-			return std::nullopt; // Already instantiated - return nullopt to indicate success
+			// If the cached entry was produced under ShapeOnly mode but the current
+			// request is a full materialization (HardUse or SfinaeProbe), treat the
+			// cache as a miss so we re-enter instantiation and fully materialise the
+			// struct.  This is safe because ShapeOnly entries are always committed to
+			// the cache, so a concurrent ShapeOnly path will still hit them.
+			const StructDeclarationNode* cached_struct =
+				cached->is<StructDeclarationNode>() ? &cached->as<StructDeclarationNode>() : nullptr;
+			bool cached_is_shape_only = cached_struct && cached_struct->is_shape_only();
+			bool current_wants_full = (template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly);
+			if (cached_is_shape_only && current_wants_full) {
+				FLASH_LOG_FORMAT(Templates, Debug,
+					"Cache hit for '{}' is ShapeOnly but current mode is full — re-entering instantiation",
+					template_name);
+				// Fall through to re-instantiate
+			} else {
+				FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} args", template_name, template_args.size());
+				return std::nullopt; // Already instantiated - return nullopt to indicate success
+			}
 		}
 	}
 
@@ -3549,6 +3565,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Mark instantiation complete with the type index
 			FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
 			in_progress_guard.dismiss(); // Don't remove from in_progress in destructor
+
+			// Tag the struct with its materialization level before caching.
+			if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
+				instantiated_struct.as<StructDeclarationNode>().mark_shape_only();
+			} else {
+				instantiated_struct.as<StructDeclarationNode>().mark_materialized();
+			}
 
 			// Register in cache for O(1) lookup on future instantiations
 			gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
@@ -8580,6 +8603,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Mark instantiation complete with the type index
 	FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
 	in_progress_guard.dismiss(); // Don't remove from in_progress in destructor
+
+	// Tag the struct with its materialization level before caching.
+	if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
+		instantiated_struct.as<StructDeclarationNode>().mark_shape_only();
+	} else {
+		instantiated_struct.as<StructDeclarationNode>().mark_materialized();
+	}
 
 	// Register in cache for O(1) lookup on future instantiations
 	gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);

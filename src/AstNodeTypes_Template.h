@@ -1105,6 +1105,53 @@ public:
 		return deferred_static_asserts_;
 	}
 
+	// ── Struct-level body-state (parallel to FunctionDeclarationNode::BodyStateTag) ──
+	//   NotMaterialized   — freshly constructed; not yet instantiated.
+	//   ShapeOnly         — type layout/signatures computed under ShapeOnly mode;
+	//                       member function bodies have NOT been materialised.
+	//   Materialized      — full instantiation committed (HardUse / SfinaeProbe path).
+	//   FailedSubstitution — substitution failed; node must not be re-probed.
+	enum class StructBodyStateTag : uint8_t {
+		NotMaterialized = 0,
+		ShapeOnly = 1,
+		Materialized = 2,
+		FailedSubstitution = 3,
+	};
+
+	StructBodyStateTag struct_body_state_tag() const { return struct_body_state_tag_; }
+
+	bool is_shape_only() const { return struct_body_state_tag_ == StructBodyStateTag::ShapeOnly; }
+	bool is_materialized() const { return struct_body_state_tag_ == StructBodyStateTag::Materialized; }
+	bool is_failed_substitution() const { return struct_body_state_tag_ == StructBodyStateTag::FailedSubstitution; }
+
+	// True when a full instantiation should still be performed (i.e. the struct
+	// has not yet been fully committed or fatally failed).
+	bool needs_body_materialization() const {
+		return struct_body_state_tag_ == StructBodyStateTag::NotMaterialized ||
+			   struct_body_state_tag_ == StructBodyStateTag::ShapeOnly;
+	}
+
+	void mark_shape_only() {
+		assert(struct_body_state_tag_ == StructBodyStateTag::NotMaterialized);
+		struct_body_state_tag_ = StructBodyStateTag::ShapeOnly;
+	}
+
+	void mark_materialized() {
+		assert(struct_body_state_tag_ == StructBodyStateTag::NotMaterialized ||
+			   struct_body_state_tag_ == StructBodyStateTag::ShapeOnly ||
+			   struct_body_state_tag_ == StructBodyStateTag::Materialized);
+		struct_body_state_tag_ = StructBodyStateTag::Materialized;
+	}
+
+	void mark_failed_substitution(StringHandle reason) {
+		assert(struct_body_state_tag_ == StructBodyStateTag::NotMaterialized ||
+			   struct_body_state_tag_ == StructBodyStateTag::ShapeOnly);
+		struct_body_state_tag_ = StructBodyStateTag::FailedSubstitution;
+		struct_substitution_failure_reason_ = reason;
+	}
+
+	StringHandle struct_substitution_failure_reason() const { return struct_substitution_failure_reason_; }
+
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
 		outer_template_param_names_.clear();
@@ -1160,6 +1207,8 @@ private:
 	std::vector<DeferredStaticAssert> deferred_static_asserts_;	// Static_asserts deferred during template definition
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
+	StructBodyStateTag struct_body_state_tag_ = StructBodyStateTag::NotMaterialized;
+	StringHandle struct_substitution_failure_reason_;  // Populated iff struct_body_state_tag_ == FailedSubstitution
 };
 
 // Template class declaration node - represents a class template
