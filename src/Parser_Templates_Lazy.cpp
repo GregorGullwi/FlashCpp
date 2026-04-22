@@ -605,6 +605,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	// Get the function body - either from definition or by re-parsing from saved position
 	std::optional<ASTNode> body_to_substitute;
+	StringHandle body_reparse_failure_reason;
 
 	const bool has_saved_body_position = func_decl.has_template_body_position();
 	const bool has_parsed_body = func_decl.is_materialized();
@@ -684,6 +685,19 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		// Restore original position
 		restore_lexer_position_only(current_pos);
 		discard_saved_token(current_pos);
+		if (!body_to_substitute.has_value()) {
+			StringBuilder reason_builder;
+			body_reparse_failure_reason = StringTable::getOrInternStringHandle(
+				reason_builder
+					.append("failed to reparse lazy member body for ")
+					.append(StringTable::getStringView(lazy_info.identity.instantiated_owner_name))
+					.append("::")
+					.append(StringTable::getStringView(fn_name_handle))
+					.commit());
+			new_func_ref.mark_failed_substitution(body_reparse_failure_reason);
+			FLASH_LOG(Templates, Debug, "Marked lazy member function as failed substitution after body reparse: ",
+					  StringTable::getStringView(body_reparse_failure_reason));
+		}
 	} else if (has_parsed_body) {
 		// Use the already-parsed definition only when no deferred body position is available.
 		body_to_substitute = func_decl.get_definition();

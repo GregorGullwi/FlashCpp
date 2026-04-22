@@ -456,12 +456,11 @@ bool Parser::tryAppendDefaultTemplateArg(
 			return false;
 		}
 
-		bool prev_sfinae_context = in_sfinae_context_;
 		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 		FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-		in_sfinae_context_ = true;
-		ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
+		FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
+		template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
 		parsing_template_depth_ = 0;
 		clearCurrentTemplateParameters();
 		sfinae_type_map_.clear();
@@ -489,12 +488,11 @@ bool Parser::tryAppendDefaultTemplateArg(
 	};
 	if (param.kind() == TemplateParameterKind::Type) {
 		if (param.has_default_value_position() && !template_args.empty()) {
-			bool prev_sfinae_context = in_sfinae_context_;
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-			in_sfinae_context_ = true;
-			ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
+			FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
+			template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
 			parsing_template_depth_ = 0;
 			clearCurrentTemplateParameters();
 			sfinae_type_map_.clear();
@@ -1574,12 +1572,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// may resolve to concrete types (e.g., bool) even when they contain dependent expressions.
 	// The re-parse with concrete template arguments will fail if substitution is invalid.
 		if (func_decl.has_trailing_return_type_position()) {
-			bool prev_sfinae_context = in_sfinae_context_;
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-			in_sfinae_context_ = true;
-			ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
+			FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
+			template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
 			parsing_template_depth_ = 0;	 // suppress template body context during SFINAE
 			clearCurrentTemplateParameters();  // No dependent names during SFINAE
 			sfinae_type_map_.clear();
@@ -2216,7 +2213,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// Try each template overload in order.
 	// For SFINAE: collect all viable matches and return the most specific one.
 	// For non-SFINAE: return the first successful non-deferred match.
-	bool outer_sfinae_context = in_sfinae_context_;
+	bool outer_sfinae_context = template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe;
 
 	struct SfinaeCandidateEntry {
 		ASTNode result;
@@ -2261,10 +2258,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Trying template overload {} for '{}'",
 						 recursion_depth, overload_idx, template_name);
 
-		// Enable SFINAE context for this instantiation attempt
-		bool prev_sfinae_context = in_sfinae_context_;
-		in_sfinae_context_ = true;
-		ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
+		// Enter the mode appropriate for this instantiation attempt.
 		FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
 		template_instantiation_mode_ = selectTemplateInstantiationMode(outer_sfinae_context);
 
@@ -2817,7 +2811,11 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	FLASH_LOG_FORMAT(Templates, Debug, "Should re-parse: {}", should_reparse);
 
 	if (should_reparse) {
-		FLASH_LOG_FORMAT(Templates, Debug, "Re-parsing function declaration for SFINAE validation, in_sfinae_context={}", in_sfinae_context_);
+		FLASH_LOG_FORMAT(
+			Templates,
+			Debug,
+			"Re-parsing function declaration for SFINAE validation, sfinae_probe={}",
+			template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe);
 
 		// Cycle detection for trailing return type re-parsing: when evaluating a
 		// function's decltype trailing return type, encountering the same function
@@ -3549,6 +3547,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 	}
 
+	const bool commit_instantiation = shouldCommitTemplateInstantiationArtifacts();
+	bool body_reparse_failed = false;
+
 	// Handle the function body
 	// Check if the template has a body position stored for re-parsing
 	if (func_decl.has_template_body_position()) {
@@ -3591,6 +3592,19 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		const std::vector<ASTNode>& func_template_params = template_func.template_parameters();
 		reparse_template_function_body(new_func_ref, func_decl, func_template_params, template_args,
 									   /*preserve_ref_qualifier=*/false);
+		if (!new_func_ref.is_materialized()) {
+			StringBuilder reason_builder;
+			StringHandle body_reparse_failure_reason = StringTable::getOrInternStringHandle(
+				reason_builder
+					.append("failed to reparse template function body for ")
+					.append(saved_mangled_name)
+					.commit());
+			new_func_ref.mark_failed_substitution(body_reparse_failure_reason);
+			gTemplateRegistry.markFailedInstantiation(key, overload_id);
+			body_reparse_failed = true;
+			FLASH_LOG(Templates, Debug, "Marked template instantiation as failed substitution after body reparse: ",
+					  StringTable::getStringView(body_reparse_failure_reason));
+		}
 
 		// Restore pack parameter info (after substitution so PackExpansionExprNode can use it).
 		has_parameter_packs_ = saved_has_parameter_packs;
@@ -3604,6 +3618,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 		// Restore outer pack parameter info (must happen on both branches)
 		pack_param_info_ = std::move(saved_outer_pack_param_info);
+	}
+
+	if (body_reparse_failed) {
+		if (cacheable_instantiation && commit_instantiation) {
+			gTemplateRegistry.registerInstantiation(key, new_func_node);
+		}
+		return std::nullopt;
 	}
 
 	copy_function_properties(new_func_ref, func_decl);
@@ -3682,7 +3703,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Register the instantiation
-	const bool commit_instantiation = shouldCommitTemplateInstantiationArtifacts();
 	if (cacheable_instantiation && commit_instantiation) {
 		gTemplateRegistry.registerInstantiation(key, new_func_node);
 	}

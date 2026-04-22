@@ -231,7 +231,8 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			}
 		}
 
-		if (in_sfinae_context_ && object_struct_name.has_value() && !sfinae_type_map_.empty()) {
+		if (template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe &&
+			object_struct_name.has_value() && !sfinae_type_map_.empty()) {
 			StringHandle obj_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
 			auto subst_it = sfinae_type_map_.find(obj_name_handle);
 			if (subst_it != sfinae_type_map_.end()) {
@@ -293,7 +294,8 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 				arg_types);
 		}
 
-		if (object_struct_name.has_value() && !instantiating_lazy_member_ && !in_sfinae_context_) {
+		if (object_struct_name.has_value() && !instantiating_lazy_member_ &&
+			template_instantiation_mode_ == TemplateInstantiationMode::HardUse) {
 			std::string_view func_name = member_name_token.value();
 			if (!func_name.empty()) {
 				StringHandle class_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
@@ -318,7 +320,8 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			}
 		}
 
-		if (object_struct_name.has_value() && !in_sfinae_context_ &&
+		if (object_struct_name.has_value() &&
+			template_instantiation_mode_ == TemplateInstantiationMode::HardUse &&
 			!known_member_func && !instantiated_func.has_value()) {
 			auto checkHasMemberTemplate = [&]() {
 				StringBuilder qualified_name_sb;
@@ -365,7 +368,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 		// the argument count, the call is ill-formed.
 		if (!known_member_func && !instantiated_func.has_value() &&
 			!explicit_template_args && object_struct_name.has_value() &&
-			!in_sfinae_context_) {
+			template_instantiation_mode_ == TemplateInstantiationMode::HardUse) {
 			if (auto type_opt = get_expression_type(*result); type_opt.has_value() &&
 														  is_struct_type(type_opt->category())) {
 				TypeIndex type_idx = type_opt->type_index();

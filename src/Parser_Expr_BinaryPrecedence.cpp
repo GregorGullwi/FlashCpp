@@ -192,16 +192,15 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		};
 
 		// Phase 1: try the template registry (covers most non-ADL templates)
-		// Must set SFINAE context so substitution failures return nullopt
+		// Must enter SfinaeProbe mode so substitution failures return nullopt
 		// instead of throwing a hard CompileError (same as Phase 2 below).
-		bool previous_sfinae_phase1 = in_sfinae_context_;
-		in_sfinae_context_ = true;
+		FlashCpp::ScopedState guard_instantiation_mode_phase1(template_instantiation_mode_);
+		template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
 		if (std::optional<ASTNode> instantiated = try_instantiate_template(op_name, arg_types); instantiated.has_value()) {
 			if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
 				addSuccessfulCandidate(*func_decl, OperatorTemplateCandidateSource::Registry, 0);
 			}
 		}
-		in_sfinae_context_ = previous_sfinae_phase1;
 
 		// Phase 2: collect remaining candidates via ordinary + ADL-only lookup
 		std::vector<ASTNode> candidates = gSymbolTable.lookup_all(op_name);
@@ -217,14 +216,13 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				continue;
 			}
 
-			bool previous_sfinae_context = in_sfinae_context_;
-			in_sfinae_context_ = true;
+			FlashCpp::ScopedState guard_instantiation_mode_phase2(template_instantiation_mode_);
+			template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
 			std::optional<ASTNode> instantiated = try_instantiate_single_template(
 				candidate,
 				op_name,
 				arg_types,
 				template_recursion_depth);
-			in_sfinae_context_ = previous_sfinae_context;
 
 			if (instantiated.has_value()) {
 				if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
@@ -632,7 +630,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				// When in SFINAE context (e.g., decltype(a + b)), check that the
 				// operator is actually defined for the operand types. For struct types,
 				// this means checking member operator overloads and free operator functions.
-				if (in_sfinae_context_ && !sfinae_type_map_.empty()) {
+				if (template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe &&
+					!sfinae_type_map_.empty()) {
 					auto resolve_operand_type_index = [&](const ASTNode& operand) -> TypeIndex {
 						if (!operand.is<ExpressionNode>())
 							return TypeIndex{};

@@ -700,11 +700,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 		// SFINAE for trailing return type: always re-parse when trailing position is available
 		if (func_decl.has_trailing_return_type_position()) {
-			bool prev_sfinae_context = in_sfinae_context_;
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-			in_sfinae_context_ = true;
+			FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
+			template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
 			parsing_template_depth_ = 0;	 // suppress template body context during SFINAE
 			clearCurrentTemplateParameters();  // No dependent names during SFINAE
 			sfinae_type_map_.clear();
@@ -727,8 +727,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			auto return_type_result = parse_type_specifier();
 			gSymbolTable.exit_scope();
 			restore_lexer_position_only(sfinae_pos);
-			in_sfinae_context_ = prev_sfinae_context;
-			// guard_ptb, guard_param_names and guard_sfinae_map restore their fields automatically
+			// guard_ptb, guard_param_names, guard_sfinae_map, and guard_instantiation_mode
+			// restore their fields automatically
 
 			if (return_type_result.is_error() || !return_type_result.node().has_value()) {
 				continue;  // SFINAE: this overload's return type failed, try next
