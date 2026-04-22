@@ -1730,7 +1730,7 @@ inline bool TypeSpecifierNode::matches_signature(const TypeSpecifierNode& other)
 // recursing forever while the public wrapper chooses a traversal budget.
 inline bool templateArgInfoContainsDependentPlaceholderImpl(const TypeInfo::TemplateArgInfo& arg_info, size_t depth_limit);
 
-inline size_t maxDependentPlaceholderDepth() {
+inline size_t getDependentPlaceholderTraversalBudget() {
 	// Use a fixed safe recursion budget so pathological graphs cannot scale stack
 	// usage with translation-unit size. Valid template/type nesting should remain
 	// far below this limit.
@@ -1779,7 +1779,7 @@ inline bool typeIndexContainsDependentPlaceholder(TypeIndex type_index, size_t d
 }
 
 inline bool typeIndexContainsDependentPlaceholder(TypeIndex type_index) {
-	return typeIndexContainsDependentPlaceholder(type_index, maxDependentPlaceholderDepth());
+	return typeIndexContainsDependentPlaceholder(type_index, getDependentPlaceholderTraversalBudget());
 }
 
 inline bool templateArgInfoContainsDependentPlaceholderImpl(const TypeInfo::TemplateArgInfo& arg_info, size_t depth_limit) {
@@ -1793,7 +1793,7 @@ inline bool templateArgInfoContainsDependentPlaceholderImpl(const TypeInfo::Temp
 }
 
 inline bool templateArgInfoContainsDependentPlaceholder(const TypeInfo::TemplateArgInfo& arg_info) {
-	return templateArgInfoContainsDependentPlaceholderImpl(arg_info, maxDependentPlaceholderDepth());
+	return templateArgInfoContainsDependentPlaceholderImpl(arg_info, getDependentPlaceholderTraversalBudget());
 }
 
 inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_spec) {
