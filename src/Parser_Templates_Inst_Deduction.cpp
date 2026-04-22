@@ -64,10 +64,47 @@ static TypeInfo& registerTemplateTypeBinding(
 	StringHandle param_name,
 	const TemplateTypeArg& arg) {
 	if (arg.type_index.is_valid()) {
+		if (arg.cv_qualifier != CVQualifier::None) {
+			// Build a TypeSpecifierNode that carries the cv_qualifier so that
+			// resolveAliasTypeInfo (which reads aliasTypeSpecifier()->cv_qualifier())
+			// can recover it when the bound name is later used as a template argument.
+			// Without this, is_const<First> where First=const int sees plain int and
+			// the is_const<const T> specialization pattern fails to match.
+			TypeSpecifierNode alias_spec(
+				arg.type_index.withCategory(arg.typeEnum()),
+				static_cast<unsigned char>(get_type_size_bits(arg.typeEnum())),
+				Token(), arg.cv_qualifier, ReferenceQualifier::None);
+			return add_type_alias_copy(
+				param_name,
+				arg.type_index.withCategory(arg.typeEnum()),
+				getTypeSizeFromTemplateArgument(arg),
+				alias_spec);
+		}
 		return add_type_alias_copy(
 			param_name,
 			arg.type_index.withCategory(arg.typeEnum()),
 			getTypeSizeFromTemplateArgument(arg));
+	}
+	// For primitive types the TypeIndex carries index=0 (is_valid()==false) but
+	// carries the TypeCategory in its category bits.  Still need to preserve
+	// cv_qualifier when binding e.g. First=const int: use a TypeAlias entry
+	// backed by TypeIndex{0, typeEnum()} so that resolveAliasTypeInfo can reach
+	// the primitive type via nativeTypeIndex() and pick up the aliasTypeSpecifier.
+	if (arg.cv_qualifier != CVQualifier::None) {
+		FLASH_LOG_FORMAT(Templates, Debug,
+			"registerTemplateTypeBinding(prim): param='{}' cv={} type={} — NEW cv path",
+			StringTable::getStringView(param_name),
+			static_cast<int>(arg.cv_qualifier),
+			static_cast<int>(arg.typeEnum()));
+		TypeSpecifierNode alias_spec(
+			TypeIndex{0, arg.typeEnum()},
+			static_cast<unsigned char>(get_type_size_bits(arg.typeEnum())),
+			Token(), arg.cv_qualifier, ReferenceQualifier::None);
+		return add_type_alias_copy(
+			param_name,
+			TypeIndex{0, arg.typeEnum()},
+			getTypeSizeFromTemplateArgument(arg),
+			alias_spec);
 	}
 	return add_template_param_type(
 		param_name,
@@ -2264,33 +2301,32 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			}
 		}
 		// Collect all candidates at the best specificity level.
-		bool any_deleted_at_best = false;
+		bool all_best_deleted = true;
+		bool saw_best = false;
 		const SfinaeCandidateEntry* best_non_deleted = nullptr;
 		for (const auto& candidate : sfinae_candidates) {
 			if (candidate.specificity == best_specificity) {
-				if (candidate.is_deleted) {
-					any_deleted_at_best = true;
-				} else if (!best_non_deleted) {
-					best_non_deleted = &candidate;
+				saw_best = true;
+				if (!candidate.is_deleted) {
+					all_best_deleted = false;
+					if (!best_non_deleted) {
+						best_non_deleted = &candidate;
+					}
 				}
 			}
 		}
-		// If any best-specificity candidate is deleted → SFINAE failure.
-		// This handles the case where a deleted overload explicitly catches
-		// a class of inputs (e.g., pair<const F,S>) that should not be swappable.
-		//
-		// TODO (item #3 follow-up): once the enable_if<false> reparse path
-		// reliably fails for every shape of dependent return type (currently
-		// it misses some e.g. `pair<First, Second>&` when the enable_if
-		// predicate is a compound boolean like `!is_const<F> && !is_const<S>`
-		// and parses through without tripping is_incomplete_instantiation_),
-		// this heuristic can be narrowed to "all best-spec candidates are
-		// `= delete`". Items #1 and #2 of the plan (per-overload failure
-		// memoization and mark_failed_substitution wiring) are done; what
-		// remains is tightening the reparse guard for that specific shape.
-		if (any_deleted_at_best) {
+		// SFINAE failure only when *every* best-specificity candidate is `= delete`.
+		// A non-deleted candidate at best specificity is the correct match; a mix of
+		// deleted and non-deleted means the non-deleted one wins (the deleted overloads
+		// are explicit SFINAE sentinels for a different input shape).
+		// Previously any-deleted fired even when a viable non-deleted overload existed at
+		// the same specificity level. Now that registerTemplateTypeBinding preserves
+		// cv_qualifier so is_const<const T> correctly matches, enable_if<false>
+		// substitution failures are caught in the reparse path before reaching here,
+		// so the remaining candidates at best specificity are all genuinely viable.
+		if (saw_best && all_best_deleted) {
 			FLASH_LOG_FORMAT(Templates, Debug,
-				"[depth={}]: SFINAE failure for '{}': deleted candidate at best specificity={}",
+				"[depth={}]: SFINAE failure for '{}': all best-specificity candidates are = delete (specificity={})",
 				recursion_depth, template_name, best_specificity);
 			recursion_depth--;
 			return std::nullopt;
