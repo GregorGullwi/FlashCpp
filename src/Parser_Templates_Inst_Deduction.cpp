@@ -3589,6 +3589,18 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		const std::vector<ASTNode>& func_template_params = template_func.template_parameters();
 		reparse_template_function_body(new_func_ref, func_decl, func_template_params, template_args,
 									   /*preserve_ref_qualifier=*/false);
+		if (!new_func_ref.is_materialized()) {
+			StringBuilder reason_builder;
+			StringHandle body_reparse_failure_reason = StringTable::getOrInternStringHandle(
+				reason_builder
+					.append("failed to reparse template function body for ")
+					.append(saved_mangled_name)
+					.commit());
+			new_func_ref.mark_failed_substitution(body_reparse_failure_reason);
+			gTemplateRegistry.markFailedInstantiation(key, overload_id);
+			FLASH_LOG(Templates, Debug, "Marked template instantiation as failed substitution after body reparse: ",
+					  StringTable::getStringView(body_reparse_failure_reason));
+		}
 
 		// Restore pack parameter info (after substitution so PackExpansionExprNode can use it).
 		has_parameter_packs_ = saved_has_parameter_packs;

@@ -113,10 +113,15 @@ explicit cv from the token stream. With that in place, `is_const<First>` where
 substitution failure through the existing reparse-failure path rather than
 silently succeeding. The `test_namespaced_pair_swap_sfinae_ret0.cpp` regression
 that previously blocked this narrowing no longer occurs, and the related
-KNOWN_ISSUES entry has been closed. Per-overload failure memoization via
-`mark_failed_substitution` at every reparse site is still a desirable follow-up
-(it would avoid redoing the reparse on repeat probes) but is no longer on the
-critical path for correctness.
+KNOWN_ISSUES entry has been closed. Lower-priority follow-through landed
+afterwards as well: the post-emplacement function-body reparse-failure sites in
+`Parser_Templates_Lazy.cpp::instantiateLazyMemberFunction` and
+`Parser_Templates_Inst_Deduction.cpp::try_instantiate_single_template` now call
+`mark_failed_substitution(reason)` on the fresh `FunctionDeclarationNode`, so
+repeat probes of the same node short-circuit via
+`needs_body_materialization() == false` instead of re-running the body reparse.
+This complements — rather than replaces — the existing per-overload
+`gTemplateRegistry.markFailedInstantiation(key, overload_id)` memoization.
 
 Item 2d follow-up (2026-04-22): the remaining gaps in per-overload
 failure memoization inside `try_instantiate_single_template` have been
@@ -822,10 +827,17 @@ everything they declared, instantiated roots emit only what sema
 marked ODR-used. This closes the "what should be emitted for this
 instantiation?" question at the data-structure level.
 
-Item #2 and the remaining end-to-end work under #3 remain the principled long-term fix for the SFINAE corner cases still listed in KNOWN_ISSUES. Item #2's data-model prerequisite (three-state
-`BodyStateTag` on `FunctionDeclarationNode` plus `needs_body_materialization` / `mark_failed_substitution` API) is in place as of 2026-04-21; the remaining work is wiring every
-reparse-failure site in `try_instantiate_single_template` to the new mutator so the `= delete` tie-break heuristic can be narrowed. The workarounds in place (= delete tie-breaking heuristic,
-hasLaterUsableTemplateDefinitionWithMatchingShape check) paper over real gaps in the data model. Phase 6 work on deduction-rule cleanup will benefit from both of these.
+Item #2 and the remaining end-to-end work under #3 remain the principled
+long-term fix for the SFINAE corner cases still listed in KNOWN_ISSUES. Item
+#2's data-model prerequisite (three-state `BodyStateTag` on
+`FunctionDeclarationNode` plus `needs_body_materialization` /
+`mark_failed_substitution` API) is in place, and the lower-priority Phase D
+follow-through now wires the currently-known post-emplacement function-body
+reparse-failure sites to that mutator. The workarounds still in place
+(`= delete` tie-breaking heuristic,
+`hasLaterUsableTemplateDefinitionWithMatchingShape` check) paper over real gaps
+in the data model. Phase 6 work on deduction-rule cleanup will benefit from
+both of these.
 
 Item #6 (invariant probes) is now in place: future architectural tightening can keep its guardrails checked in instead of re-inventing one-off audit files for each slice.
 
