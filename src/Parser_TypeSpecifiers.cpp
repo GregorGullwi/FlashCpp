@@ -803,6 +803,14 @@ ParseResult Parser::parse_type_specifier() {
 			TypeIndex user_type_index = type_info->type_index_;
 			int type_size_bits = static_cast<int>(type_info->sizeInBits().value);
 
+			// If the type alias carries a cv-qualifier (e.g. template binding First=const int),
+			// merge it with any explicit cv-qualifier from the token stream so that
+			// is_const<First> sees the concrete const-qualification.
+			if (const TypeSpecifierNode* alias_spec = type_info->aliasTypeSpecifier()) {
+				cv_qualifier = static_cast<CVQualifier>(
+					static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(alias_spec->cv_qualifier()));
+			}
+
 			// Determine the correct Type value from the found TypeInfo
 			if (type_info->isStruct()) {
 				const StructTypeInfo* struct_info = type_info->getStructInfo();
@@ -2395,10 +2403,14 @@ ParseResult Parser::parse_type_specifier() {
 			if (is_typedef) {
 				resolved_type = resolved_alias.typeEnum();
 				type_size = static_cast<unsigned char>(type_info_ctx->sizeInBits().value);
+				// Merge cv-qualifier from the alias chain (e.g. template binding First=const int)
+				// with any explicit cv-qualifier from the token stream.
+				CVQualifier effective_cv = static_cast<CVQualifier>(
+					static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(resolved_alias.cv_qualifier));
 				// Create TypeSpecifierNode and add pointer levels and reference qualifiers from typedef
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
 					resolved_alias.type_index.is_valid() ? resolved_alias.type_index : user_type_index.withCategory(resolved_type),
-					type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
+					type_size, type_name_token, effective_cv, ReferenceQualifier::None);
 				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
 				if (resolved_alias.isArray()) {
 					type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(resolved_alias.array_dimensions);

@@ -64,10 +64,42 @@ static TypeInfo& registerTemplateTypeBinding(
 	StringHandle param_name,
 	const TemplateTypeArg& arg) {
 	if (arg.type_index.is_valid()) {
+		if (arg.cv_qualifier != CVQualifier::None) {
+			// Build a TypeSpecifierNode that carries the cv_qualifier so that
+			// resolveAliasTypeInfo (which reads aliasTypeSpecifier()->cv_qualifier())
+			// can recover it when the bound name is later used as a template argument.
+			// Without this, is_const<First> where First=const int sees plain int and
+			// the is_const<const T> specialization pattern fails to match.
+			TypeSpecifierNode alias_spec(
+				arg.type_index.withCategory(arg.typeEnum()),
+				static_cast<unsigned char>(get_type_size_bits(arg.typeEnum())),
+				Token(), arg.cv_qualifier, ReferenceQualifier::None);
+			return add_type_alias_copy(
+				param_name,
+				arg.type_index.withCategory(arg.typeEnum()),
+				getTypeSizeFromTemplateArgument(arg),
+				alias_spec);
+		}
 		return add_type_alias_copy(
 			param_name,
 			arg.type_index.withCategory(arg.typeEnum()),
 			getTypeSizeFromTemplateArgument(arg));
+	}
+	// For primitive types the TypeIndex carries index=0 (is_valid()==false) but
+	// carries the TypeCategory in its category bits.  Still need to preserve
+	// cv_qualifier when binding e.g. First=const int: use a TypeAlias entry
+	// backed by TypeIndex{0, typeEnum()} so that resolveAliasTypeInfo can reach
+	// the primitive type via nativeTypeIndex() and pick up the aliasTypeSpecifier.
+	if (arg.cv_qualifier != CVQualifier::None) {
+		TypeSpecifierNode alias_spec(
+			TypeIndex{0, arg.typeEnum()},
+			static_cast<unsigned char>(get_type_size_bits(arg.typeEnum())),
+			Token(), arg.cv_qualifier, ReferenceQualifier::None);
+		return add_type_alias_copy(
+			param_name,
+			TypeIndex{0, arg.typeEnum()},
+			getTypeSizeFromTemplateArgument(arg),
+			alias_spec);
 	}
 	return add_template_param_type(
 		param_name,
@@ -2263,34 +2295,23 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 				best_specificity = candidate.specificity;
 			}
 		}
-		// Collect all candidates at the best specificity level.
-		bool any_deleted_at_best = false;
+		// Collect the best non-deleted candidate (if any) at the best specificity level.
+		// If every best-specificity candidate is `= delete`, treat it as a SFINAE failure:
+		// per C++17 [temp.deduct.call], selecting a deleted function in the immediate
+		// context of a decltype/SFINAE probe is itself a substitution failure. The
+		// reparse path has already rejected overloads whose return-type substitution
+		// failed (e.g. `enable_if<false>::type`), so any `= delete` candidate that
+		// reaches this collection step is a genuine explicit SFINAE sentinel.
 		const SfinaeCandidateEntry* best_non_deleted = nullptr;
 		for (const auto& candidate : sfinae_candidates) {
-			if (candidate.specificity == best_specificity) {
-				if (candidate.is_deleted) {
-					any_deleted_at_best = true;
-				} else if (!best_non_deleted) {
-					best_non_deleted = &candidate;
-				}
+			if (candidate.specificity == best_specificity && !candidate.is_deleted) {
+				best_non_deleted = &candidate;
+				break;
 			}
 		}
-		// If any best-specificity candidate is deleted → SFINAE failure.
-		// This handles the case where a deleted overload explicitly catches
-		// a class of inputs (e.g., pair<const F,S>) that should not be swappable.
-		//
-		// TODO (item #2 follow-up): once the enable_if<false> reparse path
-		// reliably fails for every shape of dependent return type (currently
-		// it misses some e.g. `pair<First, Second>&` when the enable_if is
-		// inside a typename-qualified name whose outer template is already
-		// resolvable with placeholder args), this heuristic can be narrowed
-		// to "all best-spec candidates are `= delete`". The data-model
-		// prerequisite (`FunctionDeclarationNode::mark_failed_substitution`)
-		// is already in place; what's missing is wiring every reparse-failure
-		// site to that mutator and tightening the reparse guard.
-		if (any_deleted_at_best) {
+		if (!best_non_deleted) {
 			FLASH_LOG_FORMAT(Templates, Debug,
-				"[depth={}]: SFINAE failure for '{}': deleted candidate at best specificity={}",
+				"[depth={}]: SFINAE failure for '{}': all best-specificity candidates are = delete (specificity={})",
 				recursion_depth, template_name, best_specificity);
 			recursion_depth--;
 			return std::nullopt;
@@ -2552,11 +2573,37 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Step 2: Check if we already have this instantiation
 	auto key = FlashCpp::makeInstantiationKey(
 		StringTable::getOrInternStringHandle(template_name), template_args);
+	// Per-overload discriminator for the SFINAE failure memo.  Using the
+	// address of the overload's FunctionDeclarationNode separates overloads
+	// of the same template name whose deduced arg lists and arities are
+	// identical but whose SFINAE predicates are not (e.g. two `process(T)`
+	// overloads, one enabled for `is_int<T>` and the other for `is_double<T>`).
+	const uintptr_t overload_id = reinterpret_cast<uintptr_t>(&func_decl);
+
+	// SFINAE fast-path: if a previous probe against *this same overload*
+	// already recorded a substitution failure for the same deduced args,
+	// skip the entire reparse.  This is the N²-reparse elimination.
+	if (gTemplateRegistry.isFailedInstantiation(key, overload_id)) {
+		FLASH_LOG_FORMAT(Templates, Debug,
+			"[depth={}]: SFINAE fast-path: '{}' previously failed substitution for this overload",
+			recursion_depth, template_name);
+		return std::nullopt;
+	}
+
 	const bool cacheable_instantiation = hasUsableTemplateFunctionDefinition(func_decl);
 
 	if (cacheable_instantiation) {
 		auto existing_inst = gTemplateRegistry.getInstantiation(key);
 		if (existing_inst.has_value()) {
+			// Defensive: if a future caller ever registers a FailedSubstitution
+			// node under this key, treat it as a SFINAE miss rather than a hit.
+			if (existing_inst->is<FunctionDeclarationNode>() &&
+				existing_inst->as<FunctionDeclarationNode>().failed_substitution()) {
+				FLASH_LOG_FORMAT(Templates, Debug,
+					"[depth={}]: cached instantiation for '{}' is FailedSubstitution — skipping",
+					recursion_depth, template_name);
+				return std::nullopt;
+			}
 			PROFILE_TEMPLATE_CACHE_HIT(std::string(template_name) + "_func");
 			return *existing_inst;  // Return existing instantiation
 		}
@@ -2795,22 +2842,21 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 		if (return_type_result.is_error()) {
 			// SFINAE: Return type parsing failed - this is a substitution failure.
-			// This is already the correct behavior for item #2: the nullopt
-			// propagates up to `try_instantiate_template`, which treats it as a
-			// SFINAE candidate rejection — no `= delete` heuristic needed.
-			//
-			// A future optimization can memoize the failure on a stub node
-			// registered under a per-overload key (the template-wide
-			// `TemplateInstantiationKey` currently hashes `template_name +
-			// args` and is shared across overloads, which makes it unsafe as
-			// a failure memo key). The `mark_failed_substitution` mutator on
-			// FunctionDeclarationNode is in place for that purpose.
+			// Memoize under a per-overload key (template_name + args + overload_id,
+			// where overload_id is the address of the source FunctionDeclarationNode)
+			// so the next probe for this same overload short-circuits at the
+			// entry fast-path instead of reparsing.  We can't call the node-level
+			// `mark_failed_substitution` mutator here because `new_func_ref` has
+			// not been emplaced yet (that happens further down after the return
+			// type is known).  The registry-side memo is the failure record.
 			FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type parsing failed: {}", return_type_result.error_message());
+			gTemplateRegistry.markFailedInstantiation(key, overload_id);
 			return std::nullopt;	 // Substitution failure - try next overload
 		}
 
 		if (!return_type_result.node().has_value()) {
 			FLASH_LOG(Templates, Debug, "SFINAE: Return type parsing returned no node");
+			gTemplateRegistry.markFailedInstantiation(key, overload_id);
 			return std::nullopt;
 		}
 
@@ -3221,6 +3267,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			if (const TypeInfo* rt_info = tryGetTypeInfo(rt.type_index())) {
 				if (rt_info->is_incomplete_instantiation_ && rt_info->isDependentMemberType()) {
 					FLASH_LOG(Templates, Debug, "SFINAE: unresolved dependent member alias remains after resolution: ", StringTable::getStringView(rt_info->name()));
+					gTemplateRegistry.markFailedInstantiation(key, overload_id);
 					return std::nullopt;
 				}
 			}
