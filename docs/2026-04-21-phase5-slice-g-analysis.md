@@ -116,6 +116,24 @@ KNOWN_ISSUES entry has been closed. Per-overload failure memoization via
 (it would avoid redoing the reparse on repeat probes) but is no longer on the
 critical path for correctness.
 
+Item 2d follow-up (2026-04-22): the remaining gaps in per-overload
+failure memoization inside `try_instantiate_single_template` have been
+closed at the registry level. Two SFINAE-failure sites past the
+key-computation point were previously returning `std::nullopt` without
+calling `gTemplateRegistry.markFailedInstantiation(key, overload_id)`:
+the `requires`-clause failure path and the per-parameter concept-
+constraint failure path. Both failures are deterministic in
+`(template_name, template_args, overload_id)` (pure predicates over
+the deduced arguments), so memoizing them is safe and matches the
+existing return-type / dependent-alias reparse-failure memos. Every
+post-key failure return in `try_instantiate_single_template` now
+registers the failure with the registry; repeat SFINAE probes for the
+same overload short-circuit at the `isFailedInstantiation` fast-path
+instead of re-evaluating the constraint. The cycle-detection bail-out
+in the trailing-return reparse is intentionally left unmemoized — it
+is transient, not a real substitution failure. Full suite still passes
+at 2174 pass / 149 expected-fail.
+
 Item 2c cleanup (2026-04-22, immediately after the narrowing): empirical
 verification with `Templates:debug` logs confirmed that the reparse-failure
 path in `try_instantiate_single_template` now rejects the non-deleted
