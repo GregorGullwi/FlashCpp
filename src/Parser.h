@@ -697,16 +697,26 @@ private:
 	static constexpr size_t MAX_PARSING_DEPTH = 500;	 // Reasonable limit for nested parsing
 	std::vector<std::string_view> template_param_names_;	 // Template parameter names in current scope
 
-		// Track if we're instantiating a lazy member function (to prevent infinite recursion)
+	// Track if we're instantiating a lazy member function (to prevent infinite recursion)
 	bool instantiating_lazy_member_ = false;
 
-		// Track if we're in SFINAE context (template argument substitution)
-		// When true, type resolution errors should be treated as substitution failures instead of hard errors
-	bool in_sfinae_context_ = false;
+	enum class TemplateInstantiationMode {
+		// Ordinary instantiation request: commit cache, symbol-table, and AST/lazy-member side effects.
+		HardUse,
+		// SFINAE-driven probe: substitution failures are soft and the caller may try another overload.
+		SfinaeProbe,
+		// Declaration-time shape probe: compute types/signatures only and suppress commit-time side effects.
+		ShapeOnly
+	};
 
-		// SFINAE type substitution map: maps template parameter name handles to concrete type indices.
-		// Populated during SFINAE trailing return type re-parse so the expression parser can resolve
-		// template parameter types (e.g., U → WithoutFoo) for member access validation.
+	// Track if we're in SFINAE context (template argument substitution)
+	// When true, type resolution errors should be treated as substitution failures instead of hard errors
+	bool in_sfinae_context_ = false;
+	TemplateInstantiationMode template_instantiation_mode_ = TemplateInstantiationMode::HardUse;
+
+	// SFINAE type substitution map: maps template parameter name handles to concrete type indices.
+	// Populated during SFINAE trailing return type re-parse so the expression parser can resolve
+	// template parameter types (e.g., U → WithoutFoo) for member access validation.
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual> sfinae_type_map_;
 
 		// Last parsed trailing requires clause from caller-specific requires handling
@@ -1568,6 +1578,18 @@ private:
 
 		pending_semantic_roots_.push_back(node);
 		return true;
+	}
+	bool shouldCommitTemplateInstantiationArtifacts() const {
+		return template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly;
+	}
+	TemplateInstantiationMode selectTemplateInstantiationMode(bool outer_sfinae_context) const {
+		if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
+			return TemplateInstantiationMode::ShapeOnly;
+		}
+		if (outer_sfinae_context) {
+			return TemplateInstantiationMode::SfinaeProbe;
+		}
+		return TemplateInstantiationMode::HardUse;
 	}
 	std::optional<ASTNode> lookupLateMaterializedOwningStructRoot(StringHandle struct_name) const {
 		std::string_view struct_name_view = StringTable::getStringView(struct_name);

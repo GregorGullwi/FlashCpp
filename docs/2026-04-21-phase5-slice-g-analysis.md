@@ -25,10 +25,12 @@ The core architectural recommendation from this document has largely landed alre
  - Item #9 below is now finished on this branch as well: `ReachableStructWalker.h` provides the shared reachable-struct traversal used by both `SemanticAnalysis::drainLazyMemberRegistry`
    and codegen's AST walk.
  - Item #6 below is now finished on this branch too: `Log.h` exposes `FLASH_INVARIANT_PROBE` / `FLASH_INVARIANT_PROBE_FORMAT` with off/log/fail modes, and codegen uses a
-   `Phase5StructDrain` probe to catch any future regression where a still-lazy member or constructor reaches the struct visitor.
+    `Phase5StructDrain` probe to catch any future regression where a still-lazy member or constructor reaches the struct visitor.
  - Item #4 below is now finished on this branch (2026-04-21 follow-up): `drainLazyMemberRegistry` pass 1 now skips `isInstantiatedNode(i)` roots;
    instantiated-struct members materialise only via the ODR-use snapshot pass 2. Closing the six coverage gaps (binary operator overloads, CV-aware conversion operators, struct→enum UDC,
    `markOdrUsedAllInClass`, receiver-aware `tryMaterializeLazyCallTarget`, range-for begin/end, `member_context_stack_` fallback for `this->member()`) was what unlocked it.
+ - Item #3 below is no longer pure TODO: `Parser.h` now carries a parser-side `TemplateInstantiationMode`, the three declaration-time template-default parse sites enter
+   `ShapeOnly`, and that mode suppresses the commit-time function-instantiation / lazy-member side effects that should not escape eager default-argument parsing.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -153,7 +155,7 @@ standard overload resolution expressed in one line.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-### 3. Introduce an InstantiationContext value that propagates through instantiation machinery   [TODO]
+### 3. Introduce an InstantiationContext value that propagates through instantiation machinery   [PARTIAL]
 
 Right now instantiation knows whether it's in SFINAE via a parser-global in_sfinae_context_ flag. That's a single bit of implicit state. It couldn't catch the pair<const int,
 int> case because the struct was instantiated before the SFINAE probe started.
@@ -173,8 +175,20 @@ Benefits:
  - Diagnostics get proper instantiation backtraces for free (every chained parent contributes a frame).
  - Specialization for shape-only vs. body requests becomes a type-system question, not a manual flag check.
 
-Current state (TODO): Parser.h still has in_sfinae_context_ as a plain bool. No InstantiationContext struct exists. The "non-SFINAE function-template overload selection uses
-first match instead of most-specific" KNOWN_ISSUES entry would also benefit from the richer context chain.
+Current state (PARTIAL, 2026-04-22): Parser.h still has `in_sfinae_context_` as
+the main SFINAE switch, but it now also carries a parser-side
+`TemplateInstantiationMode` scaffold (`HardUse` / `SfinaeProbe` / `ShapeOnly`).
+The three declaration-time default-template-argument parse sites in
+`Parser_Templates_Params.cpp` enter `ShapeOnly`; `try_instantiate_template`
+preserves that mode across per-overload attempts instead of downgrading it back
+to ordinary hard-use instantiation; and shape-only function instantiations now
+suppress the commit points that should not escape eager default parsing
+(`gTemplateRegistry.registerInstantiation`, `gSymbolTable.insertGlobal`,
+`registerAndNormalizeLateMaterializedTopLevelNode`, plus lazy-member registry
+writes for member and nested-member functions). This is deliberately only a
+first slice: class-template cache / queue commits still use the old implicit
+rules, and the substitution stack still reasons mostly through the legacy bool,
+so the richer context has not yet been threaded end-to-end.
 
 #### 2026-04-22 audit: KNOWN_ISSUES#2 is blocked on this item
 
@@ -411,6 +425,15 @@ regressed at least:
 by deferring legitimate trait/alias instantiations too early.  So item #3's
 broader `InstantiationContext` redesign remains valuable as architectural
 cleanup, but it is no longer the recommended path for this specific bug.
+
+**Side effect:** Fix A also closes KNOWN_ISSUES.md entry #3 ("Unresolved-type
+detection relies on fragile heuristic `UserDefined && size_in_bits() == 0`").
+The two codegen guards that entry described — the `has_unresolved_params`
+lambda in `try_instantiate_single_template`
+(`src/Parser_Templates_Inst_Deduction.cpp:3709`) and its mirror at
+`src/FlashCppMain.cpp:545` — now both call `typeSpecStillUsesDependentPlaceholder`,
+which is exactly the "reuse `DependentPlaceholderKind`" option from that entry's
+proposed fix approach.  KNOWN_ISSUES#3 has been updated to Resolved.
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -765,7 +788,7 @@ exists.
 |---|--------------------------------------------|----------|
 | 1 | Explicit ODR-use bit on lazy registry      | DONE     |
 | 2 | Shape / body phase split + variant state   | PARTIAL  |
-| 3 | InstantiationContext threading             | TODO     |
+| 3 | InstantiationContext threading             | PARTIAL  |
 | 4 | Separate instantiated-struct list          | DONE     |
 | 5 | Sema owns ODR-use; codegen pure consumer   | DONE     |
 | 6 | FLASH_INVARIANT_PROBE infrastructure       | DONE     |
@@ -790,7 +813,7 @@ everything they declared, instantiated roots emit only what sema
 marked ODR-used. This closes the "what should be emitted for this
 instantiation?" question at the data-structure level.
 
-Items #2 and #3 remain the principled long-term fix for the SFINAE corner cases still listed in KNOWN_ISSUES. Item #2's data-model prerequisite (three-state
+Item #2 and the remaining end-to-end work under #3 remain the principled long-term fix for the SFINAE corner cases still listed in KNOWN_ISSUES. Item #2's data-model prerequisite (three-state
 `BodyStateTag` on `FunctionDeclarationNode` plus `needs_body_materialization` / `mark_failed_substitution` API) is in place as of 2026-04-21; the remaining work is wiring every
 reparse-failure site in `try_instantiate_single_template` to the new mutator so the `= delete` tie-break heuristic can be narrowed. The workarounds in place (= delete tie-breaking heuristic,
 hasLaterUsableTemplateDefinitionWithMatchingShape check) paper over real gaps in the data model. Phase 6 work on deduction-rule cleanup will benefit from both of these.
@@ -804,15 +827,11 @@ const-ness plumbing from the lazy-member registry API.
 
 ## Recommended next steps
 
-1. Items #2 and #3 are now the highest-value remaining architectural follow-ups. They are the Phase 6 prerequisites for principled SFINAE handling, and the existing
-   KNOWN_ISSUES workarounds are stable enough that this can be tackled deliberately instead of as an emergency cleanup. The 2026-04-22 audit under item #3
-   confirms empirically that KNOWN_ISSUES#2 (non-SFINAE partial ordering) is blocked on item #3 (`InstantiationContext` threading): the specificity-sorted
-   non-SFINAE selection itself is a one-function change, but it cannot land alone without regressing the pair/swap SFINAE cluster.
+1. Items #2 and #3 are still the highest-value remaining architectural follow-ups. Item #3 is now partially scaffolded (`TemplateInstantiationMode::ShapeOnly`
+   exists and suppresses the eager default-argument commits that were leaking out of declaration-time parsing), so the next concrete work there is to thread
+   that richer mode through the remaining class-template cache / queue / substitution paths and then retire the parser-global bool as the real authority.
 
-2. Item #4 is still the main unfinished Slice G structural split, but it should only be retried behind a focused ODR-use coverage audit. The earlier regressions showed that the
-   data model is close, not that blind top-level filtering is safe.
-
-3. Item #7 (stable ASTNodeId) is still optional for correctness, but it becomes more attractive if the project grows more long-lived dedup/tracking sets beyond the current
+2. Item #7 (stable ASTNodeId) is still optional for correctness, but it becomes more attractive if the project grows more long-lived dedup/tracking sets beyond the current
    raw_pointer()-keyed helpers.
 
-4. Item #11 (explicit instantiation lifecycle hooks) remains a smaller cleanup that can wait until there is a clearer consumer for those phases.
+3. Item #11 (explicit instantiation lifecycle hooks) remains a smaller cleanup that can wait until there is a clearer consumer for those phases.

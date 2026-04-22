@@ -2265,6 +2265,8 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		bool prev_sfinae_context = in_sfinae_context_;
 		in_sfinae_context_ = true;
 		ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
+		FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
+		template_instantiation_mode_ = selectTemplateInstantiationMode(outer_sfinae_context);
 
 		// Try to instantiate this specific template
 		std::optional<ASTNode> result = try_instantiate_single_template(
@@ -3680,7 +3682,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Register the instantiation
-	if (cacheable_instantiation) {
+	const bool commit_instantiation = shouldCommitTemplateInstantiationArtifacts();
+	if (cacheable_instantiation && commit_instantiation) {
 		gTemplateRegistry.registerInstantiation(key, new_func_node);
 	}
 
@@ -3688,7 +3691,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Template instantiations should be globally visible, not scoped to where they're called
 	// Use insertGlobal() to add to global scope without modifying the scope stack
 	// Register with the human-readable template-specific name for template lookups
-	gSymbolTable.insertGlobal(saved_mangled_name, new_func_node);
+	if (commit_instantiation) {
+		gSymbolTable.insertGlobal(saved_mangled_name, new_func_node);
+	}
 
 	// Add to top-level AST so it gets visited by the code generator.
 	// Bodyless instantiations (no function definition) can never be compiled and must
@@ -3717,8 +3722,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	FLASH_LOG_FORMAT(Templates, Debug,
 		"'{}': has_body={}, has_unresolved_params={}, registering={}",
 		template_name, func_definition.has_value(), has_unresolved_params,
-		func_definition.has_value() && !has_unresolved_params);
-	if (func_definition.has_value() && !has_unresolved_params) {
+		func_definition.has_value() && !has_unresolved_params && commit_instantiation);
+	if (func_definition.has_value() && !has_unresolved_params && commit_instantiation) {
 		registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
 	}
 

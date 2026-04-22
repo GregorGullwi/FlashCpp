@@ -1416,7 +1416,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	// in the unity build, so it is visible here).
 	registerNestedMemberFunctionsForLazy(nested_struct, *nested_struct_info,
 										 lazy_info->parent_class_name, lazy_info->qualified_name,
-										 lazy_info->parent_template_params, lazy_info->parent_template_args);
+										 lazy_info->parent_template_params, lazy_info->parent_template_args,
+										 shouldCommitTemplateInstantiationArtifacts());
 
 	// Set the struct info on the type
 	nested_type_info.struct_info_ = std::move(nested_struct_info);

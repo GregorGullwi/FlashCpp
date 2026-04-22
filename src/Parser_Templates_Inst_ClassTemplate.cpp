@@ -6119,7 +6119,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// top-level member functions of the parent template and would otherwise
 			// never be registered, causing link errors when called.
 			registerNestedMemberFunctionsForLazy(nested_struct, *nested_struct_info,
-												 instantiated_name, qualified_name, template_params, template_args_to_use);
+												 instantiated_name, qualified_name, template_params, template_args_to_use,
+												 shouldCommitTemplateInstantiationArtifacts());
 
 			// Mark nested struct as needing a trivial default constructor when it
 			// has no explicit constructors.  Without this, default member
@@ -6793,7 +6794,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// in a moved-from state after registerLazyMember.
 				StringHandle effective_name = effectiveLookupName(lazy_info.identity);
 
-				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
+				if (shouldCommitTemplateInstantiationArtifacts()) {
+					LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
+				}
 
 				FLASH_LOG(Templates, Debug, "Registered lazy member function: ",
 						  instantiated_name, "::", decl.identifier_token().value());
