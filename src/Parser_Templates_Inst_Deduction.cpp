@@ -2230,13 +2230,14 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	overload_iteration_order.resize(all_templates->size());
 	std::iota(overload_iteration_order.begin(), overload_iteration_order.end(), size_t{0});
 	if (!outer_sfinae_context) {
+		constexpr int nonFunctionTemplateSpecificity = -1;
 
 		std::vector<int> scores;
 		scores.reserve(all_templates->size());
 		for (const auto& node : *all_templates) {
 			scores.push_back(node.is<TemplateFunctionDeclarationNode>()
 				? computeTemplateFunctionSpecificity(node.as<TemplateFunctionDeclarationNode>())
-				: -1);
+				: nonFunctionTemplateSpecificity);
 		}
 		std::stable_sort(
 			overload_iteration_order.begin(),

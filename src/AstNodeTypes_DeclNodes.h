@@ -1739,6 +1739,11 @@ inline size_t maxDependentPlaceholderDepth() {
 
 inline bool typeInfoStillUsesDependentPlaceholderImpl(const TypeInfo& type_info, size_t depth_limit) {
 	if (depth_limit == 0) {
+		// Exhausting the traversal budget means we could not prove the type is fully
+		// concrete. Treat it as still dependent so late materialization/codegen does
+		// not commit a potentially malformed instantiation. Invalid TypeIndex values
+		// below remain non-dependent because they do not represent traversable type
+		// structure at all.
 		return true;
 	}
 	if (type_info.isDependentPlaceholder()) {
