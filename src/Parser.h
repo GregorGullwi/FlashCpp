@@ -1771,9 +1771,6 @@ public:
 	/// base-class helper recursion) may reach the same freshly-created struct;
 	/// silently double-pushing would produce LNK2005 at codegen time.
 	void registerLateMaterializedTopLevelNode(const ASTNode& node) {
-		if (!shouldCommitTemplateInstantiationArtifacts()) {
-			return;
-		}
 		if (const void* key = node.raw_pointer()) {
 			auto [_, inserted] = instantiated_node_keys_.insert(key);
 			if (!inserted) {
@@ -1792,9 +1789,6 @@ public:
 	/// Does NOT normalize immediately - use for dependencies that must be processed first.
 	/// Idempotent by raw_pointer() identity (see registerLateMaterializedTopLevelNode).
 	void registerLateMaterializedTopLevelNodeFront(const ASTNode& node) {
-		if (!shouldCommitTemplateInstantiationArtifacts()) {
-			return;
-		}
 		if (const void* key = node.raw_pointer()) {
 			auto [_, inserted] = instantiated_node_keys_.insert(key);
 			if (!inserted) {
@@ -1811,9 +1805,6 @@ public:
 	/// Use this when the node must be immediately visible to subsequent lookups.
 	/// This is the preferred entry point for single-node instantiation.
 	void registerAndNormalizeLateMaterializedTopLevelNode(const ASTNode& node) {
-		if (!shouldCommitTemplateInstantiationArtifacts()) {
-			return;
-		}
 		registerLateMaterializedTopLevelNode(node);
 		normalizePendingSemanticRootsIfAvailable();
 	}
@@ -1821,9 +1812,6 @@ public:
 	/// Register AND normalize a single late-materialized AST node at the front.
 	/// Use for dependencies that must be processed first and immediately visible.
 	void registerAndNormalizeLateMaterializedTopLevelNodeFront(const ASTNode& node) {
-		if (!shouldCommitTemplateInstantiationArtifacts()) {
-			return;
-		}
 		registerLateMaterializedTopLevelNodeFront(node);
 		normalizePendingSemanticRootsIfAvailable();
 	}
