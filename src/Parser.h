@@ -697,12 +697,19 @@ private:
 	static constexpr size_t MAX_PARSING_DEPTH = 500;	 // Reasonable limit for nested parsing
 	std::vector<std::string_view> template_param_names_;	 // Template parameter names in current scope
 
-		// Track if we're instantiating a lazy member function (to prevent infinite recursion)
+	// Track if we're instantiating a lazy member function (to prevent infinite recursion)
 	bool instantiating_lazy_member_ = false;
+
+	enum class TemplateInstantiationMode {
+		HardUse,
+		SfinaeProbe,
+		ShapeOnly
+	};
 
 		// Track if we're in SFINAE context (template argument substitution)
 		// When true, type resolution errors should be treated as substitution failures instead of hard errors
 	bool in_sfinae_context_ = false;
+	TemplateInstantiationMode template_instantiation_mode_ = TemplateInstantiationMode::HardUse;
 
 		// SFINAE type substitution map: maps template parameter name handles to concrete type indices.
 		// Populated during SFINAE trailing return type re-parse so the expression parser can resolve
@@ -1569,6 +1576,9 @@ private:
 		pending_semantic_roots_.push_back(node);
 		return true;
 	}
+	bool shouldCommitTemplateInstantiationArtifacts() const {
+		return template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly;
+	}
 	std::optional<ASTNode> lookupLateMaterializedOwningStructRoot(StringHandle struct_name) const {
 		std::string_view struct_name_view = StringTable::getStringView(struct_name);
 		if (struct_name_view.empty()) {
@@ -1749,6 +1759,9 @@ public:
 	/// base-class helper recursion) may reach the same freshly-created struct;
 	/// silently double-pushing would produce LNK2005 at codegen time.
 	void registerLateMaterializedTopLevelNode(const ASTNode& node) {
+		if (!shouldCommitTemplateInstantiationArtifacts()) {
+			return;
+		}
 		if (const void* key = node.raw_pointer()) {
 			auto [_, inserted] = instantiated_node_keys_.insert(key);
 			if (!inserted) {
@@ -1767,6 +1780,9 @@ public:
 	/// Does NOT normalize immediately - use for dependencies that must be processed first.
 	/// Idempotent by raw_pointer() identity (see registerLateMaterializedTopLevelNode).
 	void registerLateMaterializedTopLevelNodeFront(const ASTNode& node) {
+		if (!shouldCommitTemplateInstantiationArtifacts()) {
+			return;
+		}
 		if (const void* key = node.raw_pointer()) {
 			auto [_, inserted] = instantiated_node_keys_.insert(key);
 			if (!inserted) {
@@ -1783,6 +1799,9 @@ public:
 	/// Use this when the node must be immediately visible to subsequent lookups.
 	/// This is the preferred entry point for single-node instantiation.
 	void registerAndNormalizeLateMaterializedTopLevelNode(const ASTNode& node) {
+		if (!shouldCommitTemplateInstantiationArtifacts()) {
+			return;
+		}
 		registerLateMaterializedTopLevelNode(node);
 		normalizePendingSemanticRootsIfAvailable();
 	}
@@ -1790,6 +1809,9 @@ public:
 	/// Register AND normalize a single late-materialized AST node at the front.
 	/// Use for dependencies that must be processed first and immediately visible.
 	void registerAndNormalizeLateMaterializedTopLevelNodeFront(const ASTNode& node) {
+		if (!shouldCommitTemplateInstantiationArtifacts()) {
+			return;
+		}
 		registerLateMaterializedTopLevelNodeFront(node);
 		normalizePendingSemanticRootsIfAvailable();
 	}

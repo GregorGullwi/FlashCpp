@@ -127,7 +127,8 @@ void registerNestedMemberFunctionsForLazy(
 	StringHandle class_template_name,
 	StringHandle qualified_name,
 	const TParams& template_params,
-	const TArgs& template_args) {
+	const TArgs& template_args,
+	bool register_lazy_members) {
 	for (const StructMemberFunctionDecl& mem_func : nested_struct.member_functions()) {
 		if (mem_func.is_constructor || mem_func.is_destructor) {
 			if (mem_func.is_constructor)
@@ -151,7 +152,9 @@ void registerNestedMemberFunctionsForLazy(
 				mem_func.is_destructor,
 				template_params,
 				template_args);
-			LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
+			if (register_lazy_members) {
+				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
+			}
 		} else if (const FunctionDeclarationNode* func_decl = get_function_decl_node(mem_func.function_declaration)) {
 			const DeclarationNode& decl = func_decl->decl_node();
 
@@ -165,7 +168,9 @@ void registerNestedMemberFunctionsForLazy(
 				template_params,
 				template_args);
 
-			LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
+			if (register_lazy_members) {
+				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
+			}
 
 			// Set is_const/volatile_member_function on the node so propagateAstProperties derives cv_qualifier.
 			{
