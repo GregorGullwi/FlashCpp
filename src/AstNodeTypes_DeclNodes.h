@@ -1777,7 +1777,7 @@ inline bool templateArgInfoContainsDependentPlaceholderImpl(const TypeInfo::Temp
 	if (arg_info.dependent_name.isValid() || arg_info.dependent_expr.has_value()) {
 		return true;
 	}
-	return typeIndexContainsDependentPlaceholder(arg_info.type_index);
+	return typeIndexContainsDependentPlaceholder(arg_info.type_index, depth_limit);
 }
 
 inline bool templateArgInfoContainsDependentPlaceholder(const TypeInfo::TemplateArgInfo& arg_info) {
