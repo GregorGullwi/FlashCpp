@@ -1,7 +1,7 @@
 # Template Instantiation / Materialization Status
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-23 (Phase 6 pack-expanded brace init: unsized array + aggregate struct)
+**Last Updated:** 2026-04-23 (Phase 6 nested wrapped pack deduction/materialization)
 
 This document is now a short status audit, not a historical scratchpad.
 Its purpose is to answer two questions clearly:
@@ -116,6 +116,12 @@ Covered by the current tree after this PR:
 - **implicit deduction** of pack element types from template-specialisation function-parameter packs (`Box<Ts>...`): `Ts` is now correctly deduced as `{int, double}` when called as `f(Box<int>{}, Box<double>{})`, covered by `tests/test_implicit_deduction_box_pack_ret0.cpp`
 - **multi-type-pack implicit deduction guard**: a variadic type parameter that is not the function-parameter pack now produces an empty pack (instead of consuming all call args). `template_param_pack_sizes_` is also populated by the implicit path so that `sizeof...` resolves correctly. Covered by `tests/test_multi_type_pack_implicit_deduction_ret0.cpp`.
 - **multi-dependent pack element type deduction**: pack element types with multiple dependent positions (e.g. `Pair<Ts,Us>...`) now correctly deduce all packs. `CallArgDeductionInfo::function_pack_dependent_param_names` tracks all dependent names; `deduceTemplateArgsFromCall` gate and inner position-matching loop were updated; `template_param_pack_sizes_` uses the call-arg range count; complex fold expansion uses `pack_param_info_` size. Covered by `tests/test_multi_dep_pack_ret0.cpp`.
+- **2026-04-23 nested wrapped pack deduction/materialization landed:** nested pack element shapes such as `Wrap<Box<Ts>>...` and `Wrap<Pair<Ts,Us>>...` now work across implicit deduction, mixed explicit+deduced calls, and class-template member/static-member function templates.
+  1. `buildDeductionMapFromCallArgs` now recursively walks template-instantiation arguments instead of only the first template-arg layer, so nested dependent names populate `function_pack_dependent_param_names` and nested non-pack matches can pre-deduce concrete args.
+  2. The variadic extraction paths (`deduceTemplateArgsFromCall`, `try_instantiate_template_explicit`, and `try_instantiate_member_function_template`) now recursively extract the concrete inner argument for the requested dependent pack parameter instead of relying on a flat top-level position.
+  3. `substitute_template_parameter` now recursively materializes nested template-placeholder arguments while resolving concrete placeholder types, which fixes member-template parameter materialization for pack-expanded `Wrap<Pair<...>>` / `Wrap<Box<...>>` parameters.
+  4. `instantiate_member_function_template_core` now rebuilds pack-parameter substitutions using the same nested dependent-name mapping, including correct parallel pack counts for co-packs.
+  - Regressions: `tests/test_nested_box_pack_implicit_deduction_ret0.cpp`, `tests/test_nested_multi_dep_pack_ret0.cpp`, `tests/test_explicit_nested_multi_dep_pack_ret0.cpp`, `tests/test_class_template_nested_pack_member_ret0.cpp`.
 
 Still open after this PR:
 
@@ -140,7 +146,7 @@ If you want the shortest accurate summary:
 - **Done:** Phases 1-4
 - **Done:** Phase 5 materialization / ownership cleanup
 - **In progress:** Phase 6 explicit-deduction cleanup
-- **Landed in Phase 6 so far:** the nondeduced-tail positional-fallback fix, canonical function-parameter → call-argument pack-slice metadata, pack-before-tail explicit deduction, mixed explicit + deduced pack support, multi-pack sizeof resolution, fold expressions with complex pack operands, implicit deduction of inner types from template-specialisation pack parameters, **multi-type-pack implicit deduction guard** (non-function type packs produce empty packs; `template_param_pack_sizes_` now populated by the implicit path), **multi-dependent pack element type deduction** (`Pair<Ts,Us>...` deduces both packs correctly)
+- **Landed in Phase 6 so far:** the nondeduced-tail positional-fallback fix, canonical function-parameter → call-argument pack-slice metadata, pack-before-tail explicit deduction, mixed explicit + deduced pack support, multi-pack sizeof resolution, fold expressions with complex pack operands, implicit deduction of inner types from template-specialisation pack parameters, **multi-type-pack implicit deduction guard** (non-function type packs produce empty packs; `template_param_pack_sizes_` now populated by the implicit path), **multi-dependent pack element type deduction** (`Pair<Ts,Us>...` deduces both packs correctly), **nested wrapped pack deduction/materialization** (`Wrap<Box<Ts>>...` / `Wrap<Pair<Ts,Us>>...` now work in free and member templates)
 - **Work left after this PR:** nested template packs and other complex mapping shapes that may surface as the test corpus grows
 
 ## Regression coverage worth keeping close
@@ -165,6 +171,10 @@ The following tests are the most relevant guardrails for this area:
 - `tests/test_implicit_deduction_box_pack_ret0.cpp`
 - `tests/test_multi_type_pack_implicit_deduction_ret0.cpp`
 - `tests/test_multi_dep_pack_ret0.cpp`
+- `tests/test_nested_box_pack_implicit_deduction_ret0.cpp`
+- `tests/test_nested_multi_dep_pack_ret0.cpp`
+- `tests/test_explicit_nested_multi_dep_pack_ret0.cpp`
+- `tests/test_class_template_nested_pack_member_ret0.cpp`
 
 ## Validation baseline refreshed on 2026-04-23 (Phase 6: multi-dependent pack element type deduction)
 
@@ -623,3 +633,26 @@ With the two brace-init-pack-expansion issues closed, all items recorded in
 Phase 6 roadmap section above still lists "nested template packs and other
 complex mapping shapes that may surface as the test corpus grows" as the
 general open-ended follow-up, but there are no concrete reproducers tracked.
+
+## Validation baseline refreshed on 2026-04-23 (Phase 6: nested wrapped pack deduction/materialization)
+
+Validation run after:
+- recursive nested dependent-name discovery / extraction in `src/Parser_Templates_Inst_Deduction.cpp`
+- recursive nested placeholder materialization in `src/Parser_Expr_QualLookup.cpp`
+- member-template pack-parameter materialization alignment in `src/Parser_Templates_Inst_MemberFunc.cpp`
+- adding:
+  - `tests/test_nested_box_pack_implicit_deduction_ret0.cpp`
+  - `tests/test_nested_multi_dep_pack_ret0.cpp`
+  - `tests/test_explicit_nested_multi_dep_pack_ret0.cpp`
+  - `tests/test_class_template_nested_pack_member_ret0.cpp`
+
+Validation commands:
+- `clang++ -std=c++20 -fsyntax-only tests/test_nested_box_pack_implicit_deduction_ret0.cpp tests/test_nested_multi_dep_pack_ret0.cpp tests/test_explicit_nested_multi_dep_pack_ret0.cpp tests/test_class_template_nested_pack_member_ret0.cpp`
+- `make sharded CXX=clang++`
+- `bash ./tests/run_all_tests.sh test_nested_box_pack_implicit_deduction_ret0.cpp test_nested_multi_dep_pack_ret0.cpp test_explicit_nested_multi_dep_pack_ret0.cpp test_class_template_nested_pack_member_ret0.cpp test_implicit_deduction_box_pack_ret0.cpp test_multi_dep_pack_ret0.cpp test_explicit_multi_dep_pack_ret0.cpp test_class_template_inner_func_pack_fold_ret0.cpp test_class_template_static_member_func_template_ret0.cpp`
+- `bash ./tests/run_all_tests.sh`
+
+Current baseline (Linux/clang):
+- **2201** compile+link+runtime passing tests (+4 from the nested wrapped-pack regressions)
+- **149** `_fail` tests failing as expected
+- overall result: **SUCCESS**
