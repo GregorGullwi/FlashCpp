@@ -2261,7 +2261,14 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				if (!init_expr_result.node().has_value()) {
 					return ParseResult::error("Expected initializer expression", current_token_);
 				}
-				init_list_ref.add_initializer(*init_expr_result.node());
+				ASTNode element_node = *init_expr_result.node();
+				if (peek() == "..."_tok) {
+					Token ellipsis_token = peek_info();
+					advance();
+					element_node = emplace_node<ExpressionNode>(
+						PackExpansionExprNode(element_node, ellipsis_token));
+				}
+				init_list_ref.add_initializer(element_node);
 			}
 		}
 
