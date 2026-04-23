@@ -1688,7 +1688,8 @@ private:
 		StringHandle qualified_name,
 		const ASTNode& template_node,
 		const std::vector<TemplateTypeArg>& template_args,
-		const FlashCpp::TemplateInstantiationKey& key);
+		const FlashCpp::TemplateInstantiationKey& key,
+		const std::vector<TypeSpecifierNode>& call_arg_types);
 	bool enqueuePendingSemanticRoot(const ASTNode& node) {
 		if (!node.has_value()) {
 			return false;
