@@ -104,6 +104,7 @@ Covered by the current tree after this PR:
 Still open after this PR:
 
 - any other richer template-param ↔ function-param mapping shapes that may surface as the test corpus grows (e.g. nested template packs, multiple dependent positions within one pack element type)
+- `deduceTemplateArgsFromCall` does not yet gate its variadic-branch `arg_index` reset / per-pack pairwise match on the current template-pack name. A symmetric guard already exists in the explicit path (`try_instantiate_template_explicit`, `src/Parser_Templates_Inst_Deduction.cpp:1422-1426`). Porting that guard to the implicit path would harden multi-pack signatures where only one pack expands in the function signature (e.g. `template<int... Ns, typename... Ts> f(Ts...)`) and multi-dependent patterns like `Pair<T, Ts>...`. No current test exercises the gap; follow-up only.
 
 ## Clear next steps
 
