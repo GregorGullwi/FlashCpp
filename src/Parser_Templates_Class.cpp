@@ -4674,6 +4674,30 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		return param_list_result;
 	}
 
+	// Shared tail helper: after all leading/trailing specifiers and the optional
+	// member-initializer-list have been consumed, skip any trailing `requires`
+	// clause and then the function body (`try{...}`, `{...}`, `= default;`,
+	// `= delete;`, or a bare `;`).  Used by both the constructor and destructor
+	// skip lambdas to avoid duplicating this logic.
+	auto skipMemberTemplateFunctionTail = [&]() {
+		if (peek() == "requires"_tok) {
+			skip_trailing_requires_clause();
+		}
+		if (peek() == "try"_tok) {
+			skip_function_body();
+		} else if (peek() == "{"_tok) {
+			skip_balanced_braces();
+		} else if (peek() == "="_tok) {
+			advance();
+			if (peek() == "default"_tok || peek() == "delete"_tok) {
+				advance();
+			}
+			consume(";"_tok);
+		} else if (peek() == ";"_tok) {
+			advance();
+		}
+	};
+
 	auto skipMemberStructTemplateConstructor = [&]() {
 		if (peek() == "("_tok) {
 			skip_balanced_parens();
@@ -4696,6 +4720,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 		}
 
+		// Handle requires clause before the member-initializer-list.
 		if (peek() == "requires"_tok) {
 			skip_trailing_requires_clause();
 		}
@@ -4737,25 +4762,13 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 		}
 
-		if (peek() == "try"_tok) {
-			skip_function_body();
-		} else if (peek() == "{"_tok) {
-			skip_balanced_braces();
-		} else if (peek() == "="_tok) {
-			advance();
-			if (peek() == "default"_tok || peek() == "delete"_tok) {
-				advance();
-			}
-			consume(";"_tok);
-		} else if (peek() == ";"_tok) {
-			advance();
-		}
+		skipMemberTemplateFunctionTail();
 	};
 
 	// Skip a member struct template destructor (~Name(...)) entirely, including
-	// any leading specifiers/virtual, trailing noexcept/override/final, and
-	// the body or `= default` / `= delete`. Destructors are re-parsed during
-	// instantiation alongside other members; just consume tokens here.
+	// any trailing noexcept/override/final/requires, and the body or
+	// `= default` / `= delete`.  Destructors are re-parsed during instantiation
+	// alongside other members; just consume tokens here.
 	auto skipMemberStructTemplateDestructor = [&]() {
 		if (!consume("~"_tok)) {
 			return;
@@ -4768,12 +4781,13 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		if (peek() == "("_tok) {
 			skip_balanced_parens();
 		}
-		// Skip trailing specifiers up to the body / `=` / `;`.
+		// Skip trailing specifiers (noexcept, override, final) up to the body,
+		// `=`, `;`, or a trailing `requires` clause.
 		int angle_depth = 0;
 		while (!peek().is_eof()) {
 			auto tk = peek();
 			if (angle_depth == 0 &&
-				(tk == "{"_tok || tk == "try"_tok || tk == ";"_tok || tk == "="_tok)) {
+				(tk == "{"_tok || tk == "try"_tok || tk == ";"_tok || tk == "="_tok || tk == "requires"_tok)) {
 				break;
 			}
 			if (tk == "("_tok) {
@@ -4785,19 +4799,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				advance();
 			}
 		}
-		if (peek() == "try"_tok) {
-			skip_function_body();
-		} else if (peek() == "{"_tok) {
-			skip_balanced_braces();
-		} else if (peek() == "="_tok) {
-			advance();
-			if (peek() == "default"_tok || peek() == "delete"_tok) {
-				advance();
-			}
-			consume(";"_tok);
-		} else if (peek() == ";"_tok) {
-			advance();
-		}
+		skipMemberTemplateFunctionTail();
 	};
 
 	// Extract parameter names for later lookup
