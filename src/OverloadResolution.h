@@ -541,6 +541,14 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				if (!to_is_rvalue && to.is_const()) {
 					auto plan = buildConversionPlan(from_base_category, to_base_category);
 					if (plan.is_valid) {
+						// C++20 [over.ics.rank] p3.3.1.4: binding an rvalue (xvalue) to
+						// T&& is preferred over binding it to const T&.  Downgrade an
+						// exact_match rank here so that a rvalue-reference parameter
+						// overload always wins over a const-lvalue-reference one when
+						// both would otherwise tie.
+						if (plan.rank == ConversionRank::ExactMatch) {
+							plan.rank = ConversionRank::Conversion;
+						}
 						return plan;
 					}
 				}
