@@ -1031,18 +1031,34 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 				StringHandle pack_type_name = fp_type.token().handle();
 				// For simple "Ts... args" the token IS the template parameter name.
 				// For "MyBox<Ts>... args" the token is "MyBox" (not a template param).
-				// In those cases, look inside the TypeInfo template args for a dependent name.
+				// For "Pair<Ts,Us>... args" the token is "Pair" (not a template param).
+				// In those cases, look inside the TypeInfo template args for dependent names.
+				// All dependent names found are recorded in function_pack_dependent_param_names
+				// so that multi-dependent pack element types (e.g. Pair<Ts,Us>) allow both
+				// Ts and Us to consume their corresponding position from each call argument.
 				if (!pack_type_name.isValid() || !tparam_nodes_by_name.count(pack_type_name)) {
 					if (const TypeInfo* type_info = tryGetTypeInfo(fp_type.type_index())) {
 						if (type_info->isTemplateInstantiation()) {
 							for (const auto& targ : type_info->templateArgs()) {
 								if (targ.dependent_name.isValid()) {
-									pack_type_name = targ.dependent_name;
-									break;
+									if (!tparam_nodes_by_name.count(pack_type_name)) {
+										// Primary name: first dependent entry that IS a template
+										// parameter.  For "Pair<Ts,Us>..." the token gives "Pair"
+										// (valid but not a template param), so we replace it with
+										// the first actual pack parameter name ("Ts").
+										pack_type_name = targ.dependent_name;
+									}
+									deduction_info.function_pack_dependent_param_names.insert(
+										targ.dependent_name);
 								}
 							}
 						}
 					}
+				}
+				// For the simple "Ts... args" case the primary name is already in
+				// pack_type_name; add it to the set so the gate check is uniform.
+				if (pack_type_name.isValid()) {
+					deduction_info.function_pack_dependent_param_names.insert(pack_type_name);
 				}
 				deduction_info.function_pack_template_param_name = pack_type_name;
 				deduction_info.function_pack_element_type_index = fp_type.type_index();
@@ -1413,31 +1429,72 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				// NOTE: current_explicit_call_arg_types_ may be null here — the
 				// deduction-map build block (lines ~980-990) is conditional and does
 				// not guarantee non-null for this later point in the same function.
-				// IMPORTANT: only apply this block when the current template-parameter pack
-				// is the one that corresponds to the function-parameter pack.  A template may
-				// have multiple packs (e.g. template<int... Ns, typename... Ts>), where only
-				// Ts expands in the function signature.  If we applied the call-arg slice check
-				// to Ns, it would incorrectly compare Ns's explicit count against the Ts call
-				// arg count and produce a false overload_mismatch.
+				// IMPORTANT: only apply this block for template-parameter packs that
+				// participate in the function-parameter pack expansion.  A template may
+				// have multiple packs (e.g. template<int... Ns, typename... Ts>), where
+				// only Ts expands in the function signature.  The guard uses
+				// function_pack_dependent_param_names, which covers both the primary
+				// pack (Ts) and co-packs (Us in "Pair<Ts,Us>...").
 				if (current_explicit_call_arg_types_ != nullptr &&
 					deduction_info.has_value() &&
 					deduction_info->function_pack_call_arg_start != SIZE_MAX &&
-					deduction_info->function_pack_template_param_name.isValid() &&
-					deduction_info->function_pack_template_param_name == param.nameHandle()) {
+					deduction_info->function_pack_dependent_param_names.count(param.nameHandle())) {
 					const size_t pack_call_arg_count =
 						deduction_info->function_pack_call_arg_end > deduction_info->function_pack_call_arg_start
 							? deduction_info->function_pack_call_arg_end - deduction_info->function_pack_call_arg_start
 							: 0;
-					if (pack_size > pack_call_arg_count) {
+					// Overload-mismatch check only for the primary pack (the one whose
+					// name matches function_pack_template_param_name).  Co-packs always
+					// end up with the same count as the primary pack.
+					if (deduction_info->function_pack_template_param_name == param.nameHandle() &&
+						pack_size > pack_call_arg_count) {
 						overload_mismatch = true;
 						break;
+					}
+					// Find this pack's position in the element type's template-arg list.
+					// For "Pair<Ts,Us>...", Ts is at position 0 and Us is at position 1.
+					// For simple "Ts...", dep_pos stays SIZE_MAX and we fall back to the
+					// full call-arg type.
+					size_t dep_pos = SIZE_MAX;
+					if (deduction_info->function_pack_element_type_index.is_valid()) {
+						if (const TypeInfo* elem_info = tryGetTypeInfo(
+								deduction_info->function_pack_element_type_index)) {
+							if (elem_info->isTemplateInstantiation()) {
+								size_t p = 0;
+								for (const auto& targ : elem_info->templateArgs()) {
+									if (targ.dependent_name == param.nameHandle()) {
+										dep_pos = p;
+										break;
+									}
+									++p;
+								}
+							}
+						}
 					}
 					for (size_t j = deduction_info->function_pack_call_arg_start + pack_size;
 						 j < deduction_info->function_pack_call_arg_end &&
 						 j < current_explicit_call_arg_types_->size();
 						 ++j) {
-						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
-							(*current_explicit_call_arg_types_)[j]));
+						const TypeSpecifierNode& call_arg = (*current_explicit_call_arg_types_)[j];
+						bool pushed = false;
+						// For template-specialization element types (e.g. "Pair<Ts,Us>..."),
+						// extract the inner type at dep_pos from the concrete call argument's
+						// TypeInfo rather than using the whole pair type as the pack element.
+						if (dep_pos != SIZE_MAX) {
+							if (const TypeInfo* call_arg_info = tryGetTypeInfo(call_arg.type_index())) {
+								if (call_arg_info->isTemplateInstantiation() &&
+									dep_pos < call_arg_info->templateArgs().size()) {
+									const TypeInfo::TemplateArgInfo& inner = call_arg_info->templateArgs()[dep_pos];
+									TemplateTypeArg extracted_arg = toTemplateTypeArg(inner);
+									extracted_arg.is_dependent = inner.dependent_name.isValid();
+									template_args.push_back(extracted_arg);
+									pushed = true;
+								}
+							}
+						}
+						if (!pushed) {
+							template_args.push_back(TemplateTypeArg::makeTypeSpecifier(call_arg));
+						}
 					}
 				}
 				template_param_arg_starts[i] = arg_start_index;
@@ -1851,6 +1908,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			size_t count;
 		};
 		auto getPackParameterName = [&](const TypeSpecifierNode& type_spec) -> std::string_view {
+			// For template-specialization element types like Pair<Ts,Us>..., the token
+			// value is "Pair" — a template class name, not a template parameter name.
+			// deduction_info->function_pack_template_param_name is already set to the
+			// first actual dependent template parameter name ("Ts"), so prefer it.
+			if (deduction_info.has_value() && deduction_info->function_pack_template_param_name.isValid()) {
+				return StringTable::getStringView(deduction_info->function_pack_template_param_name);
+			}
 			if (!type_spec.token().value().empty()) {
 				return type_spec.token().value();
 			}
@@ -1922,10 +1986,21 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					}
 					const auto& template_param = template_params[template_param_index].as<TemplateParameterNode>();
 					if (template_param.is_variadic()) {
-						if (template_param.name() == pack_param_name) {
-							subst_params.push_back(emplace_node<TemplateParameterNode>(
-								cloneNonVariadicTemplateParam(template_param)));
-							subst_args.push_back(template_args[template_arg_index + pack_element_offset]);
+						// Substitute at position i when this is the primary pack (pack_param_name)
+						// OR a co-pack in a multi-dependent element type (e.g. the "Us" in
+						// "Pair<Ts,Us>...").  Co-packs share the same parallel expansion count
+						// as the primary pack; all dependent names are in
+						// function_pack_dependent_param_names.
+						const bool is_primary = (template_param.name() == pack_param_name);
+						const bool is_co_pack = !is_primary && deduction_info.has_value() &&
+							deduction_info->function_pack_dependent_param_names.count(
+								template_param.nameHandle());
+						if (is_primary || is_co_pack) {
+							if (template_arg_index + pack_element_offset < template_args.size()) {
+								subst_params.push_back(emplace_node<TemplateParameterNode>(
+									cloneNonVariadicTemplateParam(template_param)));
+								subst_args.push_back(template_args[template_arg_index + pack_element_offset]);
+							}
 						}
 						template_arg_index += template_param_arg_counts[template_param_index];
 						continue;
@@ -2447,9 +2522,12 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 		if (param.kind() == TemplateParameterKind::Type) {
 			if (param.is_variadic()) {
 				// Gate call-arg consumption on the function-parameter pack.
-				// If this param is NOT the function-parameter pack, it cannot be deduced
-				// from call args. Produce an empty pack and continue.
-				if (param.nameHandle() != deduction_info.function_pack_template_param_name) {
+				// If this param is NOT in the set of dependent pack names for the
+				// function-parameter pack element type, it cannot be deduced from call args.
+				// Produce an empty pack and continue.
+				// The set contains the primary pack name for simple "Ts... args" cases and
+				// ALL dependent pack names for multi-dependent types like "Pair<Ts,Us>...".
+				if (!deduction_info.function_pack_dependent_param_names.count(param.nameHandle())) {
 					continue;
 				}
 				if (function_pack_arg_start != SIZE_MAX) {
@@ -2461,6 +2539,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 				// implicit deduction of Ts from Box<Ts>... arguments:
 				//   template<typename... Ts> int f(Box<Ts>... boxes)
 				//   f(box_int, box_dbl) should deduce Ts={int,double}, not {Box<int>,Box<double>}
+				// For multi-dependent types like Pair<Ts,Us>..., each pack param finds its
+				// own position inside each call argument by matching p.dependent_name.
 				const TypeInfo* pack_elem_fp_info = nullptr;
 				if (!deduction_info.function_pack_element_type_index.isNull()) {
 					const TypeInfo* elem_info = tryGetTypeInfo(deduction_info.function_pack_element_type_index);
@@ -2477,6 +2557,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 					bool pushed = false;
 					// Try to unwrap the inner type when the pack element is a template
 					// specialization (e.g. deduce int from Box<int> when pattern is Box<Ts>).
+					// For multi-dependent types (e.g. Pair<Ts,Us>...), find the position
+					// whose dependent_name matches the current pack parameter (param.nameHandle()).
 					if (pack_elem_fp_info) {
 						const TypeInfo* ca_info = tryGetTypeInfo(ca_type.type_index());
 						if (ca_info && ca_info->isTemplateInstantiation() &&
@@ -2488,6 +2570,13 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 								const auto& c = ca_targs[j];
 								if (!p.dependent_name.isValid())
 									continue;
+								// Only push the arg for the position that belongs to the
+								// current pack parameter.  For simple Box<Ts>... this is
+								// always the first (and only) dependent position.  For
+								// multi-dependent types like Pair<Ts,Us>... each pack param
+								// picks its own position: Ts picks j=0, Us picks j=1.
+								if (p.dependent_name != param.nameHandle())
+									continue;
 								if (!c.is_value) {
 									template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
 										makeTypeSpecifierFromTemplateArgInfo(c)));
@@ -2496,10 +2585,6 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 									template_args.push_back(TemplateTypeArg::makeValue(c.intValue(), c.typeEnum()));
 									pushed = true;
 								}
-								// We push exactly one template arg per call arg (one element of Ts).
-								// For patterns with multiple dependent positions (e.g. Pair<Ts,Us>...)
-								// only the first dependent position is consumed here; multi-pack
-								// patterns of that form are not yet fully supported.
 								break;
 							}
 						}
@@ -3624,22 +3709,25 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	});
 	template_param_pack_sizes_.clear();
 	if (deduction_info.has_value()) {
-		size_t non_variadic_tparam_count = 0;
-		for (const auto& tpnode : template_params) {
-			if (tpnode.is<TemplateParameterNode>() &&
-			    !tpnode.as<TemplateParameterNode>().is_variadic()) {
-				++non_variadic_tparam_count;
-			}
-		}
-		const StringHandle func_pack_name = deduction_info->function_pack_template_param_name;
+		// Compute the number of call arguments that map to the function-parameter pack.
+		// For single-pack types (e.g. Ts... or Box<Ts>...) this equals the number of
+		// call arguments consumed by the pack.  For multi-dependent types (e.g.
+		// Pair<Ts,Us>...) ALL packs in function_pack_dependent_param_names get the
+		// same count (parallel expansion), so we use the call-arg range rather than
+		// template_args.size() - non_variadic_count which would overcount.
+		const size_t func_pack_call_arg_count =
+			(deduction_info->function_pack_call_arg_end != SIZE_MAX &&
+			 deduction_info->function_pack_call_arg_start != SIZE_MAX &&
+			 deduction_info->function_pack_call_arg_end >= deduction_info->function_pack_call_arg_start)
+				? (deduction_info->function_pack_call_arg_end - deduction_info->function_pack_call_arg_start)
+				: 0;
 		for (const auto& tpnode : template_params) {
 			if (!tpnode.is<TemplateParameterNode>()) continue;
 			const auto& tparam = tpnode.as<TemplateParameterNode>();
 			if (!tparam.is_variadic()) continue;
 			const size_t pack_count =
-				(tparam.nameHandle() == func_pack_name &&
-				 template_args.size() > non_variadic_tparam_count)
-					? (template_args.size() - non_variadic_tparam_count)
+				deduction_info->function_pack_dependent_param_names.count(tparam.nameHandle())
+					? func_pack_call_arg_count
 					: 0;
 			template_param_pack_sizes_.emplace_back(tparam.nameHandle(), pack_count);
 		}
