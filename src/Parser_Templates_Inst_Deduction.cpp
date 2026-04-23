@@ -2452,6 +2452,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 				if (param.nameHandle() != deduction_info.function_pack_template_param_name) {
 					continue;
 				}
+				if (function_pack_arg_start != SIZE_MAX) {
+					arg_index = function_pack_arg_start;
+				}
 				// If the function-parameter pack element type is a template specialisation
 				// (e.g. Box<Ts>...), look up its TypeInfo so we can extract the inner
 				// template argument rather than pushing the full outer type.  This fixes
