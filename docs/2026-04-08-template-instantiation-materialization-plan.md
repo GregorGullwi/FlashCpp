@@ -1,7 +1,7 @@
 # Template Instantiation / Materialization Status
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-23 (Phase 6 multi-type-pack implicit deduction guard)
+**Last Updated:** 2026-04-23 (Phase 6 multi-dependent pack element type deduction)
 
 This document is now a short status audit, not a historical scratchpad.
 Its purpose is to answer two questions clearly:
@@ -39,7 +39,15 @@ Its purpose is to answer two questions clearly:
     1. `deduceTemplateArgsFromCall` now gates its variadic-Type branch on `function_pack_template_param_name`: a variadic type parameter that is NOT the function-parameter pack (e.g. `Tags...` in `template<typename... Tags, typename... Ts> f(Ts...)`) immediately produces an empty pack instead of consuming all call args. The symmetric guard was already present in `try_instantiate_template_explicit` (the explicit path).
     2. `try_instantiate_single_template` now populates `template_param_pack_sizes_` before the body re-parse (same save/restore `ScopeGuard` pattern as the explicit path), so `substituteTemplateParameters` can resolve `sizeof...(Tags) = 0` and `sizeof...(Ts) = 3` correctly via `get_template_param_pack_size` rather than the overcounting naive fallback.
     - Regression: `tests/test_multi_type_pack_implicit_deduction_ret0.cpp`.
-  - **What is still open:** any other richer template-param ↔ function-param mapping shapes that may surface as the test corpus grows (e.g. nested template packs, multiple dependent positions within one pack element type).
+  - **2026-04-23 multi-dependent pack element type deduction landed:**
+    When a function-parameter pack's element type has **multiple** dependent template-parameter positions (e.g. `Pair<Ts, Us>...`), all of them are now correctly deduced from the corresponding positions inside each call argument.
+    1. `CallArgDeductionInfo` gained a new `function_pack_dependent_param_names` set (in `Parser.h`), populated by `buildDeductionMapFromCallArgs` with **all** dependent names found in the pack element type's template arguments (not just the first). For simple `Ts... args` or `Box<Ts>... args` the set contains one name; for `Pair<Ts, Us>... args` it contains both.
+    2. `deduceTemplateArgsFromCall` variadic-Type gate changed from a single-name equality check to a set-membership check, allowing each pack param (Ts, Us, …) to enter the call-arg consumption loop.
+    3. The inner box-unwrapping loop now finds the position whose `dependent_name` matches the **current** pack parameter name rather than stopping at the first dependent position. This ensures `Ts` picks up position j=0 and `Us` picks up position j=1 from each `Pair<Ts,Us>` call argument.
+    4. `try_instantiate_single_template`'s `template_param_pack_sizes_` population now uses `function_pack_call_arg_end - function_pack_call_arg_start` (the call-arg range count) for all packs in the dependent-names set, rather than `template_args.size() - non_variadic_count`. This prevents overcounting when multiple packs each contribute to `template_args`.
+    5. The complex fold-expression substitution handler (`Parser_Templates_Substitution.cpp`) now prefers `pack_param_info_[0].pack_size` over `template_args.size() - non_variadic_count` for the expansion count, so fold expressions like `(0 + ... + (pairs.first + pairs.second))` expand the correct number of times.
+    - Regression: `tests/test_multi_dep_pack_ret0.cpp`.
+  - **What is still open:** nested template packs, and other complex mapping shapes that may surface as the test corpus grows.
 
 ## What is clearly landed
 
@@ -105,11 +113,11 @@ Covered by the current tree after this PR:
 - fold expressions whose pack operand is a complex cast-expression rather than a bare identifier: `(... op (expr))` and `(init op ... op (expr))`, covered by `tests/test_fold_expr_complex_pack_ret0.cpp`
 - **implicit deduction** of pack element types from template-specialisation function-parameter packs (`Box<Ts>...`): `Ts` is now correctly deduced as `{int, double}` when called as `f(Box<int>{}, Box<double>{})`, covered by `tests/test_implicit_deduction_box_pack_ret0.cpp`
 - **multi-type-pack implicit deduction guard**: a variadic type parameter that is not the function-parameter pack now produces an empty pack (instead of consuming all call args). `template_param_pack_sizes_` is also populated by the implicit path so that `sizeof...` resolves correctly. Covered by `tests/test_multi_type_pack_implicit_deduction_ret0.cpp`.
+- **multi-dependent pack element type deduction**: pack element types with multiple dependent positions (e.g. `Pair<Ts,Us>...`) now correctly deduce all packs. `CallArgDeductionInfo::function_pack_dependent_param_names` tracks all dependent names; `deduceTemplateArgsFromCall` gate and inner position-matching loop were updated; `template_param_pack_sizes_` uses the call-arg range count; complex fold expansion uses `pack_param_info_` size. Covered by `tests/test_multi_dep_pack_ret0.cpp`.
 
 Still open after this PR:
 
-- any other richer template-param ↔ function-param mapping shapes that may surface as the test corpus grows (e.g. nested template packs, multiple dependent positions within one pack element type)
-- multi-dependent pack element patterns like `Pair<T, Ts>...` where more than one template argument position per pack element is dependent: the box-unwrapping currently only consumes the first dependent position per call arg.
+- nested template packs and other complex template-param ↔ function-param mapping shapes that may surface as the test corpus grows
 
 ## Clear next steps
 
@@ -121,6 +129,7 @@ Still open after this PR:
    - `tests/test_explicit_template_pack_sizeof_param_name_ret0.cpp`
    - `tests/test_implicit_deduction_box_pack_ret0.cpp`
    - `tests/test_multi_type_pack_implicit_deduction_ret0.cpp`
+   - `tests/test_multi_dep_pack_ret0.cpp`
 
 ## Recommended interpretation of the roadmap
 
@@ -129,8 +138,8 @@ If you want the shortest accurate summary:
 - **Done:** Phases 1-4
 - **Done:** Phase 5 materialization / ownership cleanup
 - **In progress:** Phase 6 explicit-deduction cleanup
-- **Landed in Phase 6 so far:** the nondeduced-tail positional-fallback fix, canonical function-parameter → call-argument pack-slice metadata, pack-before-tail explicit deduction, mixed explicit + deduced pack support, multi-pack sizeof resolution, fold expressions with complex pack operands, implicit deduction of inner types from template-specialisation pack parameters, **multi-type-pack implicit deduction guard** (non-function type packs produce empty packs; `template_param_pack_sizes_` now populated by the implicit path)
-- **Work left after this PR:** other richer template-param ↔ function-param mapping shapes that may surface as the test corpus grows
+- **Landed in Phase 6 so far:** the nondeduced-tail positional-fallback fix, canonical function-parameter → call-argument pack-slice metadata, pack-before-tail explicit deduction, mixed explicit + deduced pack support, multi-pack sizeof resolution, fold expressions with complex pack operands, implicit deduction of inner types from template-specialisation pack parameters, **multi-type-pack implicit deduction guard** (non-function type packs produce empty packs; `template_param_pack_sizes_` now populated by the implicit path), **multi-dependent pack element type deduction** (`Pair<Ts,Us>...` deduces both packs correctly)
+- **Work left after this PR:** nested template packs and other complex mapping shapes that may surface as the test corpus grows
 
 ## Regression coverage worth keeping close
 
@@ -153,13 +162,18 @@ The following tests are the most relevant guardrails for this area:
 - `tests/test_fold_expr_complex_pack_ret0.cpp`
 - `tests/test_implicit_deduction_box_pack_ret0.cpp`
 - `tests/test_multi_type_pack_implicit_deduction_ret0.cpp`
+- `tests/test_multi_dep_pack_ret0.cpp`
 
-## Validation baseline refreshed on 2026-04-23 (Phase 6: multi-type-pack implicit deduction guard)
+## Validation baseline refreshed on 2026-04-23 (Phase 6: multi-dependent pack element type deduction)
 
 Linux validation run after:
-- Adding guard in `deduceTemplateArgsFromCall` variadic-Type branch: skip call-arg consumption when `function_pack_template_param_name` is valid and the current param name does not match it (non-function-parameter type packs produce an empty pack).
-- Populating `template_param_pack_sizes_` in `try_instantiate_single_template` before the body re-parse, mirroring the same save/restore `ScopeGuard` pattern used in `try_instantiate_template_explicit`. This lets `sizeof...(Pack)` resolve correctly for multi-type-pack templates via the implicit path.
-- Adding regression test `tests/test_multi_type_pack_implicit_deduction_ret0.cpp`.
+- Adding `function_pack_dependent_param_names` set to `CallArgDeductionInfo` in `Parser.h`.
+- Populating the set with ALL dependent names in the pack element type in `buildDeductionMapFromCallArgs` (removing the early `break` that stopped at the first dependent name).
+- Changing the `deduceTemplateArgsFromCall` variadic-Type gate from single-name equality to set-membership check.
+- Fixing the inner box-unwrapping loop to find the position matching the current pack parameter name, enabling `Pair<Ts,Us>...` to extract `Ts` from position j=0 and `Us` from position j=1.
+- Fixing `try_instantiate_single_template` pack-sizes population to use `function_pack_call_arg_end - function_pack_call_arg_start` for all packs in the set (not `template_args.size() - non_variadic_count`).
+- Fixing the complex fold-expression substitution handler to prefer `pack_param_info_[0].pack_size` over `template_args.size() - non_variadic_count` for expansion count.
+- Adding regression test `tests/test_multi_dep_pack_ret0.cpp`.
 
 Run:
 
@@ -168,7 +182,7 @@ Run:
 
 Current baseline:
 
-- **2185** compile+link+runtime passing tests (+1 from new `test_multi_type_pack_implicit_deduction_ret0.cpp`)
+- **2186** compile+link+runtime passing tests (+1 from new `test_multi_dep_pack_ret0.cpp`)
 - **149** `_fail` tests failing as expected
 - overall result: **SUCCESS**
 

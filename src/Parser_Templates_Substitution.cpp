@@ -602,7 +602,11 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 				if (!pack_param_info_.empty()) {
 					func_pack_name = pack_param_info_[0].original_name;
-					if (num_pack_elements == 0) {
+					// pack_param_info_ carries the exact function-parameter pack expansion
+					// count; prefer it over template_args.size() - non_variadic_count, which
+					// overcounts for multi-dependent pack element types (e.g. Pair<Ts,Us>...
+					// where template_args holds args for both Ts and Us).
+					if (pack_param_info_[0].pack_size > 0 || num_pack_elements == 0) {
 						num_pack_elements = pack_param_info_[0].pack_size;
 					}
 				}

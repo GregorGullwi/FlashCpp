@@ -1220,6 +1220,13 @@ private:
 		// check on the correct template pack (not e.g. a non-type pack that sits in the
 		// template parameter list but has no function-parameter counterpart).
 		StringHandle function_pack_template_param_name;
+		// All template-parameter pack names that appear as dependent positions in the
+		// function-parameter pack's element type.  For simple "Ts... args" this is {Ts}.
+		// For template-specialisation element types like "Box<Ts>... args" this is {Ts}.
+		// For multi-dependent types like "Pair<Ts,Us>... args" this is {Ts, Us}.
+		// Used by deduceTemplateArgsFromCall to allow each matching pack param to consume
+		// its corresponding position from every pack call argument.
+		std::unordered_set<StringHandle, StringHash, StringEqual> function_pack_dependent_param_names;
 		// TypeIndex of the function-parameter pack's element type.
 		// Set when the pack parameter has a type (e.g. for "Box<Ts>... boxes" this holds
 		// the TypeIndex for Box<Ts>).  Used by deduceTemplateArgsFromCall to extract inner
