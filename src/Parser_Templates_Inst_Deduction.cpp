@@ -2449,7 +2449,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 				// If function_pack_template_param_name is valid and this param is NOT
 				// the function-parameter pack, it cannot be deduced from call args.
 				// Produce an empty pack and continue to the next template parameter.
-				StringHandle this_param_name = StringTable::getOrInternStringHandle(param.name());
+				StringHandle this_param_name = param.nameHandle();
 				if (deduction_info.function_pack_template_param_name.isValid() &&
 				    this_param_name != deduction_info.function_pack_template_param_name) {
 					continue;
@@ -2478,7 +2478,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 					const TypeSpecifierNode& ca_type = arg_types[arg_index];
 					bool pushed = false;
 					// Try to unwrap the inner type when the pack element is a template
-					// specialisation (e.g. deduce int from Box<int> when pattern is Box<Ts>).
+					// specialization (e.g. deduce int from Box<int> when pattern is Box<Ts>).
 					if (pack_elem_fp_info) {
 						const TypeInfo* ca_info = tryGetTypeInfo(ca_type.type_index());
 						if (ca_info && ca_info->isTemplateInstantiation() &&
@@ -2514,7 +2514,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 				continue;
 			}
 
-			StringHandle param_handle = StringTable::getOrInternStringHandle(param.name());
+			StringHandle param_handle = param.nameHandle();
 			auto map_it = param_name_to_arg.find(param_handle);
 			if (map_it != param_name_to_arg.end()) {
 				template_args.push_back(map_it->second);
@@ -2538,7 +2538,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 			return std::nullopt;
 		}
 
-		StringHandle param_handle = StringTable::getOrInternStringHandle(param.name());
+		StringHandle param_handle = param.nameHandle();
 		auto map_it = param_name_to_arg.find(param_handle);
 		if (map_it != param_name_to_arg.end()) {
 			template_args.push_back(map_it->second);
