@@ -1205,6 +1205,9 @@ private:
 	struct CallArgDeductionInfo {
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
 		std::unordered_set<size_t> pre_deduced_arg_indices;
+		std::vector<size_t> func_param_to_call_arg_index;
+		size_t function_pack_call_arg_start = SIZE_MAX;
+		size_t function_pack_call_arg_end = SIZE_MAX;
 	};
 	bool tryAppendDefaultTemplateArg(
 		const TemplateParameterNode& param,
@@ -1242,8 +1245,8 @@ private:
 		int recursion_depth,
 		NamespaceHandle source_namespace);
 	// Shared pre-deduction helper for matching function-parameter slots to call-argument
-	// types. The explicit-template-argument path must only rely on this map for non-pack
-	// signatures; pack-aware remapping needs an explicit contract first.
+	// types. The returned metadata also carries the canonical function-param → call-arg
+	// mapping so deduction sites can reuse one pack-aware view of the call shape.
 	std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const std::vector<ASTNode>& template_params,
 		const std::vector<ASTNode>& func_params,
