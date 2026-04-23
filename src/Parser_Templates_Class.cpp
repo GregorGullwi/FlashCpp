@@ -4674,6 +4674,32 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		return param_list_result;
 	}
 
+	// Shared tail helper: after all leading/trailing specifiers and the optional
+	// member-initializer-list have been consumed, skip any trailing `requires`
+	// clause and then the function body (`try{...}`, `{...}`, `= default;`,
+	// `= delete;`, or a bare `;`).  Used by both the constructor and destructor
+	// skip lambdas to avoid duplicating this logic.
+	auto skipMemberTemplateFunctionTail = [&]() {
+		if (peek() == "requires"_tok) {
+			skip_trailing_requires_clause();
+		}
+		if (peek() == "try"_tok) {
+			skip_function_body();
+		} else if (peek() == "{"_tok) {
+			skip_balanced_braces();
+		} else if (peek() == "="_tok) {
+			advance();
+			if (peek() == "default"_tok || peek() == "delete"_tok) {
+				advance();
+			} else if (!peek().is_eof() && peek() != ";"_tok) {
+				advance(); // skip '0' in pure-virtual = 0
+			}
+			consume(";"_tok);
+		} else if (peek() == ";"_tok) {
+			advance();
+		}
+	};
+
 	auto skipMemberStructTemplateConstructor = [&]() {
 		if (peek() == "("_tok) {
 			skip_balanced_parens();
@@ -4696,6 +4722,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 		}
 
+		// Handle requires clause before the member-initializer-list.
 		if (peek() == "requires"_tok) {
 			skip_trailing_requires_clause();
 		}
@@ -4737,19 +4764,44 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 		}
 
-		if (peek() == "try"_tok) {
-			skip_function_body();
-		} else if (peek() == "{"_tok) {
-			skip_balanced_braces();
-		} else if (peek() == "="_tok) {
-			advance();
-			if (peek() == "default"_tok || peek() == "delete"_tok) {
-				advance();
-			}
-			consume(";"_tok);
-		} else if (peek() == ";"_tok) {
+		skipMemberTemplateFunctionTail();
+	};
+
+	// Skip a member struct template destructor (~Name(...)) entirely, including
+	// any trailing noexcept/override/final/requires, and the body or
+	// `= default` / `= delete`.  Destructors are re-parsed during instantiation
+	// alongside other members; just consume tokens here.
+	auto skipMemberStructTemplateDestructor = [&]() {
+		if (!consume("~"_tok)) {
+			return;
+		}
+		// Consume the name identifier (expected to match the struct/simple name; we
+		// still advance regardless so recovery is well-defined on malformed input).
+		if (peek().is_identifier()) {
 			advance();
 		}
+		if (peek() == "("_tok) {
+			skip_balanced_parens();
+		}
+		// Skip trailing specifiers (noexcept, override, final) up to the body,
+		// `=`, `;`, or a trailing `requires` clause.
+		int angle_depth = 0;
+		while (!peek().is_eof()) {
+			auto tk = peek();
+			if (angle_depth == 0 &&
+				(tk == "{"_tok || tk == "try"_tok || tk == ";"_tok || tk == "="_tok || tk == "requires"_tok)) {
+				break;
+			}
+			if (tk == "("_tok) {
+				skip_balanced_parens();
+			} else if (tk == "<"_tok || tk == ">"_tok || tk == ">>"_tok) {
+				update_angle_depth(tk, angle_depth);
+				advance();
+			} else {
+				advance();
+			}
+		}
+		skipMemberTemplateFunctionTail();
 	};
 
 	// Extract parameter names for later lookup
@@ -5187,6 +5239,13 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					discard_saved_token(ctor_lookahead_pos);
 					restore_token_position(member_saved_pos);
 				}
+			} else if (!peek().is_eof() && peek() == "~"_tok) {
+				// Destructor in a member struct template (partial specialization) body.
+				// Skip it here; destructors are re-parsed during instantiation.
+				discard_saved_token(member_saved_pos);
+				FLASH_LOG_FORMAT(Parser, Debug, "parse_member_struct_template: Skipping destructor for {}", struct_name);
+				skipMemberStructTemplateDestructor();
+				continue;
 			} else {
 				// Not starting with struct name - restore position to BEFORE specifiers
 				// so parse_type_and_name() can properly handle the specifiers
@@ -5560,6 +5619,13 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				discard_saved_token(ctor_lookahead_pos2);
 				restore_token_position(member_saved_pos2);
 			}
+		} else if (!peek().is_eof() && peek() == "~"_tok) {
+			// Destructor in a member struct template (primary) body.
+			// Skip it here; destructors are re-parsed during instantiation.
+			discard_saved_token(member_saved_pos2);
+			FLASH_LOG_FORMAT(Parser, Debug, "parse_member_struct_template (primary): Skipping destructor for {}", struct_name);
+			skipMemberStructTemplateDestructor();
+			continue;
 		} else {
 			// Not starting with struct name - restore position to BEFORE specifiers
 			// so parse_type_and_name() can properly handle the specifiers

@@ -14,7 +14,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~639ms. The header still compiles, but `std::ratio_less` remains blocked because non-type default template arguments that depend on qualified constexpr members (for example `__ratio_less_impl`'s bool defaults) are still not fully instantiated/evaluated. |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | ~2861ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | ~2861ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". **2026-04-23 (Linux/libstdc++):** the long-standing `Expected identifier token` parse stops at `_Optional_payload_base::_Storage`'s templated constructor (`<optional>:209`) and partial-specialization destructor (`<optional>:259`) are now fixed. On Linux, `<optional>` parses completely and fails later in codegen on deferred `_Optional_base` / `_Optional_payload` placeholder resolution. Regression: `tests/test_nested_member_template_ctor_dtor_ret0.cpp`. |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
 | `<utility>` | `test_std_utility.cpp` | ❌ Codegen Error | ~830ms (retested 2026-04-11). Targeted test now fails with codegen errors from template deduction / Non-type parameter issues. |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
@@ -98,6 +98,17 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+#### 2026-04-23 Targeted Retests (Linux/libstdc++)
+
+Rebuilt `x64/Sharded/FlashCpp` on Linux with clang++ and ran each std header test directly against the system libstdc++-14 headers. Full regression suite (`tests/run_all_tests.sh`, 2187 tests) continues to pass. Linux-only observations:
+
+- `<optional>` no longer stops on the nested-member-class-template constructor/destructor parse gap at `<optional>:209` / `<optional>:259`. Header now parses completely (~750ms) and fails later in codegen on deferred `_Optional_base` / `_Optional_payload` placeholder type resolution. See the 2026-04-23 fix entry below.
+- The generic blocker (member class templates whose body contains a template constructor or a destructor) was shared by other headers on Linux. `<variant>` now parses further and stops with a new first error at `<variant>:418` in `_Variadic_union(in_place_index_t<_Np>, _Args&&...) : _M_rest(in_place_index<_Np-1>, ...)`, which is an arithmetic non-type template argument (`_Np-1`) inside a member initializer — a separate issue.
+- Linux sweep summary (current state) for the std header files under `tests/std/test_std_*.cpp`:
+  - Compiles cleanly: `<bit>`, `<compare>`, `<concepts>`, `<limits>`, `<new>`, `<source_location>`, `<span>`, `<version>`, plus small focused regressions (`test_std_pair_swap_deleted_member`, `test_std_typeinfo_ret0`).
+  - Parse-phase errors (rc=1, no crash): `<any>`, `<atomic>`, `<exception>`, `<latch>`, `<numeric>`, `<optional>`, `<ratio>`, `<shared_mutex>`, `<type_traits>`, `<utility>`, `<variant>`.
+  - Deep-template crashes (rc=139) remain in many heavier headers — Linux libstdc++ paths diverge from MSVC, so the MSVC-focused table above is not a direct substitute. These need their own Linux investigation.
 
 #### 2026-04-20 Targeted Retests
 
@@ -221,7 +232,13 @@ As of the 2026-04-20 targeted retest, the global namespace prefix blocker and th
 
 12. **Late iostream-family codegen / IR lowering crash**: After the InstantiationContext fix below, `<iostream>` gets through parsing and much deeper into codegen before crashing in `IROperandHelpers::toIrValue` after `_S_empty`/`_S_size`/`move` failures. `<sstream>` / `<fstream>` still need targeted retests to see whether they now fail in the same later phase. Affects: `<iostream>`, likely `<sstream>`, `<fstream>`.
 
-### Recent Fixes (2026-04-10)
+### Recent Fixes (2026-04-23)
+
+1. **Nested member class template constructor/destructor parsing**: `parse_member_function_template` checked the constructor name against `struct_node.name()`, which for nested member class templates is the fully-qualified form (e.g. `Outer::_Storage`) or a `$pattern_...` partial-specialization name. The constructor in source is spelled with just the simple base name, so the check silently failed and the template-constructor was re-parsed as a return-typed function, causing `Expected identifier token` on the first parameter. The comparison now also accepts the simple name (after the last `::`) and the base name (with any `$pattern_...` suffix stripped). Separately, member class template bodies (both primary and partial specializations) did not handle `~StructName()` destructors and fell through to `parse_type_and_name()`, which rejected `~` with `Expected type specifier`. A small `skipMemberStructTemplateDestructor` helper now consumes the destructor declaration (including trailing noexcept/override/= default/= delete and the body) the same way `skipMemberStructTemplateConstructor` already consumed constructors; the destructor is re-parsed during instantiation alongside other members. Regression test: `tests/test_nested_member_template_ctor_dtor_ret0.cpp`.
+
+   Linux/libstdc++ impact: `<optional>` previously stopped at `_Optional_payload_base::_Storage(in_place_t, _Args&&...)` on line 209 of `<optional>`, and then at the partial specialization's destructor on line 259. Both parser stops are gone; the header now parses completely and fails later in codegen on deeper deferred `_Optional_base` / `_Optional_payload` placeholder resolution.
+
+
 
 1. **Namespaced implicit template instantiations can now keep lazy member-function stubs without replaying every deferred body immediately, and dependent placeholder member calls stop forcing concrete-class resolution**: implicit template classes with qualified names now take the same stub-registration path as other lazy instantiations, but deferred-body replay still stays enabled for existing non-namespaced tests so the main suite keeps its previous behavior. Separately, member-postfix resolution now recognizes incomplete template-instantiation placeholders and leaves those calls dependent instead of trying to materialize a concrete class too early. This is enough to make the focused std-style `pair::swap` unused-body regression compile again. Regression test: `tests/std/test_std_pair_swap_deleted_member.cpp`.
 
