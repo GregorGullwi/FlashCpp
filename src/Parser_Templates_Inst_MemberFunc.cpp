@@ -142,6 +142,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	qualified_name_sb.append(struct_name).append("::").append(member_name);
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(qualified_name_sb);
 
+	// Push a parser-level instantiation context for provenance tracking and backtraces.
+	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, qualified_name);
+
 	// Look up the template in the registry
 	auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
 
@@ -703,8 +706,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-			FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
-			template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
+			ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
 			parsing_template_depth_ = 0;	 // suppress template body context during SFINAE
 			clearCurrentTemplateParameters();  // No dependent names during SFINAE
 			sfinae_type_map_.clear();

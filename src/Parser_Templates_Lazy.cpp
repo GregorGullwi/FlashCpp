@@ -10,6 +10,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	FLASH_LOG(Templates, Debug, "instantiateLazyMemberFunction: ",
 			  lazy_info.identity.instantiated_owner_name, "::", effectiveLookupName(lazy_info.identity));
 
+	// Push a parser-level instantiation context so backtraces can identify this lazy-member step.
+	// Use the instantiated owner name as the origin since that is the most descriptive identifier.
+	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, lazy_info.identity.instantiated_owner_name);
+
 	// Constructors/destructors for nested template types are also materialized lazily.
 	if (lazy_info.identity.kind == DeferredMemberIdentity::Kind::Constructor && lazy_info.identity.original_member_node.is<ConstructorDeclarationNode>()) {
 		const ConstructorDeclarationNode& ctor_decl = lazy_info.identity.original_member_node.as<ConstructorDeclarationNode>();

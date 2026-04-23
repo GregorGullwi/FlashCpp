@@ -407,8 +407,10 @@ int main_impl(int argc, char* argv[]) {
 		} catch (const CompileError& e) {
 			// Phase 1 violations (e.g. non-dependent name not visible at template definition)
 			// are thrown as CompileError from within template instantiation during parsing.
-			FLASH_LOG(Parser, Error, "error: ", e.what());
-			std::cerr << "error: " << e.what() << std::endl;
+			std::string notes = g_parser_instantiation_notes;
+			g_parser_instantiation_notes.clear();
+			FLASH_LOG(Parser, Error, "error: ", e.what(), notes);
+			std::cerr << "error: " << e.what() << notes << std::endl;
 			return 1;
 		}
 
@@ -439,8 +441,10 @@ int main_impl(int argc, char* argv[]) {
 		try {
 			sema.run();
 		} catch (const CompileError& e) {
-			FLASH_LOG(General, Error, "error: ", e.what());
-			std::cerr << "error: " << e.what() << std::endl;
+			std::string notes = g_parser_instantiation_notes;
+			g_parser_instantiation_notes.clear();
+			FLASH_LOG(General, Error, "error: ", e.what(), notes);
+			std::cerr << "error: " << e.what() << notes << std::endl;
 			return 1;
 		} catch (const InternalError& e) {
 			FLASH_LOG(General, Error, "internal error: ", e.what());
@@ -518,6 +522,10 @@ int main_impl(int argc, char* argv[]) {
 					node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
 				}
 				FLASH_LOG(General, Error, "Compile error in '", node_desc, "': ", e.what());
+				// Clear any stale parse-phase instantiation notes here without printing them.
+				// These notes describe parse-time template context that is unrelated to this
+				// codegen-phase error, so attaching them would be misleading.
+				g_parser_instantiation_notes.clear();
 				has_compile_errors = true;
 			} catch (const std::bad_any_cast& e) {
 				// Log and skip nodes that cause bad_any_cast during IR conversion

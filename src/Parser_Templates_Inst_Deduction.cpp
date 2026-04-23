@@ -459,8 +459,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 		FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-		FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
-		template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
+		ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
 		parsing_template_depth_ = 0;
 		clearCurrentTemplateParameters();
 		sfinae_type_map_.clear();
@@ -491,8 +490,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-			FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
-			template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
+			ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
 			parsing_template_depth_ = 0;
 			clearCurrentTemplateParameters();
 			sfinae_type_map_.clear();
@@ -1575,8 +1573,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-			FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
-			template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
+			ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
 			parsing_template_depth_ = 0;	 // suppress template body context during SFINAE
 			clearCurrentTemplateParameters();  // No dependent names during SFINAE
 			sfinae_type_map_.clear();
@@ -2259,8 +2256,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 						 recursion_depth, overload_idx, template_name);
 
 		// Enter the mode appropriate for this instantiation attempt.
-		FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
-		template_instantiation_mode_ = selectTemplateInstantiationMode(outer_sfinae_context);
+		ScopedParserInstantiationContext guard_instantiation_mode(*this, selectTemplateInstantiationMode(outer_sfinae_context), StringHandle{});
 
 		// Try to instantiate this specific template
 		std::optional<ASTNode> result = try_instantiate_single_template(
@@ -2504,10 +2500,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	const std::vector<ASTNode>& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 
-	// Step 1: Deduce template arguments from function call arguments
-	// For now, we support simple type parameter deduction
-	// We deduce template parameters in order from function arguments
-	// TODO: Add support for non-type parameters and more complex deduction
+	// Step 1: Deduce template arguments from function call arguments.
+	// Type parameters (TemplateParameterKind::Type) and non-type parameters
+	// (TemplateParameterKind::NonType) are both handled by buildDeductionMapFromCallArgs
+	// and deduceTemplateArgsFromCall below.  The NOTE below is historical context
+	// only; the helpers already cover non-type deduction via the is_value path.
+	// More complex deduction (partial ordering, template-template params) is still
+	// limited; see Phase 6 audit in docs/2026-04-21-phase5-slice-g-analysis.md.
 
 	// Check if we have only variadic parameters - they can be empty
 	bool all_variadic = true;

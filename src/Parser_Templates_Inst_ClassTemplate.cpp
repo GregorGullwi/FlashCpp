@@ -715,6 +715,11 @@ static void retryNormalizeTemplateStaticMembersAfterDeferredBodies(
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 
+	// Push a parser-level instantiation context for provenance tracking and backtraces.
+	// The mode snapshot is taken at call time (before any inner mode changes).
+	StringHandle template_name_handle_for_ctx = StringTable::getOrInternStringHandle(template_name);
+	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, template_name_handle_for_ctx);
+
 	// Add iteration limit to prevent infinite loops during template instantiation
 	static thread_local int iteration_count = 0;
 	static thread_local const int MAX_ITERATIONS = 10000; // Safety limit
@@ -919,15 +924,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	FlashCpp::TemplateInstantiationKey cache_key =
 		FlashCpp::makeInstantiationKey(template_name_handle, template_args);
 	bool current_wants_full = (template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly);
-	auto cached_shape_only_needs_upgrade = [&]() {
-		if (!current_wants_full) {
-			return false;
-		}
-		auto cached = gTemplateRegistry.getInstantiation(cache_key);
-		return cached.has_value() &&
-			   cached->is<StructDeclarationNode>() &&
-			   cached->as<StructDeclarationNode>().is_shape_only();
-	};
 	bool can_use_raw_cache_key = true;
 	if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 		template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
@@ -944,11 +940,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// cache as a miss so we re-enter instantiation and fully materialise the
 			// struct.  This is safe because ShapeOnly entries are always committed to
 			// the cache, so a concurrent ShapeOnly path will still hit them.
-			const StructDeclarationNode* cached_struct =
-				cached->is<StructDeclarationNode>() ? &cached->as<StructDeclarationNode>() : nullptr;
-			bool cached_is_shape_only = cached_struct && cached_struct->is_shape_only();
-			bool cached_failed_substitution = cached_struct && cached_struct->is_failed_substitution();
-			if (cached_is_shape_only && current_wants_full) {
+			const ASTNode* cached_node = cached.has_value() ? &cached.value() : nullptr;
+			bool cached_is_shape_only = cached_node && cached_node->is<StructDeclarationNode>() &&
+				cached_node->as<StructDeclarationNode>().is_shape_only();
+			bool cached_failed_substitution = cached_node && cached_node->is<StructDeclarationNode>() &&
+				cached_node->as<StructDeclarationNode>().is_failed_substitution();
+			if (cachedInstNeedsShapeOnlyUpgrade(cached_node, current_wants_full)) {
 				FLASH_LOG_FORMAT(Templates, Debug,
 					"Cache hit for '{}' is ShapeOnly but current mode is full — re-entering instantiation",
 					template_name);
@@ -1622,7 +1619,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Check if we already have this instantiation
 	auto existing_type = getTypesByNameMap().find(instantiated_name);
 	if (existing_type != getTypesByNameMap().end()) {
-		if (cached_shape_only_needs_upgrade()) {
+		auto cached_reg = gTemplateRegistry.getInstantiation(cache_key);
+		const ASTNode* cached_node = cached_reg.has_value() ? &cached_reg.value() : nullptr;
+		if (cachedInstNeedsShapeOnlyUpgrade(cached_node, current_wants_full)) {
 			FLASH_LOG_FORMAT(Templates, Debug,
 				"Type-map hit for '{}' is backed by a ShapeOnly instantiation — re-entering full instantiation",
 				StringTable::getStringView(instantiated_name));
@@ -1894,7 +1893,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (original_instantiated_name != instantiated_name) {
 				getTypesByNameMap()[original_instantiated_name] = existing_type_with_defaults->second;
 			}
-			if (cached_shape_only_needs_upgrade()) {
+			auto cached_reg = gTemplateRegistry.getInstantiation(cache_key);
+			const ASTNode* cached_node = cached_reg.has_value() ? &cached_reg.value() : nullptr;
+			if (cachedInstNeedsShapeOnlyUpgrade(cached_node, current_wants_full)) {
 				FLASH_LOG(Templates, Debug, "Found ShapeOnly instantiation with filled-in defaults; re-entering full instantiation");
 			} else {
 				FLASH_LOG(Templates, Debug, "Found existing instantiation with filled-in defaults");
@@ -3597,6 +3598,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			in_progress_guard.dismiss(); // Don't remove from in_progress in destructor
 
 			// Tag the struct with its materialization level before caching.
+			// Commit point: state transition NotMaterialized|ShapeOnly -> ShapeOnly|Materialized.
+			// ShapeOnly   -> mode is ShapeOnly (shape probe, no commit side effects).
+			// Materialized -> mode is HardUse or SfinaeProbe (full commit, all artifacts registered).
 			if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
 				instantiated_struct.as<StructDeclarationNode>().mark_shape_only();
 			} else {
@@ -4136,7 +4140,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Check if we already have this instantiation (after filling defaults)
 	existing_type = getTypesByNameMap().find(instantiated_name);
 	if (existing_type != getTypesByNameMap().end()) {
-		if (cached_shape_only_needs_upgrade()) {
+		auto cached_reg = gTemplateRegistry.getInstantiation(cache_key);
+		const ASTNode* cached_node = cached_reg.has_value() ? &cached_reg.value() : nullptr;
+		if (cachedInstNeedsShapeOnlyUpgrade(cached_node, current_wants_full)) {
 			FLASH_LOG(Templates, Debug, "Type already exists from ShapeOnly instantiation, continuing to upgrade");
 		} else {
 			FLASH_LOG(Templates, Debug, "Type already exists, returning nullopt");
@@ -8643,6 +8649,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	in_progress_guard.dismiss(); // Don't remove from in_progress in destructor
 
 	// Tag the struct with its materialization level before caching.
+	// Commit point: state transition NotMaterialized|ShapeOnly -> ShapeOnly|Materialized.
+	// ShapeOnly   -> mode is ShapeOnly (shape probe, no commit side effects).
+	// Materialized -> mode is HardUse or SfinaeProbe (full commit, all artifacts registered).
 	if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
 		instantiated_struct.as<StructDeclarationNode>().mark_shape_only();
 	} else {

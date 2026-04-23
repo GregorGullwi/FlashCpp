@@ -236,8 +236,7 @@ ParseResult Parser::parse_requires_expression() {
 	// Enter SfinaeProbe mode for the requires expression body.
 	// In requires expressions, function lookup failures and type errors should not produce errors -
 	// they indicate that the constraint is not satisfied (the expression is invalid)
-	FlashCpp::ScopedState guard_instantiation_mode(template_instantiation_mode_);
-	template_instantiation_mode_ = TemplateInstantiationMode::SfinaeProbe;
+	ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
 
 	// Parse requirements (expressions that must be valid)
 	std::vector<ASTNode> requirements;

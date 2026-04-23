@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <chrono>
+#include <exception>
 #include <limits>
 #include <optional>
 #include <sstream>
@@ -345,6 +346,12 @@ inline std::vector<std::string_view> buildTemplateParamNames(
 // Declared here (not in TemplateRegistry_Types.h) to avoid a dependency on
 // ConstExprEvaluator.h from the template-registry header.
 TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_result);
+
+// Thread-local instantiation backtrace.  Unlike current_instantiation_ctx_ (which is RAII
+// and clears during stack unwinding), this string persists through exception propagation
+// so that catch sites can report it.  Populated by ScopedParserInstantiationContext on
+// the first destructor invocation during unwinding; cleared by the catch site after use.
+inline thread_local std::string g_parser_instantiation_notes;
 
 class Parser {
 	// Friend classes that need access to private members
@@ -704,17 +711,96 @@ private:
 		// Ordinary instantiation request: commit cache, symbol-table, and AST/lazy-member side effects.
 		HardUse,
 		// SFINAE-driven probe: substitution failures are soft and the caller may try another overload.
+		// Unlike ShapeOnly, substitution errors in SfinaeProbe cause the probe to soft-fail and the
+		// caller may select an alternative overload.  Commit-time side effects are also suppressed.
 		SfinaeProbe,
-		// Declaration-time shape probe: compute types/signatures only and suppress commit-time side effects.
+		// Declaration-time shape probe: used when parsing default template arguments and computing
+		// type/signature shapes that do not yet require a full, committed instantiation.
+		//
+		// CONTRACT:
+		//   - Compute types and member signatures (layout, return types, overload sets) as normal.
+		//   - Suppress ALL commit-time side effects: type-map commits, symbol-table entries,
+		//     AST registration, and lazy-member side-effect callbacks.
+		//   - Unlike SfinaeProbe, substitution failures are NOT soft-failures: an error in
+		//     ShapeOnly mode is still an error.  The mode only controls the commit phase.
+		//   - ShapeOnly is STICKY: selectTemplateInstantiationMode() propagates ShapeOnly
+		//     downward into nested instantiations so an entire shape-probe subtree stays in
+		//     ShapeOnly mode.  The only sites that observe and honour the mode flag are
+		//     shouldCommitTemplateInstantiationArtifacts() and selectTemplateInstantiationMode().
 		ShapeOnly
 	};
 
 	TemplateInstantiationMode template_instantiation_mode_ = TemplateInstantiationMode::HardUse;
 
+	// Parser-level instantiation context: threaded through class-template, function-template,
+	// and lazy-member instantiation to carry provenance and support instantiation backtraces.
+	// This is distinct from the type-owned InstantiationContext in AstNodeTypes_DeclNodes.h,
+	// which stores concrete argument bindings for codegen/constexpr use.
+	struct ParserInstantiationContext {
+		TemplateInstantiationMode mode = TemplateInstantiationMode::HardUse;
+		StringHandle origin_name;             // Name of the template being instantiated
+		const ParserInstantiationContext* parent = nullptr; // Enclosing instantiation (for backtraces)
+	};
+
+	// RAII guard that pushes a ParserInstantiationContext onto the parser's context stack,
+	// sets template_instantiation_mode_, and restores both on destruction.
+	// On the first destructor invocation during stack unwinding, captures the instantiation
+	// backtrace into g_parser_instantiation_notes for use by catch sites.
+	class ScopedParserInstantiationContext {
+	public:
+		ScopedParserInstantiationContext(Parser& p, TemplateInstantiationMode mode, StringHandle origin)
+			: parser_(p),
+			  prev_ctx_(p.current_instantiation_ctx_),
+			  prev_mode_(p.template_instantiation_mode_) {
+			ctx_ = {mode, origin, prev_ctx_};
+			parser_.current_instantiation_ctx_ = &ctx_;
+			parser_.template_instantiation_mode_ = mode;
+		}
+		~ScopedParserInstantiationContext() {
+			// Capture backtrace on the first destructor invocation during unwinding.
+			// std::uncaught_exceptions() > 0 means we're inside an active exception.
+			// The empty-check ensures we capture only once (innermost guard first).
+			if (std::uncaught_exceptions() > 0 && g_parser_instantiation_notes.empty()) {
+				g_parser_instantiation_notes = buildInstantiationNotes(parser_.current_instantiation_ctx_);
+			}
+			parser_.current_instantiation_ctx_ = prev_ctx_;
+			parser_.template_instantiation_mode_ = prev_mode_;
+		}
+		ScopedParserInstantiationContext(const ScopedParserInstantiationContext&) = delete;
+		ScopedParserInstantiationContext& operator=(const ScopedParserInstantiationContext&) = delete;
+	private:
+		Parser& parser_;
+		const ParserInstantiationContext* prev_ctx_;
+		TemplateInstantiationMode prev_mode_;
+		ParserInstantiationContext ctx_;
+	};
+
+	// Format an "in instantiation of …" backtrace from the given context chain.
+	// Only includes frames whose origin_name is valid (mode-only guards pass StringHandle{}).
+	// Returns empty string if ctx is null or no valid origin is found.
+	static std::string buildInstantiationNotes(const ParserInstantiationContext* ctx) {
+		if (ctx == nullptr) return {};
+		std::string notes;
+		const ParserInstantiationContext* c = ctx;
+		while (c != nullptr) {
+			if (c->origin_name.isValid()) {
+				notes += "\n  note: in instantiation of '";
+				notes += StringTable::getStringView(c->origin_name);
+				notes += "' requested here";
+			}
+			c = c->parent;
+		}
+		return notes;
+	}
+
 	// SFINAE type substitution map: maps template parameter name handles to concrete type indices.
 	// Populated during SFINAE trailing return type re-parse so the expression parser can resolve
 	// template parameter types (e.g., U → WithoutFoo) for member access validation.
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual> sfinae_type_map_;
+
+	// Active parser-level instantiation context chain (null when not inside any instantiation).
+	// Managed by ScopedParserInstantiationContext RAII guards.
+	const ParserInstantiationContext* current_instantiation_ctx_ = nullptr;
 
 		// Last parsed trailing requires clause from caller-specific requires handling
 		// skip_function_trailing_specifiers() stops before 'requires' so callers can
@@ -1576,9 +1662,28 @@ private:
 		pending_semantic_roots_.push_back(node);
 		return true;
 	}
+	// Returns true when the current instantiation mode permits committing artifacts.
+	// "Artifacts" are any globally-visible side effects produced during instantiation:
+	//   - type-map commits (getTypesByNameMap() insertions)
+	//   - symbol-table entries (gSymbolTable insertions)
+	//   - AST registration (registerLateMaterializedTopLevelNode calls)
+	//   - lazy-member side-effect callbacks
+	// In ShapeOnly mode all of these must be suppressed so that repeated shape probes
+	// remain idempotent and do not pollute the global compiler state.
 	bool shouldCommitTemplateInstantiationArtifacts() const {
 		return template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly;
 	}
+	// Select the instantiation mode to use for a nested instantiation triggered from
+	// the current context.
+	//
+	// ShapeOnly is STICKY: once the outer instantiation is in ShapeOnly mode, every
+	// nested instantiation it triggers must also stay in ShapeOnly mode, regardless of
+	// the outer_sfinae_context flag.  This ensures that an entire shape-probe subtree
+	// (e.g. default-template-argument parsing) never commits artifacts to global state.
+	//
+	// Outside of ShapeOnly mode, the mode is determined by the caller's SFINAE context:
+	// outer_sfinae_context == true  → SfinaeProbe (soft substitution failures)
+	// outer_sfinae_context == false → HardUse (full commit)
 	TemplateInstantiationMode selectTemplateInstantiationMode(bool outer_sfinae_context) const {
 		if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
 			return TemplateInstantiationMode::ShapeOnly;
@@ -1933,7 +2038,32 @@ public:	// Public methods for template instantiation
 	// Public so codegen/constexpr consumers can reuse the parser's type deduction.
 	std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
 
+	// Returns the current parser-level instantiation context chain (null when not inside any instantiation).
+	// The chain is linked via ParserInstantiationContext::parent for backtrace traversal.
+	const ParserInstantiationContext* currentInstantiationContext() const { return current_instantiation_ctx_; }
+
 private:	 // Resume private methods
+
+	// Returns true when a cached instantiation result needs to be upgraded from ShapeOnly to a
+	// full (Materialized) instantiation.
+	//
+	// A cache entry needs a ShapeOnly upgrade when:
+	//   - cached_node is a StructDeclarationNode, AND
+	//   - that node is currently tagged is_shape_only(), AND
+	//   - current_wants_full is true (i.e. the active mode is NOT ShapeOnly).
+	//
+	// This is the single authoritative test used at all four cache-check sites inside
+	// try_instantiate_class_template.  It replaces both the old cached_shape_only_needs_upgrade
+	// lambda and the equivalent inline check in the TemplateRegistry early-exit block.
+	static bool cachedInstNeedsShapeOnlyUpgrade(const ASTNode* cached_node, bool current_wants_full) {
+		if (!current_wants_full) {
+			return false;
+		}
+		if (!cached_node || !cached_node->is<StructDeclarationNode>()) {
+			return false;
+		}
+		return cached_node->as<StructDeclarationNode>().is_shape_only();
+	}
 
 
 	void register_builtin_functions();  // Register compiler builtin functions
