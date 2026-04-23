@@ -1402,6 +1402,29 @@ ASTNode Parser::substituteTemplateParameters(
 
 		auto initializer = var_decl.initializer().has_value() ? std::optional<ASTNode>(substituteTemplateParameters(*var_decl.initializer(), template_params, template_args)) : std::nullopt;
 
+		// Phase 6: for unsized arrays with pack-expanded initializers (e.g.
+		//   template<typename... Ts> f(Ts... args) { int arr[] = {args...}; }
+		// the parser-time inference set the outer dimension to 1 (the single
+		// PackExpansionExprNode).  After substitution the initializer list has
+		// been expanded into N concrete elements, so re-run the unsized-array
+		// size inference against the substituted initializer.  Emplace a fresh
+		// TypeSpecifierNode copy so we don't mutate the template pattern's
+		// shared TypeSpecifierNode (which is returned unchanged for
+		// non-template types like `int`).
+		if (substituted_decl.is<DeclarationNode>() && initializer.has_value() &&
+			initializer->is<InitializerListNode>()) {
+			DeclarationNode& sub_decl_ref = substituted_decl.as<DeclarationNode>();
+			if (sub_decl_ref.is_unsized_array() && sub_decl_ref.type_node().is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& current_spec =
+					sub_decl_ref.type_node().as<TypeSpecifierNode>();
+				ASTNode fresh_type_node = emplace_node<TypeSpecifierNode>(current_spec);
+				inferUnsizedArraySizeFromInitializer(sub_decl_ref,
+					fresh_type_node.as<TypeSpecifierNode>(),
+					initializer);
+				sub_decl_ref.set_type_node(fresh_type_node);
+			}
+		}
+
 		ASTNode new_var_node = emplace_node<VariableDeclarationNode>(substituted_decl, initializer, var_decl.storage_class());
 		VariableDeclarationNode& new_var = new_var_node.as<VariableDeclarationNode>();
 		setOuterTemplateBindingsFromParams(new_var, template_params, template_args);
