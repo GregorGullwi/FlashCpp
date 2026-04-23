@@ -4760,7 +4760,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		if (!consume("~"_tok)) {
 			return;
 		}
-		// consume the name identifier (expected to match the struct/simple name; we
+		// Consume the name identifier (expected to match the struct/simple name; we
 		// still advance regardless so recovery is well-defined on malformed input).
 		if (peek().is_identifier()) {
 			advance();
