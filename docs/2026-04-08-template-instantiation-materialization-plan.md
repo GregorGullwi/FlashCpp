@@ -1,7 +1,7 @@
 # Template Instantiation / Materialization Status
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-23 (Phase 6 explicit-deduction mapping follow-up: mixed explicit+deduced pack support)
+**Last Updated:** 2026-04-23 (Phase 6 fold-expression complex-pack parser fix)
 
 This document is now a short status audit, not a historical scratchpad.
 Its purpose is to answer two questions clearly:
@@ -25,7 +25,11 @@ Its purpose is to answer two questions clearly:
   - **2026-04-23 multi-pack slice landed:** Two bugs fixed for templates that have multiple variadic packs (e.g. `template<int... Ns, typename... Ts>`):
     1. `try_instantiate_template_explicit`: the call-arg-slice deduction check is now gated on the template-parameter pack that actually maps to the function-parameter pack (via the new `CallArgDeductionInfo::function_pack_template_param_name` field), preventing a false `overload_mismatch` for non-function packs.
     2. `substituteTemplateParameters` / `SizeofPackNode` handler: the accurate per-pack element count is now propagated from `try_instantiate_template_explicit` through the new `template_param_pack_sizes_` member, so `sizeof...(Ns)` and `sizeof...(Ts)` resolve to the correct individual counts rather than the overcounted `template_args.size() - non_variadic_count`. Regressions: `tests/test_explicit_type_pack_not_in_func_sig_ret0.cpp`, `tests/test_explicit_nontype_pack_not_in_func_sig_ret0.cpp`, `tests/test_multi_pack_sizeof_deduction_ret0.cpp`.
-  - **What is still open:** other non-trivial pack remapping shapes not yet exercised, and the broader Phase 6 architecture for deduction from function parameter packs in non-explicit call contexts.
+  - **2026-04-23 fold-expression complex-pack parser fix landed:** Two parser patterns extended to handle non-bare-identifier pack expressions per the C++17/20 standard (`[expr.prim.fold]`):
+    1. **Pattern 1** `(... op cast-expr)`: the unary-left-fold handler now tries to parse a full cast expression when the token after `... op` is not a bare identifier. Previously any expression like `(args > 0)` was silently rejected and caused a template instantiation failure for common patterns such as `(... && (args > 0))`.
+    2. **Pattern 3** `(init op ... op cast-expr)`: the binary-left-fold handler received the same extension for the right-hand operand, enabling `(0 + ... + (args * 2))`.
+    A new `FoldExpressionNode` constructor was added for the binary-fold + complex-pack case. Regression: `tests/test_fold_expr_complex_pack_ret0.cpp`.
+  - **What is still open:** explicit-deduction handling for pack parameters that appear inside template-specialisation arguments in function-parameter packs during *non-explicit* (deduction-only) calls (e.g. implicit deduction of `Ts` from `Box<Ts>...` arguments). Explicit instantiation of those patterns already works. The broader "other non-trivial pack remapping shapes" class is now well covered for the explicit path; the non-explicit deduction path is the remaining open surface.
 
 ## What is clearly landed
 
@@ -86,23 +90,22 @@ Covered by the current tree after this PR:
 - pack-before-tail signatures
 - mixed explicit + deduced elements within the same function-parameter-pack slice
 - the nondeduced-tail bug fixed by `tests/test_explicit_variadic_pack_nondeduced_tail_fail.cpp`
+- template-parameter packs not mapped to any function-parameter pack (type and non-type), covered by `tests/test_explicit_type_pack_not_in_func_sig_ret0.cpp` and `tests/test_explicit_nontype_pack_not_in_func_sig_ret0.cpp`
+- multiple variadic packs where only one is expanded in the function signature, covered by `tests/test_multi_pack_sizeof_deduction_ret0.cpp`
+- fold expressions whose pack operand is a complex cast-expression rather than a bare identifier: `(... op (expr))` and `(init op ... op (expr))`, covered by `tests/test_fold_expr_complex_pack_ret0.cpp`
 
 Still open after this PR:
 
-- template-parameter packs that do not map directly to the single function-parameter-pack slice
-- multiple template packs where only one pack is expanded in the function signature
-- any other explicit-deduction shapes that need richer template-param ↔ function-param mapping than the current canonical call-arg slice metadata
+- **non-explicit deduction** of pack elements from `Box<Ts>...`-style function parameters: when `Ts` is expanded inside a template-specialisation argument in the function parameter list, implicit deduction from a call like `sum_boxes(a, b)` incorrectly deduces `Ts = {Box<int>, Box<double>}` instead of `Ts = {int, double}`. Explicit instantiation (`sum_boxes<int, double>(a, b)`) works correctly.
+- any other richer template-param ↔ function-param mapping shapes that may surface as the test corpus grows
 
 ## Clear next steps
 
-1. **Keep the active scope on explicit deduction only.**
-   - Phase 5 is done; do not reopen the materialization / ownership work in this roadmap unless a new regression appears.
+1. **Fix non-explicit deduction from template-specialisation function parameter packs.**
+   - `buildDeductionMapFromCallArgs` currently skips parameter-pack slots in its template-argument-matching pass (gated on `func_param_to_call_arg_index[i] == SIZE_MAX`). The fix is to iterate over each call-arg in the pack's slice and run the template-arg pairwise matching for the parameter-pack element type, writing each deduced inner type into `param_name_to_arg` for the variadic template parameter.
+   - Example gap: `template<typename... Ts> int f(Box<Ts>... boxes)` called as `f(a, b)` should deduce `Ts = {int, double}` if `a` is `Box<int>` and `b` is `Box<double>`. Currently deduces `Ts = {Box<int>, Box<double>}` instead.
 
-2. **Generalize the mapping model beyond one function-pack slice.**
-   - The current `CallArgDeductionInfo` metadata is enough for the common single-pack shapes now covered by tests.
-   - Future work should extend the metadata to describe template-param ↔ function-param relationships explicitly rather than reintroducing positional fallback heuristics.
-
-3. **Keep the explicit-deduction regression cluster close.**
+2. **Keep the deduction regression cluster close.**
    - `tests/test_explicit_variadic_pack_deduction_ret0.cpp`
    - `tests/test_explicit_variadic_pack_nondeduced_tail_fail.cpp`
    - `tests/test_explicit_variadic_pack_trailing_default_ret0.cpp`
@@ -116,8 +119,8 @@ If you want the shortest accurate summary:
 - **Done:** Phases 1-4
 - **Done:** Phase 5 materialization / ownership cleanup
 - **In progress:** Phase 6 explicit-deduction cleanup
-- **Landed in Phase 6 so far:** the nondeduced-tail positional-fallback fix, canonical function-parameter → call-argument pack-slice metadata, pack-before-tail explicit deduction, and mixed explicit + deduced pack support
-- **Work left after this PR:** generalized explicit-deduction handling for more complex pack mappings; the roadmap is **not** fully exhausted yet, so this document should stay
+- **Landed in Phase 6 so far:** the nondeduced-tail positional-fallback fix, canonical function-parameter → call-argument pack-slice metadata, pack-before-tail explicit deduction, mixed explicit + deduced pack support, multi-pack sizeof resolution, fold expressions with complex pack operands
+- **Work left after this PR:** non-explicit (implicit) deduction of inner template types from `Box<Ts>...`-style function parameters; the roadmap is **not** fully exhausted yet, so this document should stay
 
 ## Regression coverage worth keeping close
 
@@ -137,8 +140,26 @@ The following tests are the most relevant guardrails for this area:
 - `tests/test_explicit_variadic_pack_trailing_default_ret0.cpp`
 - `tests/test_pack_nonpack_mixed_explicit_deduction_ret0.cpp`
 - `tests/test_explicit_template_pack_sizeof_param_name_ret0.cpp`
+- `tests/test_fold_expr_complex_pack_ret0.cpp`
 
-## Validation baseline refreshed on 2026-04-21 (Slice G: re-normalize materialized bodies + deeper diagnosis)
+## Validation baseline refreshed on 2026-04-23 (Phase 6: fold-expression complex-pack parser fix)
+
+Linux validation run after:
+- Extending fold-expression Pattern 1 `(... op cast-expr)` to accept non-bare-identifier pack operands in the parser.
+- Extending fold-expression Pattern 3 `(init op ... op cast-expr)` similarly.
+- Adding `FoldExpressionNode` constructor for binary fold with complex pack expression.
+- Adding regression test `tests/test_fold_expr_complex_pack_ret0.cpp`.
+
+Run:
+
+- `make sharded CXX=clang++`
+- `bash ./tests/run_all_tests.sh`
+
+Current baseline:
+
+- **2183** compile+link+runtime passing tests (+1 from new `test_fold_expr_complex_pack_ret0.cpp`)
+- **149** `_fail` tests failing as expected
+- overall result: **SUCCESS**
 
 Landed on top of the drain-by-ODR-use pass:
 - `SemanticAnalysis::drainLazyMemberRegistry` now calls `normalizeTopLevelNode(*result)` immediately after each successful `ensureMemberFunctionMaterialized` (in both the AST-walk pass and the ODR-use pass). This guarantees a freshly-substituted body has its internal call expressions annotated by sema (routed through `tryAnnotateCallArgConversions` → `tryMaterializeLazyCallTarget`). The normalize helpers dedup via `normalized_bodies_`, so re-normalizing an already-processed node is a safe no-op.

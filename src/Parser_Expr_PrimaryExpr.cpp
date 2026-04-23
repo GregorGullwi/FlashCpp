@@ -6929,7 +6929,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			return isFoldOperatorToken(peek_info().value());
 		};
 
-		// Pattern 1: Unary left fold: (... op pack)
+		// Pattern 1: Unary left fold: (... op pack) or (... op complex_expr)
 		if (peek() == "..."_tok) {
 			advance(); // consume ...
 
@@ -6939,7 +6939,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				Token op_token = peek_info();
 				advance(); // consume operator
 
-				// Next should be the pack identifier
+				// Next is either a simple pack identifier or a complex cast-expression.
 				if (peek().is_identifier()) {
 					std::string_view pack_name = peek_info().value();
 					advance(); // consume pack name
@@ -6949,6 +6949,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						discard_saved_token(fold_check_pos);
 						result = emplace_node<ExpressionNode>(
 							FoldExpressionNode(pack_name, fold_op,
+											   FoldExpressionNode::Direction::Left, op_token));
+						is_fold = true;
+					}
+				} else {
+					// Complex pack expression: (... op expr) where expr is not a bare identifier.
+					// e.g. (... && (args > 0)) — valid unary left fold per the C++17/20 standard
+					// ([expr.prim.fold]: cast-expression fold-operator ...).
+					// If parsing or closing ) fails, is_fold stays false and fold_check_pos restores.
+					ParseResult complex_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (!complex_result.is_error() && complex_result.node().has_value() && consume(")"_tok)) {
+						discard_saved_token(fold_check_pos);
+						result = emplace_node<ExpressionNode>(
+							FoldExpressionNode(*complex_result.node(), fold_op,
 											   FoldExpressionNode::Direction::Left, op_token));
 						is_fold = true;
 					}
@@ -7093,6 +7106,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									discard_saved_token(init_pos);
 									result = emplace_node<ExpressionNode>(
 										FoldExpressionNode(pack_name, fold_op,
+														   FoldExpressionNode::Direction::Left, *init_result.node(), op_token));
+									is_fold = true;
+								}
+							} else {
+								// Complex pack expression: (init op ... op expr)
+								// e.g. (0 + ... + (args * 2)) â valid binary left fold.
+								// If parsing or closing ) fails, is_fold stays false and init_pos restores.
+								ParseResult pack_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+								if (!pack_result.is_error() && pack_result.node().has_value() && consume(")"_tok)) {
+									discard_saved_token(fold_check_pos);
+									discard_saved_token(init_pos);
+									result = emplace_node<ExpressionNode>(
+										FoldExpressionNode(*pack_result.node(), fold_op,
 														   FoldExpressionNode::Direction::Left, *init_result.node(), op_token));
 									is_fold = true;
 								}
