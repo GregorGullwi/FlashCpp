@@ -1,7 +1,7 @@
 # Template Instantiation / Materialization Status
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-23 (Phase 6 multi-dependent pack element type deduction)
+**Last Updated:** 2026-04-23 (Phase 6 fold Pattern 3 bare-id backtracking + brace-init pack expansion)
 
 This document is now a short status audit, not a historical scratchpad.
 Its purpose is to answer two questions clearly:
@@ -21,6 +21,8 @@ Its purpose is to answer two questions clearly:
   - The long Phase 5 slice chain (A through M) is effectively closed by the current tree state captured below in the validation history.
 - **Phase 6:** In progress.
   - The 2026-04-22 positional-fallback bugfix landed: fallback is gated on an actual **function-parameter pack** and skips pre-deduced call-arg slots. Regression: `tests/test_explicit_variadic_pack_nondeduced_tail_fail.cpp`.
+  - **2026-04-23 fold Pattern 3 bare-id backtracking fix landed:** the binary-left-fold parser Pattern 3 `(init op ... op <pack>)` path consumed an identifier before checking `)`, but did not restore the token position on failure. This made `(0 + ... + args.x)` (and any member-access or complex expression starting with an identifier) fall through as a non-fold parenthesized expression. Fix: save token position before consuming the identifier and restore on `)`-mismatch so the complex-expression fallback can re-parse the full expression. Regression: `tests/test_fold_member_access_ret42.cpp`.
+  - **2026-04-23 pack expansion in brace initializer lists landed:** `{args...}` and `{static_cast<int>(args)...}` inside brace-init lists are now parsed as `PackExpansionExprNode` elements. Two parser sites updated (`parse_brace_initializer_clause_list` in `src/Parser_Statements.cpp` and the array-element branch of `parse_brace_initializer`). `substituteTemplateParameters` for `InitializerListNode` now routes non-designated `PackExpansionExprNode` elements through the existing `expandPackExpansionArgs` helper so each pack element becomes a separate initializer in the substituted list. Regression: `tests/test_pack_expansion_brace_init_ret42.cpp` (explicit-size array form). Known-issue corollaries (documented in `docs/KNOWN_ISSUES.md`): unsized `int arr[] = {args...}` keeps pre-expansion size 1 because `deduceArraySize` runs at parse time; aggregate struct brace-init with a pack-expansion element is still rejected at parse time on a different code path.
   - The explicit-deduction cleanup slice landed: explicit function-template instantiation now reuses the canonical function-parameter → call-argument mapping for pack slices, including **mixed explicit + deduced pack** cases. Regressions: `tests/test_explicit_variadic_pack_deduction_ret0.cpp` and `tests/test_explicit_variadic_pack_trailing_default_ret0.cpp`.
   - **2026-04-23 multi-pack slice landed:** Two bugs fixed for templates that have multiple variadic packs (e.g. `template<int... Ns, typename... Ts>`):
     1. `try_instantiate_template_explicit`: the call-arg-slice deduction check is now gated on the template-parameter pack that actually maps to the function-parameter pack (via the new `CallArgDeductionInfo::function_pack_template_param_name` field), preventing a false `overload_mismatch` for non-function packs.

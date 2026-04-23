@@ -1424,7 +1424,15 @@ ParseResult Parser::parse_brace_initializer_clause_list(std::vector<ASTNode>& el
 		}
 
 		if (init_expr_result.node().has_value()) {
-			elements.push_back(*init_expr_result.node());
+			ASTNode element_node = *init_expr_result.node();
+			// Check for pack expansion (...) after the element, e.g. {static_cast<int>(args)...}
+			if (peek() == "..."_tok) {
+				Token ellipsis_token = peek_info();
+				advance();
+				element_node = emplace_node<ExpressionNode>(
+					PackExpansionExprNode(element_node, ellipsis_token));
+			}
+			elements.push_back(element_node);
 		} else {
 			return ParseResult::error("Expected initializer expression", current_token_);
 		}
@@ -1604,7 +1612,15 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			// Add the initializer to the list
 			if (init_expr_result.node().has_value()) {
-				init_list_ref.add_initializer(*init_expr_result.node());
+				ASTNode element_node = *init_expr_result.node();
+				// Check for pack expansion (...) after the element, e.g. {args...}
+				if (peek() == "..."_tok) {
+					Token ellipsis_token = peek_info();
+					advance();
+					element_node = emplace_node<ExpressionNode>(
+						PackExpansionExprNode(element_node, ellipsis_token));
+				}
+				init_list_ref.add_initializer(element_node);
 			} else {
 				return ParseResult::error("Expected initializer expression", current_token_);
 			}

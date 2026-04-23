@@ -7097,6 +7097,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							advance(); // consume second operator
 
 							if (peek().is_identifier()) {
+								SaveHandle pack_name_pos = save_token_position();
 								std::string_view pack_name = peek_info().value();
 								advance(); // consume pack name
 
@@ -7104,12 +7105,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									// Valid binary left fold: (init op ... op pack)
 									discard_saved_token(fold_check_pos);
 									discard_saved_token(init_pos);
+									discard_saved_token(pack_name_pos);
 									result = emplace_node<ExpressionNode>(
 										FoldExpressionNode(pack_name, fold_op,
 														   FoldExpressionNode::Direction::Left, *init_result.node(), op_token));
 									is_fold = true;
+								} else {
+									// Identifier was just a prefix of a complex expression (e.g. args.x).
+									// Restore so the complex-expression path below can re-parse it.
+									restore_token_position(pack_name_pos);
+									discard_saved_token(pack_name_pos);
 								}
-							} else {
+							}
+
+							if (!is_fold) {
 								// Complex pack expression: (init op ... op expr)
 								// e.g. (0 + ... + (args * 2)) â valid binary left fold.
 								// If parsing or closing ) fails, is_fold stays false and init_pos restores.
