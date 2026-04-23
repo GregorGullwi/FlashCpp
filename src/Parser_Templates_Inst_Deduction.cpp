@@ -163,38 +163,6 @@ static bool hasTemplateFunctionBodyDefinition(const FunctionDeclarationNode& fun
 		   func_decl.is_materialized();
 }
 
-static const TypeSpecifierNode* tryGetMappedCallArgForDirectTypeTemplateParam(
-	const std::vector<ASTNode>& func_params,
-	const std::vector<TypeSpecifierNode>& arg_types,
-	const Parser::CallArgDeductionInfo& deduction_info,
-	StringHandle template_param_name) {
-	for (size_t i = 0; i < func_params.size() &&
-					   i < deduction_info.func_param_to_call_arg_index.size();
-		 ++i) {
-		if (!func_params[i].is<DeclarationNode>()) {
-			continue;
-		}
-		const DeclarationNode& func_param_decl = func_params[i].as<DeclarationNode>();
-		if (func_param_decl.is_parameter_pack() || func_param_decl.is_array()) {
-			continue;
-		}
-		size_t call_arg_index = deduction_info.func_param_to_call_arg_index[i];
-		if (call_arg_index == SIZE_MAX || call_arg_index >= arg_types.size()) {
-			continue;
-		}
-		const TypeSpecifierNode& func_param_type = func_param_decl.type_node().as<TypeSpecifierNode>();
-		if (func_param_type.pointer_depth() != 0 || func_param_type.is_array()) {
-			continue;
-		}
-		const TypeInfo* func_param_type_info = tryGetTypeInfo(func_param_type.type_index());
-		if (!func_param_type_info || func_param_type_info->name() != template_param_name) {
-			continue;
-		}
-		return &arg_types[call_arg_index];
-	}
-	return nullptr;
-}
-
 static bool sameTypeSpecifierShape(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
 	if (lhs.category() != rhs.category() ||
 		lhs.cv_qualifier() != rhs.cv_qualifier() ||
@@ -1287,7 +1255,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				? gNamespaceRegistry.getQualifiedName(func_decl.namespace_handle())
 				: "(invalid)");
 		bool has_variadic_func_pack = false;
-		size_t required_function_args_after_pack = 0;
 
 	// Filter by call argument count if known (SIZE_MAX means unknown)
 	// Only reject if caller provides MORE args than the function has params
@@ -1298,10 +1265,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				if (p.is<DeclarationNode>() && p.as<DeclarationNode>().is_parameter_pack()) {
 					has_variadic_func_pack = true;
 					continue;
-				}
-				if (has_variadic_func_pack &&
-					(!p.is<DeclarationNode>() || !p.as<DeclarationNode>().has_default_value())) {
-					++required_function_args_after_pack;
 				}
 			}
 			if (!has_variadic_func_pack && call_arg_count > func_param_count) {
@@ -1364,6 +1327,42 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 			param_name_to_arg = std::move(deduction_info->param_name_to_arg);
 		}
+		auto tryGetMappedCallArgForDirectTypeTemplateParam =
+			[&](StringHandle template_param_name) -> const TypeSpecifierNode* {
+			if (!deduction_info.has_value() || current_explicit_call_arg_types_ == nullptr) {
+				return nullptr;
+			}
+			for (size_t func_param_index = 0;
+				 func_param_index < func_decl.parameter_nodes().size() &&
+				 func_param_index < deduction_info->func_param_to_call_arg_index.size();
+				 ++func_param_index) {
+				if (!func_decl.parameter_nodes()[func_param_index].is<DeclarationNode>()) {
+					continue;
+				}
+				const DeclarationNode& func_param_decl =
+					func_decl.parameter_nodes()[func_param_index].as<DeclarationNode>();
+				if (func_param_decl.is_parameter_pack() || func_param_decl.is_array()) {
+					continue;
+				}
+				size_t call_arg_index = deduction_info->func_param_to_call_arg_index[func_param_index];
+				if (call_arg_index == SIZE_MAX ||
+					call_arg_index >= current_explicit_call_arg_types_->size()) {
+					continue;
+				}
+				const TypeSpecifierNode& func_param_type =
+					func_param_decl.type_node().as<TypeSpecifierNode>();
+				if (func_param_type.pointer_depth() != 0 || func_param_type.is_array()) {
+					continue;
+				}
+				const TypeInfo* func_param_type_info = tryGetTypeInfo(func_param_type.type_index());
+				if (!func_param_type_info ||
+					func_param_type_info->name() != template_param_name) {
+					continue;
+				}
+				return &(*current_explicit_call_arg_types_)[call_arg_index];
+			}
+			return nullptr;
+		};
 		bool overload_mismatch = false;
 		for (size_t i = 0; i < template_params.size(); ++i) {
 			if (!template_params[i].is<TemplateParameterNode>()) {
@@ -1449,11 +1448,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						current_explicit_call_arg_types_ != nullptr &&
 						deduction_info.has_value()) {
 						if (const TypeSpecifierNode* mapped_arg_type =
-								tryGetMappedCallArgForDirectTypeTemplateParam(
-									func_decl.parameter_nodes(),
-									*current_explicit_call_arg_types_,
-									*deduction_info,
-									param_handle)) {
+								tryGetMappedCallArgForDirectTypeTemplateParam(param_handle)) {
 							template_args.push_back(TemplateTypeArg::makeTypeSpecifier(*mapped_arg_type));
 							template_param_arg_starts[i] = arg_start_index;
 							template_param_arg_counts[i] = template_args.size() - arg_start_index;

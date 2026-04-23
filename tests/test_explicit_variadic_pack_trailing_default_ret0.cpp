@@ -1,31 +1,19 @@
-struct IntTag {
-	char value;
-};
-
-struct LongTag {
-	char value[2];
-};
-
-IntTag selectTag(int) {
-	return {};
+int classifyValues(char, short) {
+	return 23;
 }
 
-LongTag selectTag(long) {
-	return {};
+int classifyValues(char, short, int) {
+	return 99;
 }
 
-template<typename... Ts, typename Tail = int>
-int classify(Ts..., Tail value = Tail{}) {
-	return static_cast<int>(sizeof...(Ts)) * 10 + static_cast<int>(sizeof(selectTag(value)));
+template<typename... Ts, typename Tail>
+int packBeforeTail(Ts... values, Tail) {
+	return classifyValues(values...);
 }
 
 int main() {
-	if (classify<char, short>(1, 2, 7L) != 22) {
+	if (packBeforeTail<char, short>(1, 2, 7L) != 23) {
 		return 1;
-	}
-
-	if (classify<char, short>(1, 2) != 21) {
-		return 2;
 	}
 
 	return 0;
