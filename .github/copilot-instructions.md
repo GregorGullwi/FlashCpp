@@ -1,13 +1,13 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-FlashCpp is a C++20 compiler front-end. Core sources live in `src/`; tests sit in `tests/*.cpp`. Generated binaries belong in `x64/` or `Debug/` and stay untracked.
+FlashCpp is a C++20 compiler front-end. Core sources live in `src/`; tests sit in `tests/*.cpp`. Generated binaries belong in `x64/` or `Sharded/` and stay untracked.
 Bash scripts, and the `Makefile` cover clang workflows.
-Use `cd /tmp && /home/runner/work/FlashCpp/FlashCpp/x64/Debug/FlashCpp [test_file_name].cpp -o [test_file_name].o` when compiling individual test files to verify your changes.
+Use `cd /tmp && /home/runner/work/FlashCpp/FlashCpp/x64/Sharded/FlashCpp [test_file_name].cpp -o [test_file_name].o` when compiling individual test files to verify your changes.
 Link using clang and run to verify the return output.
 
 ## Build, Test, and Development Commands
-- Use `make main CXX=clang++` — builds the compiler, good when using bash as WSL/Linux, to produce `x64\Debug\FlashCpp`. Run it whenever you change compiler source files.
+- Use `make sharded CXX=clang++` — builds the compiler, good when using bash as WSL/Linux, to produce `x64\Sharded\FlashCpp`. Run it whenever you change compiler source files.
 - Use `tests/run_all_tests.sh` — invokes all the tests in the tests folder on WSL/Linux. 
 
 ## Coding Style & Naming Conventions
@@ -25,7 +25,7 @@ When adding new test cases and files, verify that they are valid C++20 source fi
 
 ## Workspace Hygiene
 Delete binaries, dumps, and logs before you summarize your work. Feel free to leave debug output in the source code.
-Purge `x64/`, `Debug/`, `output/`, and any ad-hoc `.obj`, `.exe`, `.pdb`, or `.lst`; `git status --short` should show only intentional edits.
+Purge `x64/`, `Sharded/`, `output/`, and any ad-hoc `.obj`, `.exe`, `.pdb`, or `.lst`; `git status --short` should show only intentional edits.
 
 ## Debugging & Reference Tips
 Use `strace` to get more information regarding coredumps, since gdb or lldb isn't available. Prefer logging.

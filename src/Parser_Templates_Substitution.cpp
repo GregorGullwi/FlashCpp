@@ -830,6 +830,16 @@ ASTNode Parser::substituteTemplateParameters(
 			// try to calculate from template_params/template_args by finding the variadic parameter
 			bool found_variadic = false;
 			if (num_pack_elements == 0) {
+				// First, try the per-pack sizes recorded by try_instantiate_template_explicit.
+				// This is the authoritative source when multiple variadic packs are present:
+				// the naive "template_args.size() - non_variadic_count" formula below
+				// overcounts by attributing ALL remaining args to whichever pack is found first.
+				if (auto exact_size = get_template_param_pack_size(pack_name)) {
+					found_variadic = true;
+					num_pack_elements = *exact_size;
+				}
+			}
+			if (num_pack_elements == 0 && !found_variadic) {
 				// The pack_name is the function parameter name (e.g., "rest")
 				// We need to find the corresponding variadic template parameter (e.g., "Rest")
 				// The mapping: function param type uses the template param name
@@ -837,6 +847,9 @@ ASTNode Parser::substituteTemplateParameters(
 				// Without this check, a member function template with its own variadic params
 				// (e.g., Args...) would incorrectly match when sizeof... asks about the class
 				// template's pack (e.g., Elements...).
+				// NOTE: We guard with !found_variadic so an authoritative empty pack (size=0
+				// from get_template_param_pack_size) does not fall through to this naive
+				// formula, which overcounts when multiple packs are present.
 				size_t non_variadic_count = 0;
 				for (size_t i = 0; i < template_params.size(); ++i) {
 					if (template_params[i].is<TemplateParameterNode>()) {
@@ -852,7 +865,7 @@ ASTNode Parser::substituteTemplateParameters(
 					num_pack_elements = template_args.size() - non_variadic_count;
 				}
 			} else if (num_pack_elements > 0) {
-				found_variadic = true; // count_pack_elements found it
+				found_variadic = true; // count_pack_elements or get_template_param_pack_size found it
 			}
 
 			// If no variadic parameter was found, check pack_param_info_ as well

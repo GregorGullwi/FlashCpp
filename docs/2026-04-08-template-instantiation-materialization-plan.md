@@ -21,8 +21,11 @@ Its purpose is to answer two questions clearly:
   - The long Phase 5 slice chain (A through M) is effectively closed by the current tree state captured below in the validation history.
 - **Phase 6:** In progress.
   - The 2026-04-22 positional-fallback bugfix landed: fallback is gated on an actual **function-parameter pack** and skips pre-deduced call-arg slots. Regression: `tests/test_explicit_variadic_pack_nondeduced_tail_fail.cpp`.
-  - This PR lands the next explicit-deduction cleanup slice: explicit function-template instantiation now reuses the canonical function-parameter → call-argument mapping for pack slices, including **mixed explicit + deduced pack** cases. Regressions: `tests/test_explicit_variadic_pack_deduction_ret0.cpp` and `tests/test_explicit_variadic_pack_trailing_default_ret0.cpp`.
-  - **What is still open after this PR:** broader Phase 6 architecture for cases where template-parameter packs do **not** map 1:1 onto the function-parameter-pack slice (for example, multiple template packs where only one is expanded in the function signature, or other non-trivial pack remapping shapes). That work remains separate from the completed materialization/ownership plan.
+  - The explicit-deduction cleanup slice landed: explicit function-template instantiation now reuses the canonical function-parameter → call-argument mapping for pack slices, including **mixed explicit + deduced pack** cases. Regressions: `tests/test_explicit_variadic_pack_deduction_ret0.cpp` and `tests/test_explicit_variadic_pack_trailing_default_ret0.cpp`.
+  - **2026-04-23 multi-pack slice landed:** Two bugs fixed for templates that have multiple variadic packs (e.g. `template<int... Ns, typename... Ts>`):
+    1. `try_instantiate_template_explicit`: the call-arg-slice deduction check is now gated on the template-parameter pack that actually maps to the function-parameter pack (via the new `CallArgDeductionInfo::function_pack_template_param_name` field), preventing a false `overload_mismatch` for non-function packs.
+    2. `substituteTemplateParameters` / `SizeofPackNode` handler: the accurate per-pack element count is now propagated from `try_instantiate_template_explicit` through the new `template_param_pack_sizes_` member, so `sizeof...(Ns)` and `sizeof...(Ts)` resolve to the correct individual counts rather than the overcounted `template_args.size() - non_variadic_count`. Regressions: `tests/test_explicit_type_pack_not_in_func_sig_ret0.cpp`, `tests/test_explicit_nontype_pack_not_in_func_sig_ret0.cpp`, `tests/test_multi_pack_sizeof_deduction_ret0.cpp`.
+  - **What is still open:** other non-trivial pack remapping shapes not yet exercised, and the broader Phase 6 architecture for deduction from function parameter packs in non-explicit call contexts.
 
 ## What is clearly landed
 
@@ -259,3 +262,58 @@ An audit guard that converted the removed fallback into a hard `InternalError` w
 - `docs/2026-04-06-template-constexpr-sema-audit-plan.md`
 - `docs/2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`
 - `docs/2026-04-04-codegen-name-lookup-investigation.md`
+
+## PR #1344 review comments addressed (2026-04-23)
+
+Four review comments from PR #1344 were addressed:
+
+### Fix 1: Tab/space indentation (Devin)
+`src/Parser_Templates_Inst_Deduction.cpp` lines 1006-1012 had mixed leading
+space + tab characters.  Replaced with pure tab indentation to match the rest
+of the file.
+
+### Fix 2: Namespace/template-specialisation pack name extraction (Gemini)
+`src/Parser_Templates_Inst_Deduction.cpp` — the pack-parameter name extractor
+used `fp_type.token().handle()` unconditionally.  For simple `Ts... args` that
+token correctly returns `Ts`, but for `MyBox<Ts>... args` it returns `MyBox`
+(the template name), not the pack parameter `Ts`.
+
+The fix: after reading the token handle, check whether it exists in
+`tparam_nodes_by_name`.  If it does not (or is invalid), walk the `TypeInfo`
+for the type specifier; if the type is a template instantiation, iterate its
+`templateArgs()` and use the first entry whose `dependent_name` is valid as the
+pack parameter name.  The stale `FLASH_LOG_FORMAT(Templates, Error, ...)`
+diagnostic that fired for every template-instantiation type was removed because
+it incorrectly flagged valid cases as errors.
+
+A new test `tests/test_explicit_pack_template_specialization_ret0.cpp` was
+added that calls `f<0>(a, b)` where `f` is declared
+`template<int N, typename... Ts> int f(Box<Ts>... boxes)`.
+
+### Fix 3: ScopeGuard ordering for exception safety (Gemini)
+`src/Parser_Templates_Inst_Deduction.cpp` — `ScopeGuard
+restore_template_pack_sizes` was constructed *after* the loop that populates
+`template_param_pack_sizes_`.  If the loop threw (e.g., `std::bad_alloc`) the
+saved data would be permanently lost.  Moved the `ScopeGuard` construction to
+immediately after the `std::move` and before the population loop.
+
+### Fix 4: Empty pack falling through to naive fallback (Devin)
+`src/Parser_Templates_Substitution.cpp` — when
+`get_template_param_pack_size` returned `0` for an authoritative empty pack,
+`found_variadic` was set to `true` but `num_pack_elements` stayed `0`, causing
+the next `if (num_pack_elements == 0)` guard to re-enter the naive
+`template_args.size() - non_variadic_count` formula.  This overcounts when
+multiple variadic packs are present.  Changed the guard condition to
+`if (num_pack_elements == 0 && !found_variadic)` so that an authoritative
+empty-pack result is respected and the naive fallback is skipped.
+
+### Validation baseline (2026-04-23)
+
+- `make main CXX=clang++`
+- `bash ./tests/run_all_tests.sh`
+
+Current baseline:
+
+- **2182** compile+link+runtime passing tests (includes new test)
+- **149** `_fail` tests failing as expected
+- overall result: **SUCCESS**
