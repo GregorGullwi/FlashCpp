@@ -1332,8 +1332,24 @@ ASTNode Parser::substituteTemplateParameters(
 		InitializerListNode& new_init_list_ref = new_init_list.as<InitializerListNode>();
 
 		for (size_t i = 0; i < init_list.initializers().size(); ++i) {
+			const ASTNode& element = init_list.initializers()[i];
+			// Expand PackExpansionExprNode elements (e.g. {args...}) into multiple
+			// substituted initializers. Designated initializers cannot be pack expansions
+			// per C++20 [dcl.init.aggr], so only apply to non-designated slots.
+			if (!init_list.is_designated(i) && element.is<ExpressionNode>()) {
+				const ExpressionNode& elem_expr = element.as<ExpressionNode>();
+				if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&elem_expr)) {
+					ChunkedVector<ASTNode> expanded;
+					if (expandPackExpansionArgs(*pack_expansion_expr, template_params, template_args, expanded)) {
+						for (size_t k = 0; k < expanded.size(); ++k) {
+							new_init_list_ref.add_initializer(expanded[k]);
+						}
+						continue;
+					}
+				}
+			}
 			ASTNode substituted_init = substituteTemplateParameters(
-				init_list.initializers()[i], template_params, template_args);
+				element, template_params, template_args);
 			if (init_list.is_designated(i)) {
 				new_init_list_ref.add_designated_initializer(init_list.member_name(i), substituted_init);
 			} else {
