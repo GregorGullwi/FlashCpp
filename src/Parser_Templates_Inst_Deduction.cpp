@@ -1290,9 +1290,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				: "(invalid)");
 		bool has_variadic_func_pack = false;
 
-	// Filter by call argument count if known (SIZE_MAX means unknown)
-	// Only reject if caller provides MORE args than the function has params
-	// (fewer args might use defaults, so we allow call_arg_count <= func_param_count)
+		// Filter by call argument count if known (SIZE_MAX means unknown)
+		// Only reject if caller provides MORE args than the function has params
+		// (fewer args might use defaults, so we allow call_arg_count <= func_param_count)
 		if (call_arg_count != SIZE_MAX && !func_decl.is_variadic()) {
 			size_t func_param_count = func_decl.parameter_nodes().size();
 			for (const auto& p : func_decl.parameter_nodes()) {
@@ -1306,7 +1306,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		}
 
-	// Check if template has a variadic parameter pack
+		// Check if template has a variadic parameter pack
 		bool has_variadic_pack = false;
 		for (const auto& param : template_params) {
 			if (param.is<TemplateParameterNode>()) {
@@ -1318,7 +1318,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		}
 
-	// Verify we have the right number of template arguments.
+		// Verify we have the right number of template arguments.
 		size_t required_template_args = countRequiredTemplateArgsAfter<
 			decltype(template_params),
 			decltype(explicit_types)>(template_params, 0);
@@ -1338,7 +1338,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			continue;
 		}
 
-	// Build template argument list
+		// Build template argument list
 		InlineVector<TemplateTypeArg, 4> template_args;
 		std::vector<size_t> template_param_arg_starts(template_params.size(), SIZE_MAX);
 		std::vector<size_t> template_param_arg_counts(template_params.size(), 0);
@@ -1477,12 +1477,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		if (overload_mismatch)
 			continue;  // SFINAE: try next overload
 
-	// CHECK REQUIRES CLAUSE CONSTRAINT BEFORE INSTANTIATION
+		// CHECK REQUIRES CLAUSE CONSTRAINT BEFORE INSTANTIATION
 		if (template_func.has_requires_clause()) {
 			const RequiresClauseNode& requires_clause =
 				template_func.requires_clause()->as<RequiresClauseNode>();
 
-		// Get template parameter names for evaluation
+			// Get template parameter names for evaluation
 			InlineVector<std::string_view, 4> eval_param_names;
 			for (const auto& tparam_node : template_params) {
 				if (tparam_node.is<TemplateParameterNode>()) {
@@ -1490,19 +1490,19 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				}
 			}
 
-		// Create a copy of explicit_types with template template arg flags properly set
+			// Create a copy of explicit_types with template template arg flags properly set
 			InlineVector<TemplateTypeArg, 4> constraint_eval_args = template_args;
 
 			FLASH_LOG(Templates, Debug, "  Evaluating constraint with ", constraint_eval_args.size(), " template args and ", eval_param_names.size(), " param names");
 
-		// Evaluate the constraint with the template arguments
+			// Evaluate the constraint with the template arguments
 			auto constraint_result = evaluateConstraint(
 				requires_clause.constraint_expr(), constraint_eval_args, eval_param_names);
 
 			FLASH_LOG(Templates, Debug, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
 
 			if (!constraint_result.satisfied) {
-			// Constraint not satisfied - report detailed error
+				// Constraint not satisfied - report detailed error
 				std::string args_str;
 				for (size_t j = 0; j < constraint_eval_args.size(); ++j) {
 					if (j > 0)
@@ -1520,13 +1520,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				}
 				FLASH_LOG(Parser, Error, "  template arguments: ", args_str);
 
-			// Don't create instantiation - constraint failed, try next overload
+				// Don't create instantiation - constraint failed, try next overload
 				continue;
 			}
 		}
 
-	// CHECK CONCEPT CONSTRAINTS ON TEMPLATE PARAMETERS (C++20 abbreviated templates)
-	// For parameters like `template<IsInt _T0>` (from `IsInt auto x`), evaluate the concept
+		// CHECK CONCEPT CONSTRAINTS ON TEMPLATE PARAMETERS (C++20 abbreviated templates)
+		// For parameters like `template<IsInt _T0>` (from `IsInt auto x`), evaluate the concept
 		{
 			bool concept_failed = false;
 			forEachNonPackTemplateParamArgBinding(
@@ -1564,11 +1564,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		if (overload_mismatch)
 			continue;  // SFINAE: concept constraint failed, try next overload
 
-	// SFINAE for trailing return type: if the function has a declaration position for re-parsing,
-	// always re-parse the return type with substituted template parameters.
-	// During template parsing, trailing return types like decltype(u->foo(), void(), true)
-	// may resolve to concrete types (e.g., bool) even when they contain dependent expressions.
-	// The re-parse with concrete template arguments will fail if substitution is invalid.
+		// SFINAE for trailing return type: if the function has a declaration position for re-parsing,
+		// always re-parse the return type with substituted template parameters.
+		// During template parsing, trailing return types like decltype(u->foo(), void(), true)
+		// may resolve to concrete types (e.g., bool) even when they contain dependent expressions.
+		// The re-parse with concrete template arguments will fail if substitution is invalid.
 		if (func_decl.has_trailing_return_type_position()) {
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
@@ -1582,8 +1582,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			restore_lexer_position_only(func_decl.trailing_return_type_position());
 			advance();  // consume '->'
 
-		// Register function parameters so they're visible in decltype expressions.
-		// Use SymbolTableScope RAII to ensure exit_scope on all paths (including exceptions).
+			// Register function parameters so they're visible in decltype expressions.
+			// Use SymbolTableScope RAII to ensure exit_scope on all paths (including exceptions).
 			FlashCpp::SymbolTableScope sfinae_param_scope(ScopeType::Function);
 			register_parameters_in_scope(func_decl.parameter_nodes());
 
@@ -1591,11 +1591,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 
 			auto return_type_result = parse_type_specifier();
-		// Explicitly exit the param scope before restoring the lexer position.
+			// Explicitly exit the param scope before restoring the lexer position.
 			gSymbolTable.exit_scope();
 			sfinae_param_scope.dismiss();  // prevent double exit in destructor
 			restore_lexer_position_only(sfinae_pos);
-		// guard_ptb, guard_param_names and guard_sfinae_map restore their fields automatically
+			// guard_ptb, guard_param_names and guard_sfinae_map restore their fields automatically
 
 			if (return_type_result.is_error() || !return_type_result.node().has_value()) {
 				FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: trailing return type re-parse failed for '{}', trying next overload", template_name);
@@ -1603,12 +1603,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		}
 
-	// Instantiate the template (same logic as try_instantiate_template)
-	// Generate mangled name first - it now includes reference qualifiers
+		// Instantiate the template (same logic as try_instantiate_template)
+		// Generate mangled name first - it now includes reference qualifiers
 		std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(template_name, template_args);
 
-	// Check if we already have this instantiation using structured key
-	// This ensures that int, int&, and int&& are treated as distinct instantiations
+		// Check if we already have this instantiation using structured key
+		// This ensures that int, int&, and int&& are treated as distinct instantiations
 		auto key = FlashCpp::makeInstantiationKey(
 			StringTable::getOrInternStringHandle(template_name), template_args);
 
@@ -1619,7 +1619,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 		const DeclarationNode& orig_decl = func_decl.decl_node();
 
-	// Create a token for the mangled name
+		// Create a token for the mangled name
 		Token mangled_token(Token::Type::Identifier, mangled_name,
 							orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
 							orig_decl.identifier_token().file_index());
@@ -1667,7 +1667,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					}
 				}
 			}
-			if (auto direct_alias = gTemplateRegistry.lookup_alias_template(std::string(type_name));
+			if (auto direct_alias = gTemplateRegistry.lookup_alias_template(type_name);
 				direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
 				const auto& alias_node = direct_alias->as<TemplateAliasNode>();
 				if (alias_node.target_type().is<TypeSpecifierNode>()) {
@@ -1808,12 +1808,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		};
 
-	// Substitute template parameters in the return type
+		// Substitute template parameters in the return type
 		const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
 		TypeIndex substituted_return_type_index = substitute_template_parameter(
 			orig_return_type, template_params, template_args);
 
-	// Create return type with substituted type, preserving qualifiers
+		// Create return type with substituted type, preserving qualifiers
 		ASTNode return_type = emplace_node<TypeSpecifierNode>(
 			substituted_return_type_index,
 			get_type_size_bits(substituted_return_type_index.category()),
@@ -1821,7 +1821,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			orig_return_type.cv_qualifier(),
 			ReferenceQualifier::None);
 
-	// Apply pointer levels and references from original type
+		// Apply pointer levels and references from original type
 		TypeSpecifierNode& return_type_ref = return_type.as<TypeSpecifierNode>();
 		return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
 		applyTemplateArgIndirection(return_type_ref, orig_return_type, template_params, template_args,
@@ -1978,13 +1978,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				return param_type;
 			};
 
-	// Add parameters with concrete types
+		// Add parameters with concrete types
 		for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
 			const auto& param = func_decl.parameter_nodes()[i];
 			if (param.is<DeclarationNode>()) {
 				const DeclarationNode& param_decl = param.as<DeclarationNode>();
 
-			// Get original parameter type
+				// Get original parameter type
 				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				if (param_decl.is_parameter_pack()) {
 					size_t pack_start_index = arg_type_index;
@@ -2018,11 +2018,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					continue;
 				}
 
-			// Substitute template parameters in the type
+				// Substitute template parameters in the type
 				TypeIndex substituted_type_index = substitute_template_parameter(
 					orig_param_type, template_params, template_args);
 
-			// Create new type specifier with substituted type
+				// Create new type specifier with substituted type
 				ASTNode param_type = emplace_node<TypeSpecifierNode>(
 					substituted_type_index,
 					get_type_size_bits(substituted_type_index.category()),
@@ -2031,7 +2031,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					ReferenceQualifier::None);
 				resolve_dependent_member_alias_local(param_type);
 
-			// Apply pointer levels and references from original type
+				// Apply pointer levels and references from original type
 				TypeSpecifierNode& param_type_ref = param_type.as<TypeSpecifierNode>();
 				int resolved_param_size_bits = getTypeSpecSizeBits(param_type_ref);
 				if (resolved_param_size_bits > 0) {
@@ -2052,7 +2052,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				apply_resolved_alias_metadata_local(param_type_ref);
 
 				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
-			// Preserve default argument value from the original template declaration
+				// Preserve default argument value from the original template declaration
 				if (param_decl.has_default_value()) {
 					new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
 				}
@@ -2061,12 +2061,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		}
 
-	// Handle the function body
-	// Check if the template has a body position stored for re-parsing
-	// Populate template_param_pack_sizes_ so substituteTemplateParameters can resolve
-	// sizeof...(P) correctly when multiple variadic packs are present.  Saved/restored
-	// around the body reparse (and the substituteTemplateParameters fallback path) so
-	// nested instantiations that run during body parsing don't see stale data.
+		// Handle the function body
+		// Check if the template has a body position stored for re-parsing
+		// Populate template_param_pack_sizes_ so substituteTemplateParameters can resolve
+		// sizeof...(P) correctly when multiple variadic packs are present.  Saved/restored
+		// around the body reparse (and the substituteTemplateParameters fallback path) so
+		// nested instantiations that run during body parsing don't see stale data.
 		auto saved_template_pack_sizes = std::move(template_param_pack_sizes_);
 		ScopeGuard restore_template_pack_sizes([&]() {
 			template_param_pack_sizes_ = std::move(saved_template_pack_sizes);
@@ -2080,11 +2080,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		}
 		if (func_decl.has_template_body_position()) {
-		// Cycle detection: if this exact instantiation (same mangled name = same template
-		// arguments) is already being parsed on this thread, return early to break the cycle.
-		// Using the mangled name instead of the original template declaration pointer ensures
-		// distinct recursive instantiations (e.g. var_sum<int,int,int> from var_sum<int,int,int,int>)
-		// are not blocked.
+			// Cycle detection: if this exact instantiation (same mangled name = same template
+			// arguments) is already being parsed on this thread, return early to break the cycle.
+			// Using the mangled name instead of the original template declaration pointer ensures
+			// distinct recursive instantiations (e.g. var_sum<int,int,int> from var_sum<int,int,int,int>)
+			// are not blocked.
 			static thread_local std::unordered_set<StringHandle> body_parse_in_progress;
 			StringHandle cycle_key = StringTable::getOrInternStringHandle(mangled_name);
 			if (body_parse_in_progress.count(cycle_key)) {
@@ -2099,8 +2099,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				~BodyParseGuard() { set.erase(key); }
 			} body_guard{body_parse_in_progress, cycle_key};
 
-		// preserve_ref_qualifier=true: explicit args carry the user-written ref (e.g. T=int&)
-		// and TypeInfo must reflect it so nested template-arg uses resolve the right specialization.
+			// preserve_ref_qualifier=true: explicit args carry the user-written ref (e.g. T=int&)
+			// and TypeInfo must reflect it so nested template-arg uses resolve the right specialization.
 			bool saved_has_parameter_packs = has_parameter_packs_;
 			ScopeGuard restore_has_parameter_packs([&]() {
 				has_parameter_packs_ = saved_has_parameter_packs;
@@ -2111,7 +2111,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
 										   /*preserve_ref_qualifier=*/true);
 		} else {
-		// Copy the function body if it exists (for non-template or already-parsed bodies)
+			// Copy the function body if it exists (for non-template or already-parsed bodies)
 			auto orig_body = func_decl.get_definition();
 			if (orig_body.has_value()) {
 				new_func_ref.set_definition(
@@ -2127,16 +2127,16 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			compute_and_set_mangled_name(new_func_ref);
 		}
 
-	// Register the instantiation
+		// Register the instantiation
 		gTemplateRegistry.registerInstantiation(key, new_func_node);
 
-	// Add to symbol table at GLOBAL scope using the simple template name (e.g., identity_int)
-	// Template instantiations should be globally visible, not scoped to where they're called
-	// The simple name is used for template-specific lookups, while the computed mangled name
-	// (from compute_and_set_mangled_name above) is used for code generation and linking
+		// Add to symbol table at GLOBAL scope using the simple template name (e.g., identity_int)
+		// Template instantiations should be globally visible, not scoped to where they're called
+		// The simple name is used for template-specific lookups, while the computed mangled name
+		// (from compute_and_set_mangled_name above) is used for code generation and linking
 		gSymbolTable.insertGlobal(mangled_token.value(), new_func_node);
 
-	// Add to top-level AST so it gets visited by the code generator
+		// Add to top-level AST so it gets visited by the code generator
 		registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
 
 		return new_func_node;
@@ -2380,6 +2380,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 	size_t function_pack_arg_start,
 	int recursion_depth,
 	NamespaceHandle source_namespace) {
+
 	InlineVector<TemplateTypeArg, 4> template_args;
 	std::vector<TypeCategory> deduced_type_args;
 	size_t next_deduced_type_arg = 0;
