@@ -891,6 +891,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	CallArgDeductionInfo deduction_info;
 	auto& param_name_to_arg = deduction_info.param_name_to_arg;
 	auto& pre_deduced_arg_indices = deduction_info.pre_deduced_arg_indices;
+	auto& func_param_to_call_arg_index = deduction_info.func_param_to_call_arg_index;
 
 	// Build map of template parameter names for O(1) lookup; also used by the
 	// direct-param pre-deduction pass below to identify which function-param
@@ -982,7 +983,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		}
 		return required_args;
 	};
-	std::vector<size_t> func_param_to_call_arg_index(func_params.size(), SIZE_MAX);
+	func_param_to_call_arg_index.assign(func_params.size(), SIZE_MAX);
 	size_t call_arg_index = 0;
 	for (size_t i = 0; i < func_params.size(); ++i) {
 		if (!func_params[i].is<DeclarationNode>()) {
@@ -991,9 +992,11 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		const DeclarationNode& func_param_decl = func_params[i].as<DeclarationNode>();
 		if (func_param_decl.is_parameter_pack()) {
 			size_t required_after = countRequiredFunctionArgsAfter(i + 1);
-			call_arg_index = arg_types.size() >= required_after
-							   ? arg_types.size() - required_after
-							   : arg_types.size();
+			deduction_info.function_pack_call_arg_start = call_arg_index;
+			deduction_info.function_pack_call_arg_end = arg_types.size() >= required_after
+														 ? arg_types.size() - required_after
+														 : call_arg_index;
+			call_arg_index = deduction_info.function_pack_call_arg_end;
 			continue;
 		}
 		if (call_arg_index >= arg_types.size()) {
@@ -1252,7 +1255,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				? gNamespaceRegistry.getQualifiedName(func_decl.namespace_handle())
 				: "(invalid)");
 		bool has_variadic_func_pack = false;
-		size_t required_function_args_after_pack = 0;
 
 	// Filter by call argument count if known (SIZE_MAX means unknown)
 	// Only reject if caller provides MORE args than the function has params
@@ -1263,10 +1265,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				if (p.is<DeclarationNode>() && p.as<DeclarationNode>().is_parameter_pack()) {
 					has_variadic_func_pack = true;
 					continue;
-				}
-				if (has_variadic_func_pack &&
-					(!p.is<DeclarationNode>() || !p.as<DeclarationNode>().has_default_value())) {
-					++required_function_args_after_pack;
 				}
 			}
 			if (!has_variadic_func_pack && call_arg_count > func_param_count) {
@@ -1312,14 +1310,14 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		std::vector<size_t> template_param_arg_counts(template_params.size(), 0);
 		size_t explicit_idx = 0;	 // Track position in explicit_types
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
-		std::unordered_set<size_t> pre_deduced_arg_indices;
+		std::optional<CallArgDeductionInfo> deduction_info;
 		// Build a name-to-arg deduction map whenever call arg types are available,
 		// regardless of whether the template has variadic parameters.
 		// buildDeductionMapFromCallArgs now safely skips parameter-pack function slots,
 		// so non-pack template params (T, U in template<T, U, ...Rest>) are pre-deduced
 		// from the corresponding call argument positions.
 		if (current_explicit_call_arg_types_ != nullptr) {
-			auto deduction_info = buildDeductionMapFromCallArgs(
+			deduction_info = buildDeductionMapFromCallArgs(
 				template_params,
 				func_decl,
 				*current_explicit_call_arg_types_,
@@ -1327,27 +1325,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			if (!deduction_info.has_value()) {
 				continue;
 			}
-			pre_deduced_arg_indices = std::move(deduction_info->pre_deduced_arg_indices);
 			param_name_to_arg = std::move(deduction_info->param_name_to_arg);
 		}
-		// Positional fallback for trailing non-pack params that appear after a variadic
-		// function-parameter pack (e.g., template<...Rest, T> func(Rest..., T last)).
-		// Such trailing params are not reached by the direct-param pre-deduction above.
-		size_t positional_deduced_call_arg_index = SIZE_MAX;
-		if (current_explicit_call_arg_types_ != nullptr && has_variadic_func_pack) {
-			positional_deduced_call_arg_index = 0;
-			if (has_variadic_func_pack &&
-				current_explicit_call_arg_types_->size() >= required_function_args_after_pack) {
-				positional_deduced_call_arg_index =
-					current_explicit_call_arg_types_->size() - required_function_args_after_pack;
-			}
-		}
-		auto skipPreDeducedCallArgIndices = [&]() {
-			while (positional_deduced_call_arg_index < current_explicit_call_arg_types_->size() &&
-				   pre_deduced_arg_indices.count(positional_deduced_call_arg_index)) {
-				++positional_deduced_call_arg_index;
-			}
-		};
 		bool overload_mismatch = false;
 		for (size_t i = 0; i < template_params.size(); ++i) {
 			if (!template_params[i].is<TemplateParameterNode>()) {
@@ -1391,34 +1370,30 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					template_args.push_back(explicit_types[explicit_idx + j]);
 				}
 				explicit_idx += pack_size;
-				// Pack-aware explicit deduction (Phase 6): when there are no explicit
-				// args remaining for this variadic pack and call arg types are available,
-				// fill the pack from the corresponding function parameter positions.
+				// Pack-aware explicit deduction (Phase 6): explicit args can seed the
+				// front of the template-parameter pack and the remainder is deduced from
+				// the mapped function-parameter-pack call-arg slice.
 				// This handles e.g. count_rest<int>(1, 2, 3) → T=int explicit,
-				// Rest deduced as {int,int} from call args 1 and 2.
+				// Rest deduced as {int,int} from call args 1 and 2, and mixed
+				// explicit+deduced pack cases such as pack<int>(1, 2.0).
 				// NOTE: current_explicit_call_arg_types_ may be null here — the
 				// deduction-map build block (lines ~980-990) is conditional and does
 				// not guarantee non-null for this later point in the same function.
-				if (remaining_args == 0 &&
-					current_explicit_call_arg_types_ != nullptr &&
-					has_variadic_func_pack) {
-					size_t pack_func_param_start = 0;
-					for (const auto& fp : func_decl.parameter_nodes()) {
-						if (fp.is<DeclarationNode>() &&
-							fp.as<DeclarationNode>().is_parameter_pack()) {
-							break;
-						}
-						++pack_func_param_start;
-					}
-					// Call args from pack_func_param_start through
-					// (call_args.size() - required_function_args_after_pack) fill the pack.
-					// The underflow guard handles the rare case where required_function_args_after_pack
-					// exceeds the number of available call args (malformed call, caught later).
-					const size_t pack_call_end =
-						current_explicit_call_arg_types_->size() >= required_function_args_after_pack
-							? current_explicit_call_arg_types_->size() - required_function_args_after_pack
+				if (current_explicit_call_arg_types_ != nullptr &&
+					deduction_info.has_value() &&
+					deduction_info->function_pack_call_arg_start != SIZE_MAX) {
+					const size_t pack_call_arg_count =
+						deduction_info->function_pack_call_arg_end > deduction_info->function_pack_call_arg_start
+							? deduction_info->function_pack_call_arg_end - deduction_info->function_pack_call_arg_start
 							: 0;
-					for (size_t j = pack_func_param_start; j < pack_call_end; ++j) {
+					if (pack_size > pack_call_arg_count) {
+						overload_mismatch = true;
+						break;
+					}
+					for (size_t j = deduction_info->function_pack_call_arg_start + pack_size;
+						 j < deduction_info->function_pack_call_arg_end &&
+						 j < current_explicit_call_arg_types_->size();
+						 ++j) {
 						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
 							(*current_explicit_call_arg_types_)[j]));
 					}
@@ -1437,23 +1412,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					auto map_it = param_name_to_arg.find(param_handle);
 					if (map_it != param_name_to_arg.end()) {
 						template_args.push_back(map_it->second);
-						template_param_arg_starts[i] = arg_start_index;
-						template_param_arg_counts[i] = template_args.size() - arg_start_index;
-						continue;
-					}
-					if (!param.has_default() &&
-						current_explicit_call_arg_types_ != nullptr &&
-						positional_deduced_call_arg_index != SIZE_MAX &&
-						positional_deduced_call_arg_index < current_explicit_call_arg_types_->size()) {
-						skipPreDeducedCallArgIndices();
-					}
-					if (!param.has_default() &&
-						current_explicit_call_arg_types_ != nullptr &&
-						positional_deduced_call_arg_index != SIZE_MAX &&
-						positional_deduced_call_arg_index < current_explicit_call_arg_types_->size()) {
-						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
-							(*current_explicit_call_arg_types_)[positional_deduced_call_arg_index]));
-						++positional_deduced_call_arg_index;
 						template_param_arg_starts[i] = arg_start_index;
 						template_param_arg_counts[i] = template_args.size() - arg_start_index;
 						continue;
