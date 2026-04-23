@@ -163,42 +163,6 @@ static bool hasTemplateFunctionBodyDefinition(const FunctionDeclarationNode& fun
 		   func_decl.is_materialized();
 }
 
-static const TypeSpecifierNode* tryGetCallArgTypeForTemplateParam(
-	const FunctionDeclarationNode& func_decl,
-	const std::vector<TypeSpecifierNode>& arg_types,
-	const std::vector<size_t>& func_param_to_call_arg_index,
-	StringHandle template_param_name) {
-	for (size_t func_param_index = 0;
-		 func_param_index < func_decl.parameter_nodes().size() &&
-		 func_param_index < func_param_to_call_arg_index.size();
-		 ++func_param_index) {
-		if (!func_decl.parameter_nodes()[func_param_index].is<DeclarationNode>()) {
-			continue;
-		}
-		const DeclarationNode& func_param_decl =
-			func_decl.parameter_nodes()[func_param_index].as<DeclarationNode>();
-		if (func_param_decl.is_parameter_pack() || func_param_decl.is_array()) {
-			continue;
-		}
-		size_t call_arg_index = func_param_to_call_arg_index[func_param_index];
-		if (call_arg_index == SIZE_MAX || call_arg_index >= arg_types.size()) {
-			continue;
-		}
-		const TypeSpecifierNode& func_param_type =
-			func_param_decl.type_node().as<TypeSpecifierNode>();
-		if (func_param_type.pointer_depth() != 0 || func_param_type.is_array()) {
-			continue;
-		}
-		const TypeInfo* func_param_type_info = tryGetTypeInfo(func_param_type.type_index());
-		if (!func_param_type_info ||
-			func_param_type_info->name() != template_param_name) {
-			continue;
-		}
-		return &arg_types[call_arg_index];
-	}
-	return nullptr;
-}
-
 static bool sameTypeSpecifierShape(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
 	if (lhs.category() != rhs.category() ||
 		lhs.cv_qualifier() != rhs.cv_qualifier() ||
@@ -1031,7 +995,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			deduction_info.function_pack_call_arg_start = call_arg_index;
 			deduction_info.function_pack_call_arg_end = arg_types.size() >= required_after
 														 ? arg_types.size() - required_after
-														 : arg_types.size();
+														 : call_arg_index;
 			call_arg_index = deduction_info.function_pack_call_arg_end;
 			continue;
 		}
@@ -1406,19 +1370,25 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					template_args.push_back(explicit_types[explicit_idx + j]);
 				}
 				explicit_idx += pack_size;
-				// Pack-aware explicit deduction (Phase 6): when there are no explicit
-				// args remaining for this variadic pack and call arg types are available,
-				// fill the pack from the corresponding function parameter positions.
+				// Pack-aware explicit deduction (Phase 6): explicit args can seed the
+				// front of the template-parameter pack and the remainder is deduced from
+				// the mapped function-parameter-pack call-arg slice.
 				// This handles e.g. count_rest<int>(1, 2, 3) → T=int explicit,
-				// Rest deduced as {int,int} from call args 1 and 2.
+				// Rest deduced as {int,int} from call args 1 and 2, and mixed
+				// explicit+deduced pack cases such as pack<int>(1, 2.0).
 				// NOTE: current_explicit_call_arg_types_ may be null here — the
 				// deduction-map build block (lines ~980-990) is conditional and does
 				// not guarantee non-null for this later point in the same function.
-				if (remaining_args == 0 &&
-					current_explicit_call_arg_types_ != nullptr &&
+				if (current_explicit_call_arg_types_ != nullptr &&
 					deduction_info.has_value() &&
 					deduction_info->function_pack_call_arg_start != SIZE_MAX) {
-					for (size_t j = deduction_info->function_pack_call_arg_start;
+					const size_t pack_call_arg_count =
+						deduction_info->function_pack_call_arg_end - deduction_info->function_pack_call_arg_start;
+					if (pack_size > pack_call_arg_count) {
+						overload_mismatch = true;
+						break;
+					}
+					for (size_t j = deduction_info->function_pack_call_arg_start + pack_size;
 						 j < deduction_info->function_pack_call_arg_end &&
 						 j < current_explicit_call_arg_types_->size();
 						 ++j) {
@@ -1443,21 +1413,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						template_param_arg_starts[i] = arg_start_index;
 						template_param_arg_counts[i] = template_args.size() - arg_start_index;
 						continue;
-					}
-					if (!param.has_default() &&
-						current_explicit_call_arg_types_ != nullptr &&
-						deduction_info.has_value()) {
-						if (const TypeSpecifierNode* deduced_call_arg_type =
-								tryGetCallArgTypeForTemplateParam(
-									func_decl,
-									*current_explicit_call_arg_types_,
-									deduction_info->func_param_to_call_arg_index,
-									param_handle)) {
-							template_args.push_back(TemplateTypeArg::makeTypeSpecifier(*deduced_call_arg_type));
-							template_param_arg_starts[i] = arg_start_index;
-							template_param_arg_counts[i] = template_args.size() - arg_start_index;
-							continue;
-						}
 					}
 					if (tryAppendDefaultTemplateArg(param, template_params, template_args, func_decl.namespace_handle())) {
 						template_param_arg_starts[i] = arg_start_index;
