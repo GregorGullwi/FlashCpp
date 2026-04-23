@@ -7110,11 +7110,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										FoldExpressionNode(pack_name, fold_op,
 														   FoldExpressionNode::Direction::Left, *init_result.node(), op_token));
 									is_fold = true;
-								} else {
-									// Identifier was just a prefix of a complex expression (e.g. args.x).
-									// Restore so the complex-expression path below can re-parse it.
-									restore_token_position(pack_name_pos);
-								}
+										} else {
+											// Identifier was just a prefix of a complex expression (e.g. args.x).
+											// Restore so the complex-expression path below can re-parse it.
+											restore_token_position(pack_name_pos);
+											discard_saved_token(pack_name_pos);
 							}
 
 							if (!is_fold) {
