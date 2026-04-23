@@ -4691,6 +4691,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			advance();
 			if (peek() == "default"_tok || peek() == "delete"_tok) {
 				advance();
+			} else if (!peek().is_eof() && peek() != ";"_tok) {
+				advance(); // skip '0' in pure-virtual = 0
 			}
 			consume(";"_tok);
 		} else if (peek() == ";"_tok) {
