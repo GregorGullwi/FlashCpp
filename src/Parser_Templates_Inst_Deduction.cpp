@@ -1003,16 +1003,14 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			// loop to gate the call-arg-slice size check on only the matching template pack.
 			if (func_param_decl.type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& fp_type = func_param_decl.type_node().as<TypeSpecifierNode>();
-				std::string_view pack_type_name = fp_type.token().value();
-				if (pack_type_name.empty()) {
-					if (const TypeInfo* type_info = tryGetTypeInfo(fp_type.type_index())) {
-						pack_type_name = StringTable::getStringView(type_info->name());
-					}
-				}
-				if (!pack_type_name.empty()) {
-					deduction_info.function_pack_template_param_name =
-						StringTable::getOrInternStringHandle(pack_type_name);
-				}
+ 				StringHandle pack_type_name = fp_type.token().handle();
+ 				if (!pack_type_name.isValid()) {
+					FLASH_LOG_FORMAT(Templates, Error, "Expected pack type name to be valid for {}", func_param_decl.identifier_token().value());
+ 					if (const TypeInfo* type_info = tryGetTypeInfo(fp_type.type_index())) {
+ 						pack_type_name = type_info->name();
+ 					}
+ 				}
+				deduction_info.function_pack_template_param_name = pack_type_name;
 			}
 			continue;
 		}
