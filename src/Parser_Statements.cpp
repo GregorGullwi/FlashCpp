@@ -2012,6 +2012,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// Parse comma-separated initializer expressions (positional or designated)
 	size_t member_index = 0;
 	bool has_designated = false; // Track if we've seen any designated initializers
+	bool has_seen_pack_expansion = false; // True once a positional pack expansion is seen
 	std::unordered_set<std::string_view> used_members; // Track which members have been initialized
 
 	auto parse_nested_member_brace_initializer = [&](const StructMember& target_member) -> ParseResult {
@@ -2132,123 +2133,135 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				return ParseResult::error("Positional initializers cannot follow designated initializers", current_token_);
 			}
 
-			// Check if we have too many initializers
-			if (member_index >= struct_info.members.size()) {
+			// Check if we have too many initializers.
+			// Skip the check when a pack expansion was already seen — we can't know
+			// the remaining member count until template substitution expands the pack.
+			if (!has_seen_pack_expansion && member_index >= struct_info.members.size()) {
 				return ParseResult::error("Too many initializers for struct", current_token_);
 			}
 
 			FLASH_LOG(Parser, Debug, "Parsing positional initializer for member index: ", member_index);
 
-			const StructMember& target_member = struct_info.members[member_index];
+			if (!has_seen_pack_expansion) {
+				const StructMember& target_member = struct_info.members[member_index];
 
-			// C++ aggregate brace elision for array members:
-			// Allow flat initialization like `S s = {1,2,3,4,5,6};` where first members are arrays.
-			// Values are consumed recursively for the current array member before moving to next member.
-			// For aggregate struct elements, consume the recursive scalar-clause count so a following
-			// member still starts at the right initializer after flat brace elision.
-			auto count_brace_elision_scalar_clauses_for_type = [&](TypeIndex element_type_index, const auto& recurse) -> size_t {
-				const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index);
-				const StructTypeInfo* element_struct_info = element_type_info ? element_type_info->getStructInfo() : nullptr;
-				if (!element_struct_info || element_struct_info->hasUserDefinedConstructor()) {
-					return 1;
-				}
+				// C++ aggregate brace elision for array members:
+				// Allow flat initialization like `S s = {1,2,3,4,5,6};` where first members are arrays.
+				// Values are consumed recursively for the current array member before moving to next member.
+				// For aggregate struct elements, consume the recursive scalar-clause count so a following
+				// member still starts at the right initializer after flat brace elision.
+				auto count_brace_elision_scalar_clauses_for_type = [&](TypeIndex element_type_index, const auto& recurse) -> size_t {
+					const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index);
+					const StructTypeInfo* element_struct_info = element_type_info ? element_type_info->getStructInfo() : nullptr;
+					if (!element_struct_info || element_struct_info->hasUserDefinedConstructor()) {
+						return 1;
+					}
 
-				size_t clause_count = 0;
-				for (const auto& member : element_struct_info->members) {
-					size_t member_clause_count = member.is_array ? std::accumulate(
-						member.array_dimensions.begin(),
-						member.array_dimensions.end(),
-						size_t{1},
-						std::multiplies<size_t>())
-						: size_t{1};
-					if (const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index)) {
-						if (const StructTypeInfo* member_struct_info = member_type_info->getStructInfo();
-							member_struct_info && !member_struct_info->hasUserDefinedConstructor()) {
-							member_clause_count *= recurse(member.type_index, recurse);
+					size_t clause_count = 0;
+					for (const auto& member : element_struct_info->members) {
+						size_t member_clause_count = member.is_array ? std::accumulate(
+							member.array_dimensions.begin(),
+							member.array_dimensions.end(),
+							size_t{1},
+							std::multiplies<size_t>())
+							: size_t{1};
+						if (const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index)) {
+							if (const StructTypeInfo* member_struct_info = member_type_info->getStructInfo();
+								member_struct_info && !member_struct_info->hasUserDefinedConstructor()) {
+								member_clause_count *= recurse(member.type_index, recurse);
+							}
 						}
+						clause_count += member_clause_count;
 					}
-					clause_count += member_clause_count;
-				}
-				return clause_count > 0 ? clause_count : 1;
-			};
-			if (target_member.is_array && !target_member.array_dimensions.empty() && peek() != "{"_tok) {
-				auto [nested_init_list_node, nested_init_list_ref] = create_node_ref(InitializerListNode());
-				size_t element_limit = std::accumulate(
-					target_member.array_dimensions.begin(),
-					target_member.array_dimensions.end(),
-					size_t{1},
-					std::multiplies<size_t>());
-				element_limit *= count_brace_elision_scalar_clauses_for_type(target_member.type_index, count_brace_elision_scalar_clauses_for_type);
-				size_t element_count = 0;
+					return clause_count > 0 ? clause_count : 1;
+				};
+				if (target_member.is_array && !target_member.array_dimensions.empty() && peek() != "{"_tok) {
+					auto [nested_init_list_node, nested_init_list_ref] = create_node_ref(InitializerListNode());
+					size_t element_limit = std::accumulate(
+						target_member.array_dimensions.begin(),
+						target_member.array_dimensions.end(),
+						size_t{1},
+						std::multiplies<size_t>());
+					element_limit *= count_brace_elision_scalar_clauses_for_type(target_member.type_index, count_brace_elision_scalar_clauses_for_type);
+					size_t element_count = 0;
 
-				while (element_count < element_limit && peek() != "}"_tok) {
-					ParseResult nested_expr_result = parse_expression(2, ExpressionContext::Normal);
-					if (nested_expr_result.is_error()) {
-						return nested_expr_result;
-					}
-					if (!nested_expr_result.node().has_value()) {
-						return ParseResult::error("Expected initializer expression", current_token_);
-					}
+					while (element_count < element_limit && peek() != "}"_tok) {
+						ParseResult nested_expr_result = parse_expression(2, ExpressionContext::Normal);
+						if (nested_expr_result.is_error()) {
+							return nested_expr_result;
+						}
+						if (!nested_expr_result.node().has_value()) {
+							return ParseResult::error("Expected initializer expression", current_token_);
+						}
 
-					nested_init_list_ref.add_initializer(*nested_expr_result.node());
-					element_count++;
+						nested_init_list_ref.add_initializer(*nested_expr_result.node());
+						element_count++;
 
-					if (peek() == ","_tok) {
-						advance();
-						if (peek() == "}"_tok) {
+						if (peek() == ","_tok) {
+							advance();
+							if (peek() == "}"_tok) {
+								break;
+							}
+						} else {
 							break;
 						}
-					} else {
-						break;
 					}
-				}
 
-				init_list_ref.add_initializer(nested_init_list_node);
-				member_index++;
-				continue;
-			}
-
-			// Check if the next token is a brace - if so, we need to parse it as a nested brace initializer
-			ParseResult init_expr_result;
-			if (peek() == "{"_tok) {
-				FLASH_LOG(Parser, Debug, "Detected nested brace initializer for positional member at index: ", member_index);
-				init_expr_result = parse_nested_member_brace_initializer(target_member);
-			} else {
-				// Parse the initializer expression with precedence > comma operator (precedence 1)
-				// This prevents comma from being treated as an operator in initializer lists
-				FLASH_LOG(Parser, Debug, "Parsing simple expression initializer for positional member at index: ", member_index);
-				init_expr_result = parse_expression(2, ExpressionContext::Normal);
-			}
-			if (init_expr_result.is_error()) {
-				return init_expr_result;
-			}
-
-			// Add the initializer to the list
-			if (init_expr_result.node().has_value()) {
-				ASTNode element_node = *init_expr_result.node();
-				// Phase 6: handle pack expansion (e.g. `Triple t = {args...};`).
-				// Mirror the array-path logic in parse_brace_initializer_clause_list:
-				// wrap the expression in a PackExpansionExprNode so the template
-				// substitution pass can expand it into N concrete initializers.
-				// A pack expansion can supply any number of trailing positional
-				// members, so suppress the parse-time "too many initializers"
-				// check by advancing member_index past the last member.  After
-				// substitution the InitializerListNode has the expanded element
-				// count, which downstream sema/IR-gen validates against the
-				// struct's member count.
-				if (peek() == "..."_tok) {
-					Token ellipsis_token = peek_info();
-					advance();
-					element_node = emplace_node<ExpressionNode>(
-						PackExpansionExprNode(element_node, ellipsis_token));
-					init_list_ref.add_initializer(element_node);
-					member_index = struct_info.members.size();
-				} else {
-					init_list_ref.add_initializer(element_node);
+					init_list_ref.add_initializer(nested_init_list_node);
 					member_index++;
+					continue;
+				}
+
+				// Check if the next token is a brace - if so, we need to parse it as a nested brace initializer
+				ParseResult init_expr_result;
+				if (peek() == "{"_tok) {
+					FLASH_LOG(Parser, Debug, "Detected nested brace initializer for positional member at index: ", member_index);
+					init_expr_result = parse_nested_member_brace_initializer(target_member);
+				} else {
+					// Parse the initializer expression with precedence > comma operator (precedence 1)
+					// This prevents comma from being treated as an operator in initializer lists
+					FLASH_LOG(Parser, Debug, "Parsing simple expression initializer for positional member at index: ", member_index);
+					init_expr_result = parse_expression(2, ExpressionContext::Normal);
+				}
+				if (init_expr_result.is_error()) {
+					return init_expr_result;
+				}
+
+				// Add the initializer to the list
+				if (init_expr_result.node().has_value()) {
+					ASTNode element_node = *init_expr_result.node();
+					// Phase 6: handle pack expansion (e.g. `Triple t = {args...};`).
+					// Mirror the array-path logic in parse_brace_initializer_clause_list:
+					// wrap the expression in a PackExpansionExprNode so the template
+					// substitution pass can expand it into N concrete initializers.
+					if (peek() == "..."_tok) {
+						Token ellipsis_token = peek_info();
+						advance();
+						element_node = emplace_node<ExpressionNode>(
+							PackExpansionExprNode(element_node, ellipsis_token));
+						init_list_ref.add_initializer(element_node);
+						has_seen_pack_expansion = true;
+					} else {
+						init_list_ref.add_initializer(element_node);
+						member_index++;
+					}
+				} else {
+					return ParseResult::error("Expected initializer expression", current_token_);
 				}
 			} else {
-				return ParseResult::error("Expected initializer expression", current_token_);
+				// After a pack expansion: the current member position is unknown at
+				// parse time (it depends on the pack's runtime arity).  Parse
+				// subsequent elements as plain expressions so they are recorded in
+				// the InitializerListNode and placed in their correct positions
+				// after template substitution expands the pack.
+				ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
+				if (init_expr_result.is_error()) {
+					return init_expr_result;
+				}
+				if (!init_expr_result.node().has_value()) {
+					return ParseResult::error("Expected initializer expression", current_token_);
+				}
+				init_list_ref.add_initializer(*init_expr_result.node());
 			}
 		}
 
