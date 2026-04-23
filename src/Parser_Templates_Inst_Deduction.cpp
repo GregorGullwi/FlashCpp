@@ -1039,6 +1039,23 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 					auto it = tparam_nodes_by_name.find(fp_type_name);
 					if (it != tparam_nodes_by_name.end() && it->second->is_variadic()) {
 						is_pack = true;
+					} else if (!is_pack) {
+						// Wrapped-pack fallback: for "Box<Ts>..." the type name is "Box"
+						// (not a template parameter), so look inside the TypeInfo template
+						// args for a dependent name that IS a variadic parameter.
+						if (const TypeInfo* ti = tryGetTypeInfo(fp_ts.type_index())) {
+							if (ti->isTemplateInstantiation()) {
+								for (const auto& targ : ti->templateArgs()) {
+									if (targ.dependent_name.isValid()) {
+										auto dep_it = tparam_nodes_by_name.find(targ.dependent_name);
+										if (dep_it != tparam_nodes_by_name.end() && dep_it->second->is_variadic()) {
+											is_pack = true;
+											break;
+										}
+									}
+								}
+							}
+						}
 					}
 				}
 			}
@@ -1056,15 +1073,16 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			// loop to gate the call-arg-slice size check on only the matching template pack.
 			if (func_param_decl.type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& fp_type = func_param_decl.type_node().as<TypeSpecifierNode>();
-				StringHandle pack_type_name = fp_type.token().handle();
-				// The token handle may be invalid/empty for class-template inner
-				// member function template pack parameters.  Fall back to the
-				// TypeInfo name so "Us... args" correctly records "Us" as the
-				// dependent template parameter name.
+				// Prioritise TypeInfo::name() over the token handle: for class-template
+				// inner member function template pack parameters the token handle is
+				// often invalid/empty, while the TypeInfo name is always populated.
+				// This matches the priority order used in the detection block above.
+				StringHandle pack_type_name;
+				if (const TypeInfo* ti = tryGetTypeInfo(fp_type.type_index())) {
+					pack_type_name = ti->name();
+				}
 				if (!pack_type_name.isValid()) {
-					if (const TypeInfo* ti = tryGetTypeInfo(fp_type.type_index())) {
-						pack_type_name = ti->name();
-					}
+					pack_type_name = fp_type.token().handle();
 				}
 				// For simple "Ts... args" the token IS the template parameter name.
 				// For "MyBox<Ts>... args" the token is "MyBox" (not a template param).

@@ -217,12 +217,54 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			if (start == SIZE_MAX || end == SIZE_MAX || start > end) {
 				continue;  // no function-parameter pack slice available
 			}
+			// Look up the pack element type so we can unwrap wrapped packs
+			// (e.g. "Box<Ts>...").  When the element type is a template
+			// specialisation we extract the inner arg at the position that
+			// corresponds to the current template pack parameter instead of
+			// pushing the whole outer type.  This mirrors the unwrapping in
+			// deduceTemplateArgsFromCall (see function_pack_element_type_index).
+			const TypeInfo* pack_elem_fp_info = nullptr;
+			if (deduction_info->function_pack_element_type_index.is_valid()) {
+				const TypeInfo* elem_info = tryGetTypeInfo(deduction_info->function_pack_element_type_index);
+				if (elem_info && elem_info->isTemplateInstantiation()) {
+					pack_elem_fp_info = elem_info;
+				}
+			}
+			// Find the position of param within the element type template args.
+			// For "Pair<Ts,Us>..." Ts is at 0 and Us is at 1; for simple "Ts..." dep_pos
+			// stays SIZE_MAX and we fall back to pushing the full call-arg type.
+			size_t dep_pos = SIZE_MAX;
+			if (pack_elem_fp_info) {
+				size_t p = 0;
+				for (const auto& targ : pack_elem_fp_info->templateArgs()) {
+					if (targ.dependent_name == param.nameHandle()) {
+						dep_pos = p;
+						break;
+					}
+					++p;
+				}
+			}
 			for (size_t i = start; i < end; ++i) {
 				if (deduction_info->pre_deduced_arg_indices.count(i)) {
 					continue;
 				}
-				template_args.push_back(TemplateTypeArg::makeType(
-					arg_types[i].type_index().withCategory(arg_types[i].type())));
+				const TypeSpecifierNode& ca_type = arg_types[i];
+				bool pushed = false;
+				if (dep_pos != SIZE_MAX) {
+					if (const TypeInfo* ca_info = tryGetTypeInfo(ca_type.type_index())) {
+						if (ca_info->isTemplateInstantiation() &&
+							pack_elem_fp_info->baseTemplateName() == ca_info->baseTemplateName() &&
+							dep_pos < ca_info->templateArgs().size()) {
+							const TypeInfo::TemplateArgInfo& inner = ca_info->templateArgs()[dep_pos];
+							template_args.push_back(toTemplateTypeArg(inner));
+							pushed = true;
+						}
+					}
+				}
+				if (!pushed) {
+					template_args.push_back(TemplateTypeArg::makeType(
+						ca_type.type_index().withCategory(ca_type.type())));
+				}
 			}
 			arg_index = end;
 			continue;
