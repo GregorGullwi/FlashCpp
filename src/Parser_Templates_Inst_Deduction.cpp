@@ -1383,7 +1383,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					deduction_info.has_value() &&
 					deduction_info->function_pack_call_arg_start != SIZE_MAX) {
 					const size_t pack_call_arg_count =
-						deduction_info->function_pack_call_arg_end - deduction_info->function_pack_call_arg_start;
+						deduction_info->function_pack_call_arg_end > deduction_info->function_pack_call_arg_start
+							? deduction_info->function_pack_call_arg_end - deduction_info->function_pack_call_arg_start
+							: 0;
 					if (pack_size > pack_call_arg_count) {
 						overload_mismatch = true;
 						break;
