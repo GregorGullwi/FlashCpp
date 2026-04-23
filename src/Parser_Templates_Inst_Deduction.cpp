@@ -3626,7 +3626,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		template_param_pack_sizes_ = std::move(saved_template_pack_sizes);
 	});
 	template_param_pack_sizes_.clear();
-	if (deduction_info->function_pack_template_param_name.isValid()) {
+	if (deduction_info.has_value()) {
 		size_t non_variadic_tparam_count = 0;
 		for (const auto& tpnode : template_params) {
 			if (tpnode.is<TemplateParameterNode>() &&
