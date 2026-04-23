@@ -2229,6 +2229,11 @@ public:
 		: pack_name_(""), op_(op), direction_(dir), type_(Type::Unary),
 		  init_expr_(std::nullopt), pack_expr_(pack_expr), token_(token) {}
 
+	// Binary fold with complex pack expression: (init op ... op expr) or (expr op ... op init)
+	explicit FoldExpressionNode(ASTNode pack_expr, std::string_view op, Direction dir, ASTNode init, Token token)
+		: pack_name_(""), op_(op), direction_(dir), type_(Type::Binary),
+		  init_expr_(init), pack_expr_(pack_expr), token_(token) {}
+
 	std::string_view pack_name() const { return pack_name_; }
 	std::string_view op() const { return op_; }
 	Direction direction() const { return direction_; }
