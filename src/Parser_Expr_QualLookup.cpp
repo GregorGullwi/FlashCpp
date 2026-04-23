@@ -255,9 +255,11 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		std::vector<TypeSpecifierNode> deduced_arg_types;
 		deduced_arg_types.reserve(args.size());
 		for (const auto& arg : args) {
-			if (auto type_opt = get_expression_type(arg)) {
-				deduced_arg_types.push_back(*type_opt);
+			auto type_opt = get_expression_type(arg);
+			if (!type_opt.has_value()) {
+				throw InternalError("Could not determine type of call argument during qualified static member template deduction");
 			}
+			deduced_arg_types.push_back(*type_opt);
 		}
 		if (!deduced_arg_types.empty()) {
 			instantiated_func = try_instantiate_member_function_template(
