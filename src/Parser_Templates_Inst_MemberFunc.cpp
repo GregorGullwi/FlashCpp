@@ -203,6 +203,31 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			return std::nullopt;
 		}
 
+		// Variadic type parameter: consume the function-parameter-pack call-arg
+		// slice (if this template pack maps to the function-parameter pack) or
+		// produce an empty pack (if it does not, e.g. a separate template-level
+		// pack that has no function-parameter counterpart).  This mirrors the
+		// variadic-Type branch in deduceTemplateArgsFromCall.
+		if (param.is_variadic()) {
+			if (!deduction_info->function_pack_dependent_param_names.count(param.nameHandle())) {
+				continue;  // empty pack
+			}
+			size_t start = deduction_info->function_pack_call_arg_start;
+			size_t end = deduction_info->function_pack_call_arg_end;
+			if (start == SIZE_MAX || end == SIZE_MAX || start > end) {
+				continue;  // no function-parameter pack slice available
+			}
+			for (size_t i = start; i < end; ++i) {
+				if (deduction_info->pre_deduced_arg_indices.count(i)) {
+					continue;
+				}
+				template_args.push_back(TemplateTypeArg::makeType(
+					arg_types[i].type_index().withCategory(arg_types[i].type())));
+			}
+			arg_index = end;
+			continue;
+		}
+
 		auto deduced_it = deduction_info->param_name_to_arg.find(param.nameHandle());
 		if (deduced_it != deduction_info->param_name_to_arg.end()) {
 			template_args.push_back(deduced_it->second);
