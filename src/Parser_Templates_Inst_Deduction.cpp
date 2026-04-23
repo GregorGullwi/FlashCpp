@@ -997,6 +997,23 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 														 ? arg_types.size() - required_after
 														 : call_arg_index;
 			call_arg_index = deduction_info.function_pack_call_arg_end;
+			// Record which template-parameter pack this function-parameter pack expands.
+			// The type specifier for e.g. "Ts... args" carries "Ts" as either its token
+			// value or its TypeInfo name.  This name is later used by the explicit-deduction
+			// loop to gate the call-arg-slice size check on only the matching template pack.
+			if (func_param_decl.type_node().is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& fp_type = func_param_decl.type_node().as<TypeSpecifierNode>();
+				std::string_view pack_type_name = fp_type.token().value();
+				if (pack_type_name.empty()) {
+					if (const TypeInfo* type_info = tryGetTypeInfo(fp_type.type_index())) {
+						pack_type_name = StringTable::getStringView(type_info->name());
+					}
+				}
+				if (!pack_type_name.empty()) {
+					deduction_info.function_pack_template_param_name =
+						StringTable::getOrInternStringHandle(pack_type_name);
+				}
+			}
 			continue;
 		}
 		if (call_arg_index >= arg_types.size()) {
@@ -1379,9 +1396,17 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				// NOTE: current_explicit_call_arg_types_ may be null here — the
 				// deduction-map build block (lines ~980-990) is conditional and does
 				// not guarantee non-null for this later point in the same function.
+				// IMPORTANT: only apply this block when the current template-parameter pack
+				// is the one that corresponds to the function-parameter pack.  A template may
+				// have multiple packs (e.g. template<int... Ns, typename... Ts>), where only
+				// Ts expands in the function signature.  If we applied the call-arg slice check
+				// to Ns, it would incorrectly compare Ns's explicit count against the Ts call
+				// arg count and produce a false overload_mismatch.
 				if (current_explicit_call_arg_types_ != nullptr &&
 					deduction_info.has_value() &&
-					deduction_info->function_pack_call_arg_start != SIZE_MAX) {
+					deduction_info->function_pack_call_arg_start != SIZE_MAX &&
+					deduction_info->function_pack_template_param_name.isValid() &&
+					deduction_info->function_pack_template_param_name == param.nameHandle()) {
 					const size_t pack_call_arg_count =
 						deduction_info->function_pack_call_arg_end > deduction_info->function_pack_call_arg_start
 							? deduction_info->function_pack_call_arg_end - deduction_info->function_pack_call_arg_start
@@ -2021,6 +2046,22 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 	// Handle the function body
 	// Check if the template has a body position stored for re-parsing
+	// Populate template_param_pack_sizes_ so substituteTemplateParameters can resolve
+	// sizeof...(P) correctly when multiple variadic packs are present.  Saved/restored
+	// around the body reparse (and the substituteTemplateParameters fallback path) so
+	// nested instantiations that run during body parsing don't see stale data.
+		auto saved_template_pack_sizes = std::move(template_param_pack_sizes_);
+		template_param_pack_sizes_.clear();
+		for (size_t pi = 0; pi < template_params.size(); ++pi) {
+			if (!template_params[pi].is<TemplateParameterNode>()) continue;
+			const auto& tparam = template_params[pi].as<TemplateParameterNode>();
+			if (tparam.is_variadic() && template_param_arg_starts[pi] != SIZE_MAX) {
+				template_param_pack_sizes_.emplace_back(tparam.nameHandle(), template_param_arg_counts[pi]);
+			}
+		}
+		ScopeGuard restore_template_pack_sizes([&]() {
+			template_param_pack_sizes_ = std::move(saved_template_pack_sizes);
+		});
 		if (func_decl.has_template_body_position()) {
 		// Cycle detection: if this exact instantiation (same mangled name = same template
 		// arguments) is already being parsed on this thread, return early to break the cycle.

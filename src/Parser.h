@@ -821,6 +821,13 @@ private:
 	};
 	std::vector<PackParamInfo> pack_param_info_;
 
+		// Per-template-parameter-pack sizes set by try_instantiate_template_explicit before
+		// reparsing a function body.  Allows substituteTemplateParameters to resolve
+		// sizeof...(P) to the correct count even when multiple variadic packs are present
+		// (the naive template_args.size()-non_variadic_count formula overcounts in that case).
+		// Saved/restored around each instantiation so nesting is safe.
+	std::vector<std::pair<StringHandle, size_t>> template_param_pack_sizes_;
+
 		// Track class template parameter pack sizes for sizeof...() in member function templates
 		// When a class template like tuple<int, float, double> is instantiated, the pack _Elements
 		// has size 3. Member function templates need access to this info when they reference sizeof...(_Elements).
@@ -1208,6 +1215,11 @@ private:
 		std::vector<size_t> func_param_to_call_arg_index;
 		size_t function_pack_call_arg_start = SIZE_MAX;
 		size_t function_pack_call_arg_end = SIZE_MAX;
+		// Name of the template-parameter pack that the function-parameter pack expands.
+		// Used by try_instantiate_template_explicit to gate the call-arg-slice deduction
+		// check on the correct template pack (not e.g. a non-type pack that sits in the
+		// template parameter list but has no function-parameter counterpart).
+		StringHandle function_pack_template_param_name;
 	};
 	bool tryAppendDefaultTemplateArg(
 		const TemplateParameterNode& param,
@@ -2146,6 +2158,18 @@ private:	 // Resume private methods
 		for (const auto& info : pack_param_info_) {
 			if (info.original_name == pack_name) {
 				return info.pack_size;
+			}
+		}
+		return std::nullopt;
+	}
+
+	// Get the per-template-parameter-pack element count set by try_instantiate_template_explicit.
+	// This is the authoritative count for sizeof...(P) when multiple packs are present,
+	// since the naive "total_args - non_variadic_count" fallback overcounts in that case.
+	std::optional<size_t> get_template_param_pack_size(std::string_view pack_name) const {
+		for (const auto& [handle, count] : template_param_pack_sizes_) {
+			if (StringTable::getStringView(handle) == pack_name) {
+				return count;
 			}
 		}
 		return std::nullopt;
