@@ -262,3 +262,58 @@ An audit guard that converted the removed fallback into a hard `InternalError` w
 - `docs/2026-04-06-template-constexpr-sema-audit-plan.md`
 - `docs/2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`
 - `docs/2026-04-04-codegen-name-lookup-investigation.md`
+
+## PR #1344 review comments addressed (2026-04-23)
+
+Four review comments from PR #1344 were addressed:
+
+### Fix 1: Tab/space indentation (Devin)
+`src/Parser_Templates_Inst_Deduction.cpp` lines 1006-1012 had mixed leading
+space + tab characters.  Replaced with pure tab indentation to match the rest
+of the file.
+
+### Fix 2: Namespace/template-specialisation pack name extraction (Gemini)
+`src/Parser_Templates_Inst_Deduction.cpp` — the pack-parameter name extractor
+used `fp_type.token().handle()` unconditionally.  For simple `Ts... args` that
+token correctly returns `Ts`, but for `MyBox<Ts>... args` it returns `MyBox`
+(the template name), not the pack parameter `Ts`.
+
+The fix: after reading the token handle, check whether it exists in
+`tparam_nodes_by_name`.  If it does not (or is invalid), walk the `TypeInfo`
+for the type specifier; if the type is a template instantiation, iterate its
+`templateArgs()` and use the first entry whose `dependent_name` is valid as the
+pack parameter name.  The stale `FLASH_LOG_FORMAT(Templates, Error, ...)`
+diagnostic that fired for every template-instantiation type was removed because
+it incorrectly flagged valid cases as errors.
+
+A new test `tests/test_explicit_pack_template_specialization_ret0.cpp` was
+added that calls `f<0>(a, b)` where `f` is declared
+`template<int N, typename... Ts> int f(Box<Ts>... boxes)`.
+
+### Fix 3: ScopeGuard ordering for exception safety (Gemini)
+`src/Parser_Templates_Inst_Deduction.cpp` — `ScopeGuard
+restore_template_pack_sizes` was constructed *after* the loop that populates
+`template_param_pack_sizes_`.  If the loop threw (e.g., `std::bad_alloc`) the
+saved data would be permanently lost.  Moved the `ScopeGuard` construction to
+immediately after the `std::move` and before the population loop.
+
+### Fix 4: Empty pack falling through to naive fallback (Devin)
+`src/Parser_Templates_Substitution.cpp` — when
+`get_template_param_pack_size` returned `0` for an authoritative empty pack,
+`found_variadic` was set to `true` but `num_pack_elements` stayed `0`, causing
+the next `if (num_pack_elements == 0)` guard to re-enter the naive
+`template_args.size() - non_variadic_count` formula.  This overcounts when
+multiple variadic packs are present.  Changed the guard condition to
+`if (num_pack_elements == 0 && !found_variadic)` so that an authoritative
+empty-pack result is respected and the naive fallback is skipped.
+
+### Validation baseline (2026-04-23)
+
+- `make main CXX=clang++`
+- `bash ./tests/run_all_tests.sh`
+
+Current baseline:
+
+- **2182** compile+link+runtime passing tests (includes new test)
+- **149** `_fail` tests failing as expected
+- overall result: **SUCCESS**

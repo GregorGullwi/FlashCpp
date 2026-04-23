@@ -1003,13 +1003,22 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			// loop to gate the call-arg-slice size check on only the matching template pack.
 			if (func_param_decl.type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& fp_type = func_param_decl.type_node().as<TypeSpecifierNode>();
- 				StringHandle pack_type_name = fp_type.token().handle();
- 				if (!pack_type_name.isValid()) {
-					FLASH_LOG_FORMAT(Templates, Error, "Expected pack type name to be valid for {}", func_param_decl.identifier_token().value());
- 					if (const TypeInfo* type_info = tryGetTypeInfo(fp_type.type_index())) {
- 						pack_type_name = type_info->name();
- 					}
- 				}
+				StringHandle pack_type_name = fp_type.token().handle();
+				// For simple "Ts... args" the token IS the template parameter name.
+				// For "MyBox<Ts>... args" the token is "MyBox" (not a template param).
+				// In those cases, look inside the TypeInfo template args for a dependent name.
+				if (!pack_type_name.isValid() || !tparam_nodes_by_name.count(pack_type_name)) {
+					if (const TypeInfo* type_info = tryGetTypeInfo(fp_type.type_index())) {
+						if (type_info->isTemplateInstantiation()) {
+							for (const auto& targ : type_info->templateArgs()) {
+								if (targ.dependent_name.isValid()) {
+									pack_type_name = targ.dependent_name;
+									break;
+								}
+							}
+						}
+					}
+				}
 				deduction_info.function_pack_template_param_name = pack_type_name;
 			}
 			continue;
@@ -2049,6 +2058,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// around the body reparse (and the substituteTemplateParameters fallback path) so
 	// nested instantiations that run during body parsing don't see stale data.
 		auto saved_template_pack_sizes = std::move(template_param_pack_sizes_);
+		ScopeGuard restore_template_pack_sizes([&]() {
+			template_param_pack_sizes_ = std::move(saved_template_pack_sizes);
+		});
 		template_param_pack_sizes_.clear();
 		for (size_t pi = 0; pi < template_params.size(); ++pi) {
 			if (!template_params[pi].is<TemplateParameterNode>()) continue;
@@ -2057,9 +2069,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				template_param_pack_sizes_.emplace_back(tparam.nameHandle(), template_param_arg_counts[pi]);
 			}
 		}
-		ScopeGuard restore_template_pack_sizes([&]() {
-			template_param_pack_sizes_ = std::move(saved_template_pack_sizes);
-		});
 		if (func_decl.has_template_body_position()) {
 		// Cycle detection: if this exact instantiation (same mangled name = same template
 		// arguments) is already being parsed on this thread, return early to break the cycle.
