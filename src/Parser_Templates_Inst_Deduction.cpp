@@ -1015,7 +1015,52 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			continue;
 		}
 		const DeclarationNode& func_param_decl = func_params[i].as<DeclarationNode>();
-		if (func_param_decl.is_parameter_pack()) {
+		// Detect whether this function parameter is a pack.  The explicit
+		// `is_parameter_pack` flag is the primary signal, but for class-template
+		// member function templates the inner template's pack parameter flag
+		// may not be set on the pattern's DeclarationNode.  Fall back to checking
+		// whether the parameter type names a variadic template parameter of the
+		// enclosing template, mirroring the pattern used in
+		// instantiate_member_function_template_core.
+		bool is_pack = func_param_decl.is_parameter_pack();
+		if (!is_pack && func_param_decl.type_node().is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& fp_ts = func_param_decl.type_node().as<TypeSpecifierNode>();
+			if (fp_ts.category() == TypeCategory::UserDefined ||
+				fp_ts.category() == TypeCategory::TypeAlias ||
+				fp_ts.category() == TypeCategory::Template) {
+				StringHandle fp_type_name;
+				if (const TypeInfo* ti = tryGetTypeInfo(fp_ts.type_index())) {
+					fp_type_name = ti->name();
+				}
+				if (!fp_type_name.isValid()) {
+					fp_type_name = fp_ts.token().handle();
+				}
+				if (fp_type_name.isValid()) {
+					auto it = tparam_nodes_by_name.find(fp_type_name);
+					if (it != tparam_nodes_by_name.end() && it->second->is_variadic()) {
+						is_pack = true;
+					} else if (!is_pack) {
+						// Wrapped-pack fallback: for "Box<Ts>..." the type name is "Box"
+						// (not a template parameter), so look inside the TypeInfo template
+						// args for a dependent name that IS a variadic parameter.
+						if (const TypeInfo* ti = tryGetTypeInfo(fp_ts.type_index())) {
+							if (ti->isTemplateInstantiation()) {
+								for (const auto& targ : ti->templateArgs()) {
+									if (targ.dependent_name.isValid()) {
+										auto dep_it = tparam_nodes_by_name.find(targ.dependent_name);
+										if (dep_it != tparam_nodes_by_name.end() && dep_it->second->is_variadic()) {
+											is_pack = true;
+											break;
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if (is_pack) {
 			size_t required_after = countRequiredFunctionArgsAfter(i + 1);
 			deduction_info.function_pack_call_arg_start = call_arg_index;
 			deduction_info.function_pack_call_arg_end = arg_types.size() >= required_after
@@ -1028,7 +1073,17 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			// loop to gate the call-arg-slice size check on only the matching template pack.
 			if (func_param_decl.type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& fp_type = func_param_decl.type_node().as<TypeSpecifierNode>();
-				StringHandle pack_type_name = fp_type.token().handle();
+				// Prioritise TypeInfo::name() over the token handle: for class-template
+				// inner member function template pack parameters the token handle is
+				// often invalid/empty, while the TypeInfo name is always populated.
+				// This matches the priority order used in the detection block above.
+				StringHandle pack_type_name;
+				if (const TypeInfo* ti = tryGetTypeInfo(fp_type.type_index())) {
+					pack_type_name = ti->name();
+				}
+				if (!pack_type_name.isValid()) {
+					pack_type_name = fp_type.token().handle();
+				}
 				// For simple "Ts... args" the token IS the template parameter name.
 				// For "MyBox<Ts>... args" the token is "MyBox" (not a template param).
 				// For "Pair<Ts,Us>... args" the token is "Pair" (not a template param).

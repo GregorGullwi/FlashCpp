@@ -98,6 +98,11 @@ ParseResult Parser::parse_template_function_declaration_body(
 	func_decl.set_is_constexpr(is_constexpr);
 	func_decl.set_is_consteval(is_consteval);
 	func_decl.set_is_constinit(is_constinit);
+	// Static storage class: needed for static member function templates so that
+	// codegen omits the implicit 'this' parameter and the call site doesn't pass one.
+	if (specs.storage_class == StorageClass::Static) {
+		func_decl.set_is_static(true);
+	}
 
 	// In C++, the order after parameters is: cv-qualifiers -> ref-qualifier -> noexcept -> trailing-return-type
 	// We need to skip cv-qualifiers, ref-qualifier, and noexcept BEFORE checking for trailing return type

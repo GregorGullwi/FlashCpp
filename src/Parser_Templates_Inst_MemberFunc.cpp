@@ -203,6 +203,73 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			return std::nullopt;
 		}
 
+		// Variadic type parameter: consume the function-parameter-pack call-arg
+		// slice (if this template pack maps to the function-parameter pack) or
+		// produce an empty pack (if it does not, e.g. a separate template-level
+		// pack that has no function-parameter counterpart).  This mirrors the
+		// variadic-Type branch in deduceTemplateArgsFromCall.
+		if (param.is_variadic()) {
+			if (!deduction_info->function_pack_dependent_param_names.count(param.nameHandle())) {
+				continue;  // empty pack
+			}
+			size_t start = deduction_info->function_pack_call_arg_start;
+			size_t end = deduction_info->function_pack_call_arg_end;
+			if (start == SIZE_MAX || end == SIZE_MAX || start > end) {
+				continue;  // no function-parameter pack slice available
+			}
+			// Look up the pack element type so we can unwrap wrapped packs
+			// (e.g. "Box<Ts>...").  When the element type is a template
+			// specialisation we extract the inner arg at the position that
+			// corresponds to the current template pack parameter instead of
+			// pushing the whole outer type.  This mirrors the unwrapping in
+			// deduceTemplateArgsFromCall (see function_pack_element_type_index).
+			const TypeInfo* pack_elem_fp_info = nullptr;
+			if (deduction_info->function_pack_element_type_index.is_valid()) {
+				const TypeInfo* elem_info = tryGetTypeInfo(deduction_info->function_pack_element_type_index);
+				if (elem_info && elem_info->isTemplateInstantiation()) {
+					pack_elem_fp_info = elem_info;
+				}
+			}
+			// Find the position of param within the element type template args.
+			// For "Pair<Ts,Us>..." Ts is at 0 and Us is at 1; for simple "Ts..." dep_pos
+			// stays SIZE_MAX and we fall back to pushing the full call-arg type.
+			size_t dep_pos = SIZE_MAX;
+			if (pack_elem_fp_info) {
+				size_t p = 0;
+				for (const auto& targ : pack_elem_fp_info->templateArgs()) {
+					if (targ.dependent_name == param.nameHandle()) {
+						dep_pos = p;
+						break;
+					}
+					++p;
+				}
+			}
+			for (size_t i = start; i < end; ++i) {
+				if (deduction_info->pre_deduced_arg_indices.count(i)) {
+					continue;
+				}
+				const TypeSpecifierNode& ca_type = arg_types[i];
+				bool pushed = false;
+				if (dep_pos != SIZE_MAX) {
+					if (const TypeInfo* ca_info = tryGetTypeInfo(ca_type.type_index())) {
+						if (ca_info->isTemplateInstantiation() &&
+							pack_elem_fp_info->baseTemplateName() == ca_info->baseTemplateName() &&
+							dep_pos < ca_info->templateArgs().size()) {
+							const TypeInfo::TemplateArgInfo& inner = ca_info->templateArgs()[dep_pos];
+							template_args.push_back(toTemplateTypeArg(inner));
+							pushed = true;
+						}
+					}
+				}
+				if (!pushed) {
+					template_args.push_back(TemplateTypeArg::makeType(
+						ca_type.type_index().withCategory(ca_type.type())));
+				}
+			}
+			arg_index = end;
+			continue;
+		}
+
 		auto deduced_it = deduction_info->param_name_to_arg.find(param.nameHandle());
 		if (deduced_it != deduction_info->param_name_to_arg.end()) {
 			template_args.push_back(deduced_it->second);
