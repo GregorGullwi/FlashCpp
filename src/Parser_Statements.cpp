@@ -2225,12 +2225,31 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			// Add the initializer to the list
 			if (init_expr_result.node().has_value()) {
-				init_list_ref.add_initializer(*init_expr_result.node());
+				ASTNode element_node = *init_expr_result.node();
+				// Phase 6: handle pack expansion (e.g. `Triple t = {args...};`).
+				// Mirror the array-path logic in parse_brace_initializer_clause_list:
+				// wrap the expression in a PackExpansionExprNode so the template
+				// substitution pass can expand it into N concrete initializers.
+				// A pack expansion can supply any number of trailing positional
+				// members, so suppress the parse-time "too many initializers"
+				// check by advancing member_index past the last member.  After
+				// substitution the InitializerListNode has the expanded element
+				// count, which downstream sema/IR-gen validates against the
+				// struct's member count.
+				if (peek() == "..."_tok) {
+					Token ellipsis_token = peek_info();
+					advance();
+					element_node = emplace_node<ExpressionNode>(
+						PackExpansionExprNode(element_node, ellipsis_token));
+					init_list_ref.add_initializer(element_node);
+					member_index = struct_info.members.size();
+				} else {
+					init_list_ref.add_initializer(element_node);
+					member_index++;
+				}
 			} else {
 				return ParseResult::error("Expected initializer expression", current_token_);
 			}
-
-			member_index++;
 		}
 
 		// Check for comma or end of list

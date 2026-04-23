@@ -1,7 +1,7 @@
 # Template Instantiation / Materialization Status
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-23 (Phase 6 fold Pattern 3 bare-id backtracking + brace-init pack expansion)
+**Last Updated:** 2026-04-23 (Phase 6 pack-expanded brace init: unsized array + aggregate struct)
 
 This document is now a short status audit, not a historical scratchpad.
 Its purpose is to answer two questions clearly:
@@ -546,6 +546,80 @@ Current baseline (Linux/clang):
 
 ### Still open Phase 6 items
 
-- Unsized array with pack-expanded initializer keeps pre-expansion size 1.
-- Aggregate brace-init of a struct with pack-expanded initializer parse
-  failure at the call site.
+- ~~Unsized array with pack-expanded initializer keeps pre-expansion size 1.~~ (fixed — see below)
+- ~~Aggregate brace-init of a struct with pack-expanded initializer parse
+  failure at the call site.~~ (fixed — see below)
+
+## Phase 6 continued: pack-expanded brace initializers for unsized arrays and aggregate structs (2026-04-23)
+
+Closed both remaining Phase 6 items in `docs/KNOWN_ISSUES.md`.  The file is now
+empty (all previously-documented issues have been resolved).
+
+### Root causes
+
+1. **Unsized array `int arr[] = {args...}` kept pre-expansion size 1.**
+   `Parser::inferUnsizedArraySizeFromInitializer` runs at parse time and sets
+   the outer dimension from `init_list.initializers().size()`.  Before template
+   substitution, the list contains a single `PackExpansionExprNode`, so the
+   dimension was fixed at 1.  Although `substituteTemplateParameters` for
+   `InitializerListNode` correctly expanded the pack into N substituted
+   elements, the `DeclarationNode`'s `TypeSpecifierNode` still carried the
+   stale `[1]` dimension, which `IrGenerator_Stmt_Decl.cpp` then preferred over
+   the init-list size.
+
+2. **Aggregate brace-init `Triple t = {args...};` rejected at parse time.**
+   The positional aggregate-init branch of `parse_brace_initializer` (in
+   `src/Parser_Statements.cpp`) called `parse_expression(2, Normal)` without
+   checking for a trailing `...`, unlike `parse_brace_initializer_clause_list`
+   (the array-path) which already wrapped the element in a
+   `PackExpansionExprNode` when `...` followed.  The parser then either tried
+   to parse `...` as the next positional initializer (failing) or emitted
+   "Failed to parse initializer expression".
+
+### Fixes
+
+- `src/Parser_Templates_Substitution.cpp / VariableDeclarationNode branch`
+  — after substituting the declaration and initializer, when the declaration
+  is an unsized array and the substituted initializer is an
+  `InitializerListNode`, emplace a fresh `TypeSpecifierNode` copy (to avoid
+  mutating the pattern's shared spec for non-template element types like
+  `int`) and re-run `inferUnsizedArraySizeFromInitializer` against the
+  expanded initializer.  The `DeclarationNode::set_type_node` setter is used
+  to swap in the updated spec.
+- `src/Parser_Statements.cpp / parse_brace_initializer positional branch`
+  — after `parse_expression`, detect a trailing `...` and wrap the element in
+  a `PackExpansionExprNode`, mirroring the existing logic in
+  `parse_brace_initializer_clause_list` and the array-element branch of
+  `parse_brace_initializer`.  When a pack expansion is seen, advance
+  `member_index` past the last member to suppress the parse-time
+  "too many initializers" check (pack size is only known after substitution;
+  downstream sema/IR-gen validates the expanded element count against the
+  struct's member count).
+
+Regression tests:
+- `tests/test_unsized_array_pack_expansion_ret3.cpp` — exercises
+  `int arr[] = {static_cast<int>(args)...}` and asserts
+  `sizeof(arr)/sizeof(arr[0]) == 3`.
+- `tests/test_aggregate_struct_pack_expansion_ret42.cpp` — exercises
+  `Triple t = {static_cast<int>(args)...};` and asserts
+  `t.a + t.b + t.c == 42`.
+
+### Validation baseline (2026-04-23 · late evening)
+
+- `make sharded CXX=clang++`
+- `bash ./tests/run_all_tests.sh`
+
+Current baseline (Linux/clang):
+
+- **2197** compile+link+runtime passing tests (+2 vs evening baseline from the
+  new regression tests above)
+- **149** `_fail` tests failing as expected
+- overall result: **SUCCESS**
+
+### Phase 6 status
+
+With the two brace-init-pack-expansion issues closed, all items recorded in
+`docs/KNOWN_ISSUES.md` as of this PR are resolved and the file is empty.  The
+Phase 6 roadmap section above still lists "nested template packs and other
+complex mapping shapes that may surface as the test corpus grows" as the
+general open-ended follow-up, but there are no concrete reproducers tracked.
