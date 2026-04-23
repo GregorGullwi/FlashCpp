@@ -1220,6 +1220,12 @@ private:
 		// check on the correct template pack (not e.g. a non-type pack that sits in the
 		// template parameter list but has no function-parameter counterpart).
 		StringHandle function_pack_template_param_name;
+		// TypeIndex of the function-parameter pack's element type.
+		// Set when the pack parameter has a type (e.g. for "Box<Ts>... boxes" this holds
+		// the TypeIndex for Box<Ts>).  Used by deduceTemplateArgsFromCall to extract inner
+		// template arguments (e.g. Ts→int) from pack call arguments (e.g. Box<int>) rather
+		// than deducing the outer type (Box<int>) directly.
+		TypeIndex function_pack_element_type_index;
 	};
 	bool tryAppendDefaultTemplateArg(
 		const TemplateParameterNode& param,

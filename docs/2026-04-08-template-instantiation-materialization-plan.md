@@ -1,7 +1,7 @@
 # Template Instantiation / Materialization Status
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-23 (Phase 6 fold-expression complex-pack parser fix)
+**Last Updated:** 2026-04-23 (Phase 6 implicit pack deduction from template-specialisation parameters)
 
 This document is now a short status audit, not a historical scratchpad.
 Its purpose is to answer two questions clearly:
@@ -29,7 +29,13 @@ Its purpose is to answer two questions clearly:
     1. **Pattern 1** `(... op cast-expr)`: the unary-left-fold handler now tries to parse a full cast expression when the token after `... op` is not a bare identifier. Previously any expression like `(args > 0)` was silently rejected and caused a template instantiation failure for common patterns such as `(... && (args > 0))`.
     2. **Pattern 3** `(init op ... op cast-expr)`: the binary-left-fold handler received the same extension for the right-hand operand, enabling `(0 + ... + (args * 2))`.
     A new `FoldExpressionNode` constructor was added for the binary-fold + complex-pack case. Regression: `tests/test_fold_expr_complex_pack_ret0.cpp`.
-  - **What is still open:** explicit-deduction handling for pack parameters that appear inside template-specialisation arguments in function-parameter packs during *non-explicit* (deduction-only) calls (e.g. implicit deduction of `Ts` from `Box<Ts>...` arguments). Explicit instantiation of those patterns already works. The broader "other non-trivial pack remapping shapes" class is now well covered for the explicit path; the non-explicit deduction path is the remaining open surface.
+  - **2026-04-23 implicit pack deduction from template-specialisation parameters landed:**
+    When a function-parameter pack has a template-specialisation element type (e.g. `Box<Ts>...`), `deduceTemplateArgsFromCall` now extracts the inner type from each pack call argument (e.g. `Box<int>` → `int`) rather than deducing the outer type directly (`Box<int>`).
+    - `CallArgDeductionInfo` gained a new `function_pack_element_type_index` field populated by `buildDeductionMapFromCallArgs` when the pack element type is resolved.
+    - `deduceTemplateArgsFromCall` uses that TypeIndex to look up the pack element's `TypeInfo`; when it is a template instantiation with the same base template as the call argument, it pairwise-extracts the inner (dependent) type rather than pushing the full call-arg type.
+    - This fixes implicit calls like `f(box_int, box_dbl)` for `template<typename... Ts> int f(Box<Ts>... boxes)`: `Ts` is now correctly deduced as `{int, double}` instead of `{Box<int>, Box<double>}`.
+    - Regression: `tests/test_implicit_deduction_box_pack_ret0.cpp`.
+  - **What is still open:** any other richer template-param ↔ function-param mapping shapes that may surface as the test corpus grows (e.g. nested template packs, multiple dependent positions within one pack element type).
 
 ## What is clearly landed
 
@@ -93,24 +99,21 @@ Covered by the current tree after this PR:
 - template-parameter packs not mapped to any function-parameter pack (type and non-type), covered by `tests/test_explicit_type_pack_not_in_func_sig_ret0.cpp` and `tests/test_explicit_nontype_pack_not_in_func_sig_ret0.cpp`
 - multiple variadic packs where only one is expanded in the function signature, covered by `tests/test_multi_pack_sizeof_deduction_ret0.cpp`
 - fold expressions whose pack operand is a complex cast-expression rather than a bare identifier: `(... op (expr))` and `(init op ... op (expr))`, covered by `tests/test_fold_expr_complex_pack_ret0.cpp`
+- **implicit deduction** of pack element types from template-specialisation function-parameter packs (`Box<Ts>...`): `Ts` is now correctly deduced as `{int, double}` when called as `f(Box<int>{}, Box<double>{})`, covered by `tests/test_implicit_deduction_box_pack_ret0.cpp`
 
 Still open after this PR:
 
-- **non-explicit deduction** of pack elements from `Box<Ts>...`-style function parameters: when `Ts` is expanded inside a template-specialisation argument in the function parameter list, implicit deduction from a call like `sum_boxes(a, b)` incorrectly deduces `Ts = {Box<int>, Box<double>}` instead of `Ts = {int, double}`. Explicit instantiation (`sum_boxes<int, double>(a, b)`) works correctly.
-- any other richer template-param ↔ function-param mapping shapes that may surface as the test corpus grows
+- any other richer template-param ↔ function-param mapping shapes that may surface as the test corpus grows (e.g. nested template packs, multiple dependent positions within one pack element type)
 
 ## Clear next steps
 
-1. **Fix non-explicit deduction from template-specialisation function parameter packs.**
-   - `buildDeductionMapFromCallArgs` currently skips parameter-pack slots in its template-argument-matching pass (gated on `func_param_to_call_arg_index[i] == SIZE_MAX`). The fix is to iterate over each call-arg in the pack's slice and run the template-arg pairwise matching for the parameter-pack element type, writing each deduced inner type into `param_name_to_arg` for the variadic template parameter.
-   - Example gap: `template<typename... Ts> int f(Box<Ts>... boxes)` called as `f(a, b)` should deduce `Ts = {int, double}` if `a` is `Box<int>` and `b` is `Box<double>`. Currently deduces `Ts = {Box<int>, Box<double>}` instead.
-
-2. **Keep the deduction regression cluster close.**
+1. **Keep the deduction regression cluster close.**
    - `tests/test_explicit_variadic_pack_deduction_ret0.cpp`
    - `tests/test_explicit_variadic_pack_nondeduced_tail_fail.cpp`
    - `tests/test_explicit_variadic_pack_trailing_default_ret0.cpp`
    - `tests/test_pack_nonpack_mixed_explicit_deduction_ret0.cpp`
    - `tests/test_explicit_template_pack_sizeof_param_name_ret0.cpp`
+   - `tests/test_implicit_deduction_box_pack_ret0.cpp`
 
 ## Recommended interpretation of the roadmap
 
@@ -119,8 +122,8 @@ If you want the shortest accurate summary:
 - **Done:** Phases 1-4
 - **Done:** Phase 5 materialization / ownership cleanup
 - **In progress:** Phase 6 explicit-deduction cleanup
-- **Landed in Phase 6 so far:** the nondeduced-tail positional-fallback fix, canonical function-parameter → call-argument pack-slice metadata, pack-before-tail explicit deduction, mixed explicit + deduced pack support, multi-pack sizeof resolution, fold expressions with complex pack operands
-- **Work left after this PR:** non-explicit (implicit) deduction of inner template types from `Box<Ts>...`-style function parameters; the roadmap is **not** fully exhausted yet, so this document should stay
+- **Landed in Phase 6 so far:** the nondeduced-tail positional-fallback fix, canonical function-parameter → call-argument pack-slice metadata, pack-before-tail explicit deduction, mixed explicit + deduced pack support, multi-pack sizeof resolution, fold expressions with complex pack operands, **implicit deduction of inner types from template-specialisation pack parameters**
+- **Work left after this PR:** other richer template-param ↔ function-param mapping shapes that may surface as the test corpus grows
 
 ## Regression coverage worth keeping close
 
@@ -141,6 +144,26 @@ The following tests are the most relevant guardrails for this area:
 - `tests/test_pack_nonpack_mixed_explicit_deduction_ret0.cpp`
 - `tests/test_explicit_template_pack_sizeof_param_name_ret0.cpp`
 - `tests/test_fold_expr_complex_pack_ret0.cpp`
+- `tests/test_implicit_deduction_box_pack_ret0.cpp`
+
+## Validation baseline refreshed on 2026-04-23 (Phase 6: implicit pack deduction from template-specialisation parameters)
+
+Linux validation run after:
+- Adding `function_pack_element_type_index` field to `CallArgDeductionInfo` in `Parser.h`.
+- Setting `function_pack_element_type_index` in `buildDeductionMapFromCallArgs` when the pack element type is a resolved TypeIndex.
+- Extending `deduceTemplateArgsFromCall` variadic type-param branch to extract inner types from template-specialisation pack call arguments using the stored TypeIndex.
+- Adding regression test `tests/test_implicit_deduction_box_pack_ret0.cpp`.
+
+Run:
+
+- `make sharded CXX=clang++`
+- `bash ./tests/run_all_tests.sh`
+
+Current baseline:
+
+- **2184** compile+link+runtime passing tests (+1 from new `test_implicit_deduction_box_pack_ret0.cpp`)
+- **149** `_fail` tests failing as expected
+- overall result: **SUCCESS**
 
 ## Validation baseline refreshed on 2026-04-23 (Phase 6: fold-expression complex-pack parser fix)
 

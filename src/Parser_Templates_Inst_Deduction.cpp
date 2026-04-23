@@ -883,6 +883,31 @@ void Parser::reparse_template_function_body(
 	// template_scope RAII guard removes TypeInfo entries automatically.
 }
 
+// Synthesize a TypeSpecifierNode from a TypeInfo::TemplateArgInfo entry.
+// Used when reconstructing a concrete type from a dependent template-arg
+// position (e.g. extracting 'int' from Box<int> when the pattern is Box<Ts>).
+static TypeSpecifierNode makeTypeSpecifierFromTemplateArgInfo(
+	const TypeInfo::TemplateArgInfo& c) {
+	TypeSpecifierNode synth_ts(
+		c.type_index.withCategory(c.typeEnum()),
+		get_type_size_bits(c.typeEnum()),
+		Token(), c.cv_qualifier, ReferenceQualifier::None);
+	for (size_t pd = 0; pd < c.pointer_depth; ++pd) {
+		CVQualifier ptr_cv = (pd < c.pointer_cv_qualifiers.size())
+								 ? c.pointer_cv_qualifiers[pd]
+								 : CVQualifier::None;
+		synth_ts.add_pointer_level(ptr_cv);
+	}
+	synth_ts.set_reference_qualifier(c.ref_qualifier);
+	if (c.is_array) {
+		synth_ts.set_array(true, c.array_size);
+	}
+	if (c.function_signature.has_value()) {
+		synth_ts.set_function_signature(*c.function_signature);
+	}
+	return synth_ts;
+}
+
 std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArgs(
 	const std::vector<ASTNode>& template_params,
 	const std::vector<ASTNode>& func_params,
@@ -1020,6 +1045,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 					}
 				}
 				deduction_info.function_pack_template_param_name = pack_type_name;
+				deduction_info.function_pack_element_type_index = fp_type.type_index();
 			}
 			continue;
 		}
@@ -1065,24 +1091,8 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 					// and reference qualifiers are preserved through the
 					// entire pipeline (TemplateTypeArg →
 					// substitute_template_parameter / registerTypeParamsInScope).
-					TypeSpecifierNode synth_ts(
-						c.type_index.withCategory(c.typeEnum()),
-						get_type_size_bits(c.typeEnum()),
-						Token(), c.cv_qualifier, ReferenceQualifier::None);
-					for (size_t pd = 0; pd < c.pointer_depth; ++pd) {
-						CVQualifier ptr_cv = (pd < c.pointer_cv_qualifiers.size())
-												 ? c.pointer_cv_qualifiers[pd]
-												 : CVQualifier::None;
-						synth_ts.add_pointer_level(ptr_cv);
-					}
-					synth_ts.set_reference_qualifier(c.ref_qualifier);
-					if (c.is_array) {
-						synth_ts.set_array(true, c.array_size);
-					}
-					if (c.function_signature.has_value()) {
-						synth_ts.set_function_signature(*c.function_signature);
-					}
-					TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(synth_ts);
+					TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(
+						makeTypeSpecifierFromTemplateArgInfo(c));
 					auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
 					if (!inserted && !(it->second == new_arg)) {
 						FLASH_LOG_FORMAT(Templates, Error,
@@ -2438,12 +2448,58 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 				if (function_pack_arg_start != SIZE_MAX) {
 					arg_index = function_pack_arg_start;
 				}
+				// If the function-parameter pack element type is a template specialisation
+				// (e.g. Box<Ts>...), look up its TypeInfo so we can extract the inner
+				// template argument rather than pushing the full outer type.  This fixes
+				// implicit deduction of Ts from Box<Ts>... arguments:
+				//   template<typename... Ts> int f(Box<Ts>... boxes)
+				//   f(box_int, box_dbl) should deduce Ts={int,double}, not {Box<int>,Box<double>}
+				const TypeInfo* pack_elem_fp_info = nullptr;
+				if (!deduction_info.function_pack_element_type_index.isNull()) {
+					const TypeInfo* elem_info = tryGetTypeInfo(deduction_info.function_pack_element_type_index);
+					if (elem_info && elem_info->isTemplateInstantiation()) {
+						pack_elem_fp_info = elem_info;
+					}
+				}
 				while (arg_index < arg_types.size()) {
 					if (pre_deduced_arg_indices.count(arg_index)) {
 						++arg_index;
 						continue;
 					}
-					template_args.push_back(TemplateTypeArg::makeTypeSpecifier(arg_types[arg_index]));
+					const TypeSpecifierNode& ca_type = arg_types[arg_index];
+					bool pushed = false;
+					// Try to unwrap the inner type when the pack element is a template
+					// specialisation (e.g. deduce int from Box<int> when pattern is Box<Ts>).
+					if (pack_elem_fp_info) {
+						const TypeInfo* ca_info = tryGetTypeInfo(ca_type.type_index());
+						if (ca_info && ca_info->isTemplateInstantiation() &&
+							pack_elem_fp_info->baseTemplateName() == ca_info->baseTemplateName()) {
+							const auto& fp_targs = pack_elem_fp_info->templateArgs();
+							const auto& ca_targs = ca_info->templateArgs();
+							for (size_t j = 0; j < fp_targs.size() && j < ca_targs.size(); ++j) {
+								const auto& p = fp_targs[j];
+								const auto& c = ca_targs[j];
+								if (!p.dependent_name.isValid())
+									continue;
+								if (!c.is_value) {
+									template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
+										makeTypeSpecifierFromTemplateArgInfo(c)));
+									pushed = true;
+								} else {
+									template_args.push_back(TemplateTypeArg::makeValue(c.intValue(), c.typeEnum()));
+									pushed = true;
+								}
+								// We push exactly one template arg per call arg (one element of Ts).
+								// For patterns with multiple dependent positions (e.g. Pair<Ts,Us>...)
+								// only the first dependent position is consumed here; multi-pack
+								// patterns of that form are not yet fully supported.
+								break;
+							}
+						}
+					}
+					if (!pushed) {
+						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(ca_type));
+					}
 					++arg_index;
 				}
 				continue;
