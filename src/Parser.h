@@ -1234,6 +1234,23 @@ private:
 		// than deducing the outer type (Box<int>) directly.
 		TypeIndex function_pack_element_type_index;
 	};
+	static void collectDependentTemplateParamNamesFromType(
+		TypeIndex pattern_type_index,
+		const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
+			tparam_nodes_by_name,
+		StringHandle& primary_name,
+		std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_param_names);
+	static std::optional<TemplateTypeArg> extractNestedTemplateArgForDependentName(
+		TypeIndex pattern_type_index,
+		TypeIndex concrete_type_index,
+		StringHandle dependent_name);
+	static std::optional<bool> preDeduceTemplateArgsFromMatchingTypes(
+		const TypeSpecifierNode& pattern_type,
+		const TypeSpecifierNode& concrete_type,
+		const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
+			tparam_nodes_by_name,
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>& param_name_to_arg,
+		int recursion_depth);
 	bool tryAppendDefaultTemplateArg(
 		const TemplateParameterNode& param,
 		const std::vector<ASTNode>& template_params,
