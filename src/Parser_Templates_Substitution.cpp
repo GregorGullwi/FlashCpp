@@ -634,26 +634,39 @@ ASTNode Parser::substituteTemplateParameters(
 					return node;
 				}
 
-				// For each pack element, substitute the variadic parameter in the complex expression
+				// For each pack element, substitute the variadic parameter in the complex expression.
+				// When multiple variadic packs are present (e.g. Ts, Us in Pair<Ts,Us>...), each pack
+				// occupies a different slice of template_args.  We track a running template_arg_index
+				// (mirroring buildSubstitutionForPackElement) so each pack reads from its own slice.
 				for (size_t i = 0; i < num_pack_elements; ++i) {
 					// Also include the non-variadic parameters so they get substituted too
 					std::vector<ASTNode> subst_params;
 					std::vector<TemplateTypeArg> subst_args;
+					size_t template_arg_index = 0;
 					for (size_t p = 0; p < template_params.size(); ++p) {
 						if (template_params[p].is<TemplateParameterNode>()) {
 							const auto& tparam = template_params[p].as<TemplateParameterNode>();
 							if (tparam.is_variadic()) {
-								if (variadic_param_idx == SIZE_MAX || (non_variadic_count + i) >= template_args.size()) {
-									continue;
+								// Determine this pack's size from template_param_pack_sizes_ if available;
+								// fall back to num_pack_elements (correct for single-pack functions).
+								size_t pack_size = num_pack_elements;
+								if (auto sz = get_template_param_pack_size(tparam.name())) {
+									pack_size = *sz;
 								}
-								// Create a non-variadic version of this parameter for single substitution
-								TemplateParameterNode single_tparam(tparam.nameHandle(), tparam.token());
-								// Don't set variadic - we're substituting one element at a time
-								subst_params.push_back(emplace_node<TemplateParameterNode>(single_tparam));
-								subst_args.push_back(template_args[non_variadic_count + i]);
-							} else if (p < template_args.size()) {
-								subst_params.push_back(template_params[p]);
-								subst_args.push_back(template_args[p]);
+								if (template_arg_index + i < template_args.size()) {
+									// Create a non-variadic version of this parameter for single substitution
+									TemplateParameterNode single_tparam(tparam.nameHandle(), tparam.token());
+									// Don't set variadic - we're substituting one element at a time
+									subst_params.push_back(emplace_node<TemplateParameterNode>(single_tparam));
+									subst_args.push_back(template_args[template_arg_index + i]);
+								}
+								template_arg_index += pack_size;
+							} else {
+								if (template_arg_index < template_args.size()) {
+									subst_params.push_back(template_params[p]);
+									subst_args.push_back(template_args[template_arg_index]);
+								}
+								++template_arg_index;
 							}
 						}
 					}

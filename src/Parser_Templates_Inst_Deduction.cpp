@@ -1485,15 +1485,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 								if (call_arg_info->isTemplateInstantiation() &&
 									dep_pos < call_arg_info->templateArgs().size()) {
 									const TypeInfo::TemplateArgInfo& inner = call_arg_info->templateArgs()[dep_pos];
-									TemplateTypeArg extracted_arg;
-									extracted_arg.setCategory(inner.category());
-									extracted_arg.type_index = inner.type_index;
-									extracted_arg.is_value = inner.is_value;
-									extracted_arg.value = inner.intValue();
-									extracted_arg.cv_qualifier = inner.cv_qualifier;
-									extracted_arg.ref_qualifier = inner.ref_qualifier;
+									TemplateTypeArg extracted_arg = toTemplateTypeArg(inner);
 									extracted_arg.is_dependent = inner.dependent_name.isValid();
-									extracted_arg.dependent_name = inner.dependent_name;
 									template_args.push_back(extracted_arg);
 									pushed = true;
 								}
