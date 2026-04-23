@@ -2445,6 +2445,15 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 
 		if (param.kind() == TemplateParameterKind::Type) {
 			if (param.is_variadic()) {
+				// Gate call-arg consumption on the function-parameter pack.
+				// If function_pack_template_param_name is valid and this param is NOT
+				// the function-parameter pack, it cannot be deduced from call args.
+				// Produce an empty pack and continue to the next template parameter.
+				StringHandle this_param_name = StringTable::getOrInternStringHandle(param.name());
+				if (deduction_info.function_pack_template_param_name.isValid() &&
+				    this_param_name != deduction_info.function_pack_template_param_name) {
+					continue;
+				}
 				if (function_pack_arg_start != SIZE_MAX) {
 					arg_index = function_pack_arg_start;
 				}
@@ -3605,6 +3614,36 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					arg_type_index++;
 				}
 			}
+		}
+	}
+
+	// Populate template_param_pack_sizes_ so substituteTemplateParameters can
+	// resolve sizeof...(Pack) correctly when multiple variadic packs are present.
+	// Saved/restored around the body reparse so nested instantiations don't see stale data.
+	auto saved_template_pack_sizes = std::move(template_param_pack_sizes_);
+	ScopeGuard restore_template_pack_sizes([&]() {
+		template_param_pack_sizes_ = std::move(saved_template_pack_sizes);
+	});
+	template_param_pack_sizes_.clear();
+	if (deduction_info->function_pack_template_param_name.isValid()) {
+		size_t non_variadic_tparam_count = 0;
+		for (const auto& tpnode : template_params) {
+			if (tpnode.is<TemplateParameterNode>() &&
+			    !tpnode.as<TemplateParameterNode>().is_variadic()) {
+				++non_variadic_tparam_count;
+			}
+		}
+		const StringHandle func_pack_name = deduction_info->function_pack_template_param_name;
+		for (const auto& tpnode : template_params) {
+			if (!tpnode.is<TemplateParameterNode>()) continue;
+			const auto& tparam = tpnode.as<TemplateParameterNode>();
+			if (!tparam.is_variadic()) continue;
+			const size_t pack_count =
+				(tparam.nameHandle() == func_pack_name &&
+				 template_args.size() > non_variadic_tparam_count)
+					? (template_args.size() - non_variadic_tparam_count)
+					: 0;
+			template_param_pack_sizes_.emplace_back(tparam.nameHandle(), pack_count);
 		}
 	}
 
