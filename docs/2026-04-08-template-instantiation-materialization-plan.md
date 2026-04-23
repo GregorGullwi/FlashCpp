@@ -403,3 +403,91 @@ Current baseline:
 - **2182** compile+link+runtime passing tests (includes new test)
 - **149** `_fail` tests failing as expected
 - overall result: **SUCCESS**
+
+## Phase 6 continued: inner member function pack in class-template context (2026-04-23)
+
+Fixed the first entry in `docs/KNOWN_ISSUES.md` ("inner member function pack
+in class template context — fold returns only first pack element").
+
+### Root cause
+
+When a class template contains an inner member function template with its own
+variadic type pack — e.g.:
+
+```cpp
+template<typename... Ts>
+struct Wrapper {
+    template<typename... Us>
+    int call(Us... args) { return (0 + ... + args); }
+};
+```
+
+…the pattern `DeclarationNode` for `Us... args` on the member template did not
+have `is_parameter_pack` set, and its type specifier's `token()` was empty
+(the type is stored as a `TypeIndex` pointing to the template-parameter
+`TypeInfo` for `Us`, not a named token).
+
+Two downstream consequences:
+
+1. `Parser::buildDeductionMapFromCallArgs` gated pack detection solely on
+   `DeclarationNode::is_parameter_pack()` and so never populated
+   `function_pack_call_arg_start/end`,
+   `function_pack_dependent_param_names`, or
+   `function_pack_template_param_name` for the inner pack.
+2. `Parser::try_instantiate_member_function_template` had a naive
+   per-template-param deduction loop that pushed exactly one
+   `TemplateTypeArg` per template parameter, so the variadic `Us` was
+   deduced with 1 element regardless of the call arity.
+
+The combination caused `try_instantiate_member_function_template` to return a
+single-element `Us = {int}` even for `w.call(10, 15, 17)`.  Downstream, the
+MemberFunc parameter-expansion path only created `args_0` in the symbol
+table, so `count_pack_elements("args")` returned `1` and the unary fold
+`(0 + ... + args)` expanded to a single element.
+
+### Fix
+
+Two small, scoped changes:
+
+- `src/Parser_Templates_Inst_Deduction.cpp / buildDeductionMapFromCallArgs`
+  — detect packs by either (a) `is_parameter_pack()` or (b) the type
+  specifier naming a variadic template parameter of the enclosing template
+  (mirroring the fallback that already exists in
+  `instantiate_member_function_template_core`).  Additionally, when
+  extracting the pack's template-parameter name, fall back to the
+  `TypeInfo::name()` when the type token handle is invalid, so that the
+  inner pack's name (e.g. `Us`) is correctly recorded in
+  `function_pack_dependent_param_names` /
+  `function_pack_template_param_name`.
+- `src/Parser_Templates_Inst_MemberFunc.cpp / try_instantiate_member_function_template`
+  — handle variadic Type template parameters in the deduction loop by
+  consuming the `function_pack_call_arg_start..function_pack_call_arg_end`
+  slice (matching the variadic branch of `deduceTemplateArgsFromCall`),
+  producing an empty pack for variadic template params that do not map to
+  the function-parameter pack.
+
+Regression test: `tests/test_class_template_inner_func_pack_fold_ret0.cpp`
+exercises simple and multi-pack inner fold cases including a non-variadic
+outer class template, verifying that all three inner-pack folds return the
+expected sum.
+
+### Validation baseline (2026-04-23 · afternoon)
+
+- `make sharded CXX=clang++`
+- `bash ./tests/run_all_tests.sh`
+
+Current baseline (Linux/clang):
+
+- **2193** compile+link+runtime passing tests (+11 vs morning baseline; the
+  additional passing tests are existing tests whose inner-pack fold or
+  member-function pack deduction was previously incorrect)
+- **149** `_fail` tests failing as expected
+- overall result: **SUCCESS**
+
+### Still open Phase 6 items (unchanged)
+
+- Static member function template via `S<T1,T2>::f(args...)` — body not
+  queued for codegen; link fails with undefined reference.
+- Unsized array with pack-expanded initializer keeps pre-expansion size 1.
+- Aggregate brace-init of a struct with pack-expanded initializer parse
+  failure at the call site.
