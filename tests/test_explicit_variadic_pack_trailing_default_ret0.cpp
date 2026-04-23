@@ -16,5 +16,9 @@ int main() {
 		return 1;
 	}
 
+	if (packBeforeTail<char, short, int>(1, 2, 3, 7L) != 99) {
+		return 2;
+	}
+
 	return 0;
 }
