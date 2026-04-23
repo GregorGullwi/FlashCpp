@@ -338,9 +338,26 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		// Also check the base template name for template specializations
 		// E.g., in template<> struct allocator<void>, the struct name is "allocator_void"
 		// but the constructor is still named "allocator"
+		// For member class templates the struct_node may carry a qualified name such as
+		// "Outer::_Storage"; a constructor inside the body is still spelled just "_Storage".
+		// Partial specialization patterns carry a "$pattern_..." suffix on the simple name;
+		// the constructor is still spelled using the base template name.
+		std::string_view struct_full_name = StringTable::getStringView(struct_node.name());
+		std::string_view struct_simple_name = struct_full_name;
+		if (size_t scope_pos = struct_full_name.rfind("::");
+			scope_pos != std::string_view::npos) {
+			struct_simple_name = struct_full_name.substr(scope_pos + 2);
+		}
+		std::string_view struct_base_name = struct_simple_name;
+		if (size_t pattern_pos = struct_simple_name.find("$pattern");
+			pattern_pos != std::string_view::npos) {
+			struct_base_name = struct_simple_name.substr(0, pattern_pos);
+		}
 		bool is_base_template_ctor = false;
 		if (!peek().is_eof() && peek().is_identifier() &&
-			peek_info().value() != struct_node.name()) {
+			peek_info().value() != struct_full_name &&
+			peek_info().value() != struct_simple_name &&
+			peek_info().value() != struct_base_name) {
 			auto type_it = getTypesByNameMap().find(struct_node.name());
 			if (type_it != getTypesByNameMap().end() && type_it->second->isTemplateInstantiation()) {
 				std::string_view base_name = StringTable::getStringView(type_it->second->baseTemplateName());
@@ -350,7 +367,10 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 			}
 		}
 		if (!peek().is_eof() && peek().is_identifier() &&
-			(peek_info().value() == struct_node.name() || is_base_template_ctor)) {
+			(peek_info().value() == struct_full_name ||
+			 peek_info().value() == struct_simple_name ||
+			 peek_info().value() == struct_base_name ||
+			 is_base_template_ctor)) {
 			[[maybe_unused]] Token name_token = peek_info();
 			advance();
 
