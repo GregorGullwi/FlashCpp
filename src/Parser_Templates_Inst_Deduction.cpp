@@ -1028,17 +1028,15 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			if (fp_ts.category() == TypeCategory::UserDefined ||
 				fp_ts.category() == TypeCategory::TypeAlias ||
 				fp_ts.category() == TypeCategory::Template) {
-				std::string_view fp_type_name;
-				if (fp_ts.type_index().is_valid()) {
-					if (const TypeInfo* ti = tryGetTypeInfo(fp_ts.type_index())) {
-						fp_type_name = StringTable::getStringView(ti->name());
-					}
+				StringHandle fp_type_name;
+				if (const TypeInfo* ti = tryGetTypeInfo(fp_ts.type_index())) {
+					fp_type_name = ti->name();
 				}
-				if (fp_type_name.empty()) {
-					fp_type_name = fp_ts.token().value();
+				if (!fp_type_name.isValid()) {
+					fp_type_name = fp_ts.token().handle();
 				}
-				if (!fp_type_name.empty()) {
-					auto it = tparam_nodes_by_name.find(StringTable::getOrInternStringHandle(fp_type_name));
+				if (fp_type_name.isValid()) {
+					auto it = tparam_nodes_by_name.find(fp_type_name);
 					if (it != tparam_nodes_by_name.end() && it->second->is_variadic()) {
 						is_pack = true;
 					}
