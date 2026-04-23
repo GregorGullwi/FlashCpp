@@ -2447,16 +2447,10 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 		if (param.kind() == TemplateParameterKind::Type) {
 			if (param.is_variadic()) {
 				// Gate call-arg consumption on the function-parameter pack.
-				// If function_pack_template_param_name is valid and this param is NOT
-				// the function-parameter pack, it cannot be deduced from call args.
-				// Produce an empty pack and continue to the next template parameter.
-				StringHandle this_param_name = param.nameHandle();
-				if (deduction_info.function_pack_template_param_name.isValid() &&
-				    this_param_name != deduction_info.function_pack_template_param_name) {
+				// If this param is NOT the function-parameter pack, it cannot be deduced
+				// from call args. Produce an empty pack and continue.
+				if (param.nameHandle() != deduction_info.function_pack_template_param_name) {
 					continue;
-				}
-				if (function_pack_arg_start != SIZE_MAX) {
-					arg_index = function_pack_arg_start;
 				}
 				// If the function-parameter pack element type is a template specialisation
 				// (e.g. Box<Ts>...), look up its TypeInfo so we can extract the inner
