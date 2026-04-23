@@ -1062,6 +1062,16 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		}
 	}
 
+		// For integer-to-integer conversions where sizes differ, we must emit a
+		// proper extension (sign/zero) or truncation IR instruction.  Simply
+		// changing the type metadata leaves the underlying storage at the source
+		// size, and a later 32-bit load from an 8-bit stack slot reads 3 bytes of
+		// uninitialized memory (KI-001).  Delegate to generateTypeConversion which
+		// handles SignExtend/ZeroExtend/Truncate based on signedness and size.
+	if (is_integer_type(source_type) && is_integer_type(target_type) && source_size != target_size) {
+		return generateTypeConversion(expr_operands, source_type, target_type, staticCastNode.cast_token());
+	}
+
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
 	return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);

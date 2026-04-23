@@ -2,10 +2,6 @@
 // has multiple dependent positions (Pair<Ts,Us>...).
 // This exercises the fix where function_pack_template_param_name must be set
 // to the first template param name ("Ts"), not the template name ("Pair").
-//
-// NOTE: tests are in a helper function rather than directly in main() to work
-// around KI-001 (variadic-template pack call result corrupted when it is the
-// very first call in a function scope).
 
 template<typename T, typename U>
 struct Pair {
@@ -26,7 +22,7 @@ int count_pairs(Pair<Ts, Us>...) {
 	return static_cast<int>(sizeof...(Ts)) + static_cast<int>(sizeof...(Us));
 }
 
-int run_tests() {
+int main() {
 	Pair<int, double> p1(1, 2.0);
 	Pair<char, int>   p2(3, 4);
 
@@ -49,5 +45,3 @@ int run_tests() {
 
 	return 0;
 }
-
-int main() { return run_tests(); }
