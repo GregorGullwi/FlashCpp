@@ -228,7 +228,14 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		return ParseResult::error("Expected ')' after function arguments", current_token_);
 	}
 
-	// Try to instantiate the member template function if we have explicit template args
+	// Try to instantiate the member template function.
+	// Three sub-cases:
+	// 1. Explicit template args (e.g. Type::member<U>(args)) — use explicit instantiation.
+	// 2. No call args and no explicit args — try zero-arg explicit instantiation.
+	// 3. Call args but no explicit args (e.g. Type::member(args)) — deduce from args.
+	//    This covers static member function templates like `S<T1,T2>::f(a, b)` where
+	//    `try_parse_member_template_function_call` is the only path and the lazy
+	//    fallback below only handles non-template members.
 	std::optional<ASTNode> instantiated_func;
 	if (member_template_args.has_value()) {
 		instantiated_func = try_instantiate_member_function_template_explicit(
@@ -240,6 +247,22 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 			instantiated_class_name,
 			member_name,
 			{});
+	} else {
+		// Collect argument types from the already-parsed call args, then attempt
+		// deduction-based member function template instantiation.  This is the
+		// same mechanism used for regular (non-static) member template calls in
+		// Parser_Expr_PostfixCalls.cpp.
+		std::vector<TypeSpecifierNode> deduced_arg_types;
+		deduced_arg_types.reserve(args.size());
+		for (const auto& arg : args) {
+			if (auto type_opt = get_expression_type(arg)) {
+				deduced_arg_types.push_back(*type_opt);
+			}
+		}
+		if (!deduced_arg_types.empty()) {
+			instantiated_func = try_instantiate_member_function_template(
+				instantiated_class_name, member_name, deduced_arg_types);
+		}
 	}
 
 	// Trigger lazy member function instantiation if needed
