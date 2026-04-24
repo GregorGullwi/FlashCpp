@@ -817,7 +817,7 @@ static TemplateParameterNode cloneNonVariadicTemplateParam(const TemplateParamet
 }
 
 bool Parser::buildSubstitutionForPackElement(
-	std::string_view pack_param_name,
+	StringHandle pack_param_name,
 	size_t pack_element_offset,
 	const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
 	const InlineVector<ASTNode, 4>& template_params,
@@ -832,7 +832,7 @@ bool Parser::buildSubstitutionForPackElement(
 			continue;
 		}
 		const auto& tparam = template_params[i].as<TemplateParameterNode>();
-		if (tparam.is_variadic() && tparam.name() == pack_param_name) {
+		if (tparam.is_variadic() && tparam.nameHandle() == pack_param_name) {
 			pack_binding = std::pair<size_t, size_t>{
 				template_param_arg_starts[i],
 				template_param_arg_counts[i]};
@@ -848,7 +848,7 @@ bool Parser::buildSubstitutionForPackElement(
 		}
 		const auto& tparam = template_params[i].as<TemplateParameterNode>();
 		if (tparam.is_variadic()) {
-			const bool is_primary = (tparam.name() == pack_param_name);
+			const bool is_primary = (tparam.nameHandle() == pack_param_name);
 			const bool is_co_pack = !is_primary &&
 				dependent_pack_names.count(tparam.nameHandle());
 			if (is_primary || is_co_pack) {
@@ -1146,23 +1146,20 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		pack_param_info_ = std::move(saved_pack_param_info);
 	});
 
-	// Helper to extract the type name from a TypeSpecifierNode, trying token value first, then TypeInfo lookup
-	auto getTypeName = [&](const TypeSpecifierNode& type_spec) -> std::string_view {
+	// Helper to extract the type name from a TypeSpecifierNode as a StringHandle.
+	// Returns an invalid handle when the type is not a user-defined/alias/template type.
+	auto getTypeName = [&](const TypeSpecifierNode& type_spec) -> StringHandle {
 		if (type_spec.category() != TypeCategory::UserDefined &&
 			type_spec.category() != TypeCategory::TypeAlias &&
 			type_spec.category() != TypeCategory::Template) {
 			return {};
 		}
-		std::string_view name;
 		if (type_spec.type_index().is_valid()) {
 			if (const TypeInfo* ti = tryGetTypeInfo(type_spec.type_index())) {
-				name = StringTable::getStringView(ti->name());
+				return ti->name();
 			}
 		}
-		if (name.empty()) {
-			name = type_spec.token().value();
-		}
-		return name;
+		return type_spec.token().handle();
 	};
 	std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual> tparam_nodes_by_name;
 	for (const auto& template_param_node : template_params) {
@@ -1221,16 +1218,13 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	}
 	auto getPackParameterName = [&](const TypeSpecifierNode& type_spec,
 								   StringHandle& primary_pack_name,
-								   std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names) -> std::string_view {
+								   std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names) {
 		primary_pack_name = {};
 		dependent_pack_names.clear();
-		std::string_view type_name = getTypeName(type_spec);
-		if (!type_name.empty()) {
-			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
-			if (tparam_nodes_by_name.count(type_name_handle)) {
-				primary_pack_name = type_name_handle;
-				dependent_pack_names.insert(type_name_handle);
-			}
+		StringHandle type_name_handle = getTypeName(type_spec);
+		if (type_name_handle.isValid() && tparam_nodes_by_name.count(type_name_handle)) {
+			primary_pack_name = type_name_handle;
+			dependent_pack_names.insert(type_name_handle);
 		}
 		collectDependentTemplateParamNamesFromType(
 			type_spec.type_index(),
@@ -1252,17 +1246,14 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				}
 			}
 		}
-		return primary_pack_name.isValid()
-			? StringTable::getStringView(primary_pack_name)
-			: type_name;
 	};
-	auto getTemplateParamPackBinding = [&](std::string_view pack_param_name) -> std::optional<std::pair<size_t, size_t>> {
+	auto getTemplateParamPackBinding = [&](StringHandle pack_param_name) -> std::optional<std::pair<size_t, size_t>> {
 		for (size_t i = 0; i < template_params.size(); ++i) {
 			if (!template_params[i].is<TemplateParameterNode>()) {
 				continue;
 			}
 			const auto& tparam = template_params[i].as<TemplateParameterNode>();
-			if (tparam.is_variadic() && tparam.name() == pack_param_name) {
+			if (tparam.is_variadic() && tparam.nameHandle() == pack_param_name) {
 				return std::pair<size_t, size_t>{
 					template_param_arg_starts[i],
 					template_param_arg_counts[i]};
@@ -1273,7 +1264,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 
 	// Copy parameters while substituting template arguments and expanding variadic packs.
-	size_t current_param_index = 0;
+	size_t materialized_param_index = 0;
 	for (const auto& param : func_decl.parameter_nodes()) {
 		if (param.is<DeclarationNode>()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
@@ -1284,13 +1275,13 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			bool is_pack_param = param_decl.is_parameter_pack();
 
 			// Also detect if type references a variadic template parameter (for cases where is_parameter_pack isn't set)
-			std::string_view type_name = getTypeName(param_type_spec);
-			if (!is_pack_param && !type_name.empty()) {
+			StringHandle type_name_handle = getTypeName(param_type_spec);
+			if (!is_pack_param && type_name_handle.isValid()) {
 				for (size_t i = 0; i < template_params.size(); ++i) {
 					if (!template_params[i].is<TemplateParameterNode>())
 						continue;
 					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-					if (tparam.is_variadic() && tparam.name() == type_name) {
+					if (tparam.is_variadic() && tparam.nameHandle() == type_name_handle) {
 						is_pack_param = true;
 						break;
 					}
@@ -1316,18 +1307,18 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			if (is_pack_param) {
 				StringHandle primary_pack_name;
 				std::unordered_set<StringHandle, StringHash, StringEqual> dependent_pack_names;
-				std::string_view pack_param_name = getPackParameterName(
+				getPackParameterName(
 					param_type_spec,
 					primary_pack_name,
 					dependent_pack_names);
-				auto pack_binding = getTemplateParamPackBinding(pack_param_name);
+				auto pack_binding = getTemplateParamPackBinding(primary_pack_name);
 				if (pack_binding.has_value()) {
 					std::string_view orig_name = param_decl.identifier_token().value();
 					for (size_t pi = 0; pi < pack_binding->second; ++pi) {
 						InlineVector<ASTNode, 4> subst_params;
 						InlineVector<TemplateTypeArg, 4> subst_args;
 						if (!buildSubstitutionForPackElement(
-								pack_param_name,
+								primary_pack_name,
 								pi,
 								dependent_pack_names,
 								template_params,
@@ -1352,8 +1343,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 										 param_decl.identifier_token().file_index());
 						new_func_ref.add_parameter_node(emplace_node<DeclarationNode>(param_type, elem_token));
 					}
-					pack_param_info_.push_back({orig_name, current_param_index, pack_binding->second});
-					current_param_index += pack_binding->second;
+					pack_param_info_.push_back({orig_name, materialized_param_index, pack_binding->second});
+					materialized_param_index += pack_binding->second;
 					handled_as_pack = true;
 				}
 			}
@@ -1393,7 +1384,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				new_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 			}
 			new_func_ref.add_parameter_node(new_param_decl);
-			++current_param_index;
+			++materialized_param_index;
 		}
 	}
 

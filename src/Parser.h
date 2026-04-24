@@ -1691,7 +1691,7 @@ private:
 		const FlashCpp::TemplateInstantiationKey& key,
 		const std::vector<TypeSpecifierNode>& call_arg_types);
 	bool buildSubstitutionForPackElement(
-		std::string_view pack_param_name,
+		StringHandle pack_param_name,
 		size_t pack_element_offset,
 		const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
 		const InlineVector<ASTNode, 4>& template_params,
