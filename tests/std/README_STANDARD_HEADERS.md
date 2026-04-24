@@ -101,6 +101,104 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+#### 2026-04-24 Preprocessor / Typedef / Builtin Sweep (Linux/libstdc++-14)
+
+This sweep re-ran every `tests/std/test_std_*.cpp` against system libstdc++-14 with the freshly
+rebuilt `x64/Sharded/FlashCpp` and identified the actual first-order compile error per header
+(the previous sweep's bucket-by-first-error was masked by the SFINAE path logging
+"Non-type parameter not supported in deduction" at Error level for every overload attempt).
+Full regression suite `tests/run_all_tests.sh` (2205 tests, 149 `_fail`) = SUCCESS.
+
+Fixes landed in this sweep:
+
+- **Preprocessor: `__has_feature` / `__has_extension` / `__building_module` etc.** —
+  Clang's `<stddef.h>` and its `__stddef_size_t.h` / `__stddef_ptrdiff_t.h` / … family
+  gate the `typedef __SIZE_TYPE__ size_t;` declarations on
+  `#if !defined(_SIZE_T) || __has_feature(modules)`. FlashCpp's preprocessor had no handler
+  for `__has_feature` — the unknown identifier silently pushed 0, then the trailing
+  `(arg)` was parsed as a separate parenthesized subexpression, producing a stack imbalance
+  that turned the whole `#if` into 0. The typedef bodies were therefore entirely skipped,
+  so `size_t` was never declared, so `sizeof(size_t)` returned 0, so glibc's
+  `<bits/types/struct_FILE.h>` aborted with "Invalid array bound for member `_unused2`:
+  sizeof evaluated to 0 for type `size_t`". Added explicit handlers for `__has_feature`,
+  `__has_extension`, `__building_module`, `__is_target_arch`, `__is_target_vendor`,
+  `__is_target_os`, `__is_target_environment`, `__is_identifier`; each correctly consumes
+  the `(arg)` and pushes 0 (or 1 for `__is_identifier`). File: `src/FileReader_Macros.cpp`.
+  Unblocked: `<chrono>`, `<fstream>`, `<iostream>`, `<sstream>`, `<stdexcept>`, `<string>`
+  past the struct_FILE.h size-0 blocker.
+
+- **Parser: C-style function-type typedefs with parameter lists** —
+  `typedef ssize_t cookie_read_function_t(void *, char *, size_t);` (glibc's
+  `<bits/types/cookie_io_functions_t.h>`) failed with "Expected ';' after typedef declaration".
+  Root cause: `Parser::parse_typedef` explicitly `advance()`'d past the `(` before calling
+  `skip_balanced_parens()`, which *requires* the `(` still be on the stream — so it
+  immediately returned and the parameter list stayed unconsumed. Removed the erroneous
+  `advance()`. Regression: `tests/test_typedef_function_type_multiparam_ret0.cpp`.
+  File: `src/Parser_Decl_TypedefUsing.cpp`.
+
+- **Builtin registration: `__builtin_alloca` / `__builtin_alloca_with_align`** —
+  `<bits/locale_facets.h>` / `<bits/locale_facets_nonio.tcc>` use the unqualified names
+  from template bodies, hitting the C++20 [temp.res]/9 "non-dependent name … was not
+  declared before the template definition" rule because the builtin names were not
+  visible at definition time. Registered both as `extern "C"` builtins returning `void*`.
+  Also added them to the `__has_builtin` supported set. Files: `src/Parser_Core.cpp`,
+  `src/FileReader_Macros.cpp`.
+
+- **Diagnostics: demote spurious "Non-type parameter not supported in deduction" error** —
+  This is a normal SFINAE outcome (the caller returns `nullopt` to try the next overload)
+  and was being logged at Error level for every overload attempt across every header,
+  masking the real first-order error. Now logs at Debug with the actual parameter name.
+  File: `src/Parser_Templates_Inst_Deduction.cpp`.
+
+Current first-order errors after this sweep (grouped by root cause, not just per-header):
+
+- **(6 headers) `<chrono>`, `<fstream>`, `<iostream>`, `<sstream>`, `<stdexcept>`, `<string>`** —
+  `/usr/include/c++/14/bits/basic_string.h:4699` "Template instantiation failed or type not
+  found" in the `operator""s` user-defined-literal family returning `basic_string<CharT>`.
+  Was previously masked by the `struct_FILE.h` size-0 blocker.
+- **(4 headers) `<functional>`, `<list>`, `<memory>`, `<tuple>`** —
+  `/usr/include/c++/14/tuple:399` "No matching function for call to `_M_tail`" in
+  `_Tuple_impl`'s allocator-extended copy constructor: unqualified call to the
+  static member `_M_tail` inside a member-initializer list isn't resolving to the
+  same class's member.
+- **(4 headers) `<iterator>`, `<map>`, `<ranges>`, `<set>`** —
+  `/usr/include/c++/14/bits/stl_pair.h:308` or `node_handle.h:285` "Call to deleted
+  function `swap`": overload resolution picks the SFINAE'd-out `swap(pair<_T1,_T2>&,
+  pair<_T1,_T2>&) = delete;` rather than the earlier non-deleted overload, because
+  `enable_if_t<!__and_<__is_swappable<_T1>, __is_swappable<_T2>>::value>::type` isn't
+  fully removing the deleted candidate during overload resolution.
+- **(3 headers) `<deque>`, `<queue>`, `<stack>`** — `stl_deque.h:700` non-dependent name
+  `_M_deallocate_node` in out-of-line template member function body not finding its
+  own class's member function during unqualified lookup.
+- **(3 headers) `<algorithm>`, `<array>`, `<string_view>`** — "Cannot use copy
+  initialization with explicit constructor for target type `std::reverse_iterator`": the
+  return statement in `array::rbegin()` is being treated as copy-init rather than the
+  constructor-call expression it is.
+- **(1 header)** `<cmath>` — `tr1/poly_hermite.tcc:121` non-dependent name
+  `__poly_hermite_recursion` despite being declared at line 74 of the same file.
+- **(1 header)** `<atomic>` — `atomic:92` No matching member function for call to `load`.
+- **(1 header)** `<vector>` — "Itanium name mangling: unknown type".
+- **(1 header)** `<variant>` — `variant:418` Expected ')' after initializer arguments.
+- **(1 header)** `<shared_mutex>` — "struct info not found for constructor call type
+  `time_point`".
+- **(2 tests)** `<optional>` / `<optional_codegen_recovery>` — "struct type info not found".
+- **(1 test)** `<ratio>` — `static_assert` involves `std::ratio_less` which evaluates to
+  "Undefined qualified identifier in constant expression".
+- **(1 test)** `<type_traits>` — `static_assert(std::is_integral<int>::value)` fails.
+- **(1 test)** `<wstring_view_find_ret0>` — No matching member function for call to `find`.
+
+Post-sweep std-header pass count (unchanged at 13/47, but several headers now reach a
+later, more actionable error rather than a generic SFINAE stop):
+`<aggregate_brace_elision_follow>`, `<bit>`, `<compare_ret42>`, `<concepts>`,
+`<exception>`, `<limits>`, `<new>`, `<pair_swap_deleted_member>`, `<source_location>`,
+`<span>`, `<type_traits_is_integral_any_of_fail>`, `<typeinfo_ret0>`, `<version>`.
+
+Regression note: the table rows claiming `<atomic>`, `<latch>`, `<variant>` pass on
+2026-04-24 were verified this sweep against `origin/main` (commit `a4070ae`, before any
+of this sweep's changes) — they fail there too. The table rows are stale from the
+earlier 2026-04-24 depth-guard sweep and should be read against the Post-Depth-Guard
+Sweep's "cleanly compiles (13)" list and this sweep's updated first-error bucket.
+
 #### 2026-04-24 Post-Depth-Guard Sweep (Linux/libstdc++-14)
 
 After the initial 2026-04-24 depth guard landed, a subsequent sweep showed most std headers were actually SIGSEGV'ing again. Investigation with gdb pinpointed the real root cause and produced a more complete fix:

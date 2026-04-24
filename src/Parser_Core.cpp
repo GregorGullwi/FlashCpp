@@ -1353,6 +1353,13 @@ void Parser::register_builtin_functions() {
 			const_void_ptr,
 			size_t_type
 		});
+	// __builtin_alloca(size_t) — allocates on the current stack frame, returns void*.
+	// libstdc++'s <bits/locale_facets.h> / <bits/locale_facets_nonio.tcc> uses it
+	// through helpers like `__builtin_alloca_with_align` via template bodies, so the
+	// unqualified name must be visible at name-lookup time to satisfy the
+	// non-dependent-name rule.
+	register_extern_c_builtin("__builtin_alloca", void_ptr, {size_t_type});
+	register_extern_c_builtin("__builtin_alloca_with_align", void_ptr, {size_t_type, size_t_type});
 	register_extern_c_builtin("__atomic_store", void_type, {volatile_void_ptr, const_void_ptr, int_type});
 	register_extern_c_builtin("__atomic_store_n", void_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
 	register_extern_c_builtin("__atomic_load", void_type, {const_volatile_void_ptr, void_ptr, int_type});

@@ -2794,7 +2794,14 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 			continue;
 		}
 
-		FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Non-type parameter not supported in deduction");
+		// SFINAE: a non-type template parameter could not be deduced from the
+		// call arguments and has no usable default.  Callers treat std::nullopt
+		// as "this overload does not match", so this path is part of normal
+		// overload resolution and must not be logged as an error.
+		std::string_view param_name_sv = StringTable::getStringView(param_handle);
+		FLASH_LOG_FORMAT(Templates, Debug,
+			"[depth={}]: SFINAE: non-type template parameter '{}' could not be deduced",
+			recursion_depth, param_name_sv);
 		return std::nullopt;
 	}
 
