@@ -101,6 +101,90 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+#### 2026-04-24 Lexer Standards-Compliance + Unary Literal Folding Sweep (Linux/libstdc++-14)
+
+This sweep targeted a standards-compliance defect in the lexer and the downstream
+codegen fragility it was hiding. Full regression suite (`bash tests/run_all_tests.sh`,
+2207 tests + 149 `_fail`) = SUCCESS.
+
+Fixes landed in this sweep:
+
+- **Lexer: removed non-standard negative numeric literal rule** (`src/Lexer.h`).
+  C++20 [lex.ccon] / [lex.fcon] produce non-negative `integer-literal` / `floating-literal`
+  only — the leading `-` in `-5`, `-0.0`, `3-1`, `a-1`, `foo<3-1>`, etc. is always a
+  separate token (unary or binary depending on context). The lexer's
+  `c == '-' && isdigit(next)` rule eagerly combined `-<digits>` into a single literal
+  token, dropping binary `-` and breaking expressions like `3-1` and non-type template
+  arguments of the form `_Np - 1` (which is exactly the shape `libstdc++`'s
+  `<variant>::_Variadic_union(... , in_place_index<_Np-1>, ...)` and several `<tuple>` /
+  `<ratio>` helpers use).
+
+- **Parser: constant-fold unary `+` / `-` on numeric literals at AST construction**
+  (`src/Parser_Expr_PrimaryUnary.cpp`). Because the lexer no longer pre-negates,
+  `-5.0` / `-0.0` / `-5` are now `UnaryOperator(-, NumericLiteralNode(...))` in the AST.
+  At the point where the parser pops `pending_unary_ops` and wraps the operand, a unary
+  `+` / `-` applied directly to a `NumericLiteralNode` is folded back into a single
+  `NumericLiteralNode` with the negated value, preserving `TypeCategory` /
+  `TypeQualifier` / size. This is standard constant folding and in particular keeps
+  IEEE-754 signed-zero semantics exact: `-0.0` retains the sign bit (bit-distinct from
+  `+0.0`), which the codegen-via-`0.0 - x` alternative would not. It also avoids the
+  pre-existing `handleUnaryOperation` path's lack of support for `double` IR immediates
+  (the integer `NEG` instruction is emitted which is wrong for floats).
+
+Regression tests added:
+
+- `tests/test_subtract_literal_in_template_arg_ret0.cpp` — `3 - 1`, `a - 1`, and
+  `tag<3 - 1>` in non-type template argument position.
+- `tests/test_unary_minus_literal_fold_ret0.cpp` — integer literals (including
+  `-9223372036854775807LL - 1` for `INT64_MIN`), `double` / `float` literals including
+  `-0.0`, contextual-bool conversion of `-0.0`, `-(-x)` double-negation, and unsigned
+  wrap-around (`-1u == 0xFFFFFFFFu`).
+
+Std-header status after this sweep (Linux/libstdc++-14, `x64/Sharded/FlashCpp`, 60 s
+timeout, measured on the same host as previous sweeps):
+
+- Compiles cleanly (13, unchanged): `<aggregate_brace_elision_follow>` (~41ms),
+  `<bit>` (~504ms), `<compare_ret42>` (~31ms), `<concepts>` (~413ms),
+  `<exception>` (~459ms), `<limits>` (~1477ms), `<new>` (~58ms),
+  `<pair_swap_deleted_member>` (~25ms), `<source_location>` (~43ms),
+  `<span>` (~45ms), `<type_traits_is_integral_any_of_fail>`,
+  `<typeinfo_ret0>` (~60ms), `<version>` (~43ms).
+- Timings (re-measured against this binary) for the headers still failing with
+  compile/codegen errors (rc=1):
+  `<algorithm>` ~2668ms, `<any>` ~508ms, `<array>` ~1427ms, `<atomic>` ~1018ms,
+  `<chrono>` ~10418ms, `<cmath>` ~5853ms, `<deque>` ~3416ms, `<fstream>` ~6805ms,
+  `<functional>` ~2495ms, `<iostream>` ~6749ms, `<iterator>` ~2851ms,
+  `<latch>` ~1022ms, `<list>` ~2683ms, `<map>` ~2447ms, `<memory>` ~3123ms,
+  `<numeric>` ~2267ms, `<optional>` ~1023ms, `<optional_codegen_recovery>` ~1026ms,
+  `<queue>` ~3506ms, `<ranges>` ~3062ms, `<ratio>` ~504ms, `<set>` ~2461ms,
+  `<shared_mutex>` ~2690ms, `<sstream>` ~6744ms, `<stack>` ~3410ms,
+  `<stdexcept>` ~6542ms, `<string>` ~6480ms, `<string_view>` ~2898ms,
+  `<tuple>` ~1979ms, `<type_traits>` ~329ms, `<utility>` ~693ms, `<vector>` ~1901ms,
+  `<wstring_view_find_ret0>` ~2646ms.
+- **New regression exposed (not introduced by these fixes, but previously masked by
+  the `_Np-1` parse error):** `<variant>` (`tests/std/test_std_variant.cpp`) now
+  progresses past the `_Variadic_union` member-initializer and reaches codegen, where
+  it SIGSEGVs reliably (~2450ms, rc=139). Previously the parse error aborted the
+  compile before this code path was exercised. The crash is a pre-existing
+  codegen/sema bug in the `<variant>` visit machinery; opening as a follow-up item
+  rather than rolling back the standards-compliance fix.
+
+Notable first-order error changes enabled by this sweep (not new fixes — just that
+the deeper error surface is now reachable):
+
+- `<variant>` — was "`Expected ')' after initializer arguments`" at
+  `<variant>:418` from the `in_place_index<_Np-1>` arithmetic non-type argument;
+  now reaches codegen (see crash above).
+- `<ratio>` — `ratio_less` / `ratio_greater` static asserts that used to stop at
+  `_Np - 1`-style constant folds in chained comparisons now proceed to the next
+  layer; the remaining failure is evaluating qualified-identifier constants in the
+  targeted `static_assert`.
+- `<tuple>`, `<chrono>`, `<algorithm>` — various internal helpers that write
+  `N - 1` / `sizeof...(Args) - 1` in non-type template argument position no longer
+  mis-tokenize, so their downstream errors (e.g. `_M_tail`, `Cannot use copy
+  initialization with explicit constructor`) are now the first-order errors
+  attributable to the real bug rather than an early lexer artifact.
+
 #### 2026-04-24 Preprocessor / Typedef / Builtin Sweep (Linux/libstdc++-14)
 
 This sweep re-ran every `tests/std/test_std_*.cpp` against system libstdc++-14 with the freshly
