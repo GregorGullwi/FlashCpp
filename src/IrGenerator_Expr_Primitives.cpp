@@ -1747,8 +1747,8 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						StringHandle member_name_h = StringTable::getOrInternStringHandle(qualifiedIdNode.name());
 						if (auto mr = FlashCpp::gLazyMemberResolver.resolve(lookup_type_idx, member_name_h)) {
 							const StructMember* member = mr.member;
-							FLASH_LOG(Codegen, Debug, "KI-001: qualified non-static member '",
-								qualifiedIdNode.name(), "' resolved as this->member (offset=", mr.adjusted_offset, ")");
+							FLASH_LOG(Codegen, Debug, "Resolved qualified non-static member '",
+								qualifiedIdNode.name(), "' as this->member (offset=", mr.adjusted_offset, ")");
 							if (member->is_array) {
 								TempVar addr_temp = var_counter.next();
 								AddressOfMemberOp addr_op;
