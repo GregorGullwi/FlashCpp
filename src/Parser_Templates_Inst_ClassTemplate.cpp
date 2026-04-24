@@ -12,6 +12,19 @@
 
 static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
+// Per-compilation iteration counter for try_instantiate_class_template.
+// Lifted to file scope so resetTemplateInstantiationCounters() can clear it
+// at the start of each parse() call (i.e. each new compilation unit).
+// Using thread_local avoids data races in multi-threaded compiler drivers.
+static thread_local int g_template_inst_iteration_count = 0;
+static thread_local bool g_template_inst_iteration_limit_tripped = false;
+static constexpr int g_template_inst_max_iterations = 10000;
+
+void resetTemplateInstantiationCounters() {
+	g_template_inst_iteration_count = 0;
+	g_template_inst_iteration_limit_tripped = false;
+}
+
 // The std::string_view keys point at parser-owned/interned template parameter names that outlive
 // each transient substitution map built during instantiation; these maps mirror the existing
 // name-substitution containers used throughout template instantiation, while packs stay keyed by
@@ -734,8 +747,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	static thread_local bool s_instantiation_depth_warned = false;
 	static constexpr size_t MAX_INSTANTIATION_NESTING_DEPTH = 24;
 	++s_instantiation_nesting_depth;
+	// Iteration counters are file-scope thread_locals reset once per parse() call;
+	// see resetTemplateInstantiationCounters().  The NestingGuard here only manages
+	// the depth counter and its associated "warned" flag.
 	struct NestingGuard {
-		~NestingGuard() { --s_instantiation_nesting_depth; }
+		~NestingGuard() {
+			if (--s_instantiation_nesting_depth == 0) {
+				// Reset the per-instantiation-tree "warned" flag when the outermost
+				// instantiation unwinds, so the next instantiation tree (which
+				// represents a genuinely new context) gets a fresh diagnostic.
+				s_instantiation_depth_warned = false;
+			}
+		}
 	} nesting_guard;
 	if (s_instantiation_nesting_depth > MAX_INSTANTIATION_NESTING_DEPTH) {
 		if (!s_instantiation_depth_warned) {
@@ -746,23 +769,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return std::nullopt;
 	}
 
-	// Add iteration limit to prevent infinite loops during template instantiation.
-	// Once the total-work limit is hit, we stay in the "catastrophic failure" state
-	// for the rest of the compilation: without this, callers that treat nullopt as
-	// "try another overload/path" re-enter and the counter gets reset, producing
-	// multi-million-call retry storms that look like hangs for real std headers.
-	static thread_local int iteration_count = 0;
-	static thread_local bool iteration_limit_tripped = false;
-	static thread_local const int MAX_ITERATIONS = 10000; // Safety limit
-
-	if (iteration_limit_tripped) {
+	// Iteration guard: prevents retry storms for the entire compilation.
+	// Once the limit is hit, g_template_inst_iteration_limit_tripped stays true for
+	// the rest of this parse() call; it is only reset by resetTemplateInstantiationCounters()
+	// at the start of the next parse() call.
+	if (g_template_inst_iteration_limit_tripped) {
 		return std::nullopt;
 	}
-	iteration_count++;
-	if (iteration_count > MAX_ITERATIONS) {
-		FLASH_LOG(Templates, Error, "Template instantiation iteration limit exceeded (", MAX_ITERATIONS, ")! Possible infinite loop.");
+	g_template_inst_iteration_count++;
+	if (g_template_inst_iteration_count > g_template_inst_max_iterations) {
+		FLASH_LOG(Templates, Error, "Template instantiation iteration limit exceeded (", g_template_inst_max_iterations, ")! Possible infinite loop.");
 		FLASH_LOG(Templates, Error, "Last template: '", template_name, "' with ", template_args.size(), " args");
-		iteration_limit_tripped = true;
+		g_template_inst_iteration_limit_tripped = true;
 		return std::nullopt;
 	}
 

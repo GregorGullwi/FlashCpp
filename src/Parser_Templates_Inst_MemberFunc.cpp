@@ -922,7 +922,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	static constexpr size_t MAX_MEMBER_INST_DEPTH = 24;
 	++s_member_inst_depth;
 	struct DepthGuard {
-		~DepthGuard() { --s_member_inst_depth; }
+		~DepthGuard() {
+			if (--s_member_inst_depth == 0) {
+				s_member_inst_depth_warned = false;
+			}
+		}
 	} depth_guard;
 	if (s_member_inst_depth > MAX_MEMBER_INST_DEPTH) {
 		if (!s_member_inst_depth_warned) {

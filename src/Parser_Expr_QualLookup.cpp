@@ -1130,11 +1130,13 @@ TypeIndex Parser::substitute_template_parameter(
 			materialized_base.instantiated_name,
 			member_type_chain);
 	};
-	// Visited set breaks cycles when a template placeholder's arguments
-	// transitively reference the same placeholder type (common with libstdc++
-	// iterator/allocator CRTP chains). Without this guard, self-referential
-	// template instantiations recurse indefinitely and exhaust the stack.
-	std::unordered_set<TypeIndex> visited_placeholder_types;
+	// Gray-set (DFS in-progress set) for cycle detection in the placeholder arg
+	// graph.  A TypeIndex is present while we are actively recursing into it.
+	// On exit we erase it, so a TypeIndex that appears in two independent
+	// branches of a DAG (e.g. Pair<T,T> where T is a placeholder) is resolved
+	// correctly for both occurrences; only a genuine back-edge (the same node
+	// encountered while it is already on the current stack) is blocked.
+	std::unordered_set<TypeIndex> in_progress_placeholder_types;
 	auto resolveConcreteTemplateArgPlaceholders =
 		[&](const auto& self, TemplateTypeArg& concrete_arg) -> void {
 			if (concrete_arg.is_value || !concrete_arg.type_index.is_valid()) {
@@ -1146,13 +1148,20 @@ TypeIndex Parser::substitute_template_parameter(
 				return;
 			}
 
-			// Cycle break: if we've already started resolving this placeholder
-			// higher up the stack, bail out and leave the arg as-is.
-			auto [inserted_it, inserted] = visited_placeholder_types.insert(concrete_arg.type_index);
-			(void)inserted_it;
+			// Cycle break: if this placeholder is already on the current recursion
+			// stack (i.e. we are about to recurse into a type we're already
+			// resolving higher up), bail out to prevent infinite recursion.
+			auto [inserted_it, inserted] = in_progress_placeholder_types.insert(concrete_arg.type_index);
 			if (!inserted) {
 				return;
 			}
+			// RAII: always remove from the in-progress set when we leave, so
+			// sibling / subsequent calls for the same TypeIndex are not blocked.
+			struct GrayGuard {
+				std::unordered_set<TypeIndex>& set;
+				std::unordered_set<TypeIndex>::iterator it;
+				~GrayGuard() { set.erase(it); }
+			} gray_guard{in_progress_placeholder_types, inserted_it};
 
 			std::vector<TemplateTypeArg> nested_args = materializeConcretePlaceholderArgsBase(*arg_type_info);
 			for (TemplateTypeArg& nested_arg : nested_args) {

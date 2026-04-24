@@ -808,7 +808,11 @@ void Parser::reparse_template_function_body(
 	static constexpr size_t MAX_BODY_REPLAY_DEPTH = 24;
 	++s_body_replay_depth;
 	struct DepthGuard {
-		~DepthGuard() { --s_body_replay_depth; }
+		~DepthGuard() {
+			if (--s_body_replay_depth == 0) {
+				s_body_replay_depth_warned = false;
+			}
+		}
 	} depth_guard;
 	if (s_body_replay_depth > MAX_BODY_REPLAY_DEPTH) {
 		if (!s_body_replay_depth_warned) {
