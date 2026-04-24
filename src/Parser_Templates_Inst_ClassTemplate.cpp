@@ -720,6 +720,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	StringHandle template_name_handle_for_ctx = StringTable::getOrInternStringHandle(template_name);
 	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, template_name_handle_for_ctx);
 
+	// Nesting depth limit: prevents stack overflow from infinite recursive template
+	// instantiation chains (e.g. mutually-recursive SFINAE constraints in libstdc++ iterators).
+	// This is independent from the total-call iteration_count below, which cannot prevent
+	// deep recursion.  Equivalent to GCC's -ftemplate-depth.
+	static thread_local size_t s_instantiation_nesting_depth = 0;
+	static constexpr size_t MAX_INSTANTIATION_NESTING_DEPTH = 256;
+	++s_instantiation_nesting_depth;
+	struct NestingGuard {
+		~NestingGuard() { --s_instantiation_nesting_depth; }
+	} nesting_guard;
+	if (s_instantiation_nesting_depth > MAX_INSTANTIATION_NESTING_DEPTH) {
+		FLASH_LOG(Templates, Error, "Max template instantiation depth (", MAX_INSTANTIATION_NESTING_DEPTH,
+				  ") exceeded for '", template_name, "'. Possible recursive template instantiation.");
+		return std::nullopt;
+	}
+
 	// Add iteration limit to prevent infinite loops during template instantiation
 	static thread_local int iteration_count = 0;
 	static thread_local const int MAX_ITERATIONS = 10000; // Safety limit

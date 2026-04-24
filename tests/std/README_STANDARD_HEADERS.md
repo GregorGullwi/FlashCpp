@@ -39,15 +39,15 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<sstream>` | `test_std_sstream.cpp` | 💥 Crash | ~4565ms (retested 2026-04-11). |
 | `<fstream>` | `test_std_fstream.cpp` | 💥 Crash | ~4642ms (retested 2026-04-11). |
 | `<chrono>` | `test_std_chrono.cpp` | ❌ Compile Error | ~6638ms (retested 2026-04-11). Call to deleted function 'swap'. |
-| `<atomic>` | `test_std_atomic.cpp` | ❌ Codegen Error | ~1922ms (retested 2026-04-11). Parsing succeeds; codegen fails with deferred member function errors. |
+| `<atomic>` | `test_std_atomic.cpp` | ✅ Compiled | ~838ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** Previous deferred member function codegen errors are resolved. |
 | `<new>` | `test_std_new.cpp` | ✅ Compiled | ~56ms |
-| `<exception>` | `test_std_exception.cpp` | ❌ Codegen Error | ~574ms (retested 2026-04-11). Targeted test now fails with template deduction / Non-type parameter issues. |
+| `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~368ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `exception_ptr` copy-vs-move-constructor ambiguity is resolved by the rvalue overload-rank fix. Regression: `tests/test_rvalue_ref_overload_preference_ret0.cpp`. |
 | `<stdexcept>` | `test_std_stdexcept.cpp` | 💥 Crash | ~4390ms (retested 2026-04-11). |
 | `<typeinfo>` | N/A | ✅ Compiled | ~54ms |
 | `<typeindex>` | N/A | ❌ Codegen Error | ~640ms (retested 2026-04-11). "Cannot use copy initialization with explicit constructor". |
 | `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | ~2299ms (retested 2026-04-11). Targeted test now fails with codegen errors. |
 | `<iterator>` | `test_std_iterator.cpp` | ❌ Compile Error | ~2481ms (retested 2026-04-11). Call to deleted function 'swap'. |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | ~3170ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". |
+| `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~736ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `_Variadic_union` arithmetic non-type template argument (`_Np-1`) inside a member initializer is now resolved. |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
 | `<csignal>` | N/A | ✅ Compiled | ~140ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~16ms (C++23) |
@@ -58,7 +58,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~47ms (C++23) |
 | `<barrier>` | N/A | 💥 Crash | ~5458ms. Stack overflow during template instantiation |
 | `<coroutine>` | N/A | ❌ Parse Error | ~36ms. Requires `-fcoroutines` flag |
-| `<latch>` | `test_std_latch.cpp` | ❌ Codegen Error | ~1155ms (retested 2026-04-11). Parsing succeeds; codegen fails with "sema missed return conversion (int -> long)" in latch member functions. |
+| `<latch>` | `test_std_latch.cpp` | ✅ Compiled | ~832ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** Prior "sema missed return conversion (int → long)" errors in latch member functions are resolved. |
 | `<shared_mutex>` | `test_std_shared_mutex.cpp` | ❌ Codegen Error | ~2733ms (retested 2026-04-11). "Ambiguous constructor call for 'std::chrono::time_point'". |
 | `<cstdlib>` | N/A | ✅ Compiled | ~120ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~70ms |
@@ -98,6 +98,21 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+#### 2026-04-24 Targeted Retests (Linux/libstdc++)
+
+Rebuilt `x64/Sharded/FlashCpp` on Linux with clang++ after applying CliPPy's rvalue-reference overload-resolution fix (`exception_ptr` move-ctor preference) and template instantiation depth guard. Ran each std header test against system libstdc++-14 headers.
+
+New changes vs 2026-04-23 sweep:
+- **NEW ✅ `<exception>`**: Now compiles cleanly (~368ms). The `exception_ptr` copy-vs-move-constructor ambiguity in `operator=` is resolved by the rvalue overload-rank fix. Regression: `tests/test_rvalue_ref_overload_preference_ret0.cpp`.
+- **NEW ✅ `<atomic>`**: Now compiles cleanly (~838ms). Previous deferred member function codegen errors are gone.
+- **NEW ✅ `<latch>`**: Now compiles cleanly (~832ms). Prior "sema missed return conversion (int → long)" errors are resolved.
+- **NEW ✅ `<variant>`**: Now compiles cleanly (~736ms). The `_Variadic_union` member-initializer arithmetic non-type argument blocker (`_Np-1`) is resolved.
+
+Linux sweep summary (2026-04-24) for the std header files under `tests/std/test_std_*.cpp`:
+- Compiles cleanly: `<atomic>`, `<bit>`, `<compare>`, `<concepts>`, `<exception>`, `<latch>`, `<limits>`, `<new>`, `<source_location>`, `<span>`, `<variant>`, `<version>`, plus small focused regressions (`test_std_pair_swap_deleted_member`, `test_std_typeinfo_ret0`).
+- Compile/codegen errors (rc=1, no crash): `<any>` (Ambiguous constructor call), `<numeric>` (unresolved auto type mangling), `<optional>` (unresolved auto type mangling), `<ratio>` (static_assert: ratio_less value), `<shared_mutex>` (Ambiguous constructor call), `<type_traits>` (static_assert failed), `<utility>` (Operator< not defined).
+- Deep-template crashes (rc=139, SIGSEGV from stack overflow at `try_instantiate_class_template` depth ~57): `<algorithm>`, `<array>`, `<chrono>`, `<cmath>`, `<deque>`, `<fstream>`, `<functional>`, `<iostream>`, `<iterator>`, `<list>`, `<map>`, `<memory>`, `<queue>`, `<ranges>`, `<set>`, `<sstream>`, `<stack>`, `<stdexcept>`, `<string>`, `<string_view>`, `<tuple>`, `<vector>`. The depth guard (MAX_INSTANTIATION_NESTING_DEPTH=256) prevents unbounded recursion from libstdc++'s `__convertible_from`/`__normal_iterator` mutual dependency, but cannot prevent the crash that occurs within the 57th frame's work when the call-chain depth exhausts the 16MB thread stack. The depth guard does prevent a full stack overflow to 300+ levels. Regression: `tests/test_template_recursive_instantiation_depth_ret0.cpp`.
 
 #### 2026-04-23 Targeted Retests (Linux/libstdc++)
 
