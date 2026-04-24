@@ -14,27 +14,27 @@ int g(S&&) { return 10; }
 int g(const S&) { return 20; }
 
 int main() {
-int x = 5;
-// Cast to rvalue: should prefer f(int&&)
-int r1 = f((int&&)x);
-if (r1 != 1)
-return r1;
+	int x = 5;
+	// Cast to rvalue: should prefer f(int&&)
+	int r1 = f((int&&)x);
+	if (r1 != 1)
+		return r1;
 
-// Lvalue: should prefer f(const int&)
-int r2 = f(x);
-if (r2 != 2)
-return r2;
+	// Lvalue: should prefer f(const int&)
+	int r2 = f(x);
+	if (r2 != 2)
+		return r2;
 
-// Rvalue struct: should prefer g(S&&)
-S s{3};
-int r3 = g((S&&)s);
-if (r3 != 10)
-return r3;
+	// Rvalue struct: should prefer g(S&&)
+	S s{3};
+	int r3 = g((S&&)s);
+	if (r3 != 10)
+		return r3;
 
-// Lvalue struct: should prefer g(const S&)
-int r4 = g(s);
-if (r4 != 20)
-return r4;
+	// Lvalue struct: should prefer g(const S&)
+	int r4 = g(s);
+	if (r4 != 20)
+		return r4;
 
-return 0;
+	return 0;
 }
