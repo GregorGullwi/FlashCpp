@@ -6754,6 +6754,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Slice 3: map from original template member node (by raw pointer) to the instantiated stub node.
 	// Used by deferred-body replay to avoid name-based scanning.
 	std::unordered_map<const void*, ASTNode> source_member_to_stub;
+	TypeIndex instantiated_member_owner_type_index{};
+	if (auto instantiated_owner_it = getTypesByNameMap().find(instantiated_name);
+		instantiated_owner_it != getTypesByNameMap().end()) {
+		instantiated_member_owner_type_index = instantiated_owner_it->second->type_index_;
+	}
+	auto resolve_member_self_type = [&](TypeIndex& type_index) {
+		if (type_index.category() == TypeCategory::Struct &&
+			instantiated_member_owner_type_index.is_valid()) {
+			type_index = resolveSelfRefParamIndex(type_index, instantiated_member_owner_type_index);
+		}
+	};
 
 	// Extract a stable identity key from an ASTNode (raw pointer of the stored node).
 	auto astNodeKey = [](const ASTNode& n) -> const void* {
@@ -6821,6 +6832,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_params,
 					template_args_to_use,
 					return_type_index);
+				resolve_member_self_type(return_type_index);
 				if (return_type_index.is_valid() && return_type_index.category() != TypeCategory::UserDefined) {
 					return_type = return_type_index.category();
 				}
@@ -6864,6 +6876,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					return_type = subst_index.category();
 					return_type_index = subst_index;
 				}
+				resolve_member_self_type(return_type_index);
 
 				// Create substituted return type node
 				TypeSpecifierNode substituted_return_type = substituted_return_type_node.is<TypeSpecifierNode>()
@@ -6941,6 +6954,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Substitute parameter type
 						TypeIndex param_type_index = substitute_template_parameter(
 							param_type_spec, template_params, template_args_to_use);
+						param_type_index = resolveOwnerAliasTypeIndex(
+							[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+								return substitute_template_parameter(type_spec, params, args);
+							},
+							class_decl,
+							param_type_spec,
+							template_params,
+							template_args_to_use,
+							param_type_index);
+						resolve_member_self_type(param_type_index);
 
 						// Create substituted parameter type
 						TypeSpecifierNode substituted_param_type(
@@ -7061,6 +7084,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_params,
 					template_args_to_use,
 					return_type_index);
+				resolve_member_self_type(return_type_index);
 
 				// Create substituted return type node
 				TypeSpecifierNode substituted_return_type = substituted_return_type_node.is<TypeSpecifierNode>()
@@ -7125,6 +7149,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Substitute parameter type
 						TypeIndex param_type_index = substitute_template_parameter(
 							param_type_spec, template_params, template_args_to_use);
+						param_type_index = resolveOwnerAliasTypeIndex(
+							[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+								return substitute_template_parameter(type_spec, params, args);
+							},
+							class_decl,
+							param_type_spec,
+							template_params,
+							template_args_to_use,
+							param_type_index);
+						resolve_member_self_type(param_type_index);
 
 						// Create substituted parameter type
 						TypeSpecifierNode substituted_param_type(
@@ -7367,6 +7401,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					return_type = subst_index.category();
 					return_type_index = subst_index;
 				}
+				resolve_member_self_type(return_type_index);
 
 				// Create substituted return type node
 				TypeSpecifierNode substituted_return_type(
@@ -7424,6 +7459,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Substitute parameter type
 						TypeIndex param_type_index = substitute_template_parameter(
 							param_type_spec, template_params, template_args_to_use);
+						param_type_index = resolveOwnerAliasTypeIndex(
+							[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+								return substitute_template_parameter(type_spec, params, args);
+							},
+							class_decl,
+							param_type_spec,
+							template_params,
+							template_args_to_use,
+							param_type_index);
+						resolve_member_self_type(param_type_index);
 
 						// Create substituted parameter type
 						TypeSpecifierNode substituted_param_type(

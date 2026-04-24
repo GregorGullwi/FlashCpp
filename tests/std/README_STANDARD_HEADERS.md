@@ -4,7 +4,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
-> **Note (2026-04-24 post-depth-guard sweep):** the rows below marked "✅ Compiled" for `<atomic>`, `<exception>`, `<variant>`, and `<latch>` with a 2026-04-24 timestamp reflect the state *before* the cyclic-placeholder-recursion bug was diagnosed. After fixing that bug (see the new **2026-04-24 Post-Depth-Guard Sweep** section below), the previously-crashing headers like `<string>`, `<vector>`, `<map>` now reach a first-order compile error instead of SIGSEGV'ing, but several of the previously-"Compiled" headers also surface a downstream compile error (rc=1) that was previously hidden by the crash during template substitution. Treat the dated section below this table as the authoritative current state.
+> **Note (2026-04-24 post-member-overload-fix sweep):** the rows below marked "✅ Compiled" for `<atomic>`, `<exception>`, `<variant>`, and `<latch>` with a 2026-04-24 timestamp reflect an earlier state.  After the 2026-04-24 depth-guard sweep those headers again failed; `<exception>` still compiles cleanly on Linux/libstdc++-14, but `<atomic>`, `<latch>`, and `<variant>` no longer do.  The authoritative current state is the **2026-04-24 Member-Function Overload Registration Fix** dated section below the table.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
@@ -26,14 +26,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<array>` | `test_std_array.cpp` | ❌ Parse Error | ~2554ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | ~3882ms (retested 2026-04-20). The simple std-style `(max)` / `(min)` focused regression now passes (`tests/test_std_algorithm_max_ret3.cpp`), but the real header now stops earlier in MSVC `<utility>:82` on parenthesized function-template declaration parsing. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~1564ms (retested 2026-04-11). "unsupported PackExpansionExprNode reached semantic analysis". |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~2262ms (retested 2026-04-24, Linux/libstdc++). Previous `tuple:399` `_M_tail` blocker resolved by the member-function overload registration fix; now first-order error is `unsupported PackExpansionExprNode reached semantic analysis` deeper in tuple's pack expansion machinery. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2337ms (retested 2026-04-20). Still stops in UCRT with "No matching function for call to '__stdio_common_vfwprintf'" during overload resolution; not a crash. Distilled expected-failure repro: `tests/test_ucrt_vfwprintf_const_pointer_alias_arg_fail.cpp`. |
 | `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<list>` | `test_std_list.cpp` | 💥 Crash | ~1987ms (retested 2026-04-11). |
+| `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2999ms (retested 2026-04-24, Linux/libstdc++). `_M_tail` blocker resolved by the member-function overload fix; now first-order error is `unsupported PackExpansionExprNode reached semantic analysis` deeper in shared tuple pack-expansion code. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<memory>` | `test_std_memory.cpp` | 💥 Crash | ~5108ms (retested 2026-04-11). |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | ~3723ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~4669ms (retested 2026-04-24, Linux/libstdc++). `tuple:399` `_M_tail` blocker resolved by the member-function overload fix; now first-order error is `/usr/include/c++/14/string_view:863:31: error: Template instantiation failed or type not found`. |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~3763ms (retested 2026-04-24, Linux/libstdc++). `_M_tail` blocker resolved by the member-function overload fix; now first-order error is non-dependent name `__node_gen` C++20 [temp.res]/9 violation (false positive triggered by template reparse depth-guard firing during deep instantiation). |
 | `<map>` | `test_std_map.cpp` | ❌ Parse Error | ~2988ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2906ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -100,6 +100,111 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+#### 2026-04-24 Member-Function Overload Registration Fix (Linux/libstdc++-14)
+
+This sweep targeted the complete-class member-function lookup path used when
+a template's member-initializer list references an unqualified member
+function.  Full regression suite (`bash tests/run_all_tests.sh`, 2207 tests
++ 149 `_fail`) = SUCCESS.
+
+Fix landed:
+
+- **Parser complete-class member-function lookup now registers ALL matching
+  overloads, not just the first** (`src/Parser_Expr_PrimaryExpr.cpp`).  When
+  a template body is being reparsed and an unqualified name like
+  `_M_tail(__in)` is looked up inside a member-initializer list, the parser
+  previously walked `struct_node->member_functions()` and `break`ed after
+  finding the first match by name.  For libstdc++'s `<tuple>`, which
+  declares `static _M_tail(_Tuple_impl&)` immediately followed by
+  `static _M_tail(const _Tuple_impl&)`, that meant only the non-const
+  overload became visible, so the call `_M_tail(__in)` with `__in` of type
+  `const _Tuple_impl&` was rejected with "No matching function for call to
+  '_M_tail'" at `tuple:399`.  The loop now continues through all overloads
+  (same fix applied to the base-class member-function lookup).
+  Regression: `tests/test_member_function_overload_in_ctor_init_ret0.cpp`.
+
+Std-header impact: `<tuple>`, `<list>`, `<functional>`, `<memory>` all
+advance past `tuple:399` `_M_tail` blocker.  They now stop at the next
+layer of issues (unsupported `PackExpansionExprNode` in `<tuple>` / `<list>`,
+deeper `string_view:863` template-instantiation failure in `<memory>`,
+and a different non-dependent name `__node_gen` in `<functional>`).
+
+Full std-header sweep (Linux/libstdc++-14, `x64/Sharded/FlashCpp`, 45 s
+timeout, remeasured against this binary):
+
+- **Compile cleanly (13)**: `<bit>` (~501ms), `<compare>` (~32ms),
+  `<concepts>` (~420ms), `<exception>` (~461ms), `<limits>` (~1487ms),
+  `<new>` (~59ms), `<pair_swap_deleted_member>` (~26ms),
+  `<source_location>` (~44ms), `<span>` (~45ms), `<typeinfo_ret0>` (~60ms),
+  `<version>` (~43ms), plus focused regressions. The standalone
+  `<initializer_list>` / `<numbers>` / `<typeindex>` / `<new>` / most C
+  headers (see table) remain clean.
+- **Compile/codegen errors (rc=1, 43 headers)**, grouped by first-order
+  root cause (after the member-overload fix):
+  - **(5 headers) `<chrono>`, `<fstream>`, `<iostream>`, `<sstream>`,
+    `<stdexcept>`, `<string>`** —
+    `/usr/include/c++/14/bits/basic_string.h:4699` "Template instantiation
+    failed or type not found" in `operator""s` UDL returning
+    `basic_string<CharT>` via brace init. Precedes max-depth replay abort
+    on `basic_string::find`/`rfind`/`find_first_of`/etc. member templates.
+  - **(2 headers) `<tuple>`, `<list>`** — `tuple:25089` / `tuple:38125`
+    `unsupported PackExpansionExprNode reached semantic analysis; pack
+    expansion should have been eliminated during template substitution`
+    — exposed after the member-overload fix unblocked `_M_tail`.
+  - **(3 headers) `<deque>`, `<queue>`, `<stack>`** — `stl_deque.h:700`
+    non-dependent name `_M_deallocate_node` `[temp.res]/9` check fires
+    *after* the template-reparse depth-guard trips (false positive caused
+    by the depth-guard aborting mid-reparse, not a real violation).
+  - **(1 header) `<functional>`** — `hashtable.h` non-dependent name
+    `__node_gen` `[temp.res]/9` (same depth-guard-triggered false positive
+    shape as `_M_deallocate_node`).
+  - **(1 header) `<memory>`** — `string_view:863` "Template instantiation
+    failed or type not found".
+  - **(3 headers) `<iterator>`, `<ranges>`, `<map>`, `<set>`** —
+    `stl_pair.h:308` / `node_handle.h:285` deleted `swap` overload reached
+    during overload resolution (SFINAE'd overload not fully removed).
+  - **(3 headers) `<algorithm>`, `<array>`, `<string_view>`** —
+    "Cannot use copy initialization with explicit constructor for target
+    type `std::reverse_iterator`": `array::rbegin()`'s
+    `return reverse_iterator(end())` (a functional-style cast, direct
+    init) is being misclassified as copy init in return-statement path.
+  - **(1 header) `<cmath>`** — `tr1/poly_hermite.tcc:121` non-dependent
+    name `__poly_hermite_recursion` (same depth-guard-triggered false
+    positive shape).
+  - **(1 header) `<atomic>`** — `atomic:92` `_M_base.load()` - member
+    function lookup on `__atomic_base<bool>` misses `load()`.
+  - **(1 header) `<vector>`** — "Itanium name mangling: unknown type".
+  - **(1 header) `<shared_mutex>`** — "Ambiguous constructor call" for
+    `std::chrono::time_point`.
+  - **(2 tests) `<optional>`, `<numeric>`,
+    `<optional_codegen_recovery>`** — "Itanium: unresolved auto type
+    reached mangling".
+  - **(1 test) `<ratio>`** — `static_assert` on `std::ratio_less`
+    evaluates to "Undefined qualified identifier in constant expression".
+  - **(1 test) `<type_traits>`** — `static_assert(std::is_integral<int>::value)`
+    fails.
+  - **(1 test) `<utility>`** — "Operator< not defined for operand types"
+    in generated `operator<=`/`operator>`/`operator>=` for `std::pair`.
+  - **(1 test) `<wstring_view_find_ret0>`** — No matching member function
+    for call to `find`.
+  - **(1 header) `<any>`** — "Ambiguous constructor call" after codegen
+    can't find `_Arg` symbol for the templated `any(T&&)` ctor body.
+  - **(1 header) `<latch>`** — 10 top-level codegen failures
+    (`ConstructorCallOp missing resolved constructor for
+    'std::__mutex_base'`, `sema missed function call argument conversion
+    (int -> long)`, repeated `__compare_exchange` instantiation loss).
+- **Segfaults (2): `<atomic>` post-error, `<variant>` (rc=139)**.
+  `<atomic>` still produces a first-order compile error at `atomic:92`
+  `_M_base.load()` and then SIGSEGVs during error-path cleanup.
+  `<variant>` SIGSEGVs reliably at codegen time without reaching a
+  first-order compile error — pre-existing codegen/sema bug in the
+  `<variant>` visit machinery.
+- **Timeouts: 0** (sticky depth-guards still working).
+
+The `_M_tail` overload bucket (previously 4 headers: `<tuple>`, `<list>`,
+`<functional>`, `<memory>`) is gone after this fix. Those headers now
+surface first-order errors at deeper layers which are independent bugs.
 
 #### 2026-04-24 Lexer Standards-Compliance + Unary Literal Folding Sweep (Linux/libstdc++-14)
 
