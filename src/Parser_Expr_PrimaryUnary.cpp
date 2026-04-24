@@ -1050,6 +1050,37 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 				}
 			}
 
+			// Constant-fold unary '+' / '-' applied to a numeric literal directly into a
+			// NumericLiteralNode. C++ has no negative numeric literals ([lex.ccon]/[lex.fcon]
+			// produce non-negative values); `-5` is parsed as unary-minus applied to `5`.
+			// Folding at AST construction time is standard compiler behavior and ensures
+			// downstream IR/codegen consumers see an ordinary literal, which in particular
+			// keeps IEEE-754 signed-zero semantics correct (e.g. `-0.0` → a literal with
+			// value `-0.0`, not `0.0 - 0.0` which would yield `+0.0`).
+			if ((it->value() == "-" || it->value() == "+") && operand_node.is<ExpressionNode>()) {
+				const auto& expr = operand_node.as<ExpressionNode>();
+				if (std::holds_alternative<NumericLiteralNode>(expr)) {
+					const auto& lit = std::get<NumericLiteralNode>(expr);
+					NumericLiteralValue folded_value = lit.value();
+					if (it->value() == "-") {
+						if (std::holds_alternative<double>(folded_value)) {
+							folded_value = -std::get<double>(folded_value);
+						} else {
+							// Integer literal: negate the two's-complement bit pattern. This is
+							// well-defined for signed (wraps at INT_MIN), and for unsigned the
+							// result is 2^N - value per [expr.unary.op]/8, which has the same
+							// bit pattern at the stored width. The TypeCategory is preserved.
+							unsigned long long v = std::get<unsigned long long>(folded_value);
+							folded_value = static_cast<unsigned long long>(
+								-static_cast<long long>(v));
+						}
+					}
+					operand_node = emplace_node<ExpressionNode>(
+						NumericLiteralNode(*it, folded_value, lit.type(), lit.qualifier(), lit.sizeInBits()));
+					continue;
+				}
+			}
+
 			operand_node = emplace_node<ExpressionNode>(
 				UnaryOperatorNode(*it, operand_node, true));
 		}
