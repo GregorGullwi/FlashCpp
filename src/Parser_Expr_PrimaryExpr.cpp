@@ -4820,52 +4820,89 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									{},
 									*explicit_template_args);
 							std::string_view instantiated_name = materialized_owner.instantiated_name;
+							// Detect dependent args up front (used both for the retry path and the skip/error path).
+							bool any_dependent = false;
+							if (parsing_template_depth_ > 0) {
+								for (const auto& arg : *explicit_template_args) {
+									if (arg.is_dependent || arg.is_pack) {
+										any_dependent = true;
+										break;
+									}
+								}
+							}
 							if (instantiated_name.empty()) {
-								// In a template body, the template arguments may be dependent on
-								// enclosing template parameters (e.g., __tuple_compare<_Tp, _Up, __i + 1, __size>::__eq(...)).
-								// If any argument is dependent, skip the ::member(args) tail and treat
-								// the whole expression as a dependent call that will be resolved during instantiation.
-								bool any_dependent = false;
-								if (parsing_template_depth_ > 0) {
-									for (const auto& arg : *explicit_template_args) {
-										if (arg.is_dependent || arg.is_pack) {
-											any_dependent = true;
-											break;
+								// KI-002 fix: If active template-parameter substitutions are present
+								// (populated during reparse_template_function_body for a concrete
+								// instantiation, e.g. T=int), try to resolve dependent args to their
+								// concrete types and retry materialization.  This makes
+								// Foo<T>::method() inside Foo<T>'s own member bodies work correctly.
+								if (any_dependent && !template_param_substitutions_.empty()) {
+									std::vector<TemplateTypeArg> resolved_args = *explicit_template_args;
+									bool all_resolved = true;
+									for (auto& arg : resolved_args) {
+										if (arg.is_dependent && arg.dependent_name.isValid()) {
+											for (const auto& subst : template_param_substitutions_) {
+												if (subst.is_type_param &&
+														subst.param_name == arg.dependent_name &&
+														!subst.substituted_type.is_dependent) {
+													arg = subst.substituted_type;
+													break;
+												}
+											}
+										}
+										if (arg.is_dependent) {
+											all_resolved = false;
+										}
+									}
+									if (all_resolved) {
+										AliasTemplateMaterializationResult retry =
+											materializePrimaryTemplateOwnerForLookup(template_name, {}, resolved_args);
+										if (!retry.instantiated_name.empty()) {
+											materialized_owner = retry;
+											instantiated_name = materialized_owner.instantiated_name;
 										}
 									}
 								}
-								if (any_dependent) {
+								// If materialization still failed, apply the original dependent-args
+								// skip-and-defer strategy for genuinely un-instantiable expressions.
+								if (instantiated_name.empty()) {
+									// In a template body, the template arguments may be dependent on
+									// enclosing template parameters (e.g., __tuple_compare<_Tp, _Up, __i + 1, __size>::__eq(...)).
+									// If any argument is dependent, skip the ::member(args) tail and treat
+									// the whole expression as a dependent call that will be resolved during instantiation.
+									if (any_dependent) {
+										pending_explicit_template_args_.reset();
+										// Skip ::member<T>(args) segments — template args and call
+										// parens must be consumed inside the loop so multi-level
+										// expressions like A<T>::B<U>::C(args) are fully skipped.
+										while (peek() == "::"_tok) {
+											advance(); // consume ::
+											if (peek() == "template"_tok) {
+												advance(); // consume 'template' keyword
+											}
+											if (peek().is_identifier()) {
+												advance(); // consume member name
+											}
+											// Skip template arguments on member if present (e.g., ::member<T>)
+											if (peek() == "<"_tok) {
+												skip_template_arguments();
+											}
+											// Skip function call arguments if present (e.g., ::member(a, b))
+											if (peek() == "("_tok) {
+												skip_balanced_parens();
+											}
+										}
+										FLASH_LOG_FORMAT(Parser, Debug,
+											"Deferred dependent qualified call: {}< dependent args >::...",
+											template_name);
+										result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+										return ParseResult::success(*result);
+									}
 									pending_explicit_template_args_.reset();
-									// Skip ::member<T>(args) segments — template args and call
-									// parens must be consumed inside the loop so multi-level
-									// expressions like A<T>::B<U>::C(args) are fully skipped.
-									while (peek() == "::"_tok) {
-										advance(); // consume ::
-										if (peek() == "template"_tok) {
-											advance(); // consume 'template' keyword
-										}
-										if (peek().is_identifier()) {
-											advance(); // consume member name
-										}
-										// Skip template arguments on member if present (e.g., ::member<T>)
-										if (peek() == "<"_tok) {
-											skip_template_arguments();
-										}
-										// Skip function call arguments if present (e.g., ::member(a, b))
-										if (peek() == "("_tok) {
-											skip_balanced_parens();
-										}
-									}
-									FLASH_LOG_FORMAT(Parser, Debug,
-										"Deferred dependent qualified call: {}< dependent args >::...",
-										template_name);
-									result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
-									return ParseResult::success(*result);
+									return ParseResult::error(
+										"Failed to materialize template owner for qualified lookup",
+										identifier_token);
 								}
-								pending_explicit_template_args_.reset();
-								return ParseResult::error(
-									"Failed to materialize template owner for qualified lookup",
-									identifier_token);
 							}
 
 							// Parse qualified identifier after template, using the instantiated name

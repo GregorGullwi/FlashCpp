@@ -1724,6 +1724,70 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 					TypeIndex type_index = (is_struct_type(static_member->type_index.category())) ? static_member->type_index : TypeIndex{};
 					return makeExprResult(type_index.withCategory(static_member->memberType()), SizeInBits{qsm_size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 				}
+				// KI-001 fix: No static member found with that name.  If the qualifier names
+				// the same struct as the one currently being compiled (or its primary template),
+				// and the named identifier is a non-static data member, emit a this->member
+				// MemberLoadOp — identical to the implicit-this path in generateIdentifierIr.
+				if (current_struct_name_.isValid()) {
+					bool is_current_struct = (struct_type_it->second->name() == current_struct_name_);
+					if (!is_current_struct) {
+						// Also accept template instantiations: current_struct_name_="Foo$hash",
+						// qualifier="Foo" (the primary template name).
+						std::string_view cur_sv = StringTable::getStringView(current_struct_name_);
+						std::string_view qual_sv = StringTable::getStringView(struct_type_it->second->name());
+						is_current_struct = (cur_sv.starts_with(qual_sv) &&
+											 cur_sv.size() > qual_sv.size() &&
+											 cur_sv[qual_sv.size()] == '$');
+					}
+					if (is_current_struct) {
+						auto cur_it = getTypesByNameMap().find(current_struct_name_);
+						TypeIndex lookup_type_idx = (cur_it != getTypesByNameMap().end())
+							? cur_it->second->type_index_
+							: struct_type_it->second->type_index_;
+						StringHandle member_name_h = StringTable::getOrInternStringHandle(qualifiedIdNode.name());
+						if (auto mr = FlashCpp::gLazyMemberResolver.resolve(lookup_type_idx, member_name_h)) {
+							const StructMember* member = mr.member;
+							FLASH_LOG(Codegen, Debug, "KI-001: qualified non-static member '",
+								qualifiedIdNode.name(), "' resolved as this->member (offset=", mr.adjusted_offset, ")");
+							if (member->is_array) {
+								TempVar addr_temp = var_counter.next();
+								AddressOfMemberOp addr_op;
+								addr_op.result = addr_temp;
+								addr_op.base_object = StringTable::getOrInternStringHandle("this");
+								addr_op.member_offset = static_cast<int>(mr.adjusted_offset);
+								addr_op.member_type_index = member->type_index.withCategory(member->memberType());
+								addr_op.member_size_in_bits = static_cast<int>(member->size * 8);
+								ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_op), Token()));
+								TypeIndex arr_ti = member->type_index;
+								return makeExprResult(arr_ti.withCategory(member->memberType()), SizeInBits{POINTER_SIZE_BITS},
+									IrOperand{addr_temp}, PointerDepth{member->pointer_depth + 1}, ValueStorage::ContainsData);
+							}
+							TempVar result_temp = var_counter.next();
+							MemberLoadOp member_load;
+							member_load.result.value = result_temp;
+							member_load.result.setType(member->type_index.category());
+							member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
+							member_load.object = StringTable::getOrInternStringHandle("this");
+							member_load.member_name = member->getName();
+							member_load.offset = static_cast<int>(mr.adjusted_offset);
+							member_load.ref_qualifier = member->is_rvalue_reference()
+								? CVReferenceQualifier::RValueReference
+								: (member->is_reference() ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None);
+							member_load.struct_type_info = nullptr;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+							LValueInfo lvalue_info(LValueInfo::Kind::Member,
+								StringTable::getOrInternStringHandle("this"),
+								static_cast<int>(mr.adjusted_offset));
+							lvalue_info.member_name = member->getName();
+							lvalue_info.is_pointer_to_member = true;
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
+							TypeIndex type_index = is_struct_type(member->type_index.category()) ? member->type_index : TypeIndex{};
+							return makeExprResult(type_index.withCategory(member->memberType()),
+								SizeInBits{static_cast<int>(member->size * 8)}, IrOperand{result_temp},
+								PointerDepth{}, ValueStorage::ContainsData);
+						}
+					}
+				}
 			}
 		}
 
