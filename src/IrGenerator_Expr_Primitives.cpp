@@ -1724,10 +1724,10 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 					TypeIndex type_index = (is_struct_type(static_member->type_index.category())) ? static_member->type_index : TypeIndex{};
 					return makeExprResult(type_index.withCategory(static_member->memberType()), SizeInBits{qsm_size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 				}
-				// KI-001 fix: No static member found with that name.  If the qualifier names
-				// the same struct as the one currently being compiled (or its primary template),
-				// and the named identifier is a non-static data member, emit a this->member
-				// MemberLoadOp — identical to the implicit-this path in generateIdentifierIr.
+				// No static member found with that name. If the qualifier denotes the current
+				// class or one of its base-class subobjects, and the named identifier is a
+				// non-static data member, emit a this->member MemberLoadOp — identical to
+				// the implicit-this path in generateIdentifierIr.
 				if (current_struct_name_.isValid()) {
 					bool is_current_struct = (struct_type_it->second->name() == current_struct_name_);
 					if (!is_current_struct) {
@@ -1739,13 +1739,24 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 											 cur_sv.size() > qual_sv.size() &&
 											 cur_sv[qual_sv.size()] == '$');
 					}
+					auto cur_it = getTypesByNameMap().find(current_struct_name_);
+					TypeIndex current_complete_type_idx = (cur_it != getTypesByNameMap().end())
+						? cur_it->second->type_index_
+						: struct_type_it->second->type_index_;
+					StringHandle member_name_h = StringTable::getOrInternStringHandle(qualifiedIdNode.name());
+					FlashCpp::MemberResolutionResult qualified_member_resolution;
 					if (is_current_struct) {
-						auto cur_it = getTypesByNameMap().find(current_struct_name_);
-						TypeIndex lookup_type_idx = (cur_it != getTypesByNameMap().end())
-							? cur_it->second->type_index_
-							: struct_type_it->second->type_index_;
-						StringHandle member_name_h = StringTable::getOrInternStringHandle(qualifiedIdNode.name());
-						if (auto mr = FlashCpp::gLazyMemberResolver.resolve(lookup_type_idx, member_name_h)) {
+						qualified_member_resolution =
+							FlashCpp::gLazyMemberResolver.resolve(current_complete_type_idx, member_name_h);
+					} else {
+						qualified_member_resolution =
+							FlashCpp::gLazyMemberResolver.resolveQualified(
+								current_complete_type_idx,
+								struct_type_it->second->type_index_,
+								member_name_h);
+					}
+					if (qualified_member_resolution) {
+						const auto& mr = qualified_member_resolution;
 							const StructMember* member = mr.member;
 							FLASH_LOG(Codegen, Debug, "Resolved qualified non-static member '",
 								qualifiedIdNode.name(), "' as this->member (offset=", mr.adjusted_offset, ")");
@@ -1785,7 +1796,6 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 							return makeExprResult(type_index.withCategory(member->memberType()),
 								SizeInBits{static_cast<int>(member->size * 8)}, IrOperand{result_temp},
 								PointerDepth{}, ValueStorage::ContainsData);
-						}
 					}
 				}
 			}
