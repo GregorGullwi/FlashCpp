@@ -1668,22 +1668,21 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			if (owner_type_it != getTypesByNameMap().end() &&
 				owner_type_it->second != nullptr &&
 				owner_type_it->second->isTemplateInstantiation()) {
-				std::string_view owner_base_name =
-					StringTable::getStringView(owner_type_it->second->baseTemplateName());
-				std::string_view type_name = type.token().value();
-				if (type_name.empty()) {
+				StringHandle owner_base_name = owner_type_it->second->baseTemplateName();
+				StringHandle type_name = type.token().handle();
+				if (!type_name.isValid()) {
 					if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
-						type_name = StringTable::getStringView(type_info->name());
+						type_name = type_info->name();
 					}
 				}
 
-				if (!owner_base_name.empty() && type_name == owner_base_name) {
+				if (owner_base_name.isValid() && type_name == owner_base_name) {
 					std::vector<TemplateTypeArg> current_inst_args =
 						collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteInType");
 					if (!current_inst_args.empty()) {
 						Parser::AliasTemplateMaterializationResult materialized_type =
 							parser_.materializeTemplateInstantiationForLookup(
-								owner_base_name,
+								StringTable::getStringView(owner_base_name),
 								current_inst_args);
 						if (const TypeInfo* resolved_type_info = materialized_type.resolved_type_info) {
 							TypeSpecifierNode substituted_current_instantiation(

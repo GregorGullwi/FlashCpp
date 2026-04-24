@@ -1744,7 +1744,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 					TypeIndex current_complete_type_idx = (cur_it != getTypesByNameMap().end())
 						? cur_it->second->type_index_
 						: struct_type_it->second->type_index_;
-					StringHandle member_name_h = StringTable::getOrInternStringHandle(qualifiedIdNode.name());
+					StringHandle member_name_h = qualifiedIdNode.nameHandle();
 					FlashCpp::MemberResolutionResult qualified_member_resolution;
 					if (is_current_struct) {
 						qualified_member_resolution =

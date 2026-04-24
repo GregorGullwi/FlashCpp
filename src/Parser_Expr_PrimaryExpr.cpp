@@ -127,14 +127,18 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurr
 
 	const auto& member_ctx = member_function_context_stack_.back();
 	const TypeInfo* current_type_info = tryGetTypeInfo(member_ctx.struct_type_index);
-	std::string_view current_struct_name = StringTable::getStringView(member_ctx.struct_name);
-	std::string_view current_base_template_name;
+	StringHandle primary_template_name_handle =
+		primary_template_name.empty()
+		? StringHandle{}
+		: StringTable::getOrInternStringHandle(primary_template_name);
+	StringHandle current_struct_name = member_ctx.struct_name;
+	StringHandle current_base_template_name{};
 	if (current_type_info != nullptr && current_type_info->isTemplateInstantiation()) {
-		current_base_template_name = StringTable::getStringView(current_type_info->baseTemplateName());
+		current_base_template_name = current_type_info->baseTemplateName();
 	}
 
-	if (primary_template_name != current_struct_name &&
-		(primary_template_name.empty() || primary_template_name != current_base_template_name)) {
+	if (primary_template_name_handle != current_struct_name &&
+		(!primary_template_name_handle.isValid() || primary_template_name_handle != current_base_template_name)) {
 		return std::nullopt;
 	}
 
@@ -183,11 +187,11 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurr
 	}
 
 	AliasTemplateMaterializationResult result;
-	std::string_view base_instantiated_name =
+	StringHandle base_instantiated_name =
 		current_type_info != nullptr
-		? StringTable::getStringView(current_type_info->name())
+		? current_type_info->name()
 		: current_struct_name;
-	std::string_view instantiated_name = base_instantiated_name;
+	StringHandle instantiated_name = base_instantiated_name;
 	result.resolved_type_info = current_type_info;
 	if (current_concrete_args != nullptr && !current_concrete_args->empty()) {
 		std::vector<TemplateTypeArg> exact_args;
@@ -196,18 +200,20 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurr
 			exact_args.push_back(toTemplateTypeArg(arg_info));
 		}
 
-		std::string_view concrete_template_name =
-			!current_base_template_name.empty()
+		StringHandle concrete_template_name =
+			current_base_template_name.isValid()
 			? current_base_template_name
-			: (!primary_template_name.empty() ? primary_template_name : current_struct_name);
-		instantiated_name =
-			get_instantiated_class_name(concrete_template_name, exact_args);
+			: (primary_template_name_handle.isValid()
+				? primary_template_name_handle
+				: current_struct_name);
+		instantiated_name = StringTable::getOrInternStringHandle(
+			get_instantiated_class_name(StringTable::getStringView(concrete_template_name), exact_args));
 		if (const TypeInfo* exact_type_info = findTypeByName(
-				StringTable::getOrInternStringHandle(instantiated_name))) {
+				instantiated_name)) {
 			result.resolved_type_info = exact_type_info;
 		}
 	}
-	result.instantiated_name = instantiated_name;
+	result.instantiated_name = StringTable::getStringView(instantiated_name);
 	if (member_ctx.struct_node != nullptr) {
 		result.instantiated_struct_node = ASTNode(member_ctx.struct_node);
 	}
