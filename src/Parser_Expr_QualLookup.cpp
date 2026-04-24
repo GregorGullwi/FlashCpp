@@ -1148,7 +1148,8 @@ TypeIndex Parser::substitute_template_parameter(
 
 			// Cycle break: if we've already started resolving this placeholder
 			// higher up the stack, bail out and leave the arg as-is.
-			auto [_, inserted] = visited_placeholder_types.insert(concrete_arg.type_index);
+			auto [inserted_it, inserted] = visited_placeholder_types.insert(concrete_arg.type_index);
+			(void)inserted_it;
 			if (!inserted) {
 				return;
 			}

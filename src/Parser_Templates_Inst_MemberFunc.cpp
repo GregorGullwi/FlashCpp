@@ -911,6 +911,29 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	const FlashCpp::TemplateInstantiationKey& key,
 	const std::vector<TypeSpecifierNode>& call_arg_types) {
 
+	// Depth guard: instantiating a member function template replays its body,
+	// and body expressions can recursively trigger further member-function
+	// template instantiations.  libstdc++ container headers (<string>, <vector>,
+	// <map>) hit dozens of nested replays through iterator/alloc_traits SFINAE
+	// chains before exhausting the thread stack.  Bail cleanly instead of
+	// crashing on the guard page.
+	static thread_local size_t s_member_inst_depth = 0;
+	static thread_local bool s_member_inst_depth_warned = false;
+	static constexpr size_t MAX_MEMBER_INST_DEPTH = 24;
+	++s_member_inst_depth;
+	struct DepthGuard {
+		~DepthGuard() { --s_member_inst_depth; }
+	} depth_guard;
+	if (s_member_inst_depth > MAX_MEMBER_INST_DEPTH) {
+		if (!s_member_inst_depth_warned) {
+			FLASH_LOG(Templates, Error, "Max member function template instantiation depth (",
+					  MAX_MEMBER_INST_DEPTH, ") exceeded for '", StringTable::getStringView(qualified_name),
+					  "'. Possible recursive template instantiation.");
+			s_member_inst_depth_warned = true;
+		}
+		return std::nullopt;
+	}
+
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const auto& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();

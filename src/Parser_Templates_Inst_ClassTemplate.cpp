@@ -731,26 +731,38 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// 50-60 when parsing real libstdc++ headers.  Keep the guard well below that so we
 	// emit a diagnostic before the kernel kills us.
 	static thread_local size_t s_instantiation_nesting_depth = 0;
-	static constexpr size_t MAX_INSTANTIATION_NESTING_DEPTH = 48;
+	static thread_local bool s_instantiation_depth_warned = false;
+	static constexpr size_t MAX_INSTANTIATION_NESTING_DEPTH = 24;
 	++s_instantiation_nesting_depth;
 	struct NestingGuard {
 		~NestingGuard() { --s_instantiation_nesting_depth; }
 	} nesting_guard;
 	if (s_instantiation_nesting_depth > MAX_INSTANTIATION_NESTING_DEPTH) {
-		FLASH_LOG(Templates, Error, "Max template instantiation depth (", MAX_INSTANTIATION_NESTING_DEPTH,
-				  ") exceeded for '", template_name, "'. Possible recursive template instantiation.");
+		if (!s_instantiation_depth_warned) {
+			FLASH_LOG(Templates, Error, "Max template instantiation depth (", MAX_INSTANTIATION_NESTING_DEPTH,
+					  ") exceeded for '", template_name, "'. Possible recursive template instantiation.");
+			s_instantiation_depth_warned = true;
+		}
 		return std::nullopt;
 	}
 
-	// Add iteration limit to prevent infinite loops during template instantiation
+	// Add iteration limit to prevent infinite loops during template instantiation.
+	// Once the total-work limit is hit, we stay in the "catastrophic failure" state
+	// for the rest of the compilation: without this, callers that treat nullopt as
+	// "try another overload/path" re-enter and the counter gets reset, producing
+	// multi-million-call retry storms that look like hangs for real std headers.
 	static thread_local int iteration_count = 0;
+	static thread_local bool iteration_limit_tripped = false;
 	static thread_local const int MAX_ITERATIONS = 10000; // Safety limit
 
+	if (iteration_limit_tripped) {
+		return std::nullopt;
+	}
 	iteration_count++;
 	if (iteration_count > MAX_ITERATIONS) {
 		FLASH_LOG(Templates, Error, "Template instantiation iteration limit exceeded (", MAX_ITERATIONS, ")! Possible infinite loop.");
 		FLASH_LOG(Templates, Error, "Last template: '", template_name, "' with ", template_args.size(), " args");
-		iteration_count = 0; // Reset for next compilation
+		iteration_limit_tripped = true;
 		return std::nullopt;
 	}
 

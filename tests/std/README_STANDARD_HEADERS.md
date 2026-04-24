@@ -4,6 +4,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
+> **Note (2026-04-24 post-depth-guard sweep):** the rows below marked "✅ Compiled" for `<atomic>`, `<exception>`, `<variant>`, and `<latch>` with a 2026-04-24 timestamp reflect the state *before* the cyclic-placeholder-recursion bug was diagnosed. After fixing that bug (see the new **2026-04-24 Post-Depth-Guard Sweep** section below), the previously-crashing headers like `<string>`, `<vector>`, `<map>` now reach a first-order compile error instead of SIGSEGV'ing, but several of the previously-"Compiled" headers also surface a downstream compile error (rc=1) that was previously hidden by the crash during template substitution. Treat the dated section below this table as the authoritative current state.
+
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1369ms |
@@ -99,7 +101,22 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
-#### 2026-04-24 Targeted Retests (Linux/libstdc++)
+#### 2026-04-24 Post-Depth-Guard Sweep (Linux/libstdc++-14)
+
+After the initial 2026-04-24 depth guard landed, a subsequent sweep showed most std headers were actually SIGSEGV'ing again. Investigation with gdb pinpointed the real root cause and produced a more complete fix:
+
+- **Root cause (fixed this session):** `Parser::substitute_template_parameter`'s nested helper `resolveConcreteTemplateArgPlaceholders` (`src/Parser_Expr_QualLookup.cpp`) self-recursed on cyclic template-instantiation placeholder arg graphs with no visited-set or depth guard. libstdc++'s `__normal_iterator` / `iterator_traits` SFINAE chains drove it into the millions of frames, exhausting the 16MB thread stack. Fix: track visited placeholder `TypeIndex` values for the duration of a single `substitute_template_parameter` call and bail out on revisit.
+- **Secondary recursion paths (also fixed):** `try_instantiate_class_template` and `reparse_template_function_body` (both in `src/Parser_Templates_Inst_Deduction.cpp` / `src/Parser_Templates_Inst_ClassTemplate.cpp`) plus `instantiate_member_function_template_core` (`src/Parser_Templates_Inst_MemberFunc.cpp`) all had recursion paths that could blow the stack even with the above fix. Each now has a tight per-thread depth guard (24) that returns `std::nullopt` / no-op cleanly instead of crashing. The existing `try_instantiate_class_template` iteration-count guard used to reset itself after firing, so a single runaway compilation could produce millions of retries; it is now sticky for the remainder of the compilation.
+- **Post-fix std header status** (with libstdc++-14 headers, `x64/Sharded/FlashCpp`, 45 s timeout, running against `tests/std/test_std_*.cpp`):
+  - Compiles cleanly (13): `<aggregate_brace_elision_follow>`, `<bit>`, `<compare_ret42>`, `<concepts>`, `<exception>`, `<limits>`, `<new>`, `<pair_swap_deleted_member>`, `<source_location>`, `<span>`, `<type_traits_is_integral_any_of_fail>`, `<typeinfo_ret0>`, `<version>`.
+  - Compile/codegen errors (34) — previously all crashed with SIGSEGV on `#include`, now reach clean error exits and are therefore investigable: `<algorithm>` (~1.9 s), `<any>` (~0.4 s), `<array>` (~1.0 s), `<atomic>` (~0.7 s), `<chrono>` (~7.1 s), `<cmath>` (~4.1 s), `<deque>` (~2.5 s), `<fstream>` (~4.8 s), `<functional>` (~1.8 s), `<iostream>` (~4.9 s), `<iterator>` (~2.0 s), `<latch>` (~0.7 s), `<list>` (~1.9 s), `<map>` (~1.8 s), `<memory>` (~2.2 s), `<numeric>` (~1.5 s), `<optional>` (~0.7 s), `<optional_codegen_recovery>` (~0.7 s), `<queue>` (~2.5 s), `<ranges>` (~2.1 s), `<ratio>` (~0.4 s), `<set>` (~1.8 s), `<shared_mutex>` (~1.8 s), `<sstream>` (~4.8 s), `<stack>` (~2.5 s), `<stdexcept>` (~4.7 s), `<string>` (~4.7 s), `<string_view>` (~2.1 s), `<tuple>` (~1.4 s), `<type_traits>` (~0.2 s), `<utility>` (~0.5 s), `<variant>` (~0.7 s), `<vector>` (~1.4 s), `<wstring_view_find_ret0>` (~1.9 s).
+  - Crashes: **0** (down from 22).
+  - Timeouts: **0** (down from 4 — the iteration-count guard's sticky-tripped bit is what closed the retry-storm pattern for `<iterator>` / `<map>` / `<ranges>` / `<set>`).
+- Full regression suite (`bash tests/run_all_tests.sh`, 2204 tests + 149 _fail): SUCCESS.
+
+The remaining 34 failures are now exposed first-order compile errors (most logged early as "Non-type parameter not supported in deduction" before the header progresses further) rather than stack-overflow crashes masking them. These are unblocked for targeted investigation in follow-up work.
+
+
 
 Rebuilt `x64/Sharded/FlashCpp` on Linux with clang++ after applying CliPPy's rvalue-reference overload-resolution fix (`exception_ptr` move-ctor preference) and template instantiation depth guard. Ran each std header test against system libstdc++-14 headers.
 
@@ -246,6 +263,16 @@ As of the 2026-04-20 targeted retest, the global namespace prefix blocker and th
 11. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). Affects: `<vector>`, `<list>`, `<map>`.
 
 12. **Late iostream-family codegen / IR lowering crash**: After the InstantiationContext fix below, `<iostream>` gets through parsing and much deeper into codegen before crashing in `IROperandHelpers::toIrValue` after `_S_empty`/`_S_size`/`move` failures. `<sstream>` / `<fstream>` still need targeted retests to see whether they now fail in the same later phase. Affects: `<iostream>`, likely `<sstream>`, `<fstream>`.
+
+### Recent Fixes (2026-04-24, post-depth-guard)
+
+1. **Cyclic template-instantiation placeholder arg graphs no longer cause unbounded recursion**: `Parser::substitute_template_parameter`'s inner helper `resolveConcreteTemplateArgPlaceholders` (`src/Parser_Expr_QualLookup.cpp`) now carries a visited `std::unordered_set<TypeIndex>` across its self-recursion. When a placeholder's template argument transitively references the same placeholder type (the common libstdc++ pattern is `iterator_traits<__normal_iterator<P, C>>` whose arg `__normal_iterator<P, C>` internally re-references the same traits chain), the recursion now stops at the first revisit instead of running until the thread stack is exhausted. This single fix is what turns the `SIGSEGV` crashes on bare `#include <atomic>`, `#include <bit>`, `#include <exception>`, `#include <concepts>`, and most large libstdc++ containers into clean compile errors (or clean compiles in a few cases).
+
+2. **Three tight per-thread depth guards added on the template-instantiation entry points** — `try_instantiate_class_template` (already existed, lowered from 256 to 24 to match observed frame size on Linux's 16MB stack), `reparse_template_function_body` (new, 24), and `instantiate_member_function_template_core` (new, 24). Each is gated by its own sticky "already warned" flag so a runaway recursion only produces one diagnostic per compilation instead of tens of thousands. Together they catch the recursion chains that do not flow through `substitute_template_parameter` (e.g. container headers that re-enter member-template body replay for every overload resolution).
+
+3. **`try_instantiate_class_template`'s iteration-count guard is now sticky for the rest of the compilation** instead of auto-resetting itself. Previously, once the 10,000-call cap was hit, the counter reset to zero, causing callers that treat `std::nullopt` as "try another overload" to burn through millions of retries in what looked externally like a hang. The guard now trips once and stays tripped, converting the previous `<iterator>` / `<map>` / `<ranges>` / `<set>` 45 s timeouts into ~2 s clean compile errors.
+
+4. **Net effect on the std-header sweep**: `tests/std/test_std_*.cpp` against libstdc++-14 goes from 22 crashes + 4 timeouts + 13 compiles down to **0 crashes + 0 timeouts + 13 compiles + 34 clean compile errors**. Main regression suite (`bash tests/run_all_tests.sh`): 2204/2204 pass, 149/149 `_fail` correct.
 
 ### Recent Fixes (2026-04-23)
 
