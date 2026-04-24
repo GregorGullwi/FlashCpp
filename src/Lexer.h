@@ -105,8 +105,6 @@ public:
 				return consume_identifier_or_keyword();
 			} else if (std::isdigit(c)) {
 				return consume_literal(); // Positive number
-			} else if (c == '-' && num_characters_left >= 1 && std::isdigit(source_[cursor_ + 1])) {
-				return consume_literal(); // Negative number
 			} else if (c == '.' && num_characters_left >= 1 && std::isdigit(source_[cursor_ + 1])) {
 				return consume_literal(); // Floating-point literal starting with decimal point (e.g., .5f)
 			} else if (c == '\"') {
