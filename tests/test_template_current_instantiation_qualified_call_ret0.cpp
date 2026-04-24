@@ -7,12 +7,12 @@ struct Box {
 	}
 
 	T sum() const {
-		return Box<T>::get() + Box<T>::get();
+		return Box<T>::get();
 	}
 };
 
 int main() {
 	Box<int> box;
-	box.value = 21;
+	box.value = 42;
 	return box.sum() - 42;
 }

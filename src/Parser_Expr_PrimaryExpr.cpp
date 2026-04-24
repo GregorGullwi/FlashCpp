@@ -98,6 +98,16 @@ bool Parser::templateArgMatchesCurrentInstantiationSlot(
 		type_index_match = parsed_arg.type_index == concrete_arg->type_index;
 	}
 
+	if (parsed_arg.function_signature.has_value() != concrete_arg->function_signature.has_value()) {
+		return false;
+	}
+	if (parsed_arg.function_signature.has_value() &&
+		!FlashCpp::equalFunctionSignatureIdentity(
+			*parsed_arg.function_signature,
+			*concrete_arg->function_signature)) {
+		return false;
+	}
+
 	return type_index_match &&
 		parsed_arg.category() == concrete_arg->category() &&
 		parsed_arg.ref_qualifier == concrete_arg->ref_qualifier &&
@@ -105,8 +115,7 @@ bool Parser::templateArgMatchesCurrentInstantiationSlot(
 		parsed_arg.pointer_cv_qualifiers == concrete_arg->pointer_cv_qualifiers &&
 		parsed_arg.cv_qualifier == concrete_arg->cv_qualifier &&
 		parsed_arg.is_array == concrete_arg->is_array &&
-		parsed_arg.array_size == concrete_arg->array_size &&
-		parsed_arg.function_signature == concrete_arg->function_signature;
+		parsed_arg.array_size == concrete_arg->array_size;
 }
 
 std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurrentInstantiationTemplateOwner(

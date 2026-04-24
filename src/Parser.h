@@ -1055,6 +1055,7 @@ private:
 	// Helper function to get Type and size for built-in type keywords
 	std::optional<std::pair<TypeCategory, unsigned char>> get_builtin_type_info(std::string_view type_name);
 
+	struct AliasTemplateMaterializationResult;
 	// Helper function to parse functional-style cast: Type(expression)
 	// Returns ParseResult with StaticCastNode on success
 	ParseResult parse_functional_cast(std::string_view type_name, const Token& type_token);
