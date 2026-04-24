@@ -542,10 +542,15 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 					auto plan = buildConversionPlan(from_base_category, to_base_category);
 					if (plan.is_valid) {
 						// C++20 [over.ics.rank] p3.3.1.4: binding an rvalue (xvalue) to
-						// T&& is preferred over binding it to const T&.  Downgrade an
-						// exact_match rank here so that a rvalue-reference parameter
-						// overload always wins over a const-lvalue-reference one when
-						// both would otherwise tie.
+						// T&& is preferred over binding it to const T&. The fully correct
+						// implementation is a tie-breaker in the comparison loop (not a rank
+						// change), since both bindings are in the "ExactMatch" ICS category per
+						// [over.best.ics.general] Table 12. Using Conversion(3) here is a
+						// pragmatic approximation: it ensures T&& beats const T& in overload
+						// comparison while avoiding wider side effects from QualificationAdjustment(1)
+						// unblocking template chains that would otherwise fail (leading to crashes).
+						// TODO: replace with a proper tie-breaker in resolve_constructor_overload
+						// and resolve_overload once the comparison loop tracks per-arg ICS details.
 						if (plan.rank == ConversionRank::ExactMatch) {
 							plan.rank = ConversionRank::Conversion;
 						}

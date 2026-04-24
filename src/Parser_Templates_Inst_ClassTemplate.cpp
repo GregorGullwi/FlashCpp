@@ -731,7 +731,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		~NestingGuard() { --s_instantiation_nesting_depth; }
 	} nesting_guard;
 	if (s_instantiation_nesting_depth > MAX_INSTANTIATION_NESTING_DEPTH) {
-		FLASH_LOG(Templates, Warning, "Max template instantiation depth (", MAX_INSTANTIATION_NESTING_DEPTH,
+		FLASH_LOG(Templates, Error, "Max template instantiation depth (", MAX_INSTANTIATION_NESTING_DEPTH,
 				  ") exceeded for '", template_name, "'. Possible recursive template instantiation.");
 		return std::nullopt;
 	}
