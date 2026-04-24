@@ -2,6 +2,7 @@
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include <span>
+#include <unordered_set>
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
@@ -1129,6 +1130,13 @@ TypeIndex Parser::substitute_template_parameter(
 			materialized_base.instantiated_name,
 			member_type_chain);
 	};
+	// Gray-set (DFS in-progress set) for cycle detection in the placeholder arg
+	// graph.  A TypeIndex is present while we are actively recursing into it.
+	// On exit we erase it, so a TypeIndex that appears in two independent
+	// branches of a DAG (e.g. Pair<T,T> where T is a placeholder) is resolved
+	// correctly for both occurrences; only a genuine back-edge (the same node
+	// encountered while it is already on the current stack) is blocked.
+	std::unordered_set<TypeIndex> in_progress_placeholder_types;
 	auto resolveConcreteTemplateArgPlaceholders =
 		[&](const auto& self, TemplateTypeArg& concrete_arg) -> void {
 			if (concrete_arg.is_value || !concrete_arg.type_index.is_valid()) {
@@ -1139,6 +1147,21 @@ TypeIndex Parser::substitute_template_parameter(
 			if (arg_type_info == nullptr || !arg_type_info->isTemplateInstantiation()) {
 				return;
 			}
+
+			// Cycle break: if this placeholder is already on the current recursion
+			// stack (i.e. we are about to recurse into a type we're already
+			// resolving higher up), bail out to prevent infinite recursion.
+			auto [inserted_it, inserted] = in_progress_placeholder_types.insert(concrete_arg.type_index);
+			if (!inserted) {
+				return;
+			}
+			// RAII: always remove from the in-progress set when we leave, so
+			// sibling / subsequent calls for the same TypeIndex are not blocked.
+			struct GrayGuard {
+				std::unordered_set<TypeIndex>& set;
+				TypeIndex key;
+				~GrayGuard() { set.erase(key); }
+			} gray_guard{in_progress_placeholder_types, concrete_arg.type_index};
 
 			std::vector<TemplateTypeArg> nested_args = materializeConcretePlaceholderArgsBase(*arg_type_info);
 			for (TemplateTypeArg& nested_arg : nested_args) {

@@ -796,6 +796,32 @@ void Parser::reparse_template_function_body(
 	const InlineVector<ASTNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args,
 	bool preserve_ref_qualifier) {
+	// Depth guard: function-template body replay can recursively re-enter via
+	// expressions inside the body that instantiate further templates.  libstdc++
+	// headers like <string_view>, <vector>, and <iterator> reach dozens of nested
+	// replay frames through iterator_traits / __normal_iterator SFINAE chains,
+	// and each frame carries substantial parser state, quickly exhausting the
+	// thread's 16MB stack.  Bail out cleanly before we hit the guard page so the
+	// caller sees an error instead of a SIGSEGV.
+	static thread_local size_t s_body_replay_depth = 0;
+	static thread_local bool s_body_replay_depth_warned = false;
+	static constexpr size_t MAX_BODY_REPLAY_DEPTH = 24;
+	++s_body_replay_depth;
+	struct DepthGuard {
+		~DepthGuard() {
+			if (--s_body_replay_depth == 0) {
+				s_body_replay_depth_warned = false;
+			}
+		}
+	} depth_guard;
+	if (s_body_replay_depth > MAX_BODY_REPLAY_DEPTH) {
+		if (!s_body_replay_depth_warned) {
+			FLASH_LOG(Templates, Error, "Max template function body replay depth (", MAX_BODY_REPLAY_DEPTH,
+					  ") exceeded. Possible recursive template instantiation in function body.");
+			s_body_replay_depth_warned = true;
+		}
+		return;
+	}
 	// pack_param_info_ must be set up by the caller before entering here.
 	// Both callers (try_instantiate_template_explicit and try_instantiate_single_template)
 	// correctly compute it from the expanded parameter list and own the save/restore

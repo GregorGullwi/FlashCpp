@@ -37,6 +37,13 @@
 
 using namespace std::literals::string_view_literals;
 
+// Resets the per-compilation template instantiation counters in
+// Parser_Templates_Inst_ClassTemplate.cpp.  Must be called once at the
+// start of every parse() invocation so that iteration counts and trip flags
+// from a previous compilation (e.g. in a long-lived compiler driver or
+// language server) do not bleed over into the new compilation unit.
+void resetTemplateInstantiationCounters();
+
 namespace ConstExpr {
 class Evaluator;
 struct EvalResult;
@@ -367,6 +374,7 @@ public:
 	explicit Parser(Lexer& lexer, CompileContext& context);
 
 	ParseResult parse() {
+		resetTemplateInstantiationCounters();
 		gSymbolTable = SymbolTable();
 		register_builtin_functions();
 		ParseResult parseResult;
