@@ -1140,8 +1140,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	}
 
 	// Save and reset pack_param_info_ so this instantiation can rebuild its local pack state.
-	// std::move already leaves pack_param_info_ in a valid empty state.
+	// ScopeGuard ensures restoration on every exit path, including early returns.
 	auto saved_pack_param_info = std::move(pack_param_info_);
+	ScopeGuard restore_pack_param_info([&]() {
+		pack_param_info_ = std::move(saved_pack_param_info);
+	});
 
 	// Helper to extract the type name from a TypeSpecifierNode, trying token value first, then TypeInfo lookup
 	auto getTypeName = [&](const TypeSpecifierNode& type_spec) -> std::string_view {
@@ -1234,6 +1237,21 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			tparam_nodes_by_name,
 			primary_pack_name,
 			dependent_pack_names);
+		// Ensure primary_pack_name refers to a variadic parameter. If the first
+		// dependent name found is non-variadic (e.g. T in Foo<T, Ts>...), scan
+		// the full dependent set to find a variadic one.
+		if (primary_pack_name.isValid()) {
+			auto it = tparam_nodes_by_name.find(primary_pack_name);
+			if (it != tparam_nodes_by_name.end() && !it->second->is_variadic()) {
+				for (StringHandle dep : dependent_pack_names) {
+					auto dep_it = tparam_nodes_by_name.find(dep);
+					if (dep_it != tparam_nodes_by_name.end() && dep_it->second->is_variadic()) {
+						primary_pack_name = dep;
+						break;
+					}
+				}
+			}
+		}
 		return primary_pack_name.isValid()
 			? StringTable::getStringView(primary_pack_name)
 			: type_name;
@@ -1255,6 +1273,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 
 	// Copy parameters while substituting template arguments and expanding variadic packs.
+	size_t current_param_index = 0;
 	for (const auto& param : func_decl.parameter_nodes()) {
 		if (param.is<DeclarationNode>()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
@@ -1333,7 +1352,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 										 param_decl.identifier_token().file_index());
 						new_func_ref.add_parameter_node(emplace_node<DeclarationNode>(param_type, elem_token));
 					}
-					pack_param_info_.push_back({orig_name, 0, pack_binding->second});
+					pack_param_info_.push_back({orig_name, current_param_index, pack_binding->second});
+					current_param_index += pack_binding->second;
 					handled_as_pack = true;
 				}
 			}
@@ -1373,6 +1393,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				new_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 			}
 			new_func_ref.add_parameter_node(new_param_decl);
+			++current_param_index;
 		}
 	}
 
@@ -1555,9 +1576,6 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
-
-	// Restore the outer scope's pack_param_info_ after completing this instantiation.
-	pack_param_info_ = std::move(saved_pack_param_info);
 
 	return new_func_node;
 }
