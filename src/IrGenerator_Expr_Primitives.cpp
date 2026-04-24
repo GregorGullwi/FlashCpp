@@ -1792,10 +1792,13 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 							static_cast<int>(mr.adjusted_offset));
 						lvalue_info.member_name = member->getName();
 						lvalue_info.is_pointer_to_member = true;
-						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 						if (context == ExpressionContext::LValueAddress && member->is_reference()) {
+							// Match the implicit-this path: in address context a reference member load
+							// yields the stored pointer, so assignment/addressing must go indirectly.
 							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info, TypeCategory::Invalid, 0));
+						} else {
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 						}
 						TypeIndex type_index = is_struct_type(member->type_index.category()) ? member->type_index : TypeIndex{};
 						return makeExprResult(type_index.withCategory(member->memberType()),

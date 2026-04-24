@@ -1063,6 +1063,8 @@ private:
 		const TemplateTypeArg& parsed_arg,
 		StringHandle current_param_name,
 		const TypeInfo::TemplateArgInfo* concrete_arg) const;
+	// May materialize the concrete current-instantiation owner name from active template bindings,
+	// so this helper is intentionally non-const.
 	std::optional<AliasTemplateMaterializationResult> tryResolveCurrentInstantiationTemplateOwner(
 		std::string_view primary_template_name,
 		const std::vector<TemplateTypeArg>& template_args);

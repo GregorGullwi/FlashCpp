@@ -3155,6 +3155,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	if (type_spec.type_index().is_valid()) {
 		constructor_name = getTypeInfo(type_spec.type_index()).name();
 	} else {
+		// Unresolved current-instantiation constructor calls can still carry only the
+		// source spelling in the token; recover the name from there.
 		constructor_name = type_spec.token().handle();
 	}
 
@@ -3208,6 +3210,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		? current_instantiation_type_index
 		: type_spec.type_index();
 	if (!result_type_index.is_valid() && struct_info && struct_info->own_type_index_.has_value()) {
+		// Constructor targets should normally carry a concrete type index already; this
+		// fallback covers unresolved current-instantiation spellings that were recovered above.
 		result_type_index = *struct_info->own_type_index_;
 	}
 	if (!result_type_index.is_valid()) {

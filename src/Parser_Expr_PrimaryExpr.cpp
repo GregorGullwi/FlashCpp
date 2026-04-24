@@ -183,10 +183,11 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurr
 	}
 
 	AliasTemplateMaterializationResult result;
-	result.instantiated_name =
+	std::string_view base_instantiated_name =
 		current_type_info != nullptr
 		? StringTable::getStringView(current_type_info->name())
 		: current_struct_name;
+	std::string_view instantiated_name = base_instantiated_name;
 	result.resolved_type_info = current_type_info;
 	if (current_concrete_args != nullptr && !current_concrete_args->empty()) {
 		std::vector<TemplateTypeArg> exact_args;
@@ -199,13 +200,14 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurr
 			!current_base_template_name.empty()
 			? current_base_template_name
 			: (!primary_template_name.empty() ? primary_template_name : current_struct_name);
-		result.instantiated_name =
+		instantiated_name =
 			get_instantiated_class_name(concrete_template_name, exact_args);
 		if (const TypeInfo* exact_type_info = findTypeByName(
-				StringTable::getOrInternStringHandle(result.instantiated_name))) {
+				StringTable::getOrInternStringHandle(instantiated_name))) {
 			result.resolved_type_info = exact_type_info;
 		}
 	}
+	result.instantiated_name = instantiated_name;
 	if (member_ctx.struct_node != nullptr) {
 		result.instantiated_struct_node = ASTNode(member_ctx.struct_node);
 	}
