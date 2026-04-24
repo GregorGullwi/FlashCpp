@@ -7084,6 +7084,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_params,
 					template_args_to_use,
 					return_type_index);
+				resolve_member_self_type(return_type_index);
 
 				// Create substituted return type node
 				TypeSpecifierNode substituted_return_type = substituted_return_type_node.is<TypeSpecifierNode>()

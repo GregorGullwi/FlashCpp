@@ -95,14 +95,6 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		current_function_return_value_mode_ |= ReturnValueMode::FunctionPointer;
 	}
 
-	int actual_ret_size = getTypeSpecSizeBits(ret_type_spec);
-
-		// For pointer return types or reference return types, use 64-bit size (pointer size on x64)
-		// References are represented as pointers at the IR level
-	current_function_return_size_ = (ret_type_spec.pointer_depth() > 0 || ret_type_spec.is_reference() || currentFunctionReturnsFunctionPointer())
-										? 64
-										: actual_ret_size;
-
 		// Set or clear current_struct_name_ based on whether this declaration is owned by a struct.
 		// This is critical for member variable and static member lookup in generateIdentifierIr.
 		// Some instantiated member functions reach codegen with parent_struct_name set even when
@@ -152,6 +144,14 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	if (enclosing_struct_type_index.is_valid()) {
 		resolveSelfReferentialType(resolved_ret_type, enclosing_struct_type_index);
 	}
+
+		// Compute current_function_return_size_ from the resolved return type so that
+		// emitReturn calls in the function body use the correct size.  Previously this
+		// used the unresolved ret_type_spec, which could be 0 for self-referential types.
+	int actual_ret_size = getTypeSpecSizeBits(resolved_ret_type);
+	current_function_return_size_ = (resolved_ret_type.pointer_depth() > 0 || resolved_ret_type.is_reference() || currentFunctionReturnsFunctionPointer())
+										? 64
+										: actual_ret_size;
 
 	if (FLASH_LOG_ENABLED(Codegen, Debug)) {
 		FLASH_LOG(Codegen, Debug, "===== CODEGEN visitFunctionDeclarationNode: ", func_decl.identifier_token().value(), " =====");
