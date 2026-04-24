@@ -1741,7 +1741,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 											 cur_sv[qual_sv.size()] == '$');
 					}
 					auto cur_it = getTypesByNameMap().find(current_struct_name_);
-					TypeIndex current_complete_type_idx = (cur_it != getTypesByNameMap().end())
+					TypeIndex current_complete_type_idx = (cur_it != getTypesByNameMap().end() && cur_it->second != nullptr)
 						? cur_it->second->type_index_
 						: struct_type_it->second->type_index_;
 					StringHandle member_name_h = qualifiedIdNode.nameHandle();

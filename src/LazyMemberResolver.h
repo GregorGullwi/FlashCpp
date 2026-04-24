@@ -49,6 +49,23 @@ struct MemberLookupKeyHash {
 	}
 };
 
+struct SubobjectVisitKey {
+	const StructTypeInfo* struct_info;
+	size_t offset;
+
+	bool operator==(const SubobjectVisitKey& other) const {
+		return struct_info == other.struct_info && offset == other.offset;
+	}
+};
+
+struct SubobjectVisitKeyHash {
+	size_t operator()(const SubobjectVisitKey& key) const {
+		size_t h1 = std::hash<const StructTypeInfo*>{}(key.struct_info);
+		size_t h2 = std::hash<size_t>{}(key.offset);
+		return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+	}
+};
+
 // Phase 2: Lazy member resolver with caching and cycle detection
 class LazyMemberResolver {
 private:
@@ -131,17 +148,18 @@ public:
 		}
 
 		std::queue<std::pair<const StructTypeInfo*, size_t>> to_visit;
-		std::unordered_set<const StructTypeInfo*> visited;
+		std::unordered_set<SubobjectVisitKey, SubobjectVisitKeyHash> visited;
 		to_visit.push({complete_struct, 0});
 
 		while (!to_visit.empty()) {
 			auto [current_struct, current_offset] = to_visit.front();
 			to_visit.pop();
 
-			if (visited.contains(current_struct)) {
+			SubobjectVisitKey visit_key{current_struct, current_offset};
+			if (visited.contains(visit_key)) {
 				continue;
 			}
-			visited.insert(current_struct);
+			visited.insert(visit_key);
 
 			if (current_struct == qualified_owner_struct) {
 				return resolveInternalFromStruct(
@@ -216,7 +234,7 @@ private:
 		}
 
 		std::queue<std::pair<const StructTypeInfo*, size_t>> to_visit;
-		std::unordered_set<const StructTypeInfo*> visited;
+		std::unordered_set<SubobjectVisitKey, SubobjectVisitKeyHash> visited;
 
 		to_visit.push({struct_info, initial_offset});
 
@@ -224,10 +242,11 @@ private:
 			auto [current_struct, current_offset] = to_visit.front();
 			to_visit.pop();
 
-			if (visited.contains(current_struct)) {
+			SubobjectVisitKey visit_key{current_struct, current_offset};
+			if (visited.contains(visit_key)) {
 				continue;
 			}
-			visited.insert(current_struct);
+			visited.insert(visit_key);
 
 			for (const auto& member : current_struct->members) {
 				if (member.getName() == member_name) {
