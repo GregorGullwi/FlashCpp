@@ -31,5 +31,3 @@ int main() {
 	Holder b(0, a);
 	return b.value;
 }
-
-
