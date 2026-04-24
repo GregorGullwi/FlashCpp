@@ -933,6 +933,41 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 					}
 				}
 				values.push(version);
+			} else if (keyword == "__has_feature" || keyword == "__has_extension" ||
+					   keyword == "__building_module" || keyword == "__is_target_arch" ||
+					   keyword == "__is_target_vendor" || keyword == "__is_target_os" ||
+					   keyword == "__is_target_environment" || keyword == "__is_identifier") {
+				// Clang-specific query builtins that FlashCpp does not implement.
+				// Per clang's documented semantics:
+				//  - __has_feature / __has_extension: 0 for features FlashCpp doesn't claim
+				//  - __building_module: 0 (modules not implemented)
+				//  - __is_target_arch/vendor/os/environment: 0 (can't be evaluated)
+				//  - __is_identifier: conservatively 1 (not a reserved clang keyword)
+				// Without these handlers, the trailing "(arg)" would be parsed as a separate
+				// parenthesized subexpression, producing a stack imbalance that silently
+				// turns the entire #if into false — which breaks clang's stddef.h family
+				// because `#if !defined(_SIZE_T) || __has_feature(modules)` then evaluates
+				// to 0 even when _SIZE_T is not defined.
+				const long push_value = (keyword == "__is_identifier") ? 1 : 0;
+				// Consume the "( arg )" — we don't care about the argument value,
+				// but we must consume it so it doesn't pollute the expression stack.
+				iss >> std::ws;
+				if (iss.peek() == '(') {
+					iss.ignore();
+					int paren_depth = 1;
+					while (iss && paren_depth > 0) {
+						char ch = iss.get();
+						if (ch == '(') {
+							++paren_depth;
+						} else if (ch == ')') {
+							--paren_depth;
+						}
+					}
+				}
+				values.push(push_value);
+				if (settings_.isVerboseMode()) {
+					FLASH_LOG(Lexer, Trace, "  Pushed ", keyword, " result: ", push_value);
+				}
 			} else if (auto define_it = defines_.find(keyword); define_it != defines_.end()) {
 				// convert the value to an int
 				const auto& body = define_it->second.getBody();

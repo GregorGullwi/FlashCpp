@@ -2043,10 +2043,8 @@ ParseResult Parser::parse_typedef_declaration() {
 	// Check for function type typedef: typedef return_type name(params);
 	// This is different from function pointer typedef: typedef return_type (*name)(params);
 	if (peek() == "("_tok) {
-		// This is a function type typedef
-		// Parse the parameter list by skipping to the closing ')'
-		advance(); // consume '('
-
+		// This is a function type typedef.  `skip_balanced_parens` expects the
+		// leading '(' to still be on the stream, so do NOT advance() here.
 		skip_balanced_parens();
 
 		// After consuming the closing ')', we should be at the semicolon
