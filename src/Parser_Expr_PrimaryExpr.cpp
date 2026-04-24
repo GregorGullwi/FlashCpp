@@ -4189,7 +4189,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					// Returns true if found and sets identifierType
 					bool found = false;
 
-					// First, check the current struct's member functions
+					// First, check the current struct's member functions.
+					// Register ALL matching overloads so overload resolution has the full
+					// candidate set (fixes e.g. libstdc++ tuple's two _M_tail overloads).
 					for (const auto& member_func : struct_node->member_functions()) {
 						if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
 							const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
@@ -4201,9 +4203,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								gSymbolTable.insert(identifier_token.value(), member_func.function_declaration);
 								identifierType = member_func.function_declaration;
 								found = true;
-								found_member_function_in_context = !func_decl.is_static();
+								// 'this' is needed only if at least one matching overload is non-static.
+								if (!func_decl.is_static()) {
+									found_member_function_in_context = true;
+								}
 								resolved_member_function_from_context = true;
-								break;
 							}
 						}
 					}
@@ -4234,8 +4238,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									if (!base_struct_info)
 										continue;
 
-									// Check member functions in this base class
-									// StructMemberFunction has function_decl which is an ASTNode
+									// Check member functions in this base class.
+									// Register ALL matching overloads (not just the first) so overload
+									// resolution sees the full candidate set.
 									for (const auto& member_func : base_struct_info->member_functions) {
 										if (member_func.getName() == identifier_token.handle()) {
 									// Found matching member function in base class
@@ -4244,9 +4249,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												gSymbolTable.insert(identifier_token.value(), member_func.function_decl);
 												identifierType = member_func.function_decl;
 												found = true;
-												found_member_function_in_context = !func_decl.is_static();
+												if (!func_decl.is_static()) {
+													found_member_function_in_context = true;
+												}
 												resolved_member_function_from_context = true;
-												break;
 											}
 										}
 									}
