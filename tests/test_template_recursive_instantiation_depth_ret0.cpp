@@ -11,19 +11,19 @@
 // without crashing.
 
 namespace detail {
-template<typename T> struct B;
+	template<typename T> struct B;
 
-template<typename T>
-struct A {
-using type = typename B<A<T>>::type;
-};
+	template<typename T>
+	struct A {
+		using type = typename B<A<T>>::type;
+	};
 
-template<typename T>
-struct B {
-using type = typename A<B<T>>::type;
-};
+	template<typename T>
+	struct B {
+		using type = typename A<B<T>>::type;
+	};
 } // namespace detail
 
 int main() {
-return 0;
+	return 0;
 }
