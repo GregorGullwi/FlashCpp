@@ -1786,6 +1786,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 							? CVReferenceQualifier::RValueReference
 							: (member->is_reference() ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None);
 						member_load.struct_type_info = nullptr;
+						member_load.is_pointer_to_member = true;
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 						LValueInfo lvalue_info(LValueInfo::Kind::Member,
 							StringTable::getOrInternStringHandle("this"),
