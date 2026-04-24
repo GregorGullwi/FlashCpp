@@ -1,5 +1,5 @@
 struct Base {
-	int value = 11;
+	int value = 42;
 };
 
 struct Derived : Base {
@@ -12,7 +12,6 @@ struct Derived : Base {
 
 int main() {
 	Derived derived;
-	derived.Base::value = 42;
 	derived.value = 9;
 	return derived.readBase() - 42;
 }
