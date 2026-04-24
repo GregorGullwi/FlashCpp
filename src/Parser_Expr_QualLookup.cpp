@@ -1159,9 +1159,9 @@ TypeIndex Parser::substitute_template_parameter(
 			// sibling / subsequent calls for the same TypeIndex are not blocked.
 			struct GrayGuard {
 				std::unordered_set<TypeIndex>& set;
-				std::unordered_set<TypeIndex>::iterator it;
-				~GrayGuard() { set.erase(it); }
-			} gray_guard{in_progress_placeholder_types, inserted_it};
+				TypeIndex key;
+				~GrayGuard() { set.erase(key); }
+			} gray_guard{in_progress_placeholder_types, concrete_arg.type_index};
 
 			std::vector<TemplateTypeArg> nested_args = materializeConcretePlaceholderArgsBase(*arg_type_info);
 			for (TemplateTypeArg& nested_arg : nested_args) {
