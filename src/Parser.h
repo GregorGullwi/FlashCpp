@@ -1690,6 +1690,20 @@ private:
 		const std::vector<TemplateTypeArg>& template_args,
 		const FlashCpp::TemplateInstantiationKey& key,
 		const std::vector<TypeSpecifierNode>& call_arg_types);
+	bool buildSubstitutionForPackElement(
+		std::string_view pack_param_name,
+		size_t pack_element_offset,
+		const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
+		const InlineVector<ASTNode, 4>& template_params,
+		const std::vector<size_t>& template_param_arg_starts,
+		const std::vector<size_t>& template_param_arg_counts,
+		const std::vector<TemplateTypeArg>& template_args,
+		InlineVector<ASTNode, 4>& subst_params,
+		InlineVector<TemplateTypeArg, 4>& subst_args);
+	ASTNode buildMaterializedParamType(
+		const TypeSpecifierNode& original_param_type,
+		const InlineVector<ASTNode, 4>& materialized_template_params,
+		const InlineVector<TemplateTypeArg, 4>& materialized_template_args);
 	bool enqueuePendingSemanticRoot(const ASTNode& node) {
 		if (!node.has_value()) {
 			return false;

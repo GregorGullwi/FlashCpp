@@ -788,6 +788,121 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	return std::nullopt;
 }
 
+static TemplateParameterNode cloneNonVariadicTemplateParam(const TemplateParameterNode& param) {
+	TemplateParameterNode clone = [&]() {
+		switch (param.kind()) {
+			case TemplateParameterKind::Type:
+				return TemplateParameterNode(param.nameHandle(), param.token());
+			case TemplateParameterKind::NonType:
+				return TemplateParameterNode(param.nameHandle(), param.type_node(), param.token());
+			case TemplateParameterKind::Template:
+				return TemplateParameterNode(param.nameHandle(), param.nested_parameters(), param.token());
+		}
+		return TemplateParameterNode(param.nameHandle(), param.token());
+	}();
+	if (param.has_concept_constraint()) {
+		clone.set_concept_constraint(param.concept_constraint());
+	}
+	if (param.has_concept_args()) {
+		clone.set_concept_args(param.concept_args());
+	}
+	if (param.has_default()) {
+		clone.set_default_value(param.default_value());
+	}
+	if (param.has_default_value_position()) {
+		clone.set_default_value_position(param.default_value_position());
+	}
+	clone.set_registered_type_index(param.registered_type_index());
+	return clone;
+}
+
+bool Parser::buildSubstitutionForPackElement(
+	std::string_view pack_param_name,
+	size_t pack_element_offset,
+	const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
+	const InlineVector<ASTNode, 4>& template_params,
+	const std::vector<size_t>& template_param_arg_starts,
+	const std::vector<size_t>& template_param_arg_counts,
+	const std::vector<TemplateTypeArg>& template_args,
+	InlineVector<ASTNode, 4>& subst_params,
+	InlineVector<TemplateTypeArg, 4>& subst_args) {
+	std::optional<std::pair<size_t, size_t>> pack_binding;
+	for (size_t i = 0; i < template_params.size(); ++i) {
+		if (!template_params[i].is<TemplateParameterNode>()) {
+			continue;
+		}
+		const auto& tparam = template_params[i].as<TemplateParameterNode>();
+		if (tparam.is_variadic() && tparam.name() == pack_param_name) {
+			pack_binding = std::pair<size_t, size_t>{
+				template_param_arg_starts[i],
+				template_param_arg_counts[i]};
+			break;
+		}
+	}
+	if (!pack_binding.has_value() || pack_element_offset >= pack_binding->second) {
+		return false;
+	}
+	for (size_t i = 0; i < template_params.size(); ++i) {
+		if (!template_params[i].is<TemplateParameterNode>()) {
+			continue;
+		}
+		const auto& tparam = template_params[i].as<TemplateParameterNode>();
+		if (tparam.is_variadic()) {
+			const bool is_primary = (tparam.name() == pack_param_name);
+			const bool is_co_pack = !is_primary &&
+				dependent_pack_names.count(tparam.nameHandle());
+			if (is_primary || is_co_pack) {
+				size_t pack_index = template_param_arg_starts[i] + pack_element_offset;
+				if (pack_index < template_args.size()) {
+					subst_params.push_back(ASTNode::emplace_node<TemplateParameterNode>(
+						cloneNonVariadicTemplateParam(tparam)));
+					subst_args.push_back(template_args[pack_index]);
+				}
+			}
+			continue;
+		}
+		if (template_param_arg_starts[i] == SIZE_MAX || template_param_arg_starts[i] >= template_args.size()) {
+			continue;
+		}
+		subst_params.push_back(template_params[i]);
+		subst_args.push_back(template_args[template_param_arg_starts[i]]);
+	}
+	return true;
+}
+
+ASTNode Parser::buildMaterializedParamType(
+	const TypeSpecifierNode& original_param_type,
+	const InlineVector<ASTNode, 4>& materialized_template_params,
+	const InlineVector<TemplateTypeArg, 4>& materialized_template_args) {
+	TypeIndex substituted_type_index = substitute_template_parameter(
+		original_param_type, materialized_template_params, materialized_template_args);
+	ASTNode param_type = emplace_node<TypeSpecifierNode>(
+		substituted_type_index,
+		get_type_size_bits(substituted_type_index.category()),
+		original_param_type.token(),
+		original_param_type.cv_qualifier(),
+		ReferenceQualifier::None);
+	TypeSpecifierNode& param_type_ref = param_type.as<TypeSpecifierNode>();
+	param_type_ref.set_reference_qualifier(original_param_type.reference_qualifier());
+	applyTemplateArgIndirection(
+		param_type_ref,
+		original_param_type,
+		materialized_template_params,
+		materialized_template_args,
+		/*propagate_reference_qualifier=*/true);
+	for (const auto& ptr_level : original_param_type.pointer_levels()) {
+		param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
+	}
+	propagateFunctionSignatureFromTemplateArg(
+		param_type_ref,
+		original_param_type,
+		substituted_type_index,
+		materialized_template_params,
+		materialized_template_args);
+	normalizeSubstitutedTypeSpec(param_type_ref);
+	return param_type;
+}
+
 std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	std::string_view struct_name, std::string_view member_name,
 	StringHandle qualified_name,
@@ -1137,101 +1252,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 		return std::nullopt;
 	};
-	auto cloneNonVariadicTemplateParam = [&](const TemplateParameterNode& param) {
-		TemplateParameterNode clone = [&]() {
-			switch (param.kind()) {
-				case TemplateParameterKind::Type:
-					return TemplateParameterNode(param.nameHandle(), param.token());
-				case TemplateParameterKind::NonType:
-					return TemplateParameterNode(param.nameHandle(), param.type_node(), param.token());
-				case TemplateParameterKind::Template:
-					return TemplateParameterNode(param.nameHandle(), param.nested_parameters(), param.token());
-			}
-			return TemplateParameterNode(param.nameHandle(), param.token());
-		}();
-		if (param.has_concept_constraint()) {
-			clone.set_concept_constraint(param.concept_constraint());
-		}
-		if (param.has_concept_args()) {
-			clone.set_concept_args(param.concept_args());
-		}
-		if (param.has_default()) {
-			clone.set_default_value(param.default_value());
-		}
-		if (param.has_default_value_position()) {
-			clone.set_default_value_position(param.default_value_position());
-		}
-		clone.set_registered_type_index(param.registered_type_index());
-		return clone;
-	};
-	auto buildSubstitutionForPackElement =
-		[&](std::string_view pack_param_name, size_t pack_element_offset,
-			const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
-			InlineVector<ASTNode, 4>& subst_params,
-			InlineVector<TemplateTypeArg, 4>& subst_args) -> bool {
-			auto pack_binding = getTemplateParamPackBinding(pack_param_name);
-			if (!pack_binding.has_value() || pack_element_offset >= pack_binding->second) {
-				return false;
-			}
-			for (size_t i = 0; i < template_params.size(); ++i) {
-				if (!template_params[i].is<TemplateParameterNode>()) {
-					continue;
-				}
-				const auto& tparam = template_params[i].as<TemplateParameterNode>();
-				if (tparam.is_variadic()) {
-					const bool is_primary = (tparam.name() == pack_param_name);
-					const bool is_co_pack = !is_primary &&
-						dependent_pack_names.count(tparam.nameHandle());
-					if (is_primary || is_co_pack) {
-						size_t pack_index = template_param_arg_starts[i] + pack_element_offset;
-						if (pack_index < template_args.size()) {
-							subst_params.push_back(emplace_node<TemplateParameterNode>(
-								cloneNonVariadicTemplateParam(tparam)));
-							subst_args.push_back(template_args[pack_index]);
-						}
-					}
-					continue;
-				}
-				if (template_param_arg_starts[i] == SIZE_MAX || template_param_arg_starts[i] >= template_args.size()) {
-					continue;
-				}
-				subst_params.push_back(template_params[i]);
-				subst_args.push_back(template_args[template_param_arg_starts[i]]);
-			}
-			return true;
-		};
-	auto buildMaterializedParamType =
-		[&](const TypeSpecifierNode& original_param_type,
-			const InlineVector<ASTNode, 4>& materialized_template_params,
-			const InlineVector<TemplateTypeArg, 4>& materialized_template_args) {
-			TypeIndex substituted_type_index = substitute_template_parameter(
-				original_param_type, materialized_template_params, materialized_template_args);
-			ASTNode param_type = emplace_node<TypeSpecifierNode>(
-				substituted_type_index,
-				get_type_size_bits(substituted_type_index.category()),
-				original_param_type.token(),
-				original_param_type.cv_qualifier(),
-				ReferenceQualifier::None);
-			TypeSpecifierNode& param_type_ref = param_type.as<TypeSpecifierNode>();
-			param_type_ref.set_reference_qualifier(original_param_type.reference_qualifier());
-			applyTemplateArgIndirection(
-				param_type_ref,
-				original_param_type,
-				materialized_template_params,
-				materialized_template_args,
-				/*propagate_reference_qualifier=*/true);
-			for (const auto& ptr_level : original_param_type.pointer_levels()) {
-				param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
-			}
-			propagateFunctionSignatureFromTemplateArg(
-				param_type_ref,
-				original_param_type,
-				substituted_type_index,
-				materialized_template_params,
-				materialized_template_args);
-			normalizeSubstitutedTypeSpec(param_type_ref);
-			return param_type;
-		};
+
 
 	// Copy parameters while substituting template arguments and expanding variadic packs.
 	for (const auto& param : func_decl.parameter_nodes()) {
@@ -1290,6 +1311,10 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 								pack_param_name,
 								pi,
 								dependent_pack_names,
+								template_params,
+								template_param_arg_starts,
+								template_param_arg_counts,
+								template_args,
 								subst_params,
 								subst_args)) {
 							continue;

@@ -127,26 +127,6 @@ Still open after this PR:
 
 - nested template packs and other complex template-param ↔ function-param mapping shapes that may surface as the test corpus grows
 
-## Deferred refactoring tasks
-
-The following refactoring improvements were flagged during code review and agreed upon, but deferred. Suggested agent prompt for each is included.
-
-### 1. Extract `buildSubstitutionForPackElement` lambda into a named helper
-**File:** `src/Parser_Templates_Inst_MemberFunc.cpp`  
-**Location:** inside `instantiate_member_function_template_core`, currently defined as a ~35-line local lambda.  
-**Why:** The lambda captures many locals and is logically self-contained. Extracting it into a named private helper method (e.g., `buildPackElementSubstitution`) improves readability, makes the code testable in isolation, and reduces the cognitive load on the function.
-
-**Suggested agent prompt:**
-> In `src/Parser_Templates_Inst_MemberFunc.cpp`, inside `Parser::instantiate_member_function_template_core`, extract the local lambda `buildSubstitutionForPackElement` into a dedicated private method on the `Parser` class (or a standalone helper in the same compilation unit). The lambda currently captures `template_params`, `template_param_arg_starts`, `template_param_arg_counts`, and `template_args` by reference. Design the helper signature so these are explicit parameters. Make sure all existing tests still pass after the refactor.
-
-### 2. Extract `buildMaterializedParamType` lambda into a named helper
-**File:** `src/Parser_Templates_Inst_MemberFunc.cpp`  
-**Location:** inside `instantiate_member_function_template_core`, currently defined as a ~31-line local lambda.  
-**Why:** The lambda encapsulates a complete type-specifier substitution + normalization pipeline. Extracting it makes the code easier to read and potentially reusable from other instantiation paths.
-
-**Suggested agent prompt:**
-> In `src/Parser_Templates_Inst_MemberFunc.cpp`, inside `Parser::instantiate_member_function_template_core`, extract the local lambda `buildMaterializedParamType` into a dedicated private method on the `Parser` class (or a standalone helper in the same compilation unit). The lambda currently uses `substitute_template_parameter`, `applyTemplateArgIndirection`, `propagateFunctionSignatureFromTemplateArg`, and `normalizeSubstitutedTypeSpec`. Design the helper signature to take the original `TypeSpecifierNode` plus the materialized param/arg vectors explicitly. Make sure all existing tests still pass after the refactor.
-
 ## Clear next steps
 
 1. **Keep the deduction regression cluster close.**
