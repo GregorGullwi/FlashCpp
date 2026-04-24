@@ -1663,6 +1663,43 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 	// Check if this is a struct/class type that might have template arguments
 	if (type.category() == TypeCategory::Struct) {
+		if (current_owner_type_name_.isValid()) {
+			auto owner_type_it = getTypesByNameMap().find(current_owner_type_name_);
+			if (owner_type_it != getTypesByNameMap().end() &&
+				owner_type_it->second != nullptr &&
+				owner_type_it->second->isTemplateInstantiation()) {
+				StringHandle owner_base_name = owner_type_it->second->baseTemplateName();
+				StringHandle type_name = type.token().handle();
+				if (!type_name.isValid()) {
+					if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
+						type_name = type_info->name();
+					}
+				}
+
+				if (owner_base_name.isValid() && type_name == owner_base_name) {
+					std::vector<TemplateTypeArg> current_inst_args =
+						collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteInType");
+					if (!current_inst_args.empty()) {
+						Parser::AliasTemplateMaterializationResult materialized_type =
+							parser_.materializeTemplateInstantiationForLookup(
+								StringTable::getStringView(owner_base_name),
+								current_inst_args);
+						if (const TypeInfo* resolved_type_info = materialized_type.resolved_type_info) {
+							TypeSpecifierNode substituted_current_instantiation(
+								resolved_type_info->registeredTypeIndex().withCategory(
+									resolved_type_info->typeEnum()),
+								resolved_type_info->sizeInBits(),
+								type.token(),
+								CVQualifier::None,
+								ReferenceQualifier::None);
+							applyOuterTypeModifiers(substituted_current_instantiation, type);
+							return substituted_current_instantiation;
+						}
+					}
+				}
+			}
+		}
+
 		if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
 			std::string_view type_name = StringTable::getStringView(type_info->name());
 			FLASH_LOG(Templates, Debug, "  Type is struct: ", type_name, " type_index=", type.type_index());

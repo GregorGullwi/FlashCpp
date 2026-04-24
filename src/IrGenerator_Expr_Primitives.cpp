@@ -9,7 +9,7 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
 			return generateIdentifierIr(expr, context);
 		} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
-			return generateQualifiedIdentifierIr(expr);
+			return generateQualifiedIdentifierIr(expr, context);
 		} else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
 			return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{expr.value() ? 1ULL : 0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 		} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
@@ -1381,7 +1381,8 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 	return ExprResult{};
 }
 
-ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
+ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode,
+												  ExpressionContext context) {
 	auto emitQualifiedGlobalLoad = [&](const TypeSpecifierNode& type_node,
 									 bool is_array_decl,
 									 StringHandle global_name) -> ExprResult {
@@ -1723,6 +1724,88 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						// Return the temp variable that will hold the loaded value
 					TypeIndex type_index = (is_struct_type(static_member->type_index.category())) ? static_member->type_index : TypeIndex{};
 					return makeExprResult(type_index.withCategory(static_member->memberType()), SizeInBits{qsm_size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
+				}
+				// No static member found with that name. If the qualifier denotes the current
+				// class or one of its base-class subobjects, and the named identifier is a
+				// non-static data member, emit a this->member MemberLoadOp — identical to
+				// the implicit-this path in generateIdentifierIr.
+				if (current_struct_name_.isValid()) {
+					bool is_current_struct = (struct_type_it->second->name() == current_struct_name_);
+					if (!is_current_struct) {
+						// Also accept template instantiations: current_struct_name_="Foo$hash",
+						// qualifier="Foo" (the primary template name).
+						std::string_view cur_sv = StringTable::getStringView(current_struct_name_);
+						std::string_view qual_sv = StringTable::getStringView(struct_type_it->second->name());
+						is_current_struct = (cur_sv.starts_with(qual_sv) &&
+											 cur_sv.size() > qual_sv.size() &&
+											 cur_sv[qual_sv.size()] == '$');
+					}
+					auto cur_it = getTypesByNameMap().find(current_struct_name_);
+					TypeIndex current_complete_type_idx = (cur_it != getTypesByNameMap().end() && cur_it->second != nullptr)
+						? cur_it->second->type_index_
+						: struct_type_it->second->type_index_;
+					StringHandle member_name_h = qualifiedIdNode.nameHandle();
+					FlashCpp::MemberResolutionResult qualified_member_resolution;
+					if (is_current_struct) {
+						qualified_member_resolution =
+							FlashCpp::gLazyMemberResolver.resolve(current_complete_type_idx, member_name_h);
+					} else {
+						qualified_member_resolution =
+							FlashCpp::gLazyMemberResolver.resolveQualified(
+								current_complete_type_idx,
+								struct_type_it->second->type_index_,
+								member_name_h);
+					}
+					if (qualified_member_resolution) {
+						const auto& mr = qualified_member_resolution;
+						const StructMember* member = mr.member;
+						FLASH_LOG(Codegen, Debug, "Resolved qualified non-static member '",
+							qualifiedIdNode.name(), "' as this->member (offset=", mr.adjusted_offset, ")");
+						if (member->is_array) {
+							TempVar addr_temp = var_counter.next();
+							AddressOfMemberOp addr_op;
+							addr_op.result = addr_temp;
+							addr_op.base_object = StringTable::getOrInternStringHandle("this");
+							addr_op.member_offset = static_cast<int>(mr.adjusted_offset);
+							addr_op.member_type_index = member->type_index.withCategory(member->memberType());
+							addr_op.member_size_in_bits = static_cast<int>(member->size * 8);
+							ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_op), Token()));
+							TypeIndex arr_ti = member->type_index;
+							return makeExprResult(arr_ti.withCategory(member->memberType()), SizeInBits{POINTER_SIZE_BITS},
+								IrOperand{addr_temp}, PointerDepth{member->pointer_depth + 1}, ValueStorage::ContainsData);
+						}
+						TempVar result_temp = var_counter.next();
+						MemberLoadOp member_load;
+						member_load.result.value = result_temp;
+						member_load.result.setType(member->type_index.category());
+						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
+						member_load.object = StringTable::getOrInternStringHandle("this");
+						member_load.member_name = member->getName();
+						member_load.offset = static_cast<int>(mr.adjusted_offset);
+						member_load.ref_qualifier = member->is_rvalue_reference()
+							? CVReferenceQualifier::RValueReference
+							: (member->is_reference() ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None);
+						member_load.struct_type_info = nullptr;
+						member_load.is_pointer_to_member = true;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+						LValueInfo lvalue_info(LValueInfo::Kind::Member,
+							StringTable::getOrInternStringHandle("this"),
+							static_cast<int>(mr.adjusted_offset));
+						lvalue_info.member_name = member->getName();
+						lvalue_info.is_pointer_to_member = true;
+						if (context == ExpressionContext::LValueAddress && member->is_reference()) {
+							// Match the implicit-this path: in address context a reference member load
+							// yields the stored pointer, so assignment/addressing must go indirectly.
+							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info, TypeCategory::Invalid, 0));
+						} else {
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
+						}
+						TypeIndex type_index = is_struct_type(member->type_index.category()) ? member->type_index : TypeIndex{};
+						return makeExprResult(type_index.withCategory(member->memberType()),
+							SizeInBits{static_cast<int>(member->size * 8)}, IrOperand{result_temp},
+							PointerDepth{}, ValueStorage::ContainsData);
+					}
 				}
 			}
 		}

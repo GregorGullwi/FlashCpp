@@ -3152,17 +3152,29 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// For constructor calls, we need to generate a constructor call instruction
 	// In C++, constructors are named after the class
 	StringHandle constructor_name;
-	if (is_struct_type(type_spec.category())) {
-		// If type_index is set, use it
-		if (type_spec.type_index().is_valid()) {
-			constructor_name = getTypeInfo(type_spec.type_index()).name();
-		} else {
-			// Otherwise, use the token value (the identifier name)
-			constructor_name = type_spec.token().handle();
-		}
-	} else {
-		// For basic types, constructors might not exist, but we can handle them as value construction
+	if (type_spec.type_index().is_valid()) {
 		constructor_name = getTypeInfo(type_spec.type_index()).name();
+	} else {
+		// Unresolved current-instantiation constructor calls can still carry only the
+		// source spelling in the token; recover the name from there.
+		constructor_name = type_spec.token().handle();
+	}
+
+	TypeIndex current_instantiation_type_index = TypeIndex{};
+	if (current_struct_name_.isValid()) {
+		auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+		if (current_struct_it != getTypesByNameMap().end() &&
+			current_struct_it->second != nullptr &&
+			current_struct_it->second->isTemplateInstantiation()) {
+			std::string_view current_base_template_name =
+				StringTable::getStringView(current_struct_it->second->baseTemplateName());
+			if (!current_base_template_name.empty() &&
+				current_base_template_name == StringTable::getStringView(constructor_name)) {
+				constructor_name = current_struct_name_;
+				current_instantiation_type_index =
+					current_struct_it->second->registeredTypeIndex();
+			}
+		}
 	}
 
 	// Create a temporary variable for the result (the constructed object)
@@ -3185,6 +3197,30 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			struct_info = type_it->second->struct_info_.get();
 		}
 	}
+	if (current_instantiation_type_index.is_valid()) {
+		if (const TypeInfo* current_instantiation_type_info =
+				tryGetTypeInfo(current_instantiation_type_index);
+			current_instantiation_type_info && current_instantiation_type_info->struct_info_) {
+			struct_info = current_instantiation_type_info->struct_info_.get();
+			actual_size_bits = static_cast<int>(struct_info->sizeInBits().value);
+		}
+	}
+
+	TypeIndex result_type_index = current_instantiation_type_index.is_valid()
+		? current_instantiation_type_index
+		: type_spec.type_index();
+	if (!result_type_index.is_valid() && struct_info && struct_info->own_type_index_.has_value()) {
+		// Constructor targets should normally carry a concrete type index already; this
+		// fallback covers unresolved current-instantiation spellings that were recovered above.
+		result_type_index = *struct_info->own_type_index_;
+	}
+	if (!result_type_index.is_valid()) {
+		auto type_it = getTypesByNameMap().find(constructor_name);
+		if (type_it != getTypesByNameMap().end()) {
+			result_type_index = type_it->second->registeredTypeIndex();
+		}
+	}
+	TypeCategory result_type_category = struct_info ? TypeCategory::Struct : type_spec.type();
 
 	// Build ConstructorCallOp
 	ConstructorCallOp ctor_op;
@@ -3299,8 +3335,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 			setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
 
-			TypeIndex result_type_index = type_spec.type_index();
-			return makeExprResult(result_type_index.withCategory(type_spec.type()), SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(result_type_index.withCategory(result_type_category), SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 	}
 
@@ -3415,6 +3450,5 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 					 "Marked constructor call result {} as RVO-eligible prvalue", ret_var.name());
 
 	// Return the result variable with the constructed type, including type_index for struct types
-	TypeIndex result_type_index = type_spec.type_index();
-	return makeExprResult(result_type_index.withCategory(type_spec.type()), SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(result_type_index.withCategory(result_type_category), SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 }

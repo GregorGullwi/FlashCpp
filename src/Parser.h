@@ -1055,9 +1055,19 @@ private:
 	// Helper function to get Type and size for built-in type keywords
 	std::optional<std::pair<TypeCategory, unsigned char>> get_builtin_type_info(std::string_view type_name);
 
+	struct AliasTemplateMaterializationResult;
 	// Helper function to parse functional-style cast: Type(expression)
 	// Returns ParseResult with StaticCastNode on success
 	ParseResult parse_functional_cast(std::string_view type_name, const Token& type_token);
+	bool templateArgMatchesCurrentInstantiationSlot(
+		const TemplateTypeArg& parsed_arg,
+		StringHandle current_param_name,
+		const TypeInfo::TemplateArgInfo* concrete_arg) const;
+	// May materialize the concrete current-instantiation owner name from active template bindings,
+	// so this helper is intentionally non-const.
+	std::optional<AliasTemplateMaterializationResult> tryResolveCurrentInstantiationTemplateOwner(
+		std::string_view primary_template_name,
+		const std::vector<TemplateTypeArg>& template_args);
 
 	// Helper function to parse cv-qualifiers (const/volatile) from token stream
 	// Returns combined CVQualifier flags (None, Const, Volatile, or ConstVolatile)

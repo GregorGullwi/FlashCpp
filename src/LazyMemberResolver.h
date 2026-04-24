@@ -49,6 +49,23 @@ struct MemberLookupKeyHash {
 	}
 };
 
+struct SubobjectVisitKey {
+	const StructTypeInfo* struct_info;
+	size_t offset;
+
+	bool operator==(const SubobjectVisitKey& other) const {
+		return struct_info == other.struct_info && offset == other.offset;
+	}
+};
+
+struct SubobjectVisitKeyHash {
+	size_t operator()(const SubobjectVisitKey& key) const {
+		size_t h1 = std::hash<const StructTypeInfo*>{}(key.struct_info);
+		size_t h2 = std::hash<size_t>{}(key.offset);
+		return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+	}
+};
+
 // Phase 2: Lazy member resolver with caching and cycle detection
 class LazyMemberResolver {
 private:
@@ -100,6 +117,79 @@ public:
 		return result;
 	}
 
+	MemberResolutionResult resolveQualified(
+		TypeIndex complete_type_index,
+		TypeIndex qualified_owner_type_index,
+		StringHandle member_name) const {
+		const TypeInfo* complete_type_info = tryGetTypeInfo(complete_type_index);
+		if (!complete_type_info) {
+			return MemberResolutionResult();
+		}
+
+		const StructTypeInfo* complete_struct = resolveStructInfo(
+			complete_type_index,
+			StringTable::getStringView(complete_type_info->name()),
+			complete_type_info->namespaceHandle());
+		if (!complete_struct) {
+			return MemberResolutionResult();
+		}
+
+		const TypeInfo* qualified_owner_type_info = tryGetTypeInfo(qualified_owner_type_index);
+		if (!qualified_owner_type_info) {
+			return MemberResolutionResult();
+		}
+
+		const StructTypeInfo* qualified_owner_struct = resolveStructInfo(
+			qualified_owner_type_index,
+			StringTable::getStringView(qualified_owner_type_info->name()),
+			qualified_owner_type_info->namespaceHandle());
+		if (!qualified_owner_struct) {
+			return MemberResolutionResult();
+		}
+
+		std::queue<std::pair<const StructTypeInfo*, size_t>> to_visit;
+		std::unordered_set<SubobjectVisitKey, SubobjectVisitKeyHash> visited;
+		to_visit.push({complete_struct, 0});
+
+		while (!to_visit.empty()) {
+			auto [current_struct, current_offset] = to_visit.front();
+			to_visit.pop();
+
+			SubobjectVisitKey visit_key{current_struct, current_offset};
+			if (visited.contains(visit_key)) {
+				continue;
+			}
+			visited.insert(visit_key);
+
+			if (current_struct == qualified_owner_struct) {
+				return resolveInternalFromStruct(
+					qualified_owner_struct,
+					member_name,
+					current_offset);
+			}
+
+			for (const auto& base : current_struct->virtual_bases) {
+				if (const StructTypeInfo* base_info = resolveStructInfo(
+						base.type_index,
+						base.name,
+						current_struct->getNamespaceHandle())) {
+					to_visit.push({base_info, current_offset + base.offset});
+				}
+			}
+
+			for (const auto& base : current_struct->base_classes) {
+				if (const StructTypeInfo* base_info = resolveStructInfo(
+						base.type_index,
+						base.name,
+						current_struct->getNamespaceHandle())) {
+					to_visit.push({base_info, current_offset + base.offset});
+				}
+			}
+		}
+
+		return MemberResolutionResult();
+	}
+
 	// Clear the cache (useful for testing or when type system changes)
 	void clearCache() {
 		cache_.clear();
@@ -134,6 +224,62 @@ public:
 
 private:
 	static constexpr size_t kMaxTypeAliasDepth = 64;
+
+	MemberResolutionResult resolveInternalFromStruct(
+		const StructTypeInfo* struct_info,
+		StringHandle member_name,
+		size_t initial_offset) const {
+		if (!struct_info) {
+			return MemberResolutionResult();
+		}
+
+		std::queue<std::pair<const StructTypeInfo*, size_t>> to_visit;
+		std::unordered_set<SubobjectVisitKey, SubobjectVisitKeyHash> visited;
+
+		to_visit.push({struct_info, initial_offset});
+
+		while (!to_visit.empty()) {
+			auto [current_struct, current_offset] = to_visit.front();
+			to_visit.pop();
+
+			SubobjectVisitKey visit_key{current_struct, current_offset};
+			if (visited.contains(visit_key)) {
+				continue;
+			}
+			visited.insert(visit_key);
+
+			for (const auto& member : current_struct->members) {
+				if (member.getName() == member_name) {
+					return MemberResolutionResult(
+						&member,
+						current_struct,
+						current_struct->own_type_index_.value_or(TypeIndex{}),
+						member.offset + current_offset,
+						false);
+				}
+			}
+
+			for (const auto& base : current_struct->virtual_bases) {
+				if (const StructTypeInfo* base_info = resolveStructInfo(
+						base.type_index,
+						base.name,
+						current_struct->getNamespaceHandle())) {
+					to_visit.push({base_info, current_offset + base.offset});
+				}
+			}
+
+			for (const auto& base : current_struct->base_classes) {
+				if (const StructTypeInfo* base_info = resolveStructInfo(
+						base.type_index,
+						base.name,
+						current_struct->getNamespaceHandle())) {
+					to_visit.push({base_info, current_offset + base.offset});
+				}
+			}
+		}
+
+		return MemberResolutionResult();
+	}
 
 	// context_ns: the namespace from which to start the innermost-first walk.
 	// Callers pass the declaring class's namespace so that unresolved base
@@ -209,51 +355,7 @@ private:
 			return MemberResolutionResult();
 		}
 
-		// Use BFS to handle inheritance, avoiding the recursive approach
-		// that can cause issues with complex template hierarchies
-		std::queue<std::pair<const StructTypeInfo*, size_t>> to_visit;
-		std::unordered_set<const StructTypeInfo*> visited;
-
-		to_visit.push({struct_info, 0});
-
-		while (!to_visit.empty()) {
-			auto [current_struct, current_offset] = to_visit.front();
-			to_visit.pop();
-
-			// Skip if already visited (cycle prevention at struct level)
-			if (visited.contains(current_struct)) {
-				continue;
-			}
-			visited.insert(current_struct);
-
-			// Check direct members
-			for (const auto& member : current_struct->members) {
-				if (member.getName() == member_name) {
-					return MemberResolutionResult(
-						&member,
-						current_struct,
-						current_struct->own_type_index_.value_or(TypeIndex{}),
-						member.offset + current_offset,
-						false);
-				}
-			}
-
-			// Add base classes to the queue
-			for (const auto& base : current_struct->virtual_bases) {
-				if (const StructTypeInfo* base_info = resolveStructInfo(base.type_index, base.name, current_struct->getNamespaceHandle())) {
-					to_visit.push({base_info, current_offset + base.offset});
-				}
-			}
-
-			for (const auto& base : current_struct->base_classes) {
-				if (const StructTypeInfo* base_info = resolveStructInfo(base.type_index, base.name, current_struct->getNamespaceHandle())) {
-					to_visit.push({base_info, current_offset + base.offset});
-				}
-			}
-		}
-
-		// Not found
-		return MemberResolutionResult();
+		return resolveInternalFromStruct(struct_info, member_name, 0);
 	}
 };
 
