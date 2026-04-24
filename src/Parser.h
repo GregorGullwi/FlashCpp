@@ -1065,7 +1065,7 @@ private:
 		const TypeInfo::TemplateArgInfo* concrete_arg) const;
 	std::optional<AliasTemplateMaterializationResult> tryResolveCurrentInstantiationTemplateOwner(
 		std::string_view primary_template_name,
-		const std::vector<TemplateTypeArg>& template_args) const;
+		const std::vector<TemplateTypeArg>& template_args);
 
 	// Helper function to parse cv-qualifiers (const/volatile) from token stream
 	// Returns combined CVQualifier flags (None, Const, Volatile, or ConstVolatile)

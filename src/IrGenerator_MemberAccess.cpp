@@ -1275,7 +1275,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				throw InternalError(std::string("Failed to setup base from identifier '") + std::string(ident->name()) + "' for member access");
 			}
 		} else if (const QualifiedIdentifierNode* qualified_ident = tryGetQualifiedIdentifier(object_node)) {
-			auto qualified_result = generateQualifiedIdentifierIr(*qualified_ident);
+			auto qualified_result = generateQualifiedIdentifierIr(*qualified_ident, ExpressionContext::Load);
 			if (!extractBaseFromOperands(qualified_result, base_object, base_type_index, "qualified identifier")) {
 				throw InternalError(std::string("Failed to extract base from qualified identifier result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 			}

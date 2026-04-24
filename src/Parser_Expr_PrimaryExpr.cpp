@@ -120,7 +120,7 @@ bool Parser::templateArgMatchesCurrentInstantiationSlot(
 
 std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurrentInstantiationTemplateOwner(
 	std::string_view primary_template_name,
-	const std::vector<TemplateTypeArg>& template_args) const {
+	const std::vector<TemplateTypeArg>& template_args) {
 	if (member_function_context_stack_.empty()) {
 		return std::nullopt;
 	}
@@ -183,8 +183,29 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurr
 	}
 
 	AliasTemplateMaterializationResult result;
-	result.instantiated_name = current_struct_name;
+	result.instantiated_name =
+		current_type_info != nullptr
+		? StringTable::getStringView(current_type_info->name())
+		: current_struct_name;
 	result.resolved_type_info = current_type_info;
+	if (current_concrete_args != nullptr && !current_concrete_args->empty()) {
+		std::vector<TemplateTypeArg> exact_args;
+		exact_args.reserve(current_concrete_args->size());
+		for (const auto& arg_info : *current_concrete_args) {
+			exact_args.push_back(toTemplateTypeArg(arg_info));
+		}
+
+		std::string_view concrete_template_name =
+			!current_base_template_name.empty()
+			? current_base_template_name
+			: (!primary_template_name.empty() ? primary_template_name : current_struct_name);
+		result.instantiated_name =
+			get_instantiated_class_name(concrete_template_name, exact_args);
+		if (const TypeInfo* exact_type_info = findTypeByName(
+				StringTable::getOrInternStringHandle(result.instantiated_name))) {
+			result.resolved_type_info = exact_type_info;
+		}
+	}
 	if (member_ctx.struct_node != nullptr) {
 		result.instantiated_struct_node = ASTNode(member_ctx.struct_node);
 	}
@@ -1142,6 +1163,12 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 	std::string_view primary_template_name,
 	std::string_view fallback_template_name,
 	const std::vector<TemplateTypeArg>& template_args) {
+	if (auto current_instantiation =
+			tryResolveCurrentInstantiationTemplateOwner(primary_template_name, template_args);
+		current_instantiation.has_value()) {
+		return *current_instantiation;
+	}
+
 	AliasTemplateMaterializationResult materialized_owner =
 		materializePrimaryTemplateOwnerForLookup(
 			primary_template_name,
@@ -5141,8 +5168,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// This creates a temporary object of the instantiated class type
 						// Pattern: hash<_Tp>() creates a temporary hash<_Tp> object
 						if (!identifierType && peek() == "("_tok) {
+							bool is_current_instantiation =
+								tryResolveCurrentInstantiationTemplateOwner(
+									identifier_token.value(),
+									*explicit_template_args).has_value();
 							auto class_template_opt = gTemplateRegistry.lookupTemplate(identifier_token.value());
-							if (class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
+							if (is_current_instantiation ||
+								(class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>())) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", identifier_token.value());
 
 								AliasTemplateMaterializationResult materialized_owner =
@@ -5923,7 +5955,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			if (explicit_template_args.has_value() && peek() == "("_tok) {
 				// Check if this is a class template
 				auto class_template_opt = gTemplateRegistry.lookupTemplate(identifier_token.value());
-				if (class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
+				bool is_current_instantiation =
+					tryResolveCurrentInstantiationTemplateOwner(
+						identifier_token.value(),
+						*explicit_template_args).has_value();
+				if (is_current_instantiation ||
+					(class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>())) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", identifier_token.value());
 
 					AliasTemplateMaterializationResult materialized_owner =

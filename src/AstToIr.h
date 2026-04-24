@@ -284,7 +284,8 @@ private:
 	ExprResult generateIdentifierIr(const IdentifierNode& identifierNode,
 									ExpressionContext context = ExpressionContext::Load);
 	std::optional<ExprResult> decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token);
-	ExprResult generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
+	ExprResult generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode,
+											ExpressionContext context = ExpressionContext::Load);
 	ExprResult generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
 	ExprResult generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token);
 	// Apply sema-annotated contextual bool conversion to a condition expression.
