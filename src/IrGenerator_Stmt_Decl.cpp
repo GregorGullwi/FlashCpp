@@ -227,10 +227,10 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 
 			if constexpr (std::is_same_v<T, IdentifierNode>) {
 				const DeclarationNode* decl = lookupDeclaration(inner.name());
-				if (!decl || !decl->type_node().is<TypeSpecifierNode>()) {
+				if (!decl) {
 					return std::nullopt;
 				}
-				TypeSpecifierNode type = decl->type_node().as<TypeSpecifierNode>();
+				TypeSpecifierNode type = decl->type_specifier_node();
 				if (inner.binding() != IdentifierBinding::EnumConstant) {
 					type.set_reference_qualifier(ReferenceQualifier::LValueReference);
 				}
@@ -373,7 +373,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 	const auto& decl = node.declaration();
-	const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+	const auto& type_node = decl.type_specifier_node();
 	auto flushFullExpressionTemps = [this]() {
 		emitAndClearFullExpressionTempDestructors();
 	};
@@ -1048,7 +1048,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									if (auto symbol = lookupSymbol(target_id.name())) {
 										base_decl = get_decl_from_symbol(*symbol);
 									}
-									if (base_decl && (base_decl->is_array() || base_decl->type_node().as<TypeSpecifierNode>().is_array())) {
+									if (base_decl && (base_decl->is_array() || base_decl->type_specifier_node().is_array())) {
 										auto ctx = makeStaticStorageEvalContext();
 										auto index_result = ConstExpr::Evaluator::evaluate(subscript.index_expr(), ctx);
 										if (index_result.success() && index_result.as_int() == 0) {
@@ -1594,7 +1594,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
 												if (init_symbol.has_value()) {
 													if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
-														const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
+														const TypeSpecifierNode& init_type = init_decl->type_specifier_node();
 														// Check if initializer is of the same struct type
 														if (init_type.category() == TypeCategory::Struct &&
 															init_type.type_index() == type_index) {
@@ -1697,7 +1697,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										// Get the parameter type for this argument (if it exists)
 										const TypeSpecifierNode* param_type = nullptr;
 										if (arg_index < ctor_params.size() && ctor_params[arg_index].is<DeclarationNode>()) {
-											param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+											param_type = &ctor_params[arg_index].as<DeclarationNode>().type_specifier_node();
 										}
 
 										ExpressionContext init_context = ExpressionContext::Load;
@@ -2403,7 +2403,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												std::optional<ASTNode> arg_symbol = symbol_table.lookup(ident.name());
 												if (arg_symbol.has_value()) {
 													if (const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol)) {
-														const TypeSpecifierNode& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
+														const TypeSpecifierNode& arg_type = arg_decl->type_specifier_node();
 														// Check if argument is of the same struct type
 														if (arg_type.category() == TypeCategory::Struct &&
 															arg_type.type_index() == type_node.type_index()) {
@@ -2539,7 +2539,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								// Get the parameter type for this argument (if it exists)
 								const TypeSpecifierNode* param_type = nullptr;
 								if (arg_index < ctor_params.size() && ctor_params[arg_index].is<DeclarationNode>()) {
-									param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+									param_type = &ctor_params[arg_index].as<DeclarationNode>().type_specifier_node();
 								}
 
 								ExpressionContext arg_context = ExpressionContext::Load;
@@ -2633,7 +2633,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												// Check if first parameter type matches initializer type
 											if (params[0].is<DeclarationNode>()) {
 												const auto& param_decl = params[0].as<DeclarationNode>();
-												const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+												const auto& param_type = param_decl.type_specifier_node();
 
 													// Match if types are compatible (exact match or implicit conversion)
 												bool param_matches = false;
@@ -2764,7 +2764,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									}
 
 									if (init_decl) {
-										const auto& init_type = init_decl->type_node().as<TypeSpecifierNode>();
+										const auto& init_type = init_decl->type_specifier_node();
 
 										if (init_type.is_reference() || init_type.is_rvalue_reference()) {
 											// Initializer is already a reference - just pass it through
@@ -3004,7 +3004,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 							is_array = true;
 							array_size = static_cast<size_t>(eval_result.as_int());
 								// Get element type and size from the type specifier
-							const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+							const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 							array_element_type = type_spec.type();
 							array_element_size = static_cast<int>(type_spec.size_in_bits());
 							FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Detected array with size ", array_size,
@@ -3024,7 +3024,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 							is_array = true;
 							array_size = static_cast<size_t>(eval_result.as_int());
 								// Get element type and size from the type specifier
-							const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+							const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 							array_element_type = type_spec.type();
 							array_element_size = static_cast<int>(type_spec.size_in_bits());
 							FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Detected array with size ", array_size,
@@ -3389,11 +3389,11 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 
 						// Generate mangled name with template argument
 					const DeclarationNode& decl_node = get_func.decl_node();
-					const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& return_type = decl_node.type_specifier_node();
 
 					std::vector<TypeSpecifierNode> param_types;
 					for (const auto& param : get_func.parameter_nodes()) {
-						param_types.push_back(param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+						param_types.push_back(param.as<DeclarationNode>().type_specifier_node());
 					}
 
 					std::vector<int64_t> template_args = {static_cast<int64_t>(i)};
@@ -3419,7 +3419,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 
 						const FunctionDeclarationNode& get_func = overload.as<FunctionDeclarationNode>();
 						const DeclarationNode& decl_node = get_func.decl_node();
-						const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+						const TypeSpecifierNode& return_type = decl_node.type_specifier_node();
 
 							// Check if this overload's return type matches our element type
 							// or if it's the i-th function declaration (by order)
@@ -3432,7 +3432,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 								// Generate mangled name with template argument for this specialization
 							std::vector<TypeSpecifierNode> param_types;
 							for (const auto& param : get_func.parameter_nodes()) {
-								param_types.push_back(param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+								param_types.push_back(param.as<DeclarationNode>().type_specifier_node());
 							}
 
 							std::vector<int64_t> template_args = {static_cast<int64_t>(i)};

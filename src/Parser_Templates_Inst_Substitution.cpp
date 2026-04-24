@@ -1211,8 +1211,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			} else {
 				init_expr = *spec_var_decl.initializer();
 			}
-		} else if (spec_decl.type_node().is<TypeSpecifierNode>() &&
-				   spec_decl.type_node().as<TypeSpecifierNode>().category() == TypeCategory::Bool) {
+		} else if (spec_decl.type_specifier_node().category() == TypeCategory::Bool) {
 			Token true_token(Token::Type::Keyword, "true"sv, orig_token.line(), orig_token.column(), orig_token.file_index());
 			init_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
 		}
@@ -1656,7 +1655,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// Copy members from the specialization
 	for (const auto& member_decl : spec_struct.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 		TypeCategory member_type = type_spec.type();
 		TypeIndex member_type_index = type_spec.type_index();

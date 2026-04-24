@@ -51,7 +51,7 @@ bool callableOperatorAcceptsArgumentCount(const FunctionDeclarationNode& candida
 
 ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var_decl, const TypeSpecifierNode& deduced_type) {
 	const DeclarationNode& original_decl = original_var_decl.declaration();
-	const TypeSpecifierNode& placeholder_type = original_decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& placeholder_type = original_decl.type_specifier_node();
 	if (!isPlaceholderAutoType(placeholder_type.type())) {
 		return original_var_decl.declaration_node();
 	}
@@ -1238,8 +1238,8 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 									  ? capture_decl_node
 									  : ASTNode::emplace_node<DeclarationNode>(*capture_decl);
 			symbols_.insert(capture_decl->identifier_token().value(), symbol_node);
-			if (capture_decl->type_node().is<TypeSpecifierNode>()) {
-				const CanonicalTypeId tid = canonicalizeType(capture_decl->type_node().as<TypeSpecifierNode>());
+			{
+				const CanonicalTypeId tid = canonicalizeType(capture_decl->type_specifier_node());
 				const StringHandle name = capture_decl->identifier_token().handle();
 				if (name.isValid()) {
 					addLocalType(name, tid);
@@ -1294,7 +1294,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNo
 													 const TypeSpecifierNode& range_type,
 													 const TypeSpecifierNode& begin_return_type,
 													 const FunctionDeclarationNode* dereference_func) const {
-	if (!isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
+	if (!isPlaceholderAutoType(original_var_decl.declaration().type_specifier_node().type())) {
 		return original_var_decl.declaration_node();
 	}
 
@@ -1305,7 +1305,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNo
 	}
 
 	if (dereference_func) {
-		TypeSpecifierNode deduced_loop_type = dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
+		TypeSpecifierNode deduced_loop_type = dereference_func->decl_node().type_specifier_node();
 		deduced_loop_type.set_reference_qualifier(ReferenceQualifier::None);
 		return resolveRangedForLoopDeclNode(original_var_decl, deduced_loop_type);
 	}
@@ -1343,7 +1343,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 		const std::optional<ASTNode> range_symbol = symbols_.lookup(range_ident.name());
 		if (range_symbol.has_value()) {
 			if (const DeclarationNode* range_decl_ptr = get_decl_from_symbol(*range_symbol)) {
-				range_type = range_decl_ptr->type_node().as<TypeSpecifierNode>();
+				range_type = range_decl_ptr->type_specifier_node();
 			}
 		}
 	}
@@ -1392,7 +1392,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 				const auto& adl_end_decl = end_res.selected_overload->as<FunctionDeclarationNode>();
 				mutable_stmt.set_resolved_adl_begin_function(&adl_begin_decl);
 				mutable_stmt.set_resolved_adl_end_function(&adl_end_decl);
-				const TypeSpecifierNode& begin_return_type = adl_begin_decl.decl_node().type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& begin_return_type = adl_begin_decl.decl_node().type_specifier_node();
 				const FunctionDeclarationNode* dereference_func = nullptr;
 				if (begin_return_type.pointer_depth() == 0) {
 					// C++20 [stmt.ranged] materializes the iterator as
@@ -1444,7 +1444,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 		}
 	}
 
-	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_specifier_node();
 	const FunctionDeclarationNode* dereference_func = nullptr;
 	if (begin_return_type.pointer_depth() == 0) {
 		// C++20 [stmt.ranged] lowers to `auto __begin = range.begin();`, so the
@@ -1576,8 +1576,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			for (const auto& stmt : node.as<BlockNode>().get_statements()) {
 				if (stmt.is<VariableDeclarationNode>()) {
 					const auto& var = stmt.as<VariableDeclarationNode>();
-					if (var.declaration().type_node().is<TypeSpecifierNode>()) {
-						const CanonicalTypeId tid = canonicalizeType(var.declaration().type_node().as<TypeSpecifierNode>());
+					{
+						const CanonicalTypeId tid = canonicalizeType(var.declaration().type_specifier_node());
 						const StringHandle name = var.declaration().identifier_token().handle();
 						if (name.isValid()) {
 							addLocalType(name, tid);
@@ -1630,8 +1630,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			ASTNode loop_decl_node = normalizeRangedForLoopDecl(stmt);
 			if (loop_decl_node.is<DeclarationNode>()) {
 				const auto& loop_decl = loop_decl_node.as<DeclarationNode>();
-				if (loop_decl.type_node().is<TypeSpecifierNode>()) {
-					const CanonicalTypeId tid = canonicalizeType(loop_decl.type_node().as<TypeSpecifierNode>());
+				{
+					const CanonicalTypeId tid = canonicalizeType(loop_decl.type_specifier_node());
 					const StringHandle name = loop_decl.identifier_token().handle();
 					if (name.isValid()) {
 						addLocalType(name, tid);
@@ -1668,8 +1668,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 					if (catch_clause.exception_declaration().has_value() &&
 						catch_clause.exception_declaration()->is<DeclarationNode>()) {
 						const auto& catch_decl = catch_clause.exception_declaration()->as<DeclarationNode>();
-						if (catch_decl.type_node().is<TypeSpecifierNode>()) {
-							const CanonicalTypeId tid = canonicalizeType(catch_decl.type_node().as<TypeSpecifierNode>());
+						{
+							const CanonicalTypeId tid = canonicalizeType(catch_decl.type_specifier_node());
 							const StringHandle name = catch_decl.identifier_token().handle();
 							if (name.isValid()) {
 								addLocalType(name, tid);

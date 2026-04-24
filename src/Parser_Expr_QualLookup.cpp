@@ -410,7 +410,7 @@ std::string Parser::buildPrettyFunctionSignature(const FunctionDeclarationNode& 
 
 	// Get return type from the function's declaration node
 	const DeclarationNode& decl = func_node.decl_node();
-	const TypeSpecifierNode& ret_type = decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& ret_type = decl.type_specifier_node();
 	result.append(ret_type.getReadableString()).append(" ");
 
 	// Add namespace prefix if we're in a namespace
@@ -435,7 +435,7 @@ std::string Parser::buildPrettyFunctionSignature(const FunctionDeclarationNode& 
 		if (i > 0)
 			result.append(", ");
 		const auto& param_decl = params[i].as<DeclarationNode>();
-		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& param_type = param_decl.type_specifier_node();
 		result.append(param_type.getReadableString());
 	}
 
@@ -1540,7 +1540,7 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 	for (const auto& param : lambda.parameters()) {
 		if (param.is<DeclarationNode>()) {
 			const auto& param_decl = param.as<DeclarationNode>();
-			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			const auto& param_type = param_decl.type_specifier_node();
 			sig.parameter_type_indices.push_back(param_type.type_index());
 		}
 	}
@@ -1634,7 +1634,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					return FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
 				}
 
-				TypeSpecifierNode type = decl->type_node().as<TypeSpecifierNode>();
+				TypeSpecifierNode type = decl->type_specifier_node();
 
 				// Handle array-to-pointer decay
 				// When an array is used in an expression (except with sizeof, &, etc.),
@@ -1783,7 +1783,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						}
 					}
 					if (!lambda_ptr) {
-						const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+						const auto& type_node = decl.type_specifier_node();
 						if (type_node.category() == TypeCategory::Struct) {
 							const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
 							const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
@@ -1844,9 +1844,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const DeclarationNode& callee_decl = *call_info.declaration;
 		TypeSpecifierNode return_type;
 		if (call_info.function_declaration) {
-			return_type = call_info.function_declaration->decl_node().type_node().as<TypeSpecifierNode>();
+			return_type = call_info.function_declaration->decl_node().type_specifier_node();
 		} else {
-			return_type = callee_decl.type_node().as<TypeSpecifierNode>();
+			return_type = callee_decl.type_specifier_node();
 		}
 
 		auto normalize_alias_return_type = [&](TypeSpecifierNode& type) {
@@ -1880,7 +1880,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					member_func.function_decl.is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& real_func =
 						member_func.function_decl.as<FunctionDeclarationNode>();
-					return_type = real_func.decl_node().type_node().as<TypeSpecifierNode>();
+					return_type = real_func.decl_node().type_specifier_node();
 					return;
 				}
 			}
@@ -2155,7 +2155,7 @@ TypeCategory Parser::deduce_type_from_expression(const ASTNode& expr) {
 void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl) {
 	// Check if the return type is auto
 	DeclarationNode& decl_node = func_decl.decl_node();
-	const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& return_type = decl_node.type_specifier_node();
 
 	FLASH_LOG(Parser, Debug, "deduce_and_update_auto_return_type called for function: ",
 			  decl_node.identifier_token().value(), " return_type=", (int)return_type.type());

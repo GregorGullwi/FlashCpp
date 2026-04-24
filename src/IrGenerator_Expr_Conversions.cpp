@@ -271,7 +271,7 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 		}
 
 			// Get type info
-		const TypeSpecifierNode* type_node = &decl->type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode* type_node = &decl->type_specifier_node();
 
 		AddressComponents result;
 		result.base = identifier_handle;
@@ -369,8 +369,8 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 		if (std::holds_alternative<StringHandle>(array_operands.value)) {
 			StringHandle array_name = std::get<StringHandle>(array_operands.value);
 			const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
-			if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
-				const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+			if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_specifier_node().is_array())) {
+				const TypeSpecifierNode& type_node = decl_ptr->type_specifier_node();
 				element_type_index = type_node.type_index();
 				if (type_node.pointer_depth() > 0) {
 					element_size_bits = 64;
@@ -682,7 +682,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			const DeclarationNode* decl = lookupDeclaration(identifier_handle);
 
 			if (decl) {
-				const TypeSpecifierNode* type_node = &decl->type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode* type_node = &decl->type_specifier_node();
 
 				if (type_node->category() == TypeCategory::Struct && type_node->pointer_depth() == 0) {
 						// Check for operator& overload
@@ -700,7 +700,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 						std::string_view struct_name = StringTable::getStringView(getTypeInfo(type_node->type_index()).name());
 
 							// Get the return type from the function declaration
-						const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+						const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
 
 							// Generate mangled name using the proper mangling infrastructure
 							// This handles both Itanium (Linux) and MSVC (Windows) name mangling
@@ -759,7 +759,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier.name());
 
 		const DeclarationNode* decl = lookupDeclaration(identifier_handle);
-		const TypeSpecifierNode* type_node = decl ? &decl->type_node().as<TypeSpecifierNode>() : nullptr;
+		const TypeSpecifierNode* type_node = decl ? &decl->type_specifier_node() : nullptr;
 
 		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && type_node) {
 			const auto binding_info = resolveGlobalOrStaticBinding(identifier);
@@ -872,9 +872,9 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 						if (std::holds_alternative<StringHandle>(array_operands.value)) {
 							StringHandle array_name = std::get<StringHandle>(array_operands.value);
 							const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
-							if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
+							if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_specifier_node().is_array())) {
 									// This is an array - calculate element size
-								const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+								const TypeSpecifierNode& type_node = decl_ptr->type_specifier_node();
 								if (type_node.pointer_depth() > 0) {
 										// Array of pointers
 									element_size_bits = 64;
@@ -1050,7 +1050,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 					}
 
 						// Get element type and size
-					const TypeSpecifierNode& type_node = multi_dim.base_decl->type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& type_node = multi_dim.base_decl->type_specifier_node();
 					const TypeCategory element_category = type_node.category();
 					int element_size_bits = static_cast<int>(type_node.size_in_bits());
 					if (element_size_bits == 0) {
@@ -1142,9 +1142,9 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			if (std::holds_alternative<StringHandle>(array_operands.value)) {
 				StringHandle array_name = std::get<StringHandle>(array_operands.value);
 				const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
-				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
+				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_specifier_node().is_array())) {
 						// This is an array - calculate element size
-					const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& type_node = decl_ptr->type_specifier_node();
 					if (type_node.pointer_depth() > 0) {
 							// Array of pointers
 						element_size_bits = 64;
@@ -1329,7 +1329,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 					if (symbol.has_value()) {
 						const DeclarationNode* object_decl = get_decl_from_symbol(*symbol);
 						if (object_decl) {
-							const TypeSpecifierNode& object_type = object_decl->type_node().as<TypeSpecifierNode>();
+							const TypeSpecifierNode& object_type = object_decl->type_specifier_node();
 							if (is_struct_type(object_type.category())) {
 								TypeIndex type_index = object_type.type_index();
 								if (tryGetTypeInfo(type_index)) {
@@ -1374,7 +1374,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			auto symbol = lookupSymbol(ident.nameHandle());
 			if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 				const auto& decl = symbol->as<DeclarationNode>();
-				const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+				const auto& type_node = decl.type_specifier_node();
 					// If the variable's type is the closure struct for a lambda, derive invoke signature from struct info
 				if (type_node.category() == TypeCategory::Struct) {
 					const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
@@ -1464,7 +1464,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			if (const auto* identifier = std::get_if<IdentifierNode>(&op_expr)) {
 				auto sym = lookupSymbol(identifier->nameHandle());
 				if (sym.has_value() && sym->is<DeclarationNode>()) {
-					struct_type_index = sym->as<DeclarationNode>().type_node().as<TypeSpecifierNode>().type_index().index();
+					struct_type_index = sym->as<DeclarationNode>().type_specifier_node().type_index().index();
 				}
 			}
 		}
@@ -1643,7 +1643,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 					auto symbol = symbol_table.lookup(identifier.name());
 					const DeclarationNode* decl = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
 					if (decl) {
-						pointer_depth = decl->type_node().as<TypeSpecifierNode>().pointer_depth();
+						pointer_depth = decl->type_specifier_node().pointer_depth();
 					}
 				}
 			}
@@ -1723,9 +1723,9 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				if (symbol.has_value()) {
 					const TypeSpecifierNode* type_node = nullptr;
 					if (symbol->is<DeclarationNode>()) {
-						type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						type_node = &symbol->as<DeclarationNode>().type_specifier_node();
 					} else if (symbol->is<VariableDeclarationNode>()) {
-						type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+						type_node = &symbol->as<VariableDeclarationNode>().declaration().type_specifier_node();
 					}
 					if (type_node) {
 						pointer_depth = type_node->pointer_depth();
@@ -1867,7 +1867,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	const StructMemberFunction& member_func = *matched_func;
 	const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 	std::string_view struct_name = StringTable::getStringView(operand_type_info->name());
-	TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+	TypeSpecifierNode return_type = func_decl.decl_node().type_specifier_node();
 	resolveSelfReferentialType(return_type, operand_type_index);
 
 	std::vector<TypeSpecifierNode> param_types;
@@ -2065,7 +2065,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			return tryApplyCurrentStructMemberPointerInfo(identifier.nameHandle());
 		}
 		if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-			applyPointerTypeInfo(decl->type_node().as<TypeSpecifierNode>(), consumed_dereferences);
+			applyPointerTypeInfo(decl->type_specifier_node(), consumed_dereferences);
 			if (!is_pointer && !operand_pointer_depth) {
 				return tryApplyCurrentStructMemberPointerInfo(identifier.nameHandle());
 			}
@@ -2106,7 +2106,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 						}
 					} else if (auto symbol = symbol_table.lookup(identifier->name()); symbol.has_value()) {
 						if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-							object_type_opt = decl->type_node().as<TypeSpecifierNode>();
+							object_type_opt = decl->type_specifier_node();
 						}
 					}
 				}
@@ -2685,7 +2685,7 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 			const auto& identifier = std::get<IdentifierNode>(arg_expr.as<ExpressionNode>());
 			const DeclarationNode* decl = lookupDeclaration(identifier.name());
 			if (decl) {
-				const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
+				const auto& type_node = decl->type_specifier_node();
 				if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 					return makeExprResult(type_node.type_index(), SizeInBits{64}, IrOperand{StringTable::getOrInternStringHandle(identifier.name())}, PointerDepth{}, ValueStorage::ContainsData);
 				}

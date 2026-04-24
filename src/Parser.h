@@ -2786,8 +2786,8 @@ private:	 // Resume private methods
 				// (unscoped enum values are registered as DeclarationNode with Type::Enum).
 				// Variables/parameters of enum type are also DeclarationNode with Type::Enum,
 				// so we must verify via EnumTypeInfo::findEnumerator before classifying.
-			if (decl.type_node().is<TypeSpecifierNode>()) {
-				const auto& ts = decl.type_node().as<TypeSpecifierNode>();
+			{
+				const auto& ts = decl.type_specifier_node();
 				if (ts.category() == TypeCategory::Enum && !ts.is_reference() && ts.pointer_depth() == 0) {
 					if (const TypeInfo* ti = tryGetTypeInfo(ts.type_index())) {
 						const EnumTypeInfo* enum_info = ti->getEnumInfo();

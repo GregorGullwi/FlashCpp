@@ -20,7 +20,7 @@ static int computeFunctionTemplateSpecificity(const TemplateFunctionDeclarationN
 		if (!p.is<DeclarationNode>()) {
 			continue;
 		}
-		const TypeSpecifierNode& ts = p.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& ts = p.as<DeclarationNode>().type_specifier_node();
 		StringHandle tok_handle = ts.token().handle();
 		bool is_bare_template_param = tok_handle.isValid() && param_name_handles.count(tok_handle) > 0;
 
@@ -643,9 +643,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 						if (!decl)
 							return TypeIndex{};
-						if (!decl->type_node().is<TypeSpecifierNode>())
-							return TypeIndex{};
-						const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
+						const auto& type_spec = decl->type_specifier_node();
 						if (!is_struct_type(type_spec.category()))
 							return TypeIndex{};
 						TypeIndex type_idx = type_spec.type_index();
@@ -1775,7 +1773,7 @@ ParseResult Parser::parse_static_member_block(
 		return ParseResult::error("Expected static member declaration", peek_info());
 	}
 	DeclarationNode& decl = type_and_name.node()->as<DeclarationNode>();
-	TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+	TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 	// Optional initializer
 	std::optional<ASTNode> init_expr_opt;

@@ -930,10 +930,7 @@ const StructMemberFunction* StructTypeInfo::findSameTypeConstructorCore(
 		}
 
 		const auto& param_decl = params[0].as<DeclarationNode>();
-		if (!param_decl.type_node().is<TypeSpecifierNode>()) {
-			continue;
-		}
-		const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		const auto& param_type = param_decl.type_specifier_node();
 		if (param_type.category() != TypeCategory::Struct || !isOwnTypeIndex(param_type.type_index())) {
 			continue;
 		}
@@ -1018,11 +1015,7 @@ bool isMatchingSameTypeAssignmentOperator(const StructTypeInfo& struct_info,
 	}
 
 	const auto& param_decl = params[0].as<DeclarationNode>();
-	if (!param_decl.type_node().is<TypeSpecifierNode>()) {
-		return false;
-	}
-
-	const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+	const auto& param_type = param_decl.type_specifier_node();
 	const bool matches_reference = want_move
 									   ? param_type.is_rvalue_reference()
 									   : param_type.is_lvalue_reference();

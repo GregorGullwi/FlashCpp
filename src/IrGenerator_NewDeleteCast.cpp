@@ -1141,10 +1141,10 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 					};
 
 					if (symbol->is<VariableDeclarationNode>()) {
-						return tryResolveTypeNode(symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>());
+						return tryResolveTypeNode(symbol->as<VariableDeclarationNode>().declaration().type_specifier_node());
 					}
 					if (symbol->is<DeclarationNode>()) {
-						return tryResolveTypeNode(symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+						return tryResolveTypeNode(symbol->as<DeclarationNode>().type_specifier_node());
 					}
 				}
 			}
@@ -1162,10 +1162,10 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 				}
 				if (symbol.has_value()) {
 					if (symbol->is<VariableDeclarationNode>()) {
-						return symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>().is_reference();
+						return symbol->as<VariableDeclarationNode>().declaration().type_specifier_node().is_reference();
 					}
 					if (symbol->is<DeclarationNode>()) {
-						return symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>().is_reference();
+						return symbol->as<DeclarationNode>().type_specifier_node().is_reference();
 					}
 				}
 			}

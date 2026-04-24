@@ -1414,9 +1414,9 @@ ASTNode Parser::substituteTemplateParameters(
 		if (substituted_decl.is<DeclarationNode>() && initializer.has_value() &&
 			initializer->is<InitializerListNode>()) {
 			DeclarationNode& sub_decl_ref = substituted_decl.as<DeclarationNode>();
-			if (sub_decl_ref.is_unsized_array() && sub_decl_ref.type_node().is<TypeSpecifierNode>()) {
+			if (sub_decl_ref.is_unsized_array()) {
 				const TypeSpecifierNode& current_spec =
-					sub_decl_ref.type_node().as<TypeSpecifierNode>();
+					sub_decl_ref.type_specifier_node();
 				ASTNode fresh_type_node = emplace_node<TypeSpecifierNode>(current_spec);
 				inferUnsizedArraySizeFromInitializer(sub_decl_ref,
 					fresh_type_node.as<TypeSpecifierNode>(),

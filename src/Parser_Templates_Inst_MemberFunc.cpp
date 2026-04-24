@@ -446,7 +446,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			if (!ctor.parameter_nodes()[i].is<DeclarationNode>()) {
 				return false;
 			}
-			const auto& param_type = ctor.parameter_nodes()[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			const auto& param_type = ctor.parameter_nodes()[i].as<DeclarationNode>().type_specifier_node();
 			if (!can_convert_type(arg_types[i], param_type).is_valid) {
 				return false;
 			}
@@ -1101,7 +1101,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	};
 
 	// Substitute the return type if it's a template parameter
-	const TypeSpecifierNode& return_type_spec = orig_decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& return_type_spec = orig_decl.type_specifier_node();
 	auto [return_type_index, return_resolved_arg] = resolve_template_type(return_type_spec.type_index());
 
 	// Create mangled token
@@ -1295,7 +1295,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	for (const auto& param : func_decl.parameter_nodes()) {
 		if (param.is<DeclarationNode>()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
-			const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+			const TypeSpecifierNode& param_type_spec = param_decl.type_specifier_node();
 
 			// Expand variadic pack parameters (including wrapped nested pack element types).
 			bool handled_as_pack = false;

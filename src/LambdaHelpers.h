@@ -22,7 +22,7 @@ inline std::optional<LambdaStructSignature> getFunctionSignatureFromLambdaStruct
 		if (member_func.getName() == StringTable::getOrInternStringHandle("operator()") &&
 			member_func.function_decl.is<FunctionDeclarationNode>()) {
 			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-			TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+			TypeSpecifierNode return_type = func_decl.decl_node().type_specifier_node();
 			if (isPlaceholderAutoType(return_type.type())) {
 				const SizeInBits void_size_bits{get_type_size_bits(TypeCategory::Void)};
 				return_type = TypeSpecifierNode(TypeCategory::Void, TypeQualifier::None, void_size_bits, func_decl.decl_node().identifier_token(), CVQualifier::None);
@@ -31,7 +31,7 @@ inline std::optional<LambdaStructSignature> getFunctionSignatureFromLambdaStruct
 			LambdaStructSignature sig{return_type, {}};
 			for (const auto& param_node : func_decl.parameter_nodes()) {
 				if (param_node.is<DeclarationNode>()) {
-					sig.param_types.push_back(param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+					sig.param_types.push_back(param_node.as<DeclarationNode>().type_specifier_node());
 				}
 			}
 			return sig;

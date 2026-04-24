@@ -624,7 +624,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			// Calculate struct layout
 			for (const auto& member_decl : struct_ref_inner.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-				const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& member_type_spec = decl.type_specifier_node();
 
 				// Calculate member size and alignment
 				auto [member_size_in_bits, member_alignment] = calculateResolvedMemberSizeAndAlignment(
@@ -1836,7 +1836,7 @@ ParseResult Parser::parse_typedef_declaration() {
 		// Calculate struct layout
 		for (const auto& member_decl : members) {
 			const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-			const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
+			const TypeSpecifierNode& member_type_spec = decl.type_specifier_node();
 
 			// Calculate member size and alignment
 			auto [member_size, member_alignment] = calculateResolvedMemberSizeAndAlignment(

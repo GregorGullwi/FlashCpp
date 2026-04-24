@@ -368,7 +368,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			return finalize_static_member_init(static_member, *init_result.node(), decl_node, function_name_token, saved_position);
 		}
 
-		TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+		TypeSpecifierNode& type_spec = decl_node.type_specifier_node();
 		auto push_static_member_parse_context = [&]() {
 			member_function_context_stack_.push_back({class_name, type_info->type_index_, nullptr, struct_info});
 		};
@@ -668,7 +668,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		}
 
 		// Continue with function-specific logic
-		TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
+		TypeSpecifierNode& type_specifier = decl_node.type_specifier_node();
 
 		// Parse trailing specifiers using Phase 2 unified method (instead of just skipping them)
 		// For free functions: noexcept is applied, const/volatile/&/&&/override/final are ignored
@@ -748,7 +748,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			for (size_t i = 0; i < params.size(); ++i) {
 				if (params[i].is<DeclarationNode>()) {
 					const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& param_type = param_decl.type_specifier_node();
 					// Only plain `auto` forms abbreviated function template parameters.
 					// `decltype(auto)` is not permitted here by C++20 [dcl.spec.auto]/3.
 					if (param_type.category() == TypeCategory::Auto) {
@@ -922,7 +922,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// unsized-array inference updates the same AST object already stored in the
 		// symbol table and returned VariableDeclarationNode.
 		DeclarationNode& registered_decl = global_decl_node.declaration();
-		TypeSpecifierNode& type_specifier = registered_decl.type_node().as<TypeSpecifierNode>();
+		TypeSpecifierNode& type_specifier = registered_decl.type_specifier_node();
 		const Token& identifier_token = registered_decl.identifier_token();
 		if (!gSymbolTable.insert(identifier_token.value(), global_var_node)) {
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
@@ -1083,7 +1083,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 					emplace_node<TypeSpecifierNode>(type_specifier),
 					next_identifier_token);
 				DeclarationNode& next_decl = next_decl_node.as<DeclarationNode>();
-				TypeSpecifierNode& next_type_spec = next_decl.type_node().as<TypeSpecifierNode>();
+				TypeSpecifierNode& next_type_spec = next_decl.type_specifier_node();
 
 				// Pre-register the variable before parsing its initializer (point-of-declaration)
 				auto [next_var_node, next_var_decl] = emplace_node_ref<VariableDeclarationNode>(

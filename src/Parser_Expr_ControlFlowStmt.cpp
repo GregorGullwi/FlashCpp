@@ -849,7 +849,7 @@ ParseResult Parser::parse_lambda_expression() {
 			if (var_symbol.has_value()) {
 				const DeclarationNode* decl = get_decl_from_symbol(*var_symbol);
 				if (decl) {
-					capture_type_node = decl->type_node().as<TypeSpecifierNode>();
+					capture_type_node = decl->type_specifier_node();
 				}
 			}
 		}
@@ -1253,7 +1253,7 @@ ParseResult Parser::parse_lambda_expression() {
 					if (init_symbol.has_value()) {
 						const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
 						if (init_decl) {
-							var_type = init_decl->type_node().as<TypeSpecifierNode>();
+							var_type = init_decl->type_specifier_node();
 						}
 					}
 				} else if (init_expr.is<ExpressionNode>()) {
@@ -1268,7 +1268,7 @@ ParseResult Parser::parse_lambda_expression() {
 						if (init_symbol.has_value()) {
 							const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
 							if (init_decl) {
-								var_type = init_decl->type_node().as<TypeSpecifierNode>();
+								var_type = init_decl->type_specifier_node();
 							}
 						}
 					}
@@ -1287,7 +1287,7 @@ ParseResult Parser::parse_lambda_expression() {
 					continue;
 				}
 
-				var_type = var_decl->type_node().as<TypeSpecifierNode>();
+				var_type = var_decl->type_specifier_node();
 			}
 
 			// Determine size and alignment based on capture kind

@@ -474,9 +474,9 @@ FlashCpp::SignatureValidationResult Parser::validate_signature_match(
 	// Helper lambda to extract TypeSpecifierNode from a parameter
 	auto extract_param_type = [](const ASTNode& param) -> const TypeSpecifierNode* {
 		if (param.is<DeclarationNode>()) {
-			return &param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			return &param.as<DeclarationNode>().type_specifier_node();
 		} else if (param.is<VariableDeclarationNode>()) {
-			return &param.as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+			return &param.as<VariableDeclarationNode>().declaration().type_specifier_node();
 		}
 		return nullptr;
 	};
@@ -540,8 +540,8 @@ FlashCpp::SignatureValidationResult Parser::validate_signature_match(
 	// Validate return type
 	const DeclarationNode& decl_decl = declaration.decl_node();
 	const DeclarationNode& def_decl = definition.decl_node();
-	const TypeSpecifierNode& decl_return_type = decl_decl.type_node().as<TypeSpecifierNode>();
-	const TypeSpecifierNode& def_return_type = def_decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& decl_return_type = decl_decl.type_specifier_node();
+	const TypeSpecifierNode& def_return_type = def_decl.type_specifier_node();
 
 	if (def_return_type.type() != decl_return_type.type() ||
 		def_return_type.type_index() != decl_return_type.type_index() ||
@@ -607,8 +607,7 @@ void Parser::finalize_function_after_definition(FunctionDeclarationNode& func_no
 namespace {
 bool functionSignatureHasUnresolvedPlaceholder(const FunctionDeclarationNode& func_node) {
 	const DeclarationNode& decl_node = func_node.decl_node();
-	if (decl_node.type_node().is<TypeSpecifierNode>() &&
-		isPlaceholderAutoType(decl_node.type_node().as<TypeSpecifierNode>().type())) {
+	if (isPlaceholderAutoType(decl_node.type_specifier_node().type())) {
 		return true;
 	}
 
@@ -620,11 +619,11 @@ bool functionSignatureHasUnresolvedPlaceholder(const FunctionDeclarationNode& fu
 			param_decl = &param_node.as<VariableDeclarationNode>().declaration();
 		}
 
-		if (!param_decl || !param_decl->type_node().is<TypeSpecifierNode>()) {
+		if (!param_decl) {
 			continue;
 		}
 
-		if (isPlaceholderAutoType(param_decl->type_node().as<TypeSpecifierNode>().type())) {
+		if (isPlaceholderAutoType(param_decl->type_specifier_node().type())) {
 			return true;
 		}
 	}
@@ -809,12 +808,10 @@ StructMemberFunction* Parser::find_member_function_by_signature(
 static const TypeSpecifierNode* get_param_type_specifier(const ASTNode& param) {
 	if (param.is<VariableDeclarationNode>()) {
 		const VariableDeclarationNode& var = param.as<VariableDeclarationNode>();
-		if (var.declaration().type_node().is<TypeSpecifierNode>())
-			return &var.declaration().type_node().as<TypeSpecifierNode>();
+		return &var.declaration().type_specifier_node();
 	} else if (param.is<DeclarationNode>()) {
 		const DeclarationNode& decl = param.as<DeclarationNode>();
-		if (decl.type_node().is<TypeSpecifierNode>())
-			return &decl.type_node().as<TypeSpecifierNode>();
+		return &decl.type_specifier_node();
 	}
 	return nullptr;
 }

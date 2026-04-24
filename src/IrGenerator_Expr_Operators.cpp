@@ -75,7 +75,7 @@ std::optional<bool> getSameTypeAssignmentKind(const StructTypeInfo& struct_info,
 		return std::nullopt;
 	}
 
-	const auto& param_type = func_decl.parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+	const auto& param_type = func_decl.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node();
 	if (param_type.category() != TypeCategory::Struct || !struct_info.isOwnTypeIndex(param_type.type_index())) {
 		return std::nullopt;
 	}
@@ -105,11 +105,11 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 			decl_ptr = &symbol.as<DeclarationNode>();
 		}
 
-		if (!decl_ptr || !decl_ptr->type_node().is<TypeSpecifierNode>()) {
+		if (!decl_ptr) {
 			return;
 		}
 
-		const auto& ts = decl_ptr->type_node().as<TypeSpecifierNode>();
+		const auto& ts = decl_ptr->type_specifier_node();
 		info.type_index = nativeTypeIndex(ts.type());
 		info.size_in_bits = SizeInBits{ts.size_in_bits()};
 	};
@@ -400,7 +400,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 		}
 
 		if (arg_decl) {
-			const auto& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
+			const auto& arg_type = arg_decl->type_specifier_node();
 			if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
 				value = toTypedValue(argument_result);
 			} else {
@@ -515,7 +515,7 @@ void AstToIr::fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>
 		}
 		call_op.args.push_back(materializeDefaultArgument(
 			param_decl.default_value(),
-			param_decl.type_node().as<TypeSpecifierNode>(),
+			param_decl.type_specifier_node(),
 			StringBuilder()
 				.append("parameter '")
 				.append(param_decl.identifier_token().value())
@@ -610,7 +610,7 @@ void AstToIr::fillInConstructorDefaultArguments(
 
 		ctor_op.arguments.push_back(materializeDefaultArgument(
 			param_decl.default_value(),
-			param_decl.type_node().as<TypeSpecifierNode>(),
+			param_decl.type_specifier_node(),
 			StringBuilder()
 				.append("constructor parameter '")
 				.append(param_decl.identifier_token().value())
@@ -1027,7 +1027,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			const std::optional<ASTNode> lhs_symbol = symbol_table.lookup(lhs_name);
 			if (lhs_symbol.has_value() && lhs_symbol->is<DeclarationNode>()) {
 				const auto& lhs_decl = lhs_symbol->as<DeclarationNode>();
-				const auto& lhs_type = lhs_decl.type_node().as<TypeSpecifierNode>();
+				const auto& lhs_type = lhs_decl.type_specifier_node();
 
 				// Check if LHS is a function pointer
 				if (lhs_type.is_function_pointer()) {
@@ -1535,7 +1535,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				const auto& param_nodes = func_decl.parameter_nodes();
 				if (!param_nodes.empty() && param_nodes[0].is<DeclarationNode>()) {
 					const auto& param_decl = param_nodes[0].as<DeclarationNode>();
-					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					const auto& param_type = param_decl.type_specifier_node();
 
 					// Check if parameter is a primitive type matching RHS
 					if (!isIrStructType(toIrType(param_type.type()))) {
@@ -1543,7 +1543,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						FLASH_LOG_FORMAT(Codegen, Debug, "Found operator= with primitive param for struct type index {}", lhs_type_index);
 
 						std::string_view struct_name = StringTable::getStringView(getTypeInfo(lhs_type_index).name());
-						const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+						const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
 
 						// Get parameter types for mangling
 						std::vector<TypeSpecifierNode> param_types;
@@ -1713,8 +1713,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				} else if (symbol->is<DeclarationNode>()) {
 					decl_ptr = &symbol->as<DeclarationNode>();
 				}
-				if (decl_ptr && decl_ptr->type_node().is<TypeSpecifierNode>()) {
-					return normalizeSyntaxTypeSpec(decl_ptr->type_node().as<TypeSpecifierNode>());
+				if (decl_ptr) {
+					return normalizeSyntaxTypeSpec(decl_ptr->type_specifier_node());
 				}
 			}
 			return std::nullopt;
@@ -1887,13 +1887,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			if (func_decl.is_deleted()) {
 				throw CompileError("Call to deleted function 'operator" + std::string(op) + "'");
 			}
-			TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+			TypeSpecifierNode return_type = func_decl.decl_node().type_specifier_node();
 
 			// Get parameter types for mangling
 			std::vector<TypeSpecifierNode> param_types;
 			for (const auto& param_node : func_decl.parameter_nodes()) {
 				if (param_node.is<DeclarationNode>()) {
-					param_types.push_back(param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+					param_types.push_back(param_node.as<DeclarationNode>().type_specifier_node());
 				}
 			}
 
@@ -2001,7 +2001,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			std::string_view struct_name = StringTable::getStringView(getTypeInfo(lhs_type_index).name());
 
 			// Get the return type from the function declaration
-			TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+			TypeSpecifierNode return_type = func_decl.decl_node().type_specifier_node();
 			resolveSelfReferentialType(return_type, lhs_type_index);
 
 			// Get the parameter types for mangling
@@ -2009,7 +2009,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			for (const auto& param_node : func_decl.parameter_nodes()) {
 				if (param_node.is<DeclarationNode>()) {
 					const auto& param_decl = param_node.as<DeclarationNode>();
-					TypeSpecifierNode param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					TypeSpecifierNode param_type = param_decl.type_specifier_node();
 					resolveSelfReferentialType(param_type, lhs_type_index);
 					param_types.push_back(param_type);
 				}
@@ -2161,11 +2161,11 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				if (symbol && symbol->is<VariableDeclarationNode>()) {
 					const auto& var_decl = symbol->as<VariableDeclarationNode>();
 					const auto& decl = var_decl.declaration();
-					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+					const auto& type_node = decl.type_specifier_node();
 					spaceship_lhs_type_index = type_node.type_index();
 				} else if (symbol && symbol->is<DeclarationNode>()) {
 					const auto& decl = symbol->as<DeclarationNode>();
-					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+					const auto& type_node = decl.type_specifier_node();
 					spaceship_lhs_type_index = type_node.type_index();
 				} else {
 					// Can't find the variable declaration
@@ -2222,7 +2222,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					TempVar result_var = var_counter.next();
 
 					// Get return type from the function declaration
-					const auto& return_type_node = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+					const auto& return_type_node = func_decl.decl_node().type_specifier_node();
 					TypeCategory return_type = return_type_node.type();
 					SizeInBits return_size = return_type_node.sizeBits();
 
@@ -2242,7 +2242,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					for (const auto& param_node : func_decl.parameter_nodes()) {
 						if (param_node.is<DeclarationNode>()) {
 							const auto& param_decl = param_node.as<DeclarationNode>();
-							TypeSpecifierNode param_type = param_decl.type_node().as<TypeSpecifierNode>();
+							TypeSpecifierNode param_type = param_decl.type_specifier_node();
 							resolveSelfReferentialType(param_type, spaceship_lhs_type_index);
 							param_types.push_back(param_type);
 						}
@@ -2482,7 +2482,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			if (symbol && symbol->is<VariableDeclarationNode>()) {
 				const auto& var_decl = symbol->as<VariableDeclarationNode>();
 				const auto& decl = var_decl.declaration();
-				const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+				const auto& type_node = decl.type_specifier_node();
 				lhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
 				// Arrays decay to pointers in expressions - treat them as pointer_depth == 1
 				if (decl.is_array() && lhs_pointer_depth == 0) {
@@ -2491,7 +2491,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				lhs_type_node = &type_node;
 			} else if (symbol && symbol->is<DeclarationNode>()) {
 				const auto& decl = symbol->as<DeclarationNode>();
-				const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+				const auto& type_node = decl.type_specifier_node();
 				lhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
 				// Arrays decay to pointers in expressions - treat them as pointer_depth == 1
 				if (decl.is_array() && lhs_pointer_depth == 0) {
@@ -2518,11 +2518,11 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			if (symbol && symbol->is<VariableDeclarationNode>()) {
 				const auto& var_decl = symbol->as<VariableDeclarationNode>();
 				const auto& decl = var_decl.declaration();
-				const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+				const auto& type_node = decl.type_specifier_node();
 				rhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
 			} else if (symbol && symbol->is<DeclarationNode>()) {
 				const auto& decl = symbol->as<DeclarationNode>();
-				const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+				const auto& type_node = decl.type_specifier_node();
 				rhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
 			}
 		}
@@ -3297,7 +3297,7 @@ std::string_view AstToIr::generateMangledNameForCall(std::string_view name, cons
 
 std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override, const std::vector<std::string>& namespace_path) {
 	const DeclarationNode& decl_node = func_node.decl_node();
-	const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& return_type = decl_node.type_specifier_node();
 	std::string_view func_name = decl_node.identifier_token().value();
 
 	std::string_view struct_name = !struct_name_override.empty() ? struct_name_override
@@ -3322,7 +3322,7 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 			if (!needs_resolution) {
 				for (const auto& param : func_node.parameter_nodes()) {
 					if (param.is<DeclarationNode>()) {
-						const auto& pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						const auto& pt = param.as<DeclarationNode>().type_specifier_node();
 						if (pt.category() == TypeCategory::Struct && pt.type_index().is_valid()) {
 							const TypeInfo* ti = tryGetTypeInfo(pt.type_index());
 							if (!ti || !ti->struct_info_ || !ti->struct_info_->sizeInBytes().is_set()) {
@@ -3338,7 +3338,7 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 				resolved_params.reserve(func_node.parameter_nodes().size());
 				for (const auto& param : func_node.parameter_nodes()) {
 					if (param.is<DeclarationNode>()) {
-						TypeSpecifierNode pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						TypeSpecifierNode pt = param.as<DeclarationNode>().type_specifier_node();
 						resolveSelfReferentialType(pt, struct_type_index);
 						resolved_params.push_back(pt);
 					}
@@ -3492,11 +3492,11 @@ bool AstToIr::isVaListPointerType(const ASTNode& arg, const ExprResult& ir_resul
 		const auto& id = std::get<IdentifierNode>(arg.as<ExpressionNode>());
 		if (auto sym = symbol_table.lookup(id.name())) {
 			if (sym->is<DeclarationNode>()) {
-				const auto& ty = sym->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+				const auto& ty = sym->as<DeclarationNode>().type_specifier_node();
 				if (ty.pointer_depth() > 0)
 					return true;
 			} else if (sym->is<VariableDeclarationNode>()) {
-				const auto& ty = sym->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+				const auto& ty = sym->as<VariableDeclarationNode>().declaration().type_specifier_node();
 				if (ty.pointer_depth() > 0)
 					return true;
 			}
@@ -4344,7 +4344,7 @@ ExprResult AstToIr::generateVaStartIntrinsic(const CallExprNode& callExprNode) {
 				return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 			const DeclarationNode& param_decl = param_symbol->as<DeclarationNode>();
-			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			const TypeSpecifierNode& param_type = param_decl.type_specifier_node();
 
 			addr_op.operand.setType(param_type.category());
 			addr_op.operand.ir_type = toIrType(param_type.type());
@@ -4484,7 +4484,7 @@ ExprResult AstToIr::generateGetExceptionCodeIntrinsic(const CallExprNode& callEx
 	// may differ (e.g., unsigned long vs unsigned int).  Derive the expression type
 	// from the function declaration so the intrinsic result matches what the caller
 	// expects — same as regular function calls derive their type from the declaration.
-	const auto& ret_type_spec = callExprNode.callee().declaration().type_node().as<TypeSpecifierNode>();
+	const auto& ret_type_spec = callExprNode.callee().declaration().type_specifier_node();
 	const TypeCategory result_type = ret_type_spec.type();
 	const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
 
@@ -4510,7 +4510,7 @@ ExprResult AstToIr::generateGetExceptionCodeIntrinsic(const CallExprNode& callEx
 }
 
 ExprResult AstToIr::generateAbnormalTerminationIntrinsic(const CallExprNode& callExprNode) {
-	const auto& ret_type_spec = callExprNode.callee().declaration().type_node().as<TypeSpecifierNode>();
+	const auto& ret_type_spec = callExprNode.callee().declaration().type_specifier_node();
 	const TypeCategory result_type = ret_type_spec.type();
 	const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
 
@@ -4522,7 +4522,7 @@ ExprResult AstToIr::generateAbnormalTerminationIntrinsic(const CallExprNode& cal
 }
 
 ExprResult AstToIr::generateGetExceptionInformationIntrinsic(const CallExprNode& callExprNode) {
-	const auto& ret_type_spec = callExprNode.callee().declaration().type_node().as<TypeSpecifierNode>();
+	const auto& ret_type_spec = callExprNode.callee().declaration().type_specifier_node();
 	const TypeCategory result_type = ret_type_spec.type();
 	const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
 
@@ -4599,8 +4599,8 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 			if (const auto* base_name = std::get_if<StringHandle>(&base)) {
 				if (auto symbol = lookupSymbol(*base_name)) {
 					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-						decl && decl->type_node().is<TypeSpecifierNode>()) {
-						return decl->type_node().as<TypeSpecifierNode>().type_index();
+						decl) {
+						return decl->type_specifier_node().type_index();
 					}
 				}
 				return {};
@@ -4664,10 +4664,10 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 		}
 		auto symbol = lookupSymbol(*rhs_name);
 		const DeclarationNode* rhs_decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
-		if (!rhs_decl || !rhs_decl->type_node().is<TypeSpecifierNode>()) {
+		if (!rhs_decl) {
 			return;
 		}
-		const TypeSpecifierNode& rhs_type = rhs_decl->type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& rhs_type = rhs_decl->type_specifier_node();
 		if (!rhs_decl->is_array() && !rhs_type.is_array()) {
 			return;
 		}
@@ -5058,7 +5058,7 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 		if (symbol.has_value()) {
 			const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 			if (decl) {
-				const TypeSpecifierNode& type_node = decl->type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& type_node = decl->type_specifier_node();
 				if (is_struct_type(type_node.category())) {
 					TypeIndex type_index = type_node.type_index();
 					if (type_index.is_valid()) {

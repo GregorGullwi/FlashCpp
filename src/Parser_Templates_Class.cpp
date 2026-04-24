@@ -2324,7 +2324,7 @@ ParseResult Parser::parse_template_declaration() {
 						return ParseResult::error("Expected declaration node for member", peek_info());
 					}
 					const DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
-					const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& type_spec = decl_node.type_specifier_node();
 					std::optional<size_t> bitfield_width;
 					std::optional<ASTNode> bitfield_width_expr;
 
@@ -2443,7 +2443,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Add members to struct info
 			for (const auto& member_decl : struct_ref.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 				// Calculate member size and alignment
 				auto [member_size, member_alignment] = calculateResolvedMemberSizeAndAlignment(type_spec, type_spec.type_index());
@@ -3753,7 +3753,7 @@ ParseResult Parser::parse_template_declaration() {
 					ASTNode member_node = *member_result.node();
 					if (member_node.is<DeclarationNode>()) {
 						const DeclarationNode& decl_node = member_node.as<DeclarationNode>();
-						const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+						const TypeSpecifierNode& type_spec = decl_node.type_specifier_node();
 						std::optional<size_t> bitfield_width;
 						std::optional<ASTNode> bitfield_width_expr;
 
@@ -3858,7 +3858,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Add members to struct info (struct_info was created earlier before parsing base classes)
 			for (const auto& member_decl : struct_ref.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 				// Calculate member size and alignment
 				auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
@@ -4421,14 +4421,14 @@ ParseResult Parser::parse_template_declaration() {
 				// Use the version that includes non-type template arguments in the mangled name
 				const std::vector<int64_t>& spec_non_type_args = func_for_mangling.non_type_template_args();
 				const DeclarationNode& decl = func_for_mangling.decl_node();
-				const TypeSpecifierNode& return_type = decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& return_type = decl.type_specifier_node();
 
 				// Build parameter type list
 				std::vector<TypeSpecifierNode> param_types;
 				for (const auto& param_node : func_for_mangling.parameter_nodes()) {
 					if (param_node.is<DeclarationNode>()) {
 						const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-						param_types.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+						param_types.push_back(param_decl.type_specifier_node());
 					}
 				}
 
@@ -4439,14 +4439,14 @@ ParseResult Parser::parse_template_declaration() {
 				// Use the version that includes TYPE template arguments in the mangled name
 				// This handles specializations like sum<int>, sum<int, int>
 				const DeclarationNode& decl = func_for_mangling.decl_node();
-				const TypeSpecifierNode& return_type = decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& return_type = decl.type_specifier_node();
 
 				// Build parameter type list
 				std::vector<TypeSpecifierNode> param_types;
 				for (const auto& param_node : func_for_mangling.parameter_nodes()) {
 					if (param_node.is<DeclarationNode>()) {
 						const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-						param_types.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+						param_types.push_back(param_decl.type_specifier_node());
 					}
 				}
 
@@ -5151,7 +5151,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					// Store the static member in the struct (as a pattern for instantiation)
 					if (type_and_name_result.node().has_value()) {
 						const DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
-						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+						const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 						// Calculate size and alignment for the static member, preserving array shape.
 						auto [static_member_size, static_member_alignment] =

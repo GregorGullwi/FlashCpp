@@ -239,10 +239,7 @@ static bool templateParameterListsHaveMatchingShape(const LeftParamContainer& lh
 					return false;
 				}
 				if (lhs_param.has_type()) {
-					if (!lhs_param.type_node().is<TypeSpecifierNode>() ||
-						!rhs_param.type_node().is<TypeSpecifierNode>()) {
-						return false;
-					} else if (!sameTypeSpecifierShape(
+					if (!sameTypeSpecifierShape(
 								   lhs_param.type_node().as<TypeSpecifierNode>(),
 								   rhs_param.type_node().as<TypeSpecifierNode>())) {
 						return false;
@@ -268,8 +265,8 @@ static bool functionDeclarationsHaveMatchingShape(
 		return false;
 	}
 	if (!sameTypeSpecifierShape(
-			lhs.decl_node().type_node().as<TypeSpecifierNode>(),
-			rhs.decl_node().type_node().as<TypeSpecifierNode>())) {
+			lhs.decl_node().type_specifier_node(),
+			rhs.decl_node().type_specifier_node())) {
 		return false;
 	}
 	for (size_t i = 0; i < lhs.parameter_nodes().size(); ++i) {
@@ -281,8 +278,8 @@ static bool functionDeclarationsHaveMatchingShape(
 		const DeclarationNode& rhs_param = rhs.parameter_nodes()[i].as<DeclarationNode>();
 		if (lhs_param.is_parameter_pack() != rhs_param.is_parameter_pack() ||
 			!sameTypeSpecifierShape(
-				lhs_param.type_node().as<TypeSpecifierNode>(),
-				rhs_param.type_node().as<TypeSpecifierNode>())) {
+				lhs_param.type_specifier_node(),
+				rhs_param.type_specifier_node())) {
 			return false;
 		}
 	}
@@ -338,7 +335,7 @@ static int computeTemplateFunctionSpecificity(const TemplateFunctionDeclarationN
 	int score = 0;
 	for (const auto& p : template_func.function_decl_node().parameter_nodes()) {
 		if (!p.is<DeclarationNode>()) continue;
-		const TypeSpecifierNode& ts = p.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& ts = p.as<DeclarationNode>().type_specifier_node();
 
 		// Check whether this param's type token matches a template parameter name.
 		// If it does, it's a bare template param (low specificity).
@@ -1262,8 +1259,8 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		// enclosing template, mirroring the pattern used in
 		// instantiate_member_function_template_core.
 		bool is_pack = func_param_decl.is_parameter_pack();
-		if (!is_pack && func_param_decl.type_node().is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& fp_ts = func_param_decl.type_node().as<TypeSpecifierNode>();
+		if (!is_pack) {
+			const TypeSpecifierNode& fp_ts = func_param_decl.type_specifier_node();
 			if (fp_ts.category() == TypeCategory::UserDefined ||
 				fp_ts.category() == TypeCategory::TypeAlias ||
 				fp_ts.category() == TypeCategory::Template) {
@@ -1308,8 +1305,8 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			// The type specifier for e.g. "Ts... args" carries "Ts" as either its token
 			// value or its TypeInfo name.  This name is later used by the explicit-deduction
 			// loop to gate the call-arg-slice size check on only the matching template pack.
-			if (func_param_decl.type_node().is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& fp_type = func_param_decl.type_node().as<TypeSpecifierNode>();
+			{
+				const TypeSpecifierNode& fp_type = func_param_decl.type_specifier_node();
 				// Prioritise TypeInfo::name() over the token handle: for class-template
 				// inner member function template pack parameters the token handle is
 				// often invalid/empty, while the TypeInfo name is always populated.
@@ -1351,7 +1348,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			continue;
 		}
 		const DeclarationNode& func_param_decl = func_params[i].as<DeclarationNode>();
-		const TypeSpecifierNode& fp_type = func_param_decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& fp_type = func_param_decl.type_specifier_node();
 		const TypeSpecifierNode& ca_type = arg_types[concrete_arg_index];
 		// If both the function parameter and the call argument are struct template
 		// instantiations of the same base template, match their template args pairwise
@@ -1450,7 +1447,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		if (concrete_arg_index == SIZE_MAX || concrete_arg_index >= arg_types.size()) {
 			continue;
 		}
-		const TypeSpecifierNode& fp_type = fp_decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& fp_type = fp_decl.type_specifier_node();
 		const TypeSpecifierNode& ca_type = arg_types[concrete_arg_index];
 
 		// Only handle directly-typed params (pointer_depth 0 covers T, T&, const T&).
@@ -2067,7 +2064,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		};
 
 		// Substitute template parameters in the return type
-		const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
 		TypeIndex substituted_return_type_index = substitute_template_parameter(
 			orig_return_type, template_params, template_args);
 
@@ -2261,7 +2258,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				const DeclarationNode& param_decl = param.as<DeclarationNode>();
 
 				// Get original parameter type
-				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& orig_param_type = param_decl.type_specifier_node();
 				if (param_decl.is_parameter_pack()) {
 					size_t pack_start_index = arg_type_index;
 					std::string_view pack_param_name = getPackParameterName(orig_param_type);
@@ -3083,7 +3080,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	std::string_view saved_mangled_name = mangled_name;
 
 	// Create return type - re-parse declaration if available (for SFINAE)
-	const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
 
 	ASTNode return_type;
 	Token func_name_token = orig_decl.identifier_token();
@@ -3652,7 +3649,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				size_t pack_start_index = arg_type_index;
 
 				// Check if the original parameter type is an rvalue reference (for perfect forwarding)
-				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& orig_param_type = param_decl.type_specifier_node();
 				bool is_forwarding_reference = orig_param_type.is_rvalue_reference();
 
 				// Expand the parameter pack into multiple parameters
@@ -3721,7 +3718,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 			} else {
 				// Regular parameter - substitute template parameters in the parameter type
-				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& orig_param_type = param_decl.type_specifier_node();
 				ASTNode param_type;
 				if (orig_param_type.category() == TypeCategory::Auto && arg_type_index < arg_types.size()) {
 					// Abbreviated function template parameter (concept auto / auto):

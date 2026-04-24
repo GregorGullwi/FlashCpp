@@ -830,7 +830,7 @@ private:
 			if (ctor_params &&
 				arg_index < ctor_params->size() &&
 				(*ctor_params)[arg_index].is<DeclarationNode>()) {
-				param_type = &(*ctor_params)[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+				param_type = &(*ctor_params)[arg_index].as<DeclarationNode>().type_specifier_node();
 			}
 
 			ExpressionContext arg_context = ExpressionContext::Load;

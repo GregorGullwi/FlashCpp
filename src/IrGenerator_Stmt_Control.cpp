@@ -606,7 +606,7 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 	}
 
 	const DeclarationNode& range_decl = *range_decl_ptr;
-	const TypeSpecifierNode& range_type = range_decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& range_type = range_decl.type_specifier_node();
 
 		// C++ standard: pointers are NOT valid range expressions (no size information)
 		// Only arrays and types with begin()/end() are allowed
@@ -679,7 +679,7 @@ void AstToIr::visitRangedForArray(const RangedForStatementNode& node, std::strin
 	Token end_token(Token::Type::Identifier, end_var_name, 0, 0, 0);
 
 		// Get the array element type to create pointer type
-	const TypeSpecifierNode& array_type = array_decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& array_type = array_decl.type_specifier_node();
 
 		// Calculate the actual element size for pointer arithmetic
 	int element_size_bits;
@@ -783,7 +783,7 @@ void AstToIr::visitRangedForArray(const RangedForStatementNode& node, std::strin
 	ASTNode loop_decl_node = original_var_decl.declaration_node();
 	if (sema_) {
 		loop_decl_node = sema_->normalizeRangedForLoopDecl(original_var_decl, array_type);
-	} else if (isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
+	} else if (isPlaceholderAutoType(original_var_decl.declaration().type_specifier_node().type())) {
 		throw InternalError("Range-for placeholder loop variable reached array lowering without semantic normalization");
 	}
 
@@ -893,7 +893,7 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 	sb_end.append("__range_end_");
 	sb_end.append(counter);
 	std::string_view end_var_name = sb_end.commit();
-	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_specifier_node();
 
 		// Standard C++20 range-for with begin()/end() desugars to:
 		//   auto __begin = range.begin();
@@ -1003,11 +1003,11 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 			range_type,
 			begin_return_type,
 			node.resolved_dereference_function());
-	} else if (isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
+	} else if (isPlaceholderAutoType(original_var_decl.declaration().type_specifier_node().type())) {
 		throw InternalError("Range-for placeholder loop variable reached iterator lowering without semantic normalization");
 	}
 	const DeclarationNode& loop_decl = loop_decl_node.as<DeclarationNode>();
-	const TypeSpecifierNode& loop_type = loop_decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& loop_type = loop_decl.type_specifier_node();
 
 		// C++20 standard: range-for desugars to `decl = *__begin;` for BOTH
 		// value and reference loop variables. The iterator is always dereferenced.
