@@ -1058,6 +1058,13 @@ private:
 	// Helper function to parse functional-style cast: Type(expression)
 	// Returns ParseResult with StaticCastNode on success
 	ParseResult parse_functional_cast(std::string_view type_name, const Token& type_token);
+	bool templateArgMatchesCurrentInstantiationSlot(
+		const TemplateTypeArg& parsed_arg,
+		StringHandle current_param_name,
+		const TypeInfo::TemplateArgInfo* concrete_arg) const;
+	std::optional<AliasTemplateMaterializationResult> tryResolveCurrentInstantiationTemplateOwner(
+		std::string_view primary_template_name,
+		const std::vector<TemplateTypeArg>& template_args) const;
 
 	// Helper function to parse cv-qualifiers (const/volatile) from token stream
 	// Returns combined CVQualifier flags (None, Const, Volatile, or ConstVolatile)

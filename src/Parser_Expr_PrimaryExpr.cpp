@@ -61,6 +61,127 @@ bool Parser::isTemplateTemplateParameter(StringHandle template_name_handle) cons
 	return false;
 }
 
+bool Parser::templateArgMatchesCurrentInstantiationSlot(
+	const TemplateTypeArg& parsed_arg,
+	StringHandle current_param_name,
+	const TypeInfo::TemplateArgInfo* concrete_arg) const {
+	if (parsed_arg.is_template_template_arg) {
+		return parsed_arg.template_name_handle == current_param_name;
+	}
+
+	if (parsed_arg.is_dependent) {
+		return parsed_arg.dependent_name == current_param_name;
+	}
+
+	if (concrete_arg == nullptr) {
+		return false;
+	}
+
+	if (parsed_arg.is_value != concrete_arg->is_value) {
+		return false;
+	}
+
+	if (parsed_arg.is_value) {
+		TypeCategory parsed_category = FlashCpp::NonTypeValueIdentity::normalizedTypeForComparison(parsed_arg.category());
+		TypeCategory concrete_category = FlashCpp::NonTypeValueIdentity::normalizedTypeForComparison(concrete_arg->category());
+		if (parsed_category != concrete_category) {
+			return false;
+		}
+		if (std::holds_alternative<int64_t>(concrete_arg->value)) {
+			return parsed_arg.value == std::get<int64_t>(concrete_arg->value);
+		}
+		return false;
+	}
+
+	bool type_index_match = true;
+	if (parsed_arg.type_index.needsTypeIndex() || concrete_arg->type_index.needsTypeIndex()) {
+		type_index_match = parsed_arg.type_index == concrete_arg->type_index;
+	}
+
+	return type_index_match &&
+		parsed_arg.category() == concrete_arg->category() &&
+		parsed_arg.ref_qualifier == concrete_arg->ref_qualifier &&
+		parsed_arg.pointer_depth == concrete_arg->pointer_depth &&
+		parsed_arg.pointer_cv_qualifiers == concrete_arg->pointer_cv_qualifiers &&
+		parsed_arg.cv_qualifier == concrete_arg->cv_qualifier &&
+		parsed_arg.is_array == concrete_arg->is_array &&
+		parsed_arg.array_size == concrete_arg->array_size &&
+		parsed_arg.function_signature == concrete_arg->function_signature;
+}
+
+std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurrentInstantiationTemplateOwner(
+	std::string_view primary_template_name,
+	const std::vector<TemplateTypeArg>& template_args) const {
+	if (member_function_context_stack_.empty()) {
+		return std::nullopt;
+	}
+
+	const auto& member_ctx = member_function_context_stack_.back();
+	const TypeInfo* current_type_info = tryGetTypeInfo(member_ctx.struct_type_index);
+	std::string_view current_struct_name = StringTable::getStringView(member_ctx.struct_name);
+	std::string_view current_base_template_name;
+	if (current_type_info != nullptr && current_type_info->isTemplateInstantiation()) {
+		current_base_template_name = StringTable::getStringView(current_type_info->baseTemplateName());
+	}
+
+	if (primary_template_name != current_struct_name &&
+		(primary_template_name.empty() || primary_template_name != current_base_template_name)) {
+		return std::nullopt;
+	}
+
+	const InlineVector<StringHandle, 4>* current_param_names = nullptr;
+	const InlineVector<TypeInfo::TemplateArgInfo, 4>* current_concrete_args = nullptr;
+	if (current_function_ != nullptr && current_function_->has_outer_template_bindings()) {
+		current_param_names = &current_function_->outer_template_param_names();
+		current_concrete_args = &current_function_->outer_template_args();
+	} else if (current_type_info != nullptr &&
+			   current_type_info->hasInstantiationContext()) {
+		current_param_names = &current_type_info->instantiationContext()->param_names;
+		current_concrete_args = &current_type_info->instantiationContext()->param_args;
+	}
+
+	if (current_param_names != nullptr && !current_param_names->empty()) {
+		if (template_args.size() != current_param_names->size()) {
+			return std::nullopt;
+		}
+		for (size_t i = 0; i < template_args.size(); ++i) {
+			const TypeInfo::TemplateArgInfo* concrete_arg =
+				(current_concrete_args != nullptr && i < current_concrete_args->size())
+				? &(*current_concrete_args)[i]
+				: nullptr;
+			if (!templateArgMatchesCurrentInstantiationSlot(
+					template_args[i],
+					(*current_param_names)[i],
+					concrete_arg)) {
+				return std::nullopt;
+			}
+		}
+	} else if (isTemplateBodyWithActiveParameters()) {
+		const auto& active_param_names = currentTemplateParamNames();
+		if (template_args.size() != active_param_names.size()) {
+			return std::nullopt;
+		}
+		for (size_t i = 0; i < template_args.size(); ++i) {
+			if (!templateArgMatchesCurrentInstantiationSlot(
+					template_args[i],
+					active_param_names[i],
+					nullptr)) {
+				return std::nullopt;
+			}
+		}
+	} else {
+		return std::nullopt;
+	}
+
+	AliasTemplateMaterializationResult result;
+	result.instantiated_name = current_struct_name;
+	result.resolved_type_info = current_type_info;
+	if (member_ctx.struct_node != nullptr) {
+		result.instantiated_struct_node = ASTNode(member_ctx.struct_node);
+	}
+	return result;
+}
+
 // Helper to build an interned placeholder name for TTP instantiation.
 // Argument encodings are separated by ';':
 //   t<cat>:<index>  -> type template argument
@@ -908,6 +1029,12 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 	std::string_view primary_template_name,
 	std::string_view fallback_template_name,
 	const std::vector<TemplateTypeArg>& template_args) {
+	if (auto current_instantiation =
+			tryResolveCurrentInstantiationTemplateOwner(primary_template_name, template_args);
+		current_instantiation.has_value()) {
+		return *current_instantiation;
+	}
+
 	const auto try_materialize_candidate =
 		[&](std::string_view candidate_name) -> AliasTemplateMaterializationResult {
 		if (candidate_name.empty()) {
@@ -4831,38 +4958,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								}
 							}
 							if (instantiated_name.empty()) {
-								// KI-002 fix: If active template-parameter substitutions are present
-								// (populated during reparse_template_function_body for a concrete
-								// instantiation, e.g. T=int), try to resolve dependent args to their
-								// concrete types and retry materialization.  This makes
-								// Foo<T>::method() inside Foo<T>'s own member bodies work correctly.
-								if (any_dependent && !template_param_substitutions_.empty()) {
-									std::vector<TemplateTypeArg> resolved_args = *explicit_template_args;
-									bool all_resolved = true;
-									for (auto& arg : resolved_args) {
-										if (arg.is_dependent && arg.dependent_name.isValid()) {
-											for (const auto& subst : template_param_substitutions_) {
-												if (subst.is_type_param &&
-														subst.param_name == arg.dependent_name &&
-														!subst.substituted_type.is_dependent) {
-													arg = subst.substituted_type;
-													break;
-												}
-											}
-										}
-										if (arg.is_dependent) {
-											all_resolved = false;
-										}
-									}
-									if (all_resolved) {
-										AliasTemplateMaterializationResult retry =
-											materializePrimaryTemplateOwnerForLookup(template_name, {}, resolved_args);
-										if (!retry.instantiated_name.empty()) {
-											materialized_owner = retry;
-											instantiated_name = materialized_owner.instantiated_name;
-										}
-									}
-								}
 								// If materialization still failed, apply the original dependent-args
 								// skip-and-defer strategy for genuinely un-instantiable expressions.
 								if (instantiated_name.empty()) {
