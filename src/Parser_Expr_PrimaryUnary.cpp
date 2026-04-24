@@ -1071,8 +1071,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 							// result is 2^N - value per [expr.unary.op]/8, which has the same
 							// bit pattern at the stored width. The TypeCategory is preserved.
 							unsigned long long v = std::get<unsigned long long>(folded_value);
-							folded_value = static_cast<unsigned long long>(
-								-static_cast<long long>(v));
+							folded_value = static_cast<unsigned long long>(0ULL - v);
 						}
 					}
 					operand_node = emplace_node<ExpressionNode>(
