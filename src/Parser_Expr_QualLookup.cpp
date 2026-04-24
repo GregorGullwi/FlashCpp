@@ -1055,7 +1055,7 @@ TypeIndex Parser::substitute_template_parameter(
 				});
 		}
 	};
-	auto materializeConcretePlaceholderArgs = [&](const TypeInfo& placeholder_info) {
+	auto materializeConcretePlaceholderArgsBase = [&](const TypeInfo& placeholder_info) {
 		std::vector<TemplateTypeArg> concrete_args = materializePlaceholderArgs(placeholder_info);
 		rebindConcretePlaceholderArgsByTypeName(concrete_args);
 		return concrete_args;
@@ -1128,6 +1128,45 @@ TypeIndex Parser::substitute_template_parameter(
 		return resolveBaseClassMemberTypeChain(
 			materialized_base.instantiated_name,
 			member_type_chain);
+	};
+	auto resolveConcreteTemplateArgPlaceholders =
+		[&](const auto& self, TemplateTypeArg& concrete_arg) -> void {
+			if (concrete_arg.is_value || !concrete_arg.type_index.is_valid()) {
+				return;
+			}
+
+			const TypeInfo* arg_type_info = tryGetTypeInfo(concrete_arg.type_index);
+			if (arg_type_info == nullptr || !arg_type_info->isTemplateInstantiation()) {
+				return;
+			}
+
+			std::vector<TemplateTypeArg> nested_args = materializeConcretePlaceholderArgsBase(*arg_type_info);
+			for (TemplateTypeArg& nested_arg : nested_args) {
+				self(self, nested_arg);
+			}
+
+			const TypeInfo* resolved_arg_type = resolveConcreteInstantiatedMemberChain(
+				buildQualifiedNameFromHandle(
+					arg_type_info->sourceNamespace(),
+					StringTable::getStringView(arg_type_info->baseTemplateName())),
+				nested_args,
+				extractPlaceholderMemberChain(StringTable::getStringView(arg_type_info->name())));
+			if (resolved_arg_type == nullptr) {
+				return;
+			}
+
+			concrete_arg.type_index = resolved_arg_type->registeredTypeIndex();
+			concrete_arg.setCategory(resolved_arg_type->typeEnum());
+			concrete_arg.dependent_name = {};
+			concrete_arg.dependent_expr = std::nullopt;
+			concrete_arg.is_dependent = false;
+		};
+	auto materializeConcretePlaceholderArgs = [&](const TypeInfo& placeholder_info) {
+		std::vector<TemplateTypeArg> concrete_args = materializeConcretePlaceholderArgsBase(placeholder_info);
+		for (TemplateTypeArg& concrete_arg : concrete_args) {
+			resolveConcreteTemplateArgPlaceholders(resolveConcreteTemplateArgPlaceholders, concrete_arg);
+		}
+		return concrete_args;
 	};
 	auto tryResolveConcreteTemplatePlaceholder = [&]() -> bool {
 		const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);

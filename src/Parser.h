@@ -1234,6 +1234,23 @@ private:
 		// than deducing the outer type (Box<int>) directly.
 		TypeIndex function_pack_element_type_index;
 	};
+	static void collectDependentTemplateParamNamesFromType(
+		TypeIndex pattern_type_index,
+		const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
+			tparam_nodes_by_name,
+		StringHandle& primary_name,
+		std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_param_names);
+	static std::optional<TemplateTypeArg> extractNestedTemplateArgForDependentName(
+		TypeIndex pattern_type_index,
+		TypeIndex concrete_type_index,
+		StringHandle dependent_name);
+	static std::optional<bool> preDeduceTemplateArgsFromMatchingTypes(
+		const TypeSpecifierNode& pattern_type,
+		const TypeSpecifierNode& concrete_type,
+		const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
+			tparam_nodes_by_name,
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>& param_name_to_arg,
+		int recursion_depth);
 	bool tryAppendDefaultTemplateArg(
 		const TemplateParameterNode& param,
 		const std::vector<ASTNode>& template_params,
@@ -1671,7 +1688,22 @@ private:
 		StringHandle qualified_name,
 		const ASTNode& template_node,
 		const std::vector<TemplateTypeArg>& template_args,
-		const FlashCpp::TemplateInstantiationKey& key);
+		const FlashCpp::TemplateInstantiationKey& key,
+		const std::vector<TypeSpecifierNode>& call_arg_types);
+	bool buildSubstitutionForPackElement(
+		StringHandle pack_param_name,
+		size_t pack_element_offset,
+		const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
+		const InlineVector<ASTNode, 4>& template_params,
+		const std::vector<size_t>& template_param_arg_starts,
+		const std::vector<size_t>& template_param_arg_counts,
+		const std::vector<TemplateTypeArg>& template_args,
+		InlineVector<ASTNode, 4>& subst_params,
+		InlineVector<TemplateTypeArg, 4>& subst_args);
+	ASTNode buildMaterializedParamType(
+		const TypeSpecifierNode& original_param_type,
+		const InlineVector<ASTNode, 4>& materialized_template_params,
+		const InlineVector<TemplateTypeArg, 4>& materialized_template_args);
 	bool enqueuePendingSemanticRoot(const ASTNode& node) {
 		if (!node.has_value()) {
 			return false;

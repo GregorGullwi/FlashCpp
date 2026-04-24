@@ -908,6 +908,219 @@ static TypeSpecifierNode makeTypeSpecifierFromTemplateArgInfo(
 	return synth_ts;
 }
 
+namespace {
+void collectDependentTemplateParamNamesFromTemplateArgRecursive(
+	const TypeInfo::TemplateArgInfo& pattern_arg,
+	const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
+		tparam_nodes_by_name,
+	StringHandle& primary_name,
+	std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_param_names) {
+	if (pattern_arg.dependent_name.isValid()) {
+		auto param_it = tparam_nodes_by_name.find(pattern_arg.dependent_name);
+		if (param_it != tparam_nodes_by_name.end()) {
+			dependent_param_names.insert(pattern_arg.dependent_name);
+			if (!primary_name.isValid()) {
+				primary_name = pattern_arg.dependent_name;
+			}
+		}
+	}
+
+	const TypeInfo* nested_pattern_info = tryGetTypeInfo(pattern_arg.type_index);
+	if (nested_pattern_info == nullptr || !nested_pattern_info->isTemplateInstantiation()) {
+		return;
+	}
+
+	for (const auto& nested_arg : nested_pattern_info->templateArgs()) {
+		collectDependentTemplateParamNamesFromTemplateArgRecursive(
+			nested_arg,
+			tparam_nodes_by_name,
+			primary_name,
+			dependent_param_names);
+	}
+}
+
+std::optional<TemplateTypeArg> extractNestedTemplateArgFromTemplateArgRecursive(
+	const TypeInfo::TemplateArgInfo& pattern_arg,
+	const TypeInfo::TemplateArgInfo& concrete_arg,
+	StringHandle dependent_name) {
+	if (pattern_arg.dependent_name == dependent_name) {
+		if (concrete_arg.is_value) {
+			return TemplateTypeArg::makeValue(concrete_arg.intValue(), concrete_arg.typeEnum());
+		}
+		return TemplateTypeArg::makeTypeSpecifier(makeTypeSpecifierFromTemplateArgInfo(concrete_arg));
+	}
+
+	const TypeInfo* nested_pattern_info = tryGetTypeInfo(pattern_arg.type_index);
+	const TypeInfo* nested_concrete_info = tryGetTypeInfo(concrete_arg.type_index);
+	if (nested_pattern_info == nullptr || nested_concrete_info == nullptr ||
+		!nested_pattern_info->isTemplateInstantiation() ||
+		!nested_concrete_info->isTemplateInstantiation() ||
+		nested_pattern_info->baseTemplateName() != nested_concrete_info->baseTemplateName()) {
+		return std::nullopt;
+	}
+
+	const auto& pattern_args = nested_pattern_info->templateArgs();
+	const auto& concrete_args = nested_concrete_info->templateArgs();
+	for (size_t i = 0; i < pattern_args.size() && i < concrete_args.size(); ++i) {
+		auto nested_match = extractNestedTemplateArgFromTemplateArgRecursive(
+			pattern_args[i],
+			concrete_args[i],
+			dependent_name);
+		if (nested_match.has_value()) {
+			return nested_match;
+		}
+	}
+
+	return std::nullopt;
+}
+
+std::optional<bool> preDeduceTemplateArgsFromTemplateArgRecursive(
+	const TypeInfo::TemplateArgInfo& pattern_arg,
+	const TypeInfo::TemplateArgInfo& concrete_arg,
+	const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
+		tparam_nodes_by_name,
+	std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>& param_name_to_arg,
+	int recursion_depth) {
+	bool produced_deduction = false;
+
+	if (pattern_arg.dependent_name.isValid()) {
+		auto param_it = tparam_nodes_by_name.find(pattern_arg.dependent_name);
+		if (param_it != tparam_nodes_by_name.end()) {
+			TemplateTypeArg new_arg = concrete_arg.is_value
+				? TemplateTypeArg::makeValue(concrete_arg.intValue(), concrete_arg.typeEnum())
+				: TemplateTypeArg::makeTypeSpecifier(makeTypeSpecifierFromTemplateArgInfo(concrete_arg));
+			auto [existing_it, inserted] = param_name_to_arg.emplace(pattern_arg.dependent_name, new_arg);
+			if (!inserted && !(existing_it->second == new_arg)) {
+				FLASH_LOG_FORMAT(Templates, Error,
+								 "[depth={}]: Conflicting deduction for template param '{}'",
+								 recursion_depth,
+								 StringTable::getStringView(pattern_arg.dependent_name));
+				return std::nullopt;
+			}
+			produced_deduction = true;
+		}
+	}
+
+	const TypeInfo* nested_pattern_info = tryGetTypeInfo(pattern_arg.type_index);
+	const TypeInfo* nested_concrete_info = tryGetTypeInfo(concrete_arg.type_index);
+	if (nested_pattern_info == nullptr || nested_concrete_info == nullptr ||
+		!nested_pattern_info->isTemplateInstantiation() ||
+		!nested_concrete_info->isTemplateInstantiation() ||
+		nested_pattern_info->baseTemplateName() != nested_concrete_info->baseTemplateName()) {
+		return produced_deduction;
+	}
+
+	const auto& pattern_args = nested_pattern_info->templateArgs();
+	const auto& concrete_args = nested_concrete_info->templateArgs();
+	for (size_t i = 0; i < pattern_args.size() && i < concrete_args.size(); ++i) {
+		auto nested_result = preDeduceTemplateArgsFromTemplateArgRecursive(
+			pattern_args[i],
+			concrete_args[i],
+			tparam_nodes_by_name,
+			param_name_to_arg,
+			recursion_depth);
+		if (!nested_result.has_value()) {
+			return std::nullopt;
+		}
+		produced_deduction = produced_deduction || *nested_result;
+	}
+
+	return produced_deduction;
+}
+}
+
+void Parser::collectDependentTemplateParamNamesFromType(
+	TypeIndex pattern_type_index,
+	const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
+		tparam_nodes_by_name,
+	StringHandle& primary_name,
+	std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_param_names) {
+	const TypeInfo* pattern_info = tryGetTypeInfo(pattern_type_index);
+	if (pattern_info == nullptr) {
+		return;
+	}
+	if (!primary_name.isValid()) {
+		StringHandle direct_name = pattern_info->name();
+		if (tparam_nodes_by_name.count(direct_name)) {
+			primary_name = direct_name;
+			dependent_param_names.insert(direct_name);
+		}
+	}
+	if (!pattern_info->isTemplateInstantiation()) {
+		return;
+	}
+	for (const auto& pattern_arg : pattern_info->templateArgs()) {
+		collectDependentTemplateParamNamesFromTemplateArgRecursive(
+			pattern_arg,
+			tparam_nodes_by_name,
+			primary_name,
+			dependent_param_names);
+	}
+}
+
+std::optional<TemplateTypeArg> Parser::extractNestedTemplateArgForDependentName(
+	TypeIndex pattern_type_index,
+	TypeIndex concrete_type_index,
+	StringHandle dependent_name) {
+	const TypeInfo* pattern_info = tryGetTypeInfo(pattern_type_index);
+	const TypeInfo* concrete_info = tryGetTypeInfo(concrete_type_index);
+	if (pattern_info == nullptr || concrete_info == nullptr ||
+		!pattern_info->isTemplateInstantiation() ||
+		!concrete_info->isTemplateInstantiation() ||
+		pattern_info->baseTemplateName() != concrete_info->baseTemplateName()) {
+		return std::nullopt;
+	}
+
+	const auto& pattern_args = pattern_info->templateArgs();
+	const auto& concrete_args = concrete_info->templateArgs();
+	for (size_t i = 0; i < pattern_args.size() && i < concrete_args.size(); ++i) {
+		auto nested_match = extractNestedTemplateArgFromTemplateArgRecursive(
+			pattern_args[i],
+			concrete_args[i],
+			dependent_name);
+		if (nested_match.has_value()) {
+			return nested_match;
+		}
+	}
+
+	return std::nullopt;
+}
+
+std::optional<bool> Parser::preDeduceTemplateArgsFromMatchingTypes(
+	const TypeSpecifierNode& pattern_type,
+	const TypeSpecifierNode& concrete_type,
+	const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
+		tparam_nodes_by_name,
+	std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>& param_name_to_arg,
+	int recursion_depth) {
+	const TypeInfo* pattern_info = tryGetTypeInfo(pattern_type.type_index());
+	const TypeInfo* concrete_info = tryGetTypeInfo(concrete_type.type_index());
+	if (pattern_info == nullptr || concrete_info == nullptr ||
+		!pattern_info->isTemplateInstantiation() ||
+		!concrete_info->isTemplateInstantiation() ||
+		pattern_info->baseTemplateName() != concrete_info->baseTemplateName()) {
+		return false;
+	}
+
+	bool produced_deduction = false;
+	const auto& pattern_args = pattern_info->templateArgs();
+	const auto& concrete_args = concrete_info->templateArgs();
+	for (size_t i = 0; i < pattern_args.size() && i < concrete_args.size(); ++i) {
+		auto nested_result = preDeduceTemplateArgsFromTemplateArgRecursive(
+			pattern_args[i],
+			concrete_args[i],
+			tparam_nodes_by_name,
+			param_name_to_arg,
+			recursion_depth);
+		if (!nested_result.has_value()) {
+			return std::nullopt;
+		}
+		produced_deduction = produced_deduction || *nested_result;
+	}
+
+	return produced_deduction;
+}
+
 std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArgs(
 	const std::vector<ASTNode>& template_params,
 	const std::vector<ASTNode>& func_params,
@@ -1040,20 +1253,18 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 					if (it != tparam_nodes_by_name.end() && it->second->is_variadic()) {
 						is_pack = true;
 					} else if (!is_pack) {
-						// Wrapped-pack fallback: for "Box<Ts>..." the type name is "Box"
-						// (not a template parameter), so look inside the TypeInfo template
-						// args for a dependent name that IS a variadic parameter.
-						if (const TypeInfo* ti = tryGetTypeInfo(fp_ts.type_index())) {
-							if (ti->isTemplateInstantiation()) {
-								for (const auto& targ : ti->templateArgs()) {
-									if (targ.dependent_name.isValid()) {
-										auto dep_it = tparam_nodes_by_name.find(targ.dependent_name);
-										if (dep_it != tparam_nodes_by_name.end() && dep_it->second->is_variadic()) {
-											is_pack = true;
-											break;
-										}
-									}
-								}
+						std::unordered_set<StringHandle, StringHash, StringEqual> dependent_param_names;
+						StringHandle primary_name;
+						collectDependentTemplateParamNamesFromType(
+							fp_ts.type_index(),
+							tparam_nodes_by_name,
+							primary_name,
+							dependent_param_names);
+						for (StringHandle dep_name : dependent_param_names) {
+							auto dep_it = tparam_nodes_by_name.find(dep_name);
+							if (dep_it != tparam_nodes_by_name.end() && dep_it->second->is_variadic()) {
+								is_pack = true;
+								break;
 							}
 						}
 					}
@@ -1084,34 +1295,14 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 				if (!pack_type_name.isValid()) {
 					pack_type_name = fp_type.token().handle();
 				}
-				// For simple "Ts... args" the token IS the template parameter name.
-				// For "MyBox<Ts>... args" the token is "MyBox" (not a template param).
-				// For "Pair<Ts,Us>... args" the token is "Pair" (not a template param).
-				// In those cases, look inside the TypeInfo template args for dependent names.
-				// All dependent names found are recorded in function_pack_dependent_param_names
-				// so that multi-dependent pack element types (e.g. Pair<Ts,Us>) allow both
-				// Ts and Us to consume their corresponding position from each call argument.
-				if (!pack_type_name.isValid() || !tparam_nodes_by_name.count(pack_type_name)) {
-					if (const TypeInfo* type_info = tryGetTypeInfo(fp_type.type_index())) {
-						if (type_info->isTemplateInstantiation()) {
-							for (const auto& targ : type_info->templateArgs()) {
-								if (targ.dependent_name.isValid()) {
-									if (!tparam_nodes_by_name.count(pack_type_name)) {
-										// Primary name: first dependent entry that IS a template
-										// parameter.  For "Pair<Ts,Us>..." the token gives "Pair"
-										// (valid but not a template param), so we replace it with
-										// the first actual pack parameter name ("Ts").
-										pack_type_name = targ.dependent_name;
-									}
-									deduction_info.function_pack_dependent_param_names.insert(
-										targ.dependent_name);
-								}
-							}
-						}
-					}
+				if (!tparam_nodes_by_name.count(pack_type_name)) {
+					pack_type_name = {};
 				}
-				// For the simple "Ts... args" case the primary name is already in
-				// pack_type_name; add it to the set so the gate check is uniform.
+				collectDependentTemplateParamNamesFromType(
+					fp_type.type_index(),
+					tparam_nodes_by_name,
+					pack_type_name,
+					deduction_info.function_pack_dependent_param_names);
 				if (pack_type_name.isValid()) {
 					deduction_info.function_pack_dependent_param_names.insert(pack_type_name);
 				}
@@ -1146,61 +1337,18 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		if (fp_info && ca_info &&
 			fp_info->isTemplateInstantiation() && ca_info->isTemplateInstantiation() &&
 			fp_info->baseTemplateName() == ca_info->baseTemplateName()) {
-			const auto& fp_targs = fp_info->templateArgs();
-			const auto& ca_targs = ca_info->templateArgs();
-			bool slot_produced_deduction = false;
-			for (size_t j = 0; j < fp_targs.size() && j < ca_targs.size(); ++j) {
-				const auto& p = fp_targs[j];
-				const auto& c = ca_targs[j];
-				if (!p.dependent_name.isValid())
-					continue;
-				if (!tparam_nodes_by_name.count(p.dependent_name))
-					continue;
-				if (!c.is_value) {
-					// Type argument — build a TypeSpecifierNode from the
-					// TemplateArgInfo so that pointer depth, CV qualifiers,
-					// and reference qualifiers are preserved through the
-					// entire pipeline (TemplateTypeArg →
-					// substitute_template_parameter / registerTypeParamsInScope).
-					TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(
-						makeTypeSpecifierFromTemplateArgInfo(c));
-					auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
-					if (!inserted && !(it->second == new_arg)) {
-						FLASH_LOG_FORMAT(Templates, Error,
-										 "[depth={}]: Conflicting deduction for type param '{}'",
-										 recursion_depth, StringTable::getStringView(p.dependent_name));
-						return std::nullopt;
-					}
-					slot_produced_deduction = true;
-					FLASH_LOG_FORMAT(Templates, Debug,
-									 "[depth={}]: Pre-deduced type param '{}' = type {}",
-									 recursion_depth,
-									 StringTable::getStringView(p.dependent_name),
-									 static_cast<int>(c.typeEnum()));
-				} else {
-					// Concrete argument is a value (c.is_value==true); deduce a non-type param.
-					// We check c.is_value (the concrete arg) rather than p.is_value (the
-					// placeholder), because dependent non-type params are stored as
-					// is_value==false in the placeholder even though they carry an integer value
-					// at instantiation time.
-					TemplateTypeArg new_arg = TemplateTypeArg::makeValue(c.intValue(), c.typeEnum());
-					auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
-					if (!inserted && !(it->second == new_arg)) {
-						FLASH_LOG_FORMAT(Templates, Error,
-										 "[depth={}]: Conflicting deduction for non-type param '{}'",
-										 recursion_depth, StringTable::getStringView(p.dependent_name));
-						return std::nullopt;
-					}
-					slot_produced_deduction = true;
-					FLASH_LOG_FORMAT(Templates, Debug,
-									 "[depth={}]: Pre-deduced non-type param '{}' = {}",
-									 recursion_depth,
-									 StringTable::getStringView(p.dependent_name),
-									 c.intValue());
-				}
+			auto slot_produced_deduction = preDeduceTemplateArgsFromMatchingTypes(
+				fp_type,
+				ca_type,
+				tparam_nodes_by_name,
+				param_name_to_arg,
+				recursion_depth);
+			if (!slot_produced_deduction.has_value()) {
+				return std::nullopt;
 			}
-			if (slot_produced_deduction)
+			if (*slot_produced_deduction) {
 				pre_deduced_arg_indices.insert(concrete_arg_index);
+			}
 		}
 
 		if (func_param_decl.is_array() && ca_type.is_array()) {
@@ -1506,46 +1654,18 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						overload_mismatch = true;
 						break;
 					}
-					// Find this pack's position in the element type's template-arg list.
-					// For "Pair<Ts,Us>...", Ts is at position 0 and Us is at position 1.
-					// For simple "Ts...", dep_pos stays SIZE_MAX and we fall back to the
-					// full call-arg type.
-					size_t dep_pos = SIZE_MAX;
-					if (deduction_info->function_pack_element_type_index.is_valid()) {
-						if (const TypeInfo* elem_info = tryGetTypeInfo(
-								deduction_info->function_pack_element_type_index)) {
-							if (elem_info->isTemplateInstantiation()) {
-								size_t p = 0;
-								for (const auto& targ : elem_info->templateArgs()) {
-									if (targ.dependent_name == param.nameHandle()) {
-										dep_pos = p;
-										break;
-									}
-									++p;
-								}
-							}
-						}
-					}
 					for (size_t j = deduction_info->function_pack_call_arg_start + pack_size;
 						 j < deduction_info->function_pack_call_arg_end &&
 						 j < current_explicit_call_arg_types_->size();
 						 ++j) {
 						const TypeSpecifierNode& call_arg = (*current_explicit_call_arg_types_)[j];
 						bool pushed = false;
-						// For template-specialization element types (e.g. "Pair<Ts,Us>..."),
-						// extract the inner type at dep_pos from the concrete call argument's
-						// TypeInfo rather than using the whole pair type as the pack element.
-						if (dep_pos != SIZE_MAX) {
-							if (const TypeInfo* call_arg_info = tryGetTypeInfo(call_arg.type_index())) {
-								if (call_arg_info->isTemplateInstantiation() &&
-									dep_pos < call_arg_info->templateArgs().size()) {
-									const TypeInfo::TemplateArgInfo& inner = call_arg_info->templateArgs()[dep_pos];
-									TemplateTypeArg extracted_arg = toTemplateTypeArg(inner);
-									extracted_arg.is_dependent = inner.dependent_name.isValid();
-									template_args.push_back(extracted_arg);
-									pushed = true;
-								}
-							}
+						if (auto extracted_arg = extractNestedTemplateArgForDependentName(
+								deduction_info->function_pack_element_type_index,
+								call_arg.type_index(),
+								param.nameHandle())) {
+							template_args.push_back(*extracted_arg);
+							pushed = true;
 						}
 						if (!pushed) {
 							template_args.push_back(TemplateTypeArg::makeTypeSpecifier(call_arg));
@@ -2588,21 +2708,6 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 				if (function_pack_arg_start != SIZE_MAX) {
 					arg_index = function_pack_arg_start;
 				}
-				// If the function-parameter pack element type is a template specialisation
-				// (e.g. Box<Ts>...), look up its TypeInfo so we can extract the inner
-				// template argument rather than pushing the full outer type.  This fixes
-				// implicit deduction of Ts from Box<Ts>... arguments:
-				//   template<typename... Ts> int f(Box<Ts>... boxes)
-				//   f(box_int, box_dbl) should deduce Ts={int,double}, not {Box<int>,Box<double>}
-				// For multi-dependent types like Pair<Ts,Us>..., each pack param finds its
-				// own position inside each call argument by matching p.dependent_name.
-				const TypeInfo* pack_elem_fp_info = nullptr;
-				if (!deduction_info.function_pack_element_type_index.isNull()) {
-					const TypeInfo* elem_info = tryGetTypeInfo(deduction_info.function_pack_element_type_index);
-					if (elem_info && elem_info->isTemplateInstantiation()) {
-						pack_elem_fp_info = elem_info;
-					}
-				}
 				while (arg_index < arg_types.size()) {
 					if (pre_deduced_arg_indices.count(arg_index)) {
 						++arg_index;
@@ -2610,39 +2715,12 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 					}
 					const TypeSpecifierNode& ca_type = arg_types[arg_index];
 					bool pushed = false;
-					// Try to unwrap the inner type when the pack element is a template
-					// specialization (e.g. deduce int from Box<int> when pattern is Box<Ts>).
-					// For multi-dependent types (e.g. Pair<Ts,Us>...), find the position
-					// whose dependent_name matches the current pack parameter (param.nameHandle()).
-					if (pack_elem_fp_info) {
-						const TypeInfo* ca_info = tryGetTypeInfo(ca_type.type_index());
-						if (ca_info && ca_info->isTemplateInstantiation() &&
-							pack_elem_fp_info->baseTemplateName() == ca_info->baseTemplateName()) {
-							const auto& fp_targs = pack_elem_fp_info->templateArgs();
-							const auto& ca_targs = ca_info->templateArgs();
-							for (size_t j = 0; j < fp_targs.size() && j < ca_targs.size(); ++j) {
-								const auto& p = fp_targs[j];
-								const auto& c = ca_targs[j];
-								if (!p.dependent_name.isValid())
-									continue;
-								// Only push the arg for the position that belongs to the
-								// current pack parameter.  For simple Box<Ts>... this is
-								// always the first (and only) dependent position.  For
-								// multi-dependent types like Pair<Ts,Us>... each pack param
-								// picks its own position: Ts picks j=0, Us picks j=1.
-								if (p.dependent_name != param.nameHandle())
-									continue;
-								if (!c.is_value) {
-									template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
-										makeTypeSpecifierFromTemplateArgInfo(c)));
-									pushed = true;
-								} else {
-									template_args.push_back(TemplateTypeArg::makeValue(c.intValue(), c.typeEnum()));
-									pushed = true;
-								}
-								break;
-							}
-						}
+					if (auto extracted_arg = extractNestedTemplateArgForDependentName(
+							deduction_info.function_pack_element_type_index,
+							ca_type.type_index(),
+							param.nameHandle())) {
+						template_args.push_back(*extracted_arg);
+						pushed = true;
 					}
 					if (!pushed) {
 						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(ca_type));
