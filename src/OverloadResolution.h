@@ -70,6 +70,138 @@ struct ConversionPlan {
 	}
 };
 
+struct ArgumentConversionInfo {
+	ConversionRank rank = ConversionRank::NoMatch;
+	const TypeSpecifierNode* parameter_type = nullptr;
+	bool is_valid = false;
+
+	TypeConversionResult toResult() const { return {rank, is_valid}; }
+
+	static ArgumentConversionInfo no_match() {
+		return {ConversionRank::NoMatch, nullptr, false};
+	}
+
+	static ArgumentConversionInfo exact_match_variadic() {
+		return {ConversionRank::ExactMatch, nullptr, true};
+	}
+};
+
+inline bool isSameTypeIgnoringTopLevelCvAndRef(
+	const TypeSpecifierNode& lhs,
+	const TypeSpecifierNode& rhs) {
+	const CanonicalTypeAlias lhs_canonical = canonicalize_type_alias(lhs.type_index());
+	const CanonicalTypeAlias rhs_canonical = canonicalize_type_alias(rhs.type_index());
+	const TypeIndex lhs_resolved = lhs_canonical.resolvedTypeIndex();
+	const TypeIndex rhs_resolved = rhs_canonical.resolvedTypeIndex();
+
+	if (lhs.type() != rhs.type() ||
+		lhs_resolved != rhs_resolved ||
+		lhs.pointer_depth() != rhs.pointer_depth() ||
+		lhs.pointer_levels().size() != rhs.pointer_levels().size() ||
+		lhs.array_dimensions() != rhs.array_dimensions() ||
+		lhs.has_member_class() != rhs.has_member_class() ||
+		lhs.has_function_signature() != rhs.has_function_signature()) {
+		return false;
+	}
+
+	for (size_t i = 0; i < lhs.pointer_levels().size(); ++i) {
+		if (lhs.pointer_levels()[i].cv_qualifier != rhs.pointer_levels()[i].cv_qualifier) {
+			return false;
+		}
+	}
+
+	if (lhs.has_member_class() && lhs.member_class_name() != rhs.member_class_name()) {
+		return false;
+	}
+
+	if (lhs.has_function_signature()) {
+		const FunctionSignature& lhs_sig = lhs.function_signature();
+		const FunctionSignature& rhs_sig = rhs.function_signature();
+		if (lhs_sig.returnType() != rhs_sig.returnType() ||
+			lhs_sig.return_type_index != rhs_sig.return_type_index ||
+			lhs_sig.return_pointer_depth != rhs_sig.return_pointer_depth ||
+			lhs_sig.return_reference_qualifier != rhs_sig.return_reference_qualifier ||
+			lhs_sig.parameter_type_indices.size() != rhs_sig.parameter_type_indices.size() ||
+			lhs_sig.linkage != rhs_sig.linkage ||
+			lhs_sig.class_name != rhs_sig.class_name ||
+			lhs_sig.is_const != rhs_sig.is_const ||
+			lhs_sig.is_volatile != rhs_sig.is_volatile) {
+			return false;
+		}
+		for (size_t i = 0; i < lhs_sig.parameter_type_indices.size(); ++i) {
+			if (lhs_sig.parameter_type_indices[i] != rhs_sig.parameter_type_indices[i]) {
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
+inline bool isRvalueLikeArgumentForReferenceBinding(const TypeSpecifierNode& argument_type) {
+	return !argument_type.is_reference() || argument_type.is_rvalue_reference();
+}
+
+inline int compareArgumentConversionInfo(
+	const TypeSpecifierNode& argument_type,
+	const ArgumentConversionInfo& lhs,
+	const ArgumentConversionInfo& rhs) {
+	if (lhs.rank < rhs.rank) {
+		return -1;
+	}
+	if (lhs.rank > rhs.rank) {
+		return 1;
+	}
+
+	if (lhs.rank != ConversionRank::ExactMatch ||
+		lhs.parameter_type == nullptr || rhs.parameter_type == nullptr ||
+		!isRvalueLikeArgumentForReferenceBinding(argument_type)) {
+		return 0;
+	}
+
+	const TypeSpecifierNode& lhs_param = *lhs.parameter_type;
+	const TypeSpecifierNode& rhs_param = *rhs.parameter_type;
+	const bool lhs_is_rvalue_ref = lhs_param.is_rvalue_reference();
+	const bool rhs_is_rvalue_ref = rhs_param.is_rvalue_reference();
+	const bool lhs_is_const_lvalue_ref = lhs_param.is_lvalue_reference() && lhs_param.is_const();
+	const bool rhs_is_const_lvalue_ref = rhs_param.is_lvalue_reference() && rhs_param.is_const();
+
+	if (!isSameTypeIgnoringTopLevelCvAndRef(lhs_param, rhs_param)) {
+		return 0;
+	}
+
+	if (lhs_is_rvalue_ref && rhs_is_const_lvalue_ref) {
+		return -1;
+	}
+	if (rhs_is_rvalue_ref && lhs_is_const_lvalue_ref) {
+		return 1;
+	}
+
+	return 0;
+}
+
+struct ConversionInfoComparison {
+	bool lhs_is_better = false;
+	bool lhs_is_worse = false;
+};
+
+inline ConversionInfoComparison compareConversionInfoLists(
+	const std::vector<TypeSpecifierNode>& argument_types,
+	const std::vector<ArgumentConversionInfo>& lhs_infos,
+	const std::vector<ArgumentConversionInfo>& rhs_infos) {
+	ConversionInfoComparison comparison;
+	const size_t count = std::min(argument_types.size(), std::min(lhs_infos.size(), rhs_infos.size()));
+	for (size_t i = 0; i < count; ++i) {
+		const int arg_comparison = compareArgumentConversionInfo(argument_types[i], lhs_infos[i], rhs_infos[i]);
+		if (arg_comparison < 0) {
+			comparison.lhs_is_better = true;
+		} else if (arg_comparison > 0) {
+			comparison.lhs_is_worse = true;
+		}
+	}
+	return comparison;
+}
+
 // Build a unified conversion plan for two primitive TypeCategory values.
 // Returns both the ConversionRank (for overload resolution) and the
 // StandardConversionKind (for semantic annotation) in a single call.
@@ -541,19 +673,11 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				if (!to_is_rvalue && to.is_const()) {
 					auto plan = buildConversionPlan(from_base_category, to_base_category);
 					if (plan.is_valid) {
-						// C++20 [over.ics.rank] p3.3.1.4: binding an rvalue (xvalue) to
-						// T&& is preferred over binding it to const T&. The fully correct
-						// implementation is a tie-breaker in the comparison loop (not a rank
-						// change), since both bindings are in the "ExactMatch" ICS category per
-						// [over.best.ics.general] Table 12. Using Conversion(3) here is a
-						// pragmatic approximation: it ensures T&& beats const T& in overload
-						// comparison while avoiding wider side effects from QualificationAdjustment(1)
-						// unblocking template chains that would otherwise fail (leading to crashes).
-						// TODO: replace with a proper tie-breaker in resolve_constructor_overload
-						// and resolve_overload once the comparison loop tracks per-arg ICS details.
-						if (plan.rank == ConversionRank::ExactMatch) {
-							plan.rank = ConversionRank::Conversion;
-						}
+						// C++20 [over.ics.rank]/3.2.3 prefers binding an rvalue to T&& over
+						// binding it to const T& when the implied conversion sequences are
+						// otherwise indistinguishable.  Keep the rank as ExactMatch here; the
+						// tie-breaker is applied later in resolve_constructor_overload() and
+						// resolve_overload() where the competing parameter types are visible.
 						return plan;
 					}
 				}
@@ -737,6 +861,13 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 	return buildConversionPlan(from, to).toResult();
 }
 
+inline ArgumentConversionInfo buildArgumentConversionInfo(
+	const TypeSpecifierNode& argument_type,
+	const TypeSpecifierNode& parameter_type) {
+	const ConversionPlan conversion = buildConversionPlan(argument_type, parameter_type);
+	return {conversion.rank, &parameter_type, conversion.is_valid};
+}
+
 // Result of overload resolution
 struct OverloadResolutionResult {
 	const ASTNode* selected_overload = nullptr;
@@ -863,7 +994,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 	const std::vector<TypeSpecifierNode>& argument_types,
 	bool skip_implicit = false) {
 	const ConstructorDeclarationNode* best_match = nullptr;
-	std::vector<ConversionRank> best_ranks;
+	std::vector<ArgumentConversionInfo> best_infos;
 	int num_best_matches = 0;
 	std::vector<const ConstructorDeclarationNode*> tied_candidates;
 
@@ -895,7 +1026,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 			}
 		}
 
-		std::vector<ConversionRank> conversion_ranks;
+		std::vector<ArgumentConversionInfo> conversion_infos;
 		bool all_convertible = true;
 		for (size_t i = 0; i < argument_types.size(); ++i) {
 			if (!parameters[i].is<DeclarationNode>() || !parameters[i].as<DeclarationNode>().type_node().is<TypeSpecifierNode>()) {
@@ -904,12 +1035,12 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 			}
 
 			const auto& param_type = parameters[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-			auto conversion = can_convert_type(argument_types[i], param_type);
+			const ArgumentConversionInfo conversion = buildArgumentConversionInfo(argument_types[i], param_type);
 			if (!conversion.is_valid) {
 				all_convertible = false;
 				break;
 			}
-			conversion_ranks.push_back(conversion.rank);
+			conversion_infos.push_back(conversion);
 		}
 
 		if (!all_convertible) {
@@ -918,22 +1049,17 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 
 		if (!best_match) {
 			best_match = &ctor_decl;
-			best_ranks = conversion_ranks;
+			best_infos = conversion_infos;
 			num_best_matches = 1;
 			tied_candidates.clear();
 			tied_candidates.push_back(&ctor_decl);
 			continue;
 		}
 
-		bool this_is_better = false;
-		bool this_is_worse = false;
-		for (size_t i = 0; i < conversion_ranks.size(); ++i) {
-			if (conversion_ranks[i] < best_ranks[i]) {
-				this_is_better = true;
-			} else if (conversion_ranks[i] > best_ranks[i]) {
-				this_is_worse = true;
-			}
-		}
+		const ConversionInfoComparison this_vs_best =
+			compareConversionInfoLists(argument_types, conversion_infos, best_infos);
+		const bool this_is_better = this_vs_best.lhs_is_better;
+		const bool this_is_worse = this_vs_best.lhs_is_worse;
 
 		if (this_is_better && !this_is_worse) {
 			// This constructor is strictly better than the current best.
@@ -942,7 +1068,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 			// strictly worse must be kept so that ambiguity is detected.
 			std::vector<const ConstructorDeclarationNode*> old_tied = std::move(tied_candidates);
 			best_match = &ctor_decl;
-			best_ranks = conversion_ranks;
+			best_infos = conversion_infos;
 			num_best_matches = 1;
 			tied_candidates.clear();
 			tied_candidates.push_back(&ctor_decl);
@@ -950,7 +1076,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 				if (prev == &ctor_decl)
 					continue;
 				const auto& prev_params = prev->parameter_nodes();
-				std::vector<ConversionRank> prev_ranks;
+				std::vector<ArgumentConversionInfo> prev_infos;
 				bool prev_valid = true;
 				for (size_t k = 0; k < argument_types.size(); ++k) {
 					if (!prev_params[k].is<DeclarationNode>() ||
@@ -959,22 +1085,19 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 						break;
 					}
 					const auto& pt = prev_params[k].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-					auto conv = can_convert_type(argument_types[k], pt);
+					const ArgumentConversionInfo conv = buildArgumentConversionInfo(argument_types[k], pt);
 					if (!conv.is_valid) {
 						prev_valid = false;
 						break;
 					}
-					prev_ranks.push_back(conv.rank);
+					prev_infos.push_back(conv);
 				}
 				if (!prev_valid)
 					continue;
-				bool prev_better = false, prev_worse = false;
-				for (size_t k = 0; k < prev_ranks.size() && k < best_ranks.size(); ++k) {
-					if (prev_ranks[k] < best_ranks[k])
-						prev_better = true;
-					else if (prev_ranks[k] > best_ranks[k])
-						prev_worse = true;
-				}
+				const ConversionInfoComparison prev_vs_best =
+					compareConversionInfoLists(argument_types, prev_infos, best_infos);
+				const bool prev_better = prev_vs_best.lhs_is_better;
+				const bool prev_worse = prev_vs_best.lhs_is_worse;
 				if (!prev_better && prev_worse) {
 					// Strictly worse than new best — discard.
 				} else {
@@ -1090,7 +1213,7 @@ inline OverloadResolutionResult resolve_overload(
 
 	// Track the best match found so far
 	const ASTNode* best_match = nullptr;
-	std::vector<ConversionRank> best_ranks;
+	std::vector<ArgumentConversionInfo> best_infos;
 	int num_best_matches = 0;
 	std::vector<const ASTNode*> tied_candidates; // All candidates with best rank
 
@@ -1125,7 +1248,7 @@ inline OverloadResolutionResult resolve_overload(
 		// Check if all provided arguments can be converted to parameters
 		// For variadic functions, only check the named parameters
 		// The variadic arguments (...) accept any type
-		std::vector<ConversionRank> conversion_ranks;
+		std::vector<ArgumentConversionInfo> conversion_infos;
 		bool all_convertible = true;
 
 		size_t params_to_check = std::min(parameters.size(), argument_types.size());
@@ -1134,19 +1257,19 @@ inline OverloadResolutionResult resolve_overload(
 			const auto& param_type = parameters[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 			const auto& arg_type = argument_types[i];
 
-			auto conversion = can_convert_type(arg_type, param_type);
+			const ArgumentConversionInfo conversion = buildArgumentConversionInfo(arg_type, param_type);
 			if (!conversion.is_valid) {
 				all_convertible = false;
 				break;
 			}
-			conversion_ranks.push_back(conversion.rank);
+			conversion_infos.push_back(conversion);
 		}
 
 		// For variadic functions, the extra arguments beyond named parameters
 		// are considered to have "exact match" rank (they're accepted as-is)
 		if (is_variadic) {
 			for (size_t i = params_to_check; i < argument_types.size(); ++i) {
-				conversion_ranks.push_back(ConversionRank::ExactMatch);
+				conversion_infos.push_back(ArgumentConversionInfo::exact_match_variadic());
 			}
 		}
 
@@ -1158,22 +1281,16 @@ inline OverloadResolutionResult resolve_overload(
 		if (best_match == nullptr) {
 			// First valid match
 			best_match = &overload;
-			best_ranks = conversion_ranks;
+			best_infos = conversion_infos;
 			num_best_matches = 1;
 			tied_candidates.clear();
 			tied_candidates.push_back(&overload);
 		} else {
 			// Compare conversion ranks
-			bool this_is_better = false;
-			bool this_is_worse = false;
-
-			for (size_t i = 0; i < conversion_ranks.size(); ++i) {
-				if (conversion_ranks[i] < best_ranks[i]) {
-					this_is_better = true;
-				} else if (conversion_ranks[i] > best_ranks[i]) {
-					this_is_worse = true;
-				}
-			}
+			const ConversionInfoComparison this_vs_best =
+				compareConversionInfoLists(argument_types, conversion_infos, best_infos);
+			const bool this_is_better = this_vs_best.lhs_is_better;
+			const bool this_is_worse = this_vs_best.lhs_is_worse;
 
 			if (this_is_better && !this_is_worse) {
 				// This overload is strictly better than the current best.
@@ -1182,7 +1299,7 @@ inline OverloadResolutionResult resolve_overload(
 				// strictly worse must be kept so that ambiguity is detected.
 				std::vector<const ASTNode*> old_tied = std::move(tied_candidates);
 				best_match = &overload;
-				best_ranks = conversion_ranks;
+				best_infos = conversion_infos;
 				num_best_matches = 1;
 				tied_candidates.clear();
 				tied_candidates.push_back(&overload);
@@ -1193,31 +1310,28 @@ inline OverloadResolutionResult resolve_overload(
 					const FunctionDeclarationNode* prev_func = &prev->as<FunctionDeclarationNode>();
 					const auto& prev_params = prev_func->parameter_nodes();
 					size_t prev_params_to_check = std::min(prev_params.size(), argument_types.size());
-					std::vector<ConversionRank> prev_ranks;
+					std::vector<ArgumentConversionInfo> prev_infos;
 					bool prev_valid = true;
 					for (size_t k = 0; k < prev_params_to_check; ++k) {
 						const auto& pt = prev_params[k].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-						auto conv = can_convert_type(argument_types[k], pt);
+						const ArgumentConversionInfo conv = buildArgumentConversionInfo(argument_types[k], pt);
 						if (!conv.is_valid) {
 							prev_valid = false;
 							break;
 						}
-						prev_ranks.push_back(conv.rank);
+						prev_infos.push_back(conv);
 					}
 					if (prev_func->is_variadic()) {
 						for (size_t k = prev_params_to_check; k < argument_types.size(); ++k)
-							prev_ranks.push_back(ConversionRank::ExactMatch);
+							prev_infos.push_back(ArgumentConversionInfo::exact_match_variadic());
 					}
 					if (!prev_valid)
 						continue;
 					// Compare prev against the new best.
-					bool prev_better = false, prev_worse = false;
-					for (size_t k = 0; k < prev_ranks.size() && k < best_ranks.size(); ++k) {
-						if (prev_ranks[k] < best_ranks[k])
-							prev_better = true;
-						else if (prev_ranks[k] > best_ranks[k])
-							prev_worse = true;
-					}
+					const ConversionInfoComparison prev_vs_best =
+						compareConversionInfoLists(argument_types, prev_infos, best_infos);
+					const bool prev_better = prev_vs_best.lhs_is_better;
+					const bool prev_worse = prev_vs_best.lhs_is_worse;
 					if (!prev_better && prev_worse) {
 						// Strictly worse than new best — discard.
 					} else {
@@ -1247,7 +1361,8 @@ inline OverloadResolutionResult resolve_overload(
 		// FlashCpp doesn't track volatile qualifiers, so overloads differing only in
 		// volatile (e.g. f(T*) vs f(volatile T*)) score identically. Prefer the first
 		// declared overload in that case rather than reporting spurious ambiguity.
-		// Note: const sub-ranking is now handled by ConversionRank::QualificationAdjustment,
+		// Note: pointer const sub-ranking is handled by ConversionRank::QualificationAdjustment,
+		// and reference-binding T&& vs const T& is handled earlier by compareArgumentConversionInfo(),
 		// so this tiebreaker only fires for genuine volatile-only differences.
 		bool differs_only_in_cv = true;
 		const FunctionDeclarationNode* best_func = &best_match->as<FunctionDeclarationNode>();
