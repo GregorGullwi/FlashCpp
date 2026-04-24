@@ -1442,7 +1442,11 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 	const auto& param_ti = getTypeInfo(param_idx);
 	if (!param_ti.struct_info_)
 		return param_idx;
-	auto strip_template_hash_suffix = [](std::string_view name) {
+	auto strip_to_base_name = [](std::string_view name) {
+		auto last_scope = name.rfind("::");
+		if (last_scope != std::string_view::npos) {
+			name = name.substr(last_scope + 2);
+		}
 		auto dollar_pos = name.find('$');
 		if (dollar_pos != std::string_view::npos) {
 			name = name.substr(0, dollar_pos);
@@ -1450,15 +1454,20 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 		return name;
 	};
 	auto param_name = StringTable::getStringView(param_ti.name());
-	auto param_base_name = strip_template_hash_suffix(param_name);
+	auto param_base_name = strip_to_base_name(param_name);
+	auto instantiated_name = StringTable::getStringView(getTypeInfo(left_type_index).name());
+	auto instantiated_base_name = strip_to_base_name(instantiated_name);
+	const StructTypeInfo* param_struct_info = param_ti.getStructInfo();
+	if (param_struct_info && !param_struct_info->sizeInBytes().is_set()) {
+		if (param_base_name == instantiated_base_name)
+			return left_type_index;
+	}
 	// If the parameter already carries a template hash suffix, it is already a concrete
 	// specialization (for example "Iter$abc123"), not the uninstantiated self-reference
 	// pattern spelled inside the class definition (for example plain "Iter"). In that
 	// case there is nothing to rewrite.
 	if (param_base_name.size() != param_name.size())
 		return param_idx;
-	auto instantiated_name = StringTable::getStringView(getTypeInfo(left_type_index).name());
-	auto instantiated_base_name = strip_template_hash_suffix(instantiated_name);
 	if (param_base_name == instantiated_base_name)
 		return left_type_index;
 	// Uninstantiated self-references inside nested classes are often stored as just "Inner",

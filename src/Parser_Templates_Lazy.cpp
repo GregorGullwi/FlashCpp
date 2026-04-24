@@ -34,10 +34,25 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		}
 		auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 			lazy_info.identity.instantiated_owner_name, ctor_name_handle);
+		setOuterTemplateBindingsFromParams(new_ctor_ref, lazy_info.template_params, lazy_info.template_args);
+		TypeIndex instantiated_owner_type_index{};
 		if (auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
 			struct_it != getTypesByNameMap().end()) {
-			new_ctor_ref.set_owning_type_index(struct_it->second->type_index_);
+			instantiated_owner_type_index = struct_it->second->type_index_;
+			new_ctor_ref.set_owning_type_index(instantiated_owner_type_index);
 		}
+
+		const StructDeclarationNode* owner_struct_decl = nullptr;
+		if (auto owner_symbol = lookup_symbol(lazy_info.identity.template_owner_name);
+			owner_symbol.has_value() && owner_symbol->is<StructDeclarationNode>()) {
+			owner_struct_decl = &owner_symbol->as<StructDeclarationNode>();
+		}
+
+		auto resolve_self_type = [&](TypeIndex& type_index) {
+			if (instantiated_owner_type_index.is_valid()) {
+				type_index = resolveSelfRefParamIndex(type_index, instantiated_owner_type_index);
+			}
+		};
 
 		// Build parameter list, expanding variadic pack parameters into N individual
 		// parameters (args_0, args_1, ...) and populating pack_param_info_ so that
@@ -109,6 +124,18 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 				TypeIndex param_type_index = substitute_template_parameter(
 					param_type_spec, lazy_info.template_params, lazy_info.template_args);
+				if (owner_struct_decl) {
+					param_type_index = resolveOwnerAliasTypeIndex(
+						[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+							return substitute_template_parameter(type_spec, params, args);
+						},
+						*owner_struct_decl,
+						param_type_spec,
+						lazy_info.template_params,
+						lazy_info.template_args,
+						param_type_index);
+				}
+				resolve_self_type(param_type_index);
 
 				TypeSpecifierNode substituted_param_type(
 					param_type_index.category(),
@@ -133,6 +160,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 							substituted_param_type.set_function_signature(*arg->function_signature);
 					}
 				}
+				normalizeSubstitutedTypeSpec(substituted_param_type);
 
 				auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 				auto substituted_param_decl = emplace_node<DeclarationNode>(substituted_param_type_node, param_decl.identifier_token());
@@ -415,16 +443,14 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// refers to the template class itself (e.g., W& in W<T>::operator+=), the type_index
 	// still points to the uninstantiated template base (e.g., W with size=0). We need to
 	// resolve it to the instantiated class (e.g., W<int> with correct size).
-	auto resolve_self_type = [&lazy_info](TypeIndex& type_index) {
-		if (type_index.category() == TypeCategory::Struct) {
-			if (const TypeInfo* type_info = tryGetTypeInfo(type_index);
-				type_info && type_info->name() == lazy_info.identity.template_owner_name) {
-				// This type refers to the template base class — resolve to the instantiated class
-				auto it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
-				if (it != getTypesByNameMap().end()) {
-					type_index = it->second->type_index_;
-				}
-			}
+	TypeIndex instantiated_owner_type_index{};
+	if (auto it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
+		it != getTypesByNameMap().end()) {
+		instantiated_owner_type_index = it->second->type_index_;
+	}
+	auto resolve_self_type = [&](TypeIndex& type_index) {
+		if (instantiated_owner_type_index.is_valid()) {
+			type_index = resolveSelfRefParamIndex(type_index, instantiated_owner_type_index);
 		}
 	};
 

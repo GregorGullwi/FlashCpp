@@ -130,10 +130,32 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		}
 	}
 
+	TypeIndex enclosing_struct_type_index{};
+	std::string_view self_ref_owner_name =
+		current_struct_name_.isValid()
+			? StringTable::getStringView(current_struct_name_)
+			: node.parent_struct_name();
+	if (!self_ref_owner_name.empty()) {
+		if (auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(self_ref_owner_name));
+			type_it != getTypesByNameMap().end()) {
+			enclosing_struct_type_index = type_it->second->type_index_;
+		}
+	}
+	auto resolve_param_type_for_codegen = [&](const DeclarationNode& param_decl) {
+		TypeSpecifierNode resolved = param_decl.type_node().as<TypeSpecifierNode>();
+		if (enclosing_struct_type_index.is_valid()) {
+			resolveSelfReferentialType(resolved, enclosing_struct_type_index);
+		}
+		return resolved;
+	};
+	TypeSpecifierNode resolved_ret_type = func_decl.type_node().as<TypeSpecifierNode>();
+	if (enclosing_struct_type_index.is_valid()) {
+		resolveSelfReferentialType(resolved_ret_type, enclosing_struct_type_index);
+	}
+
 	if (FLASH_LOG_ENABLED(Codegen, Debug)) {
-		const TypeSpecifierNode& debug_ret_type = func_decl.type_node().as<TypeSpecifierNode>();
 		FLASH_LOG(Codegen, Debug, "===== CODEGEN visitFunctionDeclarationNode: ", func_decl.identifier_token().value(), " =====");
-		FLASH_LOG(Codegen, Debug, "  return_type: ", (int)debug_ret_type.type(), " size: ", (int)debug_ret_type.size_in_bits(), " ptr_depth: ", debug_ret_type.pointer_depth(), " is_ref: ", debug_ret_type.is_reference(), " is_rvalue_ref: ", debug_ret_type.is_rvalue_reference());
+		FLASH_LOG(Codegen, Debug, "  return_type: ", (int)resolved_ret_type.type(), " size: ", (int)resolved_ret_type.size_in_bits(), " ptr_depth: ", resolved_ret_type.pointer_depth(), " is_ref: ", resolved_ret_type.is_reference(), " is_rvalue_ref: ", resolved_ret_type.is_rvalue_reference());
 		FLASH_LOG(Codegen, Debug, "  is_member_function: ", node.is_member_function());
 		if (node.is_member_function()) {
 			FLASH_LOG(Codegen, Debug, "  parent_struct_name: ", node.parent_struct_name());
@@ -143,7 +165,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			const auto& param = node.parameter_nodes()[i];
 			if (param.is<DeclarationNode>()) {
 				const DeclarationNode& param_decl = param.as<DeclarationNode>();
-				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				TypeSpecifierNode param_type = resolve_param_type_for_codegen(param_decl);
 				FLASH_LOG(Codegen, Debug, "  param[", i, "]: name='", param_decl.identifier_token().value(), "' type=", (int)param_type.type(), " type_index=", param_type.type_index(), " size=", (int)param_type.size_in_bits(), " ptr_depth=", param_type.pointer_depth(), " base_cv=", (int)param_type.cv_qualifier(), " is_ref=", param_type.is_reference(), " is_rvalue_ref=", param_type.is_rvalue_reference());
 				for (size_t j = 0; j < param_type.pointer_levels().size(); ++j) {
 					FLASH_LOG(Codegen, Debug, " ptr[", j, "]_cv=", (int)param_type.pointer_levels()[j].cv_qualifier);
@@ -156,7 +178,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		// Clear static local names map for new function
 	static_local_names_.clear();
 
-	const TypeSpecifierNode& ret_type = func_decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& ret_type = resolved_ret_type;
 
 		// Create function declaration with return type and name
 		// Use FunctionDeclOp to store typed payload
@@ -291,10 +313,10 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		mangled_name = node.mangled_name();
 	} else if (node.has_non_type_template_args()) {
 			// Generate mangled name with template arguments for template specializations (e.g., get<0>)
-		const TypeSpecifierNode& return_type = func_decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& return_type = resolved_ret_type;
 		std::vector<TypeSpecifierNode> param_types;
 		for (const auto& param : node.parameter_nodes()) {
-			param_types.push_back(param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+			param_types.push_back(resolve_param_type_for_codegen(param.as<DeclarationNode>()));
 		}
 		auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
 			func_decl.identifier_token().value(), return_type, param_types,
@@ -324,7 +346,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	size_t unnamed_param_counter = 0;  // Counter for generating unique names for unnamed parameters
 	for (const auto& param : node.parameter_nodes()) {
 		const DeclarationNode& param_decl = param.as<DeclarationNode>();
-		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		TypeSpecifierNode param_type = resolve_param_type_for_codegen(param_decl);
 
 		FunctionParam param_info;
 		param_info.type_index = param_type.type_index();
@@ -988,9 +1010,20 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		//size_t paramIndex = 0;
 	for (const auto& param : node.parameter_nodes()) {
 		const DeclarationNode& param_decl = param.as<DeclarationNode>();
-			//const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		ASTNode symbol_param = param;
+		if (enclosing_struct_type_index.is_valid()) {
+			TypeSpecifierNode resolved_param_type = resolve_param_type_for_codegen(param_decl);
+			if (resolved_param_type.type_index() != param_decl.type_node().as<TypeSpecifierNode>().type_index()) {
+				auto resolved_param_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_param_type);
+				auto resolved_param_decl = ASTNode::emplace_node<DeclarationNode>(resolved_param_type_node, param_decl.identifier_token());
+				if (param_decl.has_default_value()) {
+					resolved_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
+				}
+				symbol_param = resolved_param_decl;
+			}
+		}
 
-		symbol_table.insert(param_decl.identifier_token().value(), param);
+		symbol_table.insert(param_decl.identifier_token().value(), symbol_param);
 			//paramIndex++;
 	}
 
@@ -1548,6 +1581,15 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		enclosing_type_info = enclosing_type_it->second;
 	}
 	const StructTypeInfo* enclosing_struct_info = enclosing_type_info ? enclosing_type_info->getStructInfo() : nullptr;
+	const TypeIndex enclosing_struct_type_index =
+		enclosing_type_info ? enclosing_type_info->type_index_ : TypeIndex{};
+	auto resolve_ctor_param_type_for_codegen = [&](const DeclarationNode& param_decl) {
+		TypeSpecifierNode resolved = param_decl.type_node().as<TypeSpecifierNode>();
+		if (enclosing_struct_type_index.is_valid()) {
+			resolveSelfReferentialType(resolved, enclosing_struct_type_index);
+		}
+		return resolved;
+	};
 	const bool emit_split_ctor_variants =
 		enclosing_struct_info != nullptr &&
 		!enclosing_struct_info->virtual_bases.empty();
@@ -1612,7 +1654,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	ctor_param_names.reserve(node.parameter_nodes().size());
 	for (const auto& param : node.parameter_nodes()) {
 		const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor decl operands");
-		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		TypeSpecifierNode param_type = resolve_ctor_param_type_for_codegen(param_decl);
 
 		FunctionParam func_param;
 		func_param.type_index = param_type.type_index();
@@ -1660,7 +1702,21 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 			symbol_table.insert("this"sv, this_decl);
 		}
 		for (size_t i = 0; i < node.parameter_nodes().size(); ++i) {
-			symbol_table.insert(StringTable::getStringView(ctor_param_names[i]), node.parameter_nodes()[i]);
+			const DeclarationNode& param_decl =
+				requireDeclarationNode(node.parameter_nodes()[i], "ctor param scope insert");
+			ASTNode param_for_scope = node.parameter_nodes()[i];
+			if (enclosing_struct_type_index.is_valid()) {
+				TypeSpecifierNode resolved_param_type = resolve_ctor_param_type_for_codegen(param_decl);
+				if (resolved_param_type.type_index() != param_decl.type_node().as<TypeSpecifierNode>().type_index()) {
+					auto resolved_param_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_param_type);
+					auto resolved_param_decl = ASTNode::emplace_node<DeclarationNode>(resolved_param_type_node, param_decl.identifier_token());
+					if (param_decl.has_default_value()) {
+						resolved_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
+					}
+					param_for_scope = resolved_param_decl;
+				}
+			}
+			symbol_table.insert(StringTable::getStringView(ctor_param_names[i]), param_for_scope);
 		}
 	};
 
