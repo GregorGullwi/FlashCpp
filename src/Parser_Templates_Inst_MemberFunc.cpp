@@ -1025,8 +1025,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	}
 
 	// Save and reset pack_param_info_ so this instantiation can rebuild its local pack state.
+	// std::move already leaves pack_param_info_ in a valid empty state.
 	auto saved_pack_param_info = std::move(pack_param_info_);
-	pack_param_info_.clear();
 
 	// Helper to extract the type name from a TypeSpecifierNode, trying token value first, then TypeInfo lookup
 	auto getTypeName = [&](const TypeSpecifierNode& type_spec) -> std::string_view {
