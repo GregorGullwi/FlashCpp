@@ -2,6 +2,7 @@
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include <span>
+#include <unordered_set>
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
@@ -1129,6 +1130,11 @@ TypeIndex Parser::substitute_template_parameter(
 			materialized_base.instantiated_name,
 			member_type_chain);
 	};
+	// Visited set breaks cycles when a template placeholder's arguments
+	// transitively reference the same placeholder type (common with libstdc++
+	// iterator/allocator CRTP chains). Without this guard, self-referential
+	// template instantiations recurse indefinitely and exhaust the stack.
+	std::unordered_set<TypeIndex> visited_placeholder_types;
 	auto resolveConcreteTemplateArgPlaceholders =
 		[&](const auto& self, TemplateTypeArg& concrete_arg) -> void {
 			if (concrete_arg.is_value || !concrete_arg.type_index.is_valid()) {
@@ -1137,6 +1143,13 @@ TypeIndex Parser::substitute_template_parameter(
 
 			const TypeInfo* arg_type_info = tryGetTypeInfo(concrete_arg.type_index);
 			if (arg_type_info == nullptr || !arg_type_info->isTemplateInstantiation()) {
+				return;
+			}
+
+			// Cycle break: if we've already started resolving this placeholder
+			// higher up the stack, bail out and leave the arg as-is.
+			auto [_, inserted] = visited_placeholder_types.insert(concrete_arg.type_index);
+			if (!inserted) {
 				return;
 			}
 
