@@ -1,10 +1,10 @@
 // Regression test for C++20 [over.ics.rank] p3.3.1.4:
 // binding an rvalue to T&& is preferred over binding it to const T&.
-// Before the fix the conversion rank for rvalue→const T& was set to
-// ConversionRank::Conversion, making it lose to other Conversion-rank
-// candidates (e.g. f(const int&) would incorrectly tie with f(long)).
-// With the fix the rank is QualificationAdjustment, which is strictly
-// between ExactMatch and Promotion — correct ordering is preserved.
+// Before the fix there was no rank demotion for rvalue→const T&, so it
+// returned ExactMatch — the same rank as rvalue→T&&.  This caused ambiguity
+// in overload resolution (both candidates tied).
+// With the fix the rank for rvalue→const T& is demoted to Conversion(3),
+// ensuring T&& (ExactMatch) always wins over const T& for rvalue arguments.
 
 int f(int&&) { return 1; }
 int f(const int&) { return 2; }
