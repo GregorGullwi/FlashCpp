@@ -3592,178 +3592,6 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					}
 				}
 
-				auto traitKindFromTemplateName = [](StringHandle template_name) -> std::optional<TypeTraitKind> {
-					std::string_view name = StringTable::getStringView(template_name);
-					if (name == "is_void")
-						return TypeTraitKind::IsVoid;
-					if (name == "is_null_pointer" || name == "is_nullptr")
-						return TypeTraitKind::IsNullptr;
-					if (name == "is_integral")
-						return TypeTraitKind::IsIntegral;
-					if (name == "is_floating_point")
-						return TypeTraitKind::IsFloatingPoint;
-					if (name == "is_array")
-						return TypeTraitKind::IsArray;
-					if (name == "is_pointer")
-						return TypeTraitKind::IsPointer;
-					if (name == "is_lvalue_reference")
-						return TypeTraitKind::IsLvalueReference;
-					if (name == "is_rvalue_reference")
-						return TypeTraitKind::IsRvalueReference;
-					if (name == "is_member_object_pointer")
-						return TypeTraitKind::IsMemberObjectPointer;
-					if (name == "is_member_function_pointer")
-						return TypeTraitKind::IsMemberFunctionPointer;
-					if (name == "is_enum")
-						return TypeTraitKind::IsEnum;
-					if (name == "is_union")
-						return TypeTraitKind::IsUnion;
-					if (name == "is_class")
-						return TypeTraitKind::IsClass;
-					if (name == "is_function")
-						return TypeTraitKind::IsFunction;
-					if (name == "is_reference")
-						return TypeTraitKind::IsReference;
-					if (name == "is_arithmetic")
-						return TypeTraitKind::IsArithmetic;
-					if (name == "is_fundamental")
-						return TypeTraitKind::IsFundamental;
-					if (name == "is_object")
-						return TypeTraitKind::IsObject;
-					if (name == "is_scalar")
-						return TypeTraitKind::IsScalar;
-					if (name == "is_compound")
-						return TypeTraitKind::IsCompound;
-					if (name == "is_const")
-						return TypeTraitKind::IsConst;
-					if (name == "is_volatile")
-						return TypeTraitKind::IsVolatile;
-					if (name == "is_signed")
-						return TypeTraitKind::IsSigned;
-					if (name == "is_unsigned")
-						return TypeTraitKind::IsUnsigned;
-					if (name == "is_bounded_array")
-						return TypeTraitKind::IsBoundedArray;
-					if (name == "is_unbounded_array")
-						return TypeTraitKind::IsUnboundedArray;
-					return std::nullopt;
-				};
-
-				struct TraitInput {
-					TypeIndex type_index;
-					size_t pointer_depth;
-					ReferenceQualifier ref_qualifier;
-					CVQualifier cv;
-					bool is_array;
-					std::optional<size_t> array_size;
-					const TypeInfo* type_info;
-					const StructTypeInfo* struct_info;
-				};
-
-				auto evaluateTypeTraitFromInput = [](TypeTraitKind trait_kind, const TraitInput& input) {
-					return evaluateTypeTrait(trait_kind, input.type_index,
-											 input.ref_qualifier != ReferenceQualifier::None,
-											 input.ref_qualifier == ReferenceQualifier::RValueReference,
-											 input.ref_qualifier == ReferenceQualifier::LValueReference,
-											 input.pointer_depth, input.cv, input.is_array, input.array_size, input.struct_info);
-				};
-
-				auto evaluate_unary_trait_from_resolved = [&](StringHandle trait_template_name) -> std::optional<EvalResult> {
-					if (!resolved_type_info || resolved_type_info->template_args_.empty()) {
-						return std::nullopt;
-					}
-
-					auto trait_kind = traitKindFromTemplateName(trait_template_name);
-					if (!trait_kind.has_value()) {
-						return std::nullopt;
-					}
-
-					const auto& arg_info = resolved_type_info->template_args_[0];
-					TraitInput input{
-						.type_index = arg_info.type_index,
-						.pointer_depth = arg_info.pointer_depth ? arg_info.pointer_depth : arg_info.pointer_cv_qualifiers.size(),
-						.ref_qualifier = arg_info.ref_qualifier,
-						.cv = arg_info.cv_qualifier,
-						.is_array = arg_info.is_array,
-						.array_size = arg_info.array_size,
-						.type_info = nullptr,
-						.struct_info = nullptr};
-
-					if (const TypeInfo* type_info = tryGetTypeInfo(input.type_index)) {
-						input.type_info = type_info;
-						if (type_info->isTypeAlias()) {
-							ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-								type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
-							if (resolved_alias.type_index.is_valid()) {
-								input.type_index = resolved_alias.type_index;
-							}
-							// C++20 [temp.alias]/2: aliases are transparent, so accumulate
-							// the alias-resolved metadata on top of any explicit indirection
-							// already present on the template argument (e.g., Ptr* where Ptr = int*
-							// should yield pointer_depth 2, not 1).
-							input.pointer_depth += resolved_alias.pointer_depth;
-							// Reference collapsing (C++20 [dcl.ref]/6): & always wins.
-							if (resolved_alias.reference_qualifier == ReferenceQualifier::LValueReference) {
-								input.ref_qualifier = ReferenceQualifier::LValueReference;
-							} else if (input.ref_qualifier == ReferenceQualifier::None) {
-								input.ref_qualifier = resolved_alias.reference_qualifier;
-							}
-							if (resolved_alias.isArray()) {
-								input.is_array = true;
-								if (!input.array_size.has_value() && !resolved_alias.array_dimensions.empty()) {
-									input.array_size = resolved_alias.array_dimensions.front();
-								}
-							}
-							input.struct_info = resolved_alias.terminal_type_info
-													? resolved_alias.terminal_type_info->getStructInfo()
-													: nullptr;
-						} else {
-							input.pointer_depth = type_info->pointer_depth_;
-							input.ref_qualifier = type_info->reference_qualifier_;
-							input.struct_info = type_info->getStructInfo();
-						}
-					}
-
-					auto trait_result = evaluateTypeTraitFromInput(*trait_kind, input);
-					if (trait_result.success) {
-						return trait_result.value ? EvalResult::from_bool(true) : EvalResult::from_bool(false);
-					}
-
-					return std::nullopt;
-				};
-				auto evaluate_integral_constant_value = [](const TypeInfo& ti) -> std::optional<EvalResult> {
-					if (!ti.isTemplateInstantiation()) {
-						return std::nullopt;
-					}
-
-					const auto& args = ti.templateArgs();
-					if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
-						FLASH_LOG(ConstExpr, Debug, "Integral constant synthesis: template args=", args.size());
-						for (size_t i = 0; i < args.size(); ++i) {
-							FLASH_LOG(ConstExpr, Debug, "  arg[", i, "] is_value=", args[i].is_value, ", category=", static_cast<int>(args[i].category()), ", type_index=", args[i].type_index, ", value(int)=", args[i].intValue());
-						}
-					}
-					if (args.size() < 2) {
-						FLASH_LOG(ConstExpr, Debug, "Integral constant synthesis failed: expected >=2 template args, got ", args.size());
-						return std::nullopt;
-					}
-
-					const auto& value_arg = args[1];
-					if (!value_arg.is_value) {
-						FLASH_LOG(ConstExpr, Debug, "Integral constant synthesis failed: value arg is not non-type value");
-						return std::nullopt;
-					}
-
-					// Convert the stored value based on the template argument type
-					if (value_arg.category() == TypeCategory::Bool) {
-						return EvalResult::from_bool(value_arg.intValue() != 0);
-					}
-					if (is_unsigned_integer_type(value_arg.typeEnum())) {
-						return EvalResult::from_uint(static_cast<unsigned long long>(value_arg.intValue()));
-					}
-					return EvalResult::from_int(value_arg.intValue());
-				};
-
 				auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
 
 				if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
@@ -3783,22 +3611,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					std::vector<TemplateTypeArg> exact_args;
 					exact_args.reserve(resolved_type_info->templateArgs().size());
 					for (const auto& arg_info : resolved_type_info->templateArgs()) {
-						TemplateTypeArg arg;
-						arg.type_index = arg_info.type_index;
-						arg.is_value = arg_info.is_value;
-						arg.cv_qualifier = arg_info.cv_qualifier;
-						arg.ref_qualifier = arg_info.ref_qualifier;
-						arg.pointer_depth = static_cast<uint8_t>(arg_info.pointer_depth);
-						arg.is_array = arg_info.is_array;
-						arg.array_size = arg_info.array_size;
-						arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
-						arg.dependent_name = arg_info.dependent_name;
-						arg.function_signature = arg_info.function_signature;
-						arg.is_dependent = arg_info.dependent_name.isValid();
-						if (arg.is_value) {
-							arg.value = arg_info.intValue();
-						}
-						exact_args.push_back(std::move(arg));
+						exact_args.push_back(toTemplateTypeArg(arg_info));
 					}
 
 					auto specialization_ast = gTemplateRegistry.lookupExactSpecialization(base_template_name, exact_args);
@@ -3821,39 +3634,15 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					return std::nullopt;
 				};
 
-				// Fallback: synthesize integral_constant::value from template arguments when
-				// normal static-member lookup did not produce the specialized trait value.
-				const StringHandle value_handle = StringTable::getOrInternStringHandle("value");
-				if (member_handle == value_handle) {
+				// Prefer an exact specialization's static-member initializer if normal
+				// recursive lookup did not produce one. This lets standard library
+				// patterns like `template<> struct trait<int> { static constexpr V value = ...; };`
+				// override the primary template's inherited member regardless of which
+				// alias-shaped argument reached the original template-instantiation cache.
+				if (!static_member) {
 					if (auto exact_value = evaluate_specialization_static_member(member_handle)) {
-						FLASH_LOG(ConstExpr, Debug, "Evaluated value member from exact specialization AST");
+						FLASH_LOG(ConstExpr, Debug, "Evaluated static member from exact specialization AST");
 						return *exact_value;
-					}
-					if (resolved_type_info) {
-						// Standard unary type traits may inherit a stale primary-template
-						// false_type::value if earlier alias-shaped lookups reached the
-						// primary/inherited metadata. Prefer the resolved trait argument
-						// only after exact specialization/static-member lookup failed.
-						if (auto trait_value = evaluate_unary_trait_from_resolved(resolved_type_info->baseTemplateName())) {
-							FLASH_LOG(ConstExpr, Debug, "Synthesized value from unary trait evaluator for ", StringTable::getStringView(resolved_type_info->baseTemplateName()));
-							return *trait_value;
-						}
-						if (!static_member) {
-							if (auto synthesized = evaluate_integral_constant_value(*resolved_type_info)) {
-								FLASH_LOG(ConstExpr, Debug, "Synthesized integral_constant value from template args (self)");
-								return *synthesized;
-							}
-						}
-					}
-					if (!static_member) {
-						for (const auto& base : struct_info->base_classes) {
-							if (const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index)) {
-								if (auto synthesized = evaluate_integral_constant_value(*base_type_info)) {
-									FLASH_LOG(ConstExpr, Debug, "Synthesized integral_constant value from base template args");
-									return *synthesized;
-								}
-							}
-						}
 					}
 				}
 
