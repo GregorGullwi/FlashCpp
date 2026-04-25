@@ -1170,24 +1170,19 @@ Potential areas for enhancement (in order of complexity):
   - Some template-dependent or complex intermediate expressions may still fall back to the evaluator's 64-bit storage width when `exact_type` is unavailable.
 
 ### Medium-Hard
-- ⚠️ **Enforce C++20 aggregate-initialization rules** — In C++20, a type with any
-  user-declared constructor is **not** an aggregate ([dcl.init.aggr]/1,
+- ✅ **C++20 aggregate-initialization rules for user-declared constructors**
+  *(Implemented)* — In C++20, a type with any user-declared constructor is **not**
+  an aggregate ([dcl.init.aggr]/1,
   [P1008R1](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p1008r1.pdf)).
-  FlashCpp now correctly rejects direct brace-init variable declarations that sema
-  normalizes to `ConstructorCallNode` when no matching constructor exists
-  (including alias / user-defined spellings of struct types), instead of silently
-  falling back to aggregate member initialization. Straightforward static/global
-  nested brace-init that must route through constructors now also preserves the
-  constructor materialization in emitted runtime data, but remaining fallback
-  risk still exists in richer lower constexpr/codegen paths that materialize
-  aggregate objects directly. The `IsAggregate` type trait
-  (`src/TypeTraitEvaluator.h:251-275`)
-  already correctly detects non-aggregate types (checking `!ctor.is_implicit()`),
-  but this detection is not yet enforced uniformly across every initialization
-  pipeline. **TODO:** Extend the same rejection consistently across the remaining
-  constexpr-evaluator, IR code-generation, and future initialization paths. The
-  `IsAggregate` logic in `TypeTraitEvaluator.h` can be reused or extracted into a
-  shared helper.
+  FlashCpp now tracks user-declared constructors separately from compiler-implicit
+  constructors for aggregate checks, including explicitly defaulted constructors
+  and deleted constructors.  The constexpr aggregate materialization path now
+  rejects these non-aggregate types instead of silently falling back to memberwise
+  aggregate initialization, while constructor-based initialization remains valid.
+  The `__is_aggregate` implementation uses the same user-declared-constructor
+  distinction.  Covered by `tests/test_constexpr_aggregate_defaulted_ctor_fail.cpp`,
+  `tests/test_constexpr_aggregate_deleted_ctor_fail.cpp`, and
+  `tests/test_constexpr_defaulted_ctor_value_init_ret0.cpp`.
 - ✅ **Constructor-backed callable-object materialization now reuses `try_materialize_struct_from_ctor_args`** *(Implemented)* — The remaining constexpr functor path in `evaluate_callable_object` no longer inlines its own `find_matching_constructor` → `bind_evaluated_arguments` → `materialize_members_from_constructor` sequence. It now delegates to `try_materialize_struct_from_ctor_args` and moves the resulting `object_member_bindings` into the evaluation bindings before binding `operator()` arguments. This keeps callable-object constexpr evaluation aligned with the other constructor-materialization paths and removes the last duplicated implementation of that sequence.
 - ✅ **Global struct paren-init `Type var(args)` now emits correct runtime init data** *(Implemented)* — Three separate bugs were fixed:
   1. **Parser** (`src/Parser_Decl_FunctionOrVar.cpp`): The `Type::Struct` check in the global-scope paren-init branch was extended to also cover `Type::UserDefined` (typedef'd / template-instantiated struct types). Previously, non-Struct-tagged types fell through to `parse_direct_initialization()` which produced an `InitializerListNode` instead of a `ConstructorCallNode`.

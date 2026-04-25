@@ -232,6 +232,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			new_ctor_ref.set_delegating_initializer(std::move(substituted_del_args));
 		}
 		new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
+		new_ctor_ref.set_is_explicitly_defaulted(ctor_decl.is_explicitly_defaulted());
 		new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
 
 		std::optional<ASTNode> body_to_substitute;

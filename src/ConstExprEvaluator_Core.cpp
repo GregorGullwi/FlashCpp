@@ -2383,7 +2383,7 @@ EvalResult Evaluator::evaluate_new_expression(
 				args_copy.push_back(arg);
 			}
 			auto try_materialize_aggregate_new = [&]() -> std::optional<EvalResult> {
-				if (struct_info->hasUserDefinedConstructor()) {
+				if (struct_info->hasUserDeclaredConstructor()) {
 					return std::nullopt;
 				}
 
@@ -4611,13 +4611,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					}
 				}
 
-				if (si->hasUserDefinedConstructor()) {
+				if (si->hasUserDeclaredConstructor()) {
 					ChunkedVector<ASTNode> ctor_args;
 					for (const auto& arg : init_list.initializers()) {
 						ctor_args.push_back(arg);
 					}
-					const bool skip_implicit_constructors =
-						si->hasUserDefinedConstructor() && init_list.initializers().empty();
+					const bool skip_implicit_constructors = init_list.initializers().empty();
 
 					auto ctor_result = try_materialize_struct_from_ctor_args(
 						si,
@@ -4726,14 +4725,14 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							// Prefer a matching user-defined constructor over aggregate init.
 							// FlashCpp generates implicit default/copy constructors for every struct,
 							// so we check for non-implicit constructors to identify user-defined ones.
-							bool has_user_defined_ctor = struct_info->hasUserDefinedConstructor();
-							if (has_user_defined_ctor) {
+							bool has_user_declared_ctor = struct_info->hasUserDeclaredConstructor();
+							if (has_user_declared_ctor) {
 								ChunkedVector<ASTNode> ctor_args;
 								for (const auto& arg : init_list.initializers()) {
 									ctor_args.push_back(arg);
 								}
 								const bool skip_implicit_constructors =
-									has_user_defined_ctor && init_list.initializers().empty();
+									has_user_declared_ctor && init_list.initializers().empty();
 								auto ctor_result = try_materialize_struct_from_ctor_args(
 									struct_info,
 									type_spec.type_index(),

@@ -4438,7 +4438,7 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 		// try aggregate initialization directly with the constructor arguments.
 		// Use Paren style because this came from paren-init (e.g., Type(arg1, arg2)),
 		// not brace-init, so narrowing conversions should be allowed.
-		if (!struct_info->hasUserDefinedConstructor() && !ctor_args.empty()) {
+		if (!struct_info->hasUserDeclaredConstructor() && !ctor_args.empty()) {
 			InitializerListNode init_list(InitializerListNode::InitializationStyle::Paren);
 			for (size_t i = 0; i < ctor_args.size(); ++i) {
 				init_list.add_initializer(ctor_args[i]);
@@ -5792,12 +5792,12 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 	if (!struct_info) {
 		return EvalResult::error("Aggregate object is not a struct");
 	}
-	if (struct_info->hasUserDefinedConstructor()) {
+	if (struct_info->hasUserDeclaredConstructor()) {
 		return EvalResult::error(std::string(StringBuilder()
 			.append("Type '"sv)
 			.append(StringTable::getStringView(struct_info->getName()))
-			.append("' has user-defined constructors and is not an aggregate"sv)
-			.commit()));
+			.append("' has user-declared constructors and is not an aggregate"sv)
+			.commit()), EvalErrorType::NotConstantExpression);
 	}
 
 	EvalResult object_result = EvalResult::from_int(0);
@@ -5849,7 +5849,7 @@ EvalResult Evaluator::materialize_constructor_object_value(
 	// No matching constructor found - try aggregate initialization if arguments are provided.
 	// This handles cases like Pt{3, 7} where Pt is an aggregate with no user-defined constructors.
 	if (ctor_call.arguments().size() > 0) {
-		if (struct_info->hasUserDefinedConstructor()) {
+		if (struct_info->hasUserDeclaredConstructor()) {
 			return EvalResult::error(std::string(StringBuilder()
 				.append("No matching constructor for '"sv)
 				.append(StringTable::getStringView(struct_info->getName()))
@@ -5880,7 +5880,7 @@ EvalResult Evaluator::materialize_array_value(
 	auto count_brace_elision_scalar_clauses_for_type = [&](TypeIndex type_index, const auto& recurse) -> size_t {
 		const TypeInfo* type_info = tryGetTypeInfo(type_index);
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
-		if (!struct_info || struct_info->hasUserDefinedConstructor()) {
+		if (!struct_info || struct_info->hasUserDeclaredConstructor()) {
 			return 1;
 		}
 
@@ -5895,7 +5895,7 @@ EvalResult Evaluator::materialize_array_value(
 											: size_t{1};
 			const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
 			const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
-			if (member_struct_info && !member_struct_info->hasUserDefinedConstructor()) {
+			if (member_struct_info && !member_struct_info->hasUserDeclaredConstructor()) {
 				member_clause_count *= recurse(member.type_index, recurse);
 			}
 			clause_count += member_clause_count;
@@ -5945,7 +5945,17 @@ EvalResult Evaluator::materialize_array_value(
 	for (size_t cursor = 0; cursor < initializers.size();) {
 		const ASTNode& element = initializers[cursor];
 		EvalResult element_result;
-		if (element_struct_info) {
+		const ConstructorCallNode* direct_ctor = nullptr;
+		if (element.is<ConstructorCallNode>()) {
+			direct_ctor = &element.as<ConstructorCallNode>();
+		} else if (element.is<ExpressionNode>()) {
+			const ExpressionNode& element_expr = element.as<ExpressionNode>();
+			direct_ctor = std::get_if<ConstructorCallNode>(&element_expr);
+		}
+		if (direct_ctor) {
+			element_result = materialize_constructor_object_value(*direct_ctor, context, bindings);
+			cursor++;
+		} else if (element_struct_info) {
 			if (element.is<InitializerListNode>()) {
 				element_result = materialize_struct_array_element(element.as<InitializerListNode>());
 				cursor++;
@@ -5954,7 +5964,8 @@ EvalResult Evaluator::materialize_array_value(
 					? evaluate_expression_with_bindings_const(element, *bindings, context)
 					: evaluate(element, context);
 				if (direct_element_result.success() &&
-					direct_element_result.object_type_index == element_type_index) {
+					direct_element_result.object_type_index.is_valid() &&
+					(!element_type_index.is_valid() || direct_element_result.object_type_index == element_type_index)) {
 					element_result = std::move(direct_element_result);
 					cursor++;
 				} else {

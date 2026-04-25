@@ -41,6 +41,7 @@ struct StructTypeInfo {
 	bool has_deleted_copy_assignment = false;	  // True if copy assignment operator is = delete
 	bool has_deleted_move_assignment = false;	  // True if move assignment operator is = delete
 	bool has_deleted_destructor = false;			 // True if destructor is = delete
+	bool has_deleted_constructor = false;		 // True if any constructor is = delete
 
 	// Virtual function support (Phase 2)
 	bool has_vtable = false;	 // True if this struct has virtual functions
@@ -282,6 +283,7 @@ struct StructTypeInfo {
 
 	// Mark a constructor as deleted
 	void markConstructorDeleted(bool is_copy, bool is_move) {
+		has_deleted_constructor = true;
 		if (is_copy) {
 			has_deleted_copy_constructor = true;
 		} else if (is_move) {
@@ -743,6 +745,7 @@ struct StructTypeInfo {
 
 	// Check if the class has any user-defined constructor
 	bool hasUserDefinedConstructor() const;
+	bool hasUserDeclaredConstructor() const;
 
 	// Check if any member has a default initializer (e.g., "int x = 5;")
 	// This is important because implicit default constructors must be called
@@ -2410,6 +2413,8 @@ public:
 	// Implicit function support (for compiler-generated functions like operator=)
 	void set_is_implicit(bool implicit) { is_implicit_ = implicit; }
 	bool is_implicit() const { return is_implicit_; }
+	void set_is_explicitly_defaulted(bool explicitly_defaulted) { is_explicitly_defaulted_ = explicitly_defaulted; }
+	bool is_explicitly_defaulted() const { return is_explicitly_defaulted_; }
 
 	// Linkage support (C vs C++)
 	void set_linkage(Linkage linkage) { linkage_ = linkage; }
@@ -2540,6 +2545,7 @@ private:
 	NamespaceHandle namespace_handle_;  // Namespace this function was declared in (default: INVALID = not yet set)
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
+	bool is_explicitly_defaulted_ = false;  // True for user-declared functions spelled '= default'
 	bool has_template_body_ = false;
 	bool has_template_declaration_ = false;	// True if template declaration position is saved (for SFINAE re-parsing)
 

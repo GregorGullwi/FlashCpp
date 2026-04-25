@@ -304,17 +304,7 @@ TypeTraitResult evaluateTypeTrait(
 	case TypeTraitKind::IsAggregate:
 		if (struct_info && !is_reference && pointer_depth == 0) {
 				// Check aggregate conditions
-			bool has_user_constructors = false;
-			for (const auto& func : struct_info->member_functions) {
-				if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-					const ConstructorDeclarationNode& ctor = func.function_decl.as<ConstructorDeclarationNode>();
-					if (!ctor.is_implicit()) {
-						has_user_constructors = true;
-						break;
-					}
-				}
-			}
-
+			bool has_user_constructors = struct_info->hasUserDeclaredConstructor();
 			bool no_virtual = !struct_info->has_vtable;
 			bool all_public = true;
 			for (const auto& member : struct_info->members) {

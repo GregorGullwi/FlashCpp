@@ -944,7 +944,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						auto arity_resolution = resolve_constructor_overload_arity(*si, ctor_call.arguments().size(), true);
 						matching_ctor = arity_resolution.selected_overload;
 					}
-					if (!matching_ctor && si->hasUserDefinedConstructor()) {
+					if (!matching_ctor && si->hasUserDeclaredConstructor()) {
 						missing_ctor_for_nonaggregate = true;
 					}
 					if (matching_ctor) {
@@ -1614,7 +1614,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									sema_normalized_current_function_ &&
 									type_info &&
 									type_info->struct_info_ &&
-									type_info->struct_info_->hasUserDefinedConstructor();
+									type_info->struct_info_->hasUserDeclaredConstructor();
 
 								// SECOND: If no copy constructor matched, prefer the sema annotation.
 								// Only fall back to local type-based/arity-based resolution when sema
@@ -2351,7 +2351,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							sema_normalized_current_function_ &&
 							ctor_constructs_target_type &&
 							type_info->struct_info_ &&
-							type_info->struct_info_->hasUserDefinedConstructor();
+							type_info->struct_info_->hasUserDeclaredConstructor();
 						if (const ConstructorDeclarationNode* resolved_ctor = direct_ctor->resolved_constructor()) {
 							if (resolvedConstructorMatchesTargetType(*resolved_ctor, type_node.type_index())) {
 								matching_ctor = resolved_ctor;
