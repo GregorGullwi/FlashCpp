@@ -6001,7 +6001,7 @@ EvalResult Evaluator::materialize_array_value(
 					? evaluate_expression_with_bindings_const(element, *bindings, context)
 					: evaluate(element, context);
 				if (direct_element_result.success() &&
-					(!direct_element_result.object_member_bindings.empty() || direct_element_result.object_type_index.is_valid()) &&
+					direct_element_result.object_type_index.is_valid() &&
 					(!element_type_index.is_valid() || direct_element_result.object_type_index == element_type_index)) {
 					element_result = std::move(direct_element_result);
 					cursor++;

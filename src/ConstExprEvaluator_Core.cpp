@@ -4666,8 +4666,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					for (const auto& arg : init_list.initializers()) {
 						ctor_args.push_back(arg);
 					}
-					const bool skip_implicit_constructors =
-						si->hasUserDefinedConstructor() && init_list.initializers().empty();
+					const bool skip_implicit_constructors = init_list.initializers().empty();
 
 					auto ctor_result = try_materialize_struct_from_ctor_args(
 						si,
@@ -4793,7 +4792,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 									ctor_args.push_back(arg);
 								}
 								const bool skip_implicit_constructors =
-									struct_info->hasUserDefinedConstructor() && init_list.initializers().empty();
+									has_user_declared_ctor && init_list.initializers().empty();
 								auto ctor_result = try_materialize_struct_from_ctor_args(
 									struct_info,
 									type_spec.type_index(),

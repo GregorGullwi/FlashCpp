@@ -2637,20 +2637,11 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		//   - No virtual, private, or protected base classes
 		if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 			if (struct_info) {
-				// Check aggregate conditions:
-				// 1. No user-declared constructors (check member_functions for non-implicit constructors)
+				// Check aggregate conditions (C++20 [dcl.init.aggr]/1):
+				// 1. No user-declared constructors (includes = default and = delete)
 				// 2. No private or protected members (all members are public)
 				// 3. No virtual functions (has_vtable flag)
-				bool has_user_constructors = false;
-				for (const auto& func : struct_info->member_functions) {
-					if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-						const ConstructorDeclarationNode& ctor = func.function_decl.as<ConstructorDeclarationNode>();
-						if (!ctor.is_implicit()) {
-							has_user_constructors = true;
-							break;
-						}
-					}
-				}
+				bool has_user_constructors = struct_info->hasUserDeclaredConstructor();
 
 				bool no_virtual = !struct_info->has_vtable;
 				bool all_public = true;

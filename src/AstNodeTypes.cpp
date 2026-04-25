@@ -787,7 +787,7 @@ bool StructTypeInfo::hasUserDefinedConstructor() const {
 		if (!func.is_constructor)
 			continue;
 		const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-		if (ctor_node.is_implicit() && !ctor_node.is_explicitly_defaulted())
+		if (ctor_node.is_implicit())
 			continue;
 		return true;
 	}
