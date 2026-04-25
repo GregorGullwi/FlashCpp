@@ -2,9 +2,10 @@
 // is_explicitly_defaulted must be propagated during template constructor cloning.
 template<typename T>
 struct HasDefaulted {
-    T val;
-    constexpr HasDefaulted() = default;
-};
+struct HasDefaulted {
+	T val;
+	constexpr HasDefaulted() = default;
+
 
 extern "C" int printf(const char*, ...);
 int main() {
