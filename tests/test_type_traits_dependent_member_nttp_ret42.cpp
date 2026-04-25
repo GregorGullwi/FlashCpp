@@ -44,7 +44,19 @@ struct is_integral_custom
 	: integral_constant<bool, is_integral_helper<typename remove_cv<T>::type>::value> {};
 
 int main() {
-	bool const_volatile_int_is_integral = is_integral_custom<const volatile int>::value;
-	bool const_volatile_char_is_integral = is_integral_custom<const volatile char>::value;
-	return const_volatile_int_is_integral ? (const_volatile_char_is_integral ? 0 : 42) : 0;
+	// All cv-qualifications of int should be recognised as integral after cv stripping
+	bool plain_int = is_integral_custom<int>::value;
+	bool const_int = is_integral_custom<const int>::value;
+	bool volatile_int = is_integral_custom<volatile int>::value;
+	bool const_volatile_int = is_integral_custom<const volatile int>::value;
+
+	// No cv-qualification of char should be recognised as integral
+	bool plain_char = is_integral_custom<char>::value;
+	bool const_char = is_integral_custom<const char>::value;
+	bool volatile_char = is_integral_custom<volatile char>::value;
+	bool const_volatile_char = is_integral_custom<const volatile char>::value;
+
+	bool all_int_cases = plain_int && const_int && volatile_int && const_volatile_int;
+	bool no_char_cases = !plain_char && !const_char && !volatile_char && !const_volatile_char;
+	return (all_int_cases && no_char_cases) ? 42 : 0;
 }
