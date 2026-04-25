@@ -41,6 +41,11 @@ static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type
 	return arg;
 }
 
+// Build an alias-normalized copy of template arguments for specialization lookup.
+// Returns std::nullopt when every argument is already canonical; otherwise returns
+// the normalized argument vector. This matters for full specializations such as
+// `template<> struct Trait<int>` when a use-site argument arrives through an alias
+// or alias template and still carries an alias TypeIndex/category.
 static std::optional<std::vector<TemplateTypeArg>> tryMakeAliasNormalizedTemplateArgs(const std::vector<TemplateTypeArg>& template_args) {
 	std::vector<TemplateTypeArg> normalized_args;
 	normalized_args.reserve(template_args.size());
@@ -56,6 +61,10 @@ static std::optional<std::vector<TemplateTypeArg>> tryMakeAliasNormalizedTemplat
 	return normalized_args;
 }
 
+// Exact specializations must beat both the instantiation cache and the primary
+// template. Try the direct key first, then retry with alias-normalized arguments
+// so an alias-resolved primitive does not miss `Trait<int>` and incorrectly cache
+// a primary-template instantiation.
 static std::optional<ASTNode> lookupExactSpecializationWithAliasNormalization(
 	std::string_view template_name,
 	const std::vector<TemplateTypeArg>& template_args) {

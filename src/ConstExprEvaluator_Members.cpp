@@ -3775,6 +3775,9 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				const StringHandle value_handle = StringTable::getOrInternStringHandle("value");
 				if (member_handle == value_handle) {
 					if (resolved_type_info) {
+						// Standard unary type traits may inherit a stale primary-template
+						// false_type::value if exact specialization lookup previously missed
+						// an alias-shaped argument. Prefer the resolved trait argument here.
 						if (auto trait_value = evaluate_unary_trait_from_resolved(resolved_type_info->baseTemplateName())) {
 							FLASH_LOG(ConstExpr, Debug, "Synthesized value from unary trait evaluator for ", StringTable::getStringView(resolved_type_info->baseTemplateName()));
 							return *trait_value;
