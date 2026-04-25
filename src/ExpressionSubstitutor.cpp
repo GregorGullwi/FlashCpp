@@ -11,7 +11,6 @@ namespace {
 // Bound recursive placeholder unwrapping so malformed alias cycles cannot recurse indefinitely.
 static constexpr int kMaxDependentMemberTypeResolutionDepth = 16;
 static constexpr int kInitialDependentMemberTypeResolutionDepth = 0;
-static constexpr size_t kScopeResolutionLength = 2;
 
 bool parseUnsignedDecimal(std::string_view text, uint64_t& value) {
 	auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
@@ -435,6 +434,7 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 	}
 
 	std::string_view dependent_base_name = type_name.substr(0, member_sep);
+	constexpr size_t kScopeResolutionLength = 2;
 	std::string_view dependent_member_name = type_name.substr(member_sep + kScopeResolutionLength);
 	std::string_view base_template_name = extractBaseTemplateName(dependent_base_name);
 	if (base_template_name.empty()) {
@@ -473,15 +473,15 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 		return nullptr;
 	}
 
+	const TypeInfo* next_dependent_type = nullptr;
 	if (const TypeInfo* alias_target = tryGetTypeInfo(resolved_type->type_index_);
-		alias_target != nullptr &&
-		alias_target != resolved_type &&
-		alias_target->isDependentMemberType()) {
-		return resolveDependentMemberType(*alias_target, depth + 1);
+		alias_target != nullptr && alias_target != resolved_type && alias_target->isDependentMemberType()) {
+		next_dependent_type = alias_target;
+	} else if (resolved_type->isDependentMemberType()) {
+		next_dependent_type = resolved_type;
 	}
-
-	if (resolved_type->isDependentMemberType()) {
-		return resolveDependentMemberType(*resolved_type, depth + 1);
+	if (next_dependent_type != nullptr) {
+		return resolveDependentMemberType(*next_dependent_type, depth + 1);
 	}
 
 	return resolved_type;
