@@ -1734,6 +1734,13 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	for (const auto& base : spec_struct.base_classes()) {
 		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 		if (base_type_info == nullptr) {
+			// Defensive fallback: if the recorded TypeIndex is stale (e.g., the base
+			// type was registered after the spec was parsed), fall back to a name
+			// lookup so we still produce a valid inheritance chain.
+			FLASH_LOG(Templates, Debug,
+				"instantiate_full_specialization: base '", base.name,
+				"' for ", instantiated_name,
+				" not resolvable by type_index, falling back to name lookup");
 			base_type_info = findTypeByName(StringTable::getOrInternStringHandle(base.name));
 		}
 		if (base_type_info == nullptr) {
