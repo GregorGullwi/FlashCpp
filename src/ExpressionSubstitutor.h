@@ -119,7 +119,8 @@ private:
 	std::vector<TemplateTypeArg> collectCurrentBoundTemplateArgs(std::string_view use_site) const;
 	MaterializedStoredTemplateArgs materializeStoredTemplateArgs(
 		const TypeInfo& template_instantiation_info,
-		bool evaluate_dependent_member_values);
+		bool evaluate_dependent_member_values,
+		int depth);
 	const TypeInfo* resolveDependentMemberType(const TypeInfo& type_info, int depth);
 
 // Substitution context

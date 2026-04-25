@@ -338,7 +338,8 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::collectCurrentBoundTemplateA
 
 ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::materializeStoredTemplateArgs(
 	const TypeInfo& template_instantiation_info,
-	bool evaluate_dependent_member_values) {
+	bool evaluate_dependent_member_values,
+	int depth) {
 	MaterializedStoredTemplateArgs result;
 	const auto& stored_args = template_instantiation_info.templateArgs();
 	result.args.reserve(stored_args.size());
@@ -395,7 +396,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
 				if (const TypeInfo* recursively_resolved_type = resolveDependentMemberType(
 						*arg_type_info,
-						kInitialDependentMemberTypeResolutionDepth)) {
+						depth)) {
 					materialized_arg.type_index =
 						recursively_resolved_type->registeredTypeIndex().withCategory(recursively_resolved_type->typeEnum());
 					materialized_arg.setCategory(recursively_resolved_type->typeEnum());
@@ -452,7 +453,8 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 	MaterializedStoredTemplateArgs concrete_base_args =
 		materializeStoredTemplateArgs(
 			*dependent_base_it->second,
-			/*evaluate_dependent_member_values=*/true);
+			/*evaluate_dependent_member_values=*/true,
+			depth);
 	Parser::AliasTemplateMaterializationResult materialized_base =
 		parser_.materializeTemplateInstantiationForLookup(
 			base_template_name,
@@ -1439,7 +1441,8 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 							MaterializedStoredTemplateArgs concrete_base_args =
 								materializeStoredTemplateArgs(
 									*dependent_base_it->second,
-									/*evaluate_dependent_member_values=*/true);
+									/*evaluate_dependent_member_values=*/true,
+									kInitialDependentMemberTypeResolutionDepth);
 							if (!concrete_base_args.args.empty()) {
 								current_inst_args = std::move(concrete_base_args.args);
 							}
@@ -1527,7 +1530,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	auto type_it = getTypesByNameMap().find(ns_name_handle);
 	if (type_it != getTypesByNameMap().end() && type_it->second->isTemplateInstantiation()) {
 		MaterializedStoredTemplateArgs materialized_args =
-			materializeStoredTemplateArgs(*type_it->second, /*evaluate_dependent_member_values=*/true);
+			materializeStoredTemplateArgs(*type_it->second, /*evaluate_dependent_member_values=*/true, kInitialDependentMemberTypeResolutionDepth);
 		inst_args = std::move(materialized_args.args);
 	}
 
@@ -1777,7 +1780,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 				FLASH_LOG(Templates, Debug, "  Found template type: ", base_name);
 
 				MaterializedStoredTemplateArgs substituted_args =
-					materializeStoredTemplateArgs(*type_info, /*evaluate_dependent_member_values=*/false);
+					materializeStoredTemplateArgs(*type_info, /*evaluate_dependent_member_values=*/false, kInitialDependentMemberTypeResolutionDepth);
 				if (substituted_args.had_substitution && !substituted_args.args.empty()) {
 					Parser::AliasTemplateMaterializationResult materialized_type =
 						parser_.materializeTemplateInstantiationForLookup(base_name, substituted_args.args);
