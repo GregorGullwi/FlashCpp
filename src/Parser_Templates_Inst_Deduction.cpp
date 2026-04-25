@@ -1926,7 +1926,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
 				const auto& alias_node = direct_alias->as<TemplateAliasNode>();
 				type_node = substituteTemplateParameters(
-					emplace_node<TypeSpecifierNode>(alias_node.target_type()),
+					ASTNode(&alias_node.target_type()),
 					template_params,
 					template_args);
 				if (!type_node.is<TypeSpecifierNode>())
@@ -3385,7 +3385,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
 			const auto& alias_node = direct_alias->as<TemplateAliasNode>();
 			type_node = substituteTemplateParameters(
-				emplace_node<TypeSpecifierNode>(alias_node.target_type()),
+				ASTNode(&alias_node.target_type()),
 				template_params,
 				template_args);
 			if (!type_node.is<TypeSpecifierNode>())
