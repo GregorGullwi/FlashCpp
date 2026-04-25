@@ -5191,12 +5191,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 					const StaticCastNode& cast_node = std::get<StaticCastNode>(arg_expr);
 					const TypeSpecifierNode& cast_type = cast_node.target_type();
 					const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-					const ASTNode& param_type_node = param_decl.type_node();
-					if (!param_type_node.is<TypeSpecifierNode>()) {
-						matches_cast_targets = false;
-						break;
-					}
-					const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
+					const TypeSpecifierNode& param_type = param_decl.type_specifier_node();
 					if (cast_type.type() != param_type.type() ||
 						cast_type.type_index() != param_type.type_index() ||
 						cast_type.pointer_depth() != param_type.pointer_depth()) {
