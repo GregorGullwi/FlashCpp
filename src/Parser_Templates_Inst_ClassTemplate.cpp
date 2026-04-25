@@ -41,6 +41,14 @@ static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type
 	return arg;
 }
 
+static std::vector<TemplateTypeArg> makeAliasNormalizedTemplateArgs(const std::vector<TemplateTypeArg>& template_args) {
+	std::vector<TemplateTypeArg> normalized_args = template_args;
+	for (TemplateTypeArg& arg : normalized_args) {
+		arg = NameMangling::normalizeTemplateTypeArgForMangling(arg);
+	}
+	return normalized_args;
+}
+
 static const TypeSpecifierNode* getDeclarationParamTypeNode(const ASTNode& param) {
 	if (!param.is<DeclarationNode>()) {
 		return nullptr;
@@ -966,6 +974,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
+	{
+		auto exact_spec = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
+		if (!exact_spec.has_value() && !template_args.empty()) {
+			std::vector<TemplateTypeArg> normalized_args = makeAliasNormalizedTemplateArgs(template_args);
+			if (normalized_args != template_args) {
+				exact_spec = gTemplateRegistry.lookupExactSpecialization(template_name, normalized_args);
+			}
+		}
+		if (exact_spec.has_value()) {
+			FLASH_LOG(Templates, Debug, "Found exact specialization for ", template_name, " with ", template_args.size(), " args before cache lookup");
+			return instantiate_full_specialization(template_name, template_args, *exact_spec);
+		}
+	}
+
 	// Check TypeIndex-based instantiation cache for O(1) lookup
 	// This uses TypeIndex instead of string keys to avoid ambiguity with type names containing underscores
 	std::string_view normalized_template_name = template_name;
@@ -1658,6 +1680,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Note: This also handles empty template args (e.g., template<> struct Tuple<> {})
 	{
 		auto exact_spec = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
+		if (!exact_spec.has_value() && !template_args.empty()) {
+			std::vector<TemplateTypeArg> normalized_args = makeAliasNormalizedTemplateArgs(template_args);
+			if (normalized_args != template_args) {
+				exact_spec = gTemplateRegistry.lookupExactSpecialization(template_name, normalized_args);
+			}
+		}
 		if (exact_spec.has_value()) {
 			FLASH_LOG(Templates, Debug, "Found exact specialization for ", template_name, " with ", template_args.size(), " args");
 			// Instantiate the exact specialization

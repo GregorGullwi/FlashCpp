@@ -3773,13 +3773,13 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 				// Fallback: synthesize integral_constant::value from template arguments when static member isn't registered
 				const StringHandle value_handle = StringTable::getOrInternStringHandle("value");
-				if (!static_member && member_handle == value_handle) {
-					if (resolved_type_info) {
-						if (auto trait_value = evaluate_unary_trait_from_resolved(resolved_type_info->baseTemplateName())) {
-							FLASH_LOG(ConstExpr, Debug, "Synthesized value from unary trait evaluator for ", StringTable::getStringView(resolved_type_info->baseTemplateName()));
-							return *trait_value;
-						}
+				if (member_handle == value_handle && resolved_type_info) {
+					if (auto trait_value = evaluate_unary_trait_from_resolved(resolved_type_info->baseTemplateName())) {
+						FLASH_LOG(ConstExpr, Debug, "Synthesized value from unary trait evaluator for ", StringTable::getStringView(resolved_type_info->baseTemplateName()));
+						return *trait_value;
 					}
+				}
+				if (!static_member && member_handle == value_handle) {
 					if (resolved_type_info) {
 						if (auto synthesized = evaluate_integral_constant_value(*resolved_type_info)) {
 							FLASH_LOG(ConstExpr, Debug, "Synthesized integral_constant value from template args (self)");
