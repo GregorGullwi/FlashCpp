@@ -8,6 +8,8 @@
 
 namespace {
 
+static constexpr int kMaxDependentMemberTypeResolutionDepth = 16;
+
 bool parseUnsignedDecimal(std::string_view text, uint64_t& value) {
 	auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
 	return ec == std::errc{} && ptr == text.data() + text.size();
@@ -417,7 +419,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 }
 
 const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo& type_info, int depth) {
-	if (!type_info.isDependentMemberType() || depth >= 16) {
+	if (!type_info.isDependentMemberType() || depth >= kMaxDependentMemberTypeResolutionDepth) {
 		return nullptr;
 	}
 
