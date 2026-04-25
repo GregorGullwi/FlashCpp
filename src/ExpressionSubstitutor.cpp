@@ -389,6 +389,18 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 
 		if (!substituted && !arg.is_value && is_struct_type(arg.category())) {
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+				if (const TypeInfo* resolved_member_type = resolveDependentMemberType(*arg_type_info, 0)) {
+					materialized_arg.type_index =
+						resolved_member_type->registeredTypeIndex().withCategory(resolved_member_type->typeEnum());
+					materialized_arg.setCategory(resolved_member_type->typeEnum());
+					materialized_arg.dependent_name = {};
+					materialized_arg.is_dependent = false;
+					result.had_substitution = true;
+					substituted = true;
+					result.args.push_back(materialized_arg);
+					continue;
+				}
+
 				std::string_view arg_type_name = StringTable::getStringView(arg_type_info->name());
 				auto type_subst_it = param_map_.find(arg_type_name);
 				if (type_subst_it != param_map_.end()) {
@@ -402,6 +414,63 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	}
 
 	return result;
+}
+
+const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo& type_info, int depth) {
+	if (!type_info.isDependentMemberType() || depth >= 16) {
+		return nullptr;
+	}
+
+	std::string_view type_name = StringTable::getStringView(type_info.name());
+	size_t member_sep = type_name.rfind("::");
+	if (member_sep == std::string_view::npos) {
+		return nullptr;
+	}
+
+	std::string_view dependent_base_name = type_name.substr(0, member_sep);
+	std::string_view dependent_member_name = type_name.substr(member_sep + 2);
+	std::string_view base_template_name = extractBaseTemplateName(dependent_base_name);
+	if (base_template_name.empty()) {
+		return nullptr;
+	}
+
+	auto dependent_base_it = getTypesByNameMap().find(
+		StringTable::getOrInternStringHandle(dependent_base_name));
+	if (dependent_base_it == getTypesByNameMap().end() ||
+		dependent_base_it->second == nullptr ||
+		!dependent_base_it->second->isTemplateInstantiation()) {
+		return nullptr;
+	}
+
+	MaterializedStoredTemplateArgs concrete_base_args =
+		materializeStoredTemplateArgs(
+			*dependent_base_it->second,
+			/*evaluate_dependent_member_values=*/true);
+	Parser::AliasTemplateMaterializationResult materialized_base =
+		parser_.materializeTemplateInstantiationForLookup(
+			base_template_name,
+			concrete_base_args.args);
+	if (materialized_base.instantiated_name.empty()) {
+		return nullptr;
+	}
+
+	QualifiedTypeMemberAccess member_access;
+	member_access.member_name = StringTable::getOrInternStringHandle(dependent_member_name);
+	std::vector<QualifiedTypeMemberAccess> member_chain;
+	member_chain.push_back(std::move(member_access));
+	const TypeInfo* resolved_type =
+		parser_.resolveBaseClassMemberTypeChain(
+			materialized_base.instantiated_name,
+			member_chain);
+	if (resolved_type == nullptr) {
+		return nullptr;
+	}
+
+	if (resolved_type->isDependentMemberType()) {
+		return resolveDependentMemberType(*resolved_type, depth + 1);
+	}
+
+	return resolved_type;
 }
 
 ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& call) {

@@ -120,6 +120,7 @@ private:
 	MaterializedStoredTemplateArgs materializeStoredTemplateArgs(
 		const TypeInfo& template_instantiation_info,
 		bool evaluate_dependent_member_values);
+	const TypeInfo* resolveDependentMemberType(const TypeInfo& type_info, int depth);
 
 // Substitution context
 	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map_;
