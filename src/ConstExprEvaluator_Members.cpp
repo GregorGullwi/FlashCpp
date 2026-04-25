@@ -3771,37 +3771,6 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							  ", owner: ", (owner_struct != nullptr));
 				}
 
-				// Fallback: synthesize integral_constant::value from template arguments when static member isn't registered
-				const StringHandle value_handle = StringTable::getOrInternStringHandle("value");
-				if (member_handle == value_handle) {
-					if (resolved_type_info) {
-						// Standard unary type traits may inherit a stale primary-template
-						// false_type::value if exact specialization lookup previously missed
-						// an alias-shaped argument. Deliberately let the resolved trait
-						// argument override a registered/inherited static member here.
-						if (auto trait_value = evaluate_unary_trait_from_resolved(resolved_type_info->baseTemplateName())) {
-							FLASH_LOG(ConstExpr, Debug, "Synthesized value from unary trait evaluator for ", StringTable::getStringView(resolved_type_info->baseTemplateName()));
-							return *trait_value;
-						}
-						if (!static_member) {
-							if (auto synthesized = evaluate_integral_constant_value(*resolved_type_info)) {
-								FLASH_LOG(ConstExpr, Debug, "Synthesized integral_constant value from template args (self)");
-								return *synthesized;
-							}
-						}
-					}
-					if (!static_member) {
-						for (const auto& base : struct_info->base_classes) {
-							if (const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index)) {
-								if (auto synthesized = evaluate_integral_constant_value(*base_type_info)) {
-									FLASH_LOG(ConstExpr, Debug, "Synthesized integral_constant value from base template args");
-									return *synthesized;
-								}
-							}
-						}
-					}
-				}
-
 				auto evaluate_specialization_static_member = [&](StringHandle lookup_member_handle) -> std::optional<EvalResult> {
 					if (!resolved_type_info || !resolved_type_info->isTemplateInstantiation()) {
 						return std::nullopt;
@@ -3851,6 +3820,42 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 					return std::nullopt;
 				};
+
+				// Fallback: synthesize integral_constant::value from template arguments when
+				// normal static-member lookup did not produce the specialized trait value.
+				const StringHandle value_handle = StringTable::getOrInternStringHandle("value");
+				if (member_handle == value_handle) {
+					if (auto exact_value = evaluate_specialization_static_member(member_handle)) {
+						FLASH_LOG(ConstExpr, Debug, "Evaluated value member from exact specialization AST");
+						return *exact_value;
+					}
+					if (resolved_type_info) {
+						// Standard unary type traits may inherit a stale primary-template
+						// false_type::value if earlier alias-shaped lookups reached the
+						// primary/inherited metadata. Prefer the resolved trait argument
+						// only after exact specialization/static-member lookup failed.
+						if (auto trait_value = evaluate_unary_trait_from_resolved(resolved_type_info->baseTemplateName())) {
+							FLASH_LOG(ConstExpr, Debug, "Synthesized value from unary trait evaluator for ", StringTable::getStringView(resolved_type_info->baseTemplateName()));
+							return *trait_value;
+						}
+						if (!static_member) {
+							if (auto synthesized = evaluate_integral_constant_value(*resolved_type_info)) {
+								FLASH_LOG(ConstExpr, Debug, "Synthesized integral_constant value from template args (self)");
+								return *synthesized;
+							}
+						}
+					}
+					if (!static_member) {
+						for (const auto& base : struct_info->base_classes) {
+							if (const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index)) {
+								if (auto synthesized = evaluate_integral_constant_value(*base_type_info)) {
+									FLASH_LOG(ConstExpr, Debug, "Synthesized integral_constant value from base template args");
+									return *synthesized;
+								}
+							}
+						}
+					}
+				}
 
 				if (static_member && owner_struct) {
 					FLASH_LOG(ConstExpr, Debug, "Static member is_const: ", static_member->is_const(),

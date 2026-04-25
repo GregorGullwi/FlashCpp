@@ -687,7 +687,7 @@ public:
 
 	// Register a template specialization (exact match)
 	void registerSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode specialized_node) {
-		SpecializationKey key{std::string(template_name), template_args};
+		SpecializationKey key{std::string(template_name), canonicalizeTemplateArgsForExactSpecialization(template_args)};
 		specializations_[key] = specialized_node;
 		FLASH_LOG(Templates, Debug, "registerSpecialization: '", template_name, "' with ", template_args.size(), " args");
 	}
@@ -701,7 +701,7 @@ public:
 
 	// Look up an exact template specialization (no pattern matching)
 	std::optional<ASTNode> lookupExactSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) const {
-		SpecializationKey key{std::string(template_name), template_args};
+		SpecializationKey key{std::string(template_name), canonicalizeTemplateArgsForExactSpecialization(template_args)};
 
 		FLASH_LOG(Templates, Debug, "lookupExactSpecialization: '", template_name, "' with ", template_args.size(), " args");
 
@@ -897,6 +897,44 @@ public:
 	}
 
 private:
+	// Canonicalize exact-specialization keys so alias-shaped arguments (for example
+	// a typedef that resolves to `int`) hit the same specialization entry as the
+	// underlying concrete type. Exact specializations are keyed structurally, not by
+	// the incidental alias TypeIndex/category that happened to reach registration or
+	// lookup.
+	static InlineVector<TemplateTypeArg, 4> canonicalizeTemplateArgsForExactSpecialization(
+		const std::vector<TemplateTypeArg>& template_args) {
+		InlineVector<TemplateTypeArg, 4> canonical_args;
+		canonical_args.reserve(template_args.size());
+		for (const TemplateTypeArg& arg : template_args) {
+			TemplateTypeArg canonical_arg = arg;
+			if (canonical_arg.type_index.is_valid()) {
+				const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(canonical_arg.type_index);
+				if (alias_info.type_index.is_valid()) {
+					const TypeCategory resolved_category = alias_info.typeEnum();
+					const bool should_use_resolved_category =
+						canonical_arg.category() == TypeCategory::Invalid ||
+						canonical_arg.category() == TypeCategory::TypeAlias ||
+						(canonical_arg.category() == TypeCategory::UserDefined && resolved_category != TypeCategory::UserDefined) ||
+						(canonical_arg.category() == TypeCategory::Template && resolved_category != TypeCategory::Template);
+					if (should_use_resolved_category) {
+						canonical_arg.type_index = alias_info.type_index.withCategory(resolved_category);
+					}
+					if (!canonical_arg.function_signature.has_value() && alias_info.function_signature.has_value()) {
+						canonical_arg.function_signature = alias_info.function_signature;
+					}
+				}
+				if (canonical_arg.category() == TypeCategory::Invalid) {
+					if (const TypeInfo* type_info = tryGetTypeInfo(canonical_arg.type_index)) {
+						canonical_arg.type_index = canonical_arg.type_index.withCategory(type_info->typeEnum());
+					}
+				}
+			}
+			canonical_args.push_back(std::move(canonical_arg));
+		}
+		return canonical_args;
+	}
+
 	// Helper: Given a QualifiedIdentifier, call `fn` with both the unqualified name
 	// and (if the identifier has a non-global namespace) the fully-qualified name.
 	// Used by all QualifiedIdentifier registration overloads to eliminate duplication.

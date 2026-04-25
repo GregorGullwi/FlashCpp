@@ -3,7 +3,6 @@
 #include "RebindStaticMemberAst.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
-#include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 #include "InstantiationQueue.h"
@@ -39,49 +38,6 @@ static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type
 	arg.value = value;
 	arg.type_index = nativeTypeIndex(type);
 	return arg;
-}
-
-// Build an alias-normalized copy of template arguments for specialization lookup.
-// Returns std::nullopt when every argument is already canonical; otherwise returns
-// the normalized argument vector. This matters for full specializations such as
-// `template<> struct Trait<int>` when a use-site argument arrives through an alias
-// or alias template and still carries an alias TypeIndex/category.
-static std::optional<std::vector<TemplateTypeArg>> tryMakeAliasNormalizedTemplateArgs(const std::vector<TemplateTypeArg>& template_args) {
-	bool changed = false;
-	for (const TemplateTypeArg& arg : template_args) {
-		if (NameMangling::normalizeTemplateTypeArgForMangling(arg) != arg) {
-			changed = true;
-			break;
-		}
-	}
-	if (!changed) {
-		return std::nullopt;
-	}
-
-	std::vector<TemplateTypeArg> normalized_args;
-	normalized_args.reserve(template_args.size());
-	for (const TemplateTypeArg& arg : template_args) {
-		normalized_args.push_back(NameMangling::normalizeTemplateTypeArgForMangling(arg));
-	}
-	return normalized_args;
-}
-
-// Exact specializations must beat both the instantiation cache and the primary
-// template. Try the direct key first, then retry with alias-normalized arguments
-// so an alias-resolved primitive does not miss `Trait<int>` and incorrectly cache
-// a primary-template instantiation.
-static std::optional<ASTNode> lookupExactSpecializationWithAliasNormalization(
-	std::string_view template_name,
-	const std::vector<TemplateTypeArg>& template_args) {
-	auto exact_spec = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
-	if (exact_spec.has_value() || template_args.empty()) {
-		return exact_spec;
-	}
-	std::optional<std::vector<TemplateTypeArg>> normalized_args = tryMakeAliasNormalizedTemplateArgs(template_args);
-	if (!normalized_args.has_value()) {
-		return exact_spec;
-	}
-	return gTemplateRegistry.lookupExactSpecialization(template_name, *normalized_args);
 }
 
 static const TypeSpecifierNode* getDeclarationParamTypeNode(const ASTNode& param) {
@@ -1010,7 +966,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	{
-		auto exact_spec = lookupExactSpecializationWithAliasNormalization(template_name, template_args);
+		auto exact_spec = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
 		if (exact_spec.has_value()) {
 			FLASH_LOG(Templates, Debug, "Found exact specialization for ", template_name, " with ", template_args.size(), " args before cache lookup");
 			return instantiate_full_specialization(template_name, template_args, *exact_spec);
@@ -1708,7 +1664,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// it always wins over partial specializations and the primary template.
 	// Note: This also handles empty template args (e.g., template<> struct Tuple<> {})
 	{
-		auto exact_spec = lookupExactSpecializationWithAliasNormalization(template_name, template_args);
+		auto exact_spec = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
 		if (exact_spec.has_value()) {
 			FLASH_LOG(Templates, Debug, "Found exact specialization for ", template_name, " with ", template_args.size(), " args");
 			// Instantiate the exact specialization
