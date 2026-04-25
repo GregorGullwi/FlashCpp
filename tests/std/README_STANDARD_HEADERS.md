@@ -9,7 +9,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1369ms |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~275ms (retested 2026-04-25, Linux/libstdc++-14). The `std::is_integral<int>::value` static assert now passes after constant-evaluation synthesis of standard unary type-trait `::value` from the resolved template arguments, plus exact-specialization lookup through alias-normalized primitive arguments. Regression: `tests/test_template_full_specialization_alias_arg_ret0.cpp`. |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~244ms (retested 2026-04-25, Linux/libstdc++-14). The `std::is_integral<int>::value` static assert now passes after constant-evaluation synthesis of standard unary type-trait `::value` from the resolved template arguments, plus exact-specialization lookup through alias-normalized primitive arguments. Regression: `tests/test_template_full_specialization_alias_arg_ret0.cpp`. |
 | `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | ~609ms (retested 2026-04-11). Targeted test still compiles, but bare `#include <compare>` now fails with "Ambiguous constructor call" during codegen of a namespace-level node. |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
@@ -129,7 +129,7 @@ Regression:
 
 Std-header impact from the 2026-04-25 sweep against `x64/Sharded/FlashCpp`:
 
-- **Newly clean**: `<type_traits>` (`test_std_type_traits.cpp`) ~275ms.
+- **Newly clean**: `<type_traits>` (`test_std_type_traits.cpp`) ~244ms.
 - **Still clean in this sweep**: `<bit>` ~384ms, `<compare>` ~34ms,
   `<concepts>` ~322ms, `<exception>` ~349ms, `<limits>` ~1146ms,
   `<new>` ~50ms, `<source_location>` ~39ms, `<span>` ~39ms,
