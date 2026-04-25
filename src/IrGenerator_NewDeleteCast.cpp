@@ -837,7 +837,7 @@ ExprResult AstToIr::handleLValueReferenceCast(
 
 ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		// Get the target type from the type specifier first
-	const auto& target_type_node = staticCastNode.target_type().as<TypeSpecifierNode>();
+	const auto& target_type_node = staticCastNode.target_type();
 	TypeCategory target_type = target_type_node.type();
 	int target_size = static_cast<int>(target_type_node.size_in_bits());
 	size_t target_pointer_depth = target_type_node.pointer_depth();
@@ -1272,7 +1272,7 @@ ExprResult AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode
 		// Returns nullptr (for pointers) or throws bad_cast (for references) on failure
 
 		// Get the target type first to determine evaluation context
-	const auto& target_type_node = dynamicCastNode.target_type().as<TypeSpecifierNode>();
+	const auto& target_type_node = dynamicCastNode.target_type();
 
 		// For reference casts (both lvalue and rvalue), we need the address of the expression,
 		// not its loaded value. Use LValueAddress context to get the address without dereferencing.
@@ -1355,7 +1355,7 @@ ExprResult AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
 		// It doesn't change the actual value, just the type metadata
 
 	// Get the target type from the type specifier
-	const auto& target_type_node = constCastNode.target_type().as<TypeSpecifierNode>();
+	const auto& target_type_node = constCastNode.target_type();
 	TypeCategory target_type = target_type_node.type();
 	int target_size = static_cast<int>(target_type_node.size_in_bits());
 	size_t target_pointer_depth = target_type_node.pointer_depth();
@@ -1391,7 +1391,7 @@ ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinter
 		// It doesn't change the actual bits, just the type interpretation
 
 	// Get the target type from the type specifier
-	const auto& target_type_node = reinterpretCastNode.target_type().as<TypeSpecifierNode>();
+	const auto& target_type_node = reinterpretCastNode.target_type();
 	TypeCategory target_type = target_type_node.type();
 	int target_size = static_cast<int>(target_type_node.size_in_bits());
 	int target_pointer_depth = target_type_node.pointer_depth();

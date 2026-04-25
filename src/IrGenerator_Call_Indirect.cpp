@@ -446,10 +446,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			}
 
 			if (const auto* cast = std::get_if<StaticCastNode>(&receiver_expr)) {
-				if (cast->target_type().is<TypeSpecifierNode>()) {
-					if (auto resolved_cast_type = normalizeResolvedStructType(cast->target_type().as<TypeSpecifierNode>()); resolved_cast_type.has_value()) {
-						return resolved_cast_type;
-					}
+				if (auto resolved_cast_type = normalizeResolvedStructType(cast->target_type()); resolved_cast_type.has_value()) {
+					return resolved_cast_type;
 				}
 			}
 		}
@@ -642,12 +640,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// passes and the object_name.empty() path below correctly evaluates the ConstructorCallNode
 		// to get an addressable TempVar for the 'this' pointer.
 		const ConstructorCallNode& ctor_call = std::get<ConstructorCallNode>(*object_expr);
-		if (ctor_call.type_node().is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& ctor_type = ctor_call.type_node().as<TypeSpecifierNode>();
-			if (isIrStructType(toIrType(ctor_type.type()))) {
-				object_type = ctor_type;
-				// object_name remains empty; expression will be evaluated when needed
-			}
+		const TypeSpecifierNode& ctor_type = ctor_call.type_node();
+		if (isIrStructType(toIrType(ctor_type.type()))) {
+			object_type = ctor_type;
+			// object_name remains empty; expression will be evaluated when needed
 		}
 	} else if (object_expr && std::holds_alternative<MemberAccessNode>(*object_expr)) {
 		// Handle member access for function pointer calls

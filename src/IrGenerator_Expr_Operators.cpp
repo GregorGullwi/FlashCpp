@@ -529,12 +529,12 @@ TypedValue AstToIr::materializeDefaultArgument(
 	const TypeSpecifierNode& param_type_spec,
 	std::string_view error_context) {
 	auto materializePlaceholderCtorDefault = [&](const ConstructorCallNode& ctor_call) -> std::optional<TypedValue> {
+		const TypeSpecifierNode& ctor_type = ctor_call.type_node();
 		if (ctor_call.arguments().size() == 0 &&
-			ctor_call.type_node().is<TypeSpecifierNode>() &&
-			(ctor_call.type_node().as<TypeSpecifierNode>().category() == TypeCategory::UserDefined ||
-			 ctor_call.type_node().as<TypeSpecifierNode>().category() == TypeCategory::Struct ||
-			 ctor_call.type_node().as<TypeSpecifierNode>().category() == TypeCategory::Template ||
-			 isPlaceholderAutoType(ctor_call.type_node().as<TypeSpecifierNode>().type())) &&
+			(ctor_type.category() == TypeCategory::UserDefined ||
+			 ctor_type.category() == TypeCategory::Struct ||
+			 ctor_type.category() == TypeCategory::Template ||
+			 isPlaceholderAutoType(ctor_type.type())) &&
 			!is_struct_type(param_type_spec.category()) &&
 			param_type_spec.category() != TypeCategory::UserDefined) {
 			const int type_size_bits = get_type_size_bits(param_type_spec.category());
@@ -1720,10 +1720,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			return std::nullopt;
 		}
 		if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
-			if (cast->target_type().is<TypeSpecifierNode>()) {
-				return normalizeSyntaxTypeSpec(cast->target_type().as<TypeSpecifierNode>());
-			}
-			return std::nullopt;
+			return normalizeSyntaxTypeSpec(cast->target_type());
 		}
 		if (const auto* literal = std::get_if<NumericLiteralNode>(&expr)) {
 			return TypeSpecifierNode(literal->type(), literal->qualifier(), literal->sizeInBits(), Token{}, CVQualifier::None);

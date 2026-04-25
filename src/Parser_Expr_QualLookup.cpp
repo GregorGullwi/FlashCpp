@@ -1926,38 +1926,23 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	} else if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		// For constructor calls like Widget(42), return the type being constructed
 		const auto& ctor_call = std::get<ConstructorCallNode>(expr);
-		const ASTNode& type_node = ctor_call.type_node();
-		if (type_node.is<TypeSpecifierNode>()) {
-			return type_node.as<TypeSpecifierNode>();
-		}
+		return ctor_call.type_node();
 	} else if (std::holds_alternative<StaticCastNode>(expr)) {
 		// For cast expressions like (Type)expr or static_cast<Type>(expr), return the target type
 		const auto& cast = std::get<StaticCastNode>(expr);
-		const ASTNode& target_type_node = cast.target_type();
-		if (target_type_node.is<TypeSpecifierNode>()) {
-			return target_type_node.as<TypeSpecifierNode>();
-		}
+		return cast.target_type();
 	} else if (std::holds_alternative<DynamicCastNode>(expr)) {
 		// For dynamic_cast<Type>(expr), return the target type
 		const auto& cast = std::get<DynamicCastNode>(expr);
-		const ASTNode& target_type_node = cast.target_type();
-		if (target_type_node.is<TypeSpecifierNode>()) {
-			return target_type_node.as<TypeSpecifierNode>();
-		}
+		return cast.target_type();
 	} else if (std::holds_alternative<ConstCastNode>(expr)) {
 		// For const_cast<Type>(expr), return the target type
 		const auto& cast = std::get<ConstCastNode>(expr);
-		const ASTNode& target_type_node = cast.target_type();
-		if (target_type_node.is<TypeSpecifierNode>()) {
-			return target_type_node.as<TypeSpecifierNode>();
-		}
+		return cast.target_type();
 	} else if (std::holds_alternative<ReinterpretCastNode>(expr)) {
 		// For reinterpret_cast<Type>(expr), return the target type
 		const auto& cast = std::get<ReinterpretCastNode>(expr);
-		const ASTNode& target_type_node = cast.target_type();
-		if (target_type_node.is<TypeSpecifierNode>()) {
-			return target_type_node.as<TypeSpecifierNode>();
-		}
+		return cast.target_type();
 	} else if (std::holds_alternative<MemberAccessNode>(expr)) {
 		// For member access expressions like obj.member or (*ptr).member
 		const auto& member_access = std::get<MemberAccessNode>(expr);

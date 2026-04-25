@@ -2244,13 +2244,7 @@ ExprResult AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
 
 ExprResult AstToIr::generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
 	// offsetof(struct_type, member)
-	const ASTNode& type_node = offsetofNode.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		throw InternalError("offsetof type argument must be TypeSpecifierNode");
-		return ExprResult{};
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = offsetofNode.type_node();
 	if (type_spec.category() != TypeCategory::Struct) {
 		throw InternalError("offsetof requires a struct type");
 		return ExprResult{};
@@ -3703,10 +3697,7 @@ bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 	// const_cast<const T&>(x) — target type is const
 	if (std::holds_alternative<ConstCastNode>(expr)) {
 		const ConstCastNode& cc = std::get<ConstCastNode>(expr);
-		if (cc.target_type().is<TypeSpecifierNode>()) {
-			return cc.target_type().as<TypeSpecifierNode>().is_const();
-		}
-		return false;
+		return cc.target_type().is_const();
 	}
 
 	// Helper lambda: given a symbol, return its TypeSpecifierNode (or nullptr)

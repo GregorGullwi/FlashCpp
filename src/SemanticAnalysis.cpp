@@ -2732,15 +2732,12 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 							 std::is_same_v<T, ConstCastNode> ||
 							 std::is_same_v<T, ReinterpretCastNode> ||
 							 std::is_same_v<T, DynamicCastNode>) {
-			const ASTNode& target_type_node = inner.target_type();
-			if (target_type_node.is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& target_type = target_type_node.as<TypeSpecifierNode>();
-				if (target_type.is_rvalue_reference()) {
-					return ValueCategory::XValue;
-				}
-				if (target_type.is_reference()) {
-					return ValueCategory::LValue;
-				}
+			const TypeSpecifierNode& target_type = inner.target_type();
+			if (target_type.is_rvalue_reference()) {
+				return ValueCategory::XValue;
+			}
+			if (target_type.is_reference()) {
+				return ValueCategory::LValue;
 			}
 			return ValueCategory::PRValue;
 		} else {
@@ -3470,10 +3467,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 								 std::is_same_v<T, ConstCastNode> ||
 								 std::is_same_v<T, ReinterpretCastNode>) {
 				// Explicit casts: the result type is the declared target type.
-				const ASTNode& tt = e.target_type();
-				if (tt.has_value() && tt.template is<TypeSpecifierNode>())
-					return canonicalizeType(tt.template as<TypeSpecifierNode>());
-				return {};
+				return canonicalizeType(e.target_type());
 			} else if constexpr (std::is_same_v<T, SizeofExprNode> ||
 								 std::is_same_v<T, SizeofPackNode> ||
 								 std::is_same_v<T, AlignofExprNode>) {
@@ -3490,10 +3484,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				// Constructor call returns the type being constructed.
-				const ASTNode& type_node = e.type_node();
-				if (type_node.has_value() && type_node.template is<TypeSpecifierNode>())
-					return canonicalizeType(type_node.template as<TypeSpecifierNode>());
-				return {};
+				return canonicalizeType(e.type_node());
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				const ASTNode& target_type_node = e.target_type();
 				if (target_type_node.has_value() && target_type_node.template is<TypeSpecifierNode>())
@@ -3541,10 +3532,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				}
 				return {};
 			} else if constexpr (std::is_same_v<T, DynamicCastNode>) {
-				const ASTNode& tt = e.target_type();
-				if (tt.has_value() && tt.template is<TypeSpecifierNode>())
-					return canonicalizeType(tt.template as<TypeSpecifierNode>());
-				return {};
+				return canonicalizeType(e.target_type());
 			} else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
 				// offsetof returns size_t (UnsignedLongLong on 64-bit).
 				CanonicalTypeDesc desc;
@@ -5496,10 +5484,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const CallExprNode& call_no
 
 void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node) {
 	// Get the type being constructed.
-	const ASTNode& type_node = call_node.type_node();
-	if (!type_node.has_value() || !type_node.is<TypeSpecifierNode>())
-		return;
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = call_node.type_node();
 	if (type_spec.category() != TypeCategory::Struct)
 		return;
 	const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());

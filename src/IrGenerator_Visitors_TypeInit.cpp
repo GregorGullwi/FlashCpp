@@ -1095,11 +1095,9 @@ void AstToIr::generateStaticMemberDeclarations() {
 							bool evaluated_ctor = false;
 							// Try constexpr evaluation for constructor calls with arguments
 							if (!ctor_call.arguments().empty()) {
-								const ASTNode& ctor_type_node = ctor_call.type_node();
-								if (ctor_type_node.is<TypeSpecifierNode>()) {
-									const TypeSpecifierNode& ctor_type_spec = ctor_type_node.as<TypeSpecifierNode>();
-									TypeIndex ctor_type_index = ctor_type_spec.type_index();
-									if (const StructTypeInfo* ctor_struct_info = tryGetStructTypeInfo(ctor_type_index)) {
+								const TypeSpecifierNode& ctor_type_spec = ctor_call.type_node();
+								TypeIndex ctor_type_index = ctor_type_spec.type_index();
+								if (const StructTypeInfo* ctor_struct_info = tryGetStructTypeInfo(ctor_type_index)) {
 										const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
 										if (matching_ctor) {
 											FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(ctor_struct_info->name));
@@ -1191,7 +1189,6 @@ void AstToIr::generateStaticMemberDeclarations() {
 											}
 										}
 									}
-								}
 							}
 							if (!evaluated_ctor) {
 								FLASH_LOG(Codegen, Debug, "Processing ConstructorCallNode initializer for static member '",

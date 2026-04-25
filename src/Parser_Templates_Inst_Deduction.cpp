@@ -1925,16 +1925,17 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			if (auto direct_alias = gTemplateRegistry.lookup_alias_template(type_name);
 				direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
 				const auto& alias_node = direct_alias->as<TemplateAliasNode>();
-				if (alias_node.target_type().is<TypeSpecifierNode>()) {
-					type_node = substituteTemplateParameters(alias_node.target_type(), template_params, template_args);
-					if (!type_node.is<TypeSpecifierNode>())
-						return;
-					idx = type_node.as<TypeSpecifierNode>().type_index();
-					type_info = tryGetTypeInfo(idx);
-					if (!type_info)
-						return;
-					type_name = StringTable::getStringView(type_info->name());
-				}
+				type_node = substituteTemplateParameters(
+					emplace_node<TypeSpecifierNode>(alias_node.target_type()),
+					template_params,
+					template_args);
+				if (!type_node.is<TypeSpecifierNode>())
+					return;
+				idx = type_node.as<TypeSpecifierNode>().type_index();
+				type_info = tryGetTypeInfo(idx);
+				if (!type_info)
+					return;
+				type_name = StringTable::getStringView(type_info->name());
 			}
 
 			auto sep_pos = type_name.find("::");
@@ -2021,9 +2022,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				auto alias_opt = gTemplateRegistry.lookup_alias_template(StringTable::getStringView(resolved_handle));
 				if (alias_opt.has_value() && alias_opt->is<TemplateAliasNode>()) {
 					const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
-					if (alias_node.target_type().is<TypeSpecifierNode>()) {
-						type_node = emplace_node<TypeSpecifierNode>(alias_node.target_type().as<TypeSpecifierNode>());
-					}
+					type_node = emplace_node<TypeSpecifierNode>(alias_node.target_type());
 				}
 			} else {
 				const TypeInfo* resolved_info = type_it->second;
@@ -3385,17 +3384,18 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		if (auto direct_alias = gTemplateRegistry.lookup_alias_template(std::string(type_name));
 			direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
 			const auto& alias_node = direct_alias->as<TemplateAliasNode>();
-			if (alias_node.target_type().is<TypeSpecifierNode>()) {
-				type_node = substituteTemplateParameters(alias_node.target_type(), template_params, template_args);
-				if (!type_node.is<TypeSpecifierNode>())
-					return;
-				idx = type_node.as<TypeSpecifierNode>().type_index();
-				type_info = tryGetTypeInfo(idx);
-				if (!type_info)
-					return;
-				type_name = StringTable::getStringView(type_info->name());
-				FLASH_LOG(Templates, Debug, "Resolved dependent alias through substitution: ", type_name);
-			}
+			type_node = substituteTemplateParameters(
+				emplace_node<TypeSpecifierNode>(alias_node.target_type()),
+				template_params,
+				template_args);
+			if (!type_node.is<TypeSpecifierNode>())
+				return;
+			idx = type_node.as<TypeSpecifierNode>().type_index();
+			type_info = tryGetTypeInfo(idx);
+			if (!type_info)
+				return;
+			type_name = StringTable::getStringView(type_info->name());
+			FLASH_LOG(Templates, Debug, "Resolved dependent alias through substitution: ", type_name);
 		}
 
 		auto sep_pos = type_name.find("::");
@@ -3584,12 +3584,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			auto alias_opt = gTemplateRegistry.lookup_alias_template(StringTable::getStringView(resolved_handle));
 			if (alias_opt.has_value() && alias_opt->is<TemplateAliasNode>()) {
 				const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
-				if (alias_node.target_type().is<TypeSpecifierNode>()) {
-					const auto& alias_ts = alias_node.target_type().as<TypeSpecifierNode>();
-					type_node = emplace_node<TypeSpecifierNode>(alias_ts);
-					FLASH_LOG(Templates, Debug, "Resolved dependent alias via registry '", type_name, "' -> ", alias_node.alias_name());
-					return;
-				}
+				const auto& alias_ts = alias_node.target_type();
+				type_node = emplace_node<TypeSpecifierNode>(alias_ts);
+				FLASH_LOG(Templates, Debug, "Resolved dependent alias via registry '", type_name, "' -> ", alias_node.alias_name());
+				return;
 			}
 		} else {
 			const TypeInfo* resolved_info = type_it->second;

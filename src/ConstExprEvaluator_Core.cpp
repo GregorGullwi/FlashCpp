@@ -301,10 +301,7 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 
 	if (std::holds_alternative<StaticCastNode>(expr)) {
 		const auto& cast = std::get<StaticCastNode>(expr);
-		if (cast.target_type().is<TypeSpecifierNode>()) {
-			return cast.target_type().as<TypeSpecifierNode>();
-		}
-		return std::nullopt;
+		return cast.target_type();
 	}
 
 	return std::nullopt;
@@ -1645,12 +1642,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 }
 
 EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
-	const ASTNode& type_node = offsetof_expr.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("offsetof type argument must be TypeSpecifierNode");
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = offsetof_expr.type_node();
 	if (type_spec.category() != TypeCategory::Struct) {
 		return EvalResult::error("offsetof requires a struct type");
 	}
@@ -1916,12 +1908,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 	const auto& args = ctor_call.arguments();
 
 	// Get the target type
-	const ASTNode& type_node = ctor_call.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Constructor call without valid type specifier");
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = ctor_call.type_node();
 
 	// Handle empty constructor calls (default/value initialization): Type{}
 	if (args.size() == 0) {
@@ -2125,12 +2112,7 @@ EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, Eval
 	// Evaluate static_cast<Type>(expr) and C-style casts in constant expressions
 
 	// Get the target type
-	const ASTNode& type_node = cast_node.target_type();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Cast without valid type specifier");
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = cast_node.target_type();
 
 	EvalResult result = evaluate(cast_node.expr(), context);
 	if (!result.success()) {
@@ -2151,12 +2133,7 @@ EvalResult Evaluator::evaluate_const_cast(const ConstCastNode& cast_node, Evalua
 	// Evaluate const_cast<Type>(expr) in constant expressions.
 	// Constexpr evaluation preserves the underlying value/pointer/object identity;
 	// only the target cv/reference-qualified type metadata changes.
-	const ASTNode& type_node = cast_node.target_type();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Const cast without valid type specifier");
-	}
-
-	const TypeSpecifierNode& target_type = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& target_type = cast_node.target_type();
 	EvalResult result = evaluate(cast_node.expr(), context);
 	if (!result.success()) {
 		return result;
@@ -3259,12 +3236,7 @@ EvalResult Evaluator::evaluate_callable_object(
 
 	if (ctor_call_ptr) {
 		const ConstructorCallNode& ctor_call = *ctor_call_ptr;
-		const ASTNode& type_node = ctor_call.type_node();
-		if (!type_node.is<TypeSpecifierNode>()) {
-			return EvalResult::error("Callable object constructor has invalid type");
-		}
-
-		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = ctor_call.type_node();
 		const StructTypeInfo* struct_info = get_struct_info_from_type(type_spec);
 		if (!struct_info) {
 			return EvalResult::error("Callable object is not a struct/class type");
@@ -3990,10 +3962,8 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			const ExpressionNode& expr = arg.as<ExpressionNode>();
 			if (std::holds_alternative<ConstructorCallNode>(expr)) {
 				const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
-				const ASTNode& type_node = ctor.type_node();
-
-				if (type_node.is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+				{
+					const TypeSpecifierNode& type_spec = ctor.type_node();
 					TypeCategory base_type = type_spec.type();
 					bool is_reference = type_spec.is_reference();
 					size_t pointer_depth = type_spec.pointer_depth();

@@ -3089,13 +3089,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
 	// Get the type being constructed
-	const ASTNode& type_node = constructorCallNode.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		assert(false && "Constructor call type node must be a TypeSpecifierNode");
-		return ExprResult{};
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = constructorCallNode.type_node();
 	size_t num_args = 0;
 	constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
 

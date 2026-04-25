@@ -2694,10 +2694,14 @@ private:
 // Constructor call node - represents constructor calls like T(args)
 class ConstructorCallNode {
 public:
-	explicit ConstructorCallNode(ASTNode type_node, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
+	explicit ConstructorCallNode(const TypeSpecifierNode& type_node, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
 		: type_node_(type_node), arguments_(std::move(arguments)), called_from_(called_from_token) {}
+	explicit ConstructorCallNode(ASTNode type_node, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
+		: ConstructorCallNode(type_node.as<TypeSpecifierNode>(), std::move(arguments), called_from_token) {}
 
-	const ASTNode& type_node() const { return type_node_; }
+	const TypeSpecifierNode& type_node() const { return type_node_; }
+	TypeSpecifierNode& type_specifier_node() { return type_node_; }
+	const TypeSpecifierNode& type_specifier_node() const { return type_node_; }
 	const auto& arguments() const { return arguments_; }
 	const ConstructorDeclarationNode* resolved_constructor() const { return resolved_constructor_; }
 
@@ -2707,7 +2711,7 @@ public:
 	Token called_from() const { return called_from_; }
 
 private:
-	ASTNode type_node_;	// TypeSpecifierNode representing the type being constructed
+	TypeSpecifierNode type_node_;	// TypeSpecifierNode representing the type being constructed
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
 	mutable const ConstructorDeclarationNode* resolved_constructor_ = nullptr;

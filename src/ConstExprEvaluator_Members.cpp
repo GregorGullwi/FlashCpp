@@ -2779,11 +2779,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	// bindings-aware recursive evaluator so that local variables and function
 	// parameters are visible inside the cast expression.
 	if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
-		const ASTNode& type_node = static_cast_node->target_type();
-		if (!type_node.is<TypeSpecifierNode>()) {
-			return EvalResult::error("Cast without valid type specifier");
-		}
-		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = static_cast_node->target_type();
 		// Evaluate the inner expression with bindings.
 		auto inner_result = recursive_eval(static_cast_node->expr(), bindings, context);
 		if (!inner_result.success()) {
@@ -2813,11 +2809,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	// the cast expression.  const_cast only changes cv/ref qualification — no type
 	// conversion is performed; the value/object identity is preserved as-is.
 	if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
-		const ASTNode& type_node = const_cast_node->target_type();
-		if (!type_node.is<TypeSpecifierNode>()) {
-			return EvalResult::error("Const cast without valid type specifier");
-		}
-		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = const_cast_node->target_type();
 		// Evaluate the inner expression with bindings.
 		auto inner_result = recursive_eval(const_cast_node->expr(), bindings, context);
 		if (!inner_result.success()) {
@@ -2842,12 +2834,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	// When evaluating inside a function body with local bindings, we need outer_bindings to evaluate
 	// constructor arguments that reference local variables.
 	if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
-		const ASTNode& type_node = ctor_call->type_node();
-		if (type_node.is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-			if (is_struct_type(type_spec.category()) && tryGetTypeInfo(type_spec.type_index())) {
-				return materialize_constructor_object_value(*ctor_call, context, &bindings);
-			}
+		const TypeSpecifierNode& type_spec = ctor_call->type_node();
+		if (is_struct_type(type_spec.category()) && tryGetTypeInfo(type_spec.type_index())) {
+			return materialize_constructor_object_value(*ctor_call, context, &bindings);
 		}
 	}
 
@@ -4423,12 +4412,7 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	}
 
 	const ConstructorCallNode& ctor_call = *ctor_call_ptr;
-	const ASTNode& type_node = ctor_call.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Constructor call without valid type specifier");
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = ctor_call.type_node();
 	if (!is_struct_type(type_spec.category())) {
 		return EvalResult::error("Constexpr " + std::string(usage_name) + " requires a struct type");
 	}
@@ -5172,12 +5156,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 	};
 
 	auto evaluateMemberFromCtorCall = [&context, member_name](const ConstructorCallNode& ctor_call) -> EvalResult {
-		const ASTNode& type_node = ctor_call.type_node();
-		if (!type_node.is<TypeSpecifierNode>()) {
-			return EvalResult::error("Invalid struct element type in array subscript member access");
-		}
-
-		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = ctor_call.type_node();
 		const StructTypeInfo* struct_info = get_struct_info_from_type(type_spec);
 		if (!struct_info) {
 			return EvalResult::error("Array element is not a struct in member access");
@@ -5210,15 +5189,13 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 					}
 
 					const StaticCastNode& cast_node = std::get<StaticCastNode>(arg_expr);
-					const ASTNode& cast_type_node = cast_node.target_type();
+					const TypeSpecifierNode& cast_type = cast_node.target_type();
 					const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
 					const ASTNode& param_type_node = param_decl.type_node();
-					if (!cast_type_node.is<TypeSpecifierNode>() || !param_type_node.is<TypeSpecifierNode>()) {
+					if (!param_type_node.is<TypeSpecifierNode>()) {
 						matches_cast_targets = false;
 						break;
 					}
-
-					const TypeSpecifierNode& cast_type = cast_type_node.as<TypeSpecifierNode>();
 					const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
 					if (cast_type.type() != param_type.type() ||
 						cast_type.type_index() != param_type.type_index() ||
@@ -5660,11 +5637,7 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 		}
 	} else if (ctor_call_ptr) {
 		const ConstructorCallNode& ctor_call = *ctor_call_ptr;
-		const ASTNode& type_node = ctor_call.type_node();
-		if (!type_node.is<TypeSpecifierNode>()) {
-			return EvalResult::error("Constructor call without valid type specifier");
-		}
-		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = ctor_call.type_node();
 		if (!is_struct_type(type_spec.category())) {
 			return EvalResult::error("Member function call requires a struct type");
 		}
@@ -5845,12 +5818,7 @@ EvalResult Evaluator::materialize_constructor_object_value(
 	const ConstructorCallNode& ctor_call,
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
-	const ASTNode& type_node = ctor_call.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Constructor call without valid type specifier");
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = ctor_call.type_node();
 	if (!is_struct_type(type_spec.category())) {
 		return EvalResult::error("Constructor call is not a struct/class type");
 	}
@@ -6861,12 +6829,7 @@ EvalResult Evaluator::extract_object_members(
 	const ConstructorCallNode& ctor_call = *ctor_call_ptr;
 
 	// Get the struct type info
-	const ASTNode& type_node = ctor_call.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Constructor call without valid type specifier");
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = ctor_call.type_node();
 
 	if (!is_struct_type(type_spec.category())) {
 		return EvalResult::error("Member function call requires a struct type");

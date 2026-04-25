@@ -1737,17 +1737,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
 
 						// Check if the alias target type is void (like void_t)
-						const ASTNode& target_type = alias_node.target_type();
-						if (target_type.is<TypeSpecifierNode>()) {
-							const TypeSpecifierNode& alias_type_spec = target_type.as<TypeSpecifierNode>();
-							if (alias_type_spec.category() == TypeCategory::Void) {
-								// void_t-like alias: fill in void here, SFINAE check happens in pattern matching
-								TemplateTypeArg void_arg;
-								void_arg.type_index = nativeTypeIndex(TypeCategory::Void);
-								filled_args_for_pattern_match.push_back(void_arg);
-								FLASH_LOG(Templates, Debug, "Filled in void_t alias default for param ", i, ": void");
-								continue;
-							}
+						const TypeSpecifierNode& alias_type_spec = alias_node.target_type();
+						if (alias_type_spec.category() == TypeCategory::Void) {
+							// void_t-like alias: fill in void here, SFINAE check happens in pattern matching
+							TemplateTypeArg void_arg;
+							void_arg.type_index = nativeTypeIndex(TypeCategory::Void);
+							filled_args_for_pattern_match.push_back(void_arg);
+							FLASH_LOG(Templates, Debug, "Filled in void_t alias default for param ", i, ": void");
+							continue;
 						}
 					}
 

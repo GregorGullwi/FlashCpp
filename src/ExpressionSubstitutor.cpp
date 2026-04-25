@@ -261,16 +261,7 @@ ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNo
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing constructor call");
 
 	// Get the type being constructed
-	const ASTNode& type_node = ctor.type_node();
-
-	if (!type_node.is<TypeSpecifierNode>()) {
-		FLASH_LOG(Templates, Warning, "ExpressionSubstitutor: Constructor type node is not TypeSpecifierNode");
-		// Return wrapped in ExpressionNode
-		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(ctor);
-		return ASTNode(&new_expr);
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = ctor.type_node();
 
 	// Substitute template parameters in the type
 	TypeSpecifierNode substituted_type = substituteInType(type_spec);
@@ -285,7 +276,7 @@ ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNo
 	// Create new TypeSpecifierNode and ConstructorCallNode
 	TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(substituted_type);
 	ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
-		ASTNode(&new_type),
+		new_type,
 		std::move(substituted_args),
 		ctor.called_from());
 
@@ -1554,17 +1545,11 @@ ASTNode ExpressionSubstitutor::substituteStaticCast(const StaticCastNode& cast_n
 
 	// The target type typically doesn't need substitution for built-in functional casts
 	// like bool(x), int(x), but handle it for completeness
-	ASTNode target_type = cast_node.target_type();
-	if (target_type.is<TypeSpecifierNode>()) {
-		const TypeSpecifierNode& type_spec = target_type.as<TypeSpecifierNode>();
-		TypeSpecifierNode substituted_type = substituteInType(type_spec);
-		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(substituted_type);
-		target_type = ASTNode(&new_type);
-	}
+	TypeSpecifierNode substituted_type = substituteInType(cast_node.target_type());
 
 	// Create new StaticCastNode with substituted expression
 	StaticCastNode& new_cast = gChunkedAnyStorage.emplace_back<StaticCastNode>(
-		target_type, substituted_expr, cast_node.cast_token());
+		substituted_type, substituted_expr, cast_node.cast_token());
 
 	// Wrap in ExpressionNode
 	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_cast);

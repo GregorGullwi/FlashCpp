@@ -566,7 +566,7 @@ bool expressionHasDeferredTemplateDependency(
 					   astNodeHasDeferredTemplateDependency(inner.true_expr(), current_template_param_names) ||
 					   astNodeHasDeferredTemplateDependency(inner.false_expr(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
-				return astNodeHasDeferredTemplateDependency(inner.type_node(), current_template_param_names) ||
+				return typeRefersToCurrentTemplateParam(inner.type_node(), current_template_param_names) ||
 					   astNodesHaveDeferredTemplateDependency(inner.arguments(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				return astNodeHasDeferredTemplateDependency(inner.object(), current_template_param_names);
@@ -586,7 +586,7 @@ bool expressionHasDeferredTemplateDependency(
 					StringTable::getOrInternStringHandle(inner.pack_name()),
 					current_template_param_names);
 			} else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
-				return astNodeHasDeferredTemplateDependency(inner.type_node(), current_template_param_names);
+				return typeRefersToCurrentTemplateParam(inner.type_node(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, TypeTraitExprNode>) {
 				return astNodeHasDeferredTemplateDependency(inner.type_node(), current_template_param_names) ||
 					   astNodeHasDeferredTemplateDependency(inner.second_type_node(), current_template_param_names) ||
@@ -602,7 +602,7 @@ bool expressionHasDeferredTemplateDependency(
 								 std::is_same_v<T, DynamicCastNode> ||
 								 std::is_same_v<T, ConstCastNode> ||
 								 std::is_same_v<T, ReinterpretCastNode>) {
-				return astNodeHasDeferredTemplateDependency(inner.target_type(), current_template_param_names) ||
+				return typeRefersToCurrentTemplateParam(inner.target_type(), current_template_param_names) ||
 					   astNodeHasDeferredTemplateDependency(inner.expr(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
 				return std::any_of(

@@ -295,17 +295,9 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 								 std::is_same_v<T, ConstCastNode> ||
 								 std::is_same_v<T, ReinterpretCastNode> ||
 								 std::is_same_v<T, DynamicCastNode>) {
-				const ASTNode& target_type_node = inner.target_type();
-				if (target_type_node.is<TypeSpecifierNode>()) {
-					return target_type_node.as<TypeSpecifierNode>();
-				}
-				return std::nullopt;
+				return inner.target_type();
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
-				const ASTNode& type_node = inner.type_node();
-				if (type_node.is<TypeSpecifierNode>()) {
-					return type_node.as<TypeSpecifierNode>();
-				}
-				return std::nullopt;
+				return inner.type_node();
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				const ASTNode& target_type_node = inner.target_type();
 				if (target_type_node.is<TypeSpecifierNode>()) {
@@ -2349,9 +2341,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							// Find the matching constructor to get parameter types for reference handling
 						const ConstructorDeclarationNode* matching_ctor = nullptr;
 						bool ctor_constructs_target_type = false;
-						if (const ASTNode& ctor_type_node = direct_ctor->type_node();
-							ctor_type_node.has_value() && ctor_type_node.is<TypeSpecifierNode>()) {
-							const TypeSpecifierNode& ctor_type = ctor_type_node.as<TypeSpecifierNode>();
+						{
+							const TypeSpecifierNode& ctor_type = direct_ctor->type_node();
 							ctor_constructs_target_type =
 								ctor_type.category() == type_node.category() &&
 								ctor_type.type_index() == type_node.type_index();

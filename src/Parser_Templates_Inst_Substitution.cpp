@@ -800,7 +800,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 	// Handle constructor call: T(value) -> ConcreteType(value)
 	if (std::holds_alternative<ConstructorCallNode>(expr_variant)) {
 		const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr_variant);
-		const TypeSpecifierNode& ctor_type = ctor.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& ctor_type = ctor.type_node();
 
 		// Check if this constructor type is in our substitution map
 		// For variable templates with cleaned-up template parameters, the constructor

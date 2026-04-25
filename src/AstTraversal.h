@@ -187,25 +187,25 @@ bool visitASTImpl(const ASTNode& node, VisitorFn&& visitor) {
 
 		if (current.is<StaticCastNode>()) {
 			const auto& cast = current.as<StaticCastNode>();
-			return visit_child(cast.target_type()) ||
+			return visit_child(ASTNode::emplace_node<TypeSpecifierNode>(cast.target_type())) ||
 				   visit_child(cast.expr());
 		}
 
 		if (current.is<DynamicCastNode>()) {
 			const auto& cast = current.as<DynamicCastNode>();
-			return visit_child(cast.target_type()) ||
+			return visit_child(ASTNode::emplace_node<TypeSpecifierNode>(cast.target_type())) ||
 				   visit_child(cast.expr());
 		}
 
 		if (current.is<ConstCastNode>()) {
 			const auto& cast = current.as<ConstCastNode>();
-			return visit_child(cast.target_type()) ||
+			return visit_child(ASTNode::emplace_node<TypeSpecifierNode>(cast.target_type())) ||
 				   visit_child(cast.expr());
 		}
 
 		if (current.is<ReinterpretCastNode>()) {
 			const auto& cast = current.as<ReinterpretCastNode>();
-			return visit_child(cast.target_type()) ||
+			return visit_child(ASTNode::emplace_node<TypeSpecifierNode>(cast.target_type())) ||
 				   visit_child(cast.expr());
 		}
 
