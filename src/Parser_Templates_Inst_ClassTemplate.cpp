@@ -47,16 +47,21 @@ static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type
 // `template<> struct Trait<int>` when a use-site argument arrives through an alias
 // or alias template and still carries an alias TypeIndex/category.
 static std::optional<std::vector<TemplateTypeArg>> tryMakeAliasNormalizedTemplateArgs(const std::vector<TemplateTypeArg>& template_args) {
-	std::vector<TemplateTypeArg> normalized_args;
-	normalized_args.reserve(template_args.size());
 	bool changed = false;
-	for (size_t i = 0; i < template_args.size(); ++i) {
-		TemplateTypeArg normalized_arg = NameMangling::normalizeTemplateTypeArgForMangling(template_args[i]);
-		changed = changed || normalized_arg != template_args[i];
-		normalized_args.push_back(std::move(normalized_arg));
+	for (const TemplateTypeArg& arg : template_args) {
+		if (NameMangling::normalizeTemplateTypeArgForMangling(arg) != arg) {
+			changed = true;
+			break;
+		}
 	}
 	if (!changed) {
 		return std::nullopt;
+	}
+
+	std::vector<TemplateTypeArg> normalized_args;
+	normalized_args.reserve(template_args.size());
+	for (const TemplateTypeArg& arg : template_args) {
+		normalized_args.push_back(NameMangling::normalizeTemplateTypeArgForMangling(arg));
 	}
 	return normalized_args;
 }
