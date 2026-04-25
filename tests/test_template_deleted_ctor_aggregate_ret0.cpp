@@ -2,9 +2,10 @@
 // has_deleted_constructor must be propagated during template instantiation.
 template<typename T>
 struct HasDeleted {
-    T val;
-    HasDeleted(int) = delete;  // user-declared deleted constructor
-};
+struct HasDeleted {
+	T val;
+	HasDeleted(int) = delete;  // user-declared deleted constructor
+
 
 extern "C" int printf(const char*, ...);
 int main() {
