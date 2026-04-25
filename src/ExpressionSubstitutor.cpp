@@ -8,6 +8,7 @@
 
 namespace {
 
+// Bound recursive placeholder unwrapping so malformed alias cycles cannot recurse indefinitely.
 static constexpr int kMaxDependentMemberTypeResolutionDepth = 16;
 
 bool parseUnsignedDecimal(std::string_view text, uint64_t& value) {
@@ -391,10 +392,10 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 
 		if (!substituted && !arg.is_value && is_struct_type(arg.category())) {
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
-				if (const TypeInfo* resolved_member_type = resolveDependentMemberType(*arg_type_info, 0)) {
+				if (const TypeInfo* recursively_resolved_type = resolveDependentMemberType(*arg_type_info, 0)) {
 					materialized_arg.type_index =
-						resolved_member_type->registeredTypeIndex().withCategory(resolved_member_type->typeEnum());
-					materialized_arg.setCategory(resolved_member_type->typeEnum());
+						recursively_resolved_type->registeredTypeIndex().withCategory(recursively_resolved_type->typeEnum());
+					materialized_arg.setCategory(recursively_resolved_type->typeEnum());
 					materialized_arg.dependent_name = {};
 					materialized_arg.is_dependent = false;
 					result.had_substitution = true;

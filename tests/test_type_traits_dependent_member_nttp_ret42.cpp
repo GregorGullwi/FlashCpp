@@ -44,7 +44,7 @@ struct is_integral_custom
 	: integral_constant<bool, is_integral_helper<typename remove_cv<T>::type>::value> {};
 
 int main() {
-	bool strips_cv_from_integral = is_integral_custom<const volatile int>::value;
+	bool const_volatile_int_is_integral = is_integral_custom<const volatile int>::value;
 	bool char_is_integral = is_integral_custom<const volatile char>::value;
-	return strips_cv_from_integral ? (char_is_integral ? 0 : 42) : 0;
+	return const_volatile_int_is_integral ? (char_is_integral ? 0 : 42) : 0;
 }
