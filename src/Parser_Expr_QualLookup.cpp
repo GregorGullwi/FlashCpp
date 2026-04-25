@@ -2290,17 +2290,14 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 
 	// If we found a deduced type, update the function declaration's return type
 	if (deduced_type.has_value()) {
-		// Create a new ASTNode with the deduced type and update the declaration
-		// Note: new_type_ref is a reference to the newly created node, not the moved-from deduced_type
-		auto [new_type_node, new_type_ref] = create_node_ref<TypeSpecifierNode>(std::move(*deduced_type));
-		decl_node.set_type_node(new_type_node);
+		decl_node.set_type_node(*deduced_type);
 
-		FLASH_LOG(Parser, Debug, "  Updated return type to: ", (int)new_type_ref.type(),
-				  " size: ", (int)new_type_ref.size_in_bits());
+		FLASH_LOG(Parser, Debug, "  Updated return type to: ", (int)deduced_type->type(),
+				  " size: ", (int)deduced_type->size_in_bits());
 
 		// Log deduction for debugging
 		FLASH_LOG(Parser, Debug, "Deduced auto return type for function '", decl_node.identifier_token().value(),
-				  "': type=", (int)new_type_ref.type(), " size=", (int)new_type_ref.size_in_bits());
+				  "': type=", (int)deduced_type->type(), " size=", (int)deduced_type->size_in_bits());
 	}
 }
 

@@ -1905,7 +1905,6 @@ public:
 	ASTNode type_node() const { return ASTNode(&type_node_); }
 	TypeSpecifierNode& type_specifier_node() { return type_node_; }
 	const TypeSpecifierNode& type_specifier_node() const { return type_node_; }
-	void set_type_node(const ASTNode& type_node) { type_node_ = type_node.as<TypeSpecifierNode>(); }
 	void set_type_node(const TypeSpecifierNode& type_node) { type_node_ = type_node; }
 	const Token& identifier_token() const { return identifier_; }
 	void set_identifier_token(Token token) { identifier_ = std::move(token); }

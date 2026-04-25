@@ -965,7 +965,8 @@ ParseResult Parser::parse_member_trailing_return_type(FunctionDeclarationNode& f
 		return ParseResult::error("Expected type specifier for trailing return type", current_token_);
 	}
 
-	func_decl.decl_node().set_type_node(*trailing_result.node());
+	const TypeSpecifierNode& trailing_type = trailing_result.node()->as<TypeSpecifierNode>();
+	func_decl.decl_node().set_type_node(trailing_type);
 	if (trailing_pos.has_value()) {
 		func_decl.set_trailing_return_type_position(*trailing_pos);
 	}

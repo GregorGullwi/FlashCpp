@@ -1014,8 +1014,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		if (enclosing_struct_type_index.is_valid()) {
 			TypeSpecifierNode resolved_param_type = resolve_param_type_for_codegen(param_decl);
 			if (resolved_param_type.type_index() != param_decl.type_specifier_node().type_index()) {
-				auto resolved_param_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_param_type);
-				auto resolved_param_decl = ASTNode::emplace_node<DeclarationNode>(resolved_param_type_node, param_decl.identifier_token());
+				auto resolved_param_decl = ASTNode::emplace_node<DeclarationNode>(resolved_param_type, param_decl.identifier_token());
 				if (param_decl.has_default_value()) {
 					resolved_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
 				}
@@ -1708,8 +1707,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 			if (enclosing_struct_type_index.is_valid()) {
 				TypeSpecifierNode resolved_param_type = resolve_ctor_param_type_for_codegen(param_decl);
 				if (resolved_param_type.type_index() != param_decl.type_specifier_node().type_index()) {
-					auto resolved_param_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_param_type);
-					auto resolved_param_decl = ASTNode::emplace_node<DeclarationNode>(resolved_param_type_node, param_decl.identifier_token());
+					auto resolved_param_decl = ASTNode::emplace_node<DeclarationNode>(resolved_param_type, param_decl.identifier_token());
 					if (param_decl.has_default_value()) {
 						resolved_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
 					}

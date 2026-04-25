@@ -64,9 +64,8 @@ ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var
 		}
 	}
 
-	ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_type);
 	DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(original_decl);
-	resolved_decl.set_type_node(resolved_type_node);
+	resolved_decl.set_type_node(resolved_type);
 	return ASTNode::emplace_node<DeclarationNode>(resolved_decl);
 }
 
@@ -1024,8 +1023,7 @@ std::vector<ASTNode> SemanticAnalysis::normalizeGenericLambdaParams(
 
 		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
 		DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(param_decl);
-		ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(*deduced_type);
-		resolved_decl.set_type_node(resolved_type_node);
+		resolved_decl.set_type_node(*deduced_type);
 		resolved_nodes.push_back(ASTNode::emplace_node<DeclarationNode>(resolved_decl));
 	}
 
@@ -1494,7 +1492,7 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 				}
 				if (auto deduced_type = deducePlaceholderReturnType(func.get_definition().value_or(ASTNode{}), return_type.type());
 					deduced_type.has_value()) {
-					func.decl_node().set_type_node(ASTNode::emplace_node<TypeSpecifierNode>(*deduced_type));
+					func.decl_node().set_type_node(*deduced_type);
 					parser_.compute_and_set_mangled_name(func, true);
 				}
 			}

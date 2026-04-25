@@ -1080,7 +1080,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 				// Create a new DeclarationNode with the same type
 				ASTNode next_decl_node = emplace_node<DeclarationNode>(
-					emplace_node<TypeSpecifierNode>(type_specifier),
+					type_specifier,
 					next_identifier_token);
 				DeclarationNode& next_decl = next_decl_node.as<DeclarationNode>();
 				TypeSpecifierNode& next_type_spec = next_decl.type_specifier_node();

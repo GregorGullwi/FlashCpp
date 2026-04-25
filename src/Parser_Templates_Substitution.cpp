@@ -1417,9 +1417,9 @@ ASTNode Parser::substituteTemplateParameters(
 			if (sub_decl_ref.is_unsized_array()) {
 				const TypeSpecifierNode& current_spec =
 					sub_decl_ref.type_specifier_node();
-				ASTNode fresh_type_node = emplace_node<TypeSpecifierNode>(current_spec);
+				TypeSpecifierNode fresh_type_node = current_spec;
 				inferUnsizedArraySizeFromInitializer(sub_decl_ref,
-					fresh_type_node.as<TypeSpecifierNode>(),
+					fresh_type_node,
 					initializer);
 				sub_decl_ref.set_type_node(fresh_type_node);
 			}

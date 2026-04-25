@@ -901,8 +901,7 @@ ParseResult Parser::parse_variable_declaration() {
 
 	if (first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
 		try_apply_deduction_guides(type_specifier, first_init_expr->as<InitializerListNode>());
-		first_var_decl.declaration().set_type_node(
-			emplace_node<TypeSpecifierNode>(type_specifier));
+		first_var_decl.declaration().set_type_node(type_specifier);
 	}
 	first_var_decl.set_initializer(first_init_expr);
 
@@ -940,7 +939,7 @@ ParseResult Parser::parse_variable_declaration() {
 
 			// Create a new DeclarationNode with the same type
 			ASTNode new_decl_node = emplace_node<DeclarationNode>(
-				emplace_node<TypeSpecifierNode>(type_specifier),
+				type_specifier,
 				identifier_tok);
 			// Register before parsing initializer (point-of-declaration)
 			ParseResult decl_result = create_var_decl(new_decl_node);
