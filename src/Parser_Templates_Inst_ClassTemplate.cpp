@@ -3,7 +3,6 @@
 #include "RebindStaticMemberAst.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
-#include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 #include "InstantiationQueue.h"
@@ -963,6 +962,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Return success (nullopt) but don't actually instantiate
 			// The type will be resolved during actual template instantiation
 			return std::nullopt;
+		}
+	}
+
+	{
+		auto exact_spec = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
+		if (exact_spec.has_value()) {
+			FLASH_LOG(Templates, Debug, "Found exact specialization for ", template_name, " with ", template_args.size(), " args before cache lookup");
+			return instantiate_full_specialization(template_name, template_args, *exact_spec);
 		}
 	}
 
@@ -4475,7 +4482,43 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								subst.cv_qualifier = type_spec.cv_qualifier();
 								resolved_args.push_back(subst);
 								resolved = true;
-							} else {
+							} else if (type_name.find("::") != std::string_view::npos) {
+								// Dependent member alias of a template instantiation
+								// (e.g., `__remove_cv<_Tp>::type` reaching us as a placeholder
+								// `__remove_cv$<dep>::type`). Re-materialize the dependent base
+								// template with the current outer substitutions, then resolve the
+								// member alias against the concrete instantiation. This produces
+								// the terminal underlying type (e.g., `int`) so the deferred base
+								// receives a concrete-typed template argument and matches any
+								// exact specialization registered for that concrete type.
+								if (const TypeInfo* concrete_member_alias =
+										materializeInstantiatedMemberAliasTarget(
+											type_spec,
+											resolved_index,
+											template_params,
+											template_args_to_use)) {
+									TypeIndex terminal_index =
+										concrete_member_alias->registeredTypeIndex().withCategory(
+											concrete_member_alias->typeEnum());
+									ResolvedAliasTypeInfo terminal =
+										resolveAliasTypeInfo(terminal_index);
+									if (terminal.type_index.is_valid()) {
+										terminal_index = terminal.type_index;
+									}
+
+									TemplateTypeArg member_arg;
+									member_arg.type_index = terminal_index;
+									member_arg.pointer_depth = type_spec.pointer_depth();
+									member_arg.ref_qualifier = type_spec.reference_qualifier();
+									member_arg.cv_qualifier = type_spec.cv_qualifier();
+									resolved_args.push_back(member_arg);
+									resolved = true;
+									FLASH_LOG_FORMAT(Templates, Debug,
+										"Resolved deferred base member alias '{}' to terminal type_index={}",
+										type_name, terminal_index);
+								}
+							}
+							if (!resolved) {
 								const StructTypeInfo* resolved_struct_info = resolved_ti->getStructInfo();
 								if (resolved_ti->isTemplateInstantiation() &&
 									(!resolved_struct_info || !resolved_struct_info->sizeInBytes().is_set())) {

@@ -1727,6 +1727,35 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	register_type_aliases();
 	register_nested_class_aliases();
 
+	// Copy base classes from the full specialization. A full specialization fully
+	// binds all template parameters, so its base classes refer to concrete types
+	// already present in the type table - we just need to mirror them onto the new
+	// instantiation so member lookup walks the correct inheritance chain.
+	for (const auto& base : spec_struct.base_classes()) {
+		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+		if (base_type_info == nullptr) {
+			// Defensive fallback: if the recorded TypeIndex is stale (e.g., the base
+			// type was registered after the spec was parsed), fall back to a name
+			// lookup so we still produce a valid inheritance chain.
+			FLASH_LOG(Templates, Debug,
+				"instantiate_full_specialization: base '", base.name,
+				"' for ", instantiated_name,
+				" not resolvable by type_index, falling back to name lookup");
+			base_type_info = findTypeByName(StringTable::getOrInternStringHandle(base.name));
+		}
+		if (base_type_info == nullptr) {
+			FLASH_LOG(Templates, Warning,
+				"instantiate_full_specialization: base class '", base.name,
+				"' for ", instantiated_name, " not found in type table");
+			continue;
+		}
+		struct_info->addBaseClass(
+			StringTable::getStringView(base_type_info->name()),
+			base_type_info->registeredTypeIndex().withCategory(base_type_info->typeEnum()),
+			base.access,
+			base.is_virtual);
+	}
+
 	// Check if there's an explicit constructor - if not, we need to generate a default one
 	bool has_constructor = false;
 	for (auto& mem_func : spec_struct.member_functions()) {

@@ -9,7 +9,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1369ms |
-| `<type_traits>` | `test_std_type_traits.cpp` | ❌ Semantic Error | ~1142ms (retested 2026-04-20). Header parsing succeeds, but the targeted test fails `static_assert(std::is_integral<int>::value)`. Distilled expected-failure repro: `tests/test_std_type_traits_is_integral_any_of_fail.cpp`. |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~239ms (retested 2026-04-25, Linux/libstdc++-14). The `std::is_integral<int>::value` static assert now passes after constant-evaluation synthesis of standard unary type-trait `::value` from the resolved template arguments, plus exact-specialization lookup through alias-normalized primitive arguments. Regression: `tests/test_template_full_specialization_alias_arg_ret0.cpp`. |
 | `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | ~609ms (retested 2026-04-11). Targeted test still compiles, but bare `#include <compare>` now fails with "Ambiguous constructor call" during codegen of a namespace-level node. |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
@@ -100,6 +100,48 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+#### 2026-04-25 Unary Type-Trait Constant-Evaluation Sweep (Linux/libstdc++-14)
+
+This sweep targeted the `<type_traits>` failure where
+`std::is_integral<int>::value` evaluated as `false`.  Full regression suite
+(`bash tests/run_all_tests.sh`, 2219 tests + 151 `_fail`) still has the
+two pre-existing parser failures in `test_template_defaulted_ctor_aggregate_ret0.cpp`
+and `test_template_deleted_ctor_aggregate_ret0.cpp`; the new focused regression
+passes.
+
+Fixes landed:
+
+- **Exact class-template specialization lookup now retries with alias-normalized
+  template arguments before using the instantiation cache**
+  (`src/Parser_Templates_Inst_ClassTemplate.cpp`).  This prevents a primary
+  template instantiation from hiding a full specialization when the argument
+  arrived through an alias-resolved primitive type.
+- **Constexpr evaluation of standard unary type-trait `::value` now uses the
+  resolved template argument even when inherited `false_type::value` was found
+  first** (`src/ConstExprEvaluator_Members.cpp`).  This keeps libstdc++ traits
+  such as `std::is_integral<int>` and `std::is_pointer<int*>` semantically
+  correct for static assertions.
+
+Regression:
+
+- `tests/test_template_full_specialization_alias_arg_ret0.cpp`
+
+Std-header impact from the 2026-04-25 sweep against `x64/Sharded/FlashCpp`:
+
+- **Newly clean**: `<type_traits>` (`test_std_type_traits.cpp`) ~239ms.
+- **Still clean in this sweep**: `<bit>` ~384ms, `<compare>` ~34ms,
+  `<concepts>` ~322ms, `<exception>` ~349ms, `<limits>` ~1146ms,
+  `<new>` ~50ms, `<source_location>` ~39ms, `<span>` ~39ms,
+  `<version>` ~38ms, C compatibility aggregate ~714ms, and the focused
+  std regressions listed in `tests/std/`.
+- **Representative remaining first-order blockers**: `<array>` now stops at
+  unresolved `auto` Itanium mangling (~1092ms); `<algorithm>` at ambiguous
+  constructor call (~2046ms); `<string_view>` at `Operator<` (~2637ms);
+  `<iterator>` / `<ranges>` at deleted `swap`; `<tuple>` / `<list>` at
+  unsupported `PackExpansionExprNode`; `<deque>` / `<queue>` / `<stack>` at
+  the depth-guard-triggered `_M_deallocate_node` non-dependent-name check;
+  `<variant>` still SIGSEGVs during codegen (~1781ms).
 
 #### 2026-04-24 Member-Function Overload Registration Fix (Linux/libstdc++-14)
 
