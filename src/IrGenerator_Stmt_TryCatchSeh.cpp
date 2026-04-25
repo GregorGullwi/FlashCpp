@@ -89,7 +89,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 		if (!catch_clause.is_catch_all()) {
 			const auto& exception_decl = *catch_clause.exception_declaration();
 			const auto& decl = exception_decl.as<DeclarationNode>();
-			const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+			const auto& type_node = decl.type_specifier_node();
 
 				// Get type information
 			TypeIndex type_index = type_node.type_index();
@@ -136,7 +136,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			if (!catch_clause.is_catch_all()) {
 				const auto& exception_decl = *catch_clause.exception_declaration();
 				const auto& decl = exception_decl.as<DeclarationNode>();
-				const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+				const auto& type_node = decl.type_specifier_node();
 				TypeIndex type_index = type_node.type_index();
 				std::string_view exception_var_name = decl.identifier_token().value();
 

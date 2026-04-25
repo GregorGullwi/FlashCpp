@@ -432,7 +432,10 @@ ParseResult Parser::parse_template_parameter() {
 	}
 
 	// Create non-type parameter node
-	auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), *type_result.node(), param_name_token);
+	auto param_node = emplace_node<TemplateParameterNode>(
+		StringTable::getOrInternStringHandle(param_name),
+		type_result.node()->as<TypeSpecifierNode>(),
+		param_name_token);
 
 	// Set variadic flag if this is a parameter pack
 	if (is_variadic) {
@@ -583,7 +586,10 @@ ParseResult Parser::parse_template_template_parameter_form() {
 		}
 
 		// Create a non-type parameter node with an empty name (form only)
-		auto param_node = emplace_node<TemplateParameterNode>(StringHandle(), *type_result.node(), anchor_token);
+		auto param_node = emplace_node<TemplateParameterNode>(
+			StringHandle(),
+			type_result.node()->as<TypeSpecifierNode>(),
+			anchor_token);
 
 		if (is_variadic) {
 			param_node.as<TemplateParameterNode>().set_variadic(true);

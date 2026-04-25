@@ -51,7 +51,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		for (const auto& param_node : lambda.parameters()) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
-				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				const auto& param_type = param_decl.type_specifier_node();
 				if (isPlaceholderAutoType(param_type.type())) {
 					is_generic = true;
 					auto_param_indices.push_back(param_idx);
@@ -96,7 +96,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						if (symbol.has_value()) {
 							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 							if (decl) {
-								TypeSpecifierNode type_node = decl->type_node().as<TypeSpecifierNode>();
+								TypeSpecifierNode type_node = decl->type_specifier_node();
 								// Resolve auto type from lambda initializer if available
 								if (isPlaceholderAutoType(type_node.type())) {
 									if (auto deduced = deduceLambdaClosureType(*symbol, decl->identifier_token())) {
@@ -132,7 +132,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				for (const auto& param_node : lambda.parameters()) {
 					if (param_node.is<DeclarationNode>()) {
 						const auto& param_decl = param_node.as<DeclarationNode>();
-						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+						const auto& param_type = param_decl.type_specifier_node();
 
 						if (isPlaceholderAutoType(param_type.type()) && arg_idx < arg_types.size()) {
 							// Deduce type from argument, preserving reference flags from auto&& parameter
@@ -187,7 +187,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				for (const auto& param_node : lambda.parameters()) {
 					if (param_node.is<DeclarationNode>()) {
 						const auto& param_decl = param_node.as<DeclarationNode>();
-						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+						const auto& param_type = param_decl.type_specifier_node();
 						param_types.push_back(param_type);
 					}
 				}
@@ -215,7 +215,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					const auto& identifier = std::get<IdentifierNode>(arg_expr);
 					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 					const auto& decl_node = symbol->as<DeclarationNode>();
-					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+					const auto& type_node = decl_node.type_specifier_node();
 					// Convert to TypedValue
 					TypedValue arg;
 					arg.setType(type_node.type());
@@ -280,14 +280,14 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			if (object_ident) {
 				if (std::optional<ASTNode> symbol = lookupSymbol(object_ident->name()); symbol.has_value()) {
 					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-						callee_type = decl->type_node().as<TypeSpecifierNode>();
+						callee_type = decl->type_specifier_node();
 					}
 				}
 			}
 		} else if (object_ident) {
 			if (std::optional<ASTNode> symbol = lookupSymbol(object_ident->name()); symbol.has_value()) {
 				if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-					const TypeSpecifierNode& decl_type = decl->type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& decl_type = decl->type_specifier_node();
 					const bool prefer_decl_struct_type = decl_type.category() == TypeCategory::Struct;
 					const bool missing_callee_type = callee_type->category() == TypeCategory::Invalid;
 					const bool prefer_decl_callable_type =
@@ -438,7 +438,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				const IdentifierNode& identifier = std::get<IdentifierNode>(receiver_expr);
 				if (std::optional<ASTNode> symbol = lookupSymbol(identifier.name()); symbol.has_value()) {
 					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-						if (auto resolved_decl_type = normalizeResolvedStructType(decl->type_node().as<TypeSpecifierNode>()); resolved_decl_type.has_value()) {
+						if (auto resolved_decl_type = normalizeResolvedStructType(decl->type_specifier_node()); resolved_decl_type.has_value()) {
 							return resolved_decl_type;
 						}
 					}
@@ -446,10 +446,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			}
 
 			if (const auto* cast = std::get_if<StaticCastNode>(&receiver_expr)) {
-				if (cast->target_type().is<TypeSpecifierNode>()) {
-					if (auto resolved_cast_type = normalizeResolvedStructType(cast->target_type().as<TypeSpecifierNode>()); resolved_cast_type.has_value()) {
-						return resolved_cast_type;
-					}
+				if (auto resolved_cast_type = normalizeResolvedStructType(cast->target_type()); resolved_cast_type.has_value()) {
+					return resolved_cast_type;
 				}
 			}
 		}
@@ -562,7 +560,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
 			object_decl = get_decl_from_symbol(*symbol);
 			if (object_decl) {
-				object_type = object_decl->type_node().as<TypeSpecifierNode>();
+				object_type = object_decl->type_specifier_node();
 
 				// If the type is 'auto', deduce the actual closure type from lambda initializer
 				if (isPlaceholderAutoType(object_type.type())) {
@@ -611,7 +609,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						return;
 					}
 					object_decl = ptr_decl;
-					TypeSpecifierNode ptr_type = ptr_decl->type_node().as<TypeSpecifierNode>();
+					TypeSpecifierNode ptr_type = ptr_decl->type_specifier_node();
 					if (ptr_type.pointer_levels().size() > 0) {
 						object_type = ptr_type;
 						object_type.remove_pointer_level();
@@ -627,8 +625,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// Handle any call returning a struct (free, member, or unified)
 		auto call_info = CallInfo::tryFrom(*object_expr);
 		const DeclarationNode& decl = *call_info->declaration;
-		if (decl.type_node().is<TypeSpecifierNode>()) {
-			TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
+		{
+			TypeSpecifierNode ret_type = decl.type_specifier_node();
 			if (isIrStructType(toIrType(ret_type.type())) ||
 				ret_type.is_function_pointer() ||
 				ret_type.has_function_signature()) {
@@ -642,12 +640,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// passes and the object_name.empty() path below correctly evaluates the ConstructorCallNode
 		// to get an addressable TempVar for the 'this' pointer.
 		const ConstructorCallNode& ctor_call = std::get<ConstructorCallNode>(*object_expr);
-		if (ctor_call.type_node().is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& ctor_type = ctor_call.type_node().as<TypeSpecifierNode>();
-			if (isIrStructType(toIrType(ctor_type.type()))) {
-				object_type = ctor_type;
-				// object_name remains empty; expression will be evaluated when needed
-			}
+		const TypeSpecifierNode& ctor_type = ctor_call.type_node();
+		if (isIrStructType(toIrType(ctor_type.type()))) {
+			object_type = ctor_type;
+			// object_name remains empty; expression will be evaluated when needed
 		}
 	} else if (object_expr && std::holds_alternative<MemberAccessNode>(*object_expr)) {
 		// Handle member access for function pointer calls
@@ -897,7 +893,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		}
 		// Materialize the constant result — reuse the same scalar/struct helpers as the direct path.
 		const TypeSpecifierNode& ret_spec =
-			func_decl_node.type_node().as<TypeSpecifierNode>();
+			func_decl_node.type_specifier_node();
 		const TypeCategory ret_type = ret_spec.type();
 		const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
 		const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
@@ -960,7 +956,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			if (lhs_decl->is_parameter_pack() != rhs_decl->is_parameter_pack()) {
 				return false;
 			}
-			if (!sameTypeSpec(lhs_decl->type_node().as<TypeSpecifierNode>(), rhs_decl->type_node().as<TypeSpecifierNode>())) {
+			if (!sameTypeSpec(lhs_decl->type_specifier_node(), rhs_decl->type_specifier_node())) {
 				return false;
 			}
 		}
@@ -1154,9 +1150,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					member_load.struct_type_info = nullptr; // Not used downstream; consistent with all other MemberLoadOp sites
 					member_load.is_pointer_to_member = object_decl &&
-													   (object_decl->type_node().as<TypeSpecifierNode>().pointer_depth() > 0 ||
-														object_decl->type_node().as<TypeSpecifierNode>().is_reference() ||
-														object_decl->type_node().as<TypeSpecifierNode>().is_rvalue_reference());
+													   (object_decl->type_specifier_node().pointer_depth() > 0 ||
+														object_decl->type_specifier_node().is_reference() ||
+														object_decl->type_specifier_node().is_rvalue_reference());
 
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
@@ -1230,7 +1226,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						auto symbol_opt = symbol_table.lookup(ident.name());
 						if (symbol_opt.has_value() && symbol_opt->is<DeclarationNode>()) {
 							const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
-							const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
+							const TypeSpecifierNode& type = decl.type_specifier_node();
 							// DEBUG removed
 							arg_types.push_back(type.type_index().withCategory(type.type()));
 						}
@@ -1376,8 +1372,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// Get return type from the actual member function (if found) instead of the placeholder declaration
 		// The placeholder may not have correct pointer depth information for the return type
 		const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
-									  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
-									  : func_decl_node.type_node().as<TypeSpecifierNode>();
+									  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_specifier_node()
+									  : func_decl_node.type_specifier_node();
 		vcall_op.result.setType(return_type.category());
 		vcall_op.result.ir_type = toIrType(return_type.type());
 		// For pointer return types, use 64 bits (pointer size), otherwise use the type's size
@@ -1422,7 +1418,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 				const auto& decl_node = symbol->as<DeclarationNode>();
-				const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+				const auto& type_node = decl_node.type_specifier_node();
 
 				TypedValue tv;
 				tv.setType(type_node.type());
@@ -1484,7 +1480,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						auto symbol_opt = symbol_table.lookup(ident.name());
 						if (symbol_opt.has_value() && symbol_opt->is<DeclarationNode>()) {
 							const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
-							const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
+							const TypeSpecifierNode& type = decl.type_specifier_node();
 							template_args.push_back(TemplateTypeArg::makeType(nativeTypeIndex(type.type())));
 						}
 					}
@@ -1512,7 +1508,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				// Get return type and parameter types from the function declaration.
 				// Generic lambda calls can refine this below once sema has normalized
 				// the instantiated lambda body with concrete argument types.
-				const TypeSpecifierNode* mangling_return_type = &func_for_mangling->decl_node().type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode* mangling_return_type = &func_for_mangling->decl_node().type_specifier_node();
 
 				// Check if this is a generic lambda call (lambda with auto parameters)
 				bool is_generic_lambda = StringTable::getStringView(struct_name).substr(0, 9) == "__lambda_"sv;
@@ -1528,7 +1524,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 							if (symbol.has_value()) {
 								const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 								if (decl) {
-									TypeSpecifierNode type_node = decl->type_node().as<TypeSpecifierNode>();
+									TypeSpecifierNode type_node = decl->type_specifier_node();
 									// Resolve auto type from lambda initializer if available
 									if (isPlaceholderAutoType(type_node.type())) {
 										if (auto deduced = deduceLambdaClosureType(*symbol, decl->identifier_token())) {
@@ -1579,7 +1575,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					for (const auto& param_node : func_for_mangling->parameter_nodes()) {
 						if (param_node.is<DeclarationNode>()) {
 							const auto& param_decl = param_node.as<DeclarationNode>();
-							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+							const auto& param_type = param_decl.type_specifier_node();
 
 							if (isPlaceholderAutoType(param_type.type()) && arg_idx < arg_types.size()) {
 								// Deduce type from argument, preserving reference flags from auto&& parameter
@@ -1623,7 +1619,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					for (const auto& param_node : func_for_mangling->parameter_nodes()) {
 						if (param_node.is<DeclarationNode>()) {
 							const auto& param_decl = param_node.as<DeclarationNode>();
-							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+							const auto& param_type = param_decl.type_specifier_node();
 							param_types.push_back(param_type);
 						}
 					}
@@ -1664,9 +1660,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		if (resolved_generic_return_type.has_value()) {
 			return_type_ptr = &*resolved_generic_return_type;
 		} else if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
-			return_type_ptr = &called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>();
+			return_type_ptr = &called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_specifier_node();
 		} else {
-			return_type_ptr = &func_decl_node.type_node().as<TypeSpecifierNode>();
+			return_type_ptr = &func_decl_node.type_specifier_node();
 		}
 		const auto& return_type = *return_type_ptr;
 		CallOp call_op = createCallOp(ret_var, function_name, return_type, true, false);
@@ -1816,11 +1812,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				const ASTNode& param_node = actual_func_decl->parameter_nodes()[arg_index];
 				if (param_node.is<DeclarationNode>()) {
 					const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-					param_type = &param_decl.type_node().as<TypeSpecifierNode>();
+					param_type = &param_decl.type_specifier_node();
 				} else if (param_node.is<VariableDeclarationNode>()) {
 					const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
 					const DeclarationNode& param_decl = var_decl.declaration();
-					param_type = &param_decl.type_node().as<TypeSpecifierNode>();
+					param_type = &param_decl.type_specifier_node();
 				}
 			}
 			const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
@@ -1869,7 +1865,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(identifier.name()))));
 				} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 					const auto& decl_node = symbol->as<DeclarationNode>();
-					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+					const auto& type_node = decl_node.type_specifier_node();
 
 					// Check if parameter expects a reference
 					if (!sema_ref_binding_applied &&
@@ -1907,7 +1903,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					// Handle VariableDeclarationNode (local variables)
 					const auto& var_decl = symbol->as<VariableDeclarationNode>();
 					const auto& decl_node = var_decl.declaration();
-					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+					const auto& type_node = decl_node.type_specifier_node();
 
 					// Check if parameter expects a reference
 					if (!sema_ref_binding_applied &&
@@ -2051,8 +2047,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	// Build the final ExprResult from the return type — handles reference metadata,
 	// auto-dereference, size/type_index computation, and ValueStorage selection.
 	const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
-								  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
-								  : func_decl_node.type_node().as<TypeSpecifierNode>();
+								  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_specifier_node()
+								  : func_decl_node.type_specifier_node();
 	return buildCallReturnResult(return_type, ret_var, context, callExprNode.called_from());
 }
 

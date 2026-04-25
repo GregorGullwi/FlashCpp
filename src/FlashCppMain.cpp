@@ -549,7 +549,7 @@ int main_impl(int argc, char* argv[]) {
 				if (node_handle.is<FunctionDeclarationNode>()) {
 					for (const auto& param : node_handle.as<FunctionDeclarationNode>().parameter_nodes()) {
 						if (param.is<DeclarationNode>()) {
-							const auto& pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+							const auto& pt = param.as<DeclarationNode>().type_specifier_node();
 							if (typeSpecStillUsesDependentPlaceholder(pt) && pt.pointer_depth() == 0) {
 								has_dependent_params = true;
 								break;

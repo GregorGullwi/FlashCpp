@@ -73,8 +73,8 @@ std::optional<size_t> tryGetConstexprArrayElementCount(
 	const DeclarationNode& decl,
 	const ASTNode& symbol,
 	EvaluationContext& context) {
-	if (decl.type_node().is<TypeSpecifierNode>()) {
-		const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
+	{
+		const auto& type_spec = decl.type_specifier_node();
 		if (type_spec.is_array() && !type_spec.has_unsized_outer_array_dimension() &&
 			!type_spec.array_dimensions().empty()) {
 			size_t total_count = 1;
@@ -301,10 +301,7 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 
 	if (std::holds_alternative<StaticCastNode>(expr)) {
 		const auto& cast = std::get<StaticCastNode>(expr);
-		if (cast.target_type().is<TypeSpecifierNode>()) {
-			return cast.target_type().as<TypeSpecifierNode>();
-		}
-		return std::nullopt;
+		return cast.target_type();
 	}
 
 	return std::nullopt;
@@ -327,11 +324,11 @@ void maybe_set_exact_type(EvalResult& result, const TypeSpecifierNode& type_spec
 }
 
 void maybe_set_exact_type_from_declaration(EvalResult& result, const DeclarationNode& decl) {
-	if (decl.is_array() || !decl.type_node().is<TypeSpecifierNode>()) {
+	if (decl.is_array()) {
 		return;
 	}
 
-	maybe_set_exact_type(result, decl.type_node().as<TypeSpecifierNode>());
+	maybe_set_exact_type(result, decl.type_specifier_node());
 }
 
 void maybe_set_exact_type_from_initializer(EvalResult& result, const ASTNode& initializer, EvaluationContext& context) {
@@ -346,8 +343,8 @@ void maybe_set_exact_type_from_initializer(EvalResult& result, const ASTNode& in
 }
 
 void maybe_set_binding_result_exact_type(EvalResult& result, const DeclarationNode& decl, const ASTNode* initializer, EvaluationContext& context) {
-	if (decl.type_node().is<TypeSpecifierNode>()) {
-		const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
+	{
+		const auto& type_spec = decl.type_specifier_node();
 		if (should_preserve_exact_type(type_spec)) {
 			result.set_exact_type(type_spec);
 			return;
@@ -1062,12 +1059,8 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 		// InitializerListNode, not ExpressionNode, so evaluate() would reject it).
 		if (initializer->is<InitializerListNode>()) {
 			const auto& init_list = initializer->as<InitializerListNode>();
-			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
-				const auto& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-				return dereference_array_initializer(init_list, type_spec.type_index());
-			}
-
-			return dereference_array_initializer(init_list, TypeIndex{});
+			const auto& type_spec = var_decl.declaration().type_specifier_node();
+			return dereference_array_initializer(init_list, type_spec.type_index());
 		}
 
 		// For other array forms, materialize then index.
@@ -1220,7 +1213,7 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 					if (decl) {
 						// Check if it's an array
 						if (decl->is_array()) {
-							const auto& array_type_spec = decl->type_node().as<TypeSpecifierNode>();
+							const auto& array_type_spec = decl->type_specifier_node();
 							size_t element_size = get_typespec_size_bytes(array_type_spec);
 							if (element_size > 0) {
 								if (auto total_count = tryGetConstexprArrayElementCount(*decl, *symbol, context); total_count.has_value()) {
@@ -1233,7 +1226,7 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 						}
 
 						// Not an array, just return the variable's type size
-						const auto& var_type = decl->type_node().as<TypeSpecifierNode>();
+						const auto& var_type = decl->type_specifier_node();
 						size_t var_size = get_typespec_size_bytes(var_type);
 						if (var_size > 0) {
 							return EvalResult::from_int(static_cast<long long>(var_size));
@@ -1462,7 +1455,7 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 						if (decl) {
 							// Check if it's an array - if so, calculate total size
 							if (decl->is_array()) {
-								const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
+								const auto& type_spec = decl->type_specifier_node();
 								size_t element_size = get_typespec_size_bytes(type_spec);
 								if (element_size > 0) {
 									if (auto total_count = tryGetConstexprArrayElementCount(*decl, *symbol, context); total_count.has_value()) {
@@ -1513,7 +1506,7 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 							if (symbol.has_value()) {
 								const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 								if (decl && decl->is_array()) {
-									const auto& array_type_spec = decl->type_node().as<TypeSpecifierNode>();
+									const auto& array_type_spec = decl->type_specifier_node();
 									// Get element size by creating a copy without array dimensions
 									TypeSpecifierNode element_type_spec = array_type_spec;
 									element_type_spec.set_array_dimensions({});
@@ -1649,12 +1642,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 }
 
 EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
-	const ASTNode& type_node = offsetof_expr.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("offsetof type argument must be TypeSpecifierNode");
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = offsetof_expr.type_node();
 	if (type_spec.category() != TypeCategory::Struct) {
 		return EvalResult::error("offsetof requires a struct type");
 	}
@@ -1920,12 +1908,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 	const auto& args = ctor_call.arguments();
 
 	// Get the target type
-	const ASTNode& type_node = ctor_call.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Constructor call without valid type specifier");
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = ctor_call.type_node();
 
 	// Handle empty constructor calls (default/value initialization): Type{}
 	if (args.size() == 0) {
@@ -2129,12 +2112,7 @@ EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, Eval
 	// Evaluate static_cast<Type>(expr) and C-style casts in constant expressions
 
 	// Get the target type
-	const ASTNode& type_node = cast_node.target_type();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Cast without valid type specifier");
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = cast_node.target_type();
 
 	EvalResult result = evaluate(cast_node.expr(), context);
 	if (!result.success()) {
@@ -2155,12 +2133,7 @@ EvalResult Evaluator::evaluate_const_cast(const ConstCastNode& cast_node, Evalua
 	// Evaluate const_cast<Type>(expr) in constant expressions.
 	// Constexpr evaluation preserves the underlying value/pointer/object identity;
 	// only the target cv/reference-qualified type metadata changes.
-	const ASTNode& type_node = cast_node.target_type();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Const cast without valid type specifier");
-	}
-
-	const TypeSpecifierNode& target_type = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& target_type = cast_node.target_type();
 	EvalResult result = evaluate(cast_node.expr(), context);
 	if (!result.success()) {
 		return result;
@@ -2755,28 +2728,23 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 					if (qualified_initializer.is<InitializerListNode>()) {
 						const auto& qualified_init_list = qualified_initializer.as<InitializerListNode>();
 						if (qualified_var.declaration().is_array()) {
-							if (qualified_var.declaration().type_node().is<TypeSpecifierNode>()) {
-								return materialize_array_value_with_spec(
-									qualified_var.declaration().type_node().as<TypeSpecifierNode>(),
+							return materialize_array_value_with_spec(
+								qualified_var.declaration().type_specifier_node(),
+								qualified_init_list,
+								context);
+						}
+
+						const auto& type_spec = qualified_var.declaration().type_specifier_node();
+						if (is_struct_type(type_spec.category())) {
+							if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+								const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
+								return materialize_aggregate_object_value(
+									struct_info,
+									type_spec.type_index(),
 									qualified_init_list,
 									context);
 							}
-							return materialize_array_value(TypeIndex{}, qualified_init_list, context, nullptr);
-						}
-
-						if (qualified_var.declaration().type_node().is<TypeSpecifierNode>()) {
-							const auto& type_spec = qualified_var.declaration().type_node().as<TypeSpecifierNode>();
-							if (is_struct_type(type_spec.category())) {
-								if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
-									const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
-									return materialize_aggregate_object_value(
-										struct_info,
-										type_spec.type_index(),
-										qualified_init_list,
-										context);
-								}
-								return std::nullopt;
-							}
+							return std::nullopt;
 						}
 					}
 
@@ -2916,8 +2884,8 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	// Check if it's a DeclarationNode for an enum constant
 	if (symbol_node.is<DeclarationNode>()) {
 		const DeclarationNode& decl = symbol_node.as<DeclarationNode>();
-		if (decl.type_node().is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		{
+			const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 			if (type_spec.category() == TypeCategory::Enum) {
 				// Look up the enumerator value from the type info
 				auto type_index = type_spec.type_index();
@@ -2960,17 +2928,10 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	if (initializer->is<InitializerListNode>()) {
 		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
 		if (var_decl.declaration().is_array()) {
-			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-				// Use the spec-aware overload so multi-dimensional arrays (e.g., int[2][3])
-				// are materialized with the correct inner dimensions.
-				return materialize_array_value_with_spec(type_spec, init_list, context);
-			}
-
-			// Preserve the older generic array materialization for declarations whose
-			// array element type is not represented as a TypeSpecifierNode (for example,
-			// decltype()-spelled or still-dependent array element types).
-			return materialize_array_value(TypeIndex{}, init_list, context, nullptr);
+			const TypeSpecifierNode& type_spec = var_decl.declaration().type_specifier_node();
+			// Use the spec-aware overload so multi-dimensional arrays (e.g., int[2][3])
+			// are materialized with the correct inner dimensions.
+			return materialize_array_value_with_spec(type_spec, init_list, context);
 		}
 	}
 
@@ -2980,9 +2941,8 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			return evaluate_constructor_call(initializer->as<ConstructorCallNode>(), context);
 		}
 
-		if (initializer->is<InitializerListNode>() &&
-			var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+		if (initializer->is<InitializerListNode>()) {
+			const TypeSpecifierNode& type_spec = var_decl.declaration().type_specifier_node();
 			if (is_struct_type(type_spec.category())) {
 				const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
 				if (const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
@@ -3276,12 +3236,7 @@ EvalResult Evaluator::evaluate_callable_object(
 
 	if (ctor_call_ptr) {
 		const ConstructorCallNode& ctor_call = *ctor_call_ptr;
-		const ASTNode& type_node = ctor_call.type_node();
-		if (!type_node.is<TypeSpecifierNode>()) {
-			return EvalResult::error("Callable object constructor has invalid type");
-		}
-
-		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = ctor_call.type_node();
 		const StructTypeInfo* struct_info = get_struct_info_from_type(type_spec);
 		if (!struct_info) {
 			return EvalResult::error("Callable object is not a struct/class type");
@@ -3369,10 +3324,7 @@ EvalResult Evaluator::evaluate_callable_object(
 	// The initializer is an InitializerListNode; get the struct type from the variable's type.
 	if (initializer.has_value() && initializer->is<InitializerListNode>()) {
 		const DeclarationNode& decl = var_decl.declaration();
-		if (!decl.type_node().is<TypeSpecifierNode>()) {
-			return EvalResult::error("Brace-initialized callable object has invalid type");
-		}
-		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 		const StructTypeInfo* struct_info = get_struct_info_from_type(type_spec);
 		if (!struct_info) {
 			return EvalResult::error("Brace-initialized callable object is not a struct/class type");
@@ -4010,10 +3962,8 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			const ExpressionNode& expr = arg.as<ExpressionNode>();
 			if (std::holds_alternative<ConstructorCallNode>(expr)) {
 				const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
-				const ASTNode& type_node = ctor.type_node();
-
-				if (type_node.is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+				{
+					const TypeSpecifierNode& type_spec = ctor.type_node();
 					TypeCategory base_type = type_spec.type();
 					bool is_reference = type_spec.is_reference();
 					size_t pointer_depth = type_spec.pointer_depth();
@@ -4460,9 +4410,9 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	// (e.g., return {0, 0} in a struct-returning function) can resolve member names.
 	const TypeInfo* saved_return_type_info = context.return_type_info;
 	context.return_type_info = nullptr;
-	if (func_decl.decl_node().type_node().is<TypeSpecifierNode>()) {
+	{
 		const TypeSpecifierNode& ret_spec =
-			func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+			func_decl.decl_node().type_specifier_node();
 		TypeIndex ret_idx = ret_spec.type_index();
 		if (const TypeInfo* return_type_info = tryGetTypeInfo(ret_idx))
 			context.return_type_info = return_type_info;
@@ -4755,20 +4705,10 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			if (init_expr.is<InitializerListNode>()) {
 				const InitializerListNode& init_list = init_expr.as<InitializerListNode>();
 				if (decl.is_array()) {
-					if (decl.type_node().is<TypeSpecifierNode>()) {
-						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-						// Use the spec-aware overload so multi-dimensional arrays (e.g., int[2][3])
-						// are materialized with correct inner dimensions and proper zero-padding.
-						auto array_result = materialize_array_value_with_spec(type_spec, init_list, context, &bindings);
-						if (!array_result.success()) {
-							return array_result;
-						}
-						maybe_set_binding_result_exact_type(array_result, decl, &init_expr, context);
-						declaration_bindings[var_name] = std::move(array_result);
-						return EvalResult::error("Statement executed (not a return)");
-					}
-
-					auto array_result = materialize_array_value(TypeIndex{}, init_list, context, &bindings);
+					const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+					// Use the spec-aware overload so multi-dimensional arrays (e.g., int[2][3])
+					// are materialized with correct inner dimensions and proper zero-padding.
+					auto array_result = materialize_array_value_with_spec(type_spec, init_list, context, &bindings);
 					if (!array_result.success()) {
 						return array_result;
 					}
@@ -4777,8 +4717,8 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					return EvalResult::error("Statement executed (not a return)");
 				}
 
-				if (decl.type_node().is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				{
+					const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 					if (is_struct_type(type_spec.category())) {
 						const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
 						if (const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
@@ -4848,8 +4788,8 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				}
 			}
 
-			if (ctor_call && decl.type_node().is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+			if (ctor_call) {
+				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 				if (is_struct_type(type_spec.category())) {
 					auto object_result = materialize_constructor_object_value(*ctor_call, context, &bindings);
 					if (!object_result.success()) {
@@ -4877,32 +4817,23 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		}
 
 		// Uninitialized variable — check if it's a struct/class type requiring default construction
-		if (decl.type_node().is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-			if (is_struct_type(type_spec.category())) {
-				const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
-				if (const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
-					EvalResult default_result = make_local_default_init(type_spec, context);
-					if (!default_result.success()) {
-						return default_result;
-					}
-					declaration_bindings[var_name] = std::move(default_result);
-					return EvalResult::error("Statement executed (not a return)");
+		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+		if (is_struct_type(type_spec.category())) {
+			const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+			if (const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
+				EvalResult default_result = make_local_default_init(type_spec, context);
+				if (!default_result.success()) {
+					return default_result;
 				}
+				declaration_bindings[var_name] = std::move(default_result);
+				return EvalResult::error("Statement executed (not a return)");
 			}
-
-			EvalResult default_result = make_local_default_init(type_spec, context);
-			if (!default_result.success()) {
-				return default_result;
-			}
-			declaration_bindings[var_name] = std::move(default_result);
-			return EvalResult::error("Statement executed (not a return)");
 		}
 
-		// Defensive fallback for declarations without a TypeSpecifierNode.  These do not
-		// carry enough type information to preserve indeterminate/default-init semantics,
-		// so keep the legacy zero result instead of inventing a partial type model here.
-		EvalResult default_result = EvalResult::from_int(0);
+		EvalResult default_result = make_local_default_init(type_spec, context);
+		if (!default_result.success()) {
+			return default_result;
+		}
 		declaration_bindings[var_name] = std::move(default_result);
 		return EvalResult::error("Statement executed (not a return)");
 	}

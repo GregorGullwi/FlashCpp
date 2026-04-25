@@ -566,7 +566,7 @@ bool expressionHasDeferredTemplateDependency(
 					   astNodeHasDeferredTemplateDependency(inner.true_expr(), current_template_param_names) ||
 					   astNodeHasDeferredTemplateDependency(inner.false_expr(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
-				return astNodeHasDeferredTemplateDependency(inner.type_node(), current_template_param_names) ||
+				return typeRefersToCurrentTemplateParam(inner.type_node(), current_template_param_names) ||
 					   astNodesHaveDeferredTemplateDependency(inner.arguments(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				return astNodeHasDeferredTemplateDependency(inner.object(), current_template_param_names);
@@ -586,7 +586,7 @@ bool expressionHasDeferredTemplateDependency(
 					StringTable::getOrInternStringHandle(inner.pack_name()),
 					current_template_param_names);
 			} else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
-				return astNodeHasDeferredTemplateDependency(inner.type_node(), current_template_param_names);
+				return typeRefersToCurrentTemplateParam(inner.type_node(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, TypeTraitExprNode>) {
 				return astNodeHasDeferredTemplateDependency(inner.type_node(), current_template_param_names) ||
 					   astNodeHasDeferredTemplateDependency(inner.second_type_node(), current_template_param_names) ||
@@ -602,7 +602,7 @@ bool expressionHasDeferredTemplateDependency(
 								 std::is_same_v<T, DynamicCastNode> ||
 								 std::is_same_v<T, ConstCastNode> ||
 								 std::is_same_v<T, ReinterpretCastNode>) {
-				return astNodeHasDeferredTemplateDependency(inner.target_type(), current_template_param_names) ||
+				return typeRefersToCurrentTemplateParam(inner.target_type(), current_template_param_names) ||
 					   astNodeHasDeferredTemplateDependency(inner.expr(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
 				return std::any_of(
@@ -4090,8 +4090,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									args[pre_pack_size - 1] = id_node;
 									if (!arg_types.empty()) {
 										if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
-											if (decl->type_node().is<TypeSpecifierNode>()) {
-												arg_types.back() = decl->type_node().as<TypeSpecifierNode>();
+											{
+												arg_types.back() = decl->type_specifier_node();
 												applyIdentifierArgumentArrayBounds(args[args.size() - 1], arg_types.back());
 												arg_types.back().set_reference_qualifier(ReferenceQualifier::LValueReference);
 											}
@@ -4101,8 +4101,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								} else {
 									args.push_back(id_node);
 									if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
-										if (decl->type_node().is<TypeSpecifierNode>()) {
-											TypeSpecifierNode arg_type_node_pack = decl->type_node().as<TypeSpecifierNode>();
+										{
+											TypeSpecifierNode arg_type_node_pack = decl->type_specifier_node();
 											applyIdentifierArgumentArrayBounds(id_node, arg_type_node_pack);
 											arg_type_node_pack.set_reference_qualifier(ReferenceQualifier::LValueReference);
 											arg_types.push_back(arg_type_node_pack);
@@ -4497,7 +4497,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						if (params[i].is<DeclarationNode>() && params[i].as<DeclarationNode>().has_default_value()) {
 							ASTNode def_val = params[i].as<DeclarationNode>().default_value();
 							if (def_val.is<InitializerListNode>()) {
-								const auto& param_type_node = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+								const auto& param_type_node = params[i].as<DeclarationNode>().type_specifier_node();
 								if (is_struct_type(param_type_node.category())) {
 									auto type_copy = emplace_node<TypeSpecifierNode>(param_type_node);
 									const InitializerListNode& init_list = def_val.as<InitializerListNode>();
@@ -6144,7 +6144,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				const DeclarationNode* decl = get_decl_from_symbol(*identifierType);
 				if (decl) {
 					FLASH_LOG_FORMAT(Parser, Debug, "decl exists for '{}'", identifier_token.value());
-					const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
+					const auto& type_node = decl->type_specifier_node();
 					FLASH_LOG_FORMAT(Parser, Debug, "type_node.type()={} for '{}'", static_cast<int>(type_node.type()), identifier_token.value());
 					// Check for function pointers or function references (both have function_signature)
 					is_function_pointer = type_node.is_function_pointer() || type_node.has_function_signature();
@@ -6219,7 +6219,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						if (params[i].is<DeclarationNode>() && params[i].as<DeclarationNode>().has_default_value()) {
 							ASTNode def_val = params[i].as<DeclarationNode>().default_value();
 							if (def_val.is<InitializerListNode>()) {
-								const auto& param_type_node = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+								const auto& param_type_node = params[i].as<DeclarationNode>().type_specifier_node();
 									// For struct/aggregate parameters, convert InitializerListNode to ConstructorCallNode
 								if (is_struct_type(param_type_node.category())) {
 									auto type_copy = emplace_node<TypeSpecifierNode>(param_type_node);
@@ -6269,7 +6269,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (!decl) {
 						return ParseResult::error("Invalid declaration for operator() call", identifier_token);
 					}
-					const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
+					const auto& type_node = decl->type_specifier_node();
 					TypeIndex type_index = type_node.type_index();
 					const TypeInfo& type_info = getTypeInfo(type_index);
 					if (!type_info.struct_info_) {
@@ -6626,10 +6626,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										if (const std::vector<ASTNode>* template_overloads = gTemplateRegistry.lookupAllTemplates(identifier_token.value())) {
 											for (const ASTNode& template_overload : *template_overloads) {
 												const FunctionDeclarationNode* function_decl = get_function_decl_node(template_overload);
-												if (!function_decl || !function_decl->decl_node().type_node().is<TypeSpecifierNode>()) {
+												if (!function_decl) {
 													continue;
 												}
-												placeholder_type = function_decl->decl_node().type_node().as<TypeSpecifierNode>();
+												placeholder_type = function_decl->decl_node().type_specifier_node();
 												break;
 											}
 										}

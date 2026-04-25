@@ -702,7 +702,7 @@ ParseResult Parser::parse_variable_declaration() {
 
 	// Get the type specifier for potential additional declarations
 	DeclarationNode& first_decl = type_and_name_result.node()->as<DeclarationNode>();
-	TypeSpecifierNode& type_specifier = first_decl.type_node().as<TypeSpecifierNode>();
+	TypeSpecifierNode& type_specifier = first_decl.type_specifier_node();
 
 	// C++20 [basic.scope.pdecl]: the variable name is visible from the point immediately
 	// after its declarator, before the initializer.  We create and register the
@@ -901,8 +901,7 @@ ParseResult Parser::parse_variable_declaration() {
 
 	if (first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
 		try_apply_deduction_guides(type_specifier, first_init_expr->as<InitializerListNode>());
-		first_var_decl.declaration().set_type_node(
-			emplace_node<TypeSpecifierNode>(type_specifier));
+		first_var_decl.declaration().set_type_node(type_specifier);
 	}
 	first_var_decl.set_initializer(first_init_expr);
 
@@ -940,7 +939,7 @@ ParseResult Parser::parse_variable_declaration() {
 
 			// Create a new DeclarationNode with the same type
 			ASTNode new_decl_node = emplace_node<DeclarationNode>(
-				emplace_node<TypeSpecifierNode>(type_specifier),
+				type_specifier,
 				identifier_tok);
 			// Register before parsing initializer (point-of-declaration)
 			ParseResult decl_result = create_var_decl(new_decl_node);
@@ -982,7 +981,7 @@ ParseResult Parser::parse_variable_declaration() {
 			} else if (peek() == "{"_tok) {
 				// Direct list initialization for comma-separated declaration: Type var1, var2{args}
 				DeclarationNode& next_decl = var_decl_node.as<VariableDeclarationNode>().declaration();
-				TypeSpecifierNode& next_type_specifier = next_decl.type_node().as<TypeSpecifierNode>();
+				TypeSpecifierNode& next_type_specifier = next_decl.type_specifier_node();
 				prepareArrayTypeForBraceInitializer(next_decl, next_type_specifier);
 				ParseResult init_list_result = parse_brace_initializer(next_type_specifier);
 				if (init_list_result.is_error()) {
@@ -1494,12 +1493,7 @@ Parser::find_initializer_list_constructor(const StructTypeInfo& struct_info) con
 		}
 
 		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-		if (!param_decl.type_node().is<TypeSpecifierNode>()) {
-			FLASH_LOG(Parser, Debug, "    param type is not TypeSpecifierNode");
-			continue;
-		}
-
-		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& param_type = param_decl.type_specifier_node();
 		FLASH_LOG(Parser, Debug, "    param type: ", (int)param_type.type(),
 				  " index: ", param_type.type_index());
 
@@ -1787,7 +1781,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				const ASTNode& param = ctor_decl.parameter_nodes()[0];
 				if (param.is<DeclarationNode>()) {
 					const DeclarationNode& param_decl = param.as<DeclarationNode>();
-					if (param_decl.type_node().is<TypeSpecifierNode>()) {
+					{
 						target_type_node = param_decl.type_node();
 					}
 				}
@@ -1798,7 +1792,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				const ASTNode& param = func_decl.parameter_nodes()[0];
 				if (param.is<DeclarationNode>()) {
 					const DeclarationNode& param_decl = param.as<DeclarationNode>();
-					if (param_decl.type_node().is<TypeSpecifierNode>()) {
+					{
 						target_type_node = param_decl.type_node();
 					}
 				}
@@ -1932,13 +1926,13 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				const TypeSpecifierNode* param_type = nullptr;
 				if (param_node.is<VariableDeclarationNode>()) {
 					const VariableDeclarationNode& var = param_node.as<VariableDeclarationNode>();
-					if (var.declaration().type_node().is<TypeSpecifierNode>()) {
-						param_type = &var.declaration().type_node().as<TypeSpecifierNode>();
+					{
+						param_type = &var.declaration().type_specifier_node();
 					}
 				} else if (param_node.is<DeclarationNode>()) {
 					const DeclarationNode& decl = param_node.as<DeclarationNode>();
-					if (decl.type_node().is<TypeSpecifierNode>()) {
-						param_type = &decl.type_node().as<TypeSpecifierNode>();
+					{
+						param_type = &decl.type_specifier_node();
 					}
 				}
 
@@ -2470,14 +2464,14 @@ bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guid
 		}
 		if (param_node.is<DeclarationNode>()) {
 			const auto& decl = param_node.as<DeclarationNode>();
-			if (decl.type_node().is<TypeSpecifierNode>()) {
-				return &decl.type_node().as<TypeSpecifierNode>();
+			{
+				return &decl.type_specifier_node();
 			}
 		}
 		if (param_node.is<VariableDeclarationNode>()) {
 			const auto& var_decl = param_node.as<VariableDeclarationNode>();
-			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
-				return &var_decl.declaration().type_node().as<TypeSpecifierNode>();
+			{
+				return &var_decl.declaration().type_specifier_node();
 			}
 		}
 		return nullptr;

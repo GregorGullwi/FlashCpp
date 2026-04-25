@@ -83,7 +83,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	current_function_mangled_name_ = StringHandle(); // will be set after mangled name is computed
 
 		// Set current function return type and size for type checking in return statements
-	const TypeSpecifierNode& ret_type_spec = func_decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& ret_type_spec = func_decl.type_specifier_node();
 	current_function_return_value_mode_ = ReturnValueMode::None;
 	if (ret_type_spec.pointer_depth() > 0) {
 		current_function_return_value_mode_ |= ReturnValueMode::Pointer;
@@ -134,13 +134,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		}
 	}
 	auto resolve_param_type_for_codegen = [&](const DeclarationNode& param_decl) {
-		TypeSpecifierNode resolved = param_decl.type_node().as<TypeSpecifierNode>();
+		TypeSpecifierNode resolved = param_decl.type_specifier_node();
 		if (enclosing_struct_type_index.is_valid()) {
 			resolveSelfReferentialType(resolved, enclosing_struct_type_index);
 		}
 		return resolved;
 	};
-	TypeSpecifierNode resolved_ret_type = func_decl.type_node().as<TypeSpecifierNode>();
+	TypeSpecifierNode resolved_ret_type = func_decl.type_specifier_node();
 	if (enclosing_struct_type_index.is_valid()) {
 		resolveSelfReferentialType(resolved_ret_type, enclosing_struct_type_index);
 	}
@@ -462,8 +462,8 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		} else if (node.parameter_nodes().size() >= 2) {
 			const auto& lhs_param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
 			const auto& rhs_param_decl = node.parameter_nodes()[1].as<DeclarationNode>();
-			const auto& lhs_type = lhs_param_decl.type_node().as<TypeSpecifierNode>();
-			const auto& rhs_type = rhs_param_decl.type_node().as<TypeSpecifierNode>();
+			const auto& lhs_type = lhs_param_decl.type_specifier_node();
+			const auto& rhs_type = rhs_param_decl.type_specifier_node();
 			if (lhs_type.category() == TypeCategory::Struct &&
 				rhs_type.category() == TypeCategory::Struct &&
 				lhs_type.type_index() == rhs_type.type_index()) {
@@ -734,8 +734,8 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		} else if (node.parameter_nodes().size() >= 2) {
 			const auto& lhs_param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
 			const auto& rhs_param_decl = node.parameter_nodes()[1].as<DeclarationNode>();
-			const auto& lhs_type = lhs_param_decl.type_node().as<TypeSpecifierNode>();
-			const auto& rhs_type = rhs_param_decl.type_node().as<TypeSpecifierNode>();
+			const auto& lhs_type = lhs_param_decl.type_specifier_node();
+			const auto& rhs_type = rhs_param_decl.type_specifier_node();
 			if (lhs_type.category() == TypeCategory::Struct &&
 				rhs_type.category() == TypeCategory::Struct &&
 				lhs_type.type_index() == rhs_type.type_index()) {
@@ -1013,9 +1013,8 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		ASTNode symbol_param = param;
 		if (enclosing_struct_type_index.is_valid()) {
 			TypeSpecifierNode resolved_param_type = resolve_param_type_for_codegen(param_decl);
-			if (resolved_param_type.type_index() != param_decl.type_node().as<TypeSpecifierNode>().type_index()) {
-				auto resolved_param_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_param_type);
-				auto resolved_param_decl = ASTNode::emplace_node<DeclarationNode>(resolved_param_type_node, param_decl.identifier_token());
+			if (resolved_param_type.type_index() != param_decl.type_specifier_node().type_index()) {
+				auto resolved_param_decl = ASTNode::emplace_node<DeclarationNode>(resolved_param_type, param_decl.identifier_token());
 				if (param_decl.has_default_value()) {
 					resolved_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
 				}
@@ -1035,7 +1034,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 // 				bool is_move_assignment = false;
 // 				if (node.parameter_nodes().size() == 1) {
 // 					const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
-// 					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+// 					const auto& param_type = param_decl.type_specifier_node();
 // 					if (param_type.is_rvalue_reference()) {
 // 						is_move_assignment = true;
 // 					}
@@ -1278,7 +1277,7 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 					bool fn_has_auto = false;
 					for (const auto& p : fn.parameter_nodes()) {
 						if (p.is<DeclarationNode>()) {
-							const auto& pt = p.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+							const auto& pt = p.as<DeclarationNode>().type_specifier_node();
 							if (isPlaceholderAutoType(pt.type())) {
 								fn_has_auto = true;
 								break;
@@ -1323,7 +1322,7 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 					bool ctor_has_auto = false;
 					for (const auto& p : ctor.parameter_nodes()) {
 						if (p.is<DeclarationNode>()) {
-							const auto& pt = p.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+							const auto& pt = p.as<DeclarationNode>().type_specifier_node();
 							if (isPlaceholderAutoType(pt.type())) {
 								ctor_has_auto = true;
 								break;
@@ -1368,7 +1367,7 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 							bool has_auto_param = false;
 							for (const auto& p : inner_func.parameter_nodes()) {
 								if (p.is<DeclarationNode>()) {
-									const auto& pt = p.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+									const auto& pt = p.as<DeclarationNode>().type_specifier_node();
 									if (isPlaceholderAutoType(pt.type())) {
 										has_auto_param = true;
 										break;
@@ -1584,7 +1583,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	const TypeIndex enclosing_struct_type_index =
 		enclosing_type_info ? enclosing_type_info->type_index_ : TypeIndex{};
 	auto resolve_ctor_param_type_for_codegen = [&](const DeclarationNode& param_decl) {
-		TypeSpecifierNode resolved = param_decl.type_node().as<TypeSpecifierNode>();
+		TypeSpecifierNode resolved = param_decl.type_specifier_node();
 		if (enclosing_struct_type_index.is_valid()) {
 			resolveSelfReferentialType(resolved, enclosing_struct_type_index);
 		}
@@ -1707,9 +1706,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 			ASTNode param_for_scope = node.parameter_nodes()[i];
 			if (enclosing_struct_type_index.is_valid()) {
 				TypeSpecifierNode resolved_param_type = resolve_ctor_param_type_for_codegen(param_decl);
-				if (resolved_param_type.type_index() != param_decl.type_node().as<TypeSpecifierNode>().type_index()) {
-					auto resolved_param_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_param_type);
-					auto resolved_param_decl = ASTNode::emplace_node<DeclarationNode>(resolved_param_type_node, param_decl.identifier_token());
+				if (resolved_param_type.type_index() != param_decl.type_specifier_node().type_index()) {
+					auto resolved_param_decl = ASTNode::emplace_node<DeclarationNode>(resolved_param_type, param_decl.identifier_token());
 					if (param_decl.has_default_value()) {
 						resolved_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
 					}
@@ -1738,7 +1736,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	auto appendForwardedCtorArguments = [&](ConstructorCallOp& ctor_op) {
 		for (size_t i = 0; i < node.parameter_nodes().size(); ++i) {
 			const DeclarationNode& param_decl = requireDeclarationNode(node.parameter_nodes()[i], "ctor forward args");
-			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			const TypeSpecifierNode& param_type = param_decl.type_specifier_node();
 			TypedValue arg;
 			arg.type_index = param_type.type_index();
 			arg.setType(param_type.type());
@@ -1760,7 +1758,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	bool is_implicit_move_constructor = false;
 	if (node.is_implicit() && node.parameter_nodes().size() == 1) {
 		const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
-		const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		const auto& param_type = param_decl.type_specifier_node();
 		if (param_type.category() == TypeCategory::Struct) {
 			if (param_type.is_rvalue_reference()) {
 				is_implicit_move_constructor = true;
@@ -2557,7 +2555,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									std::optional<ASTNode> init_symbol = symbol_table.lookup(init_name);
 									if (init_symbol.has_value() && init_symbol->is<DeclarationNode>()) {
 										const auto& init_decl = init_symbol->as<DeclarationNode>();
-										const auto& init_type = init_decl.type_node().as<TypeSpecifierNode>();
+										const auto& init_type = init_decl.type_specifier_node();
 
 											// If the initializer is a reference, use its value directly (it's already a pointer)
 											// Don't dereference it - just use the string_view to refer to the variable
@@ -3091,13 +3089,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
 	// Get the type being constructed
-	const ASTNode& type_node = constructorCallNode.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		assert(false && "Constructor call type node must be a TypeSpecifierNode");
-		return ExprResult{};
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = constructorCallNode.type_node();
 	size_t num_args = 0;
 	constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
 
@@ -3347,7 +3339,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		// Get the parameter type for this argument (if it exists)
 		const TypeSpecifierNode* param_type = nullptr;
 		if (arg_index < ctor_params.size() && ctor_params[arg_index].is<DeclarationNode>()) {
-			param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			param_type = &ctor_params[arg_index].as<DeclarationNode>().type_specifier_node();
 		}
 
 		ExpressionContext arg_context = ExpressionContext::Load;

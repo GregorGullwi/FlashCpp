@@ -94,7 +94,7 @@ std::optional<ASTNode> tryFoldSubstitutedSizeofTypeNode(
 
 ASTNode makeRebuiltConstructorCallNode(
 	const ConstructorCallNode& constructor_call,
-	ASTNode substituted_type,
+	const TypeSpecifierNode& substituted_type,
 	ChunkedVector<ASTNode>&& arguments,
 	bool wrap_in_expression) {
 	if (wrap_in_expression) {
@@ -531,14 +531,17 @@ ASTNode Parser::substituteTemplateParameters(
 				/*wrap_in_expression=*/true);
 		} else if (std::holds_alternative<ConstructorCallNode>(expr)) {
 			const ConstructorCallNode& constructor_call = std::get<ConstructorCallNode>(expr);
-			ASTNode substituted_type = substituteTemplateParameters(constructor_call.type_node(), template_params, template_args);
+			ASTNode substituted_type = substituteTemplateParameters(
+				ASTNode(&constructor_call.type_node()),
+				template_params,
+				template_args);
 			ChunkedVector<ASTNode> substituted_args;
 			for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
 				substituteArgWithPackExpansion(constructor_call.arguments()[i], template_params, template_args, substituted_args);
 			}
 			return makeRebuiltConstructorCallNode(
 				constructor_call,
-				substituted_type,
+				substituted_type.as<TypeSpecifierNode>(),
 				std::move(substituted_args),
 				/*wrap_in_expression=*/true);
 		} else if (std::holds_alternative<TypeTraitExprNode>(expr)) {
@@ -731,8 +734,8 @@ ASTNode Parser::substituteTemplateParameters(
 									int result_size_bits = 32;
 									if (pack_param_idx.has_value()) {
 										const auto& tparam = template_params[*pack_param_idx].as<TemplateParameterNode>();
-										if (tparam.has_type() && tparam.type_node().is<TypeSpecifierNode>()) {
-											const TypeSpecifierNode& param_type_spec = tparam.type_node().as<TypeSpecifierNode>();
+										if (tparam.has_type()) {
+											const TypeSpecifierNode& param_type_spec = tparam.type_specifier_node();
 											result_type = param_type_spec.type();
 											result_size_bits = get_type_size_bits(result_type);
 										}
@@ -1042,24 +1045,36 @@ ASTNode Parser::substituteTemplateParameters(
 		} else if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
 			// static_cast<Type>(expr) - recursively substitute in both target type and expression
 			const StaticCastNode& cast_node = *static_cast_node;
-			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
+			ASTNode substituted_type = substituteTemplateParameters(
+				ASTNode(&cast_node.target_type()),
+				template_params,
+				template_args);
 			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
-			return emplace_node<ExpressionNode>(StaticCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
+			return emplace_node<ExpressionNode>(StaticCastNode(substituted_type.as<TypeSpecifierNode>(), substituted_expr, cast_node.cast_token()));
 		} else if (const auto* dynamic_cast_node = std::get_if<DynamicCastNode>(&expr)) {
 			const DynamicCastNode& cast_node = *dynamic_cast_node;
-			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
+			ASTNode substituted_type = substituteTemplateParameters(
+				ASTNode(&cast_node.target_type()),
+				template_params,
+				template_args);
 			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
-			return emplace_node<ExpressionNode>(DynamicCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
+			return emplace_node<ExpressionNode>(DynamicCastNode(substituted_type.as<TypeSpecifierNode>(), substituted_expr, cast_node.cast_token()));
 		} else if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
 			const ConstCastNode& cast_node = *const_cast_node;
-			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
+			ASTNode substituted_type = substituteTemplateParameters(
+				ASTNode(&cast_node.target_type()),
+				template_params,
+				template_args);
 			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
-			return emplace_node<ExpressionNode>(ConstCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
+			return emplace_node<ExpressionNode>(ConstCastNode(substituted_type.as<TypeSpecifierNode>(), substituted_expr, cast_node.cast_token()));
 		} else if (const auto* reinterpret_cast_node = std::get_if<ReinterpretCastNode>(&expr)) {
 			const ReinterpretCastNode& cast_node = *reinterpret_cast_node;
-			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
+			ASTNode substituted_type = substituteTemplateParameters(
+				ASTNode(&cast_node.target_type()),
+				template_params,
+				template_args);
 			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
-			return emplace_node<ExpressionNode>(ReinterpretCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
+			return emplace_node<ExpressionNode>(ReinterpretCastNode(substituted_type.as<TypeSpecifierNode>(), substituted_expr, cast_node.cast_token()));
 		} else if (std::holds_alternative<SizeofExprNode>(expr)) {
 			// sizeof operator - substitute template parameters in the operand and try to evaluate
 			const SizeofExprNode& sizeof_expr = std::get<SizeofExprNode>(expr);
@@ -1135,14 +1150,17 @@ ASTNode Parser::substituteTemplateParameters(
 
 	} else if (node.is<ConstructorCallNode>()) {
 		const ConstructorCallNode& constructor_call = node.as<ConstructorCallNode>();
-		ASTNode substituted_type = substituteTemplateParameters(constructor_call.type_node(), template_params, template_args);
+		ASTNode substituted_type = substituteTemplateParameters(
+			ASTNode(&constructor_call.type_node()),
+			template_params,
+			template_args);
 		ChunkedVector<ASTNode> substituted_args;
 		for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
 			substituteArgWithPackExpansion(constructor_call.arguments()[i], template_params, template_args, substituted_args);
 		}
 		return makeRebuiltConstructorCallNode(
 			constructor_call,
-			substituted_type,
+			substituted_type.as<TypeSpecifierNode>(),
 			std::move(substituted_args),
 			/*wrap_in_expression=*/false);
 
@@ -1414,12 +1432,12 @@ ASTNode Parser::substituteTemplateParameters(
 		if (substituted_decl.is<DeclarationNode>() && initializer.has_value() &&
 			initializer->is<InitializerListNode>()) {
 			DeclarationNode& sub_decl_ref = substituted_decl.as<DeclarationNode>();
-			if (sub_decl_ref.is_unsized_array() && sub_decl_ref.type_node().is<TypeSpecifierNode>()) {
+			if (sub_decl_ref.is_unsized_array()) {
 				const TypeSpecifierNode& current_spec =
-					sub_decl_ref.type_node().as<TypeSpecifierNode>();
-				ASTNode fresh_type_node = emplace_node<TypeSpecifierNode>(current_spec);
+					sub_decl_ref.type_specifier_node();
+				TypeSpecifierNode fresh_type_node = current_spec;
 				inferUnsizedArraySizeFromInitializer(sub_decl_ref,
-					fresh_type_node.as<TypeSpecifierNode>(),
+					fresh_type_node,
 					initializer);
 				sub_decl_ref.set_type_node(fresh_type_node);
 			}

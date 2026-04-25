@@ -1474,7 +1474,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				return ParseResult::error("Expected static member declaration", current_token_);
 			}
 			DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
-			TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+			TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 			// Check for initialization (static data member)
 			std::optional<ASTNode> init_expr_opt;
@@ -2301,7 +2301,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				return ParseResult::error("Expected declaration node for member", peek_info());
 			}
 			const DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
-			const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+			const TypeSpecifierNode& type_spec = decl_node.type_specifier_node();
 
 			std::optional<size_t> bitfield_width;
 			std::optional<ASTNode> bitfield_width_expr;
@@ -2721,7 +2721,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Process regular (non-union) member
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 		// Get member size and alignment
 		// Calculate member size and alignment
@@ -2833,7 +2833,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				size_t min_required = computeMinRequiredArgs(params);
 				if (min_required <= 1) {
 					const auto& param_decl = params[0].as<DeclarationNode>();
-					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					const auto& param_type = param_decl.type_specifier_node();
 
 					if (param_type.is_lvalue_reference() && param_type.category() == TypeCategory::Struct && param_type.type_index() == struct_type_info.type_index_) {
 						has_user_defined_copy_constructor = true;
@@ -2859,7 +2859,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					if (!params.empty() &&
 						computeMinRequiredArgs(params) <= 1 &&
 						params[0].is<DeclarationNode>()) {
-						const auto& param_type = params[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						const auto& param_type = params[0].as<DeclarationNode>().type_specifier_node();
 						if (param_type.is_lvalue_reference() && param_type.category() == TypeCategory::Struct) {
 							refined_kind = OverloadableOperator::CopyAssign;
 						} else if (param_type.is_rvalue_reference() && param_type.category() == TypeCategory::Struct) {
@@ -2978,7 +2978,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					size_t min_required = computeMinRequiredArgs(base_params);
 					if (min_required <= 1) {
 						const auto& param_decl = base_params[0].as<DeclarationNode>();
-						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+						const auto& param_type = param_decl.type_specifier_node();
 						if ((param_type.is_lvalue_reference() || param_type.is_rvalue_reference()) &&
 							param_type.category() == TypeCategory::Struct &&
 							base_struct_info->isOwnTypeIndex(param_type.type_index())) {
@@ -2996,7 +2996,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Copy parameters from base constructor to derived constructor
 				for (const auto& base_param : base_params) {
 					const DeclarationNode& base_param_decl = base_param.as<DeclarationNode>();
-					const TypeSpecifierNode& base_param_type = base_param_decl.type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& base_param_type = base_param_decl.type_specifier_node();
 
 					// Create a copy of the parameter for the derived constructor
 					auto param_type_node = emplace_node<TypeSpecifierNode>(
@@ -3634,7 +3634,7 @@ ParseResult Parser::parse_enum_declaration() {
 		}
 
 		if (auto type_node = underlying_type_result.node()) {
-			enum_ref.set_underlying_type(*type_node);
+			enum_ref.set_underlying_type(type_node->as<TypeSpecifierNode>());
 		}
 	}
 
@@ -3653,7 +3653,7 @@ ParseResult Parser::parse_enum_declaration() {
 
 		// Set size on TypeInfo for forward-declared enum (use fallback_size_bits_)
 		if (enum_ref.has_underlying_type()) {
-			const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
+			const auto& type_spec = *enum_ref.underlying_type();
 			enum_type_info.fallback_size_bits_ = type_spec.size_in_bits();
 		} else if (is_scoped) {
 			// Scoped enums without underlying type default to int (32 bits)
@@ -3676,7 +3676,7 @@ ParseResult Parser::parse_enum_declaration() {
 	TypeCategory underlying_type = TypeCategory::Int;
 	int underlying_size = 32;
 	if (enum_ref.has_underlying_type()) {
-		const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
+		const auto& type_spec = *enum_ref.underlying_type();
 		underlying_type = type_spec.type();
 		underlying_size = type_spec.size_in_bits();
 	}
@@ -3834,7 +3834,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 	}
 
 	const DeclarationNode& decl = result.node()->as<DeclarationNode>();
-	const TypeSpecifierNode& fp_type = decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& fp_type = decl.type_specifier_node();
 
 	if (fp_type.category() != TypeCategory::FunctionPointer) {
 		restore_token_position(funcptr_saved_pos);

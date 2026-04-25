@@ -61,7 +61,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		for (const auto& param : ctor_decl.parameter_nodes()) {
 			if (param.is<DeclarationNode>()) {
 				const DeclarationNode& param_decl = param.as<DeclarationNode>();
-				const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& param_type_spec = param_decl.type_specifier_node();
 
 				bool handled_as_pack = false;
 				if (param_decl.is_parameter_pack() && (param_type_spec.category() == TypeCategory::UserDefined || param_type_spec.category() == TypeCategory::TypeAlias || param_type_spec.category() == TypeCategory::Template)) {
@@ -424,7 +424,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	// Perform template parameter substitution (same as eager path)
 	// Substitute return type
-	const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& return_type_spec = decl.type_specifier_node();
 	TypeIndex return_type_index = substitute_template_parameter(
 		return_type_spec, lazy_info.template_params, lazy_info.template_args);
 	if (owner_struct_decl) {
@@ -507,7 +507,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	for (const auto& param : func_decl.parameter_nodes()) {
 		if (param.is<DeclarationNode>()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
-			const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+			const TypeSpecifierNode& param_type_spec = param_decl.type_specifier_node();
 
 			// Expand variadic pack parameters (e.g. "Args... args") into N params.
 			bool handled_as_pack = false;
@@ -1413,7 +1413,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	// Process members with template parameter substitution
 	for (const auto& member_decl : nested_struct.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 		// Substitute template parameters using parent's template args
 		TypeIndex substituted_type_index = substitute_template_parameter(

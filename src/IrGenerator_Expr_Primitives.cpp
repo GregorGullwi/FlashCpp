@@ -117,7 +117,7 @@ ExprResult AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNod
 			if (symbol.has_value()) {
 				object_decl = get_decl_from_symbol(*symbol);
 				if (object_decl) {
-					object_type = object_decl->type_node().as<TypeSpecifierNode>();
+					object_type = object_decl->type_specifier_node();
 					if (dtor.is_arrow_access() && object_type.pointer_levels().size() > 0) {
 						object_type.remove_pointer_level();
 					}
@@ -515,7 +515,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				if (fast_sym->is<VariableDeclarationNode>()) {
 					const auto& vd = fast_sym->as<VariableDeclarationNode>();
 					const auto& decl_n = vd.declaration();
-					const auto& type_n = decl_n.type_node().as<TypeSpecifierNode>();
+					const auto& type_n = decl_n.type_specifier_node();
 					bool is_array_type = decl_n.is_array() || type_n.is_array();
 					bool is_ptr_or_ref = type_n.is_pointer() || type_n.is_reference() || type_n.is_function_pointer();
 					int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_n.size_in_bits());
@@ -539,7 +539,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 				if (fast_sym->is<DeclarationNode>()) {
 					const auto& decl_n = fast_sym->as<DeclarationNode>();
-					const auto& type_n = decl_n.type_node().as<TypeSpecifierNode>();
+					const auto& type_n = decl_n.type_specifier_node();
 					if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(type_n, identifier_handle)) {
 						return *enumerator_constant;
 					}
@@ -1010,7 +1010,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 	if (symbol->is<DeclarationNode>()) {
 		const auto& decl_node = symbol->as<DeclarationNode>();
-		const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+		const auto& type_node = decl_node.type_specifier_node();
 
 			// Check if this is an enum value (enumerator constant)
 			// IMPORTANT: References and pointers to enum are VARIABLES, not enumerator constants
@@ -1199,7 +1199,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 	if (symbol->is<VariableDeclarationNode>()) {
 		const auto& var_decl_node = symbol->as<VariableDeclarationNode>();
 		const auto& decl_node = var_decl_node.declaration();
-		const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+		const auto& type_node = decl_node.type_specifier_node();
 
 			// Check if this is actually a global variable
 		if (is_global) {
@@ -1430,8 +1430,8 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 			const std::optional<ASTNode> local_sym = symbol_table.lookup(struct_or_enum_name);
 			if (local_sym && local_sym->is<DeclarationNode>()) {
 				const auto& decl = local_sym->as<DeclarationNode>();
-				if (decl.type_node().is<TypeSpecifierNode>()) {
-					const auto& ts = decl.type_node().as<TypeSpecifierNode>();
+				{
+					const auto& ts = decl.type_specifier_node();
 					if (ts.category() == TypeCategory::Enum)
 						scoped_enum_type_info = tryGetTypeInfo(ts.type_index());
 				}
@@ -1465,7 +1465,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 					case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::Symbol:
 						if (resolved->symbol.is<DeclarationNode>()) {
 							const auto& decl_node = resolved->symbol.as<DeclarationNode>();
-							const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+							const auto& type_node = decl_node.type_specifier_node();
 							if (resolved->is_global) {
 								return emitQualifiedGlobalLoad(type_node, decl_node.is_array(), resolved->storage_name);
 							}
@@ -1474,7 +1474,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						}
 						if (resolved->symbol.is<VariableDeclarationNode>()) {
 							const auto& decl_node = resolved->symbol.as<VariableDeclarationNode>().declaration_node().as<DeclarationNode>();
-							const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+							const auto& type_node = decl_node.type_specifier_node();
 							return emitQualifiedGlobalLoad(type_node, decl_node.is_array(), resolved->storage_name);
 						}
 						if (resolved->symbol.is<FunctionDeclarationNode>()) {
@@ -1852,7 +1852,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 
 	if (found_symbol->is<DeclarationNode>()) {
 		const auto& decl_node = found_symbol->as<DeclarationNode>();
-		const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+		const auto& type_node = decl_node.type_specifier_node();
 
 			// Check if this is a global variable (namespace-scoped)
 			// If found in global symbol table, it's a global variable
@@ -1898,7 +1898,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 	if (found_symbol->is<VariableDeclarationNode>()) {
 		const auto& var_decl_node = found_symbol->as<VariableDeclarationNode>();
 		const auto& decl_node = var_decl_node.declaration_node().as<DeclarationNode>();
-		const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+		const auto& type_node = decl_node.type_specifier_node();
 
 			// Namespace-scoped variables are always global
 			// Generate GlobalLoad for namespace-qualified global variable

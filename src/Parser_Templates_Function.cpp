@@ -117,7 +117,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// This must be done AFTER skipping cv-qualifiers/noexcept but BEFORE semicolon/body
 	// Example: template<typename T> auto func(T x) -> decltype(x + 1)
 	DeclarationNode& decl_node = func_decl.decl_node();
-	TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+	TypeSpecifierNode& return_type = decl_node.type_specifier_node();
 	FLASH_LOG(Templates, Debug, "Template instantiation: pre-trailing return type: type=", static_cast<int>(return_type.type()),
 			  ", index=", return_type.type_index(), ", token='", return_type.token().value(), "'");
 	if (!peek().is_eof()) {

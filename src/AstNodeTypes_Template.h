@@ -16,7 +16,7 @@ public:
 		: kind_(TemplateParameterKind::Type), name_(name), token_(token) {}
 
 	// Non-type parameter: template<int N>
-	TemplateParameterNode(StringHandle name, ASTNode type_node, Token token)
+	TemplateParameterNode(StringHandle name, const TypeSpecifierNode& type_node, Token token)
 		: kind_(TemplateParameterKind::NonType), name_(name), type_node_(type_node), token_(token) {}
 
 	// Template template parameter: template<template<typename> class Container>
@@ -32,7 +32,8 @@ public:
 
 	// For non-type parameters
 	bool has_type() const { return type_node_.has_value(); }
-	ASTNode type_node() const { return type_node_.value(); }
+	TypeSpecifierNode& type_specifier_node() { return type_node_.value(); }
+	const TypeSpecifierNode& type_specifier_node() const { return type_node_.value(); }
 
 	// For template template parameters
 	const std::vector<ASTNode>& nested_parameters() const { return nested_params_; }
@@ -64,7 +65,7 @@ public:
 private:
 	TemplateParameterKind kind_;
 	StringHandle name_;	// Points directly into source text from lexer token
-	std::optional<ASTNode> type_node_;  // For non-type parameters (e.g., int N)
+	std::optional<TypeSpecifierNode> type_node_;  // For non-type parameters (e.g., int N)
 	std::vector<ASTNode> nested_params_;	 // For template template parameters (nested template parameters)
 	std::optional<ASTNode> default_value_;  // Default argument (e.g., typename T = int)
 	std::optional<SaveHandle> default_value_position_;  // Lexer position for SFINAE re-parse of dependent defaults
@@ -142,22 +143,34 @@ public:
 	TemplateAliasNode(InlineVector<ASTNode, 4> template_params,
 					  InlineVector<StringHandle, 4> param_names,
 					  StringHandle alias_name,
-					  ASTNode target_type)
+					  const TypeSpecifierNode& target_type)
 		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), alias_name_(alias_name), target_type_(target_type), is_deferred_(false) {}
+	TemplateAliasNode(InlineVector<ASTNode, 4> template_params,
+					  InlineVector<StringHandle, 4> param_names,
+					  StringHandle alias_name,
+					  ASTNode target_type)
+		: TemplateAliasNode(std::move(template_params), std::move(param_names), alias_name, target_type.as<TypeSpecifierNode>()) {}
 
 	// Constructor for deferred template instantiation (Option 1)
+	TemplateAliasNode(InlineVector<ASTNode, 4> template_params,
+					  InlineVector<StringHandle, 4> param_names,
+					  StringHandle alias_name,
+					  const TypeSpecifierNode& target_type,
+					  StringHandle target_template_name,
+					  std::vector<ASTNode> target_template_args)
+		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), alias_name_(alias_name), target_type_(target_type), is_deferred_(true), target_template_name_(target_template_name), target_template_args_(std::move(target_template_args)) {}
 	TemplateAliasNode(InlineVector<ASTNode, 4> template_params,
 					  InlineVector<StringHandle, 4> param_names,
 					  StringHandle alias_name,
 					  ASTNode target_type,
 					  StringHandle target_template_name,
 					  std::vector<ASTNode> target_template_args)
-		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), alias_name_(alias_name), target_type_(target_type), is_deferred_(true), target_template_name_(target_template_name), target_template_args_(std::move(target_template_args)) {}
+		: TemplateAliasNode(std::move(template_params), std::move(param_names), alias_name, target_type.as<TypeSpecifierNode>(), target_template_name, std::move(target_template_args)) {}
 
 	const InlineVector<ASTNode, 4>& template_parameters() const { return template_parameters_; }
 	const InlineVector<StringHandle, 4>& template_param_names() const { return template_param_names_; }
 	std::string_view alias_name() const { return alias_name_.view(); }
-	ASTNode target_type() const { return target_type_; }
+	const TypeSpecifierNode& target_type() const { return target_type_; }
 
 	// Deferred instantiation support
 	bool is_deferred() const { return is_deferred_; }
@@ -165,18 +178,14 @@ public:
 	const std::vector<ASTNode>& target_template_args() const { return target_template_args_; }
 
 	// Get the underlying TypeSpecifierNode
-	TypeSpecifierNode& target_type_node() {
-		return target_type_.as<TypeSpecifierNode>();
-	}
-	const TypeSpecifierNode& target_type_node() const {
-		return target_type_.as<TypeSpecifierNode>();
-	}
+	TypeSpecifierNode& target_type_node() { return target_type_; }
+	const TypeSpecifierNode& target_type_node() const { return target_type_; }
 
 private:
 	InlineVector<ASTNode, 4> template_parameters_;  // TemplateParameterNode instances
 	InlineVector<StringHandle, 4> template_param_names_;	 // Parameter names for lookup
 	StringHandle alias_name_;  // The name of the alias (e.g., "Ptr")
-	ASTNode target_type_;  // TypeSpecifierNode - the target type (e.g., T*)
+	TypeSpecifierNode target_type_;  // The target type (e.g., T*)
 
 	// Deferred instantiation (Option 1: cleaner than string parsing)
 	bool is_deferred_;  // True if target is a template with unresolved parameters

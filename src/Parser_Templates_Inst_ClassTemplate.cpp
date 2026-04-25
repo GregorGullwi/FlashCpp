@@ -1172,7 +1172,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				continue;
 			}
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
-			const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+			const TypeSpecifierNode& param_type_spec = param_decl.type_specifier_node();
 
 			// Handle variadic pack parameters (e.g. "Args... args").
 			// These must be expanded into N individual parameters (args_0, args_1, ...) where N
@@ -1737,17 +1737,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
 
 						// Check if the alias target type is void (like void_t)
-						const ASTNode& target_type = alias_node.target_type();
-						if (target_type.is<TypeSpecifierNode>()) {
-							const TypeSpecifierNode& alias_type_spec = target_type.as<TypeSpecifierNode>();
-							if (alias_type_spec.category() == TypeCategory::Void) {
-								// void_t-like alias: fill in void here, SFINAE check happens in pattern matching
-								TemplateTypeArg void_arg;
-								void_arg.type_index = nativeTypeIndex(TypeCategory::Void);
-								filled_args_for_pattern_match.push_back(void_arg);
-								FLASH_LOG(Templates, Debug, "Filled in void_t alias default for param ", i, ": void");
-								continue;
-							}
+						const TypeSpecifierNode& alias_type_spec = alias_node.target_type();
+						if (alias_type_spec.category() == TypeCategory::Void) {
+							// void_t-like alias: fill in void here, SFINAE check happens in pattern matching
+							TemplateTypeArg void_arg;
+							void_arg.type_index = nativeTypeIndex(TypeCategory::Void);
+							filled_args_for_pattern_match.push_back(void_arg);
+							FLASH_LOG(Templates, Debug, "Filled in void_t alias default for param ", i, ": void");
+							continue;
 						}
 					}
 
@@ -2467,7 +2464,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 				FLASH_LOG(Templates, Debug, "Copying member: ", decl.identifier_token().value(),
 						  " has_initializer=", member_decl.default_initializer.has_value());
-				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 				// For pattern specializations, member types need substitution!
 				// The pattern has T* (Type::UserDefined with ptr_depth=1)
@@ -2578,7 +2575,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Substitute return type if it uses a template parameter
 					// For partial specializations like Container<T*>, the return type T* needs substitution
 					// The pattern has Type::UserDefined for T, which needs to be replaced with the concrete type
-					const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
 
 					// Use substitute_template_parameter for return type — handles all params by name,
 					// not just template_args[0].
@@ -3440,7 +3437,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				} else {
 					FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
 					const DeclarationNode& orig_decl = orig_func.decl_node();
-					const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
 
 					TypeIndex return_type_index = substitute_template_parameter(
 						orig_return_type, template_params, template_args_for_pattern);
@@ -4999,7 +4996,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Copy members from the template, substituting template parameters with concrete types
 	for (const auto& member_decl : class_decl.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 		// Substitute template parameter if the member type is a template parameter
 		TypeIndex member_type_index = substitute_template_parameter(
@@ -5434,7 +5431,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				ast_static_member && ast_static_member->declaration.has_value() &&
 				ast_static_member->declaration->is<DeclarationNode>()) {
 				const DeclarationNode& decl = ast_static_member->declaration->as<DeclarationNode>();
-				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 				substituted_type_index = substitute_template_parameter(
 					type_spec, template_params, template_args_to_use);
 				ensure_instantiated_static_member_type(substituted_type_index);
@@ -5923,7 +5920,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			if (static_member.declaration.has_value() && static_member.declaration->is<DeclarationNode>()) {
 				const DeclarationNode& decl = static_member.declaration->as<DeclarationNode>();
-				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 				substituted_type_index = substitute_template_parameter(
 					type_spec, template_params, template_args_to_use);
 				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(substituted_type_index);
@@ -6032,7 +6029,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Copy and substitute members from the nested class
 			for (const auto& member_decl : nested_struct.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 				TypeIndex substituted_type_index = substitute_template_parameter(
 					type_spec, template_params, template_args_to_use);
 				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(substituted_type_index);
@@ -6361,11 +6358,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					const auto& decl = member_decl.declaration.as<DeclarationNode>();
-					if (!decl.type_node().is<TypeSpecifierNode>()) {
-						continue;
-					}
-
-					const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
+					const auto& type_spec = decl.type_specifier_node();
 					TypeIndex substituted_type_index = substitute_template_parameter(
 						type_spec, template_params, template_args_to_use);
 					ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(substituted_type_index);
@@ -6818,7 +6811,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// This allows the function to be found during name lookup, but defers code generation
 
 				// Substitute return type
-				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& return_type_spec = decl.type_specifier_node();
 				ASTNode substituted_return_type_node = substituteTemplateParameters(
 					decl.type_node(), template_params, template_args_to_use);
 				TypeCategory return_type = return_type_spec.type();
@@ -6949,7 +6942,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& param : func_decl.parameter_nodes()) {
 					if (param.is<DeclarationNode>()) {
 						const DeclarationNode& param_decl = param.as<DeclarationNode>();
-						const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+						const TypeSpecifierNode& param_type_spec = param_decl.type_specifier_node();
 
 						// Substitute parameter type
 						TypeIndex param_type_index = substitute_template_parameter(
@@ -7070,7 +7063,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// If the function has a definition or deferred body, we need to substitute template parameters
 			if (func_decl.has_any_body_source()) {
 				// Substitute return type
-				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& return_type_spec = decl.type_specifier_node();
 				ASTNode substituted_return_type_node = substituteTemplateParameters(
 					decl.type_node(), template_params, template_args_to_use);
 				TypeIndex return_type_index = substitute_template_parameter(
@@ -7144,7 +7137,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& param : func_decl.parameter_nodes()) {
 					if (param.is<DeclarationNode>()) {
 						const DeclarationNode& param_decl = param.as<DeclarationNode>();
-						const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+						const TypeSpecifierNode& param_type_spec = param_decl.type_specifier_node();
 
 						// Substitute parameter type
 						TypeIndex param_type_index = substitute_template_parameter(
@@ -7349,7 +7342,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// No definition, but still need to substitute parameter types and return type
 
 				// Substitute return type
-				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& return_type_spec = decl.type_specifier_node();
 				TypeCategory return_type = return_type_spec.type();
 				TypeIndex return_type_index = return_type_spec.type_index();
 				return_type_index = resolveOwnerAliasTypeIndex(
@@ -7454,7 +7447,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& param : func_decl.parameter_nodes()) {
 					if (param.is<DeclarationNode>()) {
 						const DeclarationNode& param_decl = param.as<DeclarationNode>();
-						const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+						const TypeSpecifierNode& param_type_spec = param_decl.type_specifier_node();
 
 						// Substitute parameter type
 						TypeIndex param_type_index = substitute_template_parameter(
@@ -7710,7 +7703,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			bool needs_substitution = false;
 			// Check return type
 			{
-				const auto& rtype = decl_node.type_node().as<TypeSpecifierNode>();
+				const auto& rtype = decl_node.type_specifier_node();
 				if ((rtype.category() == TypeCategory::UserDefined || rtype.category() == TypeCategory::TypeAlias || rtype.category() == TypeCategory::Template)) {
 					needs_substitution = true;
 				}
@@ -7719,7 +7712,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (!needs_substitution) {
 				for (const auto& param : func_decl.parameter_nodes()) {
 					if (param.is<DeclarationNode>()) {
-						const auto& ptype = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						const auto& ptype = param.as<DeclarationNode>().type_specifier_node();
 						if ((ptype.category() == TypeCategory::UserDefined || ptype.category() == TypeCategory::TypeAlias || ptype.category() == TypeCategory::Template)) {
 							needs_substitution = true;
 							break;
@@ -7730,7 +7723,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			if (needs_substitution) {
 				// Create a new inner function with substituted non-auto parameter types
-				const TypeSpecifierNode& return_type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& return_type_spec = decl_node.type_specifier_node();
 				ASTNode substituted_return_type_node = substituteTemplateParameters(
 					decl_node.type_node(), template_params, template_args_to_use);
 				TypeIndex ret_type_index = substitute_template_parameter(
@@ -7785,7 +7778,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& param : func_decl.parameter_nodes()) {
 					if (param.is<DeclarationNode>()) {
 						const DeclarationNode& param_decl = param.as<DeclarationNode>();
-						const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+						const TypeSpecifierNode& param_type_spec = param_decl.type_specifier_node();
 
 						TypeCategory new_param_type = param_type_spec.type();
 						TypeIndex new_param_type_index = param_type_spec.type_index();

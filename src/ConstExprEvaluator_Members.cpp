@@ -1394,8 +1394,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	// Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
 	const TypeInfo* saved_return_type_info = context.return_type_info;
 	context.return_type_info = nullptr;
-	if (actual_func->decl_node().type_node().is<TypeSpecifierNode>()) {
-		const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_node().as<TypeSpecifierNode>();
+	{
+		const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_specifier_node();
 		TypeIndex ret_idx = ret_spec.type_index();
 		if (const TypeInfo* return_type_info = tryGetTypeInfo(ret_idx))
 			context.return_type_info = return_type_info;
@@ -1416,8 +1416,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	context.struct_type_index = saved_struct_type_index;
 	if (!result.success() && (result.error_message == "Constexpr member function did not return a value" ||
 							  result.error_message == "Constexpr function return statement has no expression")) {
-		if (actual_func->decl_node().type_node().is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_node().as<TypeSpecifierNode>();
+		{
+			const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_specifier_node();
 			if (ret_spec.category() == TypeCategory::Void) {
 				result = EvalResult::from_int(0LL);
 			}
@@ -1545,8 +1545,8 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 	context.struct_info = struct_info;
 	context.struct_type_index = object.object_type_index;
 	context.return_type_info = nullptr;
-	if (match.function->decl_node().type_node().is<TypeSpecifierNode>()) {
-		const TypeSpecifierNode& ret_spec = match.function->decl_node().type_node().as<TypeSpecifierNode>();
+	{
+		const TypeSpecifierNode& ret_spec = match.function->decl_node().type_specifier_node();
 		TypeIndex ret_idx = ret_spec.type_index();
 		if (const TypeInfo* return_type_info = tryGetTypeInfo(ret_idx))
 			context.return_type_info = return_type_info;
@@ -2779,11 +2779,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	// bindings-aware recursive evaluator so that local variables and function
 	// parameters are visible inside the cast expression.
 	if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
-		const ASTNode& type_node = static_cast_node->target_type();
-		if (!type_node.is<TypeSpecifierNode>()) {
-			return EvalResult::error("Cast without valid type specifier");
-		}
-		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = static_cast_node->target_type();
 		// Evaluate the inner expression with bindings.
 		auto inner_result = recursive_eval(static_cast_node->expr(), bindings, context);
 		if (!inner_result.success()) {
@@ -2813,11 +2809,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	// the cast expression.  const_cast only changes cv/ref qualification — no type
 	// conversion is performed; the value/object identity is preserved as-is.
 	if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
-		const ASTNode& type_node = const_cast_node->target_type();
-		if (!type_node.is<TypeSpecifierNode>()) {
-			return EvalResult::error("Const cast without valid type specifier");
-		}
-		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = const_cast_node->target_type();
 		// Evaluate the inner expression with bindings.
 		auto inner_result = recursive_eval(const_cast_node->expr(), bindings, context);
 		if (!inner_result.success()) {
@@ -2842,12 +2834,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	// When evaluating inside a function body with local bindings, we need outer_bindings to evaluate
 	// constructor arguments that reference local variables.
 	if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
-		const ASTNode& type_node = ctor_call->type_node();
-		if (type_node.is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-			if (is_struct_type(type_spec.category()) && tryGetTypeInfo(type_spec.type_index())) {
-				return materialize_constructor_object_value(*ctor_call, context, &bindings);
-			}
+		const TypeSpecifierNode& type_spec = ctor_call->type_node();
+		if (is_struct_type(type_spec.category()) && tryGetTypeInfo(type_spec.type_index())) {
+			return materialize_constructor_object_value(*ctor_call, context, &bindings);
 		}
 	}
 
@@ -3956,8 +3945,8 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		if (!initializer.has_value()) {
 			return EvalResult::error("Constexpr variable has no initializer: " + qualified_id.full_name());
 		}
-		if (initializer->is<InitializerListNode>() && var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+		if (initializer->is<InitializerListNode>()) {
+			const TypeSpecifierNode& type_spec = var_decl.declaration().type_specifier_node();
 			if (type_spec.array_dimension_count() > 0) {
 				return materializeArrayInitializer(
 					type_spec.type_index(),
@@ -4423,12 +4412,7 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	}
 
 	const ConstructorCallNode& ctor_call = *ctor_call_ptr;
-	const ASTNode& type_node = ctor_call.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Constructor call without valid type specifier");
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = ctor_call.type_node();
 	if (!is_struct_type(type_spec.category())) {
 		return EvalResult::error("Constexpr " + std::string(usage_name) + " requires a struct type");
 	}
@@ -4676,8 +4660,8 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_object_source(
 	resolved_object.initializer = &resolved_object.var_decl->initializer();
 
 	const DeclarationNode& decl = resolved_object.var_decl->declaration();
-	if (decl.type_node().is<TypeSpecifierNode>()) {
-		resolved_object.declared_type_index = decl.type_node().as<TypeSpecifierNode>().type_index();
+	{
+		resolved_object.declared_type_index = decl.type_specifier_node().type_index();
 	}
 
 	return std::nullopt;
@@ -5172,12 +5156,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 	};
 
 	auto evaluateMemberFromCtorCall = [&context, member_name](const ConstructorCallNode& ctor_call) -> EvalResult {
-		const ASTNode& type_node = ctor_call.type_node();
-		if (!type_node.is<TypeSpecifierNode>()) {
-			return EvalResult::error("Invalid struct element type in array subscript member access");
-		}
-
-		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = ctor_call.type_node();
 		const StructTypeInfo* struct_info = get_struct_info_from_type(type_spec);
 		if (!struct_info) {
 			return EvalResult::error("Array element is not a struct in member access");
@@ -5210,16 +5189,9 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 					}
 
 					const StaticCastNode& cast_node = std::get<StaticCastNode>(arg_expr);
-					const ASTNode& cast_type_node = cast_node.target_type();
+					const TypeSpecifierNode& cast_type = cast_node.target_type();
 					const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-					const ASTNode& param_type_node = param_decl.type_node();
-					if (!cast_type_node.is<TypeSpecifierNode>() || !param_type_node.is<TypeSpecifierNode>()) {
-						matches_cast_targets = false;
-						break;
-					}
-
-					const TypeSpecifierNode& cast_type = cast_type_node.as<TypeSpecifierNode>();
-					const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
+					const TypeSpecifierNode& param_type = param_decl.type_specifier_node();
 					if (cast_type.type() != param_type.type() ||
 						cast_type.type_index() != param_type.type_index() ||
 						cast_type.pointer_depth() != param_type.pointer_depth()) {
@@ -5400,11 +5372,11 @@ EvalResult Evaluator::evaluate_static_member_from_struct(
 			if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
 				context.current_depth++;
 				EvalResult result =
-					var_decl.initializer()->is<InitializerListNode>() && var_decl.declaration().type_node().is<TypeSpecifierNode>() &&
-							var_decl.declaration().type_node().as<TypeSpecifierNode>().array_dimension_count() > 0
+					var_decl.initializer()->is<InitializerListNode>() &&
+							var_decl.declaration().type_specifier_node().array_dimension_count() > 0
 						? materializeArrayInitializer(
-							var_decl.declaration().type_node().as<TypeSpecifierNode>().type_index(),
-							var_decl.declaration().type_node().as<TypeSpecifierNode>().array_dimensions(),
+							var_decl.declaration().type_specifier_node().type_index(),
+							var_decl.declaration().type_specifier_node().array_dimensions(),
 							var_decl.initializer()->as<InitializerListNode>(),
 							context)
 						: evaluate(*var_decl.initializer(), context);
@@ -5597,8 +5569,8 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 
 	if (!has_complex_object_result && initializer && initializer->has_value()) {
 		bool receiver_is_pointer = false;
-		if (var_decl && var_decl->declaration().type_node().is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& receiver_type = var_decl->declaration().type_node().as<TypeSpecifierNode>();
+		if (var_decl) {
+			const TypeSpecifierNode& receiver_type = var_decl->declaration().type_specifier_node();
 			receiver_is_pointer = receiver_type.is_pointer();
 		}
 		if (receiver_is_pointer) {
@@ -5660,11 +5632,7 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 		}
 	} else if (ctor_call_ptr) {
 		const ConstructorCallNode& ctor_call = *ctor_call_ptr;
-		const ASTNode& type_node = ctor_call.type_node();
-		if (!type_node.is<TypeSpecifierNode>()) {
-			return EvalResult::error("Constructor call without valid type specifier");
-		}
-		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = ctor_call.type_node();
 		if (!is_struct_type(type_spec.category())) {
 			return EvalResult::error("Member function call requires a struct type");
 		}
@@ -5785,8 +5753,8 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 	// Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
 	const TypeInfo* saved_return_type_info = context.return_type_info;
 	context.return_type_info = nullptr;
-	if (actual_func->decl_node().type_node().is<TypeSpecifierNode>()) {
-		const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_node().as<TypeSpecifierNode>();
+	{
+		const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_specifier_node();
 		TypeIndex ret_idx = ret_spec.type_index();
 		if (const TypeInfo* return_type_info = tryGetTypeInfo(ret_idx))
 			context.return_type_info = return_type_info;
@@ -5845,12 +5813,7 @@ EvalResult Evaluator::materialize_constructor_object_value(
 	const ConstructorCallNode& ctor_call,
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
-	const ASTNode& type_node = ctor_call.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Constructor call without valid type specifier");
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = ctor_call.type_node();
 	if (!is_struct_type(type_spec.category())) {
 		return EvalResult::error("Constructor call is not a struct/class type");
 	}
@@ -6861,12 +6824,7 @@ EvalResult Evaluator::extract_object_members(
 	const ConstructorCallNode& ctor_call = *ctor_call_ptr;
 
 	// Get the struct type info
-	const ASTNode& type_node = ctor_call.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Constructor call without valid type specifier");
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = ctor_call.type_node();
 
 	if (!is_struct_type(type_spec.category())) {
 		return EvalResult::error("Member function call requires a struct type");
@@ -7088,8 +7046,8 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 			}
 
 			const InitializerListNode& init_list = qualified_initializer->as<InitializerListNode>();
-			if (qualified_var.declaration().type_node().is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& type_spec = qualified_var.declaration().type_node().as<TypeSpecifierNode>();
+			{
+				const TypeSpecifierNode& type_spec = qualified_var.declaration().type_specifier_node();
 				if (auto materialized_row = tryMaterializeMultidimArrayRow(&type_spec, init_list, index, context)) {
 					return *materialized_row;
 				}
@@ -7199,8 +7157,8 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 			TypeIndex qualified_element_type{};
 			bool qualified_element_is_struct_object = false;
 			const TypeSpecifierNode* qualified_type_spec = nullptr;
-			if (qualified_var.declaration().type_node().is<TypeSpecifierNode>()) {
-				qualified_type_spec = &qualified_var.declaration().type_node().as<TypeSpecifierNode>();
+			{
+				qualified_type_spec = &qualified_var.declaration().type_specifier_node();
 				qualified_element_type = qualified_type_spec->type_index();
 				qualified_element_is_struct_object =
 					qualified_var.declaration().array_dimensions().size() == 1 &&
@@ -7238,8 +7196,8 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		return EvalResult::error("Constexpr array has no initializer");
 	}
 
-	if (initializer->is<InitializerListNode>() && var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
-		const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+	if (initializer->is<InitializerListNode>()) {
+		const TypeSpecifierNode& type_spec = var_decl.declaration().type_specifier_node();
 		bool element_is_struct_object =
 			var_decl.declaration().array_dimensions().size() == 1 &&
 			tryGetStructTypeInfo(type_spec.type_index()) != nullptr;

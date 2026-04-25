@@ -4771,7 +4771,7 @@ bool IrToObjConverter<TWriterClass>::emitSameTypeCopyOrMoveConstructorCall(TypeI
 	}
 
 	std::vector<TypeSpecifierNode> parameter_types;
-	parameter_types.push_back(ctor_node.parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+	parameter_types.push_back(ctor_node.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node());
 
 	std::string struct_name = std::string(StringTable::getStringView(type_info.name()));
 	std::string function_name;
@@ -4958,8 +4958,8 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		for (size_t i = 0; i < num_params && i < ctor_params.size(); ++i) {
 			if (ctor_params[i].is<DeclarationNode>()) {
 				const auto& param_decl = ctor_params[i].as<DeclarationNode>();
-				if (param_decl.type_node().is<TypeSpecifierNode>()) {
-					auto param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+				{
+					auto param_type_spec = param_decl.type_specifier_node();
 					parameter_types.push_back(param_type_spec);
 					continue;
 				}
@@ -7528,7 +7528,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						std::vector<std::string_view> empty_ns_path;
 						return std::string(NameMangling::generateMangledName(
 							StringTable::getStringView(vfunc->getName()),
-							func_node.decl_node().type_node().as<TypeSpecifierNode>(),
+							func_node.decl_node().type_specifier_node(),
 							func_node.parameter_nodes(),
 							false,
 							func_node.parent_struct_name(),

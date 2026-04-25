@@ -52,9 +52,8 @@ static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNo
 }
 
 static size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& decl) {
-	if (decl.type_node().is<TypeSpecifierNode>()) {
-		const ASTNode decl_type_node = decl.type_node();
-		const TypeSpecifierNode& type_node = decl_type_node.as<TypeSpecifierNode>();
+	{
+		const TypeSpecifierNode& type_node = decl.type_specifier_node();
 		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
 			return type_node.array_dimension_count();
 		}
@@ -63,9 +62,8 @@ static size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& d
 }
 
 static std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) {
-	if (decl.type_node().is<TypeSpecifierNode>()) {
-		const ASTNode decl_type_node = decl.type_node();
-		const TypeSpecifierNode& type_node = decl_type_node.as<TypeSpecifierNode>();
+	{
+		const TypeSpecifierNode& type_node = decl.type_specifier_node();
 		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
 			return type_node.array_dimensions();
 		}
@@ -134,7 +132,7 @@ AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(co
 				}
 
 				if (decl_node) {
-					const auto& type_node = decl_node->type_node().as<TypeSpecifierNode>();
+					const auto& type_node = decl_node->type_specifier_node();
 
 					FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found decl, is_struct={}, type_index={}",
 									 is_struct_type(type_node.category()), type_node.type_index());
@@ -365,7 +363,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			// We have a valid multidimensional array access
 			// For arr[M][N][P] accessed as arr[i][j][k], compute flat_index = i*N*P + j*P + k
 
-			const auto& type_node = multi_dim.base_decl->type_node().as<TypeSpecifierNode>();
+			const auto& type_node = multi_dim.base_decl->type_specifier_node();
 			TypeCategory element_type = type_node.type();
 			int element_size_bits = static_cast<int>(type_node.size_in_bits());
 			TypeIndex element_type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
@@ -538,7 +536,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 				const DeclarationNode* member_decl_ptr = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
 				if (member_decl_ptr) {
-					const auto& type_node = member_decl_ptr->type_node().as<TypeSpecifierNode>();
+					const auto& type_node = member_decl_ptr->type_specifier_node();
 					if (is_struct_type(type_node.category())) {
 						TypeIndex struct_type_index = type_node.type_index();
 						if (struct_type_index.is_valid()) {
@@ -706,7 +704,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		const IdentifierNode& arr_ident = std::get<IdentifierNode>(arr_expr);
 		const DeclarationNode* decl_ptr = lookupDeclaration(arr_ident.name());
 		if (decl_ptr) {
-			const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+			const auto& type_node = decl_ptr->type_specifier_node();
 
 			// Capture type_index for struct and native types (important for member access on array elements)
 			if (type_node.category() == TypeCategory::Struct) {
@@ -811,7 +809,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				auto symbol = symbol_table.lookup(object_name);
 				if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 					const auto& decl_node = symbol->as<DeclarationNode>();
-					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+					const auto& type_node = decl_node.type_specifier_node();
 					if (is_struct_type(type_node.category()) && type_node.type_index().is_valid()) {
 						auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 							type_node.type_index(),
@@ -997,7 +995,7 @@ bool AstToIr::validateAndSetupIdentifierMemberAccess(
 		return false;
 	}
 	const DeclarationNode& object_decl = *object_decl_ptr;
-	const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& object_type = object_decl.type_specifier_node();
 
 	// Verify this is a struct type (or a pointer/reference to a struct type)
 	// References and pointers are automatically dereferenced for member access
@@ -1136,7 +1134,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 
 	auto getOperatorArrowMangledName = [&](const FunctionDeclarationNode& func_decl,
 										   TypeIndex object_type_index) {
-		const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
 		std::string_view struct_name = StringTable::getStringView(getTypeInfo(object_type_index).name());
 		std::string_view operator_func_name = "operator->";
 		std::vector<TypeSpecifierNode> empty_params;
@@ -1174,7 +1172,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		const StructMember* member_object = nullptr;
 		size_t member_object_offset = 0;
 		if (const DeclarationNode* decl = lookupDeclaration(identifier_handle)) {
-			type_node = &decl->type_node().as<TypeSpecifierNode>();
+			type_node = &decl->type_specifier_node();
 		} else if (current_struct_name_.isValid()) {
 			auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
 			if (current_struct_it != getTypesByNameMap().end() && current_struct_it->second->isStruct()) {
@@ -1211,7 +1209,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 
 				// Get the return type from the function declaration (should be a pointer)
-				const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
 
 				auto mangled_name = getOperatorArrowMangledName(func_decl, operator_object_type);
 
@@ -1430,7 +1428,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		if (overload_result.has_match) {
 			const StructMemberFunction& member_func = *overload_result.member_overload;
 			const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-			const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+			const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
 			auto mangled_name = getOperatorArrowMangledName(func_decl, base_type_index);
 			int base_size_bits = getStructObjectSizeBits(base_type_index);
 
@@ -1728,7 +1726,7 @@ std::optional<size_t> AstToIr::calculateArraySize(const DeclarationNode& decl) {
 		return std::nullopt;
 	}
 
-	const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 	size_t element_size = type_spec.size_in_bits() / 8;
 
 	// For struct types, get size from gTypeInfo instead of size_in_bits()
@@ -1921,7 +1919,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 				}
 
 				// For regular variables, get the type size from the declaration
-				const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& var_type = decl->type_specifier_node();
 				if (var_type.category() == TypeCategory::Struct) {
 					if (const TypeInfo* type_info = tryGetTypeInfo(var_type.type_index())) {
 						if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
@@ -1966,7 +1964,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 					// Look up the identifier to get its type
 					const DeclarationNode* decl = lookupDeclaration(id_node.name());
 					if (decl) {
-						const TypeSpecifierNode& obj_type = decl->type_node().as<TypeSpecifierNode>();
+						const TypeSpecifierNode& obj_type = decl->type_specifier_node();
 						FLASH_LOG(Codegen, Debug, "sizeof(member_access): obj_type=", (int)obj_type.type(), " type_index=", obj_type.type_index());
 						if (obj_type.category() == TypeCategory::Struct) {
 							if (const TypeInfo* type_info = tryGetTypeInfo(obj_type.type_index())) {
@@ -2052,7 +2050,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 					// Look up the array identifier in the symbol table
 					const DeclarationNode* decl = lookupDeclaration(id_node.name());
 					if (decl) {
-						const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
+						const TypeSpecifierNode& var_type = decl->type_specifier_node();
 
 						// Get the base element type size
 						size_t element_size = var_type.size_in_bits() / 8;
@@ -2196,7 +2194,7 @@ ExprResult AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
 				const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 				if (decl) {
 					// Get the type alignment from the declaration
-					const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& var_type = decl->type_specifier_node();
 					if (var_type.category() == TypeCategory::Struct) {
 						if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(var_type.type_index())) {
 							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->alignment)}, PointerDepth{}, ValueStorage::ContainsData);
@@ -2246,13 +2244,7 @@ ExprResult AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
 
 ExprResult AstToIr::generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
 	// offsetof(struct_type, member)
-	const ASTNode& type_node = offsetofNode.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		throw InternalError("offsetof type argument must be TypeSpecifierNode");
-		return ExprResult{};
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = offsetofNode.type_node();
 	if (type_spec.category() != TypeCategory::Struct) {
 		throw InternalError("offsetof requires a struct type");
 		return ExprResult{};
@@ -2912,7 +2904,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 									match = false;
 									break;
 								}
-								const auto& param_type = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+								const auto& param_type = params[i].as<DeclarationNode>().type_specifier_node();
 								const auto& arg_type = arg_types[i].as<TypeSpecifierNode>();
 								if (param_type.type() != arg_type.type()) {
 									match = false;
@@ -3049,7 +3041,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 									const auto& params = func_node->parameter_nodes();
 									if (params.size() != 1 || !params[0].is<DeclarationNode>())
 										continue;
-									const auto& param_type = params[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+									const auto& param_type = params[0].as<DeclarationNode>().type_specifier_node();
 									// Match: same base type, (for structs) same type_index, and same reference qualifier
 									if (param_type.type() != from_spec.type())
 										continue;
@@ -3540,7 +3532,7 @@ const StructTypeInfo* AstToIr::getCurrentStructContext() const {
 	auto this_symbol = symbol_table.lookup("this");
 	if (this_symbol.has_value() && this_symbol->is<DeclarationNode>()) {
 		const DeclarationNode& this_decl = this_symbol->as<DeclarationNode>();
-		const TypeSpecifierNode& this_type = this_decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& this_type = this_decl.type_specifier_node();
 
 		if (isIrStructType(toIrType(this_type.type())) && this_type.type_index().is_valid()) {
 			if (const TypeInfo* type_info = tryGetTypeInfo(this_type.type_index())) {
@@ -3625,7 +3617,7 @@ bool AstToIr::isVariableReference(std::string_view var_name) const {
 
 	if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 		const auto& decl = symbol->as<DeclarationNode>();
-		const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		const auto& type_spec = decl.type_specifier_node();
 		return type_spec.is_lvalue_reference() || type_spec.is_rvalue_reference();
 	}
 
@@ -3705,22 +3697,17 @@ bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 	// const_cast<const T&>(x) — target type is const
 	if (std::holds_alternative<ConstCastNode>(expr)) {
 		const ConstCastNode& cc = std::get<ConstCastNode>(expr);
-		if (cc.target_type().is<TypeSpecifierNode>()) {
-			return cc.target_type().as<TypeSpecifierNode>().is_const();
-		}
-		return false;
+		return cc.target_type().is_const();
 	}
 
 	// Helper lambda: given a symbol, return its TypeSpecifierNode (or nullptr)
 	auto getTypeSpec = [](const ASTNode& sym) -> const TypeSpecifierNode* {
 		if (sym.is<VariableDeclarationNode>()) {
 			const auto& var_decl = sym.as<VariableDeclarationNode>();
-			if (var_decl.declaration().type_node().is<TypeSpecifierNode>())
-				return &var_decl.declaration().type_node().as<TypeSpecifierNode>();
+			return &var_decl.declaration().type_specifier_node();
 		} else if (sym.is<DeclarationNode>()) {
 			const auto& decl = sym.as<DeclarationNode>();
-			if (decl.type_node().is<TypeSpecifierNode>())
-				return &decl.type_node().as<TypeSpecifierNode>();
+			return &decl.type_specifier_node();
 		}
 		return nullptr;
 	};

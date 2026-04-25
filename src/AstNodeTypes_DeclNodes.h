@@ -1884,20 +1884,28 @@ TypeCreationResult register_type_alias(StringHandle name, const TypeSpecifierNod
 class DeclarationNode {
 public:
 	DeclarationNode() = default;
-	DeclarationNode(ASTNode type_node, Token identifier)
+	DeclarationNode(const TypeSpecifierNode& type_node, Token identifier)
 		: type_node_(type_node), identifier_(std::move(identifier)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
-	DeclarationNode(ASTNode type_node, Token identifier, std::optional<ASTNode> array_size)
+	DeclarationNode(ASTNode type_node, Token identifier)
+		: DeclarationNode(type_node.as<TypeSpecifierNode>(), std::move(identifier)) {}
+	DeclarationNode(const TypeSpecifierNode& type_node, Token identifier, std::optional<ASTNode> array_size)
 		: type_node_(type_node), identifier_(std::move(identifier)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {
 		if (array_size.has_value()) {
 			array_dimensions_.push_back(*array_size);
 		}
 	}
+	DeclarationNode(ASTNode type_node, Token identifier, std::optional<ASTNode> array_size)
+		: DeclarationNode(type_node.as<TypeSpecifierNode>(), std::move(identifier), std::move(array_size)) {}
 	// Multidimensional array constructor
-	DeclarationNode(ASTNode type_node, Token identifier, std::vector<ASTNode> array_dimensions)
+	DeclarationNode(const TypeSpecifierNode& type_node, Token identifier, std::vector<ASTNode> array_dimensions)
 		: type_node_(type_node), identifier_(std::move(identifier)), array_dimensions_(std::move(array_dimensions)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
+	DeclarationNode(ASTNode type_node, Token identifier, std::vector<ASTNode> array_dimensions)
+		: DeclarationNode(type_node.as<TypeSpecifierNode>(), std::move(identifier), std::move(array_dimensions)) {}
 
-	ASTNode type_node() const { return type_node_; }
-	void set_type_node(const ASTNode& type_node) { type_node_ = type_node; }
+	ASTNode type_node() const { return ASTNode(&type_node_); }
+	TypeSpecifierNode& type_specifier_node() { return type_node_; }
+	const TypeSpecifierNode& type_specifier_node() const { return type_node_; }
+	void set_type_node(const TypeSpecifierNode& type_node) { type_node_ = type_node; }
 	const Token& identifier_token() const { return identifier_; }
 	void set_identifier_token(Token token) { identifier_ = std::move(token); }
 	uint32_t line_number() const { return identifier_.line(); }
@@ -1938,7 +1946,7 @@ public:
 	bool has_mangled_name() const { return mangled_name_.isValid(); }
 
 private:
-	ASTNode type_node_;
+	TypeSpecifierNode type_node_;
 	Token identifier_;
 	std::vector<ASTNode> array_dimensions_;	// For array declarations like int arr[2][3][4]
 	size_t custom_alignment_;			  // Custom alignment from alignas(n), 0 = use natural alignment
@@ -2686,10 +2694,14 @@ private:
 // Constructor call node - represents constructor calls like T(args)
 class ConstructorCallNode {
 public:
-	explicit ConstructorCallNode(ASTNode type_node, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
+	explicit ConstructorCallNode(const TypeSpecifierNode& type_node, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
 		: type_node_(type_node), arguments_(std::move(arguments)), called_from_(called_from_token) {}
+	explicit ConstructorCallNode(ASTNode type_node, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
+		: ConstructorCallNode(type_node.as<TypeSpecifierNode>(), std::move(arguments), called_from_token) {}
 
-	const ASTNode& type_node() const { return type_node_; }
+	const TypeSpecifierNode& type_node() const { return type_node_; }
+	TypeSpecifierNode& type_specifier_node() { return type_node_; }
+	const TypeSpecifierNode& type_specifier_node() const { return type_node_; }
 	const auto& arguments() const { return arguments_; }
 	const ConstructorDeclarationNode* resolved_constructor() const { return resolved_constructor_; }
 
@@ -2699,7 +2711,7 @@ public:
 	Token called_from() const { return called_from_; }
 
 private:
-	ASTNode type_node_;	// TypeSpecifierNode representing the type being constructed
+	TypeSpecifierNode type_node_;	// TypeSpecifierNode representing the type being constructed
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
 	mutable const ConstructorDeclarationNode* resolved_constructor_ = nullptr;

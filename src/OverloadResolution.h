@@ -1029,12 +1029,12 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 		std::vector<ArgumentConversionInfo> conversion_infos;
 		bool all_convertible = true;
 		for (size_t i = 0; i < argument_types.size(); ++i) {
-			if (!parameters[i].is<DeclarationNode>() || !parameters[i].as<DeclarationNode>().type_node().is<TypeSpecifierNode>()) {
+			if (!parameters[i].is<DeclarationNode>()) {
 				all_convertible = false;
 				break;
 			}
 
-			const auto& param_type = parameters[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			const auto& param_type = parameters[i].as<DeclarationNode>().type_specifier_node();
 			const ArgumentConversionInfo conversion = buildArgumentConversionInfo(argument_types[i], param_type);
 			if (!conversion.is_valid) {
 				all_convertible = false;
@@ -1079,12 +1079,11 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 				std::vector<ArgumentConversionInfo> prev_infos;
 				bool prev_valid = true;
 				for (size_t k = 0; k < argument_types.size(); ++k) {
-					if (!prev_params[k].is<DeclarationNode>() ||
-						!prev_params[k].as<DeclarationNode>().type_node().is<TypeSpecifierNode>()) {
+					if (!prev_params[k].is<DeclarationNode>()) {
 						prev_valid = false;
 						break;
 					}
-					const auto& pt = prev_params[k].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					const auto& pt = prev_params[k].as<DeclarationNode>().type_specifier_node();
 					const ArgumentConversionInfo conv = buildArgumentConversionInfo(argument_types[k], pt);
 					if (!conv.is_valid) {
 						prev_valid = false;
@@ -1254,7 +1253,7 @@ inline OverloadResolutionResult resolve_overload(
 		size_t params_to_check = std::min(parameters.size(), argument_types.size());
 
 		for (size_t i = 0; i < params_to_check; ++i) {
-			const auto& param_type = parameters[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			const auto& param_type = parameters[i].as<DeclarationNode>().type_specifier_node();
 			const auto& arg_type = argument_types[i];
 
 			const ArgumentConversionInfo conversion = buildArgumentConversionInfo(arg_type, param_type);
@@ -1313,7 +1312,7 @@ inline OverloadResolutionResult resolve_overload(
 					std::vector<ArgumentConversionInfo> prev_infos;
 					bool prev_valid = true;
 					for (size_t k = 0; k < prev_params_to_check; ++k) {
-						const auto& pt = prev_params[k].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						const auto& pt = prev_params[k].as<DeclarationNode>().type_specifier_node();
 						const ArgumentConversionInfo conv = buildArgumentConversionInfo(argument_types[k], pt);
 						if (!conv.is_valid) {
 							prev_valid = false;
@@ -1377,8 +1376,8 @@ inline OverloadResolutionResult resolve_overload(
 				break;
 			}
 			for (size_t i = 0; i < best_params.size(); ++i) {
-				const auto& bp = best_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-				const auto& cp = cand_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+				const auto& bp = best_params[i].as<DeclarationNode>().type_specifier_node();
+				const auto& cp = cand_params[i].as<DeclarationNode>().type_specifier_node();
 				if (bp.type() != cp.type() || bp.type_index() != cp.type_index() ||
 					bp.pointer_depth() != cp.pointer_depth() ||
 					bp.is_reference() != cp.is_reference() ||

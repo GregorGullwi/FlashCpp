@@ -187,8 +187,8 @@ public:
 							// Check if all parameter types match
 							bool all_match = true;
 							for (size_t j = 0; j < new_params.size(); ++j) {
-								const auto& new_param_type = new_params[j].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-								const auto& existing_param_type = existing_params[j].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+								const auto& new_param_type = new_params[j].as<DeclarationNode>().type_specifier_node();
+								const auto& existing_param_type = existing_params[j].as<DeclarationNode>().type_specifier_node();
 
 								if (!new_param_type.matches_signature(existing_param_type)) {
 									all_match = false;
@@ -199,8 +199,8 @@ public:
 							// Also check return types for template specializations
 							// (e.g., get<0> returns int, get<1> returns double - different specializations)
 							if (all_match) {
-								const auto& new_return_type = new_func->decl_node().type_node().as<TypeSpecifierNode>();
-								const auto& existing_return_type = existing_func->decl_node().type_node().as<TypeSpecifierNode>();
+								const auto& new_return_type = new_func->decl_node().type_specifier_node();
+								const auto& existing_return_type = existing_func->decl_node().type_specifier_node();
 								if (!new_return_type.matches_signature(existing_return_type)) {
 									all_match = false;  // Different return types = different specializations
 								}
@@ -237,8 +237,8 @@ public:
 													if (ns_params.size() == new_params.size()) {
 														bool params_match = true;
 														for (size_t m = 0; m < ns_params.size(); ++m) {
-															const auto& ns_param_type = ns_params[m].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-															const auto& new_param_type = new_params[m].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+															const auto& ns_param_type = ns_params[m].as<DeclarationNode>().type_specifier_node();
+															const auto& new_param_type = new_params[m].as<DeclarationNode>().type_specifier_node();
 															if (!ns_param_type.matches_signature(new_param_type)) {
 																params_match = false;
 																break;

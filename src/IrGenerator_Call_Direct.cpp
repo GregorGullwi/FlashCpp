@@ -436,7 +436,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	if (inline_always_target &&
 		inline_always_target->is_inline_always() &&
 		callExprNode.arguments().size() == 1) {
-		const TypeSpecifierNode& return_type_spec = inline_always_target->decl_node().type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& return_type_spec = inline_always_target->decl_node().type_specifier_node();
 		bool returns_reference = return_type_spec.is_reference() || return_type_spec.is_rvalue_reference();
 
 		auto arg_node = callExprNode.arguments()[0];
@@ -492,7 +492,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						static constexpr int DefaultInlineAlwaysOperandSizeBits = 32;
 						int operand_size = DefaultInlineAlwaysOperandSizeBits;
 						if (const DeclarationNode* decl = lookupDeclaration(id_handle)) {
-							const TypeSpecifierNode& type = decl->type_node().as<TypeSpecifierNode>();
+							const TypeSpecifierNode& type = decl->type_specifier_node();
 							operand_type = type.type();
 							operand_size = static_cast<int>(type.size_in_bits());
 							if (operand_size == 0)
@@ -535,7 +535,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	}
 
 	if (func_ptr_decl) {
-		const auto& func_type = func_ptr_decl->type_node().as<TypeSpecifierNode>();
+		const auto& func_type = func_ptr_decl->type_specifier_node();
 		const FunctionDeclarationNode* resolved_operator_call =
 			!sema_ ? nullptr : sema_->getResolvedOpCall(sema_call_key);
 
@@ -1466,7 +1466,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		}
 			// Materialize the constant result into an ExprResult without emitting a call instruction.
 		const TypeSpecifierNode& ret_spec =
-			matched_func_decl->decl_node().type_node().as<TypeSpecifierNode>();
+			matched_func_decl->decl_node().type_specifier_node();
 		const TypeCategory ret_type = ret_spec.type();
 		const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
 		const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
@@ -1550,7 +1550,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 		if (param_decl)
-			param_type = &param_decl->type_node().as<TypeSpecifierNode>();
+			param_type = &param_decl->type_specifier_node();
 
 		const CachedParamInfo* cached_param = nullptr;
 		if (cached_param_list && !cached_param_list->empty()) {
@@ -1589,7 +1589,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 			const DeclarationNode* decl_ptr = lookupDeclaration(identifier.name());
 			if (decl_ptr) {
-				const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+				const auto& type_node = decl_ptr->type_specifier_node();
 				if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 						// Argument is a reference variable being passed to a reference parameter
 						// Pass the identifier name directly - the IRConverter will use MOV to
@@ -1733,7 +1733,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 								if (params.size() >= 1) {
 									if (params[0].is<DeclarationNode>()) {
 										const auto& ctor_param_decl = params[0].as<DeclarationNode>();
-										const auto& ctor_param_type = ctor_param_decl.type_node().as<TypeSpecifierNode>();
+										const auto& ctor_param_type = ctor_param_decl.type_specifier_node();
 
 											// Match if types are compatible
 										bool param_matches = false;
@@ -1826,7 +1826,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 
 			const auto& decl_node = *decl_ptr;
-			const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+			const auto& type_node = decl_node.type_specifier_node();
 
 				// Enumerator constants should be passed as immediate values, not variable references.
 			if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(
@@ -1985,13 +1985,13 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// But DON'T use it if the return type is still unresolved (UserDefined = template param)
 	const TypeSpecifierNode* best_return_type = nullptr;
 	if (matched_func_decl) {
-		const auto& mrt = matched_func_decl->decl_node().type_node().as<TypeSpecifierNode>();
+		const auto& mrt = matched_func_decl->decl_node().type_specifier_node();
 		if (mrt.category() != TypeCategory::UserDefined) {
 			best_return_type = &mrt;
 		}
 	}
 	if (!best_return_type) {
-		best_return_type = &decl_node.type_node().as<TypeSpecifierNode>();
+		best_return_type = &decl_node.type_specifier_node();
 	}
 	const auto& return_type = *best_return_type;
 	CallOp call_op = createCallOp(
@@ -2054,7 +2054,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		TypedValue arg = toTypedValue(std::span<const IrOperand>(&irOperands[i], 3));
 		const TypeSpecifierNode* param_type_spec = nullptr;
 		if (matched_func_decl && arg_idx < param_nodes.size() && param_nodes[arg_idx].is<DeclarationNode>()) {
-			param_type_spec = &param_nodes[arg_idx].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			param_type_spec = &param_nodes[arg_idx].as<DeclarationNode>().type_specifier_node();
 		} else if (cached_param_list && !cached_param_list->empty()) {
 			if (arg_idx < cached_param_list->size()) {
 				const auto& cached = (*cached_param_list)[arg_idx];

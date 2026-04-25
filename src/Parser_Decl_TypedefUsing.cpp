@@ -624,7 +624,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			// Calculate struct layout
 			for (const auto& member_decl : struct_ref_inner.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-				const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& member_type_spec = decl.type_specifier_node();
 
 				// Calculate member size and alignment
 				auto [member_size_in_bits, member_alignment] = calculateResolvedMemberSizeAndAlignment(
@@ -730,7 +730,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					return underlying_type_result;
 				}
 				if (auto underlying_type_node = underlying_type_result.node()) {
-					enum_ref.set_underlying_type(*underlying_type_node);
+					enum_ref.set_underlying_type(underlying_type_node->as<TypeSpecifierNode>());
 				}
 			}
 
@@ -745,7 +745,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			// Determine underlying type
 			int underlying_size = 32;
 			if (enum_ref.has_underlying_type()) {
-				const auto& type_spec_node = enum_ref.underlying_type()->as<TypeSpecifierNode>();
+				const auto& type_spec_node = *enum_ref.underlying_type();
 				underlying_size = type_spec_node.size_in_bits();
 			}
 
@@ -1203,7 +1203,7 @@ ParseResult Parser::parse_typedef_declaration() {
 			}
 
 			if (auto underlying_type_node = underlying_type_result.node()) {
-				enum_ref.set_underlying_type(*underlying_type_node);
+				enum_ref.set_underlying_type(underlying_type_node->as<TypeSpecifierNode>());
 			}
 		}
 
@@ -1218,7 +1218,7 @@ ParseResult Parser::parse_typedef_declaration() {
 		// Determine underlying type (default is int)
 		int underlying_size = 32;
 		if (enum_ref.has_underlying_type()) {
-			const auto& type_spec_node = enum_ref.underlying_type()->as<TypeSpecifierNode>();
+			const auto& type_spec_node = *enum_ref.underlying_type();
 			underlying_size = type_spec_node.size_in_bits();
 		}
 
@@ -1836,7 +1836,7 @@ ParseResult Parser::parse_typedef_declaration() {
 		// Calculate struct layout
 		for (const auto& member_decl : members) {
 			const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-			const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
+			const TypeSpecifierNode& member_type_spec = decl.type_specifier_node();
 
 			// Calculate member size and alignment
 			auto [member_size, member_alignment] = calculateResolvedMemberSizeAndAlignment(
@@ -2112,10 +2112,7 @@ ParseResult Parser::parse_typedef_declaration() {
 	// We create a TypeInfo entry that mirrors the underlying type
 	register_type_alias(StringTable::getOrInternStringHandle(qualified_alias_name), type_spec);
 
-	// Update the type_node with the modified type_spec (with pointers)
-	type_node = emplace_node<TypeSpecifierNode>(type_spec);
-
 	// Create and return typedef declaration node
-	auto typedef_node = emplace_node<TypedefDeclarationNode>(type_node, *alias_token);
+	auto typedef_node = emplace_node<TypedefDeclarationNode>(type_spec, *alias_token);
 	return saved_position.success(typedef_node);
 }

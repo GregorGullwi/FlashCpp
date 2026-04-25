@@ -1375,7 +1375,7 @@ inline void generateItaniumMangledName(
 	param_types.reserve(param_nodes.size());
 	for (const auto& param : param_nodes) {
 		const DeclarationNode& param_decl = param.as<DeclarationNode>();
-		param_types.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+		param_types.push_back(param_decl.type_specifier_node());
 	}
 
 	// Use the main implementation
@@ -1666,7 +1666,7 @@ inline MangledName generateMangledName(
 	} else {
 		for (const auto& param : param_nodes) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
-			appendParameterTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
+			appendParameterTypeCode(builder, param_decl.type_specifier_node());
 		}
 	}
 
@@ -1918,7 +1918,7 @@ inline MangledName generateMangledNameFromNode(
 	const FunctionDeclarationNode& func_node,
 	const std::vector<std::string_view>& namespace_path = {}) {
 	const DeclarationNode& decl_node = func_node.decl_node();
-	const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& return_type = decl_node.type_specifier_node();
 	std::string_view func_name = decl_node.identifier_token().value();
 
 	// Get struct name for member functions
@@ -2031,7 +2031,7 @@ inline MangledName generateMangledNameForConstructor(
 	// Add parameter type codes directly from param nodes
 	for (const auto& param : param_nodes) {
 		const DeclarationNode& param_decl = param.as<DeclarationNode>();
-		appendParameterTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
+		appendParameterTypeCode(builder, param_decl.type_specifier_node());
 	}
 
 	builder.append("@Z");  // End marker

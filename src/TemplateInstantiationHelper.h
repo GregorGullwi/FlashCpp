@@ -201,14 +201,11 @@ inline std::vector<TemplateTypeArg> TemplateInstantiationHelper::deduceTemplateA
 			const ExpressionNode& expr = arg.as<ExpressionNode>();
 			if (std::holds_alternative<ConstructorCallNode>(expr)) {
 				const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
-				const ASTNode& type_node = ctor.type_node();
-				if (type_node.is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-					// Use this type as a template argument
-					deduced_args.emplace_back(type_spec);
-					FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper: Deduced template argument from constructor call arg ", i,
-							  " (type_index=", type_spec.type_index(), ")");
-				}
+				const TypeSpecifierNode& type_spec = ctor.type_node();
+				// Use this type as a template argument
+				deduced_args.emplace_back(type_spec);
+				FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper: Deduced template argument from constructor call arg ", i,
+						  " (type_index=", type_spec.type_index(), ")");
 			}
 		}
 	}

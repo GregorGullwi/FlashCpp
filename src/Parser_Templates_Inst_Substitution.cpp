@@ -154,8 +154,8 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 			if (alias_param.kind() == TemplateParameterKind::NonType && !normalized.is_value) {
 				normalized.is_value = true;
 				normalized.is_dependent = normalized.is_dependent || normalized.dependent_name.isValid();
-				if (alias_param.has_type() && alias_param.type_node().is<TypeSpecifierNode>()) {
-					const auto& param_type = alias_param.type_node().as<TypeSpecifierNode>();
+				if (alias_param.has_type()) {
+					const auto& param_type = alias_param.type_specifier_node();
 					normalized.type_index = param_type.type_index();
 					normalized.setCategory(param_type.type());
 				} else if (!normalized.type_index.is_valid()) {
@@ -278,8 +278,8 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 			arg.is_value = true;
 			arg.value = 0;
 			TypeCategory value_category = TypeCategory::Int;
-			if (template_param.has_type() && template_param.type_node().is<TypeSpecifierNode>()) {
-				value_category = template_param.type_node().as<TypeSpecifierNode>().category();
+			if (template_param.has_type()) {
+				value_category = template_param.type_specifier_node().category();
 			}
 			TypeIndex value_type_index = nativeTypeIndex(value_category);
 			arg.type_index = value_type_index.is_valid()
@@ -800,7 +800,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 	// Handle constructor call: T(value) -> ConcreteType(value)
 	if (std::holds_alternative<ConstructorCallNode>(expr_variant)) {
 		const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr_variant);
-		const TypeSpecifierNode& ctor_type = ctor.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& ctor_type = ctor.type_node();
 
 		// Check if this constructor type is in our substitution map
 		// For variable templates with cleaned-up template parameters, the constructor
@@ -1211,8 +1211,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			} else {
 				init_expr = *spec_var_decl.initializer();
 			}
-		} else if (spec_decl.type_node().is<TypeSpecifierNode>() &&
-				   spec_decl.type_node().as<TypeSpecifierNode>().category() == TypeCategory::Bool) {
+		} else if (spec_decl.type_specifier_node().category() == TypeCategory::Bool) {
 			Token true_token(Token::Type::Keyword, "true"sv, orig_token.line(), orig_token.column(), orig_token.file_index());
 			init_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
 		}
@@ -1656,7 +1655,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// Copy members from the specialization
 	for (const auto& member_decl : spec_struct.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 		TypeCategory member_type = type_spec.type();
 		TypeIndex member_type_index = type_spec.type_index();
@@ -1900,8 +1899,8 @@ std::optional<int64_t> Parser::evaluateDependentNTTPExpression(
 			}
 			// For non-type parameters that have an explicit type node (e.g., template<int N>
 			// where someone uses sizeof(N)), also map by the param's type specifier index.
-			if (param.has_type() && param.type_node().is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& param_type = param.type_node().as<TypeSpecifierNode>();
+			if (param.has_type()) {
+				const TypeSpecifierNode& param_type = param.type_specifier_node();
 				type_substitution_map[param_type.type_index()] = template_args[i];
 			}
 			// Name-based fallback: look up by param name in the type registry.

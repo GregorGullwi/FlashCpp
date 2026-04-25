@@ -71,10 +71,10 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 			if (node->is<DeclarationNode>()) {
 				auto& decl = node->as<DeclarationNode>();
 				if (decl.array_size().has_value() &&
-					!decl.type_node().as<TypeSpecifierNode>().is_reference()) {
+					!decl.type_specifier_node().is_reference()) {
 					// This is an array parameter - convert to pointer
 					// Get the underlying type and add a pointer level
-					const TypeSpecifierNode& orig_type = decl.type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& orig_type = decl.type_specifier_node();
 					TypeSpecifierNode param_type = orig_type;  // Copy needed since we modify
 					param_type.add_pointer_level();
 
@@ -111,7 +111,7 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 			if (peek() == "{"_tok && !out_params.parameters.empty()) {
 				auto& last_param = out_params.parameters.back();
 				if (last_param.is<DeclarationNode>()) {
-					const auto& param_type = last_param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					const auto& param_type = last_param.as<DeclarationNode>().type_specifier_node();
 					if (is_struct_type(param_type.category())) {
 						SaveHandle brace_pos = save_token_position();
 						default_value = parse_brace_initializer(param_type);
@@ -232,8 +232,8 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 			size_t arg_index = args.size();
 			if (arg_index < callee_params->size() && (*callee_params)[arg_index].is<DeclarationNode>()) {
 				const auto& param_decl = (*callee_params)[arg_index].as<DeclarationNode>();
-				if (param_decl.type_node().is<TypeSpecifierNode>()) {
-					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				{
+					const auto& param_type = param_decl.type_specifier_node();
 						// Only handle struct/user-defined types
 					if (is_struct_type(param_type.category())) {
 							// Save position before parse_brace_initializer since it consumes '{'
@@ -391,7 +391,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 									if (const FunctionDeclarationNode* func_decl = FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(*symbol)) {
 										fallback_type = FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
 									} else if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-										fallback_type = decl->type_node().as<TypeSpecifierNode>();
+										fallback_type = decl->type_specifier_node();
 									}
 								}
 							}
@@ -947,8 +947,8 @@ ParseResult Parser::parse_member_trailing_return_type(FunctionDeclarationNode& f
 	}
 
 	bool save_trailing_position = false;
-	if (func_decl.decl_node().type_node().is<TypeSpecifierNode>()) {
-		const auto& current_return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+	{
+		const auto& current_return_type = func_decl.decl_node().type_specifier_node();
 		save_trailing_position = isPlaceholderAutoType(current_return_type.type());
 	}
 
@@ -965,7 +965,8 @@ ParseResult Parser::parse_member_trailing_return_type(FunctionDeclarationNode& f
 		return ParseResult::error("Expected type specifier for trailing return type", current_token_);
 	}
 
-	func_decl.decl_node().set_type_node(*trailing_result.node());
+	const TypeSpecifierNode& trailing_type = trailing_result.node()->as<TypeSpecifierNode>();
+	func_decl.decl_node().set_type_node(trailing_type);
 	if (trailing_pos.has_value()) {
 		func_decl.set_trailing_return_type_position(*trailing_pos);
 	}

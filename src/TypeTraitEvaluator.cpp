@@ -105,8 +105,8 @@ bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor,
 			auto symbol = symbols.lookup(obj_id->name());
 			if (symbol.has_value()) {
 				const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-				if (decl && decl->type_node().is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& type_spec = decl->type_node().as<TypeSpecifierNode>();
+				if (decl) {
+					const TypeSpecifierNode& type_spec = decl->type_specifier_node();
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 						const StructTypeInfo* struct_info = type_info->getStructInfo();
 						if (struct_info) {

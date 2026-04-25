@@ -127,7 +127,7 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 	for (const auto& param : lambda.parameters()) {
 		if (param.is<DeclarationNode>()) {
 			const auto& param_decl = param.as<DeclarationNode>();
-			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			const auto& param_type = param_decl.type_specifier_node();
 
 			if (isPlaceholderAutoType(param_type.type())) {
 				info.is_generic = true;
@@ -357,7 +357,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 							capture_index++;
 							continue;
 						}
-						const auto& orig_type = decl->type_node().as<TypeSpecifierNode>();
+						const auto& orig_type = decl->type_specifier_node();
 
 						TempVar addr_temp = var_counter.next();
 
@@ -607,7 +607,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	for (const auto& param_node : param_nodes) {
 		if (param_node.is<DeclarationNode>()) {
 			const auto& param_decl = param_node.as<DeclarationNode>();
-			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			const auto& param_type = param_decl.type_specifier_node();
 
 			if (isPlaceholderAutoType(param_type.type())) {
 				throw InternalError("Unresolved generic lambda parameter reached operator() mangling");
@@ -635,7 +635,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	for (const auto& param_node : param_nodes) {
 		if (param_node.is<DeclarationNode>()) {
 			const auto& param_decl = param_node.as<DeclarationNode>();
-			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			const auto& param_type = param_decl.type_specifier_node();
 
 			FunctionParam func_param;
 
@@ -754,7 +754,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	for (const auto& param_node : param_nodes) {
 		if (param_node.is<DeclarationNode>()) {
 			const auto& param_decl = param_node.as<DeclarationNode>();
-			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			const auto& param_type = param_decl.type_specifier_node();
 
 			if (isPlaceholderAutoType(param_type.type())) {
 				throw InternalError("Unresolved generic lambda parameter reached __invoke mangling");
@@ -780,7 +780,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	for (const auto& param_node : param_nodes) {
 		if (param_node.is<DeclarationNode>()) {
 			const auto& param_decl = param_node.as<DeclarationNode>();
-			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			const auto& param_type = param_decl.type_specifier_node();
 
 			FunctionParam func_param;
 
@@ -928,7 +928,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 	for (const auto& param : lambda.parameters()) {
 		if (param.is<DeclarationNode>()) {
 			const auto& param_decl = param.as<DeclarationNode>();
-			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			const auto& param_type = param_decl.type_specifier_node();
 			param_type_nodes.push_back(param_type);
 		}
 	}
@@ -1069,7 +1069,7 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 				if (init_symbol.has_value()) {
 					const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
 					if (init_decl) {
-						current_lambda_context_.capture_types[var_name] = init_decl->type_node().as<TypeSpecifierNode>();
+						current_lambda_context_.capture_types[var_name] = init_decl->type_specifier_node();
 					}
 				}
 			}
@@ -1097,7 +1097,7 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 			if (capture_index < lambda_info.captured_var_decls.size()) {
 				const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
 				if (const DeclarationNode* decl = get_decl_from_symbol(var_decl)) {
-					current_lambda_context_.capture_types[var_name] = decl->type_node().as<TypeSpecifierNode>();
+					current_lambda_context_.capture_types[var_name] = decl->type_specifier_node();
 				}
 			}
 			capture_index++;

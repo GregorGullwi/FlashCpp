@@ -998,8 +998,8 @@ ParseResult Parser::parse_type_specifier() {
 					});
 
 					std::optional<std::string_view> targetMemberName;
-					if (alias_node.target_type().is<TypeSpecifierNode>()) {
-						const auto& alias_target_spec = alias_node.target_type().as<TypeSpecifierNode>();
+					{
+						const auto& alias_target_spec = alias_node.target_type();
 						if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_spec.type_index())) {
 							std::string_view alias_target_name = StringTable::getStringView(alias_target_info->name());
 							size_t member_sep = alias_target_name.rfind("::");

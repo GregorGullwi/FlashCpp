@@ -51,7 +51,7 @@ bool callableOperatorAcceptsArgumentCount(const FunctionDeclarationNode& candida
 
 ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var_decl, const TypeSpecifierNode& deduced_type) {
 	const DeclarationNode& original_decl = original_var_decl.declaration();
-	const TypeSpecifierNode& placeholder_type = original_decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& placeholder_type = original_decl.type_specifier_node();
 	if (!isPlaceholderAutoType(placeholder_type.type())) {
 		return original_var_decl.declaration_node();
 	}
@@ -64,9 +64,8 @@ ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var
 		}
 	}
 
-	ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_type);
 	DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(original_decl);
-	resolved_decl.set_type_node(resolved_type_node);
+	resolved_decl.set_type_node(resolved_type);
 	return ASTNode::emplace_node<DeclarationNode>(resolved_decl);
 }
 
@@ -1024,8 +1023,7 @@ std::vector<ASTNode> SemanticAnalysis::normalizeGenericLambdaParams(
 
 		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
 		DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(param_decl);
-		ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(*deduced_type);
-		resolved_decl.set_type_node(resolved_type_node);
+		resolved_decl.set_type_node(*deduced_type);
 		resolved_nodes.push_back(ASTNode::emplace_node<DeclarationNode>(resolved_decl));
 	}
 
@@ -1238,8 +1236,8 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 									  ? capture_decl_node
 									  : ASTNode::emplace_node<DeclarationNode>(*capture_decl);
 			symbols_.insert(capture_decl->identifier_token().value(), symbol_node);
-			if (capture_decl->type_node().is<TypeSpecifierNode>()) {
-				const CanonicalTypeId tid = canonicalizeType(capture_decl->type_node().as<TypeSpecifierNode>());
+			{
+				const CanonicalTypeId tid = canonicalizeType(capture_decl->type_specifier_node());
 				const StringHandle name = capture_decl->identifier_token().handle();
 				if (name.isValid()) {
 					addLocalType(name, tid);
@@ -1294,7 +1292,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNo
 													 const TypeSpecifierNode& range_type,
 													 const TypeSpecifierNode& begin_return_type,
 													 const FunctionDeclarationNode* dereference_func) const {
-	if (!isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
+	if (!isPlaceholderAutoType(original_var_decl.declaration().type_specifier_node().type())) {
 		return original_var_decl.declaration_node();
 	}
 
@@ -1305,7 +1303,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNo
 	}
 
 	if (dereference_func) {
-		TypeSpecifierNode deduced_loop_type = dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
+		TypeSpecifierNode deduced_loop_type = dereference_func->decl_node().type_specifier_node();
 		deduced_loop_type.set_reference_qualifier(ReferenceQualifier::None);
 		return resolveRangedForLoopDeclNode(original_var_decl, deduced_loop_type);
 	}
@@ -1343,7 +1341,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 		const std::optional<ASTNode> range_symbol = symbols_.lookup(range_ident.name());
 		if (range_symbol.has_value()) {
 			if (const DeclarationNode* range_decl_ptr = get_decl_from_symbol(*range_symbol)) {
-				range_type = range_decl_ptr->type_node().as<TypeSpecifierNode>();
+				range_type = range_decl_ptr->type_specifier_node();
 			}
 		}
 	}
@@ -1392,7 +1390,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 				const auto& adl_end_decl = end_res.selected_overload->as<FunctionDeclarationNode>();
 				mutable_stmt.set_resolved_adl_begin_function(&adl_begin_decl);
 				mutable_stmt.set_resolved_adl_end_function(&adl_end_decl);
-				const TypeSpecifierNode& begin_return_type = adl_begin_decl.decl_node().type_node().as<TypeSpecifierNode>();
+				const TypeSpecifierNode& begin_return_type = adl_begin_decl.decl_node().type_specifier_node();
 				const FunctionDeclarationNode* dereference_func = nullptr;
 				if (begin_return_type.pointer_depth() == 0) {
 					// C++20 [stmt.ranged] materializes the iterator as
@@ -1444,7 +1442,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 		}
 	}
 
-	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_specifier_node();
 	const FunctionDeclarationNode* dereference_func = nullptr;
 	if (begin_return_type.pointer_depth() == 0) {
 		// C++20 [stmt.ranged] lowers to `auto __begin = range.begin();`, so the
@@ -1494,7 +1492,7 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 				}
 				if (auto deduced_type = deducePlaceholderReturnType(func.get_definition().value_or(ASTNode{}), return_type.type());
 					deduced_type.has_value()) {
-					func.decl_node().set_type_node(ASTNode::emplace_node<TypeSpecifierNode>(*deduced_type));
+					func.decl_node().set_type_node(*deduced_type);
 					parser_.compute_and_set_mangled_name(func, true);
 				}
 			}
@@ -1576,8 +1574,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			for (const auto& stmt : node.as<BlockNode>().get_statements()) {
 				if (stmt.is<VariableDeclarationNode>()) {
 					const auto& var = stmt.as<VariableDeclarationNode>();
-					if (var.declaration().type_node().is<TypeSpecifierNode>()) {
-						const CanonicalTypeId tid = canonicalizeType(var.declaration().type_node().as<TypeSpecifierNode>());
+					{
+						const CanonicalTypeId tid = canonicalizeType(var.declaration().type_specifier_node());
 						const StringHandle name = var.declaration().identifier_token().handle();
 						if (name.isValid()) {
 							addLocalType(name, tid);
@@ -1630,8 +1628,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			ASTNode loop_decl_node = normalizeRangedForLoopDecl(stmt);
 			if (loop_decl_node.is<DeclarationNode>()) {
 				const auto& loop_decl = loop_decl_node.as<DeclarationNode>();
-				if (loop_decl.type_node().is<TypeSpecifierNode>()) {
-					const CanonicalTypeId tid = canonicalizeType(loop_decl.type_node().as<TypeSpecifierNode>());
+				{
+					const CanonicalTypeId tid = canonicalizeType(loop_decl.type_specifier_node());
 					const StringHandle name = loop_decl.identifier_token().handle();
 					if (name.isValid()) {
 						addLocalType(name, tid);
@@ -1668,8 +1666,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 					if (catch_clause.exception_declaration().has_value() &&
 						catch_clause.exception_declaration()->is<DeclarationNode>()) {
 						const auto& catch_decl = catch_clause.exception_declaration()->as<DeclarationNode>();
-						if (catch_decl.type_node().is<TypeSpecifierNode>()) {
-							const CanonicalTypeId tid = canonicalizeType(catch_decl.type_node().as<TypeSpecifierNode>());
+						{
+							const CanonicalTypeId tid = canonicalizeType(catch_decl.type_specifier_node());
 							const StringHandle name = catch_decl.identifier_token().handle();
 							if (name.isValid()) {
 								addLocalType(name, tid);
@@ -2734,15 +2732,12 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 							 std::is_same_v<T, ConstCastNode> ||
 							 std::is_same_v<T, ReinterpretCastNode> ||
 							 std::is_same_v<T, DynamicCastNode>) {
-			const ASTNode& target_type_node = inner.target_type();
-			if (target_type_node.is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& target_type = target_type_node.as<TypeSpecifierNode>();
-				if (target_type.is_rvalue_reference()) {
-					return ValueCategory::XValue;
-				}
-				if (target_type.is_reference()) {
-					return ValueCategory::LValue;
-				}
+			const TypeSpecifierNode& target_type = inner.target_type();
+			if (target_type.is_rvalue_reference()) {
+				return ValueCategory::XValue;
+			}
+			if (target_type.is_reference()) {
+				return ValueCategory::LValue;
 			}
 			return ValueCategory::PRValue;
 		} else {
@@ -3472,10 +3467,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 								 std::is_same_v<T, ConstCastNode> ||
 								 std::is_same_v<T, ReinterpretCastNode>) {
 				// Explicit casts: the result type is the declared target type.
-				const ASTNode& tt = e.target_type();
-				if (tt.has_value() && tt.template is<TypeSpecifierNode>())
-					return canonicalizeType(tt.template as<TypeSpecifierNode>());
-				return {};
+				return canonicalizeType(e.target_type());
 			} else if constexpr (std::is_same_v<T, SizeofExprNode> ||
 								 std::is_same_v<T, SizeofPackNode> ||
 								 std::is_same_v<T, AlignofExprNode>) {
@@ -3492,10 +3484,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				// Constructor call returns the type being constructed.
-				const ASTNode& type_node = e.type_node();
-				if (type_node.has_value() && type_node.template is<TypeSpecifierNode>())
-					return canonicalizeType(type_node.template as<TypeSpecifierNode>());
-				return {};
+				return canonicalizeType(e.type_node());
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				const ASTNode& target_type_node = e.target_type();
 				if (target_type_node.has_value() && target_type_node.template is<TypeSpecifierNode>())
@@ -3543,10 +3532,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				}
 				return {};
 			} else if constexpr (std::is_same_v<T, DynamicCastNode>) {
-				const ASTNode& tt = e.target_type();
-				if (tt.has_value() && tt.template is<TypeSpecifierNode>())
-					return canonicalizeType(tt.template as<TypeSpecifierNode>());
-				return {};
+				return canonicalizeType(e.target_type());
 			} else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
 				// offsetof returns size_t (UnsignedLongLong on 64-bit).
 				CanonicalTypeDesc desc;
@@ -5498,10 +5484,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const CallExprNode& call_no
 
 void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node) {
 	// Get the type being constructed.
-	const ASTNode& type_node = call_node.type_node();
-	if (!type_node.has_value() || !type_node.is<TypeSpecifierNode>())
-		return;
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& type_spec = call_node.type_node();
 	if (type_spec.category() != TypeCategory::Struct)
 		return;
 	const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());

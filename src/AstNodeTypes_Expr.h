@@ -107,7 +107,7 @@ public:
 	bool is_scoped() const { return is_scoped_; }  // true for enum class, false for enum
 	bool is_forward_declaration() const { return is_forward_declaration_; }
 	bool has_underlying_type() const { return underlying_type_.has_value(); }
-	const std::optional<ASTNode>& underlying_type() const { return underlying_type_; }
+	const std::optional<TypeSpecifierNode>& underlying_type() const { return underlying_type_; }
 	const std::vector<ASTNode>& enumerators() const { return enumerators_; }
 	// Direct index into gTypeInfo for this enum's TypeInfo.  Set during parsing
 	// so codegen can look up the exact TypeInfo without any name-based search
@@ -115,7 +115,7 @@ public:
 	// name and collide when two functions define local enums with the same name).
 	TypeIndex type_index() const { return type_index_; }
 
-	void set_underlying_type(ASTNode type) {
+	void set_underlying_type(const TypeSpecifierNode& type) {
 		underlying_type_ = type;
 	}
 
@@ -135,7 +135,7 @@ private:
 	std::string_view name_;					// Points directly into source text from lexer token
 	bool is_scoped_;						// true for enum class, false for enum
 	bool is_forward_declaration_;			  // true for forward declarations without body
-	std::optional<ASTNode> underlying_type_; // Optional underlying type (TypeSpecifierNode)
+	std::optional<TypeSpecifierNode> underlying_type_; // Optional underlying type (TypeSpecifierNode)
 	std::vector<ASTNode> enumerators_;	   // List of EnumeratorNode
 	TypeIndex type_index_;				   // Index into gTypeInfo — set at parse time, used by codegen
 };
@@ -302,15 +302,19 @@ private:
 // offsetof operator node - offsetof(struct_type, member[.member...])
 class OffsetofExprNode {
 public:
-	explicit OffsetofExprNode(ASTNode type_node, std::vector<Token> member_path, Token offsetof_token)
+	explicit OffsetofExprNode(const TypeSpecifierNode& type_node, std::vector<Token> member_path, Token offsetof_token)
 		: type_node_(type_node), member_path_(std::move(member_path)), offsetof_token_(offsetof_token) {}
+	explicit OffsetofExprNode(ASTNode type_node, std::vector<Token> member_path, Token offsetof_token)
+		: OffsetofExprNode(type_node.as<TypeSpecifierNode>(), std::move(member_path), offsetof_token) {}
 
-	ASTNode type_node() const { return type_node_; }
+	const TypeSpecifierNode& type_node() const { return type_node_; }
+	TypeSpecifierNode& type_specifier_node() { return type_node_; }
+	const TypeSpecifierNode& type_specifier_node() const { return type_node_; }
 	const std::vector<Token>& member_path() const { return member_path_; }
 	const Token& offsetof_token() const { return offsetof_token_; }
 
 private:
-	ASTNode type_node_;				// TypeSpecifierNode for the struct type
+	TypeSpecifierNode type_node_;				// TypeSpecifierNode for the struct type
 	std::vector<Token> member_path_;	 // Member path segments
 	Token offsetof_token_;
 };
@@ -633,15 +637,19 @@ private:
 // Static cast expression node: static_cast<Type>(expr)
 class StaticCastNode {
 public:
-	explicit StaticCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
+	explicit StaticCastNode(const TypeSpecifierNode& target_type, ASTNode expr, Token cast_token)
 		: target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
+	explicit StaticCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
+		: StaticCastNode(target_type.as<TypeSpecifierNode>(), expr, cast_token) {}
 
-	const ASTNode& target_type() const { return target_type_; }
+	const TypeSpecifierNode& target_type() const { return target_type_; }
+	TypeSpecifierNode& target_type_node() { return target_type_; }
+	const TypeSpecifierNode& target_type_node() const { return target_type_; }
 	const ASTNode& expr() const { return expr_; }
 	const Token& cast_token() const { return cast_token_; }
 
 private:
-	ASTNode target_type_;  // TypeSpecifierNode - the type to cast to
+	TypeSpecifierNode target_type_;  // The type to cast to
 	ASTNode expr_;		   // ExpressionNode - the expression to cast
 	Token cast_token_;	   // Token for error reporting
 };
@@ -649,15 +657,19 @@ private:
 // Dynamic cast expression node: dynamic_cast<Type>(expr)
 class DynamicCastNode {
 public:
-	explicit DynamicCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
+	explicit DynamicCastNode(const TypeSpecifierNode& target_type, ASTNode expr, Token cast_token)
 		: target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
+	explicit DynamicCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
+		: DynamicCastNode(target_type.as<TypeSpecifierNode>(), expr, cast_token) {}
 
-	const ASTNode& target_type() const { return target_type_; }
+	const TypeSpecifierNode& target_type() const { return target_type_; }
+	TypeSpecifierNode& target_type_node() { return target_type_; }
+	const TypeSpecifierNode& target_type_node() const { return target_type_; }
 	const ASTNode& expr() const { return expr_; }
 	const Token& cast_token() const { return cast_token_; }
 
 private:
-	ASTNode target_type_;  // TypeSpecifierNode - the type to cast to (must be pointer or reference)
+	TypeSpecifierNode target_type_;  // The type to cast to (must be pointer or reference)
 	ASTNode expr_;		   // ExpressionNode - the expression to cast (must be polymorphic)
 	Token cast_token_;	   // Token for error reporting
 };
@@ -665,15 +677,19 @@ private:
 // Const cast expression node: const_cast<Type>(expr)
 class ConstCastNode {
 public:
-	explicit ConstCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
+	explicit ConstCastNode(const TypeSpecifierNode& target_type, ASTNode expr, Token cast_token)
 		: target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
+	explicit ConstCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
+		: ConstCastNode(target_type.as<TypeSpecifierNode>(), expr, cast_token) {}
 
-	const ASTNode& target_type() const { return target_type_; }
+	const TypeSpecifierNode& target_type() const { return target_type_; }
+	TypeSpecifierNode& target_type_node() { return target_type_; }
+	const TypeSpecifierNode& target_type_node() const { return target_type_; }
 	const ASTNode& expr() const { return expr_; }
 	const Token& cast_token() const { return cast_token_; }
 
 private:
-	ASTNode target_type_;  // TypeSpecifierNode - the type to cast to (adds/removes const/volatile)
+	TypeSpecifierNode target_type_;  // The type to cast to (adds/removes const/volatile)
 	ASTNode expr_;		   // ExpressionNode - the expression to cast
 	Token cast_token_;	   // Token for error reporting
 };
@@ -681,15 +697,19 @@ private:
 // Reinterpret cast expression node: reinterpret_cast<Type>(expr)
 class ReinterpretCastNode {
 public:
-	explicit ReinterpretCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
+	explicit ReinterpretCastNode(const TypeSpecifierNode& target_type, ASTNode expr, Token cast_token)
 		: target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
+	explicit ReinterpretCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
+		: ReinterpretCastNode(target_type.as<TypeSpecifierNode>(), expr, cast_token) {}
 
-	const ASTNode& target_type() const { return target_type_; }
+	const TypeSpecifierNode& target_type() const { return target_type_; }
+	TypeSpecifierNode& target_type_node() { return target_type_; }
+	const TypeSpecifierNode& target_type_node() const { return target_type_; }
 	const ASTNode& expr() const { return expr_; }
 	const Token& cast_token() const { return cast_token_; }
 
 private:
-	ASTNode target_type_;  // TypeSpecifierNode - the type to cast to (bit pattern reinterpretation)
+	TypeSpecifierNode target_type_;  // The type to cast to (bit pattern reinterpretation)
 	ASTNode expr_;		   // ExpressionNode - the expression to cast
 	Token cast_token_;	   // Token for error reporting
 };
