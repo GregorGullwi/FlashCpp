@@ -3779,11 +3779,11 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							FLASH_LOG(ConstExpr, Debug, "Synthesized value from unary trait evaluator for ", StringTable::getStringView(resolved_type_info->baseTemplateName()));
 							return *trait_value;
 						}
-					}
-					if (!static_member && resolved_type_info) {
-						if (auto synthesized = evaluate_integral_constant_value(*resolved_type_info)) {
-							FLASH_LOG(ConstExpr, Debug, "Synthesized integral_constant value from template args (self)");
-							return *synthesized;
+						if (!static_member) {
+							if (auto synthesized = evaluate_integral_constant_value(*resolved_type_info)) {
+								FLASH_LOG(ConstExpr, Debug, "Synthesized integral_constant value from template args (self)");
+								return *synthesized;
+							}
 						}
 					}
 					if (!static_member) {

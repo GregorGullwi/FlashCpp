@@ -43,20 +43,14 @@ static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type
 
 static std::optional<std::vector<TemplateTypeArg>> tryMakeAliasNormalizedTemplateArgs(const std::vector<TemplateTypeArg>& template_args) {
 	std::vector<TemplateTypeArg> normalized_args;
+	normalized_args.reserve(template_args.size());
+	bool changed = false;
 	for (size_t i = 0; i < template_args.size(); ++i) {
 		TemplateTypeArg normalized_arg = NameMangling::normalizeTemplateTypeArgForMangling(template_args[i]);
-		if (normalized_args.empty()) {
-			if (normalized_arg == template_args[i]) {
-				continue;
-			}
-			normalized_args.reserve(template_args.size());
-			for (size_t prefix_index = 0; prefix_index < i; ++prefix_index) {
-				normalized_args.push_back(template_args[prefix_index]);
-			}
-		}
+		changed = changed || !(normalized_arg == template_args[i]);
 		normalized_args.push_back(std::move(normalized_arg));
 	}
-	if (normalized_args.empty()) {
+	if (!changed) {
 		return std::nullopt;
 	}
 	return normalized_args;
