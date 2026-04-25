@@ -8,6 +8,10 @@
 
 namespace {
 
+// Bound recursive placeholder unwrapping so malformed alias cycles cannot recurse indefinitely.
+static constexpr int kMaxDependentMemberTypeResolutionDepth = 16;
+static constexpr int kInitialDependentMemberTypeResolutionDepth = 0;
+
 bool parseUnsignedDecimal(std::string_view text, uint64_t& value) {
 	auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
 	return ec == std::errc{} && ptr == text.data() + text.size();
@@ -334,7 +338,8 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::collectCurrentBoundTemplateA
 
 ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::materializeStoredTemplateArgs(
 	const TypeInfo& template_instantiation_info,
-	bool evaluate_dependent_member_values) {
+	bool evaluate_dependent_member_values,
+	int depth) {
 	MaterializedStoredTemplateArgs result;
 	const auto& stored_args = template_instantiation_info.templateArgs();
 	result.args.reserve(stored_args.size());
@@ -389,6 +394,20 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 
 		if (!substituted && !arg.is_value && is_struct_type(arg.category())) {
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+				if (const TypeInfo* recursively_resolved_type = resolveDependentMemberType(
+						*arg_type_info,
+						depth)) {
+					materialized_arg.type_index =
+						recursively_resolved_type->registeredTypeIndex().withCategory(recursively_resolved_type->typeEnum());
+					materialized_arg.setCategory(recursively_resolved_type->typeEnum());
+					materialized_arg.dependent_name = {};
+					materialized_arg.is_dependent = false;
+					result.had_substitution = true;
+					substituted = true;
+					result.args.push_back(materialized_arg);
+					continue;
+				}
+
 				std::string_view arg_type_name = StringTable::getStringView(arg_type_info->name());
 				auto type_subst_it = param_map_.find(arg_type_name);
 				if (type_subst_it != param_map_.end()) {
@@ -402,6 +421,72 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	}
 
 	return result;
+}
+
+const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo& type_info, int depth) {
+	if (!type_info.isDependentMemberType() || depth >= kMaxDependentMemberTypeResolutionDepth) {
+		return nullptr;
+	}
+
+	std::string_view type_name = StringTable::getStringView(type_info.name());
+	size_t member_sep = type_name.rfind("::");
+	if (member_sep == std::string_view::npos) {
+		return nullptr;
+	}
+
+	std::string_view dependent_base_name = type_name.substr(0, member_sep);
+	constexpr size_t kScopeResolutionLength = 2;
+	std::string_view dependent_member_name = type_name.substr(member_sep + kScopeResolutionLength);
+	std::string_view base_template_name = extractBaseTemplateName(dependent_base_name);
+	if (base_template_name.empty()) {
+		return nullptr;
+	}
+
+	auto dependent_base_it = getTypesByNameMap().find(
+		StringTable::getOrInternStringHandle(dependent_base_name));
+	if (dependent_base_it == getTypesByNameMap().end() ||
+		dependent_base_it->second == nullptr ||
+		!dependent_base_it->second->isTemplateInstantiation()) {
+		return nullptr;
+	}
+
+	MaterializedStoredTemplateArgs concrete_base_args =
+		materializeStoredTemplateArgs(
+			*dependent_base_it->second,
+			/*evaluate_dependent_member_values=*/true,
+			depth);
+	Parser::AliasTemplateMaterializationResult materialized_base =
+		parser_.materializeTemplateInstantiationForLookup(
+			base_template_name,
+			concrete_base_args.args);
+	if (materialized_base.instantiated_name.empty()) {
+		return nullptr;
+	}
+
+	QualifiedTypeMemberAccess member_access;
+	member_access.member_name = StringTable::getOrInternStringHandle(dependent_member_name);
+	std::vector<QualifiedTypeMemberAccess> member_chain;
+	member_chain.push_back(std::move(member_access));
+	const TypeInfo* resolved_type =
+		parser_.resolveBaseClassMemberTypeChain(
+			materialized_base.instantiated_name,
+			member_chain);
+	if (resolved_type == nullptr) {
+		return nullptr;
+	}
+
+	const TypeInfo* next_dependent_type = nullptr;
+	if (const TypeInfo* alias_target = tryGetTypeInfo(resolved_type->type_index_);
+		alias_target != nullptr && alias_target != resolved_type && alias_target->isDependentMemberType()) {
+		next_dependent_type = alias_target;
+	} else if (resolved_type->isDependentMemberType()) {
+		next_dependent_type = resolved_type;
+	}
+	if (next_dependent_type != nullptr) {
+		return resolveDependentMemberType(*next_dependent_type, depth + 1);
+	}
+
+	return resolved_type;
 }
 
 ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& call) {
@@ -1356,7 +1441,8 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 							MaterializedStoredTemplateArgs concrete_base_args =
 								materializeStoredTemplateArgs(
 									*dependent_base_it->second,
-									/*evaluate_dependent_member_values=*/true);
+									/*evaluate_dependent_member_values=*/true,
+									kInitialDependentMemberTypeResolutionDepth);
 							if (!concrete_base_args.args.empty()) {
 								current_inst_args = std::move(concrete_base_args.args);
 							}
@@ -1444,7 +1530,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	auto type_it = getTypesByNameMap().find(ns_name_handle);
 	if (type_it != getTypesByNameMap().end() && type_it->second->isTemplateInstantiation()) {
 		MaterializedStoredTemplateArgs materialized_args =
-			materializeStoredTemplateArgs(*type_it->second, /*evaluate_dependent_member_values=*/true);
+			materializeStoredTemplateArgs(*type_it->second, /*evaluate_dependent_member_values=*/true, kInitialDependentMemberTypeResolutionDepth);
 		inst_args = std::move(materialized_args.args);
 	}
 
@@ -1694,7 +1780,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 				FLASH_LOG(Templates, Debug, "  Found template type: ", base_name);
 
 				MaterializedStoredTemplateArgs substituted_args =
-					materializeStoredTemplateArgs(*type_info, /*evaluate_dependent_member_values=*/false);
+					materializeStoredTemplateArgs(*type_info, /*evaluate_dependent_member_values=*/false, kInitialDependentMemberTypeResolutionDepth);
 				if (substituted_args.had_substitution && !substituted_args.args.empty()) {
 					Parser::AliasTemplateMaterializationResult materialized_type =
 						parser_.materializeTemplateInstantiationForLookup(base_name, substituted_args.args);
