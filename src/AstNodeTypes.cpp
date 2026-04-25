@@ -754,7 +754,7 @@ InlineVector<const StructMemberFunction*, 4> StructTypeInfo::getConstructorsByPa
 			continue;
 		}
 		const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-		bool ctor_is_implicit = ctor_node.is_implicit();
+		bool ctor_is_implicit = ctor_node.is_implicit() && !ctor_node.is_explicitly_defaulted();
 		if (skip_implicit && ctor_is_implicit) {
 			continue;
 		}
@@ -772,7 +772,7 @@ InlineVector<const StructMemberFunction*, 4> StructTypeInfo::getConstructorsByPa
 		InlineVector<const StructMemberFunction*, 4> filtered_matches;
 		for (const StructMemberFunction* match : matches) {
 			const auto& ctor_node = match->function_decl.as<ConstructorDeclarationNode>();
-			if (!ctor_node.is_implicit()) {
+			if (!ctor_node.is_implicit() || ctor_node.is_explicitly_defaulted()) {
 				filtered_matches.push_back(match);
 			}
 		}
@@ -787,9 +787,22 @@ bool StructTypeInfo::hasUserDefinedConstructor() const {
 		if (!func.is_constructor)
 			continue;
 		const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-		if (ctor_node.is_implicit())
+		if (ctor_node.is_implicit() && !ctor_node.is_explicitly_defaulted())
 			continue;
 		return true;
+	}
+	return false;
+}
+
+bool StructTypeInfo::hasUserDeclaredConstructor() const {
+	if (has_deleted_constructor)
+		return true;
+	for (const auto& func : member_functions) {
+		if (!func.is_constructor)
+			continue;
+		const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+		if (!ctor_node.is_implicit() || ctor_node.is_explicitly_defaulted())
+			return true;
 	}
 	return false;
 }
@@ -914,7 +927,7 @@ const StructMemberFunction* StructTypeInfo::findSameTypeConstructorCore(
 		}
 
 		const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-		if (!include_implicit && ctor_node.is_implicit()) {
+		if (!include_implicit && ctor_node.is_implicit() && !ctor_node.is_explicitly_defaulted()) {
 			continue;
 		}
 

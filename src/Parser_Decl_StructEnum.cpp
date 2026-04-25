@@ -1730,6 +1730,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 							// Mark as implicit (same behavior as compiler-generated)
 							ctor_ref.set_is_implicit(true);
+							ctor_ref.set_is_explicitly_defaulted(true);
 
 							// Create an empty block for the constructor body
 							auto [block_node, block_ref] = create_node_ref(BlockNode());
