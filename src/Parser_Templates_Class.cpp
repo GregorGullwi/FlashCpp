@@ -1909,6 +1909,7 @@ ParseResult Parser::parse_template_declaration() {
 									}
 
 									ctor_ref.set_is_implicit(true);
+									ctor_ref.set_is_explicitly_defaulted(true);
 									auto [block_node, block_ref] = create_node_ref(BlockNode());
 									ctor_ref.set_definition(block_node);
 								} else if (peek() == "delete"_tok) {
@@ -3352,6 +3353,7 @@ ParseResult Parser::parse_template_declaration() {
 									}
 
 									ctor_ref.set_is_implicit(true);
+									ctor_ref.set_is_explicitly_defaulted(true);
 									auto [block_node, block_ref] = create_node_ref(BlockNode());
 									ctor_ref.set_definition(block_node);
 								} else if (peek() == "delete"_tok) {

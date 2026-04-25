@@ -2549,6 +2549,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					pack_param_info_.resize(saved_pack_info);
 					new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
+					new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
 					new_ctor_ref.set_noexcept(orig_ctor.is_noexcept());
 					struct_info->addConstructor(new_ctor_node, mem_func.access);
 				} else if (mem_func.is_destructor) {
@@ -2657,13 +2658,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					  pattern_struct.has_deleted_move_constructor());
 			if (pattern_struct.has_deleted_default_constructor()) {
 				struct_info->has_deleted_default_constructor = true;
+				struct_info->has_deleted_constructor = true;
 				FLASH_LOG(Templates, Debug, "Copied has_deleted_default_constructor from pattern AST node");
 			}
 			if (pattern_struct.has_deleted_copy_constructor()) {
 				struct_info->has_deleted_copy_constructor = true;
+				struct_info->has_deleted_constructor = true;
 			}
 			if (pattern_struct.has_deleted_move_constructor()) {
 				struct_info->has_deleted_move_constructor = true;
+				struct_info->has_deleted_constructor = true;
 			}
 
 			// Also copy deleted constructor flags from the pattern's StructTypeInfo (if available)
@@ -2688,6 +2692,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					if (pattern_struct_info->has_deleted_move_assignment) {
 						struct_info->has_deleted_move_assignment = true;
+					}
+					if (pattern_struct_info->has_deleted_constructor) {
+						struct_info->has_deleted_constructor = true;
 					}
 					if (pattern_struct_info->has_deleted_destructor) {
 						struct_info->has_deleted_destructor = true;
@@ -3423,6 +3430,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_ctor_ref.set_definition(substituteTemplateParameters(*orig_ctor.get_definition(), template_params, template_args_for_pattern));
 					}
 					pack_param_info_.resize(saved_pack_info);
+					new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
+					new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
 
 					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
 				} else if (mem_func.is_destructor) {
@@ -7544,6 +7553,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Copy all initializers (member, base, delegating) with template parameter substitution
 					substituteAndCopyInitializers(ctor_decl, new_ctor_ref, template_params, template_args_to_use);
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
+					new_ctor_ref.set_is_explicitly_defaulted(ctor_decl.is_explicitly_defaulted());
 					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
 					if (substituted_body.has_value()) {
 						new_ctor_ref.set_definition(*substituted_body);
@@ -8639,6 +8649,39 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	struct_info_ptr->needs_default_constructor = !has_constructor;
 	FLASH_LOG(Templates, Debug, "Instantiated struct ", instantiated_name, " has_constructor=", has_constructor,
 			  ", needs_default_constructor=", struct_info_ptr->needs_default_constructor);
+
+	// Propagate deleted constructor flags from the template pattern to the instantiated struct.
+	// Deleted constructors are not added to member_functions (they use continue).
+	// Check both the StructDeclarationNode (set by Parser_Templates_Class.cpp specialization paths)
+	// and the template pattern's StructTypeInfo (set by Parser_Decl_StructEnum.cpp for primary templates).
+	if (class_decl.has_deleted_default_constructor()) {
+		struct_info_ptr->has_deleted_default_constructor = true;
+		struct_info_ptr->has_deleted_constructor = true;
+	}
+	if (class_decl.has_deleted_copy_constructor()) {
+		struct_info_ptr->has_deleted_copy_constructor = true;
+		struct_info_ptr->has_deleted_constructor = true;
+	}
+	if (class_decl.has_deleted_move_constructor()) {
+		struct_info_ptr->has_deleted_move_constructor = true;
+		struct_info_ptr->has_deleted_constructor = true;
+	}
+	// Also check the template pattern's StructTypeInfo (primary template path stores flags there).
+	{
+		auto tpl_ti = getTypesByNameMap().find(StringTable::getOrInternStringHandle(template_name));
+		if (tpl_ti != getTypesByNameMap().end()) {
+			if (const StructTypeInfo* tpl_si = tpl_ti->second->getStructInfo()) {
+			if (tpl_si->has_deleted_constructor)
+				struct_info_ptr->has_deleted_constructor = true;
+			if (tpl_si->has_deleted_default_constructor)
+				struct_info_ptr->has_deleted_default_constructor = true;
+			if (tpl_si->has_deleted_copy_constructor)
+				struct_info_ptr->has_deleted_copy_constructor = true;
+			if (tpl_si->has_deleted_move_constructor)
+				struct_info_ptr->has_deleted_move_constructor = true;
+			}
+		}
+	}
 
 	// Re-evaluate deferred static_asserts with substituted template parameters
 	FLASH_LOG(Templates, Debug, "Checking deferred static_asserts for struct '", class_decl.name(),
