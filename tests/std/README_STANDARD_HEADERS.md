@@ -105,7 +105,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 This sweep targeted the `<type_traits>` failure where
 `std::is_integral<int>::value` evaluated as `false`.  Full regression suite
-(`bash tests/run_all_tests.sh -j 4`, 2219 tests + 151 `_fail`) still has the
+(`bash tests/run_all_tests.sh`, 2219 tests + 151 `_fail`) still has the
 two pre-existing parser failures in `test_template_defaulted_ctor_aggregate_ret0.cpp`
 and `test_template_deleted_ctor_aggregate_ret0.cpp`; the new focused regression
 passes.

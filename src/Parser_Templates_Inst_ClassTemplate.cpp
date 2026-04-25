@@ -47,7 +47,7 @@ static std::optional<std::vector<TemplateTypeArg>> tryMakeAliasNormalizedTemplat
 	bool changed = false;
 	for (size_t i = 0; i < template_args.size(); ++i) {
 		TemplateTypeArg normalized_arg = NameMangling::normalizeTemplateTypeArgForMangling(template_args[i]);
-		changed = changed || !(normalized_arg == template_args[i]);
+		changed = changed || normalized_arg != template_args[i];
 		normalized_args.push_back(std::move(normalized_arg));
 	}
 	if (!changed) {
