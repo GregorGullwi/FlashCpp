@@ -10,6 +10,8 @@ namespace {
 
 // Bound recursive placeholder unwrapping so malformed alias cycles cannot recurse indefinitely.
 static constexpr int kMaxDependentMemberTypeResolutionDepth = 16;
+static constexpr int kInitialDependentMemberTypeResolutionDepth = 0;
+static constexpr size_t kScopeResolutionLength = 2;
 
 bool parseUnsignedDecimal(std::string_view text, uint64_t& value) {
 	auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
@@ -392,7 +394,9 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 
 		if (!substituted && !arg.is_value && is_struct_type(arg.category())) {
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
-				if (const TypeInfo* recursively_resolved_type = resolveDependentMemberType(*arg_type_info, 0)) {
+				if (const TypeInfo* recursively_resolved_type = resolveDependentMemberType(
+						*arg_type_info,
+						kInitialDependentMemberTypeResolutionDepth)) {
 					materialized_arg.type_index =
 						recursively_resolved_type->registeredTypeIndex().withCategory(recursively_resolved_type->typeEnum());
 					materialized_arg.setCategory(recursively_resolved_type->typeEnum());
@@ -431,7 +435,7 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 	}
 
 	std::string_view dependent_base_name = type_name.substr(0, member_sep);
-	std::string_view dependent_member_name = type_name.substr(member_sep + 2);
+	std::string_view dependent_member_name = type_name.substr(member_sep + kScopeResolutionLength);
 	std::string_view base_template_name = extractBaseTemplateName(dependent_base_name);
 	if (base_template_name.empty()) {
 		return nullptr;

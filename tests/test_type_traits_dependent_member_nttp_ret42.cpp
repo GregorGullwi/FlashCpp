@@ -45,6 +45,6 @@ struct is_integral_custom
 
 int main() {
 	bool const_volatile_int_is_integral = is_integral_custom<const volatile int>::value;
-	bool char_is_integral = is_integral_custom<const volatile char>::value;
-	return const_volatile_int_is_integral ? (char_is_integral ? 0 : 42) : 0;
+	bool const_volatile_char_is_integral = is_integral_custom<const volatile char>::value;
+	return const_volatile_int_is_integral ? (const_volatile_char_is_integral ? 0 : 42) : 0;
 }
