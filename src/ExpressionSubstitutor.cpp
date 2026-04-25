@@ -466,6 +466,13 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 		return nullptr;
 	}
 
+	if (const TypeInfo* alias_target = tryGetTypeInfo(resolved_type->type_index_);
+		alias_target != nullptr &&
+		alias_target != resolved_type &&
+		alias_target->isDependentMemberType()) {
+		return resolveDependentMemberType(*alias_target, depth + 1);
+	}
+
 	if (resolved_type->isDependentMemberType()) {
 		return resolveDependentMemberType(*resolved_type, depth + 1);
 	}
