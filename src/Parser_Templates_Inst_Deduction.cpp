@@ -240,8 +240,8 @@ static bool templateParameterListsHaveMatchingShape(const LeftParamContainer& lh
 				}
 				if (lhs_param.has_type()) {
 					if (!sameTypeSpecifierShape(
-								   lhs_param.type_node().as<TypeSpecifierNode>(),
-								   rhs_param.type_node().as<TypeSpecifierNode>())) {
+								   lhs_param.type_specifier_node(),
+								   rhs_param.type_specifier_node())) {
 						return false;
 					}
 				}
@@ -1168,10 +1168,10 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	auto getNonTypeTemplateParamCategoryOrInt = [&](StringHandle param_name) -> TypeCategory {
 		auto it = tparam_nodes_by_name.find(param_name);
 		if (it == tparam_nodes_by_name.end() || it->second->kind() != TemplateParameterKind::NonType ||
-			!it->second->has_type() || !it->second->type_node().is<TypeSpecifierNode>()) {
+			!it->second->has_type()) {
 			return TypeCategory::Int;
 		}
-		return it->second->type_node().as<TypeSpecifierNode>().type();
+		return it->second->type_specifier_node().type();
 	};
 
 	auto recordPreDeducedArg = [&](StringHandle param_name, const TemplateTypeArg& new_arg,
@@ -2127,7 +2127,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					case TemplateParameterKind::Type:
 						return TemplateParameterNode(param.nameHandle(), param.token());
 					case TemplateParameterKind::NonType:
-						return TemplateParameterNode(param.nameHandle(), param.type_node(), param.token());
+						return TemplateParameterNode(param.nameHandle(), param.type_specifier_node(), param.token());
 					case TemplateParameterKind::Template:
 						return TemplateParameterNode(param.nameHandle(), param.nested_parameters(), param.token());
 				}

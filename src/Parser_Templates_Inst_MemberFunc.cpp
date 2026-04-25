@@ -92,7 +92,8 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 				outer_token,
 				CVQualifier::None,
 				ReferenceQualifier::None);
-			combined_template_params.push_back(emplace_node<TemplateParameterNode>(outer_name, outer_type_node, outer_token));
+			combined_template_params.push_back(
+				emplace_node<TemplateParameterNode>(outer_name, outer_type_node.as<TypeSpecifierNode>(), outer_token));
 		} else if (outer_arg.is_template_template_arg) {
 			combined_template_params.push_back(
 				emplace_node<TemplateParameterNode>(outer_name, std::vector<ASTNode>{}, outer_token));
@@ -794,7 +795,7 @@ static TemplateParameterNode cloneNonVariadicTemplateParam(const TemplateParamet
 			case TemplateParameterKind::Type:
 				return TemplateParameterNode(param.nameHandle(), param.token());
 			case TemplateParameterKind::NonType:
-				return TemplateParameterNode(param.nameHandle(), param.type_node(), param.token());
+				return TemplateParameterNode(param.nameHandle(), param.type_specifier_node(), param.token());
 			case TemplateParameterKind::Template:
 				return TemplateParameterNode(param.nameHandle(), param.nested_parameters(), param.token());
 		}

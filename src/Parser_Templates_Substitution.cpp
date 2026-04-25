@@ -731,8 +731,8 @@ ASTNode Parser::substituteTemplateParameters(
 									int result_size_bits = 32;
 									if (pack_param_idx.has_value()) {
 										const auto& tparam = template_params[*pack_param_idx].as<TemplateParameterNode>();
-										if (tparam.has_type() && tparam.type_node().is<TypeSpecifierNode>()) {
-											const TypeSpecifierNode& param_type_spec = tparam.type_node().as<TypeSpecifierNode>();
+										if (tparam.has_type()) {
+											const TypeSpecifierNode& param_type_spec = tparam.type_specifier_node();
 											result_type = param_type_spec.type();
 											result_size_bits = get_type_size_bits(result_type);
 										}

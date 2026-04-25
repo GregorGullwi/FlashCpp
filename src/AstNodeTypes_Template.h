@@ -16,7 +16,7 @@ public:
 		: kind_(TemplateParameterKind::Type), name_(name), token_(token) {}
 
 	// Non-type parameter: template<int N>
-	TemplateParameterNode(StringHandle name, ASTNode type_node, Token token)
+	TemplateParameterNode(StringHandle name, const TypeSpecifierNode& type_node, Token token)
 		: kind_(TemplateParameterKind::NonType), name_(name), type_node_(type_node), token_(token) {}
 
 	// Template template parameter: template<template<typename> class Container>
@@ -32,7 +32,8 @@ public:
 
 	// For non-type parameters
 	bool has_type() const { return type_node_.has_value(); }
-	ASTNode type_node() const { return type_node_.value(); }
+	TypeSpecifierNode& type_specifier_node() { return type_node_.value(); }
+	const TypeSpecifierNode& type_specifier_node() const { return type_node_.value(); }
 
 	// For template template parameters
 	const std::vector<ASTNode>& nested_parameters() const { return nested_params_; }
@@ -64,7 +65,7 @@ public:
 private:
 	TemplateParameterKind kind_;
 	StringHandle name_;	// Points directly into source text from lexer token
-	std::optional<ASTNode> type_node_;  // For non-type parameters (e.g., int N)
+	std::optional<TypeSpecifierNode> type_node_;  // For non-type parameters (e.g., int N)
 	std::vector<ASTNode> nested_params_;	 // For template template parameters (nested template parameters)
 	std::optional<ASTNode> default_value_;  // Default argument (e.g., typename T = int)
 	std::optional<SaveHandle> default_value_position_;  // Lexer position for SFINAE re-parse of dependent defaults

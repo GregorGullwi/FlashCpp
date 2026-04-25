@@ -367,15 +367,15 @@ private:
 // Typedef declaration node: typedef existing_type new_name;
 class TypedefDeclarationNode {
 public:
-	explicit TypedefDeclarationNode(ASTNode type_node, Token alias_name)
+	explicit TypedefDeclarationNode(const TypeSpecifierNode& type_node, Token alias_name)
 		: type_node_(type_node), alias_name_(alias_name) {}
 
-	const ASTNode& type_node() const { return type_node_; }
+	const TypeSpecifierNode& type_specifier_node() const { return type_node_; }
 	std::string_view alias_name() const { return alias_name_.value(); }
 	const Token& alias_token() const { return alias_name_; }
 
 private:
-	ASTNode type_node_;	// The underlying type (TypeSpecifierNode)
+	TypeSpecifierNode type_node_;	// The underlying type (TypeSpecifierNode)
 	Token alias_name_;   // The new type alias name
 };
 

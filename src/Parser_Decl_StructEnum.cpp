@@ -3634,7 +3634,7 @@ ParseResult Parser::parse_enum_declaration() {
 		}
 
 		if (auto type_node = underlying_type_result.node()) {
-			enum_ref.set_underlying_type(*type_node);
+			enum_ref.set_underlying_type(type_node->as<TypeSpecifierNode>());
 		}
 	}
 
@@ -3653,7 +3653,7 @@ ParseResult Parser::parse_enum_declaration() {
 
 		// Set size on TypeInfo for forward-declared enum (use fallback_size_bits_)
 		if (enum_ref.has_underlying_type()) {
-			const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
+			const auto& type_spec = *enum_ref.underlying_type();
 			enum_type_info.fallback_size_bits_ = type_spec.size_in_bits();
 		} else if (is_scoped) {
 			// Scoped enums without underlying type default to int (32 bits)
@@ -3676,7 +3676,7 @@ ParseResult Parser::parse_enum_declaration() {
 	TypeCategory underlying_type = TypeCategory::Int;
 	int underlying_size = 32;
 	if (enum_ref.has_underlying_type()) {
-		const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
+		const auto& type_spec = *enum_ref.underlying_type();
 		underlying_type = type_spec.type();
 		underlying_size = type_spec.size_in_bits();
 	}
