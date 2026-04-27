@@ -7695,6 +7695,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 					new_ctor_ref.set_is_explicitly_defaulted(ctor_decl.is_explicitly_defaulted());
 					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
+					new_ctor_ref.set_explicit(ctor_decl.is_explicit());
+					new_ctor_ref.set_constexpr(ctor_decl.is_constexpr());
+					if (ctor_decl.has_requires_clause()) {
+						new_ctor_ref.set_requires_clause(*ctor_decl.requires_clause());
+					}
 
 					// Add the fresh stub to the instantiated struct AST node and to struct_info.
 					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
