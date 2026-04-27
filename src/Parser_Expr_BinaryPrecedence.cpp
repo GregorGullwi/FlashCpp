@@ -202,9 +202,14 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		// when the operands are of pair type.
 		{
 			auto eligible_ns = gSymbolTable.get_adl_eligible_namespaces(arg_types);
-			const std::vector<ASTNode>* phase1_templates = gTemplateRegistry.lookupAllTemplates(op_name);
-			if (phase1_templates) {
-				for (const auto& tmpl : *phase1_templates) {
+			// Copy the vector to avoid iterator invalidation: try_instantiate_single_template
+			// can register new templates and cause the registry's internal vector to reallocate.
+			std::vector<ASTNode> phase1_templates_copy;
+			if (const std::vector<ASTNode>* phase1_templates = gTemplateRegistry.lookupAllTemplates(op_name)) {
+				phase1_templates_copy = *phase1_templates;
+			}
+			if (!phase1_templates_copy.empty()) {
+				for (const auto& tmpl : phase1_templates_copy) {
 					if (!tmpl.is<TemplateFunctionDeclarationNode>()) continue;
 					const FunctionDeclarationNode& fdecl =
 						tmpl.as<TemplateFunctionDeclarationNode>().function_decl_node();
