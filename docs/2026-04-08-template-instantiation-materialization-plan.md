@@ -49,7 +49,7 @@ Its purpose is to answer two questions clearly:
     4. `try_instantiate_single_template`'s `template_param_pack_sizes_` population now uses `function_pack_call_arg_end - function_pack_call_arg_start` (the call-arg range count) for all packs in the dependent-names set, rather than `template_args.size() - non_variadic_count`. This prevents overcounting when multiple packs each contribute to `template_args`.
     5. The complex fold-expression substitution handler (`Parser_Templates_Substitution.cpp`) now prefers `pack_param_info_[0].pack_size` over `template_args.size() - non_variadic_count` for the expansion count, so fold expressions like `(0 + ... + (pairs.first + pairs.second))` expand the correct number of times.
     - Regression: `tests/test_multi_dep_pack_ret0.cpp`.
-  - **What is still open:** nested template packs, and other complex mapping shapes that may surface as the test corpus grows.
+  - **What is still open:** nested template packs, other complex mapping shapes that may surface as the test corpus grows, and the broader substitution/metadata fallback cleanup cross-referenced below.
 
 ## What is clearly landed
 
@@ -127,6 +127,48 @@ Still open after this PR:
 
 - nested template packs and other complex template-param ↔ function-param mapping shapes that may surface as the test corpus grows
 
+### 2026-04-27 fallback-audit cross-check: template work not fully captured above
+
+`docs\2026-04-27-fallback-comments-audit.md` identified additional template-instantiation fallback work that is related to this roadmap but broader than the Phase 5 materialization cleanup and the Phase 6 pack-deduction slices above. The answer to "is all remaining template-instantiation work described here?" is therefore **no**: the plan covered the known materialization and pack-mapping reproducers, but it did not explicitly track the remaining substitution/metadata fallback classes.
+
+Add these as the next concrete roadmap items before starting the next PR:
+
+1. **Authoritative substitution context**
+   - Current symptom: fallback comments in `src\ExpressionSubstitutor.cpp`, `src\Parser_Templates_Lazy.cpp`, `src\Parser_Templates_Inst_ClassTemplate.cpp`, `src\Parser_Templates_Inst_Substitution.cpp`, and `src\Parser_Templates_Substitution.cpp` show dependent type/value/pack data being reconstructed after primary substitution loses it.
+   - Missing feature: one substitution context object should carry type parameters, non-type parameter values, pack slices/sizes, current-instantiation identity, namespace/member context, and SFINAE/error-mode state through every instantiation entry point.
+   - Removal target: general "substitute remaining template parameters" fallbacks, secondary ExpressionSubstitutor catch-alls, pack-size overcount formulas, and name-based re-discovery after a scope has exited.
+
+2. **Canonical template argument metadata on TypeInfo/TemplateRegistry**
+   - Current symptom: several paths recover template args from TypeInfo names, stripped qualifiers, stale TypeIndex values, or string-based instantiation names.
+   - Missing feature: every template instantiation TypeInfo should be born with canonical template arguments, base-pattern identity, and pattern-to-instantiation links that all consumers can query without string parsing.
+   - Removal target: `ExpressionSubstitutor` name-based template-arg recovery, `$`/base-name string stripping, stale-TypeIndex fallback lookup, and manual prefix scans for instantiated types.
+
+3. **Explicit dependent-placeholder state everywhere**
+   - Current status: Phase 4 introduced `DependentPlaceholderKind`, but fallback comments still show sentinel-style dependent detection such as `type_index == 0` and placeholder TypeSpec recovery.
+   - Missing feature: all dependent type, member type, NTTP, and pack placeholders should carry explicit kind/name/binding metadata from parse through substitution and sema.
+   - Removal target: `type_index == 0` dependent checks, "placeholder struct type" returns, and fallback TypeInfo lookups by parameter name.
+
+4. **Non-type template argument/default evaluation path**
+   - Current symptom: class-template instantiation falls back from specialized handlers to `ConstExprEvaluator` for non-type defaults, variable templates, array dimensions, and directly evaluated expressions.
+   - Missing feature: NTTP substitution should preserve value category, converted constant-expression type, and parameter identity before default filling or SFINAE checks run.
+   - Removal target: catch-all non-type default evaluation fallbacks and "template may still work with fallback path" comments.
+
+5. **Initializer/static-member substitution ownership**
+   - Current symptom: class-template instantiation still has general fallback passes for initializers and static members from AST nodes/patterns/specializations.
+   - Missing feature: member/static-member declarations and initializers should be substituted through the same canonical context as function bodies, with instantiated ownership recorded before sema/codegen.
+   - Removal target: "General fallback: substitute remaining template parameters in the initializer" and "Fallback: Process static members from AST node" style paths.
+
+6. **ExpressionSubstitutor role clarification**
+   - Current symptom: ExpressionSubstitutor is used both as an expected AST rewrite mechanism and as a late fallback after other substitution paths did not handle a node.
+   - Missing feature: define ExpressionSubstitutor's preconditions and make it consume the authoritative substitution context. It should not reconstruct bindings from global TypeInfo or names.
+   - Removal target: fallback creation of ad-hoc expression nodes and fallback recovery of template args from type names.
+
+7. **Intra-instantiation call-target rewriting remains important**
+   - This is already diagnosed in the validation-history section around Slice G/H: `ExpressionSubstitutor` does not rewrite intra-struct call targets in instantiated member bodies from the template pattern declaration to the instantiated member stub.
+   - Keep this item attached to the substitution-context work, not the materialization-drain work. The materialization drain is largely solved; the remaining problem is preserving declaration identity during substitution.
+
+These items should be handled as a **Phase 7: substitution metadata unification** rather than more Phase 5 materialization work. Phase 6 can stay focused on pack-deduction/mapping reproducers; Phase 7 should remove the fallback classes that reconstruct template facts after the fact.
+
 ## Clear next steps
 
 1. **Keep the deduction regression cluster close.**
@@ -147,7 +189,13 @@ If you want the shortest accurate summary:
 - **Done:** Phase 5 materialization / ownership cleanup
 - **In progress:** Phase 6 explicit-deduction cleanup
 - **Landed in Phase 6 so far:** the nondeduced-tail positional-fallback fix, canonical function-parameter → call-argument pack-slice metadata, pack-before-tail explicit deduction, mixed explicit + deduced pack support, multi-pack sizeof resolution, fold expressions with complex pack operands, implicit deduction of inner types from template-specialisation pack parameters, **multi-type-pack implicit deduction guard** (non-function type packs produce empty packs; `template_param_pack_sizes_` now populated by the implicit path), **multi-dependent pack element type deduction** (`Pair<Ts,Us>...` deduces both packs correctly), **nested wrapped pack deduction/materialization** (`Wrap<Box<Ts>>...` / `Wrap<Pair<Ts,Us>>...` now work in free and member templates)
-- **Work left after this PR:** nested template packs and other complex mapping shapes that may surface as the test corpus grows
+- **Work left after this PR:** nested template packs and other complex mapping shapes that may surface as the test corpus grows; plus **Phase 7 substitution metadata unification** from the 2026-04-27 fallback-audit cross-check.
+
+## Suggested agent prompt for next PR planning
+
+Use this prompt if more detail is needed before implementation:
+
+> Read `docs\2026-04-08-template-instantiation-materialization-plan.md` and `docs\2026-04-27-fallback-comments-audit.md`. Focus only on template-instantiation fallback cleanup, especially the new "2026-04-27 fallback-audit cross-check" / proposed Phase 7 section. Audit the current source for the listed fallback classes in `ExpressionSubstitutor.cpp`, `Parser_Templates_Lazy.cpp`, `Parser_Templates_Inst_ClassTemplate.cpp`, `Parser_Templates_Inst_Substitution.cpp`, `Parser_Templates_Substitution.cpp`, and `Parser_Templates_Params.cpp`. Produce a concrete implementation slice plan that identifies the first fallback class to remove, the exact source paths/functions involved, the regression test to add first, and the invariant that should replace the fallback. Do not implement until the plan names one narrow slice and explains how it avoids changing unrelated template behavior.
 
 ## Regression coverage worth keeping close
 
