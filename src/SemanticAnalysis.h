@@ -229,7 +229,7 @@ private:
 	// Infer the canonical type of a simple expression without full evaluation.
 	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).
 	// Returns invalid CanonicalTypeId if inference is not possible.
-	CanonicalTypeId inferExpressionType(ASTNode node);
+	CanonicalTypeId inferExpressionType(const ASTNode& node);
 	CanonicalTypeId inferResolvedSymbolType(const ASTNode& symbol);
 	ValueCategory inferExpressionValueCategory(const ASTNode& node);
 	void registerOuterTemplateBindingsInScope(const LambdaExpressionNode& lambda);

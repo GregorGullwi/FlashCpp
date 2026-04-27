@@ -3218,7 +3218,7 @@ CanonicalTypeId SemanticAnalysis::inferResolvedSymbolType(const ASTNode& symbol)
 
 // --- Expression type inference ---
 
-CanonicalTypeId SemanticAnalysis::inferExpressionType(ASTNode node) {
+CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	if (!node.has_value())
 		return {};
 
@@ -3227,8 +3227,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(ASTNode node) {
 			return slot->type_id;
 		}
 
-		auto& expr = node.as<ExpressionNode>();
-		return std::visit([this](auto& e) -> CanonicalTypeId {
+		const auto& expr = node.as<ExpressionNode>();
+		return std::visit([this](const auto& e) -> CanonicalTypeId {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				CanonicalTypeDesc desc;
@@ -3378,12 +3378,19 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(ASTNode node) {
 						return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
 					return {};
 				}
-				normalizeBuiltinSubscriptOperands(e);
-				// Array subscript: the result type is the element type of the array.
-				// Infer the array expression type and strip one array dimension.
-				const CanonicalTypeId array_type_id = inferExpressionType(e.array_expr());
-				if (!array_type_id)
+				// Built-in subscript: after normalization, array_expr() always holds the
+				// pointer/array operand. If called before normalization (e.g. from a parent
+				// expression's annotation handler), detect the reversed case inline without
+				// mutating the AST — simply pick the array/pointer operand from either slot.
+				const CanonicalTypeId first_type_id = inferExpressionType(e.array_expr());
+				const CanonicalTypeId second_type_id = inferExpressionType(e.index_expr());
+				if (!first_type_id || !second_type_id)
 					return {};
+				const auto& first_desc = type_context_.get(first_type_id);
+				const bool first_is_index = first_desc.pointer_levels.empty() &&
+					first_desc.array_dimensions.empty() &&
+					(isIntegralType(first_desc.category()) || first_desc.category() == TypeCategory::Enum);
+				const CanonicalTypeId array_type_id = first_is_index ? second_type_id : first_type_id;
 				const CanonicalTypeDesc& array_desc = type_context_.get(array_type_id);
 				// If it has array dimensions, strip one to get element type.
 				if (!array_desc.array_dimensions.empty()) {
