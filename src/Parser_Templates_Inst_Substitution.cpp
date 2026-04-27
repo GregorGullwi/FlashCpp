@@ -1734,20 +1734,9 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	for (const auto& base : spec_struct.base_classes()) {
 		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 		if (base_type_info == nullptr) {
-			// Defensive fallback: if the recorded TypeIndex is stale (e.g., the base
-			// type was registered after the spec was parsed), fall back to a name
-			// lookup so we still produce a valid inheritance chain.
-			FLASH_LOG(Templates, Debug,
-				"instantiate_full_specialization: base '", base.name,
-				"' for ", instantiated_name,
-				" not resolvable by type_index, falling back to name lookup");
-			base_type_info = findTypeByName(StringTable::getOrInternStringHandle(base.name));
-		}
-		if (base_type_info == nullptr) {
-			FLASH_LOG(Templates, Warning,
-				"instantiate_full_specialization: base class '", base.name,
-				"' for ", instantiated_name, " not found in type table");
-			continue;
+			throw InternalError(
+				"instantiate_full_specialization: recorded base TypeIndex is invalid for '" +
+				std::string(base.name) + "' in '" + std::string(instantiated_name) + "'");
 		}
 		struct_info->addBaseClass(
 			StringTable::getStringView(base_type_info->name()),
@@ -1931,11 +1920,6 @@ std::optional<int64_t> Parser::evaluateDependentNTTPExpression(
 			if (param.has_type()) {
 				const TypeSpecifierNode& param_type = param.type_specifier_node();
 				type_substitution_map[param_type.type_index()] = template_args[i];
-			}
-			// Name-based fallback: look up by param name in the type registry.
-			auto type_it = getTypesByNameMap().find(param.nameHandle());
-			if (type_it != getTypesByNameMap().end() && type_it->second != nullptr) {
-				type_substitution_map[type_it->second->type_index_] = template_args[i];
 			}
 		} else if (param.kind() == TemplateParameterKind::NonType && template_args[i].is_value) {
 			nontype_substitution_map[param.name()] = template_args[i].value;

@@ -152,6 +152,7 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Current symptom: class-template instantiation falls back from specialized handlers to `ConstExprEvaluator` for non-type defaults, variable templates, array dimensions, and directly evaluated expressions.
    - Missing feature: NTTP substitution should preserve value category, converted constant-expression type, and parameter identity before default filling or SFINAE checks run.
    - Removal target: catch-all non-type default evaluation fallbacks and "template may still work with fallback path" comments.
+   - Activity note: a hard-fail probe of the unresolved-default catch-all in `src\Parser_Templates_Inst_ClassTemplate.cpp` broke `tests\test_template_template_default_ret42.cpp`, so this fallback is active in the current corpus and needs a root fix before removal.
 
 5. **Initializer/static-member substitution ownership**
    - Current symptom: class-template instantiation still has general fallback passes for initializers and static members from AST nodes/patterns/specializations.
