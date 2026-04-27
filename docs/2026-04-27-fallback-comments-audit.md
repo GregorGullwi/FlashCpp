@@ -75,7 +75,6 @@ Representative sites:
 - `src\ExpressionSubstitutor.cpp:951` and `src\Parser_Templates_Lazy.cpp:1012` - general fallback substitution for remaining template-dependent expressions.
 - `src\ExpressionSubstitutor.cpp:1537` - recovers template arguments from type names when TypeInfo has no stored args.
 - `src\Parser_Templates_Inst_ClassTemplate.cpp:4049`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4589`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4787`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4813`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5246`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5844`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5904` - non-type defaults, variable templates, array dimensions, initializers, and static members use catch-all substitution or AST fallback passes.
-- `src\Parser_Templates_Inst_Substitution.cpp:1185`, `src\Parser_Templates_Inst_Substitution.cpp:1737`, `src\Parser_Templates_Inst_Substitution.cpp:1935` - qualifier-stripped, stale-TypeIndex, and name-based template parameter recovery.
 - `src\Parser_Templates_Substitution.cpp:692`, `src\Parser_Templates_Substitution.cpp:762`, `src\Parser_Templates_Substitution.cpp:848`, `src\Parser_Templates_Substitution.cpp:1633` - pack and template parameter lookup fallbacks after primary scope information is unavailable.
 - `src\Parser_Templates_Params.cpp:1826` - `type_index == 0` is treated as a fallback indicator for dependent types.
 
@@ -101,7 +100,6 @@ Representative sites:
 - `src\FlashCppMain.cpp:602` - deferred member generation is described as coming from a struct search fallback in call lowering.
 - `src\IrGenerator_Call_Direct.cpp:1074`, `src\IrGenerator_Call_Direct.cpp:1390`, `src\IrGenerator_Call_Direct.cpp:1692` - comments document historical or retained lazy member materialization fallbacks around direct calls.
 - `src\IrGenerator_Call_Indirect.cpp:1081` - historical indirect-call lazy member fallback.
-- `src\IrGenerator_Visitors_TypeInit.cpp:295`, `src\IrGenerator_Visitors_TypeInit.cpp:308`, `src\IrGenerator_Visitors_TypeInit.cpp:535` - comments say materialize-and-retry fallbacks were removed or are expected dead.
 - `src\SemanticAnalysis.cpp:3812`, `src\SemanticAnalysis.cpp:5257`, `src\SemanticAnalysis.cpp:5458` - sema comments identify lazy materialization as the replacement for codegen-side fallbacks.
 
 Missing feature:
@@ -222,3 +220,23 @@ These are not C++ semantic fallbacks. They may still deserve cleanup, but they d
 - Add temporary hard-fail guards behind a debug flag for codegen fallbacks in `IrGenerator_Call_Direct.cpp`, `IrGenerator_Expr_Operators.cpp`, `IrGenerator_Expr_Conversions.cpp`, and `IrGenerator_MemberAccess.cpp` to measure which sites still execute in the current corpus.
 - For each executing site, add a regression test that demonstrates the sema/template metadata gap before removing the fallback.
 - Prefer deleting comments for already-removed historical fallbacks once their invariant is enforced by a test or assertion.
+
+## Probe results from 2026-04-27 validation
+
+The initial audit above was architectural. Several template-instantiation fallbacks were then probed directly by replacing them with hard failures or by deleting the fallback path and running the full Windows validation (`.\build_flashcpp.bat` and `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`). The audit document keeps only the still-relevant post-audit state below rather than a historical list of removed fallbacks.
+
+### Proven active in the current corpus
+
+1. `src\Parser_Templates_Inst_ClassTemplate.cpp` — unresolved template-default catch-all
+   - Previous behavior: if no handler resolved a default template argument, the code pushed a placeholder (`void` for type params, `0` for non-type params).
+   - Probe result: replacing it with a hard error broke `tests\test_template_template_default_ret42.cpp`.
+   - Conclusion: this fallback is still active and cannot be removed safely until the default-argument substitution gap is fixed at the root.
+
+### Confidence update
+
+The audit is now backed by direct suite evidence for several representative template fallbacks:
+
+- some narrow substitution recoveries were already dead in the current corpus and have now been removed;
+- the function-shaped and constructor-shaped deferred-member queue bridges in `IrGenerator_Visitors_TypeInit.cpp` were also dead in the current corpus and have now been replaced with hard invariants;
+- at least one default-argument fallback is definitely active;
+- the larger ExpressionSubstitutor/static-initializer/pack-size/dependent-placeholder fallback classes should still be assumed active until probed or root-fixed individually.

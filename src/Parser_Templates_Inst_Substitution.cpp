@@ -1182,20 +1182,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					if (it != structural_match->substitutions.end()) {
 						converted_args.push_back(it->second);
 					} else {
-						// Fallback: use resolved arg with qualifiers stripped
-						if (converted_args.size() < filled_args.size()) {
-							FLASH_LOG(Templates, Debug, "Deduction fallback for param '",
-									  tp.name(), "': using arg[", converted_args.size(), "] with qualifiers stripped");
-							TemplateTypeArg deduced = filled_args[converted_args.size()];
-							deduced.ref_qualifier = ReferenceQualifier::None;
-							deduced.pointer_depth = 0;
-							deduced.pointer_cv_qualifiers.clear();
-							deduced.is_array = false;
-							converted_args.push_back(deduced);
-						} else {
-							FLASH_LOG(Templates, Warning, "Cannot deduce param '",
-									  tp.name(), "': no substitution and no remaining args");
-						}
+						throw InternalError(
+							"TemplatePattern::matches() did not produce a substitution for variable-template specialization parameter '" +
+							std::string(tp.name()) + "'");
 					}
 				}
 			}
