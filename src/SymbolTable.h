@@ -528,7 +528,11 @@ public:
 				return;
 			}
 			if (!is_pure_function_set(result) || !is_pure_function_set(symbol_it->second)) {
-				return;
+				// C++20 [namespace.qual]: if the same name is found in two
+				// different namespaces of the inline namespace set and the
+				// declarations do not denote the same entity and are not both
+				// function/function-template sets, the result is ill-formed.
+				throw CompileError("ambiguous lookup: '" + std::string(StringTable::getStringView(identifier)) + "' found in multiple inline namespaces");
 			}
 			append_unique_function_overloads(result, symbol_it->second);
 		});
