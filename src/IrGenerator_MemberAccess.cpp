@@ -780,15 +780,18 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				source_desc.category() == TypeCategory::Struct &&
 				!target_desc.pointer_levels.empty()) {
 				if (const TypeInfo* source_type_info = tryGetTypeInfo(source_desc.type_index)) {
-					const bool source_is_const =
-						(static_cast<uint8_t>(source_desc.base_cv) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
+					const bool source_is_const = hasCVQualifier(source_desc.base_cv, CVQualifier::Const);
 					const StructMemberFunction* conv_op = findConversionOperatorForSubscriptPointerTarget(
 						sema_, source_type_info->getStructInfo(), target_desc, source_is_const);
 					if (!conv_op) {
 						throw InternalError(std::string(StringBuilder()
 							.append("generateArraySubscriptIr: sema annotated struct-to-pointer subscript conversion for '")
 							.append(StringTable::getStringView(source_type_info->name()))
-							.append("' but no operator matching the target pointer type was found")
+							.append("' but no operator matching target category ")
+							.append(std::to_string(static_cast<int>(target_desc.category())))
+							.append(" with pointer depth ")
+							.append(std::to_string(target_desc.pointer_levels.size()))
+							.append(" was found")
 							.commit()));
 					}
 					if (auto converted = emitConversionOperatorCall(

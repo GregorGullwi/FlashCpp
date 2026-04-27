@@ -250,15 +250,13 @@ struct PointerConversionInfo {
 	CanonicalTypeId element_type_id;
 };
 
-bool isCvConst(CVQualifier qualifier) {
-	return (static_cast<uint8_t>(qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
-}
-
 std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 	const CanonicalTypeDesc& from_desc,
 	const CanonicalTypeDesc* target_desc,
 	SemanticAnalysis* sema,
 	int depth) {
+	// Mirrors the existing conversion-operator inheritance recursion guard:
+	// deep or cyclic inheritance graphs stop probing and report no match.
 	static constexpr int kMaxInheritanceDepth = 8;
 	if (!sema || depth > kMaxInheritanceDepth)
 		return std::nullopt;
@@ -270,7 +268,7 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 	if (!struct_info)
 		return std::nullopt;
 
-	const bool source_is_const = isCvConst(from_desc.base_cv);
+	const bool source_is_const = hasCVQualifier(from_desc.base_cv, CVQualifier::Const);
 	for (const auto& mf : struct_info->member_functions) {
 		if (!mf.is_conversion_operator())
 			continue;
