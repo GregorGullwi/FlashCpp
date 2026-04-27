@@ -1328,8 +1328,8 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 								ctor_has_auto = true;
 								break;
 							}
-							// Skip constructors whose parameter types are still TypeCategory::UserDefined
-							// (=23): this indicates the parser failed to record the constructor's own
+							// Skip constructors whose parameter types are still TypeCategory::UserDefined:
+							// this indicates the parser failed to record the constructor's own
 							// template parameters (e.g. template<_U1,_U2> pair(_U1&&, _U2&&) where
 							// _U1/_U2 remain unresolved).  Generating code for such a constructor would
 							// crash in reference-identifier load lowering with "Type with no runtime size".
