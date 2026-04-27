@@ -51,8 +51,8 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		~NamespaceStackGuard() { target = std::move(saved); }
 	} namespace_guard{current_namespace_stack_};
 
-		// Deferred or synthesized function generation can lose namespace stack context.
-		// Recover it from the declaration registry so unqualified lookup remains standard-compliant.
+	// Deferred or synthesized function generation can lose namespace stack context.
+	// Recover it from the declaration registry so unqualified lookup remains standard-compliant.
 	if (current_namespace_stack_.empty() && global_symbol_table_) {
 		if (auto ns_handle = global_symbol_table_->find_namespace_of_function(node); ns_handle.has_value() && !ns_handle->isGlobal()) {
 			std::vector<NamespaceHandle> namespace_path;
@@ -67,22 +67,22 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		}
 	}
 
-		// Reset the temporary variable counter for each new function
-		// For non-static member functions, reserve TempVar(1) for the implicit 'this' parameter
-		// Static member functions have no 'this' pointer
+	// Reset the temporary variable counter for each new function
+	// For non-static member functions, reserve TempVar(1) for the implicit 'this' parameter
+	// Static member functions have no 'this' pointer
 	var_counter = (node.is_member_function() && !node.is_static()) ? TempVar(2) : TempVar();
 
-		// Clear global TempVar metadata to prevent stale data from bleeding into this function
+	// Clear global TempVar metadata to prevent stale data from bleeding into this function
 	GlobalTempVarMetadataStorage::instance().clear();
 
-		// Set current function name for static local variable mangling
+	// Set current function name for static local variable mangling
 	const DeclarationNode& func_decl = node.decl_node();
 	const std::string_view func_name_view = func_decl.identifier_token().value();
 	const OverloadableOperator function_operator_kind = overloadableOperatorFromFunctionName(func_name_view);
 	current_function_name_ = StringTable::getOrInternStringHandle(func_name_view);
 	current_function_mangled_name_ = StringHandle(); // will be set after mangled name is computed
 
-		// Set current function return type and size for type checking in return statements
+	// Set current function return type and size for type checking in return statements
 	const TypeSpecifierNode& ret_type_spec = func_decl.type_specifier_node();
 	current_function_return_value_mode_ = ReturnValueMode::None;
 	if (ret_type_spec.pointer_depth() > 0) {
@@ -95,25 +95,25 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		current_function_return_value_mode_ |= ReturnValueMode::FunctionPointer;
 	}
 
-		// Set or clear current_struct_name_ based on whether this declaration is owned by a struct.
-		// This is critical for member variable and static member lookup in generateIdentifierIr.
-		// Some instantiated member functions reach codegen with parent_struct_name set even when
-		// is_member_function() is false, so parent_struct_name() is the reliable ownership signal.
+	// Set or clear current_struct_name_ based on whether this declaration is owned by a struct.
+	// This is critical for member variable and static member lookup in generateIdentifierIr.
+	// Some instantiated member functions reach codegen with parent_struct_name set even when
+	// is_member_function() is false, so parent_struct_name() is the reliable ownership signal.
 	if (std::string_view parent_name = node.parent_struct_name(); !parent_name.empty()) {
-			// Use the parent_struct_name directly (simple name like "Test") rather than
-			// looking up the TypeInfo's name (which may be namespace-qualified like "ns::Test").
-			// The namespace will be added during mangling from current_namespace_stack_.
+		// Use the parent_struct_name directly (simple name like "Test") rather than
+		// looking up the TypeInfo's name (which may be namespace-qualified like "ns::Test").
+		// The namespace will be added during mangling from current_namespace_stack_.
 		StringHandle parent_handle = StringTable::getOrInternStringHandle(parent_name);
-			// If parent_struct_name is a template pattern but we have a valid struct context
-			// from visitStructDeclarationNode, keep the instantiated struct context.
+		// If parent_struct_name is a template pattern but we have a valid struct context
+		// from visitStructDeclarationNode, keep the instantiated struct context.
 		if (!gTemplateRegistry.isPatternStructName(parent_handle)) {
 			current_struct_name_ = parent_handle;
 		}
 	} else {
-			// Clear current_struct_name_ for free functions (no parent struct association).
-			// Previously this only cleared when current_struct_name_ was already invalid,
-			// which caused free functions (like distance_like) to retain a stale struct
-			// context from a previously-visited member function.
+		// Clear current_struct_name_ for free functions (no parent struct association).
+		// Previously this only cleared when current_struct_name_ was already invalid,
+		// which caused free functions (like distance_like) to retain a stale struct
+		// context from a previously-visited member function.
 		// Some instantiated static member functions still lose their parent_struct_name()
 		// flag by the time they reach codegen. Preserve the enclosing struct context only
 		// for those static-member cases; free functions must still clear stale struct state.
@@ -145,9 +145,9 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		resolveSelfReferentialType(resolved_ret_type, enclosing_struct_type_index);
 	}
 
-		// Compute current_function_return_size_ from the resolved return type so that
-		// emitReturn calls in the function body use the correct size.  Previously this
-		// used the unresolved ret_type_spec, which could be 0 for self-referential types.
+	// Compute current_function_return_size_ from the resolved return type so that
+	// emitReturn calls in the function body use the correct size.  Previously this
+	// used the unresolved ret_type_spec, which could be 0 for self-referential types.
 	int actual_ret_size = getTypeSpecSizeBits(resolved_ret_type);
 	current_function_return_size_ = (resolved_ret_type.pointer_depth() > 0 || resolved_ret_type.is_reference() || currentFunctionReturnsFunctionPointer())
 										? 64
@@ -175,23 +175,23 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		FLASH_LOG(Codegen, Debug, "=====");
 	}
 
-		// Clear static local names map for new function
+	// Clear static local names map for new function
 	static_local_names_.clear();
 
 	const TypeSpecifierNode& ret_type = resolved_ret_type;
 
-		// Create function declaration with return type and name
-		// Use FunctionDeclOp to store typed payload
+	// Create function declaration with return type and name
+	// Use FunctionDeclOp to store typed payload
 	FunctionDeclOp func_decl_op;
 
-		// Return type information
+	// Return type information
 	func_decl_op.return_type_index = ret_type.type_index();
 
 	int actual_return_size = getTypeSpecSizeBits(ret_type);
 
-		// For pointer return types, use 64-bit size (pointer size on x64)
-		// For reference return types, keep the base type size (the reference itself is 64-bit at ABI level,
-		// but we display it as the base type with a reference qualifier)
+	// For pointer return types, use 64-bit size (pointer size on x64)
+	// For reference return types, keep the base type size (the reference itself is 64-bit at ABI level,
+	// but we display it as the base type with a reference qualifier)
 	func_decl_op.return_size_in_bits = SizeInBits{(ret_type.pointer_depth() > 0 || ret_type.is_function_pointer() || ret_type.has_function_signature())
 													  ? 64
 													  : actual_return_size};
@@ -199,14 +199,14 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	func_decl_op.returns_reference = ret_type.is_reference();
 	func_decl_op.returns_rvalue_reference = ret_type.is_rvalue_reference();
 
-		// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
-		// Only non-pointer, non-reference struct returns need this (pointer/reference returns are in RAX like regular pointers)
+	// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
+	// Only non-pointer, non-reference struct returns need this (pointer/reference returns are in RAX like regular pointers)
 	bool returns_struct_by_value = returnsStructByValue(ret_type.type(), ret_type.pointer_depth(), ret_type.is_reference());
 	bool needs_hidden_return_param = needsHiddenReturnParam(ret_type.type(), ret_type.pointer_depth(), ret_type.is_reference(), actual_return_size, context_->isLLP64());
 	func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 
-		// Track return type index and hidden parameter flag for current function context
-		// Use the type_index which carries the TypeCategory.
+	// Track return type index and hidden parameter flag for current function context
+	// Use the type_index which carries the TypeCategory.
 	current_function_return_type_index_ = ret_type.type_index();
 	current_function_has_hidden_return_param_ = needs_hidden_return_param;
 
@@ -222,13 +222,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		}
 	}
 
-		// Function name
+	// Function name
 	func_decl_op.function_name = func_decl.identifier_token().handle();
 
-		// Add struct/class name for member functions
-		// Use current_struct_name_ if set (for instantiated template specializations),
-		// otherwise use the function node's parent_struct_name
-		// For nested classes, we need to use the fully qualified name from TypeInfo
+	// Add struct/class name for member functions
+	// Use current_struct_name_ if set (for instantiated template specializations),
+	// otherwise use the function node's parent_struct_name
+	// For nested classes, we need to use the fully qualified name from TypeInfo
 	std::string_view struct_name_for_function;
 	if (current_struct_name_.isValid()) {
 		struct_name_for_function = StringTable::getStringView(current_struct_name_);
@@ -239,16 +239,16 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	}
 	func_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_function);
 
-		// Linkage and variadic flag
+	// Linkage and variadic flag
 	func_decl_op.linkage = node.linkage();
 	func_decl_op.is_variadic = node.is_variadic();
 	func_decl_op.is_static_member = node.is_static();
-		// Evaluate the noexcept specifier properly:
-		// bare `noexcept` → true; `noexcept(false)` → false; `noexcept(true)` → true.
-		// For explicit `noexcept(expr)`, evaluate the stored constant-expression AST and
-		// fall back conservatively to "potentially throwing" if evaluation fails.
-		// Leave implicit/synthesized special members on their existing parser-computed
-		// noexcept bit until the constexpr evaluator supports every synthesized form.
+	// Evaluate the noexcept specifier properly:
+	// bare `noexcept` → true; `noexcept(false)` → false; `noexcept(true)` → true.
+	// For explicit `noexcept(expr)`, evaluate the stored constant-expression AST and
+	// fall back conservatively to "potentially throwing" if evaluation fails.
+	// Leave implicit/synthesized special members on their existing parser-computed
+	// noexcept bit until the constexpr evaluator supports every synthesized form.
 	{
 		bool is_truly_noexcept = node.is_noexcept();
 		if (is_truly_noexcept && node.has_noexcept_expression() && !node.is_implicit()) {
@@ -265,31 +265,31 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		func_decl_op.is_noexcept = is_truly_noexcept;
 	}
 
-		// Member functions defined inside the class body are implicitly inline (C++ standard)
-		// Mark them as inline so they get weak linkage in the object file to allow duplicate definitions
-		// This includes constructors, destructors, and regular member functions defined inline
-		// Also mark functions in std namespace as inline to handle standard library functions that
-		// are defined in headers (like std::abs) and may be instantiated multiple times
+	// Member functions defined inside the class body are implicitly inline (C++ standard)
+	// Mark them as inline so they get weak linkage in the object file to allow duplicate definitions
+	// This includes constructors, destructors, and regular member functions defined inline
+	// Also mark functions in std namespace as inline to handle standard library functions that
+	// are defined in headers (like std::abs) and may be instantiated multiple times
 	bool is_in_std_namespace = false;
 	if (!current_namespace_stack_.empty()) {
 		is_in_std_namespace = (current_namespace_stack_[0] == "std");
 	}
 	func_decl_op.is_inline = node.is_member_function() || is_in_std_namespace;
 
-		// Use pre-computed mangled name from AST node if available (Phase 6 migration)
-		// Fall back to generating it here if not (for backward compatibility during migration)
+	// Use pre-computed mangled name from AST node if available (Phase 6 migration)
+	// Fall back to generating it here if not (for backward compatibility during migration)
 	std::string_view mangled_name;
 
-		// Don't pass namespace_stack when struct_name already includes the namespace
-		// (e.g., "std::simple" already has the namespace embedded, so we shouldn't also pass ["std"])
-		// This avoids double-encoding the namespace in the mangled name
+	// Don't pass namespace_stack when struct_name already includes the namespace
+	// (e.g., "std::simple" already has the namespace embedded, so we shouldn't also pass ["std"])
+	// This avoids double-encoding the namespace in the mangled name
 	std::vector<std::string> namespace_for_mangling;
 	if (struct_name_for_function.find("::") == std::string_view::npos) {
 		bool struct_found = false;
 		if (node.is_member_function() && !struct_name_for_function.empty()) {
-				// Always derive namespace from the struct's declaration-site NamespaceHandle
-				// rather than current_namespace_stack_, which may be the instantiation-site
-				// namespace when a template is instantiated from a different namespace.
+			// Always derive namespace from the struct's declaration-site NamespaceHandle
+			// rather than current_namespace_stack_, which may be the instantiation-site
+			// namespace when a template is instantiated from a different namespace.
 			auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_for_function);
 			auto type_it = getTypesByNameMap().find(struct_name_handle);
 			if (type_it != getTypesByNameMap().end()) {
@@ -301,18 +301,18 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			}
 		}
 		if (!struct_found && namespace_for_mangling.empty()) {
-				// Non-member functions, or struct not found: fall back to current stack.
-				// Do NOT fall back when the struct was found at global scope — an empty
-				// namespace_for_mangling is correct and must match the call-site mangling.
+			// Non-member functions, or struct not found: fall back to current stack.
+			// Do NOT fall back when the struct was found at global scope — an empty
+			// namespace_for_mangling is correct and must match the call-site mangling.
 			namespace_for_mangling = current_namespace_stack_;
 		}
 	}
-		// else: struct_name already contains namespace prefix, don't add it again
+	// else: struct_name already contains namespace prefix, don't add it again
 
 	if (node.has_mangled_name()) {
 		mangled_name = node.mangled_name();
 	} else if (node.has_non_type_template_args()) {
-			// Generate mangled name with template arguments for template specializations (e.g., get<0>)
+		// Generate mangled name with template arguments for template specializations (e.g., get<0>)
 		const TypeSpecifierNode& return_type = resolved_ret_type;
 		std::vector<TypeSpecifierNode> param_types;
 		for (const auto& param : node.parameter_nodes()) {
@@ -325,22 +325,22 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			node.is_const_member_function());
 		mangled_name = mangled.view();
 	} else {
-			// Generate mangled name using the FunctionDeclarationNode overload
+		// Generate mangled name using the FunctionDeclarationNode overload
 		mangled_name = generateMangledNameForCall(node, struct_name_for_function, namespace_for_mangling);
 	}
 	func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled_name);
 	current_function_mangled_name_ = func_decl_op.mangled_name;
 
-		// Skip duplicate function definitions to prevent multiple codegen of the same function
-		// This is especially important for inline functions from standard headers (like std::abs)
-		// that may be parsed multiple times
+	// Skip duplicate function definitions to prevent multiple codegen of the same function
+	// This is especially important for inline functions from standard headers (like std::abs)
+	// that may be parsed multiple times
 	if (generated_function_names_.count(func_decl_op.mangled_name) > 0) {
 		FLASH_LOG(Codegen, Debug, "Skipping duplicate function definition: ", func_decl.identifier_token().value(), " (", mangled_name, ")");
 		return;
 	}
 	generated_function_names_.insert(func_decl_op.mangled_name);
 
-		// Add parameters to function declaration
+	// Add parameters to function declaration
 	std::vector<CachedParamInfo> cached_params;
 	cached_params.reserve(node.parameter_nodes().size());
 	size_t unnamed_param_counter = 0;  // Counter for generating unique names for unnamed parameters
@@ -357,16 +357,16 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		if (param_type.is_lvalue_reference()) {
 			pointer_depth += 1;	// Add 1 for lvalue reference (ABI treats it as an additional pointer level)
 		}
-			// Note: Rvalue references (T&&) are tracked separately via is_rvalue_reference flag.
-			// While lvalue references are always implemented as pointers at the ABI level,
-			// rvalue references in the context of perfect forwarding can receive values directly
-			// when bound to temporaries/literals. The pointer_depth increment is omitted to allow
-			// this direct value passing, while the is_rvalue_reference flag enables proper handling
-			// in both the caller (materialization + address-taking) and callee (dereferencing).
+		// Note: Rvalue references (T&&) are tracked separately via is_rvalue_reference flag.
+		// While lvalue references are always implemented as pointers at the ABI level,
+		// rvalue references in the context of perfect forwarding can receive values directly
+		// when bound to temporaries/literals. The pointer_depth increment is omitted to allow
+		// this direct value passing, while the is_rvalue_reference flag enables proper handling
+		// in both the caller (materialization + address-taking) and callee (dereferencing).
 		param_info.pointer_depth = PointerDepth{pointer_depth};
 
-			// Handle unnamed parameters (e.g., `operator=(const T&) = default;` without explicit param name)
-			// Generate a unique name like "__param_0", "__param_1", etc. for unnamed parameters
+		// Handle unnamed parameters (e.g., `operator=(const T&) = default;` without explicit param name)
+		// Generate a unique name like "__param_0", "__param_1", etc. for unnamed parameters
 		std::string_view param_name = param_decl.identifier_token().value();
 		if (param_name.empty()) {
 			bool is_defaulted_comparison_operator =
@@ -413,7 +413,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		cached_params.push_back(cache_entry);
 	}
 
-		// Store cached parameter info keyed by mangled function name
+	// Store cached parameter info keyed by mangled function name
 	StringHandle cache_key = func_decl_op.mangled_name.isValid()
 								 ? func_decl_op.mangled_name
 								 : func_decl.identifier_token().handle();
@@ -421,13 +421,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), func_decl.identifier_token()));
 
-		// Generate memberwise three-way comparison for defaulted operator<=>
+	// Generate memberwise three-way comparison for defaulted operator<=>
 	if (function_operator_kind == OverloadableOperator::Spaceship && node.is_implicit()) {
 		const StructTypeInfo* struct_info = nullptr;
 		StringHandle lhs_object_handle;
 		StringHandle rhs_object_handle;
 
-			// Set up function scope and 'this' pointer
+		// Set up function scope and 'this' pointer
 		symbol_table.enter_scope(ScopeType::Function);
 		if (node.is_member_function()) {
 			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
@@ -505,12 +505,12 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					auto next_label = StringTable::createStringHandle(
 						StringBuilder().append("spaceship_next_").append(current_spaceship).append("_").append(mi));
 
-						// For struct members, delegate to the member's operator<=>
+					// For struct members, delegate to the member's operator<=>
 					if (member.type_index.category() == TypeCategory::Struct) {
 						const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
 						const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
 
-							// Find operator<=> in the member struct and generate its mangled name
+						// Find operator<=> in the member struct and generate its mangled name
 						StringHandle member_spaceship_mangled;
 						if (member_struct_info) {
 							for (const auto& mf : member_struct_info->member_functions) {
@@ -528,7 +528,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 						}
 
 						if (member_spaceship_mangled.isValid()) {
-								// Load addresses of this->member and other.member for the call
+							// Load addresses of this->member and other.member for the call
 							TempVar lhs_val = var_counter.next();
 							MemberLoadOp lhs_load;
 							lhs_load.result.value = lhs_val;
@@ -553,7 +553,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							rhs_load.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
 
-								// Call member's operator<=>(this->member, other.member)
+							// Call member's operator<=>(this->member, other.member)
 							TempVar call_result = var_counter.next();
 							CallOp call_op = createCallOp(
 								call_result,
@@ -581,7 +581,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
 
-								// Check if result != 0 (members not equal)
+							// Check if result != 0 (members not equal)
 							TempVar ne_result = var_counter.next();
 							BinaryOp ne_op{
 								.lhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, IrValue{call_result}),
@@ -589,14 +589,14 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 								.result = IrValue{ne_result}};
 							ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
 
-								// Branch: if not equal, return the result directly
+							// Branch: if not equal, return the result directly
 							CondBranchOp ne_branch;
 							ne_branch.label_true = diff_label;
 							ne_branch.label_false = next_label;
 							ne_branch.condition = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, IrValue{ne_result});
 							ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(ne_branch), func_decl.identifier_token()));
 
-								// Label: diff - return the inner <=> result
+							// Label: diff - return the inner <=> result
 							ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = diff_label}, func_decl.identifier_token()));
 							{
 								emitReturn(IrValue{call_result}, TypeCategory::Int, 32, func_decl.identifier_token());
@@ -606,10 +606,10 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = next_label}, func_decl.identifier_token()));
 							continue;
 						}
-							// Fall through to primitive comparison if no operator<=> found
+						// Fall through to primitive comparison if no operator<=> found
 					}
 
-						// Primitive member comparison
+					// Primitive member comparison
 					TempVar lhs_val = var_counter.next();
 					MemberLoadOp lhs_load;
 					lhs_load.result.value = lhs_val;
@@ -634,7 +634,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					rhs_load.struct_type_info = nullptr;
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
 
-						// Compare: lhs != rhs
+					// Compare: lhs != rhs
 					TempVar ne_result = var_counter.next();
 					BinaryOp ne_op{
 						.lhs = TypedValue{.size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.memberType()), .type_index = nativeTypeIndex(member.memberType()), .ir_type = toIrType(member.memberType())},
@@ -642,17 +642,17 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 						.result = IrValue{ne_result}};
 					ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
 
-						// Branch: if not equal, go to diff handling
+					// Branch: if not equal, go to diff handling
 					CondBranchOp ne_branch;
 					ne_branch.label_true = diff_label;
 					ne_branch.label_false = next_label;
 					ne_branch.condition = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, IrValue{ne_result});
 					ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(ne_branch), func_decl.identifier_token()));
 
-						// Label: diff - members are not equal
+					// Label: diff - members are not equal
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = diff_label}, func_decl.identifier_token()));
 
-						// Compare: lhs < rhs
+					// Compare: lhs < rhs
 					TempVar lt_result = var_counter.next();
 					BinaryOp lt_op{
 						.lhs = TypedValue{.size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.memberType()), .type_index = nativeTypeIndex(member.memberType()), .ir_type = toIrType(member.memberType())},
@@ -660,30 +660,30 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 						.result = IrValue{lt_result}};
 					ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(lt_op), func_decl.identifier_token()));
 
-						// Branch: if lhs < rhs, return -1, else return 1
+					// Branch: if lhs < rhs, return -1, else return 1
 					CondBranchOp lt_branch;
 					lt_branch.label_true = lt_label;
 					lt_branch.label_false = gt_label;
 					lt_branch.condition = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, IrValue{lt_result});
 					ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(lt_branch), func_decl.identifier_token()));
 
-						// Label: lt - return -1 (two's complement: 0xFFFFFFFF in 32-bit)
+					// Label: lt - return -1 (two's complement: 0xFFFFFFFF in 32-bit)
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = lt_label}, func_decl.identifier_token()));
 					{
 						emitReturn(IrValue{0xFFFFFFFFULL}, TypeCategory::Int, 32, func_decl.identifier_token());
 					}
 
-						// Label: gt - return 1
+					// Label: gt - return 1
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = gt_label}, func_decl.identifier_token()));
 					{
 						emitReturn(IrValue{1ULL}, TypeCategory::Int, 32, func_decl.identifier_token());
 					}
 
-						// Label: next - continue to next member
+					// Label: next - continue to next member
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = next_label}, func_decl.identifier_token()));
 				}
 			}
-			// All members equal - return 0
+		// All members equal - return 0
 		emitReturn(IrValue{0ULL}, TypeCategory::Int, 32, func_decl.identifier_token());
 		symbol_table.exit_scope();
 		return;
@@ -765,8 +765,8 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			}
 		}
 
-			// Find the operator<=> to call it - generate mangled name from the function signature
-			// (AST mangled name may not be set for user-defined operator<=>)
+		// Find the operator<=> to call it - generate mangled name from the function signature
+		// (AST mangled name may not be set for user-defined operator<=>)
 		StringHandle spaceship_mangled;
 		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
 		if (type_it != getTypesByNameMap().end()) {
@@ -776,7 +776,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					if (mf.operator_kind == OverloadableOperator::Spaceship) {
 						if (mf.function_decl.is<FunctionDeclarationNode>()) {
 							const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
-								// Use generateMangledNameForCall for consistent mangling across platforms
+							// Use generateMangledNameForCall for consistent mangling across platforms
 							spaceship_mangled = StringTable::getOrInternStringHandle(
 								generateMangledNameForCall(spaceship_func, node.parent_struct_name(), {}));
 						}
@@ -787,7 +787,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		}
 
 		if (spaceship_mangled.isValid()) {
-				// Generate: call operator<=>(this, other) -> int result
+			// Generate: call operator<=>(this, other) -> int result
 			TempVar call_result = var_counter.next();
 			CallOp call_op = createCallOp(
 				call_result,
@@ -807,7 +807,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			this_arg.pointer_depth = PointerDepth{1};
 			call_op.args.push_back(std::move(this_arg));
 
-				// Pass 'other' as second arg (reference = pointer)
+			// Pass 'other' as second arg (reference = pointer)
 			StringHandle other_handle;
 			if (!node.parameter_nodes().empty()) {
 				std::string_view param_name = node.parameter_nodes()[0].as<DeclarationNode>().identifier_token().value();
@@ -828,7 +828,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
 
-				// Compare result with 0 using the pre-determined comparison opcode
+			// Compare result with 0 using the pre-determined comparison opcode
 			TempVar cmp_result = var_counter.next();
 			BinaryOp cmp_op{
 				.lhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, IrValue{call_result}),
@@ -836,7 +836,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 				.result = IrValue{cmp_result}};
 			ir_.addInstruction(IrInstruction(*synthesized_cmp_opcode, std::move(cmp_op), func_decl.identifier_token()));
 
-				// Return the boolean result
+			// Return the boolean result
 			emitReturn(IrValue{cmp_result}, TypeCategory::Bool, 8, func_decl.identifier_token());
 		} else if (function_operator_kind == OverloadableOperator::Equal && compare_struct_info && !compare_struct_info->members.empty()) {
 			static size_t equal_counter = 0;
@@ -981,10 +981,10 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 	symbol_table.enter_scope(ScopeType::Function);
 
-		// For non-static member functions, add implicit 'this' pointer to symbol table
-		// Static member functions have no 'this' pointer
+	// For non-static member functions, add implicit 'this' pointer to symbol table
+	// Static member functions have no 'this' pointer
 	if (node.is_member_function() && !node.is_static()) {
-			// Look up the struct type to get its type index and size
+		// Look up the struct type to get its type index and size
 		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
 		if (type_it != getTypesByNameMap().end()) {
 			const TypeInfo* struct_type_info = type_it->second;
@@ -1005,9 +1005,8 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		}
 	}
 
-		// Allocate stack space for local variables and parameters
-		// Parameters are already in their registers, we just need to allocate space for them
-		//size_t paramIndex = 0;
+	// Allocate stack space for local variables and parameters
+	// Parameters are already in their registers, we just need to allocate space for them
 	for (const auto& param : node.parameter_nodes()) {
 		const DeclarationNode& param_decl = param.as<DeclarationNode>();
 		ASTNode symbol_param = param;
@@ -1023,30 +1022,18 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		}
 
 		symbol_table.insert(param_decl.identifier_token().value(), symbol_param);
-			//paramIndex++;
 	}
 
-		// Check if this is an implicit operator= that needs code generation
+	// Check if this is an implicit operator= that needs code generation
 	if (node.is_implicit() && node.is_member_function()) {
 		if (function_operator_kind == OverloadableOperator::Assign) {
-				// This is an implicit copy or move assignment operator
-				// Determine which one by checking the parameter type
-// 				bool is_move_assignment = false;
-// 				if (node.parameter_nodes().size() == 1) {
-// 					const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
-// 					const auto& param_type = param_decl.type_specifier_node();
-// 					if (param_type.is_rvalue_reference()) {
-// 						is_move_assignment = true;
-// 					}
-// 				}
+			// Generate memberwise assignment from source parameter to 'this'
+			// (same code for both copy and move assignment - memberwise copy/move)
 
-				// Generate memberwise assignment from source parameter to 'this'
-				// (same code for both copy and move assignment - memberwise copy/move)
-
-				// Get the parameter name from the function declaration
-				// For defaulted operator= without explicit parameter name (e.g., `operator=(const T&) = default;`),
-				// the parameter name might be empty. Use "other" as the default name.
-				// This name must match what's in func_decl_op.parameters.
+			// Get the parameter name from the function declaration
+			// For defaulted operator= without explicit parameter name (e.g., `operator=(const T&) = default;`),
+			// the parameter name might be empty. Use "other" as the default name.
+			// This name must match what's in func_decl_op.parameters.
 			StringHandle source_param_name_handle;
 			if (!node.parameter_nodes().empty()) {
 				const auto& param_node = node.parameter_nodes()[0];
@@ -1057,21 +1044,21 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					}
 				}
 			}
-				// Default to "other" if no parameter name found
+			// Default to "other" if no parameter name found
 			if (!source_param_name_handle.isValid()) {
 				source_param_name_handle = StringTable::getOrInternStringHandle("other");
 			}
 
-				// Look up the struct type
+			// Look up the struct type
 			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
 			if (type_it != getTypesByNameMap().end()) {
 				const TypeInfo* struct_type_info = type_it->second;
 				const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 				if (struct_info) {
-						// Generate memberwise assignment
+					// Generate memberwise assignment
 					for (const auto& member : struct_info->members) {
-							// First, load the member from source parameter
+						// First, load the member from source parameter
 						TempVar member_value = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = member_value;
@@ -1085,8 +1072,8 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), func_decl.identifier_token()));
 
-							// Then, store the member to 'this'
-							// Format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, ref_size_bits, value]
+						// Then, store the member to 'this'
+						// Format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, ref_size_bits, value]
 						MemberStoreOp member_store;
 						member_store.value.setType(member.type_index.category());
 						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
@@ -1100,9 +1087,9 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), func_decl.identifier_token()));
 					}
 
-						// Return *this (the return value is the 'this' pointer dereferenced)
-						// Generate: %temp = dereference [Type][Size] %this
-						//           return [Type][Size] %temp
+					// Return *this (the return value is the 'this' pointer dereferenced)
+					// Generate: %temp = dereference [Type][Size] %this
+					//           return [Type][Size] %temp
 					TempVar this_deref = var_counter.next();
 					std::vector<IrOperand> deref_operands;
 					deref_operands.emplace_back(this_deref);	 // result variable
@@ -1122,13 +1109,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			}
 		}
 	} else {
-			// User-defined function body
-			// Enter a scope for the function body to track destructors
+		// User-defined function body
+		// Enter a scope for the function body to track destructors
 		enterScope();
 		const BlockNode& block = node.get_definition().value().as<BlockNode>();
-			// Pre-scan: populate label_scope_depth_map_ with the scope depth of every
-			// label in this function body so that goto can emit the correct scope-exit
-			// destructors before the branch (forward and backward gotos both need this).
+		// Pre-scan: populate label_scope_depth_map_ with the scope depth of every
+		// label in this function body so that goto can emit the correct scope-exit
+		// destructors before the branch (forward and backward gotos both need this).
 		label_scope_depth_map_.clear();
 		block.get_statements().visit([&](const ASTNode& stmt) {
 			prescanLabels(stmt, scope_stack_.size());
@@ -1138,14 +1125,14 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		});
 	}
 
-		// Exit the function body scope and call destructors before returning
-		// Only do this for user-defined function bodies where we called enterScope()
+	// Exit the function body scope and call destructors before returning
+	// Only do this for user-defined function bodies where we called enterScope()
 	if (!node.is_implicit() || !node.is_member_function()) {
 		exitFunctionScope();
 	}
 
-		// Add implicit return if needed
-		// Check if the last instruction is a return
+	// Add implicit return if needed
+	// Check if the last instruction is a return
 	bool ends_with_return = false;
 	if (!ir_.getInstructions().empty()) {
 		const auto& last_instr = ir_.getInstructions().back();
@@ -1153,36 +1140,36 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	}
 
 	if (!ends_with_return) {
-			// Add implicit return for void functions
+		// Add implicit return for void functions
 		if (ret_type.category() == TypeCategory::Void) {
 			emitVoidReturn(func_decl.identifier_token());
 		}
-			// Special case: main() implicitly returns 0 if no return statement
+		// Special case: main() implicitly returns 0 if no return statement
 		else if (func_decl.identifier_token().value() == "main") {
 			emitReturn(0ULL, TypeCategory::Int, 32, func_decl.identifier_token());
 		}
-			// For other non-void functions, this is a warning (missing return statement)
-			// A full implementation would require control flow analysis to check all paths,
-			// but warning on functions that don't end with a return catches common cases.
+		// For other non-void functions, this is a warning (missing return statement)
+		// A full implementation would require control flow analysis to check all paths,
+		// but warning on functions that don't end with a return catches common cases.
 		else {
 			FLASH_LOG_FORMAT(Codegen, Warning, "Non-void function '{}' does not end with a return statement",
 							 func_decl.identifier_token().value());
 		}
 	}
 
-		// Emit function-level cleanup landing pad (ELF Phase 2: after return, before function end)
+	// Emit function-level cleanup landing pad (ELF Phase 2: after return, before function end)
 	emitPendingFunctionCleanupLP(func_decl.identifier_token());
 
 	symbol_table.exit_scope();
-		// Don't clear current_function_name_ here - let the top-level visitor manage it
-		// This allows nested contexts (like local struct member functions) to work properly
+	// Don't clear current_function_name_ here - let the top-level visitor manage it
+	// This allows nested contexts (like local struct member functions) to work properly
 }
 
 bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
-		// Struct declarations themselves don't generate IR - they just define types
-		// The type information is already registered in the global type system
+	// Struct declarations themselves don't generate IR - they just define types
+	// The type information is already registered in the global type system
 
-		// Skip pattern structs - they're templates and shouldn't generate code
+	// Skip pattern structs - they're templates and shouldn't generate code
 	if (gTemplateRegistry.isPatternStructName(node.name())) {
 		return false;
 	}
@@ -1204,25 +1191,25 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 
 	std::string_view struct_name = StringTable::getStringView(node.name());
 
-		// Generate member functions for both global and local structs
-		// Save the enclosing function context so member function visits don't clobber it
+	// Generate member functions for both global and local structs
+	// Save the enclosing function context so member function visits don't clobber it
 	bool is_local_struct = frame.saved_enclosing_function.isValid();
 
-		// Set struct context so member functions know which struct they belong to
-		// NOTE: We don't clear this until the next struct - the string must persist
-		// because IrOperands store string_view references to it
-		// For nested classes, we need to use the fully qualified name from TypeInfo
-		// If current_struct_name_ is valid, this is a nested class, so construct fully qualified name
+	// Set struct context so member functions know which struct they belong to
+	// NOTE: We don't clear this until the next struct - the string must persist
+	// because IrOperands store string_view references to it
+	// For nested classes, we need to use the fully qualified name from TypeInfo
+	// If current_struct_name_ is valid, this is a nested class, so construct fully qualified name
 	StringHandle lookup_name;
 	if (frame.saved_struct_name.isValid()) {
-			// This is a nested class - construct fully qualified name like "Outer::Inner"
+		// This is a nested class - construct fully qualified name like "Outer::Inner"
 		StringBuilder qualified_name_builder;
 		qualified_name_builder.append(StringTable::getStringView(frame.saved_struct_name))
 			.append("::")
 			.append(struct_name);
 		lookup_name = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 	} else {
-			// Top-level class - first try simple name, then look for namespace-qualified version
+		// Top-level class - first try simple name, then look for namespace-qualified version
 		lookup_name = StringTable::getOrInternStringHandle(struct_name);
 	}
 
@@ -1230,8 +1217,8 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 	if (type_it != getTypesByNameMap().end()) {
 		current_struct_name_ = type_it->second->name();
 	} else {
-			// If simple name lookup failed, search for namespace-qualified version
-			// e.g., for "simple", look for "std::simple" or other qualified names
+		// If simple name lookup failed, search for namespace-qualified version
+		// e.g., for "simple", look for "std::simple" or other qualified names
 		bool found_qualified = false;
 		for (const auto& [name_handle, type_info] : getTypesByNameMap()) {
 			std::string_view qualified_name = StringTable::getStringView(name_handle);
@@ -1251,8 +1238,8 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 		}
 	}
 
-		// For local structs, collect member functions for deferred generation
-		// For global structs, visit them immediately
+	// For local structs, collect member functions for deferred generation
+	// For global structs, visit them immediately
 	if (is_local_struct) {
 		for (const auto& member_func : node.member_functions()) {
 			LocalStructMemberInfo info;
@@ -1265,15 +1252,15 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 		FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - visiting members immediately, count=", node.member_functions().size());
 		for (const auto& member_func : node.member_functions()) {
 			const StringHandle member_name = member_func.getName();
-				// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
+			// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
 			FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - processing member function, is_constructor=", member_func.is_constructor);
 			try {
-					// Call the specific visitor directly instead of visit() to avoid clearing current_function_name_
+				// Call the specific visitor directly instead of visit() to avoid clearing current_function_name_
 				const ASTNode& func_decl = member_func.function_declaration;
 				if (func_decl.is<FunctionDeclarationNode>()) {
 					const auto& fn = func_decl.as<FunctionDeclarationNode>();
-						// Skip functions with unresolved auto parameters (abbreviated templates)
-						// These will be instantiated when called with concrete types
+					// Skip functions with unresolved auto parameters (abbreviated templates)
+					// These will be instantiated when called with concrete types
 					bool fn_has_auto = false;
 					for (const auto& p : fn.parameter_nodes()) {
 						if (p.is<DeclarationNode>()) {
@@ -1299,18 +1286,18 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 								" member=", StringTable::getStringView(member_name),
 								" const=", fn.is_const_member_function());
 						}
-							// Phase 5 Slices F-L: sema's end-of-normalization drain
-							// (AST-walk pass + ODR-use fixpoint pass) materializes every
-							// lazy member reachable from the top-level AST plus every
-							// sema-proven ODR-used residual before codegen runs. By the
-							// time this loop runs, any member listed in
-							// node.member_functions() that can be materialized already
-							// has a body. If fn still has no body here, it is either
-							// implicit (handled by visitFunctionDeclarationNode's
-							// implicit-member paths) or a template pattern/SFINAE-only
-							// stub that must not be emitted — visitFunctionDeclarationNode
-							// handles both cases by early-returning. No defensive
-							// materialization fallback needed here.
+						// sema's end-of-normalization drain
+						// (AST-walk pass + ODR-use fixpoint pass) materializes every
+						// lazy member reachable from the top-level AST plus every
+						// sema-proven ODR-used residual before codegen runs. By the
+						// time this loop runs, any member listed in
+						// node.member_functions() that can be materialized already
+						// has a body. If fn still has no body here, it is either
+						// implicit (handled by visitFunctionDeclarationNode's
+						// implicit-member paths) or a template pattern/SFINAE-only
+						// stub that must not be emitted — visitFunctionDeclarationNode
+						// handles both cases by early-returning. No defensive
+						// materialization fallback needed here.
 						visitFunctionDeclarationNode(fn);
 					} else {
 						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping member function with auto params (will be instantiated on call)");
@@ -1364,19 +1351,19 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 				} else if (func_decl.is<DestructorDeclarationNode>()) {
 					visitDestructorDeclarationNode(func_decl.as<DestructorDeclarationNode>());
 				} else if (func_decl.is<TemplateFunctionDeclarationNode>()) {
-						// For member functions of class template instantiations that are wrapped in
-						// TemplateFunctionDeclarationNode. If the inner function has a definition,
-						// check if all parameter types are resolved. If any parameter still has
-						// Type::Auto, this is a member function template (e.g., abbreviated template
-						// from constrained auto) that should only be instantiated when called.
+					// For member functions of class template instantiations that are wrapped in
+					// TemplateFunctionDeclarationNode. If the inner function has a definition,
+					// check if all parameter types are resolved. If any parameter still has
+					// Type::Auto, this is a member function template (e.g., abbreviated template
+					// from constrained auto) that should only be instantiated when called.
 					const auto& tmpl = func_decl.as<TemplateFunctionDeclarationNode>();
-						// If the TemplateFunctionDeclarationNode still carries non-empty template
-						// parameters, this is a member function template (e.g., a converting
-						// assignment operator like `template<U1,U2> operator=(const pair<U1,U2>&)`
-						// inside a class template instantiation). The parameters U1/U2 are not
-						// yet bound to concrete types, so generating code would encounter
-						// TypeCategory::UserDefined types with size=0 and crash. Skip it;
-						// concrete instantiations are registered separately when the function is called.
+					// If the TemplateFunctionDeclarationNode still carries non-empty template
+					// parameters, this is a member function template (e.g., a converting
+					// assignment operator like `template<U1,U2> operator=(const pair<U1,U2>&)`
+					// inside a class template instantiation). The parameters U1/U2 are not
+					// yet bound to concrete types, so generating code would encounter
+					// TypeCategory::UserDefined types with size=0 and crash. Skip it;
+					// concrete instantiations are registered separately when the function is called.
 					if (!tmpl.template_parameters().empty()) {
 						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping member function template with unbound template params (will be instantiated on call)");
 					} else if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
@@ -1413,8 +1400,8 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 		}
 	}  // End of if-else for local vs global struct
 
-		// Nested classes are always at class scope, not function scope. Clear
-		// function context before the shared reachable-struct walker descends.
+	// Nested classes are always at class scope, not function scope. Clear
+	// function context before the shared reachable-struct walker descends.
 	current_function_name_ = StringHandle();
 	current_function_mangled_name_ = StringHandle();
 	return true;
@@ -1423,7 +1410,7 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 void AstToIr::endStructDeclarationCodegen(const StructDeclarationNode& node) {
 	assert(!struct_codegen_frame_stack_.empty() && "unbalanced struct codegen frame stack");
 
-			// Generate global storage for static members
+	// Generate global storage for static members
 	StringHandle static_member_lookup_name = current_struct_name_.isValid()
 												 ? current_struct_name_
 												 : node.name();
@@ -1431,25 +1418,25 @@ void AstToIr::endStructDeclarationCodegen(const StructDeclarationNode& node) {
 	if (static_member_type_it != getTypesByNameMap().end()) {
 		const TypeInfo* type_info = static_member_type_it->second;
 
-				// Skip if we've already processed this TypeInfo pointer
-				// (same struct can be registered under multiple keys in getTypesByNameMap())
+		// Skip if we've already processed this TypeInfo pointer
+		// (same struct can be registered under multiple keys in getTypesByNameMap())
 		if (processed_type_infos_.count(type_info) > 0) {
-					// Already processed in generateStaticMemberDeclarations() or earlier visit
+			// Already processed in generateStaticMemberDeclarations() or earlier visit
 		} else {
 			processed_type_infos_.insert(type_info);
 
 			const StructTypeInfo* struct_info = type_info->getStructInfo();
 			if (struct_info) {
 				for (const auto& static_member : struct_info->static_members) {
-							// Build the qualified name for deduplication using type_info->name()
-							// This ensures consistency with generateStaticMemberDeclarations() which uses
-							// the type name from getTypesByNameMap() iterator (important for template instantiations)
+					// Build the qualified name for deduplication using type_info->name()
+					// This ensures consistency with generateStaticMemberDeclarations() which uses
+					// the type name from getTypesByNameMap() iterator (important for template instantiations)
 					StringBuilder qualified_name_sb;
 					qualified_name_sb.append(StringTable::getStringView(type_info->name())).append("::").append(StringTable::getStringView(static_member.getName()));
 					std::string_view qualified_name = qualified_name_sb.commit();
 					StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
 
-							// Skip if already emitted
+					// Skip if already emitted
 					if (emitted_static_members_.count(name_handle) > 0) {
 						continue;
 					}
@@ -1460,12 +1447,12 @@ void AstToIr::endStructDeclarationCodegen(const StructDeclarationNode& node) {
 					op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 					op.var_name = name_handle;  // Phase 3: Now using StringHandle instead of string_view
 
-							// Check if static member has an initializer
+					// Check if static member has an initializer
 					op.is_initialized = static_member.initializer.has_value();
 					if (op.is_initialized) {
-								// Evaluate the initializer expression
+						// Evaluate the initializer expression
 						ExprResult init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
-								// Convert to raw bytes
+						// Convert to raw bytes
 						{
 							unsigned long long value = 0;
 							if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
@@ -1508,20 +1495,20 @@ void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
 }
 
 void AstToIr::visitEnumDeclarationNode(const EnumDeclarationNode& node) {
-		// Enum declarations themselves don't generate IR - they just define types.
-		// The type information is already registered in the global type system.
-		// For file/namespace-scope enums, the enumerators are already in gSymbolTable
-		// from parsing and persist throughout compilation.
-		// For function-local enums (both scoped and unscoped), the parser-inserted
-		// symbols were popped when the function scope closed during parsing.
-		// Re-insert them into the codegen-local symbol table so identifier lookup
-		// can find them.
-		//
-		// Use the TypeIndex baked into the AST node at parse time (set in
-		// parse_enum_declaration immediately after add_enum_type) so we always
-		// reference the correct TypeInfo regardless of name collisions between
-		// local enums in different functions — getTypesByNameMap() uses emplace which
-		// is a no-op on duplicate keys and would return the wrong TypeInfo.
+	// Enum declarations themselves don't generate IR - they just define types.
+	// The type information is already registered in the global type system.
+	// For file/namespace-scope enums, the enumerators are already in gSymbolTable
+	// from parsing and persist throughout compilation.
+	// For function-local enums (both scoped and unscoped), the parser-inserted
+	// symbols were popped when the function scope closed during parsing.
+	// Re-insert them into the codegen-local symbol table so identifier lookup
+	// can find them.
+	//
+	// Use the TypeIndex baked into the AST node at parse time (set in
+	// parse_enum_declaration immediately after add_enum_type) so we always
+	// reference the correct TypeInfo regardless of name collisions between
+	// local enums in different functions — getTypesByNameMap() uses emplace which
+	// is a no-op on duplicate keys and would return the wrong TypeInfo.
 	const TypeIndex type_idx = node.type_index();
 	TypeInfo* type_info = tryGetTypeInfoMut(type_idx);
 	if (!type_info) {
@@ -1534,13 +1521,13 @@ void AstToIr::visitEnumDeclarationNode(const EnumDeclarationNode& node) {
 		return;
 
 	if (node.is_scoped()) {
-			// For scoped enums (enum class / enum struct): insert the *type name*
-			// into the codegen-local symbol table so that generateQualifiedIdentifierIr
-			// can find the correct TypeInfo for `Priority::High` without going through
-			// getTypesByNameMap() (which would collide when two functions define the same
-			// enum class name).
-			// symbol_table.insert is a no-op (returns false) for duplicate non-function
-			// symbols, so no pre-check is needed — file-scope enums are naturally skipped.
+		// For scoped enums (enum class / enum struct): insert the *type name*
+		// into the codegen-local symbol table so that generateQualifiedIdentifierIr
+		// can find the correct TypeInfo for `Priority::High` without going through
+		// getTypesByNameMap() (which would collide when two functions define the same
+		// enum class name).
+		// symbol_table.insert is a no-op (returns false) for duplicate non-function
+		// symbols, so no pre-check is needed — file-scope enums are naturally skipped.
 		Token type_token(Token::Type::Identifier, node.name(), 0, 0, 0);
 		ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
 			type_info->type_index_.withCategory(TypeCategory::Enum), enum_info->sizeInBits().value, type_token, CVQualifier::None, ReferenceQualifier::None);
@@ -2017,7 +2004,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				}
 				const BaseInitializer* base_init = findBaseInitializer(base);
 
-					// Get base class type info
+				// Get base class type info
 				const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 				if (!base_type_info) {
 					continue;  // Invalid base type index
@@ -2355,14 +2342,14 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 										continue;
 									}
 
-										// For struct members with brace initializers, we need to handle them specially
-										// Get the type info for this member
+									// For struct members with brace initializers, we need to handle them specially
+									// Get the type info for this member
 									TypeIndex member_type_index = member.type_index;
 									if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index)) {
 
-											// If this is a struct type, we need to initialize its members
+										// If this is a struct type, we need to initialize its members
 										if (member_type_info->struct_info_ && !member_type_info->struct_info_->members.empty()) {
-												// Build a map of member names to initializer expressions
+											// Build a map of member names to initializer expressions
 											std::unordered_map<StringHandle, const ASTNode*> member_values;
 											size_t positional_index = 0;
 
@@ -2381,25 +2368,25 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 												}
 											}
 
-												// Generate nested member stores for each member of the nested struct
+											// Generate nested member stores for each member of the nested struct
 											for (const StructMember& nested_member : member_type_info->struct_info_->members) {
-													// Determine initial value for nested member
+												// Determine initial value for nested member
 												std::optional<IrValue> nested_member_value;
 												StringHandle nested_member_name_handle = nested_member.getName();
 
 												if (member_values.count(nested_member_name_handle)) {
 													const ASTNode& init_expr = *member_values[nested_member_name_handle];
 
-														// Check if this is a nested braced initializer (two-level nesting)
+													// Check if this is a nested braced initializer (two-level nesting)
 													if (init_expr.is<InitializerListNode>()) {
-															// Handle nested braced initializers using the recursive helper
+														// Handle nested braced initializers using the recursive helper
 														const InitializerListNode& nested_init_list = init_expr.as<InitializerListNode>();
 
-															// Get the type info for the nested member
+														// Get the type info for the nested member
 														TypeIndex nested_member_type_index = nested_member.type_index;
 														if (const TypeInfo* nested_member_type_info = tryGetTypeInfo(nested_member_type_index)) {
 
-																// If this is a struct type, use the recursive helper
+															// If this is a struct type, use the recursive helper
 															if (nested_member_type_info->struct_info_ && !nested_member_type_info->struct_info_->members.empty()) {
 																generateNestedMemberStores(
 																	*nested_member_type_info->struct_info_,
@@ -2409,7 +2396,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 																	node.name_token());
 																continue;  // Skip the nested member store
 															} else {
-																	// For non-struct types with single-element initializer lists
+																// For non-struct types with single-element initializer lists
 																const auto& nested_initializers = nested_init_list.initializers();
 																if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
 																	ExprResult nested_init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
@@ -2481,7 +2468,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 										member_value = 0ULL;
 									}
 								} else {
-										// Default initializer exists but isn't an expression, zero-initialize
+									// Default initializer exists but isn't an expression, zero-initialize
 									if (member.type_index.category() == TypeCategory::Int || member.type_index.category() == TypeCategory::Long ||
 										member.type_index.category() == TypeCategory::Short || member.type_index.category() == TypeCategory::Char) {
 										member_value = 0ULL;	 // Zero for integer types
@@ -2494,7 +2481,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									}
 								}
 							} else {
-									// Check if this is a struct type with a constructor
+								// Check if this is a struct type with a constructor
 								bool is_struct_with_constructor = false;
 								if (member.type_index.category() == TypeCategory::Struct) {
 									const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
@@ -2642,7 +2629,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								if (init_expr_node.as<InitializerListNode>().size() == 0) {
 									member_value = isFloatingPointType(member.memberType()) ? IrValue{0.0} : IrValue{0ULL};
 								} else if ((is_struct_type(member.type_index.category()))) {
-										// Struct aggregate brace-init (e.g., inner{1, 2}): emit per-member stores.
+									// Struct aggregate brace-init (e.g., inner{1, 2}): emit per-member stores.
 									if (const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
 										member_type_info && member_type_info->getStructInfo()) {
 										const StructTypeInfo* nested_info = member_type_info->getStructInfo();
@@ -2679,7 +2666,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									}
 									member_value = 0ULL;	 // can't resolve struct info, zero-init
 								} else {
-										// Scalar members with multiple brace-init values are not valid C++.
+									// Scalar members with multiple brace-init values are not valid C++.
 									throw CompileError("Brace-initializer used on non-array member '" +
 													   std::string(StringTable::getStringView(member.getName())) +
 													   "': multiple initializer values for a scalar member.");
@@ -2688,7 +2675,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								member_value = 0ULL;	 // unexpected node type: fall back to zero
 							} else {
 								ExprResult init_operands = visitExpressionNode(init_expr_node.as<ExpressionNode>());
-									// Extract just the value (third element of init_operands)
+								// Extract just the value (third element of init_operands)
 								if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
 									member_value = *temp_var;
 								} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
@@ -2700,8 +2687,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								} else {
 									member_value = 0ULL;	 // fallback
 								}
-									// Single-element brace-init for array member (e.g., arr{7} for int arr[4]):
-									// emit per-element stores (elem[0] = value, elem[1..N-1] = zero).
+								// Single-element brace-init for array member (e.g., arr{7} for int arr[4]):
+								// emit per-element stores (elem[0] = value, elem[1..N-1] = zero).
 								if (member.is_array && !member.array_dimensions.empty()) {
 									const size_t arr_count = member.array_dimensions[0];
 									const size_t arr_elem_size = arr_count > 0 ? member.size / arr_count : member.size;
@@ -2837,18 +2824,18 @@ void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& no
 	if (!node.is_materialized())
 		return;
 
-		// Phase 16: track whether sema normalized this destructor body.
+	// track whether sema normalized this destructor body.
 	sema_normalized_current_function_ = sema_ &&
 										sema_->hasNormalizedBody(static_cast<const void*>(&(*node.get_definition())));
 
-		// Reset the temporary variable counter for each new destructor
-		// Destructors are always member functions, so reserve TempVar(1) for 'this'
+	// Reset the temporary variable counter for each new destructor
+	// Destructors are always member functions, so reserve TempVar(1) for 'this'
 	var_counter = TempVar(2);
 
-		// Clear global TempVar metadata to prevent stale data from bleeding into this function
+	// Clear global TempVar metadata to prevent stale data from bleeding into this function
 	GlobalTempVarMetadataStorage::instance().clear();
 
-		// Set current function name for static local variable mangling
+	// Set current function name for static local variable mangling
 	current_function_name_ = node.name();
 	static_local_names_.clear();
 
@@ -2891,36 +2878,36 @@ void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& no
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(dtor_decl_op), node.name_token()));
 	symbol_table.enter_scope(ScopeType::Function);
 
-		// Add 'this' pointer to symbol table for member access
-		// Look up the struct type to get its type index and size
+	// Add 'this' pointer to symbol table for member access
+	// Look up the struct type to get its type index and size
 	auto type_it = getTypesByNameMap().find(node.struct_name());
 	if (type_it != getTypesByNameMap().end()) {
 		const TypeInfo* struct_type_info = type_it->second;
 		const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 		if (struct_info) {
-				// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
+			// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
 			Token this_token = node.name_token();  // Use destructor token for location
 			auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
 				struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
-				// Mark 'this' as a pointer to struct (not a struct value)
+			// Mark 'this' as a pointer to struct (not a struct value)
 			this_type.as<TypeSpecifierNode>().add_pointer_level();
 			auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 
-				// Add 'this' to symbol table (it's the implicit first parameter)
+			// Add 'this' to symbol table (it's the implicit first parameter)
 			symbol_table.insert("this"sv, this_decl);
 		}
 	}
 
-		// C++ destruction order:
-		// 1. Destructor body
-		// 2. Member variables destroyed (automatic for non-class types)
-		// 3. Base class destructors (in REVERSE declaration order)
+	// C++ destruction order:
+	// 1. Destructor body
+	// 2. Member variables destroyed (automatic for non-class types)
+	// 3. Base class destructors (in REVERSE declaration order)
 
-		// Step 1: Visit the destructor body
+	// Step 1: Visit the destructor body
 	const BlockNode& block = node.get_definition().value().as<BlockNode>();
-		// Pre-scan: populate label_scope_depth_map_ so that any goto inside the
-		// destructor body emits the correct scope-exit destructors.
+	// Pre-scan: populate label_scope_depth_map_ so that any goto inside the
+	// destructor body emits the correct scope-exit destructors.
 	label_scope_depth_map_.clear();
 	block.get_statements().visit([&](const ASTNode& stmt) {
 		prescanLabels(stmt, scope_stack_.size());
@@ -2929,26 +2916,26 @@ void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& no
 		visit(statement);
 	});
 
-		// Step 2: Member destruction is automatic for primitive types (no action needed)
+	// Step 2: Member destruction is automatic for primitive types (no action needed)
 
-		// Step 3: Call base class destructors in REVERSE order
+	// Step 3: Call base class destructors in REVERSE order
 	auto struct_type_it = getTypesByNameMap().find(node.struct_name());
 	if (struct_type_it != getTypesByNameMap().end()) {
 		const TypeInfo* struct_type_info = struct_type_it->second;
 		const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 		if (struct_info && !struct_info->base_classes.empty()) {
-				// Iterate through base classes in reverse order
+			// Iterate through base classes in reverse order
 			for (auto it = struct_info->base_classes.rbegin(); it != struct_info->base_classes.rend(); ++it) {
 				const auto& base = *it;
 
-					// Get base class type info
+				// Get base class type info
 				const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 				if (!base_type_info) {
 					continue;  // Invalid base type index
 				}
 
-					// Build destructor call: Base::~Base(this)
+				// Build destructor call: Base::~Base(this)
 				DestructorCallOp dtor_op;
 				dtor_op.struct_name = base_type_info->name();
 				dtor_op.object = StringTable::getOrInternStringHandle("this");
@@ -2958,11 +2945,11 @@ void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& no
 		}
 	}
 
-		// Add implicit return for destructor (destructors don't have explicit return statements)
+	// Add implicit return for destructor (destructors don't have explicit return statements)
 	emitVoidReturn(node.name_token());
 
 	symbol_table.exit_scope();
-		// Don't clear current_function_name_ here - let the top-level visitor manage it
+	// Don't clear current_function_name_ here - let the top-level visitor manage it
 }
 
 // Generate IR for std::initializer_list construction
