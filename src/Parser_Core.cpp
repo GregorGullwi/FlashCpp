@@ -202,8 +202,8 @@ InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const std::v
 	return result;
 }
 
-// Helper to check if a type name is a dependent template placeholder
-// Uses TypeInfo metadata first (O(1)), falls back to string parsing for backward compatibility
+// Helper to check if a type name is a dependent template placeholder.
+// This now relies on canonical TypeInfo metadata instead of reconstructing from strings.
 // Returns: {is_dependent, base_template_name}
 std::pair<bool, std::string_view> isDependentTemplatePlaceholder(std::string_view type_name) {
 	// First try TypeInfo-based detection (O(1), preferred)
@@ -213,12 +213,6 @@ std::pair<bool, std::string_view> isDependentTemplatePlaceholder(std::string_vie
 		if (type_info->isTemplateInstantiation()) {
 			return {true, StringTable::getStringView(type_info->baseTemplateName())};
 		}
-	}
-
-	// Fallback: check via extractBaseTemplateName (TypeInfo metadata)
-	std::string_view base_name = extractBaseTemplateName(type_name);
-	if (!base_name.empty()) {
-		return {true, base_name};
 	}
 
 	return {false, {}};

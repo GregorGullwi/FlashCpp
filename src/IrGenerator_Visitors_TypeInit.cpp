@@ -291,56 +291,18 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 		try {
 			if (info.function_node.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func = info.function_node.as<FunctionDeclarationNode>();
-				// Phase 5 Slice E: the function-shaped `materializeLazyMemberIfNeeded`
-				// fallback that used to live here is now dead. All paths that feed this
-				// queue materialize the lazy body earlier (the struct visitor in
-				// `IrGenerator_Visitors_Decl.cpp`, the `queueDeferredMemberFunctions`
-				// lambda in `IrGenerator_Call_Direct.cpp`, and the per-call
-				// `queueDeferredMemberFunctionFromNode` sites in
-				// `IrGenerator_Call_Direct.cpp`, `IrGenerator_Call_Indirect.cpp`, and
-				// `IrGenerator_MemberAccess.cpp`), so by the time a function node is
-				// dequeued here it already has a definition.
+				// Deferred function entries are expected to arrive fully materialized.
+				// Queue feeders normalize/materialize them before enqueue, so reaching
+				// this path with a stub indicates a broken sema/codegen contract.
+				if (!func.is_materialized()) {
+					throw InternalError("Deferred function queue received an unmaterialized function");
+				}
 				normalizePendingSemanticRoots();
 				visitFunctionDeclarationNode(func);
 			} else if (info.function_node.is<ConstructorDeclarationNode>()) {
 				const ConstructorDeclarationNode& ctor = info.function_node.as<ConstructorDeclarationNode>();
-				if (!ctor.is_materialized() && parser_) {
-					// Phase 5 Slice E: the `materializeLazyMemberIfNeeded(...)` fallback that
-					// used to live here for constructor-shaped lazy entries is no longer reachable
-					// after Slices A–D. All constructor materialization paths that feed this
-					// queue now run through sema (`ensureSelectedConstructorMaterialized`,
-					// `tryAnnotateInitListConstructorArgs`, and friends) before the struct
-					// visitor queues the ctor, so by the time we revisit a ctor with no body
-					// here the struct already exposes a materialized replacement we can dispatch
-					// to directly. The replacement_ctor scan below remains the defense-in-depth
-					// path for ctors whose original definition-less stub is still in the queue.
-					bool visited_replacement_ctor = false;
-					if (auto struct_it = getTypesByNameMap().find(info.struct_name);
-						struct_it != getTypesByNameMap().end()) {
-						if (const StructTypeInfo* struct_info = struct_it->second->getStructInfo()) {
-							for (const auto& member_func : struct_info->member_functions) {
-								if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
-									continue;
-								}
-								const auto& replacement_ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-								if (!replacement_ctor.is_materialized()) {
-									continue;
-								}
-								if (replacement_ctor.name() == ctor.name() &&
-									replacement_ctor.parameter_nodes().size() == ctor.parameter_nodes().size()) {
-									normalizePendingSemanticRoots();
-									visitConstructorDeclarationNode(replacement_ctor);
-									current_function_name_ = saved_function;
-									current_namespace_stack_ = saved_namespace;
-									visited_replacement_ctor = true;
-									break;
-								}
-							}
-						}
-					}
-					if (visited_replacement_ctor) {
-						continue;
-					}
+				if (!ctor.is_materialized()) {
+					throw InternalError("Deferred constructor queue received an unmaterialized constructor");
 				}
 				normalizePendingSemanticRoots();
 				visitConstructorDeclarationNode(info.function_node.as<ConstructorDeclarationNode>());

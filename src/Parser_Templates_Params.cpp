@@ -1734,9 +1734,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe);
 		if (!arg.is_value &&
 			(type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias || type_node.category() == TypeCategory::Template)) {
-			// BUGFIX: Use the original token value instead of looking up via type_index
-			// When template parameters are parsed, they may have type_index=0 (void),
-			// which causes incorrect dependency checks. The token value is always correct.
+			// Prefer the source token spelling when it exists, but fall back to the
+			// canonical gTypeInfo name for qualified/composite cases that lost the token text.
 			std::string_view type_name = type_node.token().value();
 			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, type_name from token: {}", type_name);
 
@@ -1750,10 +1749,9 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				FLASH_LOG_FORMAT(Templates, Debug, "Full type name from gTypeInfo: {}", full_type_name);
 			}
 
-			// Fallback to gTypeInfo lookup only if token is empty
-			if (type_name.empty()) {
+			if (type_name.empty() && !full_type_name.empty()) {
 				type_name = full_type_name;
-				FLASH_LOG(Templates, Debug, "Fallback: using full type name");
+				FLASH_LOG(Templates, Debug, "Using canonical full type name for dependency check");
 			}
 
 			if (!type_name.empty()) {
@@ -1823,7 +1821,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				}
 			}
 
-			// Also check for type_index=0 as a fallback indicator of dependent types
+			// An invalid type_index still marks an unresolved dependent placeholder type.
 			if (!arg.is_dependent && !type_node.type_index().is_valid()) {
 				arg.is_dependent = true;
 				FLASH_LOG(Templates, Debug, "Template argument is dependent (placeholder with type_index=0)");

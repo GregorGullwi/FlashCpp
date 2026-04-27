@@ -275,13 +275,14 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 	// Temporarily add template parameters to type system using RAII scope guard (Phase 3)
 	FlashCpp::TemplateParameterScope template_scope;
-	for (const auto& param : template_params) {
+	for (auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
-			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
 				type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 				getTypesByNameMap().emplace(type_info.name(), &type_info);
+				tparam.set_registered_type_index(type_info.type_index_);
 				template_scope.addParameter(&type_info);
 			}
 		}

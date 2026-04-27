@@ -72,12 +72,11 @@ Removal direction:
 
 Representative sites:
 
-- `src\ExpressionSubstitutor.cpp:951` and `src\Parser_Templates_Lazy.cpp:1012` - general fallback substitution for remaining template-dependent expressions.
+- `src\ExpressionSubstitutor.cpp:951` and `src\Parser_Templates_Lazy.cpp:1012` - general substitution for remaining template-dependent expressions.
 - `src\ExpressionSubstitutor.cpp:1537` - recovers template arguments from type names when TypeInfo has no stored args.
 - `src\Parser_Templates_Inst_ClassTemplate.cpp:4049`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4589`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4787`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4813`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5246`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5844`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5904` - non-type defaults, variable templates, array dimensions, initializers, and static members use catch-all substitution or AST fallback passes.
-- `src\Parser_Templates_Inst_Substitution.cpp:1185`, `src\Parser_Templates_Inst_Substitution.cpp:1737`, `src\Parser_Templates_Inst_Substitution.cpp:1935` - qualifier-stripped, stale-TypeIndex, and name-based template parameter recovery.
 - `src\Parser_Templates_Substitution.cpp:692`, `src\Parser_Templates_Substitution.cpp:762`, `src\Parser_Templates_Substitution.cpp:848`, `src\Parser_Templates_Substitution.cpp:1633` - pack and template parameter lookup fallbacks after primary scope information is unavailable.
-- `src\Parser_Templates_Params.cpp:1826` - `type_index == 0` is treated as a fallback indicator for dependent types.
+- `src\Parser_Templates_Params.cpp:1826` - invalid `type_index` is still treated as an unresolved dependent placeholder signal.
 
 Missing feature:
 
@@ -92,7 +91,7 @@ Removal direction:
 - Introduce a single substitution context object that carries type parameters, non-type values, packs, current instantiation, and namespace/member context through all template instantiation paths.
 - Store canonical template arguments and pattern-to-instantiation links in TypeInfo/TemplateRegistry at creation time rather than reconstructing from strings.
 - Replace `type_index == 0` dependent detection with explicit dependent placeholder metadata.
-- Make ExpressionSubstitutor a normal part of substitution with explicit preconditions, not a catch-all fallback after parser/template code failed to substitute.
+- Make ExpressionSubstitutor a normal part of substitution with explicit preconditions instead of a catch-all recovery path after parser/template code failed to substitute.
 
 ### 4. Lazy member materialization fallback history
 
@@ -101,7 +100,6 @@ Representative sites:
 - `src\FlashCppMain.cpp:602` - deferred member generation is described as coming from a struct search fallback in call lowering.
 - `src\IrGenerator_Call_Direct.cpp:1074`, `src\IrGenerator_Call_Direct.cpp:1390`, `src\IrGenerator_Call_Direct.cpp:1692` - comments document historical or retained lazy member materialization fallbacks around direct calls.
 - `src\IrGenerator_Call_Indirect.cpp:1081` - historical indirect-call lazy member fallback.
-- `src\IrGenerator_Visitors_TypeInit.cpp:295`, `src\IrGenerator_Visitors_TypeInit.cpp:308`, `src\IrGenerator_Visitors_TypeInit.cpp:535` - comments say materialize-and-retry fallbacks were removed or are expected dead.
 - `src\SemanticAnalysis.cpp:3812`, `src\SemanticAnalysis.cpp:5257`, `src\SemanticAnalysis.cpp:5458` - sema comments identify lazy materialization as the replacement for codegen-side fallbacks.
 
 Missing feature:
@@ -222,3 +220,105 @@ These are not C++ semantic fallbacks. They may still deserve cleanup, but they d
 - Add temporary hard-fail guards behind a debug flag for codegen fallbacks in `IrGenerator_Call_Direct.cpp`, `IrGenerator_Expr_Operators.cpp`, `IrGenerator_Expr_Conversions.cpp`, and `IrGenerator_MemberAccess.cpp` to measure which sites still execute in the current corpus.
 - For each executing site, add a regression test that demonstrates the sema/template metadata gap before removing the fallback.
 - Prefer deleting comments for already-removed historical fallbacks once their invariant is enforced by a test or assertion.
+
+## Probe results from 2026-04-27 validation
+
+The initial audit above was architectural. Several template-instantiation fallbacks were then probed directly by replacing them with hard failures or by deleting the fallback path and running the full Windows validation (`.\build_flashcpp.bat` and `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`). The audit document keeps only the still-relevant post-audit state below rather than a historical list of removed fallbacks.
+
+### Proven active in the current corpus
+
+1. `src\Parser_Templates_Inst_ClassTemplate.cpp` — unresolved template-default catch-all
+   - Previous behavior: if no handler resolved a default template argument, the code pushed a placeholder (`void` for type params, `0` for non-type params).
+   - Probe result: replacing it with a hard error broke `tests\test_template_template_default_ret42.cpp`.
+   - Conclusion: this fallback is still active and cannot be removed safely until the default-argument substitution gap is fixed at the root.
+
+2. `src\Parser_Templates_Inst_ClassTemplate.cpp` — unresolved class-template type argument falls back to using the original `TypeSpecifierNode` as-is
+   - Probe result: replacing this with a hard error broke deferred-base and pack-expansion cases including `tests\test_nttp_base_class_substitution_ret0.cpp`, `tests\test_pack_expansion_base_class_ret0.cpp`, `tests\test_ratio_negative_lazy_member_ret0.cpp`, and `tests\test_type_traits_dependent_member_nttp_ret42.cpp`.
+   - Conclusion: this fallback is active and currently carries real class-template substitution traffic, especially around deferred base resolution and dependent member/type-trait cases.
+
+3. `src\Parser_Templates_Params.cpp` — `type_index == 0` dependent-placeholder path
+    - Probe result: replacing the dependent-marking path with a hard error broke comparison/operator template cases including `comparison_operators_ret1.cpp`, `float_comparisons_ret1.cpp`, `test_const_member_with_param_ret255.cpp`, `test_decltype_function_template_base_ret42.cpp`, and multiple spaceship tests.
+    - Probe result: wiring `parse_member_function_template(...)` in `src\Parser_Templates_Function.cpp` to preserve `registered_type_index()` on type template parameters was safe, but did not change that failing cluster, so member-function-template parameter registration is not the only remaining producer of invalid placeholder type indices.
+    - Conclusion: invalid/placeholder `TypeIndex` is still an active dependency signal in the current parser/template pipeline and cannot be removed before the placeholder metadata path is finished.
+
+4. `src\Parser_Templates_Inst_ClassTemplate.cpp` — non-type default evaluation fallback via `tryAppendEvaluatedTemplateValue(...)`
+   - Probe result: replacing it with a hard error broke `tests\test_expr_subst_noexcept_wrap_ret0.cpp`, `tests\test_template_spec_outofline_default_arg_ret42.cpp`, and `tests\test_template_spec_outofline_default_arg_namespaced_ret42.cpp`.
+   - Conclusion: this fallback is active in real default-argument instantiation paths and still covers NTTP defaults that the specialized handlers do not resolve.
+
+5. `src\Parser_Templates_Inst_ClassTemplate.cpp` — variable-template constexpr evaluation fallback
+   - Probe result: replacing it with a hard error broke `tests\test_variable_template_nttp_base_class_ret0.cpp`.
+   - Conclusion: this variable-template bridge is active and still needed when a substituted expression should be resolved through a variable template before generic constexpr evaluation.
+
+6. `src\Parser_Templates_Substitution.cpp` — fold-expression non-type parameter-pack fallback
+   - Probe result: replacing the path that reconstructs fold-pack values from `template_params`/`template_args` with a hard error broke `tests\test_fold_nontype_ret42.cpp`.
+   - Conclusion: fold substitution still loses enough non-type pack metadata that unary/binary fold evaluation needs this recovery path for the current corpus.
+
+7. `src\Parser_Templates_Substitution.cpp` — `sizeof...` pack-size recovery via `pack_param_info_`
+   - Probe result: replacing the `get_pack_size(pack_name)` rescue with a hard error broke `tests\test_explicit_template_pack_sizeof_param_name_ret0.cpp`.
+   - Conclusion: `sizeof...` still depends on secondary pack-size metadata when the primary scope-based and template-arg-based pack counting paths do not find the named pack.
+
+8. `src\Parser_Templates_Substitution.cpp` — `sizeof...` template-argument reconstruction fallback
+   - Probe result: replacing the `get_template_param_pack_size(pack_name)` branch with a hard error broke `tests\test_explicit_multi_dep_pack_ret0.cpp`, `tests\test_explicit_nontype_pack_not_in_func_sig_ret0.cpp`, `tests\test_explicit_template_pack_fill_c_varargs_ret0.cpp`, `tests\test_explicit_template_pack_sizeof_param_name_ret0.cpp`, `tests\test_explicit_type_pack_not_in_func_sig_ret0.cpp`, `tests\test_explicit_variadic_pack_deduction_ret0.cpp`, `tests\test_multi_dep_pack_ret0.cpp`, `tests\test_multi_pack_sizeof_deduction_ret0.cpp`, `tests\test_multi_type_pack_implicit_deduction_ret0.cpp`, `tests\test_nested_multi_dep_pack_ret0.cpp`, and `tests\test_pack_nonpack_mixed_explicit_deduction_ret0.cpp`.
+   - Probe result: replacing the later path that derives the pack size from `template_params`/`template_args` with a hard error broke `tests\test_explicit_template_pack_sizeof_param_name_ret0.cpp`, `tests\test_method_on_temporary_ret0.cpp`, `tests\test_pack_expansion_in_template_body_ret0.cpp`, `tests\test_sizeof_pack_class_template_ret0.cpp`, `tests\test_sizeof_pack_name_match_ret0.cpp`, `tests\test_sizeof_pack_namespace_member_template_ret0.cpp`, `tests\test_template_sizeof_pack_ret3.cpp`, and `tests\test_var_template_variadic_primary_ret42.cpp`.
+   - Conclusion: both the authoritative `template_param_pack_sizes_` lookup and the later template-argument reconstruction path are still active in the current corpus, so `sizeof...` handling still depends on preserved per-pack size metadata as well as a broader reconstruction fallback after scope-local pack facts have been dropped.
+
+9. `src\Parser_Templates_Lazy.cpp` — lazy static-member general substitution path
+    - Probe result: replacing the general ExpressionSubstitutor pass with a hard error broke a wide lazy-static-member cluster including `template_ttp_static_constexpr_member_ret0.cpp`, `test_alias_base_static_member_ret0.cpp`, `test_integral_constant_simple_ret30.cpp`, `test_ratio_lazy_static_member_ret0.cpp`, `test_template_static_member_initializer_scalar_brace_ret42.cpp`, and `test_type_traits_dependent_member_nttp_ret42.cpp`.
+    - Probe result: replacing the later `rebindStaticMemberInitializerFunctionCalls(...)` step with a hard error also broke a broad cluster including `template_ttp_static_constexpr_member_mixed_args_ret0.cpp`, `test_alias_template_nested_member_value_ret42.cpp`, `test_integral_constant_comprehensive_ret100.cpp`, `test_ratio_equal_deferred_base_ret1.cpp`, `test_template_template_forward_decl_definition_ret0.cpp`, and `test_type_traits_patterns_ret42.cpp`.
+    - Probe result: replacing the later dependency pre-instantiation scan (`collectLazyStaticDependencies(...)` / `instantiateLazyStaticMember(...)`) with a hard error broke that same broad lazy-static-member cluster.
+    - Conclusion: lazy static-member initialization still depends on three distinct steps after the specialized handlers — the general ExpressionSubstitutor pass, call-target rebinding, and dependency pre-instantiation — so none of them are removable yet.
+
+10. `src\Parser_Templates_Inst_ClassTemplate.cpp` — static-member initializer substitution fallback
+   - Probe result: replacing the general initializer substitution pass with a hard error broke a broad static-member cluster including `template_ttp_static_constexpr_member_ret0.cpp`, `test_array_enable_if_deduction_ret0.cpp`, `test_dependent_template_instantiation_ret0.cpp`, `test_static_members_template_ret0.cpp`, `test_template_static_member_outofline_ret42.cpp`, and `test_var_template_inner_impl_defaulted_outer_arg_ret42.cpp`.
+   - Conclusion: instantiated static-member initializers still rely on a catch-all substitution pass after the specialized rewrites, especially for dependent trait/default/member-access cases.
+
+11. `src\Parser_Templates_Inst_Substitution.cpp` — `sizeof(T)` / `alignof(T)` type-name mapping fallback
+   - Probe result: wiring class-template parameters to call `set_registered_type_index(...)` after `add_template_param_type(...)` in `src\Parser_Templates_Class.cpp`, then replacing the old name-based mapping pass with a hard invariant, still passed `tests\test_dependent_sizeof_alignof_template_arg_ret0.cpp` and the full suite.
+   - Conclusion: this fallback was covering a real metadata gap in class-template parameter registration, but the gap is now fixed and the fallback has been removed.
+
+12. `src\Parser_Templates_Params.cpp` — empty-token type-name recovery
+   - Probe result: replacing the `type_name = full_type_name` path with a hard error broke `tests\test_variable_template_in_enable_if_ret0.cpp`.
+   - Conclusion: template-argument dependency detection still needs the canonical `gTypeInfo` full-name path when the parsed token spelling is empty, especially around variable-template `enable_if` cases. The code now treats this as ordinary spelling selection rather than a special fallback branch.
+
+13. `src\Parser_Templates_Inst_Deduction.cpp` — function return-type substitution fallback
+    - Probe result: hard-failing the “simple substitution” return-type path broke a broad deduction cluster including `concept_abbreviated_ret0.cpp`, `concept_comprehensive_ret15.cpp`, `template_inst_simple_ret5.cpp`, `test_func_template_dependent_default_nontype_sizeof_ret0.cpp`, `test_nested_pack_return_type_ret42.cpp`, and many other concept/pack/trailing-return cases.
+    - Probe result: additionally copying `template_declaration_position()` / `template_body_position()` through `copy_function_properties(...)` was safe, but hard-failing the fallback still broke the same broad cluster, so missing saved parse positions are not the only reason this old path still fires.
+    - Probe result: forcing reparse whenever declaration source was available shrank the failure set to `concept_abbreviated_ret0.cpp`, `test_abbrev_tmpl_trailing_decltype_ret0.cpp`, `test_constrained_auto_param_ret0.cpp`, `test_constrained_auto_u64_codegen_ret1.cpp`, `test_eh_function_try_block_auto_param_ret0.cpp`, plus a runtime crash in `test_ns_qualified_template_call_ret42.cpp`.
+    - Conclusion: the current reparse gate is too conservative for most template functions, but a smaller residual cluster around abbreviated/auto return handling, function-try-block parsing, and one namespace-qualified call case still prevents removing the old return-type path outright.
+
+14. `src\Parser_Templates_Inst_Deduction.cpp` — template body copy fallback
+   - Probe result: replacing the direct body-pointer copy with a hard error broke `decltype_trailing_return_ret0.cpp`, `test_dependent_swap_decltype_noexcept_ret0.cpp`, `test_namespaced_pair_swap_sfinae_ret0.cpp`, `test_std_swap_enable_if_alias_base_ret0.cpp`, and `test_template_template_forward_decl_definition_ret0.cpp`.
+   - Probe result: additionally copying saved template declaration/body positions through `copy_function_properties(...)` was safe, but hard-failing the fallback still broke that same body-reuse cluster, so some instantiations still arrive without a usable reparse path even after metadata propagation.
+   - Conclusion: some instantiations still bypass the body reparse path and require the old direct-body reuse branch, especially for forward-declared and SFINAE-heavy function templates.
+
+15. `src\Parser_Templates_Inst_ClassTemplate.cpp` — non-type default evaluation fallback
+   - Probe result: replacing the `tryAppendEvaluatedTemplateValue(...)` path with a hard error broke `tests\test_expr_subst_noexcept_wrap_ret0.cpp`, `tests\test_template_spec_outofline_default_arg_ret42.cpp`, and `tests\test_template_spec_outofline_default_arg_namespaced_ret42.cpp`.
+   - Conclusion: specialized NTTP-default handlers still miss some out-of-line and substituted default-argument forms, so the evaluator fallback remains active.
+
+16. `src\Parser_Templates_Inst_ClassTemplate.cpp` — deferred-base type-specifier passthrough fallback
+   - Probe result: replacing the unresolved `TypeSpecifierNode` passthrough with a hard error broke `tests\test_nttp_base_class_substitution_ret0.cpp`, `tests\test_pack_expansion_base_class_ret0.cpp`, `tests\test_pack_expansion_member_type_base_ret0.cpp`, `tests\test_ratio_equal_deferred_base_ret1.cpp`, `tests\test_ratio_negative_lazy_member_ret0.cpp`, `tests\test_ternary_deferred_base_chained_ret0.cpp`, `tests\test_ternary_deferred_base_ret0.cpp`, and `tests\test_type_traits_dependent_member_nttp_ret42.cpp`.
+   - Conclusion: deferred-base instantiation still needs to preserve unresolved type-specifier arguments verbatim when earlier substitution cannot materialize them.
+
+17. `src\Parser_Templates_Inst_ClassTemplate.cpp` — variable-template constexpr bridge
+   - Probe result: replacing the variable-template evaluation bridge with a hard error broke `tests\test_variable_template_nttp_base_class_ret0.cpp`.
+   - Conclusion: deferred-base argument evaluation still needs a dedicated variable-template path before generic constexpr evaluation.
+
+### Confidence update
+
+The audit is now backed by direct suite evidence for several representative template fallbacks:
+
+- some narrow substitution recoveries were already dead in the current corpus and have now been removed;
+- the function-shaped and constructor-shaped deferred-member queue bridges in `IrGenerator_Visitors_TypeInit.cpp` were also dead in the current corpus and have now been replaced with hard invariants;
+- the array-dimension substitution fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was also dead in the current corpus and has now been removed;
+- the base-class instantiation-name fallback in `Parser_Templates_Inst_Substitution.cpp` was dead in the current corpus and has now been removed;
+- the `sizeof(T)` / `alignof(T)` type-name mapping fallback in `Parser_Templates_Inst_Substitution.cpp` was eliminated by registering class-template parameter type indices canonically in `Parser_Templates_Class.cpp`, and the old name-based recovery has now been removed;
+- the instantiated-member-alias copy fallback in `Parser_Templates_Inst_Substitution.cpp` was dead in the current corpus and has now been removed;
+- the fold-expression `pack_param_info_` fallback in `Parser_Templates_Substitution.cpp` was dead in the current corpus and has now been removed;
+- the `sizeof...` class-template pack-context fallback in `Parser_Templates_Substitution.cpp` was also dead in the current corpus and has now been removed;
+- the dependent-template placeholder string-parsing fallback in `Parser_Core.cpp` was dead in the current corpus and has now been removed;
+- the deferred-base direct constexpr-evaluation fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was dead in the current corpus and has now been removed;
+- the AST-node static-member fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was dead in the current corpus and has now been removed;
+- the unknown-member-function copy fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was dead in the current corpus and has now been removed;
+- the `Parser_Templates_Substitution.cpp` direct unqualified type-lookup step is required ordinary lookup, so the misleading fallback wording has been removed even though the behavior stays;
+- multiple dependent-type/deduction fallback paths are definitely active;
+- the larger ExpressionSubstitutor/static-initializer/pack-size/dependent-placeholder fallback classes should still be assumed active until probed or root-fixed individually.

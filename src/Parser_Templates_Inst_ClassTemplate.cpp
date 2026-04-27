@@ -2209,10 +2209,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// For Tuple<int>: template_args = [int], first_variadic_index = 1
 						// base_template_args = [] (Tuple<>)
 					} else {
-						// Fallback: assume single template parameter for non-variadic cases
-						if (!template_args.empty()) {
-							base_template_args.push_back(template_args[0]);
-						}
+						throw InternalError("Base template argument mapping missing for non-variadic base instantiation");
 					}
 
 					FLASH_LOG(Templates, Debug, "Base class instantiation: ", base_template_name, " with ", base_template_args.size(), " args");
@@ -4810,13 +4807,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 
-						// Fallback: try to evaluate the expression directly
-						if (auto value = try_evaluate_constant_expression(arg_info.node)) {
-							TemplateTypeArg val_arg(value->value, value->type);
-							val_arg.is_pack = arg_info.is_pack;
-							resolved_args.push_back(val_arg);
-							continue;
-						}
+						throw InternalError("Deferred base arguments should be resolved by specialized handlers");
 					} else if (std::holds_alternative<BinaryOperatorNode>(expr) || std::holds_alternative<TernaryOperatorNode>(expr)) {
 						// Handle binary/ternary operator expressions like: R1<T>::num < R2<T>::num
 						// These need template parameter substitution before evaluation
@@ -4879,8 +4870,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 
-				// This is expected for dependent types in template metaprogramming
-				// The template may still work correctly with the fallback path
+				// This is expected for dependent types in template metaprogramming.
+				// Leave the base unresolved instead of instantiating it with wrong arguments.
 				FLASH_LOG(Templates, Debug, "Could not resolve deferred template base argument for '",
 						  StringTable::getStringView(deferred_base.base_template_name), "'; skipping base instantiation");
 				unresolved_arg = true;
@@ -5243,66 +5234,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				member_size *= dim_size;
 			}
 		} else if (substituted_array_size.has_value()) {
-			// Fallback for arrays where resolve_array_dimensions couldn't resolve
-			// (e.g., literal array sizes that aren't template-parameter-dependent)
-			// Process ALL array dimensions from the declaration, not just the first.
-			// decl.array_dimensions() stores each dimension expression (e.g., for int arr[2][3]
-			// it stores two expressions). We evaluate each one and collect the results.
-			size_t total_elements = 1;
-			bool all_dims_resolved = true;
-			for (const auto& dim_expr : decl.array_dimensions()) {
-				if (dim_expr.is<ExpressionNode>()) {
-					const ExpressionNode& expr = dim_expr.as<ExpressionNode>();
-					if (std::holds_alternative<NumericLiteralNode>(expr)) {
-						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
-						const auto& val = lit.value();
-						if (std::holds_alternative<unsigned long long>(val)) {
-							size_t dim_size = static_cast<size_t>(std::get<unsigned long long>(val));
-							if (dim_size > 0) {
-								resolved_array_dimensions.push_back(dim_size);
-								total_elements *= dim_size;
-								continue;
-							}
-						}
-					}
-				}
-				// If we couldn't evaluate a dimension, try ConstExpr evaluator
-				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
-				if (eval_result.success() && eval_result.as_int() > 0) {
-					size_t dim_size = static_cast<size_t>(eval_result.as_int());
-					resolved_array_dimensions.push_back(dim_size);
-					total_elements *= dim_size;
-				} else {
-					all_dims_resolved = false;
-					break;
-				}
-			}
-			// If no dimensions were found from array_dimensions(), fall back to substituted_array_size
-			if (resolved_array_dimensions.empty() && all_dims_resolved) {
-				size_t array_size = 1;
-				const ASTNode& size_node = *substituted_array_size;
-				if (size_node.is<ExpressionNode>()) {
-					const ExpressionNode& expr = size_node.as<ExpressionNode>();
-					if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&expr)) {
-						const NumericLiteralNode& lit = *numeric_literal;
-						const auto& val = lit.value();
-						if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-							array_size = static_cast<size_t>(*ull_val);
-						}
-					}
-				}
-				if (array_size > 0) {
-					resolved_array_dimensions.push_back(array_size);
-					total_elements = array_size;
-				}
-			}
-			if (!resolved_array_dimensions.empty()) {
-				is_array_member = true;
-			}
-			// Compute per-element size, looking up struct sizes from gTypeInfo
-			size_t element_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_size_type_index).size;
-			member_size = element_size * total_elements;
+			throw InternalError("Array dimensions should be resolved before layout substitution");
 		} else {
 			// Check if the ORIGINAL type is a pointer or reference (use original type_spec, not substituted member_type)
 			member_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_size_type_index).size;
@@ -5841,9 +5773,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
- // General fallback: substitute remaining template parameters in the initializer.
- // ExpressionSubstitutor handles ExpressionNode variants; substituteTemplateParameters
- // is needed for InitializerListNode since ExpressionSubstitutor doesn't recurse into it.
 			if (substituted_initializer.has_value()) {
 				if (substituted_initializer->is<InitializerListNode>()) {
 					substituted_initializer = substituteTemplateParameters(
@@ -5901,165 +5830,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 	}
-	// Fallback: Process static members from AST node (for patterns/specializations)
-	else if (!class_decl.static_members().empty()) {
-		FLASH_LOG(Templates, Debug, "Processing ", class_decl.static_members().size(), " static members from primary template AST node");
-		for (const auto& static_member : class_decl.static_members()) {
-			FLASH_LOG(Templates, Debug, "Copying static member: ", StringTable::getStringView(static_member.name));
-
-			// Start with generic template substitution so compound expressions like
-			// `N + 0` don't leak raw template references into codegen.
-			std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
-																 ? std::optional<ASTNode>(substituteTemplateParameters(
-																	   *static_member.initializer, template_params, template_args_to_use))
-																 : std::nullopt;
-			if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
-				const ExpressionNode& expr = substituted_initializer->as<ExpressionNode>();
-
-				// Generic substitution already resolves ordinary template references
-				// here. Fold expressions still need explicit expansion because the
-				// substitution walk preserves FoldExpressionNode.
-				if (std::holds_alternative<FoldExpressionNode>(expr)) {
-					const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
-					std::string_view pack_name = fold.pack_name();
-					std::string_view op = fold.op();
-					FLASH_LOG(Templates, Debug, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
-
-					// Find the parameter pack in template parameters
-					std::optional<size_t> pack_param_idx;
-					for (size_t p = 0; p < template_params.size(); ++p) {
-						const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
-						if (tparam.name() == pack_name && tparam.is_variadic()) {
-							pack_param_idx = p;
-							break;
-						}
-					}
-
-					if (pack_param_idx.has_value()) {
-						// For variadic packs, arguments after non-variadic parameters are the pack values.
-						std::vector<int64_t> pack_values;
-						bool all_values_found = true;
-						size_t non_variadic_count = 0;
-						for (const auto& param : template_params) {
-							if (!param.as<TemplateParameterNode>().is_variadic()) {
-								non_variadic_count++;
-							}
-						}
-
-						for (size_t i = non_variadic_count; i < template_args_to_use.size() && all_values_found; ++i) {
-							if (template_args_to_use[i].is_value) {
-								pack_values.push_back(template_args_to_use[i].value);
-								FLASH_LOG(Templates, Debug, "Pack value[", i - non_variadic_count, "] = ", template_args_to_use[i].value);
-							} else {
-								all_values_found = false;
-							}
-						}
-
-						if (all_values_found && !pack_values.empty()) {
-							if (auto fold_result = evaluate_fold_expression(op, pack_values); fold_result.has_value()) {
-								substituted_initializer = *fold_result;
-							}
-						}
-					}
-				}
-			}
-
-			TypeIndex substituted_type_index = static_member.type_index;
-			size_t substituted_size = static_member.size;
-			size_t substituted_alignment = static_member.alignment;
-			bool is_array_member = static_member.is_array;
-			std::vector<size_t> resolved_array_dimensions = static_member.array_dimensions;
-
-			if (static_member.declaration.has_value() && static_member.declaration->is<DeclarationNode>()) {
-				const DeclarationNode& decl = static_member.declaration->as<DeclarationNode>();
-				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
-				substituted_type_index = substitute_template_parameter(
-					type_spec, template_params, template_args_to_use);
-				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(substituted_type_index);
-				resolved_array_dimensions = resolve_array_dimensions(
-					decl, template_params, template_args_to_use);
-				if (resolved_array_dimensions.empty()) {
-					resolved_array_dimensions = resolved_member_alias.array_dimensions;
-				}
-				is_array_member = !resolved_array_dimensions.empty();
-
-				TypeSpecifierNode substituted_type_spec(
-					substituted_type_index.category(),
-					type_spec.qualifier(),
-					get_type_size_bits(substituted_type_index.category()),
-					Token{},
-					type_spec.cv_qualifier());
-				substituted_type_spec.set_type_index(substituted_type_index);
-				for (const auto& ptr_level : type_spec.pointer_levels()) {
-					substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
-				}
-
-				if (is_array_member) {
-					size_t total_elements = 1;
-					for (size_t dim_size : resolved_array_dimensions) {
-						total_elements *= dim_size;
-					}
-					size_t element_size = calculateResolvedMemberSizeAndAlignment(
-						substituted_type_spec, substituted_type_index).size;
-					substituted_size = element_size * total_elements;
-				} else {
-					substituted_size = calculateResolvedMemberSizeAndAlignment(
-						substituted_type_spec, substituted_type_index).size;
-				}
-
-				substituted_alignment = get_type_alignment(substituted_type_index.category(), substituted_size);
-				if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
-					substituted_alignment = sizeof(void*);
-				} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(substituted_type_index)) {
-					substituted_alignment = member_struct_info->alignment;
-				}
-			} else {
-				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
-				original_type_spec.set_type_index(static_member.type_index);
-				substituted_type_index = substitute_template_parameter(
-					original_type_spec, template_params, template_args_to_use);
-				substituted_size = get_substituted_type_size_bytes(substituted_type_index);
-				if (is_array_member) {
-					for (size_t dim_size : resolved_array_dimensions) {
-						substituted_size *= dim_size;
-					}
-				}
-			}
-
-			std::optional<NormalizedInitializer> normalized_initializer =
-				tryEarlyNormalizeTemplateStaticMemberInitializer(
-					substituted_initializer,
-					gSymbolTable,
-					this,
-					struct_info.get(),
-					template_params,
-					template_args_to_use,
-					substituted_type_index,
-					substituted_size,
-					static_member.reference_qualifier,
-					static_member.pointer_depth);
-
-			struct_info->addStaticMember(
-				static_member.name,
-				substituted_type_index,
-				substituted_size,
-				substituted_alignment,
-				static_member.access,
-				substituted_initializer,
-				static_member.cv_qualifier,
-				static_member.reference_qualifier,
-				static_member.pointer_depth,
-				is_array_member,
-				resolved_array_dimensions);
-			if (normalized_initializer.has_value()) {
-				if (StructStaticMember* instantiated_static_member =
-						struct_info->findStaticMember(static_member.name)) {
-					instantiated_static_member->normalized_init = std::move(normalized_initializer);
-				}
-			}
-		}
-	}
-
 	std::vector<ASTNode> instantiated_nested_class_nodes;
 	instantiated_nested_class_nodes.reserve(class_decl.nested_classes().size());
 
@@ -8033,10 +7803,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		} else {
 			FLASH_LOG(Templates, Error, "Unknown member function type in template instantiation: ",
 					  mem_func.function_declaration.type_name());
-			// Copy directly as fallback
-			instantiated_struct_ref.add_member_function(
-				mem_func.function_declaration,
-				mem_func.access);
+			throw InternalError("Unhandled member function declaration kind during template instantiation");
 		}
 	}
 

@@ -1009,8 +1009,8 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			}
 		}
 
-		// General fallback: Use ExpressionSubstitutor for any remaining template-dependent expressions
-		// This handles expressions like __v<T> (variable template invocations with template parameters)
+		// Use the general ExpressionSubstitutor path for remaining template-dependent expressions
+		// such as variable template invocations like __v<T>.
 		// Check if we still have the original initializer (i.e., no specific handler above modified it)
 		bool was_substituted = false;
 		if (std::holds_alternative<FoldExpressionNode>(expr))

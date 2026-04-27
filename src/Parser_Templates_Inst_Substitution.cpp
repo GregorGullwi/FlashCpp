@@ -435,29 +435,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	if (!resolved_member_source) {
 		return nullptr;
 	}
-
-	TypeIndex resolved_member_index =
-		resolved_member_source->registeredTypeIndex().withCategory(
-			resolved_member_source->typeEnum());
-	TypeSpecifierNode concrete_member_spec(
-		resolved_member_index,
-		resolved_member_source->sizeInBits(),
-		Token(),
-		CVQualifier::None,
-		ReferenceQualifier::None);
-	if (const TypeSpecifierNode* existing_alias_spec =
-			resolved_member_source->aliasTypeSpecifier()) {
-		concrete_member_spec = *existing_alias_spec;
-	}
-	TypeInfo& concrete_member_info = add_type_alias_copy(
-		concrete_member_handle,
-		resolved_member_index,
-		resolved_member_source->sizeInBits().value,
-		concrete_member_spec);
-	getTypesByNameMap().insert_or_assign(
-		concrete_member_handle,
-		&concrete_member_info);
-	return &concrete_member_info;
+	throw InternalError("Instantiated member alias target should resolve before alias copy");
 }
 
 bool Parser::resolveAliasTemplateInstantiation(
@@ -605,10 +583,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 			return instantiated_name;
 		}
 
-		// Fallback: use basic name without defaults
-		std::string_view instantiated_name = get_instantiated_class_name(base_class_name, template_args);
-		base_class_name = instantiated_name;
-		return instantiated_name;
+		throw InternalError("Base class instantiation name should resolve after default filling");
 	}
 	return std::string_view();
 }
@@ -1182,20 +1157,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					if (it != structural_match->substitutions.end()) {
 						converted_args.push_back(it->second);
 					} else {
-						// Fallback: use resolved arg with qualifiers stripped
-						if (converted_args.size() < filled_args.size()) {
-							FLASH_LOG(Templates, Debug, "Deduction fallback for param '",
-									  tp.name(), "': using arg[", converted_args.size(), "] with qualifiers stripped");
-							TemplateTypeArg deduced = filled_args[converted_args.size()];
-							deduced.ref_qualifier = ReferenceQualifier::None;
-							deduced.pointer_depth = 0;
-							deduced.pointer_cv_qualifiers.clear();
-							deduced.is_array = false;
-							converted_args.push_back(deduced);
-						} else {
-							FLASH_LOG(Templates, Warning, "Cannot deduce param '",
-									  tp.name(), "': no substitution and no remaining args");
-						}
+						throw InternalError(
+							"TemplatePattern::matches() did not produce a substitution for variable-template specialization parameter '" +
+							std::string(tp.name()) + "'");
 					}
 				}
 			}
@@ -1734,20 +1698,9 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	for (const auto& base : spec_struct.base_classes()) {
 		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 		if (base_type_info == nullptr) {
-			// Defensive fallback: if the recorded TypeIndex is stale (e.g., the base
-			// type was registered after the spec was parsed), fall back to a name
-			// lookup so we still produce a valid inheritance chain.
-			FLASH_LOG(Templates, Debug,
-				"instantiate_full_specialization: base '", base.name,
-				"' for ", instantiated_name,
-				" not resolvable by type_index, falling back to name lookup");
-			base_type_info = findTypeByName(StringTable::getOrInternStringHandle(base.name));
-		}
-		if (base_type_info == nullptr) {
-			FLASH_LOG(Templates, Warning,
-				"instantiate_full_specialization: base class '", base.name,
-				"' for ", instantiated_name, " not found in type table");
-			continue;
+			throw InternalError(
+				"instantiate_full_specialization: recorded base TypeIndex is invalid for '" +
+				std::string(base.name) + "' in '" + std::string(instantiated_name) + "'");
 		}
 		struct_info->addBaseClass(
 			StringTable::getStringView(base_type_info->name()),
@@ -1932,62 +1885,30 @@ std::optional<int64_t> Parser::evaluateDependentNTTPExpression(
 				const TypeSpecifierNode& param_type = param.type_specifier_node();
 				type_substitution_map[param_type.type_index()] = template_args[i];
 			}
-			// Name-based fallback: look up by param name in the type registry.
-			auto type_it = getTypesByNameMap().find(param.nameHandle());
-			if (type_it != getTypesByNameMap().end() && type_it->second != nullptr) {
-				type_substitution_map[type_it->second->type_index_] = template_args[i];
-			}
 		} else if (param.kind() == TemplateParameterKind::NonType && template_args[i].is_value) {
 			nontype_substitution_map[param.name()] = template_args[i].value;
 		}
 	}
 
-	// Additional pass: for sizeof/alignof expressions, directly match the type name
-	// against template parameter names.  This handles class template type parameters
-	// where registered_type_index() was not set by add_template_param_type and the
-	// TypeInfo was removed from getTypesByNameMap() after template parsing.
-	// We map the TypeIndex that appears inside sizeof(T) directly, which the
-	// substitute_template_params_in_expression type_index lookup will then find.
-	// TODO: The root cause is that Parser_Templates_Class.cpp does not call
-	// tparam.set_registered_type_index() after add_template_param_type(), unlike
-	// Parser_Templates_Function.cpp which does.  Fixing that would eliminate this
-	// fallback.  See also: the RAII TemplateParameterScope removes the TypeInfo from
-	// getTypesByNameMap() after parsing, making name-based lookup unreliable here.
-	auto tryMapSizeofTypeByName = [&](const TypeSpecifierNode& type_node) {
+	// sizeof/alignof over a dependent type should already have a direct type-index mapping
+	// once template parameter registration is complete.
+	auto ensureMappedDependentSizeofType = [&](const TypeSpecifierNode& type_node) {
 		if (type_substitution_map.count(type_node.type_index())) {
-			return;  // Already mapped via registered_type_index or getTypesByNameMap
-		}
-		std::string_view token_name = type_node.token().value();
-		if (token_name.empty()) {
-			if (const TypeInfo* ti = tryGetTypeInfo(type_node.type_index())) {
-				token_name = StringTable::getStringView(ti->name());
-			}
-		}
-		if (token_name.empty()) {
 			return;
 		}
-		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-			if (!template_params[i].is<TemplateParameterNode>()) {
-				continue;
-			}
-			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-			if (param.kind() == TemplateParameterKind::Type && param.name() == token_name) {
-				type_substitution_map[type_node.type_index()] = template_args[i];
-				break;
-			}
-		}
+		throw InternalError("Dependent sizeof/alignof type should already be mapped before evaluation");
 	};
 	if (dependent_expr.is<ExpressionNode>()) {
 		const ExpressionNode& top_variant = dependent_expr.as<ExpressionNode>();
 		if (std::holds_alternative<SizeofExprNode>(top_variant)) {
 			const SizeofExprNode& sn = std::get<SizeofExprNode>(top_variant);
 			if (sn.is_type() && sn.type_or_expr().is<TypeSpecifierNode>()) {
-				tryMapSizeofTypeByName(sn.type_or_expr().as<TypeSpecifierNode>());
+				ensureMappedDependentSizeofType(sn.type_or_expr().as<TypeSpecifierNode>());
 			}
 		} else if (std::holds_alternative<AlignofExprNode>(top_variant)) {
 			const AlignofExprNode& an = std::get<AlignofExprNode>(top_variant);
 			if (an.is_type() && an.type_or_expr().is<TypeSpecifierNode>()) {
-				tryMapSizeofTypeByName(an.type_or_expr().as<TypeSpecifierNode>());
+				ensureMappedDependentSizeofType(an.type_or_expr().as<TypeSpecifierNode>());
 			}
 		}
 	}
