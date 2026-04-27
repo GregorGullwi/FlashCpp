@@ -581,15 +581,18 @@ public:
 		StringHandle key = StringTable::getOrInternStringHandle(func_name);
 
 		auto collect_from_ns = [&](NamespaceHandle ns) {
-			if (!ns.isValid() || !visited.insert(ns).second)
-				return;
-			auto adl_it = adl_only_symbols_.find(ns);
-			if (adl_it == adl_only_symbols_.end())
-				return;
-			auto sym_it = adl_it->second.find(key);
-			if (sym_it == adl_it->second.end())
-				return;
-			result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+			// Expand ns to include inline-linked relatives per C++20 [basic.lookup.argdep]/2.
+			for (NamespaceHandle related : gNamespaceRegistry.getInlineLinkedSet(ns)) {
+				if (!related.isValid() || !visited.insert(related).second)
+					continue;
+				auto adl_it = adl_only_symbols_.find(related);
+				if (adl_it == adl_only_symbols_.end())
+					continue;
+				auto sym_it = adl_it->second.find(key);
+				if (sym_it == adl_it->second.end())
+					continue;
+				result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+			}
 		};
 
 		std::unordered_set<size_t> visited_types;
@@ -636,10 +639,14 @@ public:
 				}
 			}
 		}
-		// 4. Associated namespaces of argument types.
+		// 4. Associated namespaces of argument types, expanded for inline namespace transparency.
+		// Per C++20 [basic.lookup.argdep]/2: if an associated namespace is an inline namespace
+		// its enclosing namespace is also included (parent transparency), and if an associated
+		// namespace has inline namespaces those are also included (child transparency).
 		std::unordered_set<size_t> visited_types;
 		auto add_ns = [&](NamespaceHandle ns) {
-			if (ns.isValid()) result.insert(ns);
+			for (NamespaceHandle related : gNamespaceRegistry.getInlineLinkedSet(ns))
+				result.insert(related);
 		};
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
@@ -669,17 +676,20 @@ public:
 		StringHandle key = StringTable::getOrInternStringHandle(func_name);
 
 		auto search_ns = [&](NamespaceHandle ns) {
-			if (!ns.isValid() || !visited.insert(ns).second)
-				return;
-			// Search regular namespace symbols
-			auto candidates = lookup_qualified_all(ns, key);
-			result.insert(result.end(), candidates.begin(), candidates.end());
-			// Also search ADL-only (hidden friend) symbols
-			auto adl_it = adl_only_symbols_.find(ns);
-			if (adl_it != adl_only_symbols_.end()) {
-				auto sym_it = adl_it->second.find(key);
-				if (sym_it != adl_it->second.end()) {
-					result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+			// Expand ns to include inline-linked relatives per C++20 [basic.lookup.argdep]/2.
+			for (NamespaceHandle related : gNamespaceRegistry.getInlineLinkedSet(ns)) {
+				if (!related.isValid() || !visited.insert(related).second)
+					continue;
+				// Search regular namespace symbols
+				auto candidates = lookup_qualified_all(related, key);
+				result.insert(result.end(), candidates.begin(), candidates.end());
+				// Also search ADL-only (hidden friend) symbols
+				auto adl_it = adl_only_symbols_.find(related);
+				if (adl_it != adl_only_symbols_.end()) {
+					auto sym_it = adl_it->second.find(key);
+					if (sym_it != adl_it->second.end()) {
+						result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+					}
 				}
 			}
 		};

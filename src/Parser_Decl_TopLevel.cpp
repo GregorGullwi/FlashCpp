@@ -597,6 +597,7 @@ ParseResult Parser::parse_namespace() {
 			// This makes members visible in the current (parent) scope
 			if (this_ns_is_inline && next_handle.isValid()) {
 				gSymbolTable.add_using_directive(next_handle);
+				gNamespaceRegistry.markInline(next_handle);
 			}
 
 			if (next_handle.isValid()) {
