@@ -216,7 +216,7 @@ private:
 	void normalizeBlock(const BlockNode& block, const SemanticContext& ctx);
 
 	// Expression handler (counts and infers types for annotatable expressions)
-	SemanticExprInfo normalizeExpression(const ASTNode& node, const SemanticContext& ctx);
+	SemanticExprInfo normalizeExpression(ASTNode node, const SemanticContext& ctx);
 
 	// Helpers
 	void registerParametersInScope(const std::vector<ASTNode>& parameter_nodes);
@@ -229,7 +229,7 @@ private:
 	// Infer the canonical type of a simple expression without full evaluation.
 	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).
 	// Returns invalid CanonicalTypeId if inference is not possible.
-	CanonicalTypeId inferExpressionType(const ASTNode& node);
+	CanonicalTypeId inferExpressionType(ASTNode node);
 	CanonicalTypeId inferResolvedSymbolType(const ASTNode& symbol);
 	ValueCategory inferExpressionValueCategory(const ASTNode& node);
 	void registerOuterTemplateBindingsInScope(const LambdaExpressionNode& lambda);

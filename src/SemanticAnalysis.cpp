@@ -2261,7 +2261,7 @@ void SemanticAnalysis::normalizeBlock(const BlockNode& block, const SemanticCont
 
 // --- Expression handler (Phase 2: counting + type inference for annotatable nodes) ---
 
-SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, const SemanticContext& ctx) {
+SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const SemanticContext& ctx) {
 	if (!node.has_value())
 		return {};
 	stats_.expressions_visited++;
@@ -2276,9 +2276,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 	// Walk children for counting; Phase 2 type annotation is done in tryAnnotateReturnConversion.
 
 	if (node.is<ExpressionNode>()) {
-		ASTNode mutable_node = node;
 		// Walk into variant-based expression nodes to count children
-		auto& expr = mutable_node.as<ExpressionNode>();
+		auto& expr = node.as<ExpressionNode>();
 		std::visit([&](auto& e) {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
@@ -3035,6 +3034,9 @@ void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& sub
 	const CanonicalTypeDesc& left_desc = type_context_.get(left_type_id);
 	const CanonicalTypeDesc& right_desc = type_context_.get(right_type_id);
 	if (is_subscript_index(left_desc) && is_array_or_pointer(right_desc)) {
+		// ArraySubscriptNode stores operands as (array, index). For built-in
+		// reversed subscripting such as 0[array], normalize to the semantic
+		// order mandated by C++20 built-in subscripting before downstream use.
 		subscript_node = ArraySubscriptNode(
 			subscript_node.index_expr(),
 			subscript_node.array_expr(),
@@ -3216,7 +3218,7 @@ CanonicalTypeId SemanticAnalysis::inferResolvedSymbolType(const ASTNode& symbol)
 
 // --- Expression type inference ---
 
-CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
+CanonicalTypeId SemanticAnalysis::inferExpressionType(ASTNode node) {
 	if (!node.has_value())
 		return {};
 
@@ -3225,8 +3227,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			return slot->type_id;
 		}
 
-		const auto& expr = node.as<ExpressionNode>();
-		return std::visit([this](const auto& e) -> CanonicalTypeId {
+		auto& expr = node.as<ExpressionNode>();
+		return std::visit([this](auto& e) -> CanonicalTypeId {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				CanonicalTypeDesc desc;
@@ -3376,12 +3378,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
 					return {};
 				}
-				ASTNode mutable_subscript_node(&e);
-				auto& mutable_subscript = mutable_subscript_node.as<ArraySubscriptNode>();
-				normalizeBuiltinSubscriptOperands(mutable_subscript);
+				normalizeBuiltinSubscriptOperands(e);
 				// Array subscript: the result type is the element type of the array.
 				// Infer the array expression type and strip one array dimension.
-				const CanonicalTypeId array_type_id = inferExpressionType(mutable_subscript.array_expr());
+				const CanonicalTypeId array_type_id = inferExpressionType(e.array_expr());
 				if (!array_type_id)
 					return {};
 				const CanonicalTypeDesc& array_desc = type_context_.get(array_type_id);

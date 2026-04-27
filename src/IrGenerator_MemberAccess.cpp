@@ -246,12 +246,12 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	// Generate IR for array[index] expression
 	// This computes the address: base_address + (index * element_size)
 
-	const ASTNode& semantic_array_expr_node = arraySubscriptNode.array_expr();
-	const ASTNode& semantic_index_expr_node = arraySubscriptNode.index_expr();
+	const ASTNode& array_expr_node = arraySubscriptNode.array_expr();
+	const ASTNode& index_expr_node = arraySubscriptNode.index_expr();
 
 	// Check for multidimensional array access pattern (arr[i][j])
 	// If the array expression is itself an ArraySubscriptNode, we have a multidimensional access
-	const ExpressionNode& array_expr = semantic_array_expr_node.as<ExpressionNode>();
+	const ExpressionNode& array_expr = array_expr_node.as<ExpressionNode>();
 	FLASH_LOG_FORMAT(Codegen, Debug, "generateArraySubscriptIr: array_expr is ArraySubscriptNode = {}",
 					 std::holds_alternative<ArraySubscriptNode>(array_expr));
 	if (std::holds_alternative<ArraySubscriptNode>(array_expr)) {
@@ -506,7 +506,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 												  TypeIndex element_type_index,
 												  StringHandle qualified_name,
 												  int64_t member_offset) -> ExprResult {
-					ExprResult index_result = visitExpressionNode(semantic_index_expr_node.as<ExpressionNode>());
+					ExprResult index_result = visitExpressionNode(index_expr_node.as<ExpressionNode>());
 					TempVar result_var = var_counter.next();
 
 					LValueInfo lvalue_info(
@@ -627,7 +627,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 						StringTable::getOrInternStringHandle(arr_ident.name()))) {
 					const StructMember* member = member_result.member;
 					if (member->is_array) {
-						ExprResult index_result = visitExpressionNode(semantic_index_expr_node.as<ExpressionNode>());
+						ExprResult index_result = visitExpressionNode(index_expr_node.as<ExpressionNode>());
 						TypeCategory element_type = member->memberType();
 						int element_size_bits = static_cast<int>(member->size * 8);
 						if (!member->array_dimensions.empty()) {
@@ -687,10 +687,10 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		}
 	}
 
-	ExprResult array_result = visitExpressionNode(semantic_array_expr_node.as<ExpressionNode>());
+	ExprResult array_result = visitExpressionNode(array_expr_node.as<ExpressionNode>());
 
 	// Get the index expression
-	ExprResult index_result = visitExpressionNode(semantic_index_expr_node.as<ExpressionNode>());
+	ExprResult index_result = visitExpressionNode(index_expr_node.as<ExpressionNode>());
 
 	// Get array type information
 	TypeCategory element_type = array_result.typeEnum();
@@ -702,7 +702,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	bool is_pointer_to_array = false;
 	TypeIndex element_type_index = TypeIndex{}; // Track type_index for struct elements
 	int element_pointer_depth = 0; // Track pointer depth for pointer array elements
-	const ExpressionNode& arr_expr = semantic_array_expr_node.as<ExpressionNode>();
+	const ExpressionNode& arr_expr = array_expr_node.as<ExpressionNode>();
 	if (std::holds_alternative<IdentifierNode>(arr_expr)) {
 		const IdentifierNode& arr_ident = std::get<IdentifierNode>(arr_expr);
 		const DeclarationNode* decl_ptr = lookupDeclaration(arr_ident.name());
