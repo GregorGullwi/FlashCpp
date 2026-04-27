@@ -25,11 +25,7 @@ static std::optional<size_t> tryGetTypeSizeForSizeof(const TypeSpecifierNode& ty
 	return static_cast<size_t>(size_bits) / 8;
 }
 
-static bool isCvConstForSubscriptConversion(CVQualifier qualifier) {
-	return (static_cast<uint8_t>(qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
-}
-
-static bool conversionOperatorReturnsTargetType(
+static bool isConversionOperatorForTargetType(
 	SemanticAnalysis* sema,
 	const StructMemberFunction& member_func,
 	const CanonicalTypeDesc& target_desc) {
@@ -59,7 +55,7 @@ static const StructMemberFunction* findConversionOperatorForSubscriptPointerTarg
 			continue;
 		if (!source_is_const && prefer_const != member_func.is_const())
 			continue;
-		if (conversionOperatorReturnsTargetType(sema, member_func, target_desc))
+		if (isConversionOperatorForTargetType(sema, member_func, target_desc))
 			return &member_func;
 	}
 
@@ -85,6 +81,8 @@ static const StructMemberFunction* findConversionOperatorForSubscriptPointerTarg
 	if (source_is_const) {
 		return findConversionOperatorForSubscriptPointerTarget(sema, struct_info, target_desc, source_is_const, true);
 	}
+	// Non-const objects prefer non-const conversion operators, but may call const
+	// conversion operators if no non-const overload matches the target type.
 	if (const StructMemberFunction* non_const = findConversionOperatorForSubscriptPointerTarget(
 			sema, struct_info, target_desc, source_is_const, false)) {
 		return non_const;
@@ -782,11 +780,16 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				source_desc.category() == TypeCategory::Struct &&
 				!target_desc.pointer_levels.empty()) {
 				if (const TypeInfo* source_type_info = tryGetTypeInfo(source_desc.type_index)) {
-					const bool source_is_const = isCvConstForSubscriptConversion(source_desc.base_cv);
+					const bool source_is_const =
+						(static_cast<uint8_t>(source_desc.base_cv) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
 					const StructMemberFunction* conv_op = findConversionOperatorForSubscriptPointerTarget(
 						sema_, source_type_info->getStructInfo(), target_desc, source_is_const);
 					if (!conv_op) {
-						throw InternalError("generateArraySubscriptIr: sema annotated struct-to-pointer subscript conversion but no operator was found");
+						throw InternalError(std::string(StringBuilder()
+							.append("generateArraySubscriptIr: sema annotated struct-to-pointer subscript conversion for '")
+							.append(StringTable::getStringView(source_type_info->name()))
+							.append("' but no operator matching the target pointer type was found")
+							.commit()));
 					}
 					if (auto converted = emitConversionOperatorCall(
 							array_result,
