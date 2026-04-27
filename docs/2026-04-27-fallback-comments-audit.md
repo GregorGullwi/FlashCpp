@@ -273,9 +273,9 @@ The initial audit above was architectural. Several template-instantiation fallba
    - Probe result: wiring class-template parameters to call `set_registered_type_index(...)` after `add_template_param_type(...)` in `src\Parser_Templates_Class.cpp`, then replacing the old name-based mapping pass with a hard invariant, still passed `tests\test_dependent_sizeof_alignof_template_arg_ret0.cpp` and the full suite.
    - Conclusion: this fallback was covering a real metadata gap in class-template parameter registration, but the gap is now fixed and the fallback has been removed.
 
-12. `src\Parser_Templates_Params.cpp` — empty-token type-name fallback
-   - Probe result: replacing the `type_name = full_type_name` rescue with a hard error broke `tests\test_variable_template_in_enable_if_ret0.cpp`.
-   - Conclusion: template-argument dependency detection still needs the `gTypeInfo` full-name backup when the parsed token is empty, especially around variable-template `enable_if` cases.
+12. `src\Parser_Templates_Params.cpp` — empty-token type-name recovery
+   - Probe result: replacing the `type_name = full_type_name` path with a hard error broke `tests\test_variable_template_in_enable_if_ret0.cpp`.
+   - Conclusion: template-argument dependency detection still needs the canonical `gTypeInfo` full-name path when the parsed token spelling is empty, especially around variable-template `enable_if` cases. The code now treats this as ordinary spelling selection rather than a special fallback branch.
 
 13. `src\Parser_Templates_Inst_Deduction.cpp` — function return-type substitution fallback
    - Probe result: hard-failing the “simple substitution” return-type path broke a broad deduction cluster including `concept_abbreviated_ret0.cpp`, `concept_comprehensive_ret15.cpp`, `template_inst_simple_ret5.cpp`, `test_func_template_dependent_default_nontype_sizeof_ret0.cpp`, `test_nested_pack_return_type_ret42.cpp`, and many other concept/pack/trailing-return cases.
