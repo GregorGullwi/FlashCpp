@@ -15,6 +15,63 @@ namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
 constexpr std::string_view kAnonymousNamespaceContext = "<anonymous namespace>";
 
+// Compute the number of logical characters in a string literal token, excluding
+// the null terminator.  The raw token includes the surrounding double-quote
+// delimiters and an optional encoding prefix (e.g. L, u8, u, U).
+// Each escape sequence (however many source characters it occupies) counts as a
+// single logical character, following C++20 [lex.ccon]:
+//   \ooo  — up to 3 octal digits
+//   \xHH  — one or more hex digits
+//   \uNNNN  — exactly 4 hex digits
+//   \UNNNNNNNN — exactly 8 hex digits
+//   all other named escapes (\n, \t, \\, etc.) — one source char after backslash
+static size_t computeStringContentLength(std::string_view token_raw) {
+	std::string_view content = token_raw;
+	// Strip optional encoding prefix (L, u8, u, U) before the opening quote.
+	if (!content.empty() && content.front() != '"') {
+		const size_t q = content.find('"');
+		if (q == std::string_view::npos)
+			return 0; // malformed token
+		content = content.substr(q);
+	}
+	// Strip enclosing double-quotes.
+	if (content.size() >= 2 && content.front() == '"' && content.back() == '"')
+		content = content.substr(1, content.size() - 2);
+	size_t len = 0;
+	for (size_t i = 0; i < content.size(); ++i) {
+		if (content[i] == '\\' && i + 1 < content.size()) {
+			++i; // advance to the first char of the escape body
+			const char esc = content[i];
+			if (esc == 'x') {
+				// Hex escape \xH[H...]: consume all contiguous hex digits.
+				while (i + 1 < content.size() &&
+					   std::isxdigit(static_cast<unsigned char>(content[i + 1])))
+					++i;
+			} else if (esc >= '0' && esc <= '7') {
+				// Octal escape \ooo: the first digit is already at i;
+				// consume up to 2 additional octal digits.
+				for (int d = 0; d < 2 && i + 1 < content.size() &&
+					 content[i + 1] >= '0' && content[i + 1] <= '7'; ++d)
+					++i;
+			} else if (esc == 'u') {
+				// Universal character name \uNNNN: exactly 4 hex digits.
+				for (int d = 0; d < 4 && i + 1 < content.size() &&
+					 std::isxdigit(static_cast<unsigned char>(content[i + 1])); ++d)
+					++i;
+			} else if (esc == 'U') {
+				// Universal character name \UNNNNNNNN: exactly 8 hex digits.
+				for (int d = 0; d < 8 && i + 1 < content.size() &&
+					 std::isxdigit(static_cast<unsigned char>(content[i + 1])); ++d)
+					++i;
+			}
+			// For named single-char escapes (\n, \t, \\, \", \', etc.) the
+			// single character already consumed above is the complete body.
+		}
+		++len; // one logical character regardless of escape sequence width
+	}
+	return len;
+}
+
 // Placeholder return-type finalization requires every return statement in the
 // body to deduce to the same full type identity, including cv/reference and
 // pointer qualifiers. This prevents plain `auto` and `decltype(auto)` from
@@ -3491,11 +3548,17 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return canonicalizeType(target_type_node.template as<TypeSpecifierNode>());
 				return {};
 			} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-				// String literal has type "const char*" (array of const char).
+				// C++20 [lex.string]: a string literal has type "array of n const char"
+				// where n is the number of content characters plus one for the implicit
+				// null terminator.  The array is const-qualified per the standard.
+				// TODO: wide (L"") and Unicode (u8"", u"", U"") string literals have
+				// element types wchar_t, char8_t, char16_t, and char32_t respectively
+				// and are not yet handled; they currently fall through as const char[N].
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::Char);
 				desc.base_cv = CVQualifier::Const;
-				desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
+				const size_t n = computeStringContentLength(e.value()) + 1;
+				desc.array_dimensions.push_back(n);
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 				auto resolved = getResolvedQualifiedIdentifier(&e);
@@ -3935,7 +3998,23 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	};
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty())
 		return false;
-	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty())
+	// Array source → incompatible scalar target: this is always ill-formed.
+	// E.g. `int c = "test"` (const char[5] → int) or `int x = arr` (int[3] → int).
+	// Array source → pointer target: valid array-to-pointer decay; bail-out is
+	// already handled by the pointer check above.
+	if (!from_desc.array_dimensions.empty()) {
+		if (to_desc.array_dimensions.empty()) {
+			// Diagnose the ill-formed conversion with a clang-compatible message.
+			const TypeSpecifierNode from_ts = materializeTypeSpecifier(from_desc);
+			const TypeSpecifierNode to_ts = materializeTypeSpecifier(to_desc);
+			throw CompileError(std::string("cannot initialize a variable of type '") +
+							   to_ts.getReadableString() +
+							   "' with an lvalue of type '" +
+							   from_ts.getReadableString() + "'");
+		}
+		return false; // array → array: handled elsewhere
+	}
+	if (!to_desc.array_dimensions.empty())
 		return false;
 	// Allow Struct source for user-defined conversion operators (Struct->primitive).
 	// Reject Struct->Struct (handled elsewhere) and primitive->Struct (converting constructors).
