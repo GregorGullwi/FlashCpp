@@ -147,6 +147,7 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Missing feature: every template instantiation TypeInfo should be born with canonical template arguments, base-pattern identity, and pattern-to-instantiation links that all consumers can query without string parsing.
    - Removal target: `ExpressionSubstitutor` name-based template-arg recovery, `$`/base-name string stripping, stale-TypeIndex fallback lookup, and manual prefix scans for instantiated types.
    - Activity note: the old non-variadic base-template "assume `template_args[0]`" fallback in `src\Parser_Templates_Inst_ClassTemplate.cpp` was hard-fail probed and the full suite still passed, so that dead base-argument shortcut has already been removed.
+   - Activity note: the base-class instantiation-name fallback in `src\Parser_Templates_Inst_Substitution.cpp` was also hard-fail probed and the full suite still passed, so the remaining corpus no longer needs the old "use basic name without defaults" rescue there.
 
 3. **Explicit dependent-placeholder state everywhere**
    - Current status: Phase 4 introduced `DependentPlaceholderKind`, but fallback comments still show sentinel-style dependent detection such as `type_index == 0` and placeholder TypeSpec recovery.
@@ -162,18 +163,21 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Activity note: a hard-fail probe of the unresolved-default catch-all in `src\Parser_Templates_Inst_ClassTemplate.cpp` broke `tests\test_template_template_default_ret42.cpp`, so this fallback is active in the current corpus and needs a root fix before removal.
    - Activity note: a hard-fail probe of the narrower `tryAppendEvaluatedTemplateValue(...)` non-type-default fallback broke `tests\test_expr_subst_noexcept_wrap_ret0.cpp`, `tests\test_template_spec_outofline_default_arg_ret42.cpp`, and `tests\test_template_spec_outofline_default_arg_namespaced_ret42.cpp`, so the specialized default handlers still do not cover all NTTP default forms.
    - Activity note: the variable-template constexpr bridge in the same area is also active; hard-failing it broke `tests\test_variable_template_nttp_base_class_ret0.cpp`.
+   - Activity note: the deferred-base direct `try_evaluate_constant_expression(arg_info.node)` fallback in the same file was hard-fail probed and the full suite still passed, so that dead direct-evaluation rescue has already been removed.
 
 5. **Initializer/static-member substitution ownership**
    - Current symptom: class-template instantiation still has general fallback passes for initializers and static members from AST nodes/patterns/specializations.
    - Missing feature: member/static-member declarations and initializers should be substituted through the same canonical context as function bodies, with instantiated ownership recorded before sema/codegen.
    - Removal target: "General fallback: substitute remaining template parameters in the initializer" and "Fallback: Process static members from AST node" style paths.
    - Activity note: the array-dimension substitution fallback used when `resolve_array_dimensions(...)` produced no dimensions but `substituted_array_size` was present was hard-fail probed and the full suite still passed, so that dead array-dimension fallback has already been removed from `src\Parser_Templates_Inst_ClassTemplate.cpp`.
+   - Activity note: the old AST-node static-member fallback in `src\Parser_Templates_Inst_ClassTemplate.cpp` was hard-fail probed and the full suite still passed, so that dead secondary static-member path has already been removed.
 
 6. **ExpressionSubstitutor role clarification**
    - Current symptom: ExpressionSubstitutor is used both as an expected AST rewrite mechanism and as a late fallback after other substitution paths did not handle a node.
    - Missing feature: define ExpressionSubstitutor's preconditions and make it consume the authoritative substitution context. It should not reconstruct bindings from global TypeInfo or names.
    - Removal target: fallback creation of ad-hoc expression nodes and fallback recovery of template args from type names.
    - Activity note: the `sizeof...` class-template pack-context rescue in `src\Parser_Templates_Substitution.cpp` was hard-fail probed and the full suite still passed, so that dead name/context rediscovery path has already been removed.
+   - Activity note: the analogous lazy static-member ExpressionSubstitutor path in `src\Parser_Templates_Lazy.cpp` is still active; hard-failing it broke a broad cluster including `template_ttp_static_constexpr_member_ret0.cpp`, `test_alias_base_static_member_ret0.cpp`, `test_integral_constant_simple_ret30.cpp`, `test_ratio_lazy_static_member_ret0.cpp`, `test_template_static_member_initializer_scalar_brace_ret42.cpp`, and `test_type_traits_dependent_member_nttp_ret42.cpp`.
 
 7. **Intra-instantiation call-target rewriting remains important**
    - This is already diagnosed in the validation-history section around Slice G/H: `ExpressionSubstitutor` does not rewrite intra-struct call targets in instantiated member bodies from the template pattern declaration to the instantiated member stub.

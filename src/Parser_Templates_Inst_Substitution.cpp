@@ -605,10 +605,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 			return instantiated_name;
 		}
 
-		// Fallback: use basic name without defaults
-		std::string_view instantiated_name = get_instantiated_class_name(base_class_name, template_args);
-		base_class_name = instantiated_name;
-		return instantiated_name;
+		throw InternalError("Base class instantiation-name default-argument fallback required");
 	}
 	return std::string_view();
 }
