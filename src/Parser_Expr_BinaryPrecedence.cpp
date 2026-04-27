@@ -191,13 +191,37 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 			ranked_candidates.push_back(ranked_candidate);
 		};
 
-		// Phase 1: try the template registry (covers most non-ADL templates)
-		// Must enter SfinaeProbe mode so substitution failures return nullopt
-		// instead of throwing a hard CompileError (same as Phase 2 below).
-		ScopedParserInstantiationContext guard_instantiation_mode_phase1(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
-		if (std::optional<ASTNode> instantiated = try_instantiate_template(op_name, arg_types); instantiated.has_value()) {
-			if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
-				addSuccessfulCandidate(*func_decl, OperatorTemplateCandidateSource::Registry, 0);
+		constexpr int initial_template_instantiation_depth = 1;
+
+		// Phase 1: try operator templates from the template registry, but restricted to
+		// namespaces that are eligible for operator lookup per C++20 [basic.lookup.argdep].
+		// Associated namespaces of a class type are the namespaces in which the class (and
+		// its base classes) are declared; non-inline nested namespaces of an associated
+		// namespace are NOT included.  For example, std::rel_ops is not an associated
+		// namespace of std::pair, so operator templates defined there must not be found
+		// when the operands are of pair type.
+		{
+			auto eligible_ns = gSymbolTable.get_adl_eligible_namespaces(arg_types);
+			const std::vector<ASTNode>* phase1_templates = gTemplateRegistry.lookupAllTemplates(op_name);
+			if (phase1_templates) {
+				for (const auto& tmpl : *phase1_templates) {
+					if (!tmpl.is<TemplateFunctionDeclarationNode>()) continue;
+					const FunctionDeclarationNode& fdecl =
+						tmpl.as<TemplateFunctionDeclarationNode>().function_decl_node();
+					NamespaceHandle tmpl_ns = fdecl.namespace_handle();
+					// Skip templates from namespaces that are not eligible for this lookup.
+					// Note: eligible_ns always contains the global namespace, so global-namespace templates
+					// pass the count check without needing an explicit isGlobal() guard.
+					if (tmpl_ns.isValid() && !eligible_ns.count(tmpl_ns)) continue;
+					ScopedParserInstantiationContext guard(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
+					int depth = initial_template_instantiation_depth;
+					if (auto instantiated = try_instantiate_single_template(tmpl, op_name, arg_types, depth)) {
+						if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
+							int specificity = computeFunctionTemplateSpecificity(tmpl.as<TemplateFunctionDeclarationNode>());
+							addSuccessfulCandidate(*func_decl, OperatorTemplateCandidateSource::Registry, specificity);
+						}
+					}
+				}
 			}
 		}
 
@@ -207,7 +231,6 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		auto adl_candidates = gSymbolTable.lookup_adl_only(op_name, arg_types);
 		candidates.insert(candidates.end(), adl_candidates.begin(), adl_candidates.end());
 
-		constexpr int initial_template_instantiation_depth = 1;
 		int template_recursion_depth = initial_template_instantiation_depth;
 		for (size_t candidate_index = 0; candidate_index < candidates.size(); ++candidate_index) {
 			const auto& candidate = candidates[candidate_index];
