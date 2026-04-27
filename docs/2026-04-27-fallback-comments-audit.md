@@ -232,11 +232,19 @@ The initial audit above was architectural. Several template-instantiation fallba
    - Probe result: replacing it with a hard error broke `tests\test_template_template_default_ret42.cpp`.
    - Conclusion: this fallback is still active and cannot be removed safely until the default-argument substitution gap is fixed at the root.
 
+2. `src\Parser_Templates_Inst_ClassTemplate.cpp` — unresolved class-template type argument falls back to using the original `TypeSpecifierNode` as-is
+   - Probe result: replacing this with a hard error broke deferred-base and pack-expansion cases including `tests\test_nttp_base_class_substitution_ret0.cpp`, `tests\test_pack_expansion_base_class_ret0.cpp`, `tests\test_ratio_negative_lazy_member_ret0.cpp`, and `tests\test_type_traits_dependent_member_nttp_ret42.cpp`.
+   - Conclusion: this fallback is active and currently carries real class-template substitution traffic, especially around deferred base resolution and dependent member/type-trait cases.
+
+3. `src\Parser_Templates_Params.cpp` — `type_index == 0` dependent-type fallback
+   - Probe result: replacing the dependent-marking path with a hard error broke comparison/operator template cases including `comparison_operators_ret1.cpp`, `float_comparisons_ret1.cpp`, `test_const_member_with_param_ret255.cpp`, `test_decltype_function_template_base_ret42.cpp`, and multiple spaceship tests.
+   - Conclusion: invalid/placeholder `TypeIndex` is still an active dependency signal in the current parser/template pipeline and cannot be removed before the placeholder metadata path is finished.
+
 ### Confidence update
 
 The audit is now backed by direct suite evidence for several representative template fallbacks:
 
 - some narrow substitution recoveries were already dead in the current corpus and have now been removed;
 - the function-shaped and constructor-shaped deferred-member queue bridges in `IrGenerator_Visitors_TypeInit.cpp` were also dead in the current corpus and have now been replaced with hard invariants;
-- at least one default-argument fallback is definitely active;
+- multiple class-template/dependent-type fallback paths are definitely active;
 - the larger ExpressionSubstitutor/static-initializer/pack-size/dependent-placeholder fallback classes should still be assumed active until probed or root-fixed individually.
