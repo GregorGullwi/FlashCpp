@@ -32,22 +32,3 @@ and then fails when compiling their bodies.
 lookup and `lookup_all` must not include operators from non-inline nested namespaces
 of the associated namespace. Specifically, `std::rel_ops` symbols must be excluded
 when doing ADL for `std::pair` operands.
-
----
-
-### KI-002: Constructor codegen crashes for uninstantiated template constructors (FIXED)
-
-**Status:** Fixed in `src/IrGenerator_Visitors_Decl.cpp`.
-
-**Root cause:** When generating code for a class template instantiation (e.g.
-`pair<int,float>`), the member-function loop in `beginStructDeclarationCodegen` would
-visit constructor nodes whose parameter types were still `TypeCategory::UserDefined` —
-meaning the parser failed to record the constructor's own template parameters
-(e.g. `template<_U1,_U2> pair(_U1&&, _U2&&)` where `_U1`/`_U2` remain unresolved).
-Attempting to generate IR for such a constructor crashed in reference-identifier load
-lowering with "Type with no runtime size reached codegen".
-
-**Fix applied:**
-1. `ConstructorDeclarationNode` path: skip if any parameter has `TypeCategory::UserDefined`.
-2. `ConstructorDeclarationNode` path: skip if `ctor.has_template_parameters()`.
-3. `TemplateFunctionDeclarationNode` path: skip if `!tmpl.template_parameters().empty()`.

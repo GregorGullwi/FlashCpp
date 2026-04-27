@@ -102,12 +102,20 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
 
-#### 2026-04-27 std::pair member-template codegen guard (Linux/libstdc++-14)
+#### 2026-04-27 std::pair constructor-template retest (Linux/libstdc++-14)
 
 Focused retest against `x64/Sharded/FlashCpp` after rebuilding with clang++:
 
-- `<utility>` (`test_std_utility.cpp`) still fails (~520ms), but no longer reaches the previous unresolved-template-constructor codegen crash path for `std::pair<int, float>`. Remaining first-order blocker is documented in `docs/KNOWN_ISSUES.md`: `std::rel_ops` operator templates are incorrectly considered reachable for `std::pair` operands and their generated `operator<=` / `operator>` / `operator>=` bodies fail because C++20 `std::pair` provides comparison through `<=>`, not those rel_ops templates.
-- `<array>` ~1090ms, `<algorithm>` ~2060ms, `<string_view>` ~2620ms, and `<compare>` ~30ms were spot-checked; `<compare>` compiles cleanly in the current Linux/libstdc++-14 environment, so the top table row is stale for this host.
+- `<utility>` (`test_std_utility.cpp`) still fails, but now only with the
+  `std::rel_ops` semantic errors (`operator<=`, `operator>`, `operator>=`
+  requiring `operator<`). The earlier `std::pair` constructor-template codegen
+  crash is no longer present in the retest log.
+- Added reduced regression
+  `tests/test_class_template_unresolved_ctor_codegen_ret0.cpp`; that narrower
+  pair-like reproducer now compiles, links, and returns 0, but it does not
+  cover the full libstdc++ `std::pair` overload-resolution failure yet.
+- `<compare>` still compiles cleanly in the current Linux/libstdc++-14
+  environment (~30ms), so the top table row remains stale for this host.
 
 #### 2026-04-25 Unary Type-Trait Constant-Evaluation Sweep (Linux/libstdc++-14)
 
