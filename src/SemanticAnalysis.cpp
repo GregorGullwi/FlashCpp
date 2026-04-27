@@ -3017,9 +3017,9 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const Ar
 }
 
 void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node) {
-	const CanonicalTypeId left_type_id = inferExpressionType(subscript_node.array_expr());
-	const CanonicalTypeId right_type_id = inferExpressionType(subscript_node.index_expr());
-	if (!left_type_id || !right_type_id)
+	const CanonicalTypeId first_operand_type_id = inferExpressionType(subscript_node.array_expr());
+	const CanonicalTypeId second_operand_type_id = inferExpressionType(subscript_node.index_expr());
+	if (!first_operand_type_id || !second_operand_type_id)
 		return;
 
 	const auto is_array_or_pointer = [](const CanonicalTypeDesc& desc) -> bool {
@@ -3031,9 +3031,9 @@ void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& sub
 			   (isIntegralType(desc.category()) || desc.category() == TypeCategory::Enum);
 	};
 
-	const CanonicalTypeDesc& left_desc = type_context_.get(left_type_id);
-	const CanonicalTypeDesc& right_desc = type_context_.get(right_type_id);
-	if (is_subscript_index(left_desc) && is_array_or_pointer(right_desc)) {
+	const CanonicalTypeDesc& first_operand_desc = type_context_.get(first_operand_type_id);
+	const CanonicalTypeDesc& second_operand_desc = type_context_.get(second_operand_type_id);
+	if (is_subscript_index(first_operand_desc) && is_array_or_pointer(second_operand_desc)) {
 		// ArraySubscriptNode stores operands as (array, index). For built-in
 		// reversed subscripting such as 0[array], normalize to the semantic
 		// order mandated by C++20 built-in subscripting before downstream use.
