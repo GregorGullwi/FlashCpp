@@ -9,11 +9,33 @@
 #include "OverloadResolution.h"
 #include "Log.h"
 #include "IrGenerator.h"
+#include "ConstExprEvaluator.h"
 #include "ReachableStructWalker.h"
 
 namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
 constexpr std::string_view kAnonymousNamespaceContext = "<anonymous namespace>";
+
+void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec) {
+	if (!decl.is_array() || type_spec.is_array()) {
+		return;
+	}
+
+	std::vector<size_t> resolved_dimensions;
+	resolved_dimensions.reserve(decl.array_dimension_count());
+	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+	for (const auto& dim_expr : decl.array_dimensions()) {
+		auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
+		if (!eval_result.success() || eval_result.as_int() <= 0) {
+			return;
+		}
+		resolved_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
+	}
+
+	if (!resolved_dimensions.empty()) {
+		type_spec.set_array_dimensions(resolved_dimensions);
+	}
+}
 
 // Compute the number of logical characters in a string literal token, excluding
 // the null terminator.  The raw token includes the surrounding double-quote
@@ -1279,7 +1301,9 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 
 		const ASTNode& param_type_node = param_decl.type_node();
 		if (param_type_node.is<TypeSpecifierNode>()) {
-			const CanonicalTypeId tid = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
+			TypeSpecifierNode param_type = param_type_node.as<TypeSpecifierNode>();
+			applyDeclarationArrayBoundsToTypeSpec(param_decl, param_type);
+			const CanonicalTypeId tid = canonicalizeType(param_type);
 			const StringHandle pname = param_decl.identifier_token().handle();
 			if (pname.isValid()) {
 				addLocalType(pname, tid);
@@ -1294,7 +1318,9 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 									  : ASTNode::emplace_node<DeclarationNode>(*capture_decl);
 			symbols_.insert(capture_decl->identifier_token().value(), symbol_node);
 			{
-				const CanonicalTypeId tid = canonicalizeType(capture_decl->type_specifier_node());
+				TypeSpecifierNode capture_type = capture_decl->type_specifier_node();
+				applyDeclarationArrayBoundsToTypeSpec(*capture_decl, capture_type);
+				const CanonicalTypeId tid = canonicalizeType(capture_type);
 				const StringHandle name = capture_decl->identifier_token().handle();
 				if (name.isValid()) {
 					addLocalType(name, tid);
@@ -1541,7 +1567,9 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 					if (!param_type_node.is<TypeSpecifierNode>()) {
 						continue;
 					}
-					const CanonicalTypeId tid = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
+					TypeSpecifierNode param_type = param_type_node.as<TypeSpecifierNode>();
+					applyDeclarationArrayBoundsToTypeSpec(param_decl, param_type);
+					const CanonicalTypeId tid = canonicalizeType(param_type);
 					const StringHandle name = param_decl.identifier_token().handle();
 					if (name.isValid()) {
 						addLocalType(name, tid);
@@ -1632,7 +1660,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 				if (stmt.is<VariableDeclarationNode>()) {
 					const auto& var = stmt.as<VariableDeclarationNode>();
 					{
-						const CanonicalTypeId tid = canonicalizeType(var.declaration().type_specifier_node());
+						TypeSpecifierNode var_type = var.declaration().type_specifier_node();
+						applyDeclarationArrayBoundsToTypeSpec(var.declaration(), var_type);
+						const CanonicalTypeId tid = canonicalizeType(var_type);
 						const StringHandle name = var.declaration().identifier_token().handle();
 						if (name.isValid()) {
 							addLocalType(name, tid);
@@ -1686,7 +1716,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			if (loop_decl_node.is<DeclarationNode>()) {
 				const auto& loop_decl = loop_decl_node.as<DeclarationNode>();
 				{
-					const CanonicalTypeId tid = canonicalizeType(loop_decl.type_specifier_node());
+					TypeSpecifierNode loop_type = loop_decl.type_specifier_node();
+					applyDeclarationArrayBoundsToTypeSpec(loop_decl, loop_type);
+					const CanonicalTypeId tid = canonicalizeType(loop_type);
 					const StringHandle name = loop_decl.identifier_token().handle();
 					if (name.isValid()) {
 						addLocalType(name, tid);
@@ -1724,7 +1756,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 						catch_clause.exception_declaration()->is<DeclarationNode>()) {
 						const auto& catch_decl = catch_clause.exception_declaration()->as<DeclarationNode>();
 						{
-							const CanonicalTypeId tid = canonicalizeType(catch_decl.type_specifier_node());
+							TypeSpecifierNode catch_type = catch_decl.type_specifier_node();
+							applyDeclarationArrayBoundsToTypeSpec(catch_decl, catch_type);
+							const CanonicalTypeId tid = canonicalizeType(catch_type);
 							const StringHandle name = catch_decl.identifier_token().handle();
 							if (name.isValid()) {
 								addLocalType(name, tid);
@@ -1798,7 +1832,9 @@ void SemanticAnalysis::registerParametersInScope(const std::vector<ASTNode>& par
 			const auto& decl = param_node.as<DeclarationNode>();
 			const ASTNode ptype = decl.type_node();
 			if (ptype.has_value() && ptype.is<TypeSpecifierNode>()) {
-				const CanonicalTypeId tid = canonicalizeType(ptype.as<TypeSpecifierNode>());
+				TypeSpecifierNode param_type = ptype.as<TypeSpecifierNode>();
+				applyDeclarationArrayBoundsToTypeSpec(decl, param_type);
+				const CanonicalTypeId tid = canonicalizeType(param_type);
 				const StringHandle pname = decl.identifier_token().handle();
 				if (pname.isValid())
 					addLocalType(pname, tid);
@@ -2056,7 +2092,9 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		const ASTNode vtype = decl.type_node();
 		CanonicalTypeId decl_type_id{}; // default: invalid (value==0)
 		if (vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
-			decl_type_id = canonicalizeType(vtype.as<TypeSpecifierNode>());
+			TypeSpecifierNode declared_type = vtype.as<TypeSpecifierNode>();
+			applyDeclarationArrayBoundsToTypeSpec(decl, declared_type);
+			decl_type_id = canonicalizeType(declared_type);
 			const StringHandle vname = decl.identifier_token().handle();
 			if (vname.isValid())
 				addLocalType(vname, decl_type_id);
@@ -2165,7 +2203,9 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			const auto& loop_decl = loop_decl_node.as<DeclarationNode>();
 			const ASTNode loop_type_node = loop_decl.type_node();
 			if (loop_type_node.is<TypeSpecifierNode>()) {
-				const CanonicalTypeId tid = canonicalizeType(loop_type_node.as<TypeSpecifierNode>());
+				TypeSpecifierNode loop_type = loop_type_node.as<TypeSpecifierNode>();
+				applyDeclarationArrayBoundsToTypeSpec(loop_decl, loop_type);
+				const CanonicalTypeId tid = canonicalizeType(loop_type);
 				const StringHandle name = loop_decl.identifier_token().handle();
 				if (name.isValid()) {
 					addLocalType(name, tid);
@@ -2471,7 +2511,9 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 						const auto& decl = param.template as<DeclarationNode>();
 						const ASTNode ptype = decl.type_node();
 						if (ptype.has_value() && ptype.template is<TypeSpecifierNode>()) {
-							const CanonicalTypeId tid = canonicalizeType(ptype.template as<TypeSpecifierNode>());
+							TypeSpecifierNode param_type = ptype.template as<TypeSpecifierNode>();
+							applyDeclarationArrayBoundsToTypeSpec(decl, param_type);
+							const CanonicalTypeId tid = canonicalizeType(param_type);
 							const StringHandle pname = decl.identifier_token().handle();
 							if (pname.isValid())
 								addLocalType(pname, tid);
@@ -3128,9 +3170,7 @@ CanonicalTypeId SemanticAnalysis::inferResolvedSymbolType(const ASTNode& symbol)
 		}
 
 		TypeSpecifierNode type = type_node.as<TypeSpecifierNode>();
-		if (decl->is_array()) {
-			type.add_pointer_level();
-		}
+		applyDeclarationArrayBoundsToTypeSpec(*decl, type);
 		return canonicalizeType(type);
 	}
 

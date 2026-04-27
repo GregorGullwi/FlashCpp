@@ -341,7 +341,9 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 								}
 							}
 						}
-					} else if (!is_struct_type(annotated_source_type) && !is_struct_type(to_type)) {
+					} else if (!is_struct_type(annotated_source_type) &&
+							   !is_struct_type(to_type) &&
+							   cast_info.cast_kind != StandardConversionKind::ArrayToPointer) {
 						TypeCategory from_type = annotated_source_type;
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
