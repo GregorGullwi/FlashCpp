@@ -414,17 +414,14 @@ public:
 			}
 
 			// If we're in a namespace scope, also check namespace_symbols_ for symbols
-			// from other blocks of the same namespace (e.g., reopened namespace blocks)
-			// This needs to happen BEFORE checking parent/global scopes.
+			// from other blocks of the same namespace (e.g., reopened namespace blocks).
+			// Use lookup_qualified() so that inline child namespaces are also searched
+			// (lookup_qualified -> lookup_qualified_all -> forEachInlineChildNamespace).
 			if (scope.scope_type == ScopeType::Namespace) {
 				if (!scope_namespace.isGlobal()) {
-					auto ns_it = namespace_symbols_.find(scope_namespace);
-					if (ns_it != namespace_symbols_.end()) {
-						StringHandle key = StringTable::getOrInternStringHandle(identifier);
-						auto symbol_it = ns_it->second.find(key);
-						if (symbol_it != ns_it->second.end() && !symbol_it->second.empty()) {
-							return symbol_it->second[0];
-						}
+					auto result = lookup_qualified(scope_namespace, identifier);
+					if (result.has_value()) {
+						return result;
 					}
 				}
 				scope_namespace = gNamespaceRegistry.getParent(scope_namespace);
@@ -493,13 +490,10 @@ public:
 			// from other blocks of the same namespace (e.g., reopened namespace blocks).
 			if (scope.scope_type == ScopeType::Namespace) {
 				if (!scope_namespace.isGlobal()) {
-					auto ns_it = namespace_symbols_.find(scope_namespace);
-					if (ns_it != namespace_symbols_.end()) {
-						StringHandle key = StringTable::getOrInternStringHandle(identifier);
-						auto symbol_it = ns_it->second.find(key);
-						if (symbol_it != ns_it->second.end()) {
-							return symbol_it->second;
-						}
+					StringHandle key = StringTable::getOrInternStringHandle(identifier);
+					auto namespace_results = lookup_qualified_all(scope_namespace, key);
+					if (!namespace_results.empty()) {
+						return namespace_results;
 					}
 				}
 				scope_namespace = gNamespaceRegistry.getParent(scope_namespace);
@@ -511,25 +505,34 @@ public:
 
 	// Lookup all overloads in a specific namespace
 	std::vector<ASTNode> lookup_qualified_all(NamespaceHandle namespace_handle, std::string_view identifier) const {
-		if (!namespace_handle.isValid()) {
-			return {};
-		}
-
-		auto ns_it = namespace_symbols_.find(namespace_handle);
-		if (ns_it == namespace_symbols_.end()) {
-			return {};
-		}
-
 		StringHandle key = StringTable::getOrInternStringHandle(identifier);
-		auto symbol_it = ns_it->second.find(key);
-		if (symbol_it == ns_it->second.end()) {
-			return {};
-		}
-		return symbol_it->second;
+		return lookup_qualified_all(namespace_handle, key);
 	}
 
 	std::vector<ASTNode> lookup_qualified_all(NamespaceHandle namespace_handle, StringHandle identifier) const {
-		return lookup_qualified_all(namespace_handle, StringTable::getStringView(identifier));
+		if (!namespace_handle.isValid()) {
+			return {};
+		}
+		std::vector<ASTNode> result;
+		gNamespaceRegistry.forEachInlineChildNamespace(namespace_handle, [&](NamespaceHandle visible_ns) {
+			auto ns_it = namespace_symbols_.find(visible_ns);
+			if (ns_it == namespace_symbols_.end()) {
+				return;
+			}
+			auto symbol_it = ns_it->second.find(identifier);
+			if (symbol_it == ns_it->second.end() || symbol_it->second.empty()) {
+				return;
+			}
+			if (result.empty()) {
+				result = symbol_it->second;
+				return;
+			}
+			if (!is_pure_function_set(result) || !is_pure_function_set(symbol_it->second)) {
+				return;
+			}
+			append_unique_function_overloads(result, symbol_it->second);
+		});
+		return result;
 	}
 
 	template <typename StringContainer>
@@ -581,15 +584,20 @@ public:
 		StringHandle key = StringTable::getOrInternStringHandle(func_name);
 
 		auto collect_from_ns = [&](NamespaceHandle ns) {
-			if (!ns.isValid() || !visited.insert(ns).second)
+			if (!ns.isValid() || visited.count(ns))
 				return;
-			auto adl_it = adl_only_symbols_.find(ns);
-			if (adl_it == adl_only_symbols_.end())
-				return;
-			auto sym_it = adl_it->second.find(key);
-			if (sym_it == adl_it->second.end())
-				return;
-			result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+			// Expand ns to include inline-linked relatives per C++20 [basic.lookup.argdep]/2.
+			gNamespaceRegistry.forEachInlineLinkedNamespace(ns, [&](NamespaceHandle related) {
+				if (!visited.insert(related).second)
+					return;
+				auto adl_it = adl_only_symbols_.find(related);
+				if (adl_it == adl_only_symbols_.end())
+					return;
+				auto sym_it = adl_it->second.find(key);
+				if (sym_it == adl_it->second.end())
+					return;
+				result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+			});
 		};
 
 		std::unordered_set<size_t> visited_types;
@@ -636,10 +644,17 @@ public:
 				}
 			}
 		}
-		// 4. Associated namespaces of argument types.
+		// 4. Associated namespaces of argument types, expanded for inline namespace transparency.
+		// Per C++20 [basic.lookup.argdep]/2: if an associated namespace is an inline namespace
+		// its enclosing namespace is also included (parent transparency), and if an associated
+		// namespace has inline namespaces those are also included (child transparency).
 		std::unordered_set<size_t> visited_types;
 		auto add_ns = [&](NamespaceHandle ns) {
-			if (ns.isValid()) result.insert(ns);
+			if (!ns.isValid() || result.count(ns))
+				return;
+			gNamespaceRegistry.forEachInlineLinkedNamespace(ns, [&](NamespaceHandle related) {
+				result.insert(related);
+			});
 		};
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
@@ -669,19 +684,33 @@ public:
 		StringHandle key = StringTable::getOrInternStringHandle(func_name);
 
 		auto search_ns = [&](NamespaceHandle ns) {
-			if (!ns.isValid() || !visited.insert(ns).second)
+			if (!ns.isValid() || visited.count(ns))
 				return;
-			// Search regular namespace symbols
-			auto candidates = lookup_qualified_all(ns, key);
-			result.insert(result.end(), candidates.begin(), candidates.end());
-			// Also search ADL-only (hidden friend) symbols
-			auto adl_it = adl_only_symbols_.find(ns);
-			if (adl_it != adl_only_symbols_.end()) {
-				auto sym_it = adl_it->second.find(key);
-				if (sym_it != adl_it->second.end()) {
-					result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+			// Expand ns to include inline-linked relatives per C++20 [basic.lookup.argdep]/2.
+			// Search each related namespace directly (not via lookup_qualified_all) to avoid
+			// double-expansion: forEachInlineLinkedNamespace already visits all inline relatives,
+			// so calling lookup_qualified_all here would re-visit their inline children and
+			// produce duplicate candidates.
+			gNamespaceRegistry.forEachInlineLinkedNamespace(ns, [&](NamespaceHandle related) {
+				if (!visited.insert(related).second)
+					return;
+				// Search regular namespace symbols — direct lookup, no child expansion.
+				auto ns_it = namespace_symbols_.find(related);
+				if (ns_it != namespace_symbols_.end()) {
+					auto sym_it = ns_it->second.find(key);
+					if (sym_it != ns_it->second.end()) {
+						result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+					}
 				}
-			}
+				// Also search ADL-only (hidden friend) symbols
+				auto adl_it = adl_only_symbols_.find(related);
+				if (adl_it != adl_only_symbols_.end()) {
+					auto sym_it = adl_it->second.find(key);
+					if (sym_it != adl_it->second.end()) {
+						result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+					}
+				}
+			});
 		};
 
 		std::unordered_set<size_t> visited_types;
@@ -978,25 +1007,19 @@ public:
 	// Takes a span/vector of namespace components instead of building a concatenated string
 	// If namespaces is empty, looks in the global namespace (for ::identifier syntax)
 	std::optional<ASTNode> lookup_qualified(NamespaceHandle namespace_handle, std::string_view identifier) const {
-		if (!namespace_handle.isValid()) {
-			return std::nullopt;
-		}
-
-		auto ns_it = namespace_symbols_.find(namespace_handle);
-		if (ns_it == namespace_symbols_.end()) {
-			return std::nullopt;
-		}
-
 		StringHandle key = StringTable::getOrInternStringHandle(identifier);
-		auto symbol_it = ns_it->second.find(key);
-		if (symbol_it == ns_it->second.end() || symbol_it->second.empty()) {
-			return std::nullopt;
-		}
-		return symbol_it->second[0];
+		return lookup_qualified(namespace_handle, key);
 	}
 
 	std::optional<ASTNode> lookup_qualified(NamespaceHandle namespace_handle, StringHandle identifier) const {
-		return lookup_qualified(namespace_handle, StringTable::getStringView(identifier));
+		if (!namespace_handle.isValid()) {
+			return std::nullopt;
+		}
+		auto result = lookup_qualified_all(namespace_handle, identifier);
+		if (result.empty()) {
+			return std::nullopt;
+		}
+		return result[0];
 	}
 
 	// Look up a symbol using QualifiedIdentifier.

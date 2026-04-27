@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include "InlineVector.h"
 #include "StringBuilder.h"
 #include "StringTable.h"
 
@@ -282,10 +284,104 @@ public:
 		return declared_namespaces_.count(handle) > 0;
 	}
 
+	// Mark a namespace as an inline namespace (C++20 [namespace.def]).
+	// Records the parent→child relationship for inline transparency in ADL.
+	void markInline(NamespaceHandle ns) {
+		if (!ns.isValid() || ns.isGlobal())
+			return;
+		// insert returns false if ns was already marked inline; avoid double-recording the child.
+		if (!inline_namespaces_.insert(ns).second)
+			return;
+		NamespaceHandle parent = getParent(ns);
+		if (parent.isValid())
+			inline_children_[parent].push_back(ns);
+	}
+
+	// Returns true if the namespace was declared as an inline namespace.
+	bool isInline(NamespaceHandle ns) const {
+		return ns.isValid() && inline_namespaces_.count(ns) > 0;
+	}
+
+	// Returns the direct inline children of a namespace.
+	const std::vector<NamespaceHandle>& getInlineChildren(NamespaceHandle parent) const {
+		static const std::vector<NamespaceHandle> empty;
+		if (!parent.isValid())
+			return empty;
+		auto it = inline_children_.find(parent);
+		if (it == inline_children_.end())
+			return empty;
+		return it->second;
+	}
+
+	// Returns the namespace itself plus all inline-linked relatives (transitively).
+	// Parent transparency: if ns is inline, its enclosing namespace is included.
+	// Child transparency: if ns has inline children, those are included (recursively).
+	// Used by ADL to satisfy C++20 [basic.lookup.argdep]/2 and [namespace.udir].
+	template <typename Callback>
+	void forEachInlineLinkedNamespace(NamespaceHandle ns, Callback&& callback) const {
+		if (!ns.isValid())
+			return;
+		const auto& direct_inline_children = getInlineChildren(ns);
+		if (!isInline(ns) && direct_inline_children.empty()) {
+			callback(ns);
+			return;
+		}
+		InlineVector<NamespaceHandle, 8> visited;
+		InlineVector<NamespaceHandle, 8> worklist;
+		worklist.push_back(ns);
+		while (!worklist.empty()) {
+			NamespaceHandle cur = worklist.back();
+			worklist.pop_back();
+			if (!cur.isValid())
+				continue;
+			if (std::find(visited.begin(), visited.end(), cur) != visited.end())
+				continue;
+			visited.push_back(cur);
+			callback(cur);
+			if (isInline(cur))
+				worklist.push_back(getParent(cur));
+			for (NamespaceHandle child : getInlineChildren(cur))
+				worklist.push_back(child);
+		}
+	}
+
+	// Visits the namespace and all of its inline children recursively.
+	// Used for ordinary qualified lookup where inline child transparency applies,
+	// but parent transparency does not.
+	template <typename Callback>
+	void forEachInlineChildNamespace(NamespaceHandle ns, Callback&& callback) const {
+		if (!ns.isValid())
+			return;
+		callback(ns);
+		const auto& direct_inline_children = getInlineChildren(ns);
+		if (direct_inline_children.empty())
+			return;
+		InlineVector<NamespaceHandle, 8> worklist;
+		for (NamespaceHandle child : direct_inline_children)
+			worklist.push_back(child);
+		while (!worklist.empty()) {
+			NamespaceHandle cur = worklist.back();
+			worklist.pop_back();
+			callback(cur);
+			for (NamespaceHandle child : getInlineChildren(cur))
+				worklist.push_back(child);
+		}
+	}
+
+	std::vector<NamespaceHandle> getInlineLinkedSet(NamespaceHandle ns) const {
+		std::vector<NamespaceHandle> result;
+		forEachInlineLinkedNamespace(ns, [&](NamespaceHandle related) {
+			result.push_back(related);
+		});
+		return result;
+	}
+
 	void clear() {
 		entries_.resize(1); // Keep global namespace
 		namespace_map_.clear();
 		declared_namespaces_.clear();
+		inline_namespaces_.clear();
+		inline_children_.clear();
 		max_size_reached_ = 1;
 	}
 
@@ -296,6 +392,8 @@ private:
 					   PairHash<NamespaceHandle, StringHandle>>
 		namespace_map_;
 	std::unordered_set<NamespaceHandle> declared_namespaces_;
+	std::unordered_set<NamespaceHandle> inline_namespaces_;
+	std::unordered_map<NamespaceHandle, std::vector<NamespaceHandle>> inline_children_;
 };
 
 extern NamespaceRegistry gNamespaceRegistry;
