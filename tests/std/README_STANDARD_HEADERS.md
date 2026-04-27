@@ -101,6 +101,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+
+#### 2026-04-27 std::pair member-template codegen guard (Linux/libstdc++-14)
+
+Focused retest against `x64/Sharded/FlashCpp` after rebuilding with clang++:
+
+- `<utility>` (`test_std_utility.cpp`) still fails (~520ms), but no longer reaches the previous unresolved-template-constructor codegen crash path for `std::pair<int, float>`. Remaining first-order blocker is documented in `docs/KNOWN_ISSUES.md`: `std::rel_ops` operator templates are incorrectly considered reachable for `std::pair` operands and their generated `operator<=` / `operator>` / `operator>=` bodies fail because C++20 `std::pair` provides comparison through `<=>`, not those rel_ops templates.
+- `<array>` ~1090ms, `<algorithm>` ~2060ms, `<string_view>` ~2620ms, and `<compare>` ~30ms were spot-checked; `<compare>` compiles cleanly in the current Linux/libstdc++-14 environment, so the top table row is stale for this host.
+
 #### 2026-04-25 Unary Type-Trait Constant-Evaluation Sweep (Linux/libstdc++-14)
 
 This sweep targeted the `<type_traits>` failure where

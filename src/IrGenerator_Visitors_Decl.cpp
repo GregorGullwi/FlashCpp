@@ -1320,6 +1320,7 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 						// Skip constructors with unresolved auto parameters (member function templates)
 						// These will be instantiated when called with concrete types
 					bool ctor_has_auto = false;
+					bool ctor_has_unresolved_param = false;
 					for (const auto& p : ctor.parameter_nodes()) {
 						if (p.is<DeclarationNode>()) {
 							const auto& pt = p.as<DeclarationNode>().type_specifier_node();
@@ -1327,9 +1328,18 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 								ctor_has_auto = true;
 								break;
 							}
+							// Skip constructors whose parameter types are still TypeCategory::UserDefined
+							// (=23): this indicates the parser failed to record the constructor's own
+							// template parameters (e.g. template<_U1,_U2> pair(_U1&&, _U2&&) where
+							// _U1/_U2 remain unresolved).  Generating code for such a constructor would
+							// crash in reference-identifier load lowering with "Type with no runtime size".
+							if (pt.category() == TypeCategory::UserDefined) {
+								ctor_has_unresolved_param = true;
+								break;
+							}
 						}
 					}
-					if (!ctor_has_auto) {
+					if (!ctor_has_auto && !ctor_has_unresolved_param && !ctor.has_template_parameters()) {
 						if (!ctor.is_materialized() &&
 							current_struct_name_.isValid() && member_name.isValid() &&
 							LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
@@ -1349,7 +1359,7 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 						// fallback needed.
 						visitConstructorDeclarationNode(ctor);
 					} else {
-						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping template constructor with auto params (will be instantiated on call)");
+						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping constructor with auto/unresolved params or unbound template params (will be instantiated on call)");
 					}
 				} else if (func_decl.is<DestructorDeclarationNode>()) {
 					visitDestructorDeclarationNode(func_decl.as<DestructorDeclarationNode>());
@@ -1360,7 +1370,16 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 						// Type::Auto, this is a member function template (e.g., abbreviated template
 						// from constrained auto) that should only be instantiated when called.
 					const auto& tmpl = func_decl.as<TemplateFunctionDeclarationNode>();
-					if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
+						// If the TemplateFunctionDeclarationNode still carries non-empty template
+						// parameters, this is a member function template (e.g., a converting
+						// assignment operator like `template<U1,U2> operator=(const pair<U1,U2>&)`
+						// inside a class template instantiation). The parameters U1/U2 are not
+						// yet bound to concrete types, so generating code would encounter
+						// TypeCategory::UserDefined types with size=0 and crash. Skip it;
+						// concrete instantiations are registered separately when the function is called.
+					if (!tmpl.template_parameters().empty()) {
+						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping member function template with unbound template params (will be instantiated on call)");
+					} else if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
 						const auto& inner_func = tmpl.function_declaration().as<FunctionDeclarationNode>();
 						if (inner_func.is_materialized()) {
 								// Check if any parameter has unresolved Auto type
