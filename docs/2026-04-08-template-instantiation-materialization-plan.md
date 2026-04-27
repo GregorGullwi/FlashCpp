@@ -156,6 +156,7 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Removal target: `type_index == 0` dependent checks, "placeholder struct type" returns, and fallback TypeInfo lookups by parameter name.
    - Activity note: a hard-fail probe of the `type_index == 0` dependent-marking path in `src\Parser_Templates_Params.cpp` broke comparison/operator template cases including `comparison_operators_ret1.cpp`, `float_comparisons_ret1.cpp`, `test_const_member_with_param_ret255.cpp`, `test_decltype_function_template_base_ret42.cpp`, and multiple spaceship tests. This sentinel path is still active and must be replaced by explicit placeholder metadata before removal.
    - Activity note: the old string-parsing dependent-template-placeholder rescue in `src\Parser_Core.cpp` was removed and the full suite still passed, so the current corpus now relies on canonical `TypeInfo` metadata rather than base-name extraction for this check.
+   - Activity note: the narrower `type_name = full_type_name` rescue in `src\Parser_Templates_Params.cpp` is also still active; hard-failing it broke `tests\test_variable_template_in_enable_if_ret0.cpp`, so parsed template-argument types can still arrive without a usable token spelling in current dependent-variable-template cases.
 
 4. **Non-type template argument/default evaluation path**
    - Current symptom: class-template instantiation falls back from specialized handlers to `ConstExprEvaluator` for non-type defaults, variable templates, array dimensions, and directly evaluated expressions.
@@ -181,6 +182,13 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Activity note: the `sizeof...` class-template pack-context rescue in `src\Parser_Templates_Substitution.cpp` was hard-fail probed and the full suite still passed, so that dead name/context rediscovery path has already been removed.
    - Activity note: the analogous lazy static-member ExpressionSubstitutor path in `src\Parser_Templates_Lazy.cpp` is still active; hard-failing it broke a broad cluster including `template_ttp_static_constexpr_member_ret0.cpp`, `test_alias_base_static_member_ret0.cpp`, `test_integral_constant_simple_ret30.cpp`, `test_ratio_lazy_static_member_ret0.cpp`, `test_template_static_member_initializer_scalar_brace_ret42.cpp`, and `test_type_traits_dependent_member_nttp_ret42.cpp`.
    - Activity note: the unknown-member-function direct-copy fallback in `src\Parser_Templates_Inst_ClassTemplate.cpp` was hard-fail probed and the full suite still passed, so that dead branch has already been removed.
+
+8. **Function template declaration/body reconstruction**
+   - Current symptom: function-template instantiation in `src\Parser_Templates_Inst_Deduction.cpp` still falls back to older return-type substitution and direct body-pointer reuse when the newer declaration/body reparse path does not fully reconstruct the instantiated function.
+   - Missing feature: the reparse path should always produce a fully instantiated declaration signature and body ownership, including concepts, trailing return types, pack-heavy signatures, and forward-declared definitions.
+   - Removal target: `Fallback: Use simple substitution (old behavior)` and `Fallback: copy the function body pointer directly (old behavior)`.
+   - Activity note: hard-failing the return-type substitution path broke a broad cluster including `concept_abbreviated_ret0.cpp`, `concept_comprehensive_ret15.cpp`, `template_inst_simple_ret5.cpp`, `test_func_template_dependent_default_nontype_sizeof_ret0.cpp`, and `test_nested_pack_return_type_ret42.cpp`.
+   - Activity note: hard-failing the direct body-copy path broke `decltype_trailing_return_ret0.cpp`, `test_dependent_swap_decltype_noexcept_ret0.cpp`, `test_namespaced_pair_swap_sfinae_ret0.cpp`, `test_std_swap_enable_if_alias_base_ret0.cpp`, and `test_template_template_forward_decl_definition_ret0.cpp`.
 
 7. **Intra-instantiation call-target rewriting remains important**
    - This is already diagnosed in the validation-history section around Slice G/H: `ExpressionSubstitutor` does not rewrite intra-struct call targets in instantiated member bodies from the template pattern declaration to the instantiated member stub.
