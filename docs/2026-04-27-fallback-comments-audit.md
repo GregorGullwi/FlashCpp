@@ -240,11 +240,20 @@ The initial audit above was architectural. Several template-instantiation fallba
    - Probe result: replacing the dependent-marking path with a hard error broke comparison/operator template cases including `comparison_operators_ret1.cpp`, `float_comparisons_ret1.cpp`, `test_const_member_with_param_ret255.cpp`, `test_decltype_function_template_base_ret42.cpp`, and multiple spaceship tests.
    - Conclusion: invalid/placeholder `TypeIndex` is still an active dependency signal in the current parser/template pipeline and cannot be removed before the placeholder metadata path is finished.
 
+4. `src\Parser_Templates_Inst_ClassTemplate.cpp` — non-type default evaluation fallback via `tryAppendEvaluatedTemplateValue(...)`
+   - Probe result: replacing it with a hard error broke `tests\test_expr_subst_noexcept_wrap_ret0.cpp`, `tests\test_template_spec_outofline_default_arg_ret42.cpp`, and `tests\test_template_spec_outofline_default_arg_namespaced_ret42.cpp`.
+   - Conclusion: this fallback is active in real default-argument instantiation paths and still covers NTTP defaults that the specialized handlers do not resolve.
+
+5. `src\Parser_Templates_Inst_ClassTemplate.cpp` — variable-template constexpr evaluation fallback
+   - Probe result: replacing it with a hard error broke `tests\test_variable_template_nttp_base_class_ret0.cpp`.
+   - Conclusion: this variable-template bridge is active and still needed when a substituted expression should be resolved through a variable template before generic constexpr evaluation.
+
 ### Confidence update
 
 The audit is now backed by direct suite evidence for several representative template fallbacks:
 
 - some narrow substitution recoveries were already dead in the current corpus and have now been removed;
 - the function-shaped and constructor-shaped deferred-member queue bridges in `IrGenerator_Visitors_TypeInit.cpp` were also dead in the current corpus and have now been replaced with hard invariants;
+- the array-dimension substitution fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was also dead in the current corpus and has now been removed;
 - multiple class-template/dependent-type fallback paths are definitely active;
 - the larger ExpressionSubstitutor/static-initializer/pack-size/dependent-placeholder fallback classes should still be assumed active until probed or root-fixed individually.

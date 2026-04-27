@@ -156,11 +156,14 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Missing feature: NTTP substitution should preserve value category, converted constant-expression type, and parameter identity before default filling or SFINAE checks run.
    - Removal target: catch-all non-type default evaluation fallbacks and "template may still work with fallback path" comments.
    - Activity note: a hard-fail probe of the unresolved-default catch-all in `src\Parser_Templates_Inst_ClassTemplate.cpp` broke `tests\test_template_template_default_ret42.cpp`, so this fallback is active in the current corpus and needs a root fix before removal.
+   - Activity note: a hard-fail probe of the narrower `tryAppendEvaluatedTemplateValue(...)` non-type-default fallback broke `tests\test_expr_subst_noexcept_wrap_ret0.cpp`, `tests\test_template_spec_outofline_default_arg_ret42.cpp`, and `tests\test_template_spec_outofline_default_arg_namespaced_ret42.cpp`, so the specialized default handlers still do not cover all NTTP default forms.
+   - Activity note: the variable-template constexpr bridge in the same area is also active; hard-failing it broke `tests\test_variable_template_nttp_base_class_ret0.cpp`.
 
 5. **Initializer/static-member substitution ownership**
    - Current symptom: class-template instantiation still has general fallback passes for initializers and static members from AST nodes/patterns/specializations.
    - Missing feature: member/static-member declarations and initializers should be substituted through the same canonical context as function bodies, with instantiated ownership recorded before sema/codegen.
    - Removal target: "General fallback: substitute remaining template parameters in the initializer" and "Fallback: Process static members from AST node" style paths.
+   - Activity note: the array-dimension substitution fallback used when `resolve_array_dimensions(...)` produced no dimensions but `substituted_array_size` was present was hard-fail probed and the full suite still passed, so that dead array-dimension fallback has already been removed from `src\Parser_Templates_Inst_ClassTemplate.cpp`.
 
 6. **ExpressionSubstitutor role clarification**
    - Current symptom: ExpressionSubstitutor is used both as an expected AST rewrite mechanism and as a late fallback after other substitution paths did not handle a node.
