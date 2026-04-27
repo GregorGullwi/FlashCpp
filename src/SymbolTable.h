@@ -414,17 +414,14 @@ public:
 			}
 
 			// If we're in a namespace scope, also check namespace_symbols_ for symbols
-			// from other blocks of the same namespace (e.g., reopened namespace blocks)
-			// This needs to happen BEFORE checking parent/global scopes.
+			// from other blocks of the same namespace (e.g., reopened namespace blocks).
+			// Use lookup_qualified() so that inline child namespaces are also searched
+			// (lookup_qualified -> lookup_qualified_all -> forEachInlineChildNamespace).
 			if (scope.scope_type == ScopeType::Namespace) {
 				if (!scope_namespace.isGlobal()) {
-					auto ns_it = namespace_symbols_.find(scope_namespace);
-					if (ns_it != namespace_symbols_.end()) {
-						StringHandle key = StringTable::getOrInternStringHandle(identifier);
-						auto symbol_it = ns_it->second.find(key);
-						if (symbol_it != ns_it->second.end() && !symbol_it->second.empty()) {
-							return symbol_it->second[0];
-						}
+					auto result = lookup_qualified(scope_namespace, identifier);
+					if (result.has_value()) {
+						return result;
 					}
 				}
 				scope_namespace = gNamespaceRegistry.getParent(scope_namespace);
@@ -690,12 +687,21 @@ public:
 			if (!ns.isValid() || visited.count(ns))
 				return;
 			// Expand ns to include inline-linked relatives per C++20 [basic.lookup.argdep]/2.
+			// Search each related namespace directly (not via lookup_qualified_all) to avoid
+			// double-expansion: forEachInlineLinkedNamespace already visits all inline relatives,
+			// so calling lookup_qualified_all here would re-visit their inline children and
+			// produce duplicate candidates.
 			gNamespaceRegistry.forEachInlineLinkedNamespace(ns, [&](NamespaceHandle related) {
 				if (!visited.insert(related).second)
 					return;
-				// Search regular namespace symbols
-				auto candidates = lookup_qualified_all(related, key);
-				result.insert(result.end(), candidates.begin(), candidates.end());
+				// Search regular namespace symbols — direct lookup, no child expansion.
+				auto ns_it = namespace_symbols_.find(related);
+				if (ns_it != namespace_symbols_.end()) {
+					auto sym_it = ns_it->second.find(key);
+					if (sym_it != ns_it->second.end()) {
+						result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+					}
+				}
 				// Also search ADL-only (hidden friend) symbols
 				auto adl_it = adl_only_symbols_.find(related);
 				if (adl_it != adl_only_symbols_.end()) {

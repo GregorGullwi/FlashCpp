@@ -815,10 +815,6 @@ private:
 	// parse it themselves with proper function parameter scope setup.
 	std::optional<ASTNode> last_parsed_requires_clause_;
 
-	// Track nesting of active inline-namespace transparency (parallel to parse_namespace recursion).
-	// Reopened inline namespaces stay transparent even if the reopening omits the 'inline' keyword.
-	std::vector<bool> inline_namespace_stack_;
-
 	// Track if current scope has parameter packs (enables fold expression parsing)
 	bool has_parameter_packs_ = false;
 

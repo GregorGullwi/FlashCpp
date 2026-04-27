@@ -11,6 +11,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include "InlineVector.h"
 #include "StringBuilder.h"
 #include "StringTable.h"
 
@@ -325,8 +326,9 @@ public:
 			callback(ns);
 			return;
 		}
-		std::vector<NamespaceHandle> visited;
-		std::vector<NamespaceHandle> worklist = {ns};
+		InlineVector<NamespaceHandle, 8> visited;
+		InlineVector<NamespaceHandle, 8> worklist;
+		worklist.push_back(ns);
 		while (!worklist.empty()) {
 			NamespaceHandle cur = worklist.back();
 			worklist.pop_back();
@@ -354,7 +356,9 @@ public:
 		const auto& direct_inline_children = getInlineChildren(ns);
 		if (direct_inline_children.empty())
 			return;
-		std::vector<NamespaceHandle> worklist(direct_inline_children.begin(), direct_inline_children.end());
+		InlineVector<NamespaceHandle, 8> worklist;
+		for (NamespaceHandle child : direct_inline_children)
+			worklist.push_back(child);
 		while (!worklist.empty()) {
 			NamespaceHandle cur = worklist.back();
 			worklist.pop_back();

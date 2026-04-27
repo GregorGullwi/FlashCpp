@@ -593,7 +593,6 @@ ParseResult Parser::parse_namespace() {
 	// For nested namespaces (A::B::C), enter each scope in order
 	if (!is_anonymous) {
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		std::vector<bool> active_inline_flags;
 		size_t entered_namespace_count = 0;
 
 		for (size_t i = 0; i < nested_names.size(); ++i) {
@@ -627,15 +626,8 @@ ParseResult Parser::parse_namespace() {
 				gSymbolTable.enter_namespace(ns_name);
 				current_handle = gSymbolTable.get_current_namespace_handle();
 			}
-			active_inline_flags.push_back(effective_inline);
 			++entered_namespace_count;
 		}
-		for (bool active_inline : active_inline_flags) {
-			inline_namespace_stack_.push_back(active_inline);
-		}
-	} else {
-		// Track inline namespace nesting for anonymous namespaces so cleanup stays balanced.
-		inline_namespace_stack_.push_back(false);
 	}
 	// For anonymous namespaces, track the namespace in the AST but not in symbol lookup
 	// Symbols will be added to current scope during declaration parsing
@@ -774,10 +766,7 @@ ParseResult Parser::parse_namespace() {
 			size_t nesting_depth = nested_names.empty() ? 1 : nested_names.size();
 			for (size_t i = 0; i < nesting_depth; ++i) {
 				gSymbolTable.exit_scope();
-				inline_namespace_stack_.pop_back();
 			}
-		} else {
-			inline_namespace_stack_.pop_back();
 		}
 		return ParseResult::error("Expected '}' after namespace body", peek_info());
 	}
@@ -788,10 +777,7 @@ ParseResult Parser::parse_namespace() {
 		size_t nesting_depth = nested_names.empty() ? 1 : nested_names.size();
 		for (size_t i = 0; i < nesting_depth; ++i) {
 			gSymbolTable.exit_scope();
-			inline_namespace_stack_.pop_back();
 		}
-	} else {
-		inline_namespace_stack_.pop_back();
 	}
 
 	return saved_position.success(namespace_node);
