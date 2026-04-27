@@ -252,7 +252,7 @@ struct PointerConversionInfo {
 
 std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 	const CanonicalTypeDesc& from_desc,
-	const CanonicalTypeDesc* target_desc,
+	const CanonicalTypeDesc* optional_target_desc,
 	SemanticAnalysis* sema,
 	int depth) {
 	// Mirrors the existing conversion-operator inheritance recursion guard:
@@ -282,13 +282,13 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 		if (!return_type_node.is<TypeSpecifierNode>())
 			continue;
 
-		const CanonicalTypeId return_type_id = sema->canonicalizeTypeForImplicitConversion(return_type_node.as<TypeSpecifierNode>());
-		if (!return_type_id)
+		const CanonicalTypeId conv_op_return_type_id = sema->canonicalizeTypeForImplicitConversion(return_type_node.as<TypeSpecifierNode>());
+		if (!conv_op_return_type_id)
 			continue;
-		const CanonicalTypeDesc& return_desc = sema->typeContext().get(return_type_id);
+		const CanonicalTypeDesc& return_desc = sema->typeContext().get(conv_op_return_type_id);
 		if (return_desc.pointer_levels.empty() || !return_desc.array_dimensions.empty())
 			continue;
-		if (target_desc && !(return_desc == *target_desc))
+		if (optional_target_desc && !(return_desc == *optional_target_desc))
 			continue;
 
 		if (struct_info->name.isValid() && mf.getName().isValid()) {
@@ -305,7 +305,7 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 		CanonicalTypeDesc element_desc = return_desc;
 		element_desc.pointer_levels.pop_back();
 		const CanonicalTypeId element_type_id = sema->canonicalizeTypeForImplicitConversion(materializeTypeSpecifier(element_desc));
-		return PointerConversionInfo{return_type_id, element_type_id};
+		return PointerConversionInfo{conv_op_return_type_id, element_type_id};
 	}
 
 	for (const auto& base : struct_info->base_classes) {
@@ -314,7 +314,7 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 		CanonicalTypeDesc base_from_desc;
 		base_from_desc.type_index = base.type_index;
 		base_from_desc.base_cv = from_desc.base_cv;
-		if (auto result = findStructPointerConversionOperator(base_from_desc, target_desc, sema, depth + 1))
+		if (auto result = findStructPointerConversionOperator(base_from_desc, optional_target_desc, sema, depth + 1))
 			return result;
 	}
 

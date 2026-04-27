@@ -53,7 +53,8 @@ static const StructMemberFunction* findConversionOperatorForSubscriptPointerTarg
 	for (const auto& member_func : struct_info->member_functions) {
 		if (source_is_const && !member_func.is_const())
 			continue;
-		if (!source_is_const && prefer_const != member_func.is_const())
+		const bool const_preference_mismatch = prefer_const != member_func.is_const();
+		if (!source_is_const && const_preference_mismatch)
 			continue;
 		if (isConversionOperatorForTargetType(sema, member_func, target_desc))
 			return &member_func;
@@ -787,11 +788,11 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 						throw InternalError(std::string(StringBuilder()
 							.append("generateArraySubscriptIr: sema annotated struct-to-pointer subscript conversion for '")
 							.append(StringTable::getStringView(source_type_info->name()))
-							.append("' but no operator matching target category ")
-							.append(std::to_string(static_cast<int>(target_desc.category())))
+							.append("' but no operator matching target type '")
+							.append(getTypeName(target_desc.category()))
 							.append(" with pointer depth ")
 							.append(std::to_string(target_desc.pointer_levels.size()))
-							.append(" was found")
+							.append("' was found")
 							.commit()));
 					}
 					if (auto converted = emitConversionOperatorCall(
