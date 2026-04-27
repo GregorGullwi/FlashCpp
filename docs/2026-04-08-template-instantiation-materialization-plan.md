@@ -192,6 +192,7 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Removal target: `Fallback: Use simple substitution (old behavior)` and `Fallback: copy the function body pointer directly (old behavior)`.
    - Activity note: hard-failing the return-type substitution path broke a broad cluster including `concept_abbreviated_ret0.cpp`, `concept_comprehensive_ret15.cpp`, `template_inst_simple_ret5.cpp`, `test_func_template_dependent_default_nontype_sizeof_ret0.cpp`, and `test_nested_pack_return_type_ret42.cpp`.
    - Activity note: hard-failing the direct body-copy path broke `decltype_trailing_return_ret0.cpp`, `test_dependent_swap_decltype_noexcept_ret0.cpp`, `test_namespaced_pair_swap_sfinae_ret0.cpp`, `test_std_swap_enable_if_alias_base_ret0.cpp`, and `test_template_template_forward_decl_definition_ret0.cpp`.
+   - Activity note: copying `template_declaration_position()` and `template_body_position()` through `copy_function_properties(...)` is safe and now done, but hard-failing the same two fallback branches still broke the broad return-type/body clusters. So missing saved parser positions were part of the metadata loss, but not the full root cause.
 
 7. **Intra-instantiation call-target rewriting remains important**
    - This is already diagnosed in the validation-history section around Slice G/H: `ExpressionSubstitutor` does not rewrite intra-struct call targets in instantiated member bodies from the template pattern declaration to the instantiated member stub.

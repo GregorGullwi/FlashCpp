@@ -571,6 +571,12 @@ void Parser::copy_function_properties(FunctionDeclarationNode& dest, const Funct
 	dest.set_inline_always(src.is_inline_always());
 	dest.set_linkage(src.linkage());
 	dest.set_calling_convention(src.calling_convention());
+	if (src.has_template_body_position()) {
+		dest.set_template_body_position(src.template_body_position());
+	}
+	if (src.has_template_declaration_position()) {
+		dest.set_template_declaration_position(src.template_declaration_position());
+	}
 	if (src.has_trailing_return_type_position()) {
 		dest.set_trailing_return_type_position(src.trailing_return_type_position());
 	}

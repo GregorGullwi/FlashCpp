@@ -279,10 +279,12 @@ The initial audit above was architectural. Several template-instantiation fallba
 
 13. `src\Parser_Templates_Inst_Deduction.cpp` — function return-type substitution fallback
    - Probe result: hard-failing the “simple substitution” return-type path broke a broad deduction cluster including `concept_abbreviated_ret0.cpp`, `concept_comprehensive_ret15.cpp`, `template_inst_simple_ret5.cpp`, `test_func_template_dependent_default_nontype_sizeof_ret0.cpp`, `test_nested_pack_return_type_ret42.cpp`, and many other concept/pack/trailing-return cases.
+   - Probe result: additionally copying `template_declaration_position()` / `template_body_position()` through `copy_function_properties(...)` was safe, but hard-failing the fallback still broke the same broad cluster, so missing saved parse positions are not the only reason this old path still fires.
    - Conclusion: function-template instantiation still depends heavily on the older return-type reconstruction path when the newer reparse route does not produce a replacement return type.
 
 14. `src\Parser_Templates_Inst_Deduction.cpp` — template body copy fallback
    - Probe result: replacing the direct body-pointer copy with a hard error broke `decltype_trailing_return_ret0.cpp`, `test_dependent_swap_decltype_noexcept_ret0.cpp`, `test_namespaced_pair_swap_sfinae_ret0.cpp`, `test_std_swap_enable_if_alias_base_ret0.cpp`, and `test_template_template_forward_decl_definition_ret0.cpp`.
+   - Probe result: additionally copying saved template declaration/body positions through `copy_function_properties(...)` was safe, but hard-failing the fallback still broke that same body-reuse cluster, so some instantiations still arrive without a usable reparse path even after metadata propagation.
    - Conclusion: some instantiations still bypass the body reparse path and require the old direct-body reuse branch, especially for forward-declared and SFINAE-heavy function templates.
 
 15. `src\Parser_Templates_Inst_ClassTemplate.cpp` — non-type default evaluation fallback
