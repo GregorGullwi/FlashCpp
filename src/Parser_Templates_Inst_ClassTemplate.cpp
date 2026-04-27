@@ -7659,16 +7659,60 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					throw;
 				}
 			} else {
-				// No definition to substitute, copy directly
-				instantiated_struct_ref.add_constructor(
-					mem_func.function_declaration,
-					mem_func.access);
+				// No inline body yet (neither materialized nor has_template_body_position).
+				// The body will arrive later via:
+				//   (a) deferred-body-replay  (template_class.deferred_bodies() non-empty), or
+				//   (b) out-of-line body matching (below in this function), or
+				//   (c) lazy instantiation triggered at the call site.
+				//
+				// We MUST create a FRESH ConstructorDeclarationNode with the instantiated
+				// struct name and with substituted (concrete) parameter types.
+				// Reusing the original template-pattern node was the root cause of link
+				// failures: the original carries template-parameter names (e.g. "T") in
+				// both its own name field and its parameter types, so the IR emitter would
+				// produce a symbol like Buffer$hash::Buffer$hash(T) instead of
+				// Buffer$hash::Buffer$hash(int).
+				try {
+					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+						instantiated_name,
+						instantiated_name);
+					setOuterTemplateBindingsFromParams(new_ctor_ref, template_params, template_args_to_use);
 
-				// Also add to struct_info so it can be found during codegen
-				struct_info_ptr->addConstructor(mem_func.function_declaration, mem_func.access);
+					// Ensure template_param_order is populated (used by ExpressionSubstitutor)
+					if (template_param_order.empty()) {
+						for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
+							if (template_params[i].is<TemplateParameterNode>()) {
+								template_param_order.push_back(template_params[i].as<TemplateParameterNode>().name());
+							}
+						}
+					}
 
-				// Slice 3: record constructor-no-definition stub (same node is reused).
-				source_member_to_stub[astNodeKey(mem_func.function_declaration)] = mem_func.function_declaration;
+					// Substitute and copy parameters so the stub has concrete types.
+					size_t saved_pack_info = pack_param_info_.size();
+					substituteAndCopyParams(ctor_decl.parameter_nodes(), new_ctor_ref, template_params, template_args_to_use);
+					pack_param_info_.resize(saved_pack_info);
+
+					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
+					new_ctor_ref.set_is_explicitly_defaulted(ctor_decl.is_explicitly_defaulted());
+					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
+					new_ctor_ref.set_explicit(ctor_decl.is_explicit());
+					new_ctor_ref.set_constexpr(ctor_decl.is_constexpr());
+					if (ctor_decl.has_requires_clause()) {
+						new_ctor_ref.set_requires_clause(*ctor_decl.requires_clause());
+					}
+
+					// Add the fresh stub to the instantiated struct AST node and to struct_info.
+					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
+					struct_info_ptr->addConstructor(new_ctor_node, mem_func.access);
+
+					// Slice 3: map original template-pattern key to fresh instantiated stub,
+					// so deferred-body-replay can find and materialise it later.
+					source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_ctor_node;
+				} catch (const std::exception& e) {
+					FLASH_LOG(Templates, Error, "Exception creating no-body constructor stub for ",
+							  ctor_decl.name(), ": ", e.what());
+					throw;
+				}
 			}
 		} else if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
 			const DestructorDeclarationNode& dtor_decl = mem_func.function_declaration.as<DestructorDeclarationNode>();

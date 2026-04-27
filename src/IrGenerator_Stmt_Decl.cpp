@@ -376,12 +376,16 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		}
 	} full_expression_temp_flush_guard{flushFullExpressionTemps};
 	auto queue_nested_template_ctor = [this](const TypeInfo& type_info_ref, const ConstructorDeclarationNode* ctor) {
-		std::string_view ctor_struct_name = StringTable::getStringView(type_info_ref.name());
-		bool is_nested_template_ctor = (ctor_struct_name.find("::") != std::string_view::npos) &&
-									   (type_info_ref.isTemplateInstantiation() || ctor_struct_name.find('$') != std::string_view::npos);
-		if (!is_nested_template_ctor || !ctor) {
+		if (!ctor) {
 			return;
 		}
+		// Always queue the selected constructor for deferred emission.  Late-instantiated
+		// concrete ctors (created by materializeMatchingConstructorTemplate during sema
+		// annotation — after beginStructDeclarationCodegen already ran) are NOT visited
+		// during the struct codegen walk and must be emitted here.  Ctors that were
+		// already visited during beginStructDeclarationCodegen are deduplicated by the
+		// emitted_constructor_nodes_ guard inside visitConstructorDeclarationNode, so
+		// double-emit is safe to ignore.
 		DeferredMemberFunctionInfo deferred_info;
 		deferred_info.struct_name = type_info_ref.name();
 		deferred_info.function_node = ASTNode(ctor);

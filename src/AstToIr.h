@@ -1222,6 +1222,11 @@ private:
 	// (same struct can be registered under multiple keys in getTypesByNameMap())
 	std::unordered_set<const TypeInfo*> processed_type_infos_;
 
+	// Deduplication guard for visitConstructorDeclarationNode: tracks which ctor AST
+	// node raw pointers have already been emitted so that a ctor visited during
+	// beginStructDeclarationCodegen is never re-emitted from the deferred queue.
+	std::unordered_set<const void*> emitted_constructor_nodes_;
+
 	// Current lambda context (for tracking captured variables)
 	// When generating lambda body, this contains the closure type name and capture metadata
 	struct LambdaContext {
