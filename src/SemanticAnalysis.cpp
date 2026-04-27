@@ -4027,10 +4027,10 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	//   (a) String-literal source: inferExpressionType returns const char[N] directly.
 	//       from_desc: pointer_levels=[], array_dimensions=[N], category=Char
 	//
-	//   (b) Identifier-array source: inferResolvedSymbolType adds one pointer level
-	//       to the TypeSpecifierNode before canonicalising, but the array dimensions
-	//       survive the canonicalisation.  The result is a hybrid descriptor:
-	//       from_desc: pointer_levels=[1], array_dimensions=[N], category=<elem>
+//   (b) Identifier-array source: applyDeclarationArrayBoundsToTypeSpec adds
+//       array dimensions to the TypeSpecifierNode before canonicalising.
+//       from_desc: pointer_levels=[], array_dimensions=[N], category=<elem>
+
 	//
 	// In both shapes the target descriptor is a plain pointer: pointer_levels=[1],
 	// array_dimensions=[], same element category.
