@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -315,25 +316,59 @@ public:
 	// Parent transparency: if ns is inline, its enclosing namespace is included.
 	// Child transparency: if ns has inline children, those are included (recursively).
 	// Used by ADL to satisfy C++20 [basic.lookup.argdep]/2 and [namespace.udir].
-	std::vector<NamespaceHandle> getInlineLinkedSet(NamespaceHandle ns) const {
-		std::vector<NamespaceHandle> result;
+	template <typename Callback>
+	void forEachInlineLinkedNamespace(NamespaceHandle ns, Callback&& callback) const {
 		if (!ns.isValid())
-			return result;
-		std::unordered_set<NamespaceHandle> visited;
+			return;
+		const auto& direct_inline_children = getInlineChildren(ns);
+		if (!isInline(ns) && direct_inline_children.empty()) {
+			callback(ns);
+			return;
+		}
+		std::vector<NamespaceHandle> visited;
 		std::vector<NamespaceHandle> worklist = {ns};
 		while (!worklist.empty()) {
 			NamespaceHandle cur = worklist.back();
 			worklist.pop_back();
-			if (!cur.isValid() || !visited.insert(cur).second)
+			if (!cur.isValid())
 				continue;
-			result.push_back(cur);
-			// Parent transparency
+			if (std::find(visited.begin(), visited.end(), cur) != visited.end())
+				continue;
+			visited.push_back(cur);
+			callback(cur);
 			if (isInline(cur))
 				worklist.push_back(getParent(cur));
-			// Child transparency
 			for (NamespaceHandle child : getInlineChildren(cur))
 				worklist.push_back(child);
 		}
+	}
+
+	// Visits the namespace and all of its inline children recursively.
+	// Used for ordinary qualified lookup where inline child transparency applies,
+	// but parent transparency does not.
+	template <typename Callback>
+	void forEachInlineChildNamespace(NamespaceHandle ns, Callback&& callback) const {
+		if (!ns.isValid())
+			return;
+		callback(ns);
+		const auto& direct_inline_children = getInlineChildren(ns);
+		if (direct_inline_children.empty())
+			return;
+		std::vector<NamespaceHandle> worklist(direct_inline_children.begin(), direct_inline_children.end());
+		while (!worklist.empty()) {
+			NamespaceHandle cur = worklist.back();
+			worklist.pop_back();
+			callback(cur);
+			for (NamespaceHandle child : getInlineChildren(cur))
+				worklist.push_back(child);
+		}
+	}
+
+	std::vector<NamespaceHandle> getInlineLinkedSet(NamespaceHandle ns) const {
+		std::vector<NamespaceHandle> result;
+		forEachInlineLinkedNamespace(ns, [&](NamespaceHandle related) {
+			result.push_back(related);
+		});
 		return result;
 	}
 

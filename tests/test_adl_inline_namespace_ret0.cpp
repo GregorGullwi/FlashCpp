@@ -32,10 +32,12 @@ int main() {
 	// Parent transparency: ChildType is in outer::inner (inline), so outer is
 	// also searched and process<ChildType> is found.
 	int r1 = process(c);
+	if (r1 != 42) return 1;
 
 	// Child transparency: ParentType is in outer, so outer::inner is also
 	// searched and from_inner(ParentType) is found.
 	int r2 = from_inner(p);
+	if (r2 != 20) return 2;
 
-	return r1 - r2 - 22; // 42 - 20 - 22 = 0
+	return 0;
 }

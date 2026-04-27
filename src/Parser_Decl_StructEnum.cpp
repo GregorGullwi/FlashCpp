@@ -194,12 +194,16 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		}
 	}
 
-	// If inside an inline namespace, register the parent-qualified name (e.g., outer::Foo)
-	if (!qualified_namespace.empty() && !inline_namespace_stack_.empty() && inline_namespace_stack_.back() && !parsing_template_class_) {
-		NamespaceHandle parent_namespace_handle = gNamespaceRegistry.getParent(current_namespace_handle);
-		StringHandle parent_handle = gNamespaceRegistry.buildQualifiedIdentifier(parent_namespace_handle, struct_name);
-		if (getTypesByNameMap().find(parent_handle) == getTypesByNameMap().end()) {
-			getTypesByNameMap().emplace(parent_handle, &struct_type_info);
+	// If inside an inline namespace, register aliases in every enclosing namespace that
+	// transparently exposes this inline namespace (e.g. outer::Foo, outer::v1::Foo, ...).
+	if (!qualified_namespace.empty() && !parsing_template_class_) {
+		NamespaceHandle visible_namespace_handle = current_namespace_handle;
+		while (visible_namespace_handle.isValid() && gNamespaceRegistry.isInline(visible_namespace_handle)) {
+			visible_namespace_handle = gNamespaceRegistry.getParent(visible_namespace_handle);
+			StringHandle visible_handle = gNamespaceRegistry.buildQualifiedIdentifier(visible_namespace_handle, struct_name);
+			if (getTypesByNameMap().find(visible_handle) == getTypesByNameMap().end()) {
+				getTypesByNameMap().emplace(visible_handle, &struct_type_info);
+			}
 		}
 	}
 

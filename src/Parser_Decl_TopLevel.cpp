@@ -482,6 +482,9 @@ ParseResult Parser::parse_namespace() {
 	std::vector<bool> nested_inline_flags;
 
 	if (peek() == "{"_tok) {
+		if (is_inline_namespace) {
+			return ParseResult::error("Inline namespace must have a name", peek_info());
+		}
 		// Anonymous namespace
 		is_anonymous = true;
 		// For anonymous namespaces, we'll use an empty name
@@ -519,6 +522,10 @@ ParseResult Parser::parse_namespace() {
 			}
 			nested_names.push_back(nested_name_token.value());
 			nested_inline_flags.push_back(nested_is_inline);
+		}
+
+		if (is_inline_namespace && nested_names.size() > 1) {
+			return ParseResult::error("Nested namespace definitions cannot be prefixed with 'inline'; use 'namespace A::inline B { }'", peek_info());
 		}
 
 		// Skip any attributes after the namespace name (e.g., __attribute__((__abi_tag__ ("cxx11"))))
@@ -586,18 +593,31 @@ ParseResult Parser::parse_namespace() {
 	// For nested namespaces (A::B::C), enter each scope in order
 	if (!is_anonymous) {
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+		std::vector<bool> active_inline_flags;
+		size_t entered_namespace_count = 0;
 
 		for (size_t i = 0; i < nested_names.size(); ++i) {
 			const auto& ns_name = nested_names[i];
 			bool this_ns_is_inline = nested_inline_flags.size() > i && nested_inline_flags[i];
 			StringHandle name_handle = StringTable::getOrInternStringHandle(ns_name);
 			NamespaceHandle next_handle = gNamespaceRegistry.getOrCreateNamespace(current_handle, name_handle);
+			bool was_declared = next_handle.isValid() && gNamespaceRegistry.isDeclared(next_handle);
+			bool was_already_inline = next_handle.isValid() && gNamespaceRegistry.isInline(next_handle);
+			if (this_ns_is_inline && was_declared && !was_already_inline) {
+				for (size_t j = 0; j < entered_namespace_count; ++j) {
+					gSymbolTable.exit_scope();
+				}
+				return ParseResult::error("Cannot reopen a non-inline namespace as inline", peek_info());
+			}
+			if (this_ns_is_inline && next_handle.isValid()) {
+				gNamespaceRegistry.markInline(next_handle);
+			}
+			bool effective_inline = this_ns_is_inline || was_already_inline;
 
 			// If this namespace is inline, add a using directive BEFORE entering
 			// This makes members visible in the current (parent) scope
-			if (this_ns_is_inline && next_handle.isValid()) {
+			if (effective_inline && next_handle.isValid()) {
 				gSymbolTable.add_using_directive(next_handle);
-				gNamespaceRegistry.markInline(next_handle);
 			}
 
 			if (next_handle.isValid()) {
@@ -607,13 +627,15 @@ ParseResult Parser::parse_namespace() {
 				gSymbolTable.enter_namespace(ns_name);
 				current_handle = gSymbolTable.get_current_namespace_handle();
 			}
+			active_inline_flags.push_back(effective_inline);
+			++entered_namespace_count;
 		}
-	}
-
-	// Track inline namespace nesting (one entry per nested level for proper cleanup)
-	for (size_t i = 0; i < (nested_names.empty() ? 1 : nested_names.size()); ++i) {
-		bool this_is_inline = nested_inline_flags.size() > i && nested_inline_flags[i];
-		inline_namespace_stack_.push_back(this_is_inline);
+		for (bool active_inline : active_inline_flags) {
+			inline_namespace_stack_.push_back(active_inline);
+		}
+	} else {
+		// Track inline namespace nesting for anonymous namespaces so cleanup stays balanced.
+		inline_namespace_stack_.push_back(false);
 	}
 	// For anonymous namespaces, track the namespace in the AST but not in symbol lookup
 	// Symbols will be added to current scope during declaration parsing
@@ -770,22 +792,6 @@ ParseResult Parser::parse_namespace() {
 		}
 	} else {
 		inline_namespace_stack_.pop_back();
-	}
-
-	// Merge inline namespace symbols into parent namespace for qualified lookup
-	// We need to do this for each inline namespace in the chain
-	// Capture the path AFTER exiting scopes (we're back to original scope)
-	if (!is_anonymous && !nested_inline_flags.empty()) {
-		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		for (size_t i = 0; i < nested_names.size(); ++i) {
-			bool this_is_inline = nested_inline_flags.size() > i && nested_inline_flags[i];
-			StringHandle name_handle = StringTable::getOrInternStringHandle(nested_names[i]);
-			NamespaceHandle inline_handle = gNamespaceRegistry.getOrCreateNamespace(current_handle, name_handle);
-			if (this_is_inline) {
-				gSymbolTable.merge_inline_namespace(inline_handle, current_handle);
-			}
-			current_handle = inline_handle;
-		}
 	}
 
 	return saved_position.success(namespace_node);
