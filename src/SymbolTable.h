@@ -611,6 +611,50 @@ public:
 		return result;
 	}
 
+	// Returns the set of namespace handles that are eligible for operator template lookup.
+	// Includes:
+	//   1. The global namespace (always eligible via ordinary unqualified lookup).
+	//   2. Namespaces present in the current scope chain (ordinary unqualified lookup).
+	//   3. Using-directive targets reachable from the current scope chain.
+	//   4. Associated namespaces of each argument type (ADL, C++20 [basic.lookup.argdep]/2).
+	// Non-inline nested namespaces of an associated namespace are intentionally excluded:
+	// e.g. std::rel_ops is not associated with std::pair, so operator templates defined
+	// there must not be found when the operands are of type pair<X,Y>.
+	std::unordered_set<NamespaceHandle> get_adl_eligible_namespaces(
+		const std::vector<TypeSpecifierNode>& arg_types) const {
+		std::unordered_set<NamespaceHandle> result;
+		// 1. Global namespace is always eligible.
+		result.insert(NamespaceRegistry::GLOBAL_NAMESPACE);
+		// 2 & 3. Current scope chain: each namespace frame and its using directives.
+		for (const auto& scope : symbol_table_stack_) {
+			if (scope.namespace_handle.isValid()) {
+				result.insert(scope.namespace_handle);
+			}
+			for (const auto& using_ns : scope.using_directive_paths) {
+				if (using_ns.isValid()) {
+					result.insert(using_ns);
+				}
+			}
+		}
+		// 4. Associated namespaces of argument types.
+		std::unordered_set<size_t> visited_types;
+		auto add_ns = [&](NamespaceHandle ns) {
+			if (ns.isValid()) result.insert(ns);
+		};
+		for (const auto& arg_type : arg_types) {
+			TypeIndex ti = arg_type.type_index();
+			if (const TypeInfo* type_info = tryGetTypeInfo(ti)) {
+				if (const StructTypeInfo* si = type_info->getStructInfo()) {
+					if (!visited_types.insert(ti.index()).second) continue;
+					collect_struct_associated_namespaces(si, add_ns, visited_types);
+				} else if (type_info->getEnumInfo()) {
+					add_ns(type_info->namespaceHandle());
+				}
+			}
+		}
+		return result;
+	}
+
 	// Collect ADL candidates per C++20 [basic.lookup.argdep].
 	// For each argument type that is a struct/class, searches the namespace in which
 	// the struct was declared, plus namespaces of all its base classes (recursively).
