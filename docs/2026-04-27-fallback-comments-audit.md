@@ -248,6 +248,14 @@ The initial audit above was architectural. Several template-instantiation fallba
    - Probe result: replacing it with a hard error broke `tests\test_variable_template_nttp_base_class_ret0.cpp`.
    - Conclusion: this variable-template bridge is active and still needed when a substituted expression should be resolved through a variable template before generic constexpr evaluation.
 
+6. `src\Parser_Templates_Substitution.cpp` — fold-expression non-type parameter-pack fallback
+   - Probe result: replacing the path that reconstructs fold-pack values from `template_params`/`template_args` with a hard error broke `tests\test_fold_nontype_ret42.cpp`.
+   - Conclusion: fold substitution still loses enough non-type pack metadata that unary/binary fold evaluation needs this recovery path for the current corpus.
+
+7. `src\Parser_Templates_Substitution.cpp` — `sizeof...` pack-size recovery via `pack_param_info_`
+   - Probe result: replacing the `get_pack_size(pack_name)` rescue with a hard error broke `tests\test_explicit_template_pack_sizeof_param_name_ret0.cpp`.
+   - Conclusion: `sizeof...` still depends on secondary pack-size metadata when the primary scope-based and template-arg-based pack counting paths do not find the named pack.
+
 ### Confidence update
 
 The audit is now backed by direct suite evidence for several representative template fallbacks:
@@ -255,5 +263,7 @@ The audit is now backed by direct suite evidence for several representative temp
 - some narrow substitution recoveries were already dead in the current corpus and have now been removed;
 - the function-shaped and constructor-shaped deferred-member queue bridges in `IrGenerator_Visitors_TypeInit.cpp` were also dead in the current corpus and have now been replaced with hard invariants;
 - the array-dimension substitution fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was also dead in the current corpus and has now been removed;
+- the fold-expression `pack_param_info_` fallback in `Parser_Templates_Substitution.cpp` was dead in the current corpus and has now been removed;
+- the `sizeof...` class-template pack-context fallback in `Parser_Templates_Substitution.cpp` was also dead in the current corpus and has now been removed;
 - multiple class-template/dependent-type fallback paths are definitely active;
 - the larger ExpressionSubstitutor/static-initializer/pack-size/dependent-placeholder fallback classes should still be assumed active until probed or root-fixed individually.

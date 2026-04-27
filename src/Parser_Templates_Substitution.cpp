@@ -759,14 +759,6 @@ ASTNode Parser::substituteTemplateParameters(
 						}
 					}
 
-					// Also check pack_param_info_ as another fallback
-					if (num_pack_elements == 0) {
-						auto pack_size = get_pack_size(fold.pack_name());
-						if (pack_size.has_value()) {
-							num_pack_elements = *pack_size;
-						}
-					}
-
 					if (num_pack_elements == 0) {
 						FLASH_LOG(Templates, Warning, "Fold expression pack '", fold.pack_name(), "' has no elements");
 						return node;
@@ -893,21 +885,6 @@ ASTNode Parser::substituteTemplateParameters(
 				if (pack_size.has_value()) {
 					found_variadic = true;
 					num_pack_elements = *pack_size;
-				}
-			}
-
-			// If still not found, check class template pack context
-			// This handles sizeof...(_Elements) in member function templates of class templates
-			// where _Elements is the class template's parameter pack
-			if (!found_variadic) {
-				FLASH_LOG(Templates, Debug, "Trying to find pack '", pack_name, "' in class template pack context");
-				auto class_pack_size = get_class_template_pack_size(pack_name);
-				if (class_pack_size.has_value()) {
-					FLASH_LOG(Templates, Debug, "Found pack '", pack_name, "' with size ", *class_pack_size);
-					found_variadic = true;
-					num_pack_elements = *class_pack_size;
-				} else {
-					FLASH_LOG(Templates, Debug, "Pack '", pack_name, "' not found in class template pack context");
 				}
 			}
 

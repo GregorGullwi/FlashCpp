@@ -138,6 +138,8 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Missing feature: one substitution context object should carry type parameters, non-type parameter values, pack slices/sizes, current-instantiation identity, namespace/member context, and SFINAE/error-mode state through every instantiation entry point.
    - Removal target: general "substitute remaining template parameters" fallbacks, secondary ExpressionSubstitutor catch-alls, pack-size overcount formulas, and name-based re-discovery after a scope has exited.
    - Activity note: a hard-fail probe of the `src\Parser_Templates_Inst_ClassTemplate.cpp` fallback that reuses an unresolved class-template `TypeSpecifierNode` as-is broke deferred-base / pack-expansion / dependent-member cases including `tests\test_nttp_base_class_substitution_ret0.cpp`, `tests\test_pack_expansion_base_class_ret0.cpp`, `tests\test_ratio_negative_lazy_member_ret0.cpp`, and `tests\test_type_traits_dependent_member_nttp_ret42.cpp`. This path is active and should be root-fixed via better substitution metadata, not removed directly.
+   - Activity note: in `src\Parser_Templates_Substitution.cpp`, hard-failing the non-type fold-pack reconstruction path broke `tests\test_fold_nontype_ret42.cpp`, and hard-failing the `sizeof...` `get_pack_size(pack_name)` rescue broke `tests\test_explicit_template_pack_sizeof_param_name_ret0.cpp`; both are active signs that pack identity/size metadata is still getting lost before substitution finishes.
+   - Activity note: the narrower fold-expression `pack_param_info_` fallback in the same file was hard-fail probed and the full suite still passed, so that dead secondary fold-pack rescue has already been removed.
 
 2. **Canonical template argument metadata on TypeInfo/TemplateRegistry**
    - Current symptom: several paths recover template args from TypeInfo names, stripped qualifiers, stale TypeIndex values, or string-based instantiation names.
@@ -169,6 +171,7 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Current symptom: ExpressionSubstitutor is used both as an expected AST rewrite mechanism and as a late fallback after other substitution paths did not handle a node.
    - Missing feature: define ExpressionSubstitutor's preconditions and make it consume the authoritative substitution context. It should not reconstruct bindings from global TypeInfo or names.
    - Removal target: fallback creation of ad-hoc expression nodes and fallback recovery of template args from type names.
+   - Activity note: the `sizeof...` class-template pack-context rescue in `src\Parser_Templates_Substitution.cpp` was hard-fail probed and the full suite still passed, so that dead name/context rediscovery path has already been removed.
 
 7. **Intra-instantiation call-target rewriting remains important**
    - This is already diagnosed in the validation-history section around Slice G/H: `ExpressionSubstitutor` does not rewrite intra-struct call targets in instantiated member bodies from the template pattern declaration to the instantiated member stub.
