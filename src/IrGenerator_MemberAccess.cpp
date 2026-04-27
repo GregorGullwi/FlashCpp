@@ -246,9 +246,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	// Generate IR for array[index] expression
 	// This computes the address: base_address + (index * element_size)
 
-	const bool is_reversed = sema_ && sema_->isBuiltinSubscriptReversed(&arraySubscriptNode);
-	const ASTNode& semantic_array_expr_node = is_reversed ? arraySubscriptNode.index_expr() : arraySubscriptNode.array_expr();
-	const ASTNode& semantic_index_expr_node = is_reversed ? arraySubscriptNode.array_expr() : arraySubscriptNode.index_expr();
+	const ASTNode& semantic_array_expr_node = arraySubscriptNode.array_expr();
+	const ASTNode& semantic_index_expr_node = arraySubscriptNode.index_expr();
 
 	// Check for multidimensional array access pattern (arr[i][j])
 	// If the array expression is itself an ArraySubscriptNode, we have a multidimensional access

@@ -2276,9 +2276,10 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 	// Walk children for counting; Phase 2 type annotation is done in tryAnnotateReturnConversion.
 
 	if (node.is<ExpressionNode>()) {
+		ASTNode mutable_node = node;
 		// Walk into variant-based expression nodes to count children
-		const auto& expr = node.as<ExpressionNode>();
-		std::visit([&](const auto& e) {
+		auto& expr = mutable_node.as<ExpressionNode>();
+		std::visit([&](auto& e) {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				const std::string_view op = e.op();
@@ -2433,6 +2434,9 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				tryAnnotateCallArgConversions(e);
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				tryResolveSubscriptOperator(e);
+				if (!getResolvedOpSubscript(&e)) {
+					normalizeBuiltinSubscriptOperands(e);
+				}
 				// If sema resolved this subscript to operator[], annotate the index
 				// argument against the operator's parameter type using the shared
 				// single-argument annotation helper.
@@ -3013,16 +3017,11 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const Ar
 	return it != op_subscript_table_.end() ? it->second : nullptr;
 }
 
-bool SemanticAnalysis::isBuiltinSubscriptReversed(const ArraySubscriptNode* key) {
-	if (!key)
-		return false;
-	if (reversed_builtin_subscripts_.count(key))
-		return true;
-
-	const CanonicalTypeId left_type_id = inferExpressionType(key->array_expr());
-	const CanonicalTypeId right_type_id = inferExpressionType(key->index_expr());
+void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node) {
+	const CanonicalTypeId left_type_id = inferExpressionType(subscript_node.array_expr());
+	const CanonicalTypeId right_type_id = inferExpressionType(subscript_node.index_expr());
 	if (!left_type_id || !right_type_id)
-		return false;
+		return;
 
 	const auto is_array_or_pointer = [](const CanonicalTypeDesc& desc) -> bool {
 		return !desc.array_dimensions.empty() || !desc.pointer_levels.empty();
@@ -3036,10 +3035,11 @@ bool SemanticAnalysis::isBuiltinSubscriptReversed(const ArraySubscriptNode* key)
 	const CanonicalTypeDesc& left_desc = type_context_.get(left_type_id);
 	const CanonicalTypeDesc& right_desc = type_context_.get(right_type_id);
 	if (is_subscript_index(left_desc) && is_array_or_pointer(right_desc)) {
-		reversed_builtin_subscripts_.insert(key);
-		return true;
+		subscript_node = ArraySubscriptNode(
+			subscript_node.index_expr(),
+			subscript_node.array_expr(),
+			subscript_node.bracket_token());
 	}
-	return false;
 }
 
 const CallArgReferenceBindingInfo* SemanticAnalysis::getCallRefBinding(const void* key, size_t arg_index) const {
@@ -3376,10 +3376,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
 					return {};
 				}
+				ASTNode mutable_subscript_node(&e);
+				auto& mutable_subscript = mutable_subscript_node.as<ArraySubscriptNode>();
+				normalizeBuiltinSubscriptOperands(mutable_subscript);
 				// Array subscript: the result type is the element type of the array.
 				// Infer the array expression type and strip one array dimension.
-				const ASTNode& array_operand = isBuiltinSubscriptReversed(&e) ? e.index_expr() : e.array_expr();
-				const CanonicalTypeId array_type_id = inferExpressionType(array_operand);
+				const CanonicalTypeId array_type_id = inferExpressionType(mutable_subscript.array_expr());
 				if (!array_type_id)
 					return {};
 				const CanonicalTypeDesc& array_desc = type_context_.get(array_type_id);
