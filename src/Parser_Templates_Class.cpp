@@ -189,9 +189,9 @@ ParseResult Parser::parse_template_declaration() {
 	InlineVector<StringHandle, 4> template_param_names;
 	InlineVector<TemplateParameterKind, 4> template_param_kinds;
 	bool has_packs = false;	// Track if any parameter is a pack
-	for (const auto& param : template_params) {
+	for (auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
-			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			// Add ALL template parameters to the name list (Type, NonType, and Template)
 			// This allows them to be recognized when referenced in the template body
 			template_param_names.push_back(tparam.nameHandle());	 // string_view from Token
@@ -207,6 +207,7 @@ ParseResult Parser::parse_template_declaration() {
 				// Create a TypeInfo entry for the template parameter
 				auto& type_info = add_template_param_type(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? TypeCategory::Template : TypeCategory::UserDefined, 0); // Do we need a correct size here?
 				type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+				tparam.set_registered_type_index(type_info.type_index_);
 				template_scope.addParameter(&type_info);	 // RAII cleanup on all return paths
 			}
 		}

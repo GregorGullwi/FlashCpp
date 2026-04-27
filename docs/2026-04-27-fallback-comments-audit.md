@@ -270,8 +270,8 @@ The initial audit above was architectural. Several template-instantiation fallba
    - Conclusion: instantiated static-member initializers still rely on a catch-all substitution pass after the specialized rewrites, especially for dependent trait/default/member-access cases.
 
 11. `src\Parser_Templates_Inst_Substitution.cpp` — `sizeof(T)` / `alignof(T)` type-name mapping fallback
-   - Probe result: replacing the name-based substitution map fill with a hard error broke `tests\test_dependent_sizeof_alignof_template_arg_ret0.cpp`.
-   - Conclusion: dependent `sizeof`/`alignof` evaluation still needs a backup mapping from the parsed type token back to the template parameter when the registered type index is missing.
+   - Probe result: wiring class-template parameters to call `set_registered_type_index(...)` after `add_template_param_type(...)` in `src\Parser_Templates_Class.cpp`, then replacing the old name-based mapping pass with a hard invariant, still passed `tests\test_dependent_sizeof_alignof_template_arg_ret0.cpp` and the full suite.
+   - Conclusion: this fallback was covering a real metadata gap in class-template parameter registration, but the gap is now fixed and the fallback has been removed.
 
 12. `src\Parser_Templates_Params.cpp` — empty-token type-name fallback
    - Probe result: replacing the `type_name = full_type_name` rescue with a hard error broke `tests\test_variable_template_in_enable_if_ret0.cpp`.
@@ -305,6 +305,7 @@ The audit is now backed by direct suite evidence for several representative temp
 - the function-shaped and constructor-shaped deferred-member queue bridges in `IrGenerator_Visitors_TypeInit.cpp` were also dead in the current corpus and have now been replaced with hard invariants;
 - the array-dimension substitution fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was also dead in the current corpus and has now been removed;
 - the base-class instantiation-name fallback in `Parser_Templates_Inst_Substitution.cpp` was dead in the current corpus and has now been removed;
+- the `sizeof(T)` / `alignof(T)` type-name mapping fallback in `Parser_Templates_Inst_Substitution.cpp` was eliminated by registering class-template parameter type indices canonically in `Parser_Templates_Class.cpp`, and the old name-based recovery has now been removed;
 - the instantiated-member-alias copy fallback in `Parser_Templates_Inst_Substitution.cpp` was dead in the current corpus and has now been removed;
 - the fold-expression `pack_param_info_` fallback in `Parser_Templates_Substitution.cpp` was dead in the current corpus and has now been removed;
 - the `sizeof...` class-template pack-context fallback in `Parser_Templates_Substitution.cpp` was also dead in the current corpus and has now been removed;
@@ -313,5 +314,5 @@ The audit is now backed by direct suite evidence for several representative temp
 - the AST-node static-member fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was dead in the current corpus and has now been removed;
 - the unknown-member-function copy fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was dead in the current corpus and has now been removed;
 - the `Parser_Templates_Substitution.cpp` direct unqualified type-lookup step is required ordinary lookup, so the misleading fallback wording has been removed even though the behavior stays;
-- multiple class-template/dependent-type/deduction fallback paths are definitely active;
+- multiple dependent-type/deduction fallback paths are definitely active;
 - the larger ExpressionSubstitutor/static-initializer/pack-size/dependent-placeholder fallback classes should still be assumed active until probed or root-fixed individually.
