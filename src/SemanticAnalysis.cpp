@@ -3978,6 +3978,49 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 
+	// C++20 [conv.array] p1: Array-to-pointer decay.
+	// An lvalue or rvalue of type "array of N T" or "array of unknown bound of T" can be
+	// converted to a prvalue of type "pointer to T".
+	//
+	// Two source shapes arise from the way sema infers types:
+	//
+	//   (a) String-literal source: inferExpressionType returns const char[N] directly.
+	//       from_desc: pointer_levels=[], array_dimensions=[N], category=Char
+	//
+	//   (b) Identifier-array source: inferResolvedSymbolType adds one pointer level
+	//       to the TypeSpecifierNode before canonicalising, but the array dimensions
+	//       survive the canonicalisation.  The result is a hybrid descriptor:
+	//       from_desc: pointer_levels=[1], array_dimensions=[N], category=<elem>
+	//
+	// In both shapes the target descriptor is a plain pointer: pointer_levels=[1],
+	// array_dimensions=[], same element category.
+	//
+	// Both cases are handled here and annotated with StandardConversionKind::ArrayToPointer
+	// so that codegen can emit an AddressOf instruction instead of inspecting the raw
+	// DeclarationNode::is_array() flag.
+	if (!from_desc.array_dimensions.empty() &&
+		to_desc.array_dimensions.empty() &&
+		!to_desc.pointer_levels.empty() &&
+		from_desc.category() == to_desc.category()) {
+		ImplicitCastInfo cast_info;
+		cast_info.source_type_id = expr_type_id;
+		cast_info.target_type_id = target_type_id;
+		cast_info.cast_kind = StandardConversionKind::ArrayToPointer;
+		cast_info.value_category_after = ValueCategory::PRValue;
+		const CastInfoIndex idx = allocateCastInfo(cast_info);
+		SemanticSlot slot;
+		slot.type_id = target_type_id;
+		slot.cast_info_index = idx;
+		slot.value_category = ValueCategory::PRValue;
+		const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
+		setSlot(key, slot);
+		stats_.slots_filled++;
+		FLASH_LOG(General, Error, "SemanticAnalysis: ArrayToPointer annotated key=", key,
+				  " idx=", idx.value,
+				  " cat=", static_cast<int>(from_desc.category()));
+		return true;
+	}
+
 	// Same base type but different canonical IDs (differ only in qualifiers or type_index,
 	// e.g. two UserDefined aliases, const vs non-const, etc.): no primitive conversion needed.
 	if (from_desc.category() == to_desc.category())
@@ -4000,8 +4043,9 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		return false;
 	// Array source → incompatible scalar target: this is always ill-formed.
 	// E.g. `int c = "test"` (const char[5] → int) or `int x = arr` (int[3] → int).
-	// Array source → pointer target: valid array-to-pointer decay; bail-out is
-	// already handled by the pointer check above.
+	// Array source → pointer target: valid array-to-pointer decay; this path is now
+	// guarded by the ArrayToPointer block above, so reaching here with array_dimensions
+	// means the target is incompatible (non-pointer).
 	if (!from_desc.array_dimensions.empty()) {
 		if (to_desc.array_dimensions.empty()) {
 			// Diagnose the ill-formed conversion with a clang-compatible message.
