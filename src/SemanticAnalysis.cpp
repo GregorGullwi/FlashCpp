@@ -2261,7 +2261,7 @@ void SemanticAnalysis::normalizeBlock(const BlockNode& block, const SemanticCont
 
 // --- Expression handler (Phase 2: counting + type inference for annotatable nodes) ---
 
-SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, const SemanticContext& ctx) {
+SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const SemanticContext& ctx) {
 	if (!node.has_value())
 		return {};
 	stats_.expressions_visited++;
@@ -2277,8 +2277,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 
 	if (node.is<ExpressionNode>()) {
 		// Walk into variant-based expression nodes to count children
-		const auto& expr = node.as<ExpressionNode>();
-		std::visit([&](const auto& e) {
+		auto& expr = node.as<ExpressionNode>();
+		std::visit([&](auto& e) {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				const std::string_view op = e.op();
@@ -2433,6 +2433,9 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				tryAnnotateCallArgConversions(e);
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				tryResolveSubscriptOperator(e);
+				if (!getResolvedOpSubscript(&e)) {
+					normalizeBuiltinSubscriptOperands(e);
+				}
 				// If sema resolved this subscript to operator[], annotate the index
 				// argument against the operator's parameter type using the shared
 				// single-argument annotation helper.
@@ -3013,6 +3016,34 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const Ar
 	return it != op_subscript_table_.end() ? it->second : nullptr;
 }
 
+void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node) {
+	const CanonicalTypeId first_operand_type_id = inferExpressionType(subscript_node.array_expr());
+	const CanonicalTypeId second_operand_type_id = inferExpressionType(subscript_node.index_expr());
+	if (!first_operand_type_id || !second_operand_type_id)
+		return;
+
+	const auto is_array_or_pointer = [](const CanonicalTypeDesc& desc) -> bool {
+		return !desc.array_dimensions.empty() || !desc.pointer_levels.empty();
+	};
+	const auto is_subscript_index = [](const CanonicalTypeDesc& desc) -> bool {
+		return desc.pointer_levels.empty() &&
+			   desc.array_dimensions.empty() &&
+			   (isIntegralType(desc.category()) || desc.category() == TypeCategory::Enum);
+	};
+
+	const CanonicalTypeDesc& first_operand_desc = type_context_.get(first_operand_type_id);
+	const CanonicalTypeDesc& second_operand_desc = type_context_.get(second_operand_type_id);
+	if (is_subscript_index(first_operand_desc) && is_array_or_pointer(second_operand_desc)) {
+		// ArraySubscriptNode stores operands as (array, index). For built-in
+		// reversed subscripting such as 0[array], normalize to the semantic
+		// order mandated by C++20 built-in subscripting before downstream use.
+		subscript_node = ArraySubscriptNode(
+			subscript_node.index_expr(),
+			subscript_node.array_expr(),
+			subscript_node.bracket_token());
+	}
+}
+
 const CallArgReferenceBindingInfo* SemanticAnalysis::getCallRefBinding(const void* key, size_t arg_index) const {
 	auto it = call_ref_bindings_.find(key);
 	if (it == call_ref_bindings_.end() || arg_index >= it->second.size()) {
@@ -3347,11 +3378,19 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
 					return {};
 				}
-				// Array subscript: the result type is the element type of the array.
-				// Infer the array expression type and strip one array dimension.
-				const CanonicalTypeId array_type_id = inferExpressionType(e.array_expr());
-				if (!array_type_id)
+				// Built-in subscript: after normalization, array_expr() always holds the
+				// pointer/array operand. If called before normalization (e.g. from a parent
+				// expression's annotation handler), detect the reversed case inline without
+				// mutating the AST — simply pick the array/pointer operand from either slot.
+				const CanonicalTypeId first_type_id = inferExpressionType(e.array_expr());
+				const CanonicalTypeId second_type_id = inferExpressionType(e.index_expr());
+				if (!first_type_id || !second_type_id)
 					return {};
+				const auto& first_desc = type_context_.get(first_type_id);
+				const bool first_is_index = first_desc.pointer_levels.empty() &&
+					first_desc.array_dimensions.empty() &&
+					(isIntegralType(first_desc.category()) || first_desc.category() == TypeCategory::Enum);
+				const CanonicalTypeId array_type_id = first_is_index ? second_type_id : first_type_id;
 				const CanonicalTypeDesc& array_desc = type_context_.get(array_type_id);
 				// If it has array dimensions, strip one to get element type.
 				if (!array_desc.array_dimensions.empty()) {
