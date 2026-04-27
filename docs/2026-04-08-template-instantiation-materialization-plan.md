@@ -137,16 +137,19 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Current symptom: fallback comments in `src\ExpressionSubstitutor.cpp`, `src\Parser_Templates_Lazy.cpp`, `src\Parser_Templates_Inst_ClassTemplate.cpp`, `src\Parser_Templates_Inst_Substitution.cpp`, and `src\Parser_Templates_Substitution.cpp` show dependent type/value/pack data being reconstructed after primary substitution loses it.
    - Missing feature: one substitution context object should carry type parameters, non-type parameter values, pack slices/sizes, current-instantiation identity, namespace/member context, and SFINAE/error-mode state through every instantiation entry point.
    - Removal target: general "substitute remaining template parameters" fallbacks, secondary ExpressionSubstitutor catch-alls, pack-size overcount formulas, and name-based re-discovery after a scope has exited.
+   - Activity note: a hard-fail probe of the `src\Parser_Templates_Inst_ClassTemplate.cpp` fallback that reuses an unresolved class-template `TypeSpecifierNode` as-is broke deferred-base / pack-expansion / dependent-member cases including `tests\test_nttp_base_class_substitution_ret0.cpp`, `tests\test_pack_expansion_base_class_ret0.cpp`, `tests\test_ratio_negative_lazy_member_ret0.cpp`, and `tests\test_type_traits_dependent_member_nttp_ret42.cpp`. This path is active and should be root-fixed via better substitution metadata, not removed directly.
 
 2. **Canonical template argument metadata on TypeInfo/TemplateRegistry**
    - Current symptom: several paths recover template args from TypeInfo names, stripped qualifiers, stale TypeIndex values, or string-based instantiation names.
    - Missing feature: every template instantiation TypeInfo should be born with canonical template arguments, base-pattern identity, and pattern-to-instantiation links that all consumers can query without string parsing.
    - Removal target: `ExpressionSubstitutor` name-based template-arg recovery, `$`/base-name string stripping, stale-TypeIndex fallback lookup, and manual prefix scans for instantiated types.
+   - Activity note: the old non-variadic base-template "assume `template_args[0]`" fallback in `src\Parser_Templates_Inst_ClassTemplate.cpp` was hard-fail probed and the full suite still passed, so that dead base-argument shortcut has already been removed.
 
 3. **Explicit dependent-placeholder state everywhere**
    - Current status: Phase 4 introduced `DependentPlaceholderKind`, but fallback comments still show sentinel-style dependent detection such as `type_index == 0` and placeholder TypeSpec recovery.
    - Missing feature: all dependent type, member type, NTTP, and pack placeholders should carry explicit kind/name/binding metadata from parse through substitution and sema.
    - Removal target: `type_index == 0` dependent checks, "placeholder struct type" returns, and fallback TypeInfo lookups by parameter name.
+   - Activity note: a hard-fail probe of the `type_index == 0` dependent-marking path in `src\Parser_Templates_Params.cpp` broke comparison/operator template cases including `comparison_operators_ret1.cpp`, `float_comparisons_ret1.cpp`, `test_const_member_with_param_ret255.cpp`, `test_decltype_function_template_base_ret42.cpp`, and multiple spaceship tests. This sentinel path is still active and must be replaced by explicit placeholder metadata before removal.
 
 4. **Non-type template argument/default evaluation path**
    - Current symptom: class-template instantiation falls back from specialized handlers to `ConstExprEvaluator` for non-type defaults, variable templates, array dimensions, and directly evaluated expressions.
