@@ -284,6 +284,18 @@ The initial audit above was architectural. Several template-instantiation fallba
    - Probe result: replacing the direct body-pointer copy with a hard error broke `decltype_trailing_return_ret0.cpp`, `test_dependent_swap_decltype_noexcept_ret0.cpp`, `test_namespaced_pair_swap_sfinae_ret0.cpp`, `test_std_swap_enable_if_alias_base_ret0.cpp`, and `test_template_template_forward_decl_definition_ret0.cpp`.
    - Conclusion: some instantiations still bypass the body reparse path and require the old direct-body reuse branch, especially for forward-declared and SFINAE-heavy function templates.
 
+15. `src\Parser_Templates_Inst_ClassTemplate.cpp` — non-type default evaluation fallback
+   - Probe result: replacing the `tryAppendEvaluatedTemplateValue(...)` path with a hard error broke `tests\test_expr_subst_noexcept_wrap_ret0.cpp`, `tests\test_template_spec_outofline_default_arg_ret42.cpp`, and `tests\test_template_spec_outofline_default_arg_namespaced_ret42.cpp`.
+   - Conclusion: specialized NTTP-default handlers still miss some out-of-line and substituted default-argument forms, so the evaluator fallback remains active.
+
+16. `src\Parser_Templates_Inst_ClassTemplate.cpp` — deferred-base type-specifier passthrough fallback
+   - Probe result: replacing the unresolved `TypeSpecifierNode` passthrough with a hard error broke `tests\test_nttp_base_class_substitution_ret0.cpp`, `tests\test_pack_expansion_base_class_ret0.cpp`, `tests\test_pack_expansion_member_type_base_ret0.cpp`, `tests\test_ratio_equal_deferred_base_ret1.cpp`, `tests\test_ratio_negative_lazy_member_ret0.cpp`, `tests\test_ternary_deferred_base_chained_ret0.cpp`, `tests\test_ternary_deferred_base_ret0.cpp`, and `tests\test_type_traits_dependent_member_nttp_ret42.cpp`.
+   - Conclusion: deferred-base instantiation still needs to preserve unresolved type-specifier arguments verbatim when earlier substitution cannot materialize them.
+
+17. `src\Parser_Templates_Inst_ClassTemplate.cpp` — variable-template constexpr bridge
+   - Probe result: replacing the variable-template evaluation bridge with a hard error broke `tests\test_variable_template_nttp_base_class_ret0.cpp`.
+   - Conclusion: deferred-base argument evaluation still needs a dedicated variable-template path before generic constexpr evaluation.
+
 ### Confidence update
 
 The audit is now backed by direct suite evidence for several representative template fallbacks:
