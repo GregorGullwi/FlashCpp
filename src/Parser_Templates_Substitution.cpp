@@ -1607,7 +1607,7 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 		ns_handle = gNamespaceRegistry.getParent(ns_handle);
 	}
 
-	// Fallback: direct unqualified lookup
+	// Then try direct unqualified lookup, subject to namespace visibility rules.
 	auto it = getTypesByNameMap().find(type_handle);
 	if (it != getTypesByNameMap().end() && isDirectlyVisibleUnqualified(it->second)) {
 		return it->second;

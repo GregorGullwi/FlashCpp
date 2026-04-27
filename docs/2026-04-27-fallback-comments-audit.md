@@ -256,6 +256,10 @@ The initial audit above was architectural. Several template-instantiation fallba
    - Probe result: replacing the `get_pack_size(pack_name)` rescue with a hard error broke `tests\test_explicit_template_pack_sizeof_param_name_ret0.cpp`.
    - Conclusion: `sizeof...` still depends on secondary pack-size metadata when the primary scope-based and template-arg-based pack counting paths do not find the named pack.
 
+8. `src\Parser_Templates_Substitution.cpp` — `sizeof...` template-argument reconstruction fallback
+   - Probe result: replacing the path that derives the pack size from `template_params`/`template_args` with a hard error broke `tests\test_explicit_template_pack_sizeof_param_name_ret0.cpp`, `tests\test_method_on_temporary_ret0.cpp`, `tests\test_pack_expansion_in_template_body_ret0.cpp`, `tests\test_sizeof_pack_class_template_ret0.cpp`, `tests\test_sizeof_pack_name_match_ret0.cpp`, `tests\test_sizeof_pack_namespace_member_template_ret0.cpp`, `tests\test_template_sizeof_pack_ret3.cpp`, and `tests\test_var_template_variadic_primary_ret42.cpp`.
+   - Conclusion: pack-size reconstruction from the current substitution arguments is still active in the current corpus and remains a core part of `sizeof...` handling when scope-local pack metadata has already been dropped.
+
 ### Confidence update
 
 The audit is now backed by direct suite evidence for several representative template fallbacks:
@@ -265,5 +269,7 @@ The audit is now backed by direct suite evidence for several representative temp
 - the array-dimension substitution fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was also dead in the current corpus and has now been removed;
 - the fold-expression `pack_param_info_` fallback in `Parser_Templates_Substitution.cpp` was dead in the current corpus and has now been removed;
 - the `sizeof...` class-template pack-context fallback in `Parser_Templates_Substitution.cpp` was also dead in the current corpus and has now been removed;
+- the dependent-template placeholder string-parsing fallback in `Parser_Core.cpp` was dead in the current corpus and has now been removed;
+- the `Parser_Templates_Substitution.cpp` direct unqualified type-lookup step is required ordinary lookup, so the misleading fallback wording has been removed even though the behavior stays;
 - multiple class-template/dependent-type fallback paths are definitely active;
 - the larger ExpressionSubstitutor/static-initializer/pack-size/dependent-placeholder fallback classes should still be assumed active until probed or root-fixed individually.
