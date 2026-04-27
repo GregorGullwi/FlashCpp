@@ -379,9 +379,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		if (!ctor) {
 			return;
 		}
-		if (!ctor->has_template_parameters() && ctor->is_materialized()) {
-			return;
-		}
+		// Always queue the selected constructor for deferred emission.  Late-instantiated
+		// concrete ctors (created by materializeMatchingConstructorTemplate after
+		// beginStructDeclarationCodegen already ran) are NOT visited during the struct
+		// codegen walk and must be emitted here.  Ctors that were already visited during
+		// beginStructDeclarationCodegen are deduplicated by the emitted_constructor_nodes_
+		// guard inside visitConstructorDeclarationNode, so double-emit is safe to ignore.
 		DeferredMemberFunctionInfo deferred_info;
 		deferred_info.struct_name = type_info_ref.name();
 		deferred_info.function_node = ASTNode(ctor);
@@ -2437,6 +2440,22 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											throw CompileError("Ambiguous constructor call");
 										}
 										matching_ctor = resolution.selected_overload;
+										// If the selected overload is still a constructor template
+										// (has its own template parameters like `template<typename U>`),
+										// instantiate it now with the concrete argument types.
+										if (matching_ctor && matching_ctor->has_template_parameters() && parser_) {
+											bool template_ctor_ambiguous = false;
+											const ConstructorDeclarationNode* concrete_ctor =
+												parser_->materializeMatchingConstructorTemplate(
+													type_info->name(),
+													*type_info->struct_info_,
+													arg_types,
+													matching_ctor,
+													template_ctor_ambiguous);
+											if (concrete_ctor) {
+												matching_ctor = concrete_ctor;
+											}
+										}
 									}
 
 									if (!matching_ctor) {

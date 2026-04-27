@@ -1571,6 +1571,13 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		return;
 	}
 
+	// Deduplication: if this exact constructor node was already emitted (e.g., visited
+	// during beginStructDeclarationCodegen AND later re-queued via deferred emission),
+	// skip the second visit to avoid duplicate symbol definitions.
+	if (!emitted_constructor_nodes_.insert(static_cast<const void*>(&node)).second) {
+		return;
+	}
+
 	// Phase 16: track whether sema normalized this constructor body.
 	sema_normalized_current_function_ = false;
 	if (sema_ && node.is_materialized()) {
