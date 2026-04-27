@@ -1563,18 +1563,20 @@ void AstToIr::visitEnumDeclarationNode(const EnumDeclarationNode& node) {
 }
 
 void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
+	// Deduplication: if this exact constructor node was already emitted (e.g., visited
+	// during beginStructDeclarationCodegen AND later re-queued via deferred emission),
+	// skip the second visit to avoid duplicate symbol definitions.  Checked before the
+	// materialization guard so that non-materialized nodes are also tracked and never
+	// visited twice.
+	if (!emitted_constructor_nodes_.insert(static_cast<const void*>(&node)).second) {
+		return;
+	}
+
 	// If no definition and not explicit, check if implicit
 	// Implicit constructors might not have a body if trivial, but we must emit the symbol
 	// so the linker can find it if referenced.
 	// Proceed to generate an empty function body.
 	if (!node.is_materialized() && !node.is_implicit()) {
-		return;
-	}
-
-	// Deduplication: if this exact constructor node was already emitted (e.g., visited
-	// during beginStructDeclarationCodegen AND later re-queued via deferred emission),
-	// skip the second visit to avoid duplicate symbol definitions.
-	if (!emitted_constructor_nodes_.insert(static_cast<const void*>(&node)).second) {
 		return;
 	}
 
