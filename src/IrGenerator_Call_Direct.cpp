@@ -1674,9 +1674,20 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 								}
 							}
 						}
-					} else if (!is_struct_type(from_type) && !is_struct_type(to_type)) {
+					} else if (!is_struct_type(from_type) && !is_struct_type(to_type) &&
+								   cast_info.cast_kind != StandardConversionKind::ArrayToPointer) {
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
+							// NOTE: ArrayToPointer is excluded from generateTypeConversion because that
+							//   function converts between scalar types (e.g. int->long), whereas
+							//   array-to-pointer decay requires emitting an AddressOf IR node to
+							//   materialise the base pointer from a stack-allocated array object.
+							//   Calling generateTypeConversion on an array operand would instead
+							//   integer-widen or reinterpret the value, producing garbage.
+							//   String-literal args already carry a 64-bit TempVar pointer from
+							//   generateStringLiteralIr, so decay is already complete.
+							//   Identifier-array args are handled in the needs_array_decay block
+							//   further below, which calls emitAddressOf to get the base pointer.
 						if (from_type == TypeCategory::Enum && from_type != argumentIrOperands.typeEnum())
 							from_type = argumentIrOperands.typeEnum();
 						argumentIrOperands = generateTypeConversion(argumentIrOperands, from_type, to_type, callExprNode.called_from());
@@ -1836,16 +1847,32 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				return;
 			}
 
-				// Check if this is an array - arrays decay to pointers when passed to functions
-			if (decl_node.is_array()) {
-					// For arrays, we need to pass the address of the first element
-					// Create a temporary for the address
-					// Generate AddressOf IR instruction to get the address of the array
+				// C++20 [conv.array]: Arrays decay to pointers when passed to functions.
+			// Primary path: sema annotates the argument expression with
+			// StandardConversionKind::ArrayToPointer when it visits a sema-normalised
+			// function body.  Fallback: when sema did not normalise the current body
+			// (e.g. template instantiation codegen) fall back to inspecting
+			// DeclarationNode::is_array() directly.
+			bool needs_array_decay = false;
+			if (sema_ && argument.is<ExpressionNode>()) {
+				const void* arg_key = &argument.as<ExpressionNode>();
+				const auto arg_slot = sema_->getSlot(arg_key);
+				if (arg_slot.has_value() && arg_slot->has_cast()) {
+					const ImplicitCastInfo& ci =
+						sema_->castInfoTable()[arg_slot->cast_info_index.value - 1];
+					needs_array_decay =
+						(ci.cast_kind == StandardConversionKind::ArrayToPointer);
+				}
+			}
+			// Fallback: trust is_array() only when sema did not annotate this function.
+			if (!needs_array_decay && !sema_normalized_current_function_) {
+				needs_array_decay = decl_node.is_array();
+			}
+
+			if (needs_array_decay) {
+					// Emit AddressOf to get the address of the array's first element.
 				TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
-					// Add the pointer (address) to the function call operands
-					// For now, we use the element type with 64-bit size to indicate it's a pointer
-					// TODO: Add proper pointer type support to the Type enum
 				irOperands.emplace_back(type_node.type());  // Element type (e.g., Char for char[])
 				irOperands.emplace_back(64);	 // Pointer size is 64 bits on x64
 				irOperands.emplace_back(addr_var);

@@ -444,11 +444,9 @@ int main_impl(int argc, char* argv[]) {
 			std::string notes = g_parser_instantiation_notes;
 			g_parser_instantiation_notes.clear();
 			FLASH_LOG(General, Error, "error: ", e.what(), notes);
-			std::cerr << "error: " << e.what() << notes << std::endl;
 			return 1;
 		} catch (const InternalError& e) {
 			FLASH_LOG(General, Error, "internal error: ", e.what());
-			std::cerr << "internal error: " << e.what() << std::endl;
 			return 1;
 		}
 

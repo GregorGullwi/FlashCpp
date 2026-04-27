@@ -341,7 +341,16 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 								}
 							}
 						}
-					} else if (!is_struct_type(annotated_source_type) && !is_struct_type(to_type)) {
+					} else if (!is_struct_type(annotated_source_type) &&
+							   !is_struct_type(to_type) &&
+							   cast_info.cast_kind != StandardConversionKind::ArrayToPointer) {
+							// NOTE: ArrayToPointer is excluded from generateTypeConversion because that
+							//   function converts between scalar types (e.g. int->long), whereas
+							//   array-to-pointer decay in a return expression requires emitting an
+							//   AddressOf IR node to materialise the base pointer from a stack-allocated
+							//   array object.  Calling generateTypeConversion on an array operand would
+							//   instead integer-widen or reinterpret the value, producing garbage.
+							//   Such returns are handled by the address-materialisation path below.
 						TypeCategory from_type = annotated_source_type;
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.

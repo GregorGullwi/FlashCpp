@@ -9,11 +9,90 @@
 #include "OverloadResolution.h"
 #include "Log.h"
 #include "IrGenerator.h"
+#include "ConstExprEvaluator.h"
 #include "ReachableStructWalker.h"
 
 namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
 constexpr std::string_view kAnonymousNamespaceContext = "<anonymous namespace>";
+
+void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec) {
+	if (!decl.is_array() || type_spec.is_array()) {
+		return;
+	}
+
+	std::vector<size_t> resolved_dimensions;
+	resolved_dimensions.reserve(decl.array_dimension_count());
+	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+	for (const auto& dim_expr : decl.array_dimensions()) {
+		auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
+		if (!eval_result.success() || eval_result.as_int() <= 0) {
+			return;
+		}
+		resolved_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
+	}
+
+	if (!resolved_dimensions.empty()) {
+		type_spec.set_array_dimensions(resolved_dimensions);
+	}
+}
+
+// Compute the number of logical characters in a string literal token, excluding
+// the null terminator.  The raw token includes the surrounding double-quote
+// delimiters and an optional encoding prefix (e.g. L, u8, u, U).
+// Each escape sequence (however many source characters it occupies) counts as a
+// single logical character, following C++20 [lex.ccon]:
+//   \ooo  — up to 3 octal digits
+//   \xHH  — one or more hex digits
+//   \uNNNN  — exactly 4 hex digits
+//   \UNNNNNNNN — exactly 8 hex digits
+//   all other named escapes (\n, \t, \\, etc.) — one source char after backslash
+static size_t computeStringContentLength(std::string_view token_raw) {
+	std::string_view content = token_raw;
+	// Strip optional encoding prefix (L, u8, u, U) before the opening quote.
+	if (!content.empty() && content.front() != '"') {
+		const size_t q = content.find('"');
+		if (q == std::string_view::npos)
+			return 0; // malformed token
+		content = content.substr(q);
+	}
+	// Strip enclosing double-quotes.
+	if (content.size() >= 2 && content.front() == '"' && content.back() == '"')
+		content = content.substr(1, content.size() - 2);
+	size_t len = 0;
+	for (size_t i = 0; i < content.size(); ++i) {
+		if (content[i] == '\\' && i + 1 < content.size()) {
+			++i; // advance to the first char of the escape body
+			const char esc = content[i];
+			if (esc == 'x') {
+				// Hex escape \xH[H...]: consume all contiguous hex digits.
+				while (i + 1 < content.size() &&
+					   std::isxdigit(static_cast<unsigned char>(content[i + 1])))
+					++i;
+			} else if (esc >= '0' && esc <= '7') {
+				// Octal escape \ooo: the first digit is already at i;
+				// consume up to 2 additional octal digits.
+				for (int d = 0; d < 2 && i + 1 < content.size() &&
+					 content[i + 1] >= '0' && content[i + 1] <= '7'; ++d)
+					++i;
+			} else if (esc == 'u') {
+				// Universal character name \uNNNN: exactly 4 hex digits.
+				for (int d = 0; d < 4 && i + 1 < content.size() &&
+					 std::isxdigit(static_cast<unsigned char>(content[i + 1])); ++d)
+					++i;
+			} else if (esc == 'U') {
+				// Universal character name \UNNNNNNNN: exactly 8 hex digits.
+				for (int d = 0; d < 8 && i + 1 < content.size() &&
+					 std::isxdigit(static_cast<unsigned char>(content[i + 1])); ++d)
+					++i;
+			}
+			// For named single-char escapes (\n, \t, \\, \", \', etc.) the
+			// single character already consumed above is the complete body.
+		}
+		++len; // one logical character regardless of escape sequence width
+	}
+	return len;
+}
 
 // Placeholder return-type finalization requires every return statement in the
 // body to deduce to the same full type identity, including cv/reference and
@@ -1222,7 +1301,9 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 
 		const ASTNode& param_type_node = param_decl.type_node();
 		if (param_type_node.is<TypeSpecifierNode>()) {
-			const CanonicalTypeId tid = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
+			TypeSpecifierNode param_type = param_type_node.as<TypeSpecifierNode>();
+			applyDeclarationArrayBoundsToTypeSpec(param_decl, param_type);
+			const CanonicalTypeId tid = canonicalizeType(param_type);
 			const StringHandle pname = param_decl.identifier_token().handle();
 			if (pname.isValid()) {
 				addLocalType(pname, tid);
@@ -1237,7 +1318,9 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 									  : ASTNode::emplace_node<DeclarationNode>(*capture_decl);
 			symbols_.insert(capture_decl->identifier_token().value(), symbol_node);
 			{
-				const CanonicalTypeId tid = canonicalizeType(capture_decl->type_specifier_node());
+				TypeSpecifierNode capture_type = capture_decl->type_specifier_node();
+				applyDeclarationArrayBoundsToTypeSpec(*capture_decl, capture_type);
+				const CanonicalTypeId tid = canonicalizeType(capture_type);
 				const StringHandle name = capture_decl->identifier_token().handle();
 				if (name.isValid()) {
 					addLocalType(name, tid);
@@ -1484,7 +1567,9 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 					if (!param_type_node.is<TypeSpecifierNode>()) {
 						continue;
 					}
-					const CanonicalTypeId tid = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
+					TypeSpecifierNode param_type = param_type_node.as<TypeSpecifierNode>();
+					applyDeclarationArrayBoundsToTypeSpec(param_decl, param_type);
+					const CanonicalTypeId tid = canonicalizeType(param_type);
 					const StringHandle name = param_decl.identifier_token().handle();
 					if (name.isValid()) {
 						addLocalType(name, tid);
@@ -1575,7 +1660,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 				if (stmt.is<VariableDeclarationNode>()) {
 					const auto& var = stmt.as<VariableDeclarationNode>();
 					{
-						const CanonicalTypeId tid = canonicalizeType(var.declaration().type_specifier_node());
+						TypeSpecifierNode var_type = var.declaration().type_specifier_node();
+						applyDeclarationArrayBoundsToTypeSpec(var.declaration(), var_type);
+						const CanonicalTypeId tid = canonicalizeType(var_type);
 						const StringHandle name = var.declaration().identifier_token().handle();
 						if (name.isValid()) {
 							addLocalType(name, tid);
@@ -1629,7 +1716,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			if (loop_decl_node.is<DeclarationNode>()) {
 				const auto& loop_decl = loop_decl_node.as<DeclarationNode>();
 				{
-					const CanonicalTypeId tid = canonicalizeType(loop_decl.type_specifier_node());
+					TypeSpecifierNode loop_type = loop_decl.type_specifier_node();
+					applyDeclarationArrayBoundsToTypeSpec(loop_decl, loop_type);
+					const CanonicalTypeId tid = canonicalizeType(loop_type);
 					const StringHandle name = loop_decl.identifier_token().handle();
 					if (name.isValid()) {
 						addLocalType(name, tid);
@@ -1667,7 +1756,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 						catch_clause.exception_declaration()->is<DeclarationNode>()) {
 						const auto& catch_decl = catch_clause.exception_declaration()->as<DeclarationNode>();
 						{
-							const CanonicalTypeId tid = canonicalizeType(catch_decl.type_specifier_node());
+							TypeSpecifierNode catch_type = catch_decl.type_specifier_node();
+							applyDeclarationArrayBoundsToTypeSpec(catch_decl, catch_type);
+							const CanonicalTypeId tid = canonicalizeType(catch_type);
 							const StringHandle name = catch_decl.identifier_token().handle();
 							if (name.isValid()) {
 								addLocalType(name, tid);
@@ -1741,7 +1832,9 @@ void SemanticAnalysis::registerParametersInScope(const std::vector<ASTNode>& par
 			const auto& decl = param_node.as<DeclarationNode>();
 			const ASTNode ptype = decl.type_node();
 			if (ptype.has_value() && ptype.is<TypeSpecifierNode>()) {
-				const CanonicalTypeId tid = canonicalizeType(ptype.as<TypeSpecifierNode>());
+				TypeSpecifierNode param_type = ptype.as<TypeSpecifierNode>();
+				applyDeclarationArrayBoundsToTypeSpec(decl, param_type);
+				const CanonicalTypeId tid = canonicalizeType(param_type);
 				const StringHandle pname = decl.identifier_token().handle();
 				if (pname.isValid())
 					addLocalType(pname, tid);
@@ -1999,7 +2092,9 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		const ASTNode vtype = decl.type_node();
 		CanonicalTypeId decl_type_id{}; // default: invalid (value==0)
 		if (vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
-			decl_type_id = canonicalizeType(vtype.as<TypeSpecifierNode>());
+			TypeSpecifierNode declared_type = vtype.as<TypeSpecifierNode>();
+			applyDeclarationArrayBoundsToTypeSpec(decl, declared_type);
+			decl_type_id = canonicalizeType(declared_type);
 			const StringHandle vname = decl.identifier_token().handle();
 			if (vname.isValid())
 				addLocalType(vname, decl_type_id);
@@ -2108,7 +2203,9 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			const auto& loop_decl = loop_decl_node.as<DeclarationNode>();
 			const ASTNode loop_type_node = loop_decl.type_node();
 			if (loop_type_node.is<TypeSpecifierNode>()) {
-				const CanonicalTypeId tid = canonicalizeType(loop_type_node.as<TypeSpecifierNode>());
+				TypeSpecifierNode loop_type = loop_type_node.as<TypeSpecifierNode>();
+				applyDeclarationArrayBoundsToTypeSpec(loop_decl, loop_type);
+				const CanonicalTypeId tid = canonicalizeType(loop_type);
 				const StringHandle name = loop_decl.identifier_token().handle();
 				if (name.isValid()) {
 					addLocalType(name, tid);
@@ -2414,7 +2511,9 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 						const auto& decl = param.template as<DeclarationNode>();
 						const ASTNode ptype = decl.type_node();
 						if (ptype.has_value() && ptype.template is<TypeSpecifierNode>()) {
-							const CanonicalTypeId tid = canonicalizeType(ptype.template as<TypeSpecifierNode>());
+							TypeSpecifierNode param_type = ptype.template as<TypeSpecifierNode>();
+							applyDeclarationArrayBoundsToTypeSpec(decl, param_type);
+							const CanonicalTypeId tid = canonicalizeType(param_type);
 							const StringHandle pname = decl.identifier_token().handle();
 							if (pname.isValid())
 								addLocalType(pname, tid);
@@ -3071,9 +3170,7 @@ CanonicalTypeId SemanticAnalysis::inferResolvedSymbolType(const ASTNode& symbol)
 		}
 
 		TypeSpecifierNode type = type_node.as<TypeSpecifierNode>();
-		if (decl->is_array()) {
-			type.add_pointer_level();
-		}
+		applyDeclarationArrayBoundsToTypeSpec(*decl, type);
 		return canonicalizeType(type);
 	}
 
@@ -3491,11 +3588,17 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return canonicalizeType(target_type_node.template as<TypeSpecifierNode>());
 				return {};
 			} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-				// String literal has type "const char*" (array of const char).
+				// C++20 [lex.string]: a string literal has type "array of n const char"
+				// where n is the number of content characters plus one for the implicit
+				// null terminator.  The array is const-qualified per the standard.
+				// TODO: wide (L"") and Unicode (u8"", u"", U"") string literals have
+				// element types wchar_t, char8_t, char16_t, and char32_t respectively
+				// and are not yet handled; they currently fall through as const char[N].
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::Char);
 				desc.base_cv = CVQualifier::Const;
-				desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
+				const size_t n = computeStringContentLength(e.value()) + 1;
+				desc.array_dimensions.push_back(n);
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 				auto resolved = getResolvedQualifiedIdentifier(&e);
@@ -3915,6 +4018,53 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 
+	// C++20 [conv.array] p1: Array-to-pointer decay.
+	// An lvalue or rvalue of type "array of N T" or "array of unknown bound of T" can be
+	// converted to a prvalue of type "pointer to T".
+	//
+	// Two source shapes arise from the way sema infers types:
+	//
+	//   (a) String-literal source: inferExpressionType returns const char[N] directly.
+	//       from_desc: pointer_levels=[], array_dimensions=[N], category=Char
+	//
+//   (b) Identifier-array source: applyDeclarationArrayBoundsToTypeSpec adds
+//       array dimensions to the TypeSpecifierNode before canonicalising.
+//       from_desc: pointer_levels=[], array_dimensions=[N], category=<elem>
+
+	//
+	// In both shapes the target descriptor is a plain pointer: pointer_levels=[1],
+	// array_dimensions=[], same element category.
+	//
+	// Both cases are handled here and annotated with StandardConversionKind::ArrayToPointer
+	// so that codegen can emit an AddressOf instruction instead of inspecting the raw
+	// DeclarationNode::is_array() flag.
+	const bool direct_array_decay =
+		to_desc.category() == from_desc.category() &&
+		to_desc.pointer_levels.size() == from_desc.pointer_levels.size() + 1;
+	const bool decay_followed_by_void_pointer_conversion =
+		to_desc.category() == TypeCategory::Void &&
+		from_desc.pointer_levels.empty() &&
+		to_desc.pointer_levels.size() == 1;
+	if (!from_desc.array_dimensions.empty() &&
+		to_desc.array_dimensions.empty() &&
+		!to_desc.pointer_levels.empty() &&
+		(direct_array_decay || decay_followed_by_void_pointer_conversion)) {
+		ImplicitCastInfo cast_info;
+		cast_info.source_type_id = expr_type_id;
+		cast_info.target_type_id = target_type_id;
+		cast_info.cast_kind = StandardConversionKind::ArrayToPointer;
+		cast_info.value_category_after = ValueCategory::PRValue;
+		const CastInfoIndex idx = allocateCastInfo(cast_info);
+		SemanticSlot slot;
+		slot.type_id = target_type_id;
+		slot.cast_info_index = idx;
+		slot.value_category = ValueCategory::PRValue;
+		const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
+		setSlot(key, slot);
+		stats_.slots_filled++;
+		return true;
+	}
+
 	// Same base type but different canonical IDs (differ only in qualifiers or type_index,
 	// e.g. two UserDefined aliases, const vs non-const, etc.): no primitive conversion needed.
 	if (from_desc.category() == to_desc.category())
@@ -3935,7 +4085,24 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	};
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty())
 		return false;
-	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty())
+	// Array source → incompatible scalar target: this is always ill-formed.
+	// E.g. `int c = "test"` (const char[5] → int) or `int x = arr` (int[3] → int).
+	// Array source → pointer target: valid array-to-pointer decay; this path is now
+	// guarded by the ArrayToPointer block above, so reaching here with array_dimensions
+	// means the target is incompatible (non-pointer).
+	if (!from_desc.array_dimensions.empty()) {
+		if (to_desc.array_dimensions.empty()) {
+			// Diagnose the ill-formed conversion with a clang-compatible message.
+			const TypeSpecifierNode from_ts = materializeTypeSpecifier(from_desc);
+			const TypeSpecifierNode to_ts = materializeTypeSpecifier(to_desc);
+			throw CompileError(std::string("cannot initialize a variable of type '") +
+							   to_ts.getReadableString() +
+							   "' with an lvalue of type '" +
+							   from_ts.getReadableString() + "'");
+		}
+		return false; // array → array: handled elsewhere
+	}
+	if (!to_desc.array_dimensions.empty())
 		return false;
 	// Allow Struct source for user-defined conversion operators (Struct->primitive).
 	// Reject Struct->Struct (handled elsewhere) and primitive->Struct (converting constructors).
@@ -4789,7 +4956,12 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 
 	const CanonicalTypeId param_type_id = canonicalizeType(param_type);
 	const CanonicalTypeId arg_type_id = inferExpressionType(arg);
-	if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) {
+	// Skip conversion annotation only when types truly match AND the source is not an array.
+	// An array source (e.g. char[5]) may need to decay to a pointer (const char*) even when
+	// canonical_types_match returns true due to the hybrid pointer+array descriptor produced
+	// by inferResolvedSymbolType for identifier-based arrays.
+	const bool arg_is_array = arg_type_id && !type_context_.get(arg_type_id).array_dimensions.empty();
+	if (arg_type_id && !arg_is_array && canonical_types_match(arg_type_id, param_type_id)) {
 		return;
 	}
 

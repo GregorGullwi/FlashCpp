@@ -698,6 +698,18 @@ std::string TypeSpecifierNode::getReadableString() const {
 		}
 	}
 
+	// Add array dimensions (e.g. "char[5]" or "int[3][4]")
+	for (const size_t dim : array_dimensions_) {
+		oss << "[" << dim << "]";
+	}
+
+	// Add reference qualifier if present
+	if (reference_qualifier_ == ReferenceQualifier::LValueReference) {
+		oss << "&";
+	} else if (reference_qualifier_ == ReferenceQualifier::RValueReference) {
+		oss << "&&";
+	}
+
 	return oss.str();
 }
 
