@@ -376,10 +376,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		}
 	} full_expression_temp_flush_guard{flushFullExpressionTemps};
 	auto queue_nested_template_ctor = [this](const TypeInfo& type_info_ref, const ConstructorDeclarationNode* ctor) {
-		std::string_view ctor_struct_name = StringTable::getStringView(type_info_ref.name());
-		bool is_nested_template_ctor = (ctor_struct_name.find("::") != std::string_view::npos) &&
-									   (type_info_ref.isTemplateInstantiation() || ctor_struct_name.find('$') != std::string_view::npos);
-		if (!is_nested_template_ctor || !ctor) {
+		if (!ctor) {
+			return;
+		}
+		if (!ctor->has_template_parameters() && ctor->is_materialized()) {
 			return;
 		}
 		DeferredMemberFunctionInfo deferred_info;
