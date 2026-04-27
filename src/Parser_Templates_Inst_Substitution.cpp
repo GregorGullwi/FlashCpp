@@ -605,7 +605,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 			return instantiated_name;
 		}
 
-		throw InternalError("Base class instantiation-name default-argument fallback required");
+		throw InternalError("Base class instantiation name should resolve after default filling");
 	}
 	return std::string_view();
 }

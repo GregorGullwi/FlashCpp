@@ -4807,7 +4807,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 
-						throw InternalError("Deferred base direct constexpr-evaluation fallback required");
+						throw InternalError("Deferred base arguments should be resolved by specialized handlers");
 					} else if (std::holds_alternative<BinaryOperatorNode>(expr) || std::holds_alternative<TernaryOperatorNode>(expr)) {
 						// Handle binary/ternary operator expressions like: R1<T>::num < R2<T>::num
 						// These need template parameter substitution before evaluation
@@ -4870,8 +4870,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 
-				// This is expected for dependent types in template metaprogramming
-				// The template may still work correctly with the fallback path
+				// This is expected for dependent types in template metaprogramming.
+				// Leave the base unresolved instead of instantiating it with wrong arguments.
 				FLASH_LOG(Templates, Debug, "Could not resolve deferred template base argument for '",
 						  StringTable::getStringView(deferred_base.base_template_name), "'; skipping base instantiation");
 				unresolved_arg = true;
@@ -5234,7 +5234,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				member_size *= dim_size;
 			}
 		} else if (substituted_array_size.has_value()) {
-			throw InternalError("Array-dimension substitution fallback required");
+			throw InternalError("Array dimensions should be resolved before layout substitution");
 		} else {
 			// Check if the ORIGINAL type is a pointer or reference (use original type_spec, not substituted member_type)
 			member_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_size_type_index).size;
@@ -5773,9 +5773,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
- // General fallback: substitute remaining template parameters in the initializer.
- // ExpressionSubstitutor handles ExpressionNode variants; substituteTemplateParameters
- // is needed for InitializerListNode since ExpressionSubstitutor doesn't recurse into it.
 			if (substituted_initializer.has_value()) {
 				if (substituted_initializer->is<InitializerListNode>()) {
 					substituted_initializer = substituteTemplateParameters(
@@ -7806,10 +7803,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		} else {
 			FLASH_LOG(Templates, Error, "Unknown member function type in template instantiation: ",
 					  mem_func.function_declaration.type_name());
-			// Copy directly as fallback
-			instantiated_struct_ref.add_member_function(
-				mem_func.function_declaration,
-				mem_func.access);
+			throw InternalError("Unhandled member function declaration kind during template instantiation");
 		}
 	}
 

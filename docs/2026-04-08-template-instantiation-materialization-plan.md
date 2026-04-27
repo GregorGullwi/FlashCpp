@@ -148,6 +148,7 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Removal target: `ExpressionSubstitutor` name-based template-arg recovery, `$`/base-name string stripping, stale-TypeIndex fallback lookup, and manual prefix scans for instantiated types.
    - Activity note: the old non-variadic base-template "assume `template_args[0]`" fallback in `src\Parser_Templates_Inst_ClassTemplate.cpp` was hard-fail probed and the full suite still passed, so that dead base-argument shortcut has already been removed.
    - Activity note: the base-class instantiation-name fallback in `src\Parser_Templates_Inst_Substitution.cpp` was also hard-fail probed and the full suite still passed, so the remaining corpus no longer needs the old "use basic name without defaults" rescue there.
+   - Activity note: the `sizeof(T)` / `alignof(T)` type-name mapping fallback in `src\Parser_Templates_Inst_Substitution.cpp` is still active; hard-failing it broke `tests\test_dependent_sizeof_alignof_template_arg_ret0.cpp`, which matches the existing note that registered type indices are not always preserved for class template parameters.
 
 3. **Explicit dependent-placeholder state everywhere**
    - Current status: Phase 4 introduced `DependentPlaceholderKind`, but fallback comments still show sentinel-style dependent detection such as `type_index == 0` and placeholder TypeSpec recovery.
@@ -171,6 +172,7 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Removal target: "General fallback: substitute remaining template parameters in the initializer" and "Fallback: Process static members from AST node" style paths.
    - Activity note: the array-dimension substitution fallback used when `resolve_array_dimensions(...)` produced no dimensions but `substituted_array_size` was present was hard-fail probed and the full suite still passed, so that dead array-dimension fallback has already been removed from `src\Parser_Templates_Inst_ClassTemplate.cpp`.
    - Activity note: the old AST-node static-member fallback in `src\Parser_Templates_Inst_ClassTemplate.cpp` was hard-fail probed and the full suite still passed, so that dead secondary static-member path has already been removed.
+   - Activity note: the broader static-member initializer substitution path in the same file is still active; hard-failing it broke a large cluster including `template_ttp_static_constexpr_member_ret0.cpp`, `test_array_enable_if_deduction_ret0.cpp`, `test_dependent_template_instantiation_ret0.cpp`, `test_static_members_template_ret0.cpp`, `test_template_static_member_outofline_ret42.cpp`, and `test_var_template_inner_impl_defaulted_outer_arg_ret42.cpp`.
 
 6. **ExpressionSubstitutor role clarification**
    - Current symptom: ExpressionSubstitutor is used both as an expected AST rewrite mechanism and as a late fallback after other substitution paths did not handle a node.
@@ -178,6 +180,7 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Removal target: fallback creation of ad-hoc expression nodes and fallback recovery of template args from type names.
    - Activity note: the `sizeof...` class-template pack-context rescue in `src\Parser_Templates_Substitution.cpp` was hard-fail probed and the full suite still passed, so that dead name/context rediscovery path has already been removed.
    - Activity note: the analogous lazy static-member ExpressionSubstitutor path in `src\Parser_Templates_Lazy.cpp` is still active; hard-failing it broke a broad cluster including `template_ttp_static_constexpr_member_ret0.cpp`, `test_alias_base_static_member_ret0.cpp`, `test_integral_constant_simple_ret30.cpp`, `test_ratio_lazy_static_member_ret0.cpp`, `test_template_static_member_initializer_scalar_brace_ret42.cpp`, and `test_type_traits_dependent_member_nttp_ret42.cpp`.
+   - Activity note: the unknown-member-function direct-copy fallback in `src\Parser_Templates_Inst_ClassTemplate.cpp` was hard-fail probed and the full suite still passed, so that dead branch has already been removed.
 
 7. **Intra-instantiation call-target rewriting remains important**
    - This is already diagnosed in the validation-history section around Slice G/H: `ExpressionSubstitutor` does not rewrite intra-struct call targets in instantiated member bodies from the template pattern declaration to the instantiated member stub.

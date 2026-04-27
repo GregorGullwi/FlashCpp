@@ -264,6 +264,14 @@ The initial audit above was architectural. Several template-instantiation fallba
    - Probe result: replacing the general ExpressionSubstitutor pass with a hard error broke a wide lazy-static-member cluster including `template_ttp_static_constexpr_member_ret0.cpp`, `test_alias_base_static_member_ret0.cpp`, `test_integral_constant_simple_ret30.cpp`, `test_ratio_lazy_static_member_ret0.cpp`, `test_template_static_member_initializer_scalar_brace_ret42.cpp`, and `test_type_traits_dependent_member_nttp_ret42.cpp`.
    - Conclusion: lazy static-member initialization still depends on a late general substitution pass after the specialized fold/identifier handlers, so this path remains active.
 
+10. `src\Parser_Templates_Inst_ClassTemplate.cpp` — static-member initializer substitution fallback
+   - Probe result: replacing the general initializer substitution pass with a hard error broke a broad static-member cluster including `template_ttp_static_constexpr_member_ret0.cpp`, `test_array_enable_if_deduction_ret0.cpp`, `test_dependent_template_instantiation_ret0.cpp`, `test_static_members_template_ret0.cpp`, `test_template_static_member_outofline_ret42.cpp`, and `test_var_template_inner_impl_defaulted_outer_arg_ret42.cpp`.
+   - Conclusion: instantiated static-member initializers still rely on a catch-all substitution pass after the specialized rewrites, especially for dependent trait/default/member-access cases.
+
+11. `src\Parser_Templates_Inst_Substitution.cpp` — `sizeof(T)` / `alignof(T)` type-name mapping fallback
+   - Probe result: replacing the name-based substitution map fill with a hard error broke `tests\test_dependent_sizeof_alignof_template_arg_ret0.cpp`.
+   - Conclusion: dependent `sizeof`/`alignof` evaluation still needs a backup mapping from the parsed type token back to the template parameter when the registered type index is missing.
+
 ### Confidence update
 
 The audit is now backed by direct suite evidence for several representative template fallbacks:
@@ -277,6 +285,7 @@ The audit is now backed by direct suite evidence for several representative temp
 - the dependent-template placeholder string-parsing fallback in `Parser_Core.cpp` was dead in the current corpus and has now been removed;
 - the deferred-base direct constexpr-evaluation fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was dead in the current corpus and has now been removed;
 - the AST-node static-member fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was dead in the current corpus and has now been removed;
+- the unknown-member-function copy fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was dead in the current corpus and has now been removed;
 - the `Parser_Templates_Substitution.cpp` direct unqualified type-lookup step is required ordinary lookup, so the misleading fallback wording has been removed even though the behavior stays;
 - multiple class-template/dependent-type fallback paths are definitely active;
 - the larger ExpressionSubstitutor/static-initializer/pack-size/dependent-placeholder fallback classes should still be assumed active until probed or root-fixed individually.
