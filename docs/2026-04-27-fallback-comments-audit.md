@@ -72,11 +72,11 @@ Removal direction:
 
 Representative sites:
 
-- `src\ExpressionSubstitutor.cpp:951` and `src\Parser_Templates_Lazy.cpp:1012` - general fallback substitution for remaining template-dependent expressions.
+- `src\ExpressionSubstitutor.cpp:951` and `src\Parser_Templates_Lazy.cpp:1012` - general substitution for remaining template-dependent expressions.
 - `src\ExpressionSubstitutor.cpp:1537` - recovers template arguments from type names when TypeInfo has no stored args.
 - `src\Parser_Templates_Inst_ClassTemplate.cpp:4049`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4589`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4787`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4813`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5246`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5844`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5904` - non-type defaults, variable templates, array dimensions, initializers, and static members use catch-all substitution or AST fallback passes.
 - `src\Parser_Templates_Substitution.cpp:692`, `src\Parser_Templates_Substitution.cpp:762`, `src\Parser_Templates_Substitution.cpp:848`, `src\Parser_Templates_Substitution.cpp:1633` - pack and template parameter lookup fallbacks after primary scope information is unavailable.
-- `src\Parser_Templates_Params.cpp:1826` - `type_index == 0` is treated as a fallback indicator for dependent types.
+- `src\Parser_Templates_Params.cpp:1826` - invalid `type_index` is still treated as an unresolved dependent placeholder signal.
 
 Missing feature:
 
@@ -91,7 +91,7 @@ Removal direction:
 - Introduce a single substitution context object that carries type parameters, non-type values, packs, current instantiation, and namespace/member context through all template instantiation paths.
 - Store canonical template arguments and pattern-to-instantiation links in TypeInfo/TemplateRegistry at creation time rather than reconstructing from strings.
 - Replace `type_index == 0` dependent detection with explicit dependent placeholder metadata.
-- Make ExpressionSubstitutor a normal part of substitution with explicit preconditions, not a catch-all fallback after parser/template code failed to substitute.
+- Make ExpressionSubstitutor a normal part of substitution with explicit preconditions instead of a catch-all recovery path after parser/template code failed to substitute.
 
 ### 4. Lazy member materialization fallback history
 
@@ -236,7 +236,7 @@ The initial audit above was architectural. Several template-instantiation fallba
    - Probe result: replacing this with a hard error broke deferred-base and pack-expansion cases including `tests\test_nttp_base_class_substitution_ret0.cpp`, `tests\test_pack_expansion_base_class_ret0.cpp`, `tests\test_ratio_negative_lazy_member_ret0.cpp`, and `tests\test_type_traits_dependent_member_nttp_ret42.cpp`.
    - Conclusion: this fallback is active and currently carries real class-template substitution traffic, especially around deferred base resolution and dependent member/type-trait cases.
 
-3. `src\Parser_Templates_Params.cpp` — `type_index == 0` dependent-type fallback
+3. `src\Parser_Templates_Params.cpp` — `type_index == 0` dependent-placeholder path
    - Probe result: replacing the dependent-marking path with a hard error broke comparison/operator template cases including `comparison_operators_ret1.cpp`, `float_comparisons_ret1.cpp`, `test_const_member_with_param_ret255.cpp`, `test_decltype_function_template_base_ret42.cpp`, and multiple spaceship tests.
    - Conclusion: invalid/placeholder `TypeIndex` is still an active dependency signal in the current parser/template pipeline and cannot be removed before the placeholder metadata path is finished.
 
@@ -261,9 +261,10 @@ The initial audit above was architectural. Several template-instantiation fallba
    - Probe result: replacing the later path that derives the pack size from `template_params`/`template_args` with a hard error broke `tests\test_explicit_template_pack_sizeof_param_name_ret0.cpp`, `tests\test_method_on_temporary_ret0.cpp`, `tests\test_pack_expansion_in_template_body_ret0.cpp`, `tests\test_sizeof_pack_class_template_ret0.cpp`, `tests\test_sizeof_pack_name_match_ret0.cpp`, `tests\test_sizeof_pack_namespace_member_template_ret0.cpp`, `tests\test_template_sizeof_pack_ret3.cpp`, and `tests\test_var_template_variadic_primary_ret42.cpp`.
    - Conclusion: both the authoritative `template_param_pack_sizes_` lookup and the later template-argument reconstruction path are still active in the current corpus, so `sizeof...` handling still depends on preserved per-pack size metadata as well as a broader reconstruction fallback after scope-local pack facts have been dropped.
 
-9. `src\Parser_Templates_Lazy.cpp` — lazy static-member ExpressionSubstitutor fallback
+9. `src\Parser_Templates_Lazy.cpp` — lazy static-member general substitution path
    - Probe result: replacing the general ExpressionSubstitutor pass with a hard error broke a wide lazy-static-member cluster including `template_ttp_static_constexpr_member_ret0.cpp`, `test_alias_base_static_member_ret0.cpp`, `test_integral_constant_simple_ret30.cpp`, `test_ratio_lazy_static_member_ret0.cpp`, `test_template_static_member_initializer_scalar_brace_ret42.cpp`, and `test_type_traits_dependent_member_nttp_ret42.cpp`.
-   - Conclusion: lazy static-member initialization still depends on a late general substitution pass after the specialized fold/identifier handlers, so this path remains active.
+   - Probe result: replacing the later `rebindStaticMemberInitializerFunctionCalls(...)` step with a hard error also broke a broad cluster including `template_ttp_static_constexpr_member_mixed_args_ret0.cpp`, `test_alias_template_nested_member_value_ret42.cpp`, `test_integral_constant_comprehensive_ret100.cpp`, `test_ratio_equal_deferred_base_ret1.cpp`, `test_template_template_forward_decl_definition_ret0.cpp`, and `test_type_traits_patterns_ret42.cpp`.
+   - Conclusion: lazy static-member initialization still depends both on the general ExpressionSubstitutor pass and on a later call-target rebinding pass, so neither part is removable yet.
 
 10. `src\Parser_Templates_Inst_ClassTemplate.cpp` — static-member initializer substitution fallback
    - Probe result: replacing the general initializer substitution pass with a hard error broke a broad static-member cluster including `template_ttp_static_constexpr_member_ret0.cpp`, `test_array_enable_if_deduction_ret0.cpp`, `test_dependent_template_instantiation_ret0.cpp`, `test_static_members_template_ret0.cpp`, `test_template_static_member_outofline_ret42.cpp`, and `test_var_template_inner_impl_defaulted_outer_arg_ret42.cpp`.

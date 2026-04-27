@@ -1821,7 +1821,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				}
 			}
 
-			// Also check for type_index=0 as a fallback indicator of dependent types
+			// An invalid type_index still marks an unresolved dependent placeholder type.
 			if (!arg.is_dependent && !type_node.type_index().is_valid()) {
 				arg.is_dependent = true;
 				FLASH_LOG(Templates, Debug, "Template argument is dependent (placeholder with type_index=0)");
