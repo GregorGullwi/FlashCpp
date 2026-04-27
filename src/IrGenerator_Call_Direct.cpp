@@ -1678,9 +1678,16 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 								   cast_info.cast_kind != StandardConversionKind::ArrayToPointer) {
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
-							// NOTE: ArrayToPointer is excluded here:
-							//   String-literal args already have a 64-bit TempVar from generateStringLiteralIr.
-							//   Identifier-array args are handled in the needs_array_decay block below.
+							// NOTE: ArrayToPointer is excluded from generateTypeConversion because that
+							//   function converts between scalar types (e.g. int->long), whereas
+							//   array-to-pointer decay requires emitting an AddressOf IR node to
+							//   materialise the base pointer from a stack-allocated array object.
+							//   Calling generateTypeConversion on an array operand would instead
+							//   integer-widen or reinterpret the value, producing garbage.
+							//   String-literal args already carry a 64-bit TempVar pointer from
+							//   generateStringLiteralIr, so decay is already complete.
+							//   Identifier-array args are handled in the needs_array_decay block
+							//   further below, which calls emitAddressOf to get the base pointer.
 						if (from_type == TypeCategory::Enum && from_type != argumentIrOperands.typeEnum())
 							from_type = argumentIrOperands.typeEnum();
 						argumentIrOperands = generateTypeConversion(argumentIrOperands, from_type, to_type, callExprNode.called_from());
