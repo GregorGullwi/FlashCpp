@@ -2433,9 +2433,6 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				tryAnnotateCallArgConversions(e);
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				tryResolveSubscriptOperator(e);
-				if (!getResolvedOpSubscript(&e)) {
-					annotateBuiltinSubscriptOperandOrder(e);
-				}
 				// If sema resolved this subscript to operator[], annotate the index
 				// argument against the operator's parameter type using the shared
 				// single-argument annotation helper.
@@ -3016,8 +3013,33 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const Ar
 	return it != op_subscript_table_.end() ? it->second : nullptr;
 }
 
-bool SemanticAnalysis::isBuiltinSubscriptReversed(const ArraySubscriptNode* key) const {
-	return reversed_builtin_subscripts_.count(key) != 0;
+bool SemanticAnalysis::isBuiltinSubscriptReversed(const ArraySubscriptNode* key) {
+	if (!key)
+		return false;
+	if (reversed_builtin_subscripts_.count(key))
+		return true;
+
+	const CanonicalTypeId left_type_id = inferExpressionType(key->array_expr());
+	const CanonicalTypeId right_type_id = inferExpressionType(key->index_expr());
+	if (!left_type_id || !right_type_id)
+		return false;
+
+	const auto is_array_or_pointer = [](const CanonicalTypeDesc& desc) -> bool {
+		return !desc.array_dimensions.empty() || !desc.pointer_levels.empty();
+	};
+	const auto is_subscript_index = [](const CanonicalTypeDesc& desc) -> bool {
+		return desc.pointer_levels.empty() &&
+			   desc.array_dimensions.empty() &&
+			   (isIntegralType(desc.category()) || desc.category() == TypeCategory::Enum);
+	};
+
+	const CanonicalTypeDesc& left_desc = type_context_.get(left_type_id);
+	const CanonicalTypeDesc& right_desc = type_context_.get(right_type_id);
+	if (is_subscript_index(left_desc) && is_array_or_pointer(right_desc)) {
+		reversed_builtin_subscripts_.insert(key);
+		return true;
+	}
+	return false;
 }
 
 const CallArgReferenceBindingInfo* SemanticAnalysis::getCallRefBinding(const void* key, size_t arg_index) const {
@@ -4784,30 +4806,6 @@ void SemanticAnalysis::tryResolveUnaryDereferenceOperator(const UnaryOperatorNod
 
 	op_unary_deref_table_[&unary_node] = best_match;
 	stats_.op_calls_resolved++;
-}
-
-void SemanticAnalysis::annotateBuiltinSubscriptOperandOrder(const ArraySubscriptNode& subscript_node) {
-	reversed_builtin_subscripts_.erase(&subscript_node);
-
-	const CanonicalTypeId left_type_id = inferExpressionType(subscript_node.array_expr());
-	const CanonicalTypeId right_type_id = inferExpressionType(subscript_node.index_expr());
-	if (!left_type_id || !right_type_id)
-		return;
-
-	const auto is_array_or_pointer = [](const CanonicalTypeDesc& desc) -> bool {
-		return !desc.array_dimensions.empty() || !desc.pointer_levels.empty();
-	};
-	const auto is_subscript_index = [](const CanonicalTypeDesc& desc) -> bool {
-		return desc.pointer_levels.empty() &&
-			   desc.array_dimensions.empty() &&
-			   (isIntegralType(desc.category()) || desc.category() == TypeCategory::Enum);
-	};
-
-	const CanonicalTypeDesc& left_desc = type_context_.get(left_type_id);
-	const CanonicalTypeDesc& right_desc = type_context_.get(right_type_id);
-	if (is_subscript_index(left_desc) && is_array_or_pointer(right_desc)) {
-		reversed_builtin_subscripts_.insert(&subscript_node);
-	}
 }
 
 void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& subscript_node) {

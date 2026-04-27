@@ -146,7 +146,7 @@ public:
 	// Look up the pre-resolved operator[] for an ArraySubscriptNode.
 	// Returns nullptr when the subscript is a built-in pointer/array subscript (not operator[]).
 	const FunctionDeclarationNode* getResolvedOpSubscript(const ArraySubscriptNode* key) const;
-	bool isBuiltinSubscriptReversed(const ArraySubscriptNode* key) const;
+	bool isBuiltinSubscriptReversed(const ArraySubscriptNode* key);
 
 	// Instantiation-time semantic hook for generic lambda parameter normalization.
 	std::vector<ASTNode> normalizeGenericLambdaParams(
@@ -386,7 +386,6 @@ private:
 	// Stores the resolved FunctionDeclarationNode* in op_subscript_table_ so that codegen
 	// can dispatch to the member function call path instead of pointer arithmetic.
 	void tryResolveSubscriptOperator(const ArraySubscriptNode& subscript_node);
-	void annotateBuiltinSubscriptOperandOrder(const ArraySubscriptNode& subscript_node);
 
 	// Scope stack for local variable type tracking (used by inferExpressionType).
 	// Keys are StringHandles from the string pool (stable for the compilation lifetime).
@@ -442,6 +441,8 @@ private:
 	// Populated by tryResolveSubscriptOperator when the subscript object is a struct type.
 	// Empty entry means built-in pointer/array subscript (handled by pointer arithmetic codegen).
 	std::unordered_map<const ArraySubscriptNode*, const FunctionDeclarationNode*> op_subscript_table_;
+	// Cache for built-in subscripts whose array/pointer operand is on the right (e.g. 0[array]).
+	// Populated lazily by isBuiltinSubscriptReversed on first access.
 	std::unordered_set<const ArraySubscriptNode*> reversed_builtin_subscripts_;
 
 	// Track which function body ASTNode pointers sema has normalized.
