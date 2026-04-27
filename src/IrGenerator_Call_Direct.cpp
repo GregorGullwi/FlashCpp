@@ -1850,11 +1850,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			if (sema_ && argument.is<ExpressionNode>()) {
 				const void* arg_key = &argument.as<ExpressionNode>();
 				const auto arg_slot = sema_->getSlot(arg_key);
-				FLASH_LOG(Codegen, Error, "[TRACE] ArrayDecay lookup: key=", arg_key,
-					" slot_found=", arg_slot.has_value(),
-					" has_cast=", (arg_slot.has_value() && arg_slot->has_cast()),
-					" is_array=", decl_node.is_array(),
-					" sema_norm=", sema_normalized_current_function_);
 				if (arg_slot.has_value() && arg_slot->has_cast()) {
 					const ImplicitCastInfo& ci =
 						sema_->castInfoTable()[arg_slot->cast_info_index.value - 1];

@@ -4015,9 +4015,6 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
 		setSlot(key, slot);
 		stats_.slots_filled++;
-		FLASH_LOG(General, Error, "SemanticAnalysis: ArrayToPointer annotated key=", key,
-				  " idx=", idx.value,
-				  " cat=", static_cast<int>(from_desc.category()));
 		return true;
 	}
 
@@ -4912,7 +4909,12 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 
 	const CanonicalTypeId param_type_id = canonicalizeType(param_type);
 	const CanonicalTypeId arg_type_id = inferExpressionType(arg);
-	if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) {
+	// Skip conversion annotation only when types truly match AND the source is not an array.
+	// An array source (e.g. char[5]) may need to decay to a pointer (const char*) even when
+	// canonical_types_match returns true due to the hybrid pointer+array descriptor produced
+	// by inferResolvedSymbolType for identifier-based arrays.
+	const bool arg_is_array = arg_type_id && !type_context_.get(arg_type_id).array_dimensions.empty();
+	if (arg_type_id && !arg_is_array && canonical_types_match(arg_type_id, param_type_id)) {
 		return;
 	}
 
