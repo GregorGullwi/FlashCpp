@@ -4038,10 +4038,17 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// Both cases are handled here and annotated with StandardConversionKind::ArrayToPointer
 	// so that codegen can emit an AddressOf instruction instead of inspecting the raw
 	// DeclarationNode::is_array() flag.
+	const bool direct_array_decay =
+		to_desc.category() == from_desc.category() &&
+		to_desc.pointer_levels.size() == from_desc.pointer_levels.size() + 1;
+	const bool decay_followed_by_void_pointer_conversion =
+		to_desc.category() == TypeCategory::Void &&
+		from_desc.pointer_levels.empty() &&
+		to_desc.pointer_levels.size() == 1;
 	if (!from_desc.array_dimensions.empty() &&
 		to_desc.array_dimensions.empty() &&
 		!to_desc.pointer_levels.empty() &&
-		from_desc.category() == to_desc.category()) {
+		(direct_array_decay || decay_followed_by_void_pointer_conversion)) {
 		ImplicitCastInfo cast_info;
 		cast_info.source_type_id = expr_type_id;
 		cast_info.target_type_id = target_type_id;
