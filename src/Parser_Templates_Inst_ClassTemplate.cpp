@@ -2209,10 +2209,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// For Tuple<int>: template_args = [int], first_variadic_index = 1
 						// base_template_args = [] (Tuple<>)
 					} else {
-						// Fallback: assume single template parameter for non-variadic cases
-						if (!template_args.empty()) {
-							base_template_args.push_back(template_args[0]);
-						}
+						throw InternalError("Base template argument mapping missing for non-variadic base instantiation");
 					}
 
 					FLASH_LOG(Templates, Debug, "Base class instantiation: ", base_template_name, " with ", base_template_args.size(), " args");
