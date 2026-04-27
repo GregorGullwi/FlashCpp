@@ -149,6 +149,7 @@ Add these as the next concrete roadmap items before starting the next PR:
    - Activity note: the old non-variadic base-template "assume `template_args[0]`" fallback in `src\Parser_Templates_Inst_ClassTemplate.cpp` was hard-fail probed and the full suite still passed, so that dead base-argument shortcut has already been removed.
    - Activity note: the base-class instantiation-name fallback in `src\Parser_Templates_Inst_Substitution.cpp` was also hard-fail probed and the full suite still passed, so the remaining corpus no longer needs the old "use basic name without defaults" rescue there.
    - Activity note: the `sizeof(T)` / `alignof(T)` type-name mapping fallback in `src\Parser_Templates_Inst_Substitution.cpp` is still active; hard-failing it broke `tests\test_dependent_sizeof_alignof_template_arg_ret0.cpp`, which matches the existing note that registered type indices are not always preserved for class template parameters.
+   - Activity note: the instantiated-member-alias copy fallback in `src\Parser_Templates_Inst_Substitution.cpp` was hard-fail probed and the full suite still passed, so that dead alias-copy branch has already been removed.
 
 3. **Explicit dependent-placeholder state everywhere**
    - Current status: Phase 4 introduced `DependentPlaceholderKind`, but fallback comments still show sentinel-style dependent detection such as `type_index == 0` and placeholder TypeSpec recovery.

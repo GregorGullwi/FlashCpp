@@ -435,29 +435,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	if (!resolved_member_source) {
 		return nullptr;
 	}
-
-	TypeIndex resolved_member_index =
-		resolved_member_source->registeredTypeIndex().withCategory(
-			resolved_member_source->typeEnum());
-	TypeSpecifierNode concrete_member_spec(
-		resolved_member_index,
-		resolved_member_source->sizeInBits(),
-		Token(),
-		CVQualifier::None,
-		ReferenceQualifier::None);
-	if (const TypeSpecifierNode* existing_alias_spec =
-			resolved_member_source->aliasTypeSpecifier()) {
-		concrete_member_spec = *existing_alias_spec;
-	}
-	TypeInfo& concrete_member_info = add_type_alias_copy(
-		concrete_member_handle,
-		resolved_member_index,
-		resolved_member_source->sizeInBits().value,
-		concrete_member_spec);
-	getTypesByNameMap().insert_or_assign(
-		concrete_member_handle,
-		&concrete_member_info);
-	return &concrete_member_info;
+	throw InternalError("Instantiated member alias target should resolve before alias copy");
 }
 
 bool Parser::resolveAliasTemplateInstantiation(

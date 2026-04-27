@@ -304,6 +304,7 @@ The audit is now backed by direct suite evidence for several representative temp
 - the function-shaped and constructor-shaped deferred-member queue bridges in `IrGenerator_Visitors_TypeInit.cpp` were also dead in the current corpus and have now been replaced with hard invariants;
 - the array-dimension substitution fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was also dead in the current corpus and has now been removed;
 - the base-class instantiation-name fallback in `Parser_Templates_Inst_Substitution.cpp` was dead in the current corpus and has now been removed;
+- the instantiated-member-alias copy fallback in `Parser_Templates_Inst_Substitution.cpp` was dead in the current corpus and has now been removed;
 - the fold-expression `pack_param_info_` fallback in `Parser_Templates_Substitution.cpp` was dead in the current corpus and has now been removed;
 - the `sizeof...` class-template pack-context fallback in `Parser_Templates_Substitution.cpp` was also dead in the current corpus and has now been removed;
 - the dependent-template placeholder string-parsing fallback in `Parser_Core.cpp` was dead in the current corpus and has now been removed;
