@@ -41,7 +41,7 @@ static bool conversionOperatorReturnsTargetType(
 	const ASTNode& return_type_node = function_decl.decl_node().type_node();
 	if (!return_type_node.is<TypeSpecifierNode>())
 		return false;
-	const CanonicalTypeId return_type_id = sema->canonicalizeType(return_type_node.as<TypeSpecifierNode>());
+	const CanonicalTypeId return_type_id = sema->canonicalizeTypeForImplicitConversion(return_type_node.as<TypeSpecifierNode>());
 	return return_type_id && sema->typeContext().get(return_type_id) == target_desc;
 }
 

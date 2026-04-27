@@ -2,7 +2,7 @@ struct ConstIntPtr {
 	int data[2];
 
 	operator const int*() const {
-		return data;
+		return &data[0];
 	}
 };
 

@@ -7,7 +7,7 @@ struct ItemPtr {
 	Item data[2];
 
 	operator Item*() {
-		return data;
+		return &data[0];
 	}
 };
 

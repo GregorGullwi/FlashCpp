@@ -3,7 +3,7 @@ struct PtrBox {
 	T data[3];
 
 	operator T*() {
-		return data;
+		return &data[0];
 	}
 };
 

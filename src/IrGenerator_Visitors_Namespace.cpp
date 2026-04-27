@@ -341,6 +341,31 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 								}
 							}
 						}
+					} else if (cast_info.cast_kind == StandardConversionKind::ArrayToPointer) {
+						if (std::holds_alternative<TempVar>(operands.value)) {
+							TempVar return_temp = std::get<TempVar>(operands.value);
+							if (auto lv_info_opt = getTempVarLValueInfo(return_temp)) {
+								const LValueInfo& lv_info = *lv_info_opt;
+								if (lv_info.kind == LValueInfo::Kind::Member &&
+									std::holds_alternative<StringHandle>(lv_info.base)) {
+									TempVar address_temp = var_counter.next();
+									AddressOfMemberOp addr_member_op;
+									addr_member_op.result = address_temp;
+									addr_member_op.base_object = std::get<StringHandle>(lv_info.base);
+									addr_member_op.member_offset = lv_info.offset;
+									addr_member_op.member_type_index = return_type_index;
+									addr_member_op.member_size_in_bits = return_size;
+									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
+									operands = makeExprResult(
+										return_type_index,
+										SizeInBits{return_size},
+										IrOperand{address_temp},
+										PointerDepth{1},
+										ValueStorage::ContainsData);
+									sema_applied_conversion = true;
+								}
+							}
+						}
 					} else if (!is_struct_type(annotated_source_type) &&
 							   !is_struct_type(to_type) &&
 							   cast_info.cast_kind != StandardConversionKind::ArrayToPointer) {

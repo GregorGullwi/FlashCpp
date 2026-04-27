@@ -284,7 +284,7 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 		if (!return_type_node.is<TypeSpecifierNode>())
 			continue;
 
-		const CanonicalTypeId return_type_id = sema->canonicalizeType(return_type_node.as<TypeSpecifierNode>());
+		const CanonicalTypeId return_type_id = sema->canonicalizeTypeForImplicitConversion(return_type_node.as<TypeSpecifierNode>());
 		if (!return_type_id)
 			continue;
 		const CanonicalTypeDesc& return_desc = sema->typeContext().get(return_type_id);
@@ -306,7 +306,7 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 
 		CanonicalTypeDesc element_desc = return_desc;
 		element_desc.pointer_levels.pop_back();
-		const CanonicalTypeId element_type_id = sema->canonicalizeType(materializeTypeSpecifier(element_desc));
+		const CanonicalTypeId element_type_id = sema->canonicalizeTypeForImplicitConversion(materializeTypeSpecifier(element_desc));
 		return PointerConversionInfo{return_type_id, element_type_id};
 	}
 
@@ -2730,6 +2730,10 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	auto id = type_context_.intern(desc);
 	stats_.canonical_types_interned++;
 	return id;
+}
+
+CanonicalTypeId SemanticAnalysis::canonicalizeTypeForImplicitConversion(const TypeSpecifierNode& type) {
+	return canonicalizeType(type);
 }
 
 std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {

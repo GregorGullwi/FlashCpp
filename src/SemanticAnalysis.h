@@ -73,6 +73,7 @@ public:
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
 	std::optional<SemanticSlot> getSlot(const void* key) const;
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
+	CanonicalTypeId canonicalizeTypeForImplicitConversion(const TypeSpecifierNode& type);
 	// Build the type/category view used specifically for overload-resolution arguments.
 	// Unlike getExpressionType(), this preserves overload-sensitive lvalue/xvalue details
 	// such as prvalue member access becoming an xvalue.

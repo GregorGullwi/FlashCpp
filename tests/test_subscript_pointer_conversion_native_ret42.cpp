@@ -2,7 +2,7 @@ struct IntPtr {
 	int data[4];
 
 	operator int*() {
-		return data;
+		return &data[0];
 	}
 };
 
@@ -10,7 +10,7 @@ struct ShortPtr {
 	short data[4];
 
 	operator short*() {
-		return data;
+		return &data[0];
 	}
 };
 
