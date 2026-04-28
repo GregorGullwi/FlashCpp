@@ -4093,7 +4093,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					filled_template_args.push_back(*evaluated_default);
 				}
 			}
-		} else if (param.kind() == TemplateParameterKind::Template) {
+		} else if (param.kind() == TemplateParameterKind::Template && param.has_default()) {
 			const ASTNode& default_node = param.default_value();
 			if (default_node.is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
