@@ -12755,10 +12755,10 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				}
 			}
 		} else if (const auto* d_val = std::get_if<double>(&op.value.value)) {
-				// Floating-point literal stored as double in IrValue.
-				// This is the common case for initializers like: double arr[3] = { 1.0, 2.0, 3.0 }.
-				// Convert to the target bit-width and load into XMM0 via a GPR.
-			uint64_t bits = encodeFloatingImmediateBits(*d_val, op.value.size_in_bits.value);
+			// Floating-point literal stored as double in IrValue.
+			// This is the common case for initializers like: double arr[3] = { 1.0, 2.0, 3.0 }.
+			// Convert to the target bit-width and load into XMM0 via a GPR.
+			uint64_t bits = encodeFloatingImmediateBits(*d_val, element_size_bits);
 			emitMovImm64(X64Register::RAX, bits);
 			emitMovqGprToXmm(X64Register::RAX, X64Register::XMM0);
 		}
@@ -12859,11 +12859,11 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
 
 				if (is_float_store) {
-						// Value is in XMM0 — use float store instruction
+					// Value is in XMM0 — use float store instruction
 					bool is_double = (element_size_bits == 64);
 					emitFloatMovToFrame(X64Register::XMM0, static_cast<int32_t>(element_offset), !is_double);
 				} else {
-						// Store RDX to [RBP + offset] with appropriate size
+					// Store RDX to [RBP + offset] with appropriate size
 					emitStoreToFrame(textSectionData, X64Register::RDX, element_offset, element_size_bytes);
 				}
 			}
