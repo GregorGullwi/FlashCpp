@@ -6,6 +6,7 @@
 #include <unordered_map>
 
 class ConstructorDeclarationNode;
+class FunctionDeclarationNode;
 
 // --- Standard conversion kinds (C++20 [conv]) ---
 
@@ -87,6 +88,10 @@ struct ImplicitCastInfo {
 	StandardConversionKind cast_kind;
 	ValueCategory value_category_after = ValueCategory::PRValue;
 	const ConstructorDeclarationNode* selected_constructor = nullptr;
+	// For UserDefined struct-to-X conversions (e.g. operator T*()): the
+	// conversion operator selected by sema. Codegen consumes this directly
+	// rather than re-running conversion-operator lookup.
+	const FunctionDeclarationNode* selected_conversion_function = nullptr;
 };
 
 // --- Canonical type descriptor (stored in TypeContext, indexed by CanonicalTypeId) ---

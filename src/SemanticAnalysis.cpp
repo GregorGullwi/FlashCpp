@@ -248,6 +248,7 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 struct PointerConversionInfo {
 	CanonicalTypeId target_type_id;
 	CanonicalTypeId element_type_id;
+	const FunctionDeclarationNode* function = nullptr;
 };
 
 std::optional<PointerConversionInfo> findStructPointerConversionOperator(
@@ -308,7 +309,7 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 		CanonicalTypeDesc element_desc = return_desc;
 		element_desc.pointer_levels.pop_back();
 		const CanonicalTypeId element_type_id = sema->canonicalizeTypeForImplicitConversion(materializeTypeSpecifier(element_desc));
-		return PointerConversionInfo{conv_op_return_type_id, element_type_id};
+		return PointerConversionInfo{conv_op_return_type_id, element_type_id, &function_decl};
 	}
 
 	for (const auto& base : struct_info->base_classes) {
@@ -4240,10 +4241,23 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	if (from_desc.category() == TypeCategory::Struct &&
 		!to_desc.pointer_levels.empty() &&
 		to_desc.array_dimensions.empty()) {
+		// Run sema-owned conversion-operator selection once and record the
+		// chosen function on the cast info. Codegen consumes this selection
+		// directly rather than re-running lookup. structHasConversionOperatorTo
+		// is still useful as a side effect to mark ODR-use of any matching
+		// overload(s), so we call it for that purpose first.
 		if (!structHasConversionOperatorTo(from_desc, to_desc, this)) {
 			FLASH_LOG(General, Debug,
 					  "SemanticAnalysis: skipping UserDefined pointer annotation — "
 					  "no matching conversion operator found in struct source type");
+			return false;
+		}
+		const auto pointer_conversion =
+			findStructPointerConversionOperator(from_desc, &to_desc, this, 0);
+		if (!pointer_conversion) {
+			FLASH_LOG(General, Debug,
+					  "SemanticAnalysis: skipping UserDefined pointer annotation — "
+					  "selection of struct-to-pointer conversion operator failed");
 			return false;
 		}
 
@@ -4252,6 +4266,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		cast_info.target_type_id = target_type_id;
 		cast_info.cast_kind = StandardConversionKind::UserDefined;
 		cast_info.value_category_after = ValueCategory::PRValue;
+		cast_info.selected_conversion_function = pointer_conversion->function;
 		const CastInfoIndex idx = allocateCastInfo(cast_info);
 
 		SemanticSlot slot;

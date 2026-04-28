@@ -25,74 +25,32 @@ static std::optional<size_t> tryGetTypeSizeForSizeof(const TypeSpecifierNode& ty
 	return static_cast<size_t>(size_bits) / 8;
 }
 
-static bool isConversionOperatorForTargetType(
-	SemanticAnalysis* sema,
-	const StructMemberFunction& member_func,
-	const CanonicalTypeDesc& target_desc) {
-	if (!sema || !member_func.is_conversion_operator() ||
-		!member_func.function_decl.is<FunctionDeclarationNode>()) {
-		return false;
-	}
-	const FunctionDeclarationNode& function_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-	const CanonicalTypeId return_type_id =
-		sema->canonicalizeTypeForImplicitConversion(function_decl.decl_node().type_specifier_node());
-	return return_type_id && sema->typeContext().get(return_type_id) == target_desc;
-}
-
-static const StructMemberFunction* findConversionOperatorForSubscriptPointerTarget(
-	SemanticAnalysis* sema,
+static const StructMemberFunction* findMemberFunctionByDecl(
 	const StructTypeInfo* struct_info,
-	const CanonicalTypeDesc& target_desc,
-	bool source_is_const,
-	bool prefer_const,
+	const FunctionDeclarationNode* target_decl,
 	int depth) {
 	static constexpr int kMaxInheritanceDepth = 8;
-	if (!struct_info)
+	if (!struct_info || !target_decl || depth > kMaxInheritanceDepth)
 		return nullptr;
-	if (depth > kMaxInheritanceDepth)
-		return nullptr;
-
 	for (const auto& member_func : struct_info->member_functions) {
-		if (source_is_const && !member_func.is_const())
+		if (!member_func.function_decl.is<FunctionDeclarationNode>())
 			continue;
-		const bool const_preference_mismatch = prefer_const != member_func.is_const();
-		if (!source_is_const && const_preference_mismatch)
-			continue;
-		if (isConversionOperatorForTargetType(sema, member_func, target_desc))
+		if (&member_func.function_decl.as<FunctionDeclarationNode>() == target_decl)
 			return &member_func;
 	}
-
 	for (const auto& base_spec : struct_info->base_classes) {
 		if (base_spec.is_deferred)
 			continue;
 		if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
 			if (const StructTypeInfo* base_struct_info = base_type_info->getStructInfo()) {
-				if (const StructMemberFunction* result = findConversionOperatorForSubscriptPointerTarget(
-						sema, base_struct_info, target_desc, source_is_const, prefer_const, depth + 1)) {
+				if (const StructMemberFunction* result = findMemberFunctionByDecl(
+						base_struct_info, target_decl, depth + 1)) {
 					return result;
 				}
 			}
 		}
 	}
-
 	return nullptr;
-}
-
-static const StructMemberFunction* findConversionOperatorForSubscriptPointerTarget(
-	SemanticAnalysis* sema,
-	const StructTypeInfo* struct_info,
-	const CanonicalTypeDesc& target_desc,
-	bool source_is_const) {
-	if (source_is_const) {
-		return findConversionOperatorForSubscriptPointerTarget(sema, struct_info, target_desc, source_is_const, true, 0);
-	}
-	// Non-const objects prefer non-const conversion operators, but may call const
-	// conversion operators if no non-const overload matches the target type.
-	if (const StructMemberFunction* non_const = findConversionOperatorForSubscriptPointerTarget(
-			sema, struct_info, target_desc, source_is_const, false, 0)) {
-		return non_const;
-	}
-	return findConversionOperatorForSubscriptPointerTarget(sema, struct_info, target_desc, source_is_const, true, 0);
 }
 
 static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNode& type_spec) {
@@ -785,18 +743,24 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				source_desc.category() == TypeCategory::Struct &&
 				!target_desc.pointer_levels.empty()) {
 				if (const TypeInfo* source_type_info = tryGetTypeInfo(source_desc.type_index)) {
-					const bool source_is_const = hasCVQualifier(source_desc.base_cv, CVQualifier::Const);
-					const StructMemberFunction* conv_op = findConversionOperatorForSubscriptPointerTarget(
-						sema_, source_type_info->getStructInfo(), target_desc, source_is_const);
-					if (!conv_op) {
+					// Sema already selected the conversion function during
+					// tryAnnotateConversion. Codegen consumes it directly here
+					// rather than re-running conversion-operator lookup.
+					if (!cast_info.selected_conversion_function) {
 						throw InternalError(std::string(StringBuilder()
 							.append("generateArraySubscriptIr: sema annotated struct-to-pointer subscript conversion for '")
 							.append(StringTable::getStringView(source_type_info->name()))
-							.append("' but no operator matching target type '")
-							.append(getTypeName(target_desc.category()))
-							.append(" with pointer depth ")
-							.append(std::to_string(target_desc.pointer_levels.size()))
-							.append("' was found")
+							.append("' but no selected conversion function was recorded")
+							.commit()));
+					}
+					const StructMemberFunction* conv_op = findMemberFunctionByDecl(
+						source_type_info->getStructInfo(),
+						cast_info.selected_conversion_function, 0);
+					if (!conv_op) {
+						throw InternalError(std::string(StringBuilder()
+							.append("generateArraySubscriptIr: sema-selected conversion function for '")
+							.append(StringTable::getStringView(source_type_info->name()))
+							.append("' could not be located among struct members")
 							.commit()));
 					}
 					if (auto converted = emitConversionOperatorCall(
