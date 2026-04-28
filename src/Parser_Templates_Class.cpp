@@ -926,11 +926,10 @@ ParseResult Parser::parse_template_declaration() {
 							}
 						}
 					}
-					discard_saved_token(after_target_type_pos);
 				} else {
 					restore_token_position(after_target_type_pos);
-					discard_saved_token(after_target_type_pos);
 				}
+				discard_saved_token(after_target_type_pos);
 
 				// Note: We already consumed the tokens, so type_spec still points to the unresolved type
 				// We don't need to re-parse again - just use the existing type_spec
