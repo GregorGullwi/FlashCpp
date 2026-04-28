@@ -4421,6 +4421,16 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					emitMovFromFrame(target_reg, var_offset);
 					continue;
 				}
+				// If the TempVar already holds a pointer/address (e.g. from `assign %t = %this`),
+				// use mov to load its value rather than lea to take its address again.
+				{
+					int var_offset = getStackOffsetFromTempVar(std::get<TempVar>(arg.value));
+					auto ref_info = getIndirectStackInfo(var_offset);
+					if (ref_info.has_value() && ref_info->holds_address_only) {
+						emitMovFromFrame(target_reg, var_offset);
+						continue;
+					}
+				}
 				if (!emitLoadAddressLikeArgument(target_reg, arg)) {
 					throw InternalError("Register call TempVar marked pass-by-address is not addressable");
 				}
@@ -8599,7 +8609,8 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						};
 
 						switch (lv_info.kind) {
-						case LValueInfo::Kind::Indirect: {
+						case LValueInfo::Kind::Indirect:
+						case LValueInfo::Kind::ReferenceDeref: {
 							if (loadBaseAddress(lv_info.base, true)) {
 								if (lv_info.offset != 0) {
 									emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
@@ -11589,6 +11600,28 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				SizedRegister{X64Register::RAX, 64, false},
 				SizedStackSlot{lhs_offset + offset, 8, false});
 		}
+
+		// Propagate holds_address_only metadata from RHS to LHS TempVar.
+		// When a pointer-sized struct (e.g. `this`) is assigned into a TempVar,
+		// the TempVar also holds an address.  Without this, the call-site emits
+		// `lea` (address-of the slot) instead of `mov` (the pointer value) for
+		// reference arguments, producing a double-indirection and wrong results.
+		if (rhs_offset != -1) {
+			auto rhs_indirect_info = getIndirectStackInfo(rhs_offset);
+			if (rhs_indirect_info.has_value() && rhs_indirect_info->holds_address_only) {
+				TempVar lhs_temp{};
+				if (const auto* tv = std::get_if<TempVar>(&op.lhs.value)) {
+					lhs_temp = *tv;
+				}
+				setIndirectStorageInfo(
+					lhs_offset,
+					rhs_indirect_info->value_type_index,
+					rhs_indirect_info->value_size_bits.value,
+					rhs_indirect_info->is_rvalue_reference,
+					true,
+					lhs_temp);
+			}
+		}
 		return;
 	}
 
@@ -11800,7 +11833,15 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			// Check if RHS is a reference - if so, dereference it unless this
 			// assignment is explicitly copying an address.
 			auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
-			if (rhs_ref_info.has_value() && !op.dereference_rhs_references && !rhs_contains_address) {
+			if (rhs_ref_info.has_value() && !rhs_contains_address &&
+				(!op.dereference_rhs_references || rhs_ref_info->holds_address_only)) {
+				// Propagate indirect/address-only metadata to the LHS TempVar in two cases:
+				// 1. dereference_rhs_references == false: explicit pointer copy (existing behaviour).
+				// 2. holds_address_only == true: even when dereference_rhs_references is true,
+				//    an address-only slot is never implicitly dereferenced, so the pointer value
+				//    is copied as-is and the LHS must inherit the holds_address_only flag.
+				//    Without this, `assign %t = %this` would leave %t without the flag and the
+				//    call-site would emit `lea` (address of slot) instead of `mov` (pointer value).
 				copied_indirect_info = rhs_ref_info;
 			}
 			if (rhs_ref_info.has_value() &&
@@ -11867,7 +11908,8 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			int value_size_bytes = rhs_ref_info->value_size_bits.value / 8;
 			emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 			source_reg = ptr_reg;
-		} else if (rhs_ref_info.has_value() && !op.dereference_rhs_references && !rhs_contains_address) {
+		} else if (rhs_ref_info.has_value() && !rhs_contains_address &&
+			(!op.dereference_rhs_references || rhs_ref_info->holds_address_only)) {
 			copied_indirect_info = rhs_ref_info;
 		} else if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
 				// Check if the value is already in a register
@@ -11945,7 +11987,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 
 		// Clear any stale register associations for this stack offset
 		regAlloc.clearStackVariableAssociations(lhs_offset);
-		if (copied_indirect_info.has_value() && !op.dereference_rhs_references) {
+		if (copied_indirect_info.has_value()) {
 			setIndirectStorageInfo(
 				lhs_offset,
 				copied_indirect_info->value_type_index,
@@ -12974,7 +13016,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			}
 			if (!found_global) {
 				FLASH_LOG(Codegen, Error, "MemberAccess missing object: ", StringTable::getStringView(object_name_handle), "\n");
-				throw InternalError("Struct object not found in scope or globals");
+				throw CompileError(std::string("Struct object '") + std::string(StringTable::getStringView(object_name_handle)) + "' not found in scope or globals");
 				return;
 			}
 		} else {

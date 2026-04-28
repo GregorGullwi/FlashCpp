@@ -759,7 +759,15 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 	}
 
 	if (const auto* member_access = tryGetNode<MemberAccessNode>(expr)) {
+		// Arrow access on 'this' (this->member) is equivalent to dot access on 'this'
+		// because 'this' is always a pointer to the current object.
 		if (member_access->is_arrow()) {
+			const IdentifierNode* object_id = tryGetIdentifier(member_access->object());
+			if (object_id && object_id->name() == "this") {
+				if (EvalResult* binding = findMutableBindingValue(member_access->member_name(), bindings, context)) {
+					return BoundWriteTarget{binding, member_access->member_name()};
+				}
+			}
 			return std::nullopt;
 		}
 

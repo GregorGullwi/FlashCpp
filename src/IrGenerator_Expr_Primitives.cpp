@@ -1305,10 +1305,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
 													  StringTable::getOrInternStringHandle(identifierNode.name()));
 
-					// Mark as lvalue with Indirect metadata for unified assignment handler
-					// This allows compound assignments (like x *= 2) to work on dereferenced references
+					// Mark as lvalue with ReferenceDeref metadata for unified assignment handler
+					// ReferenceDeref (vs plain Indirect) signals downstream code that the base is a C++ reference variable.
 				LValueInfo lvalue_info(
-					LValueInfo::Kind::Indirect,
+					LValueInfo::Kind::ReferenceDeref,
 					StringTable::getOrInternStringHandle(identifierNode.name()),	 // The reference variable name
 					0  // offset is 0 for simple dereference
 				);

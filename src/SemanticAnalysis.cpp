@@ -254,6 +254,30 @@ struct PointerConversionInfo {
 	const FunctionDeclarationNode* function = nullptr;
 };
 
+// Builds a CanonicalTypeDesc for a base class subobject, inheriting the CV
+// qualifier of the derived object so that const-ness propagates through
+// inheritance when looking up pointer conversion operators.
+static CanonicalTypeDesc makeBaseFromDesc(
+	const CanonicalTypeDesc& from_desc,
+	const BaseClassSpecifier& base) {
+	CanonicalTypeDesc base_from_desc;
+	base_from_desc.type_index = base.type_index;
+	base_from_desc.base_cv = from_desc.base_cv;
+	return base_from_desc;
+}
+
+// Returns true if a and b have the same element base type, ignoring CV
+// qualifiers on the pointed-to type. Used to determine whether two pointer-
+// returning conversion operators are truly distinct (ambiguous) or merely
+// differ in the constness of their element type (resolved by cv-preference).
+static bool hasSamePointerElementBaseType(
+	const CanonicalTypeDesc& a,
+	const CanonicalTypeDesc& b) {
+	return a.category() == b.category() &&
+		   a.type_index == b.type_index &&
+		   a.pointer_levels.size() == b.pointer_levels.size();
+}
+
 std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 	const CanonicalTypeDesc& from_desc,
 	const CanonicalTypeDesc* optional_target_desc,
@@ -318,11 +342,8 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 	for (const auto& base : struct_info->base_classes) {
 		if (base.is_deferred)
 			continue;
-		CanonicalTypeDesc base_from_desc;
-		base_from_desc.type_index = base.type_index;
-		base_from_desc.base_cv = from_desc.base_cv;
 		if (auto result = findStructPointerConversionOperator(
-				base_from_desc, optional_target_desc, sema, prefer_const, depth + 1))
+				makeBaseFromDesc(from_desc, base), optional_target_desc, sema, prefer_const, depth + 1))
 			return result;
 	}
 
@@ -342,6 +363,99 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 	if (auto non_const = findStructPointerConversionOperator(from_desc, optional_target_desc, sema, false, depth))
 		return non_const;
 	return findStructPointerConversionOperator(from_desc, optional_target_desc, sema, true, depth);
+}
+
+// Collects viable pointer-returning conversion operators from from_desc into out_ops.
+// Considers all operators matching the given constness constraint: for const sources
+// only const operators are viable; for non-const sources both const and non-const
+// operators are viable (the caller is responsible for resolving preference).
+static void collectAllStructPointerConversionOperators(
+	const CanonicalTypeDesc& from_desc,
+	SemanticAnalysis* sema,
+	bool require_const,
+	int depth,
+	std::vector<PointerConversionInfo>& out_ops) {
+	static constexpr int kMaxInheritanceDepth = 8;
+	if (!sema || depth > kMaxInheritanceDepth)
+		return;
+
+	const TypeInfo* from_type_info = tryGetTypeInfo(from_desc.type_index);
+	if (!from_type_info)
+		return;
+	const StructTypeInfo* struct_info = from_type_info->getStructInfo();
+	if (!struct_info)
+		return;
+
+	for (const auto& mf : struct_info->member_functions) {
+		if (!mf.is_conversion_operator())
+			continue;
+		if (require_const && !mf.is_const())
+			continue;
+		if (!mf.function_decl.is<FunctionDeclarationNode>())
+			continue;
+
+		const FunctionDeclarationNode& function_decl = mf.function_decl.as<FunctionDeclarationNode>();
+		const ASTNode& return_type_node = function_decl.decl_node().type_node();
+		if (!return_type_node.is<TypeSpecifierNode>())
+			continue;
+
+		const CanonicalTypeId conv_op_return_type_id =
+			sema->canonicalizeTypeForImplicitConversion(return_type_node.as<TypeSpecifierNode>());
+		if (!conv_op_return_type_id)
+			continue;
+		const CanonicalTypeDesc& return_desc = sema->typeContext().get(conv_op_return_type_id);
+		if (return_desc.pointer_levels.empty() || !return_desc.array_dimensions.empty())
+			continue;
+
+		CanonicalTypeDesc element_desc = return_desc;
+		element_desc.pointer_levels.pop_back();
+		const CanonicalTypeId element_type_id =
+			sema->canonicalizeTypeForImplicitConversion(materializeTypeSpecifier(element_desc));
+		out_ops.push_back({conv_op_return_type_id, element_type_id, &function_decl});
+	}
+
+	for (const auto& base : struct_info->base_classes) {
+		if (base.is_deferred)
+			continue;
+		collectAllStructPointerConversionOperators(
+			makeBaseFromDesc(from_desc, base), sema, require_const, depth + 1, out_ops);
+	}
+}
+
+// Returns true if from_desc has multiple viable pointer conversion operators with
+// distinct element base types, making a built-in subscript expression ambiguous.
+// Two conversion operators with the same element base type (e.g. operator int*()
+// and operator const int*() const) are NOT ambiguous; the non-const is preferred.
+//
+// C++20 [over.match.sub]: each viable pointer conversion generates a separate
+// built-in operator[] candidate. Multiple candidates with different pointer types
+// produce an ambiguous overload set.
+static bool hasAmbiguousPointerConversionOperators(
+	const CanonicalTypeDesc& from_desc,
+	SemanticAnalysis* sema) {
+	if (!sema)
+		return false;
+
+	const bool source_is_const = hasCVQualifier(from_desc.base_cv, CVQualifier::Const);
+
+	// Collect all viable candidates: for a const source only const operators
+	// qualify; for a non-const source both const and non-const are viable.
+	std::vector<PointerConversionInfo> all_ops;
+	collectAllStructPointerConversionOperators(from_desc, sema, source_is_const, 0, all_ops);
+
+	if (all_ops.size() <= 1)
+		return false;
+
+	// Check whether all operators have the same underlying element type (ignoring
+	// CV qualifiers). Operators returning e.g. int* and const int* share the same
+	// underlying element type and are resolved by cv-preference, not ambiguity.
+	const CanonicalTypeDesc& first_elem = sema->typeContext().get(all_ops[0].element_type_id);
+	for (size_t i = 1; i < all_ops.size(); ++i) {
+		const CanonicalTypeDesc& elem_i = sema->typeContext().get(all_ops[i].element_type_id);
+		if (!hasSamePointerElementBaseType(first_elem, elem_i))
+			return true;
+	}
+	return false;
 }
 
 const FunctionDeclarationNode* getCallTargetFunctionCandidate(const ASTNode& overload) {
@@ -1961,16 +2075,22 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 		ctx.current_function_return_type_id = canonicalizeType(type_node.as<TypeSpecifierNode>());
 	}
 
-	std::optional<TypeIndex> member_context_type_index;
+	std::optional<MemberContext> member_context;
 	if (func.is_member_function()) {
 		if (const TypeInfo* type_info = findStructTypeInfoByNameFragment(func.parent_struct_name());
 			type_info && type_info->getStructInfo()) {
-			member_context_type_index = type_info->type_index_;
-			member_context_stack_.push_back(*member_context_type_index);
+			member_context = MemberContext{type_info->type_index_, !func.is_static(), CVQualifier::None};
+			if (func.is_const_member_function()) {
+				member_context->this_base_cv |= CVQualifier::Const;
+			}
+			if (func.is_volatile_member_function()) {
+				member_context->this_base_cv |= CVQualifier::Volatile;
+			}
+			member_context_stack_.push_back(*member_context);
 		}
 	}
-	auto member_context_cleanup = ScopeGuard([this, &member_context_type_index]() {
-		if (member_context_type_index.has_value()) {
+	auto member_context_cleanup = ScopeGuard([this, &member_context]() {
+		if (member_context.has_value()) {
 			member_context_stack_.pop_back();
 		}
 	});
@@ -1997,14 +2117,14 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 
 	SemanticContext ctx;
 
-	std::optional<TypeIndex> member_context_type_index;
+	std::optional<MemberContext> member_context;
 	if (const TypeInfo* type_info = findStructTypeInfoByNameFragment(ctor.struct_name().view());
 		type_info && type_info->getStructInfo()) {
-		member_context_type_index = type_info->type_index_;
-		member_context_stack_.push_back(*member_context_type_index);
+		member_context = MemberContext{type_info->type_index_, true, CVQualifier::None};
+		member_context_stack_.push_back(*member_context);
 	}
-	auto member_context_cleanup = ScopeGuard([this, &member_context_type_index]() {
-		if (member_context_type_index.has_value()) {
+	auto member_context_cleanup = ScopeGuard([this, &member_context]() {
+		if (member_context.has_value()) {
 			member_context_stack_.pop_back();
 		}
 	});
@@ -2047,14 +2167,14 @@ void SemanticAnalysis::normalizeDestructorDeclaration(const DestructorDeclaratio
 
 	SemanticContext ctx;
 
-	std::optional<TypeIndex> member_context_type_index;
+	std::optional<MemberContext> member_context;
 	if (const TypeInfo* type_info = findStructTypeInfoByNameFragment(dtor.struct_name().view());
 		type_info && type_info->getStructInfo()) {
-		member_context_type_index = type_info->type_index_;
-		member_context_stack_.push_back(*member_context_type_index);
+		member_context = MemberContext{type_info->type_index_, true, CVQualifier::None};
+		member_context_stack_.push_back(*member_context);
 	}
-	auto member_context_cleanup = ScopeGuard([this, &member_context_type_index]() {
-		if (member_context_type_index.has_value()) {
+	auto member_context_cleanup = ScopeGuard([this, &member_context]() {
+		if (member_context.has_value()) {
 			member_context_stack_.pop_back();
 		}
 	});
@@ -2847,6 +2967,9 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 			return ValueCategory::PRValue;
 		};
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			if (inner.name() == "this"sv) {
+				return ValueCategory::PRValue;
+			}
 			return inner.binding() != IdentifierBinding::EnumConstant ? ValueCategory::LValue : ValueCategory::PRValue;
 		} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 			if (auto resolved = getResolvedQualifiedIdentifier(&inner); resolved.has_value() &&
@@ -2861,26 +2984,23 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 			// C++20 [expr.ref]/4: if the member is a reference, the result is
 			// always an lvalue regardless of the object's value category.
-			const CanonicalTypeId obj_type_id = inferExpressionType(inner.object());
-			if (obj_type_id) {
-				const CanonicalTypeDesc& obj_desc = type_context_.get(obj_type_id);
-				if (obj_desc.category() == TypeCategory::Struct || obj_desc.category() == TypeCategory::UserDefined) {
-					const TypeInfo* ti = tryGetTypeInfo(obj_desc.type_index);
-					const StructTypeInfo* si = ti ? ti->getStructInfo() : nullptr;
-					if (si) {
-						const StringHandle member_handle = StringTable::getOrInternStringHandle(inner.member_name());
-						for (const auto& m : si->members) {
-							if (m.getName() == member_handle) {
-								if (m.is_reference()) {
-									return ValueCategory::LValue;
-								}
-								break;
+			if (auto object_info = resolveMemberAccessObjectInfo(inner); object_info.has_value()) {
+				const StructTypeInfo* si = object_info->object_type_info->getStructInfo();
+				if (si) {
+					const StringHandle member_handle = StringTable::getOrInternStringHandle(inner.member_name());
+					for (const auto& m : si->members) {
+						if (m.getName() == member_handle) {
+							if (m.is_reference()) {
+								return ValueCategory::LValue;
 							}
+							break;
 						}
 					}
 				}
 			}
-			const ValueCategory object_category = inferExpressionValueCategory(inner.object());
+			const ValueCategory object_category = inner.is_arrow()
+				? ValueCategory::LValue
+				: inferExpressionValueCategory(inner.object());
 			switch (object_category) {
 				case ValueCategory::LValue:
 					return ValueCategory::LValue;
@@ -3026,13 +3146,23 @@ bool SemanticAnalysis::resolveOrGetMemberAccess(const MemberAccessNode& key,
 	return true;
 }
 
+const SemanticAnalysis::MemberContext* SemanticAnalysis::getCurrentMemberContext() const {
+	if (member_context_stack_.empty()) {
+		return nullptr;
+	}
+
+	return &member_context_stack_.back();
+}
+
 std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> SemanticAnalysis::tryResolveIdentifierMember(const IdentifierNode& identifier) const {
+	const MemberContext* member_context = getCurrentMemberContext();
 	if (identifier.binding() != IdentifierBinding::NonStaticMember ||
-		member_context_stack_.empty()) {
+		!member_context ||
+		!member_context->has_implicit_this) {
 		return std::nullopt;
 	}
 
-	const TypeIndex current_struct_type = member_context_stack_.back();
+	const TypeIndex current_struct_type = member_context->type_index;
 	if (!current_struct_type.is_valid()) {
 		return std::nullopt;
 	}
@@ -3136,6 +3266,15 @@ std::optional<CanonicalTypeId> SemanticAnalysis::normalizeBuiltinSubscriptOperan
 	const auto get_struct_pointer_conversion_target_type = [this](const CanonicalTypeDesc& desc) -> std::optional<CanonicalTypeId> {
 		if (desc.category() != TypeCategory::Struct)
 			return std::nullopt;
+		// C++20 [over.match.sub]: if multiple viable pointer conversion operators
+		// produce different element types the overload set is ambiguous.
+		if (hasAmbiguousPointerConversionOperators(desc, this)) {
+			const TypeInfo* type_info = tryGetTypeInfo(desc.type_index);
+			const std::string_view type_name =
+				type_info ? StringTable::getStringView(type_info->name()) : "<unknown>";
+			throw CompileError("ambiguous built-in subscript: '" + std::string(type_name) +
+							   "' has multiple pointer conversion operators with different element types");
+		}
 		if (auto pointer_conversion = findStructPointerConversionOperator(desc, nullptr, this, 0)) {
 			return pointer_conversion->target_type_id;
 		}
@@ -3187,37 +3326,8 @@ const CallArgReferenceBindingInfo* SemanticAnalysis::getCallExprRefBinding(const
 
 bool SemanticAnalysis::tryResolveMemberAccessInfo(const MemberAccessNode& member_access,
 												  ResolvedMemberAccessInfo& out_info) {
-	const ASTNode& object_node = member_access.object();
-	auto tryResolveObjectTypeInfo = [&]() -> const TypeInfo* {
-		const CanonicalTypeId object_type_id = inferExpressionType(object_node);
-		if (object_type_id) {
-			const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
-			if (object_desc.category() != TypeCategory::Struct &&
-				object_desc.category() != TypeCategory::UserDefined) {
-				return nullptr;
-			}
-
-			if (object_desc.category() == TypeCategory::UserDefined) {
-				const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(object_desc.type_index);
-				if (alias_info.terminal_type_info) {
-					return alias_info.terminal_type_info;
-				}
-			}
-			return tryGetTypeInfo(object_desc.type_index);
-		}
-
-		if (object_node.is<ExpressionNode>()) {
-			const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
-			if (const auto* ident = std::get_if<IdentifierNode>(&object_expr);
-				ident && ident->name() == "this"sv && !member_context_stack_.empty()) {
-				return tryGetTypeInfo(member_context_stack_.back());
-			}
-		}
-
-		return nullptr;
-	};
-
-	const TypeInfo* object_type_info = tryResolveObjectTypeInfo();
+	const auto object_info = resolveMemberAccessObjectInfo(member_access);
+	const TypeInfo* object_type_info = object_info ? object_info->object_type_info : nullptr;
 	if (!object_type_info) {
 		return false;
 	}
@@ -3265,6 +3375,41 @@ bool SemanticAnalysis::tryResolveMemberAccessInfo(const MemberAccessNode& member
 	}
 
 	return false;
+}
+
+std::optional<SemanticAnalysis::ResolvedMemberAccessObjectInfo> SemanticAnalysis::resolveMemberAccessObjectInfo(
+	const MemberAccessNode& member_access) {
+	const CanonicalTypeId object_type_id = inferExpressionType(member_access.object());
+	if (!object_type_id) {
+		return std::nullopt;
+	}
+
+	ResolvedMemberAccessObjectInfo result;
+	result.object_desc = type_context_.get(object_type_id);
+	if (member_access.is_arrow()) {
+		if (result.object_desc.pointer_levels.empty()) {
+			return std::nullopt;
+		}
+		result.object_desc.pointer_levels.pop_back();
+	}
+
+	if (result.object_desc.category() != TypeCategory::Struct &&
+		result.object_desc.category() != TypeCategory::UserDefined) {
+		return std::nullopt;
+	}
+
+	if (result.object_desc.category() == TypeCategory::UserDefined) {
+		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(result.object_desc.type_index);
+		result.object_type_info = alias_info.terminal_type_info;
+	}
+	if (!result.object_type_info) {
+		result.object_type_info = tryGetTypeInfo(result.object_desc.type_index);
+	}
+	if (!result.object_type_info) {
+		return std::nullopt;
+	}
+
+	return result;
 }
 
 void SemanticAnalysis::setSlot(const void* key, const SemanticSlot& slot) {
@@ -3367,6 +3512,21 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
+				if (e.name() == "this"sv) {
+					const MemberContext* member_context = getCurrentMemberContext();
+					if (!member_context ||
+						!member_context->has_implicit_this ||
+						!member_context->type_index.is_valid()) {
+						return {};
+					}
+
+					CanonicalTypeDesc desc;
+					desc.type_index = member_context->type_index;
+					desc.base_cv = member_context->this_base_cv;
+					desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
+					return type_context_.intern(desc);
+				}
+
 				const CanonicalTypeId local_id = lookupLocalType(e.nameHandle());
 				if (local_id)
 					return local_id;
@@ -3427,24 +3587,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// Phase 6: parser_.get_expression_type fallback removed.
 				// Sema now resolves data members, static members, and member
 				// functions entirely through its own type infrastructure.
-				const CanonicalTypeId object_type_id = inferExpressionType(e.object());
-				if (!object_type_id) {
-					return {};
-				}
-				const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
-				if (object_desc.category() != TypeCategory::Struct &&
-					object_desc.category() != TypeCategory::UserDefined) {
-					return {};
-				}
-				const TypeInfo* object_type_info = nullptr;
-				if (object_desc.category() == TypeCategory::UserDefined) {
-					const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(object_desc.type_index);
-					object_type_info = alias_info.terminal_type_info;
-				}
-				if (!object_type_info) {
-					object_type_info = tryGetTypeInfo(object_desc.type_index);
-				}
-				if (!object_type_info) {
+				const auto object_info = resolveMemberAccessObjectInfo(e);
+				if (!object_info.has_value()) {
 					return {};
 				}
 
@@ -3455,14 +3599,14 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					const StructTypeInfo* owner_struct_info = owner_type_info ? owner_type_info->getStructInfo() : nullptr;
 					if (owner_struct_info && member_info.member_index < owner_struct_info->members.size()) {
 						return type_context_.intern(canonicalTypeDescFromStructMember(
-							owner_struct_info->members[member_info.member_index], object_desc.base_cv));
+							owner_struct_info->members[member_info.member_index], object_info->object_desc.base_cv));
 					}
 				}
 
 				// When data member resolution fails, try static members and
 				// member functions so sema can type the access without parser
 				// fallback.
-				const StructTypeInfo* struct_info = object_type_info->getStructInfo();
+				const StructTypeInfo* struct_info = object_info->object_type_info->getStructInfo();
 				if (struct_info) {
 					const StringHandle member_name_handle = e.member_token().handle();
 					// Try static members (recursively through base classes).
@@ -5338,11 +5482,12 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 	};
 
 	auto searchMemberContextHierarchy = [&]() -> bool {
-		if (member_context_stack_.empty()) {
+		const MemberContext* member_context = getCurrentMemberContext();
+		if (!member_context) {
 			return false;
 		}
 
-		const TypeInfo* current_type_info = tryGetTypeInfo(member_context_stack_.back());
+		const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index);
 		if (!current_type_info) {
 			return false;
 		}
@@ -5437,9 +5582,10 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		};
 
 		const TypeInfo* type_info = nullptr;
-		if (!member_context_stack_.empty() &&
+		if (const MemberContext* member_context = getCurrentMemberContext();
+			member_context &&
 			owner_name.find("::") == std::string_view::npos) {
-			if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context_stack_.back())) {
+			if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index)) {
 				const std::string_view current_type_name = StringTable::getStringView(current_type_info->name());
 				const StringHandle qualified_alias_name =
 					StringTable::getOrInternStringHandle(StringBuilder()
@@ -5458,8 +5604,8 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		return resolveStructOwnerType(type_info);
 	};
 
-	if (!member_context_stack_.empty()) {
-		if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context_stack_.back())) {
+	if (const MemberContext* member_context = getCurrentMemberContext()) {
+		if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index)) {
 			if ((current_type_info->isTemplateInstantiation() &&
 				 StringTable::getStringView(current_type_info->baseTemplateName()) == struct_name_sv) ||
 				StringTable::getStringView(current_type_info->name()) == struct_name_sv) {
@@ -5650,8 +5796,8 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	// coercion, cache-as-direct-call) already expects. Codegen remaps to the
 	// instantiation based on the receiver type; sema's job here is to make
 	// sure the instantiation's body exists by the time codegen asks.
-	if (!member_context_stack_.empty()) {
-		const TypeInfo* current_type_info = tryGetTypeInfo(member_context_stack_.back());
+	if (const MemberContext* member_context = getCurrentMemberContext()) {
+		const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index);
 		if (current_type_info && current_type_info->getStructInfo() && current_type_info->isTemplateInstantiation()) {
 			StringHandle current_struct_name = current_type_info->name();
 			StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
@@ -5747,9 +5893,10 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	// member-context. That is the struct whose body we are currently
 	// annotating, which for `this->member()` calls is the correct
 	// receiver type.
-	if ((!receiver_type_info || !receiver_type_info->isStruct()) &&
-		!member_context_stack_.empty()) {
-		receiver_type_info = tryGetTypeInfo(member_context_stack_.back());
+	if (!receiver_type_info || !receiver_type_info->isStruct()) {
+		if (const MemberContext* member_context = getCurrentMemberContext()) {
+			receiver_type_info = tryGetTypeInfo(member_context->type_index);
+		}
 	}
 	if (!receiver_type_info || !receiver_type_info->isStruct()) {
 		return result;

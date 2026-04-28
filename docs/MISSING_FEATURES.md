@@ -249,6 +249,18 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
    - Improve template instantiation performance
    - Add better error messages for template failures
 
+9. **Implicit Conversion in Non-Subscript Operators**
+   - Extend the sema selection infrastructure (currently used for built-in subscript)
+     to other built-in operators that may require implicit pointer/array conversion.
+   - Unify the general user-defined conversion selection path across sema and codegen
+     so that all implicit-conversion-sequence selection is owned entirely by sema and
+     codegen only emits the already-selected conversion.
+
+10. **Conversion Operators Returning Array References**
+    - Support `operator T(&)[N]()` (conversion operator returning a reference to array)
+      in contexts that require array-to-pointer conversion (e.g. built-in subscript).
+    - Currently only pointer-returning conversion operators are handled.
+
 ---
 
 ## Grammar Coverage Analysis

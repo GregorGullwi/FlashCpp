@@ -137,6 +137,15 @@ public:
 		unsigned long long constant_value = 0;
 		bool is_global = false;
 	};
+	struct MemberContext {
+		TypeIndex type_index{};
+		bool has_implicit_this = false;
+		CVQualifier this_base_cv = CVQualifier::None;
+	};
+	struct ResolvedMemberAccessObjectInfo {
+		CanonicalTypeDesc object_desc;
+		const TypeInfo* object_type_info = nullptr;
+	};
 	std::optional<ResolvedIdentifierMemberInfo> getResolvedIdentifierMember(const IdentifierNode* key) const;
 	std::optional<ResolvedQualifiedIdentifierInfo> getResolvedQualifiedIdentifier(const QualifiedIdentifierNode* key) const;
 	bool resolveOrGetMemberAccess(const MemberAccessNode& key,
@@ -235,6 +244,8 @@ private:
 	CanonicalTypeId inferExpressionType(const ASTNode& node);
 	CanonicalTypeId inferResolvedSymbolType(const ASTNode& symbol);
 	ValueCategory inferExpressionValueCategory(const ASTNode& node);
+	const MemberContext* getCurrentMemberContext() const;
+	std::optional<ResolvedMemberAccessObjectInfo> resolveMemberAccessObjectInfo(const MemberAccessNode& member_access);
 	void registerOuterTemplateBindingsInScope(const LambdaExpressionNode& lambda);
 	void registerOuterTemplateBindingsInScope(const LambdaInfo& lambda_info);
 	void registerOuterTemplateBindingsInScope(const StructDeclarationNode& decl);
@@ -459,7 +470,8 @@ private:
 	std::vector<std::unordered_map<StringHandle, CanonicalTypeId>> scope_stack_;
 
 	// Enclosing implicit-member context for bodies/default initializers currently
-	// being normalized. Used to type `IdentifierBinding::NonStaticMember`
-	// sema-first instead of falling back to parser-owned member-context lookup.
-	std::vector<TypeIndex> member_context_stack_;
+	// being normalized. Carries both the current owner type and whether the body
+	// has an implicit `this`, so sema can type both implicit members and explicit
+	// `this` expressions without parser fallbacks.
+	std::vector<MemberContext> member_context_stack_;
 };
