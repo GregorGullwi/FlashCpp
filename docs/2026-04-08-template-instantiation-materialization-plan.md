@@ -129,10 +129,14 @@ Active fallback evidence from the 2026-04-27 audit:
   source exists, including abbreviated/constrained forms and function-try-block
   cases; the `T*` namespace-qualified call residual was fixed by consuming the
   standard pointer/reference declarator helper during return-type reparse.
-  Signature synthesis remains only for instantiations without saved declaration
-  source. Function-template instantiations without saved body positions are now
-  split: declaration-only instantiations are accepted, but real definitions
-  without saved body positions hard-fail instead of copying body pointers.
+  Abbreviated function templates now preserve that saved declaration start when
+  the parser synthesizes the implicit template wrapper, so their instantiations
+  stay on the declaration-reparse path instead of falling back to synthesized
+  return-type reconstruction. Signature synthesis remains only for
+  instantiations without saved declaration source. Function-template
+  instantiations without saved body positions are now split: declaration-only
+  instantiations are accepted, but real definitions without saved body
+  positions hard-fail instead of copying body pointers.
 
 Removal direction: make template bindings and instantiated `TypeInfo` metadata
 authoritative at creation time, then replace name-based and positional recovery
