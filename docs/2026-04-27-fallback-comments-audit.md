@@ -22,8 +22,7 @@ The removal strategy should be to make the higher phase produce complete metadat
 
 Representative sites:
 
-- `src\IrGenerator_Call_Direct.cpp:613` - arity-based `operator()` lookup for call sites not reached by sema.
-- `src\IrGenerator_Call_Direct.cpp:1196`, `src\IrGenerator_Call_Direct.cpp:1207`, `src\IrGenerator_Call_Direct.cpp:1217`, `src\IrGenerator_Call_Direct.cpp:1238` - pointer, symbol-table, precomputed-mangle, and current-struct fallbacks to recover direct call targets.
+- `src\IrGenerator_Call_Direct.cpp` — the prior arity-based `operator()` lookup, the `scoped_overloads` / `gSymbolTable_overloads` single-overload recovery branches, the precomputed-mangled `gSymbolTable` pointer-equality scan, the current-struct + base-class member-by-name recovery, and the qualified-static-member struct-iteration recovery were probed across the full 2239-test corpus with hard-fail guards, never hit, and have been removed.
 - `src\IrGenerator_Call_Indirect.cpp:275` - parser fallback for inconclusive callable type.
 - `src\IrGenerator_MemberAccess.cpp:2919` and `src\IrGenerator_MemberAccess.cpp:3047` - type traits choose constructors or assignment operators by arity or first non-implicit operator when exact matching fails.
 - `src\OverloadResolution.h:1130` - arity-only constructor overload resolution when argument type information is unavailable.
@@ -351,4 +350,13 @@ The audit is now backed by direct suite evidence for several representative temp
 - function-template declaration reparse now covers all instantiations with saved declaration source, including abbreviated/constrained auto wrappers that now preserve their declaration-start position; the return-type synthesis branch in `Parser_Templates_Inst_Deduction.cpp` remains only for no-source cases;
 - function-template instantiations without saved body positions are now split: declaration-only instantiations are accepted, but real definitions without saved body positions hard-fail instead of copying body pointers;
 - class-template template-template defaults now materialize as canonical template-template arguments, and unresolved template-template defaults hard-fail instead of falling through to the placeholder/zero catch-all;
+- the codegen-side arity-based `operator()` lookup, the `scoped_overloads` /
+  `gSymbolTable_overloads` single-overload recovery branches, the
+  precomputed-mangled `gSymbolTable` pointer-equality scan, the current-struct
+  + base-class member-by-name recovery, and the qualified-static-member
+  struct-iteration recovery in `IrGenerator_Call_Direct.cpp` (audit §1, the
+  "pointer / symbol-table / precomputed-mangle / current-struct" cluster) were
+  all probed across the full 2239-test corpus with hard-fail guards, never
+  hit, and have now been removed. Sema's resolved direct-call target plus the
+  precomputed-mangled lookup paths above already cover these call sites;
 - the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes should still be assumed active until probed or root-fixed individually.
