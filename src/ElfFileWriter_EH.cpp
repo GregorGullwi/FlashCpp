@@ -1,5 +1,6 @@
 #include "ObjFileWriter.h"
 #include "ElfFileWriter.h"
+#include "StringLiteralTokenUtils.h"
 
 // ElfFileWriter_EH.cpp - Out-of-line method definitions for ElfFileWriter
 // Part of ElfFileWriter class (unity build)
@@ -1145,9 +1146,16 @@ size_t ElfFileWriter::getSymbolCount() const {
 std::string ElfFileWriter::processStringLiteral(std::string_view str_content) {
 	std::string result;
 
-	if (str_content.size() >= 2 && str_content.front() == '"' && str_content.back() == '"') {
+	const auto parsed_literal = FlashCpp::parseStringLiteralToken(str_content);
+	if (parsed_literal.is_raw) {
+		if (parsed_literal.has_delimited_content) {
+			result.append(parsed_literal.content);
+		} else {
+			result = std::string(str_content);
+		}
+	} else if (parsed_literal.has_delimited_content) {
 		// Remove quotes
-		std::string_view content(str_content.data() + 1, str_content.size() - 2);
+		std::string_view content = parsed_literal.content;
 
 		// Process escape sequences
 		for (size_t i = 0; i < content.size(); ++i) {

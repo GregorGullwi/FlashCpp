@@ -1,5 +1,6 @@
 #include "ObjFileWriter.h"
 #include "Log.h"
+#include "StringLiteralTokenUtils.h"
 
 // ObjFileWriter_RTTI.cpp - Out-of-line method definitions for ObjectFileWriter
 // Part of ObjectFileWriter class (unity build)
@@ -266,9 +267,16 @@ std::string_view ObjectFileWriter::add_string_literal(std::string_view str_conte
 	string_literal_buffer_.clear();
 	string_literal_buffer_.reserve(str_content.size() + 1);
 
-	if (str_content.size() >= 2 && str_content.front() == '"' && str_content.back() == '"') {
+	const auto parsed_literal = FlashCpp::parseStringLiteralToken(str_content);
+	if (parsed_literal.is_raw) {
+		if (parsed_literal.has_delimited_content) {
+			string_literal_buffer_.append(parsed_literal.content);
+		} else {
+			string_literal_buffer_.append(str_content);
+		}
+	} else if (parsed_literal.has_delimited_content) {
 		// Remove quotes
-		std::string_view content(str_content.data() + 1, str_content.size() - 2);
+		std::string_view content = parsed_literal.content;
 
 		// Process escape sequences
 		for (size_t i = 0; i < content.size(); ++i) {
