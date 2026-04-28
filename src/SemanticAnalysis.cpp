@@ -40,8 +40,10 @@ void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpec
 // Compute the number of logical characters in a string literal token, excluding
 // the null terminator.  The raw token includes the surrounding double-quote
 // delimiters and an optional encoding prefix (e.g. L, u8, u, U).
-// Each escape sequence (however many source characters it occupies) counts as a
-// single logical character, following C++20 [lex.ccon]:
+// For raw string literals (R"delim(content)delim"), no escape sequences are
+// processed; the content between ( and ) is returned as-is.
+// For regular strings, each escape sequence (however many source characters it
+// occupies) counts as a single logical character, following C++20 [lex.ccon]:
 //   \ooo  — up to 3 octal digits
 //   \xHH  — one or more hex digits
 //   \uNNNN  — exactly 4 hex digits
@@ -49,16 +51,52 @@ void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpec
 //   all other named escapes (\n, \t, \\, etc.) — one source char after backslash
 static size_t computeStringContentLength(std::string_view token_raw) {
 	std::string_view content = token_raw;
-	// Strip optional encoding prefix (L, u8, u, U) before the opening quote.
-	if (!content.empty() && content.front() != '"') {
-		const size_t q = content.find('"');
-		if (q == std::string_view::npos)
+	// Strip optional encoding prefix (L, u8, u, U) before the quote or R.
+	if (!content.empty() && content.front() != '"' && content.front() != 'R') {
+		size_t q = content.find('"');
+		size_t r = content.find('R');
+		// Find the first occurrence of either " or R (after stripping prefix).
+		size_t pos = std::string_view::npos;
+		if (q != std::string_view::npos && r != std::string_view::npos)
+			pos = std::min(q, r);
+		else if (q != std::string_view::npos)
+			pos = q;
+		else if (r != std::string_view::npos)
+			pos = r;
+		if (pos == std::string_view::npos)
 			return 0; // malformed token
-		content = content.substr(q);
+		content = content.substr(pos);
 	}
-	// Strip enclosing double-quotes.
+
+	// Check if this is a raw string literal (starts with R).
+	if (!content.empty() && content.front() == 'R') {
+		// Raw string: R"delim(content)delim"
+		content = content.substr(1); // Skip 'R'
+
+		// Strip enclosing double-quotes.
+		if (content.size() >= 2 && content.front() == '"' && content.back() == '"')
+			content = content.substr(1, content.size() - 2);
+
+		// Find opening ( and closing )
+		size_t open_paren = content.find('(');
+		if (open_paren == std::string_view::npos)
+			return 0; // malformed raw string
+
+		// The delimiter is between " and (, or empty if ( is immediately after "
+		size_t close_paren = content.rfind(')');
+		if (close_paren == std::string_view::npos || close_paren <= open_paren)
+			return 0; // malformed raw string
+
+		// Extract content between ( and )
+		std::string_view raw_content = content.substr(open_paren + 1, close_paren - open_paren - 1);
+		// For raw strings, no escape processing; return length as-is
+		return raw_content.size();
+	}
+
+	// Regular string: strip enclosing double-quotes.
 	if (content.size() >= 2 && content.front() == '"' && content.back() == '"')
 		content = content.substr(1, content.size() - 2);
+
 	size_t len = 0;
 	for (size_t i = 0; i < content.size(); ++i) {
 		if (content[i] == '\\' && i + 1 < content.size()) {
