@@ -1223,7 +1223,9 @@ struct StructStaticMember {
 	size_t size;			 // Size in bytes
 	size_t alignment;		  // Alignment requirement
 	AccessSpecifier access; // Access level (public/protected/private)
+	std::optional<ASTNode> declaration; // Original declaration AST for replay-based substitution
 	std::optional<ASTNode> initializer;	// Optional initializer expression
+	std::optional<SaveHandle> initializer_position; // Saved lexer position at '=' or '{' for replay
 	CVQualifier cv_qualifier = CVQualifier::None;  // CV qualifiers (const, volatile)
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
 	bool is_array = false;
@@ -1250,6 +1252,14 @@ struct StructStaticMember {
 		is_array = is_arr;
 		array_dimensions = std::move(dims);
 	}
+
+	void setDeclaration(ASTNode decl) {
+		declaration = std::move(decl);
+	}
+
+	bool hasInitializerPosition() const { return initializer_position.has_value(); }
+	SaveHandle initializerPosition() const { return *initializer_position; }
+	void setInitializerPosition(SaveHandle pos) { initializer_position = pos; }
 
 	StringHandle getName() const {
 		return name;

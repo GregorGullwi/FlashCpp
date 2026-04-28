@@ -119,12 +119,14 @@ Active fallback evidence from the 2026-04-27 audit:
   `template_params` / `template_args`;
 - `sizeof...` still depends on preserved per-pack size metadata plus broader
   reconstruction paths after scope-local pack facts are dropped;
-- lazy static-member initialization still needs general `ExpressionSubstitutor`,
-  call-target rebinding, and dependency pre-instantiation passes, but the late
-  rebinding/dependency/evaluation work is now an unconditional post-substitution
-  normalization step for every lazy static initializer rather than only the
-  catch-all substitution branch, and dependency discovery uses the shared AST
-  traversal helper;
+- lazy static-member initialization now preserves declaration AST plus saved
+  initializer source on `StructStaticMember` and replays that source under the
+  instantiated template scope first; general `ExpressionSubstitutor`,
+  call-target rebinding, and dependency pre-instantiation still remain for
+  residual no-source / specialized-expression cases, while the late
+  rebinding/dependency/evaluation work stays as the unconditional
+  post-substitution normalization step and dependency discovery uses the shared
+  AST traversal helper;
 - function-template declaration reparse now runs whenever saved declaration
   source exists, including abbreviated/constrained forms and function-try-block
   cases; the `T*` namespace-qualified call residual was fixed by consuming the

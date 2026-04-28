@@ -5106,7 +5106,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 					// Check for initialization (e.g., = sizeof(T))
 					std::optional<ASTNode> init_expr_opt;
+					std::optional<SaveHandle> initializer_position;
 					if (peek() == "="_tok) {
+						initializer_position = save_token_position();
 						advance(); // consume '='
 
 						// Parse the initializer expression
@@ -5178,7 +5180,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 							ref_qual,
 							ptr_depth,
 							is_array,
-							std::move(array_dimensions));
+							std::move(array_dimensions),
+							initializer_position);
 					}
 					continue;
 				}

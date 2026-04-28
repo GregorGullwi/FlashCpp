@@ -1805,7 +1805,9 @@ ParseResult Parser::parse_static_member_block(
 
 	// Optional initializer
 	std::optional<ASTNode> init_expr_opt;
+	std::optional<SaveHandle> initializer_position;
 	if (peek() == "="_tok) {
+		initializer_position = save_token_position();
 		// Push struct context so static member references can be resolved
 		// This enables expressions like `!is_signed` to find `is_signed` as a static member
 		TypeIndex struct_type_index{};
@@ -1830,6 +1832,7 @@ ParseResult Parser::parse_static_member_block(
 		init_expr_opt = *init_result;
 	} else if (peek() == "{"_tok) {
 		// Brace initialization: static constexpr int x{42};
+		initializer_position = save_token_position();
 
 		TypeIndex struct_type_index{};
 		auto type_it = getTypesByNameMap().find(struct_name_handle);
@@ -1906,7 +1909,9 @@ ParseResult Parser::parse_static_member_block(
 				ref_qual,
 				ptr_depth,
 				is_array,
-				array_dimensions);
+				array_dimensions,
+				*type_and_name.node(),
+				initializer_position);
 		}
 	} else {
 		// Normal case - use provided struct_info directly
@@ -1921,7 +1926,9 @@ ParseResult Parser::parse_static_member_block(
 			ref_qual,
 			ptr_depth,
 			is_array,
-			std::move(array_dimensions));
+			std::move(array_dimensions),
+			*type_and_name.node(),
+			initializer_position);
 	}
 
 	return ParseResult::success();  // Signal caller to continue

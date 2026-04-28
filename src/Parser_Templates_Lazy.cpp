@@ -896,8 +896,83 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 	// Perform initializer substitution if needed
 	std::optional<ASTNode> substituted_initializer = lazy_info.initializer;
+	bool initializer_replayed = false;
+
+	auto try_reparse_lazy_static_initializer = [&]() -> bool {
+		if (!lazy_info.initializer_position.has_value() || !lazy_info.declaration.has_value()) {
+			return false;
+		}
+		if (!lazy_info.declaration->is<DeclarationNode>()) {
+			return false;
+		}
+
+		FlashCpp::TemplateParameterScope template_scope;
+		registerTypeParamsInScope(lazy_info.template_params, lazy_info.template_args, template_scope, true);
+
+		InlineVector<StringHandle, 4> param_names;
+		param_names.reserve(lazy_info.template_params.size());
+		for (const auto& tparam_node : lazy_info.template_params) {
+			if (tparam_node.is<TemplateParameterNode>()) {
+				param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
+			}
+		}
+
+		SaveHandle current_pos = save_token_position();
+		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
+		parsing_template_depth_ = 0;
+		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
+		populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
+		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
+		for (StringHandle param_name : param_names) {
+			pushCurrentTemplateParamName(param_name);
+		}
+
+		TypeIndex struct_type_index{};
+		if (auto type_it = getTypesByNameMap().find(instantiated_class_name);
+			type_it != getTypesByNameMap().end()) {
+			struct_type_index = type_it->second->type_index_;
+		}
+		member_function_context_stack_.push_back({instantiated_class_name, struct_type_index, nullptr, struct_info});
+		auto pop_member_ctx_guard = [this](void*) {
+			if (!member_function_context_stack_.empty()) {
+				member_function_context_stack_.pop_back();
+			}
+		};
+		std::unique_ptr<void, decltype(pop_member_ctx_guard)> member_ctx_scope(
+			reinterpret_cast<void*>(1), pop_member_ctx_guard);
+
+		restore_lexer_position_only(*lazy_info.initializer_position);
+
+		ASTNode decl_copy = *lazy_info.declaration;
+		DeclarationNode& decl = decl_copy.as<DeclarationNode>();
+		TypeSpecifierNode& type_spec = decl.type_specifier_node();
+
+		if (peek() == "="_tok) {
+			substituted_initializer = parse_copy_initialization(decl, type_spec);
+		} else if (peek() == "{"_tok) {
+			ParseResult init_result = parse_brace_initializer(type_spec);
+			if (!init_result.is_error()) {
+				substituted_initializer = init_result.node();
+			} else {
+				substituted_initializer.reset();
+			}
+		} else {
+			restore_lexer_position_only(current_pos);
+			discard_saved_token(current_pos);
+			return false;
+		}
+
+		restore_lexer_position_only(current_pos);
+		discard_saved_token(current_pos);
+		return substituted_initializer.has_value();
+	};
+
+	if (lazy_info.needs_substitution) {
+		initializer_replayed = try_reparse_lazy_static_initializer();
+	}
 
 	if (lazy_info.needs_substitution && lazy_info.initializer.has_value() &&
+		!initializer_replayed &&
 		lazy_info.initializer->is<ExpressionNode>()) {
 		const ExpressionNode& expr = lazy_info.initializer->as<ExpressionNode>();
 		const auto& template_params = lazy_info.template_params;
@@ -1010,9 +1085,9 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			}
 		}
 
-		// Use the general ExpressionSubstitutor path for remaining template-dependent expressions
-		// such as variable template invocations like __v<T>.
-		// Check if we still have the original initializer (i.e., no specific handler above modified it)
+		// Saved initializer source is now the primary substitution path. Keep the AST-based
+		// substitutor only for lazy statics that still arrive without replayable source metadata
+		// or that reduce to specialized expression forms first and still need a final rewrite.
 		bool was_substituted = false;
 		if (std::holds_alternative<FoldExpressionNode>(expr))
 			was_substituted = true;

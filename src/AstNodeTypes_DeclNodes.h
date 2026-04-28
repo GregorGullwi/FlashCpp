@@ -475,14 +475,30 @@ struct StructTypeInfo {
 	// Add static member
 	void addStaticMember(StringHandle member_name, TypeIndex type_index, size_t size, size_t member_alignment,
 						 AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, CVQualifier cv_qual = CVQualifier::None,
-						 ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0) {
+						 ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0,
+						 std::optional<ASTNode> declaration = std::nullopt,
+						 std::optional<SaveHandle> initializer_position = std::nullopt) {
 		static_members.push_back(StructStaticMember(member_name, type_index, size, member_alignment, access, initializer, cv_qual, ref_qual, ptr_depth));
+		if (declaration.has_value()) {
+			static_members.back().setDeclaration(*declaration);
+		}
+		if (initializer_position.has_value()) {
+			static_members.back().setInitializerPosition(*initializer_position);
+		}
 	}
 
 	void addStaticMember(StringHandle member_name, TypeIndex type_index, size_t size, size_t member_alignment,
 						 AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
-						 ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::vector<size_t> array_dimensions) {
+						 ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::vector<size_t> array_dimensions,
+						 std::optional<ASTNode> declaration = std::nullopt,
+						 std::optional<SaveHandle> initializer_position = std::nullopt) {
 		static_members.push_back(StructStaticMember(member_name, type_index, size, member_alignment, access, initializer, cv_qual, ref_qual, ptr_depth));
+		if (declaration.has_value()) {
+			static_members.back().setDeclaration(*declaration);
+		}
+		if (initializer_position.has_value()) {
+			static_members.back().setInitializerPosition(*initializer_position);
+		}
 		static_members.back().setArrayInfo(is_array, std::move(array_dimensions));
 	}
 

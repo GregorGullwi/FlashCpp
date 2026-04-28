@@ -5493,7 +5493,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.size = static_member.size;
 				lazy_info.alignment = static_member.alignment;
 				lazy_info.access = static_member.access;
+				lazy_info.declaration = static_member.declaration;
 				lazy_info.initializer = static_member.initializer;
+				lazy_info.initializer_position = static_member.initializer_position;
 				lazy_info.cv_qualifier = static_member.cv_qualifier;
 				lazy_info.reference_qualifier = static_member.reference_qualifier;
 				lazy_info.is_array = static_member.is_array;
