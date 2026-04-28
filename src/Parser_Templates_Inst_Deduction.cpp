@@ -3916,10 +3916,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		has_parameter_packs_ = saved_has_parameter_packs;
 		pack_param_info_ = std::move(saved_outer_pack_param_info);
 	} else {
-		// Fallback: copy the function body pointer directly (old behavior)
 		auto orig_body = func_decl.get_definition();
 		if (orig_body.has_value()) {
-			new_func_ref.set_definition(orig_body.value());
+			throw InternalError("Template function definition has no saved body position");
 		}
 
 		// Restore outer pack parameter info (must happen on both branches)

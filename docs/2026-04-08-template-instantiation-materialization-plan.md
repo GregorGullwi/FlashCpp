@@ -129,7 +129,9 @@ Active fallback evidence from the 2026-04-27 audit:
   cases; the `T*` namespace-qualified call residual was fixed by consuming the
   standard pointer/reference declarator helper during return-type reparse.
   Signature synthesis remains only for instantiations without saved declaration
-  source, and body-pointer reuse remains active for some no-body-position cases.
+  source. Function-template instantiations without saved body positions are now
+  split: declaration-only instantiations are accepted, but real definitions
+  without saved body positions hard-fail instead of copying body pointers.
 
 Removal direction: make template bindings and instantiated `TypeInfo` metadata
 authoritative at creation time, then replace name-based and positional recovery

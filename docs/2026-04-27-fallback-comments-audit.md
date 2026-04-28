@@ -291,10 +291,12 @@ The initial audit above was architectural. Several template-instantiation fallba
     - Validation: the broad return-type cluster, the previous residual cluster, and the full Windows suite passed after this change.
     - Conclusion: the old return-type dependency gate was too conservative and has been removed. The remaining synthesized return-type branch is limited to instantiations that genuinely lack saved declaration source.
 
-14. `src\Parser_Templates_Inst_Deduction.cpp` — template body copy fallback
+14. `src\Parser_Templates_Inst_Deduction.cpp` — narrowed template body no-position path
    - Probe result: replacing the direct body-pointer copy with a hard error broke `decltype_trailing_return_ret0.cpp`, `test_dependent_swap_decltype_noexcept_ret0.cpp`, `test_namespaced_pair_swap_sfinae_ret0.cpp`, `test_std_swap_enable_if_alias_base_ret0.cpp`, and `test_template_template_forward_decl_definition_ret0.cpp`.
    - Probe result: additionally copying saved template declaration/body positions through `copy_function_properties(...)` was safe, but hard-failing the fallback still broke that same body-reuse cluster, so some instantiations still arrive without a usable reparse path even after metadata propagation.
-   - Conclusion: some instantiations still bypass the body reparse path and require the old direct-body reuse branch, especially for forward-declared and SFINAE-heavy function templates.
+   - Follow-up narrowing: the documented failures were declaration-only instantiations (`has_definition=false`) with saved declaration positions but no body positions, so no body was actually copied. The path now treats no-definition/no-body-position as an invariant for declarations and hard-fails only if a real definition lacks a saved body position.
+   - Validation: the documented body-copy cluster passed after the narrowing.
+   - Conclusion: the old body-pointer copy behavior is no longer accepted for real definitions. Remaining no-body-position traffic is declaration-only template instantiation.
 
 15. `src\Parser_Templates_Inst_ClassTemplate.cpp` — non-type default evaluation fallback
    - Probe result: replacing the `tryAppendEvaluatedTemplateValue(...)` path with a hard error broke `tests\test_expr_subst_noexcept_wrap_ret0.cpp`, `tests\test_template_spec_outofline_default_arg_ret42.cpp`, and `tests\test_template_spec_outofline_default_arg_namespaced_ret42.cpp`.
@@ -329,4 +331,5 @@ The audit is now backed by direct suite evidence for several representative temp
 - the `Parser_Templates_Params.cpp` invalid-placeholder dependency branch has been narrowed to explicit speculative-parse rejection, canonical current-template-parameter materialization, and invariant failure for any remaining active-template producer;
 - lazy static-member late rebinding/dependency/evaluation now runs as the shared post-substitution normalization tail for all substituted lazy static initializers;
 - function-template declaration reparse now covers all instantiations with saved declaration source; the return-type synthesis branch in `Parser_Templates_Inst_Deduction.cpp` remains only for no-source cases;
+- function-template instantiations without saved body positions are now split: declaration-only instantiations are accepted, but real definitions without saved body positions hard-fail instead of copying body pointers;
 - the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes should still be assumed active until probed or root-fixed individually.
