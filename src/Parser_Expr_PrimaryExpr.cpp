@@ -4208,7 +4208,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// Check if this identifier matches any data member in the struct (including inherited members)
 				// First try AST node members (for regular structs), then fall back to TypeInfo (for template instantiations)
 				bool found_in_ast = false;
-				if (struct_node && !struct_node->members().empty()) {
+				if (member_func_ctx.has_implicit_this && struct_node && !struct_node->members().empty()) {
 					// First check direct members
 					for (const auto& member_decl : struct_node->members()) {
 						const ASTNode& member_node = member_decl.declaration;
@@ -4224,7 +4224,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 								// Create member access node: this->member
 								result = emplace_node<ExpressionNode>(
-									MemberAccessNode(this_ident, identifier_token));
+									MemberAccessNode(this_ident, identifier_token, true));
 
 								// Don't return - let it fall through to postfix operator parsing
 								found_in_ast = true;
@@ -4252,7 +4252,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 								// Create member access node: this->member
 								result = emplace_node<ExpressionNode>(
-									MemberAccessNode(this_ident, identifier_token));
+									MemberAccessNode(this_ident, identifier_token, true));
 
 								// Don't return - let it fall through to postfix operator parsing
 								found_in_ast = true;
@@ -4264,7 +4264,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// If not found in AST, try TypeInfo (or local_struct_info for static member initializers)
 				// This handles template class instantiations and static member initializers
-				if (!found_in_ast) {
+				if (member_func_ctx.has_implicit_this && !found_in_ast) {
 					// First try local_struct_info (for static member initializers where TypeInfo::struct_info_ isn't populated yet)
 					const StructTypeInfo* struct_info = member_func_ctx.local_struct_info;
 
@@ -4318,7 +4318,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 								// Create member access node: this->member
 								result = emplace_node<ExpressionNode>(
-									MemberAccessNode(this_ident, identifier_token));
+									MemberAccessNode(this_ident, identifier_token, true));
 
 								// Don't return - let it fall through to postfix operator parsing
 								goto found_member_variable;
@@ -4336,7 +4336,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 							// Create member access node: this->member
 							result = emplace_node<ExpressionNode>(
-								MemberAccessNode(this_ident, identifier_token));
+								MemberAccessNode(this_ident, identifier_token, true));
 
 							// Don't return - let it fall through to postfix operator parsing
 							goto found_member_variable;
