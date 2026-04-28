@@ -29,3 +29,39 @@ handle 64-bit (double) or 32-bit (float) element types correctly — likely usin
 the wrong load size or IR type for floating-point elements in the array access
 code path in `IRConverter_ConvertMain.cpp` / `IrGenerator_MemberAccess.cpp`.
 
+## `sizeof...` can survive into codegen inside class-template member templates
+
+**Status:** Open
+**Area:** Template substitution / late normalization
+**Discovered during:** 2026-04-28 phase-6 pack-binding cleanup follow-up
+
+In a non-static member template inside a class template, a pack-size expression
+for the member template's parameter pack can remain as `SizeofPackNode` long
+enough to reach codegen instead of being substituted during template
+instantiation.
+
+```cpp
+template <typename... Ts>
+struct Holder {
+	template <typename... Us>
+	int combined_pack_size(Us...) const {
+		return static_cast<int>(sizeof...(Ts)) * 10
+			 + static_cast<int>(sizeof...(Us));
+	}
+};
+
+int main() {
+	Holder<int, char> holder;
+	return holder.combined_pack_size(0L, static_cast<short>(0), true) == 23 ? 0 : 1;
+}
+```
+
+Current failure:
+
+```text
+[ERROR][Codegen] sizeof... operator found during code generation - should have been substituted during template instantiation
+```
+
+This is adjacent to the pack-binding cleanup but is not fixed by the shared
+named-pack lookup alone. The remaining gap is in member-template body
+normalization/materialization rather than the central `sizeof...` count lookup.
