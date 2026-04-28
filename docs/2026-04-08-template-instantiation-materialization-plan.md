@@ -108,6 +108,10 @@ Active fallback evidence from the 2026-04-27 audit:
 
 - unresolved class-template type arguments still pass through as original
   `TypeSpecifierNode`s for deferred-base and dependent-member cases;
+- deferred `decltype(...)` base evaluation now materializes placeholder
+  template-instantiation `TypeInfo` through
+  `materializeDeferredBasePlaceholderIfNeeded(...)` before registering the
+  base, so that branch no longer preserves placeholder base results as final;
 - unresolved template defaults still need catch-all handling for template
   template defaults and some NTTP defaults;
 - class-template NTTP defaults now use the shared

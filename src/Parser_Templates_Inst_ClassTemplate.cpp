@@ -5000,6 +5000,35 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& deferred_base : class_decl.deferred_base_classes()) {
 		FLASH_LOG(Templates, Debug, "Processing deferred decltype base class");
 
+		auto try_add_deferred_base_from_type = [&](const TypeInfo* candidate_base_type) -> bool {
+			if (candidate_base_type == nullptr) {
+				return false;
+			}
+
+			candidate_base_type = materializeDeferredBasePlaceholderIfNeeded(
+				candidate_base_type,
+				template_params,
+				template_args_to_use,
+				[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+					std::string_view mutable_template_name = concrete_base_template_name;
+					return instantiate_and_register_base_template(mutable_template_name, concrete_base_args);
+				});
+
+			if (candidate_base_type == nullptr || candidate_base_type->typeEnum() != TypeCategory::Struct) {
+				return false;
+			}
+
+			std::string_view base_class_name = StringTable::getStringView(candidate_base_type->name());
+			struct_info->addBaseClass(
+				base_class_name,
+				candidate_base_type->type_index_,
+				deferred_base.access,
+				deferred_base.is_virtual);
+			FLASH_LOG(Templates, Debug, "Added deferred base class: ", base_class_name,
+					  " with type_index=", candidate_base_type->type_index_);
+			return true;
+		};
+
 		// The deferred base contains an expression that needs to be evaluated
 		// with concrete template arguments to determine the actual base class
 		if (!deferred_base.decltype_expression.is<TypeSpecifierNode>()) {
@@ -5023,11 +5052,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Look up the base class type by its type index
 				if (base_type == TypeCategory::Struct) {
 					if (const TypeInfo* base_type_info = tryGetTypeInfo(base_type_index)) {
-						std::string_view base_class_name = StringTable::getStringView(base_type_info->name());
-
-						// Add the base class to the instantiated struct
-						struct_info->addBaseClass(base_class_name, base_type_index, deferred_base.access, deferred_base.is_virtual);
-						FLASH_LOG(Templates, Debug, "Added deferred base class: ", base_class_name, " with type_index=", base_type_index);
+						if (!try_add_deferred_base_from_type(base_type_info)) {
+							FLASH_LOG(Templates, Warning, "Deferred base class type did not materialize to a concrete struct: ",
+									  StringTable::getStringView(base_type_info->name()));
+						}
 					} else {
 						FLASH_LOG(Templates, Warning, "Deferred base class type is not a struct or invalid type_index=", base_type_index);
 						FLASH_LOG(Templates, Warning, "This likely means template parameter substitution in decltype expressions is needed");
@@ -5052,11 +5080,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Look up the base class type by its type index
 			if (base_type == TypeCategory::Struct) {
 				if (const TypeInfo* base_type_info = tryGetTypeInfo(base_type_index)) {
-					std::string_view base_class_name = StringTable::getStringView(base_type_info->name());
-
-					// Add the base class to the instantiated struct
-					struct_info->addBaseClass(base_class_name, base_type_index, deferred_base.access, deferred_base.is_virtual);
-					FLASH_LOG(Templates, Debug, "Added deferred base class: ", base_class_name, " with type_index=", base_type_index);
+					if (!try_add_deferred_base_from_type(base_type_info)) {
+						FLASH_LOG(Templates, Warning, "Deferred legacy base type did not materialize to a concrete struct: ",
+								  StringTable::getStringView(base_type_info->name()));
+					}
 				} else {
 					FLASH_LOG(Templates, Warning, "Deferred base class type is not a struct or invalid type_index=", base_type_index);
 				}
