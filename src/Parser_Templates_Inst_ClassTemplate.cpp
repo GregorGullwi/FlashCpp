@@ -4093,6 +4093,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					filled_template_args.push_back(*evaluated_default);
 				}
 			}
+		} else if (param.kind() == TemplateParameterKind::Template) {
+			const ASTNode& default_node = param.default_value();
+			if (default_node.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
+				StringHandle tpl_name_handle = StringTable::getOrInternStringHandle(default_type.token().value());
+				if (const TypeInfo* type_info = tryGetTypeInfo(default_type.type_index())) {
+					tpl_name_handle = type_info->name();
+				}
+				filled_template_args.push_back(TemplateTypeArg::makeTemplate(tpl_name_handle));
+			}
 		}
 
 		// Catch-all: ensure filled_template_args grows by exactly 1 per non-variadic
@@ -4107,6 +4117,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				filled_template_args.push_back(placeholder);
 				FLASH_LOG(Templates, Warning, "Could not resolve type default for param ", i,
 						  " of '", template_name, "', using placeholder");
+			} else if (param.kind() == TemplateParameterKind::Template) {
+				throw InternalError(
+					std::string("Could not resolve template-template default for param ") +
+					std::to_string(i) + " of '" + std::string(template_name) + "'");
 			} else {
 				filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(0)));
 				FLASH_LOG(Templates, Warning, "Could not evaluate default for param ", i,

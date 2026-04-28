@@ -228,9 +228,11 @@ The initial audit above was architectural. Several template-instantiation fallba
 ### Proven active in the current corpus
 
 1. `src\Parser_Templates_Inst_ClassTemplate.cpp` — unresolved template-default catch-all
-   - Previous behavior: if no handler resolved a default template argument, the code pushed a placeholder (`void` for type params, `0` for non-type params).
-   - Probe result: replacing it with a hard error broke `tests\test_template_template_default_ret42.cpp`.
-   - Conclusion: this fallback is still active and cannot be removed safely until the default-argument substitution gap is fixed at the root.
+    - Previous behavior: if no handler resolved a default template argument, the code pushed a placeholder (`void` for type params, `0` for non-type params).
+    - Probe result: replacing it with a hard error broke `tests\test_template_template_default_ret42.cpp`.
+    - Follow-up narrowing: class-template template-template defaults now produce canonical `TemplateTypeArg::makeTemplate(...)` values, and `substitute_template_parameter(...)` materializes template-template placeholders such as `C<T>` through the bound concrete template before layout/codegen sees them. The catch-all now hard-fails unresolved template-template defaults instead of silently pushing `0`.
+    - Validation: the strengthened `tests\test_template_template_default_ret42.cpp` now instantiates both unqualified and namespace-qualified default templates as member object types, and the focused template-template cluster passed after the change.
+    - Conclusion: the catch-all no longer covers template-template defaults. It remains active for unresolved type defaults and some non-type defaults until those default-argument substitution gaps are fixed at the root.
 
 2. `src\Parser_Templates_Inst_ClassTemplate.cpp` — unresolved class-template type argument falls back to using the original `TypeSpecifierNode` as-is
    - Probe result: replacing this with a hard error broke deferred-base and pack-expansion cases including `tests\test_nttp_base_class_substitution_ret0.cpp`, `tests\test_pack_expansion_base_class_ret0.cpp`, `tests\test_ratio_negative_lazy_member_ret0.cpp`, and `tests\test_type_traits_dependent_member_nttp_ret42.cpp`.
@@ -348,4 +350,5 @@ The audit is now backed by direct suite evidence for several representative temp
 - lazy static-member instantiation now preserves declaration AST plus initializer source position on `StructStaticMember` and replays the initializer under instantiated template scope before using the residual AST-substitution branch;
 - function-template declaration reparse now covers all instantiations with saved declaration source, including abbreviated/constrained auto wrappers that now preserve their declaration-start position; the return-type synthesis branch in `Parser_Templates_Inst_Deduction.cpp` remains only for no-source cases;
 - function-template instantiations without saved body positions are now split: declaration-only instantiations are accepted, but real definitions without saved body positions hard-fail instead of copying body pointers;
+- class-template template-template defaults now materialize as canonical template-template arguments, and unresolved template-template defaults hard-fail instead of falling through to the placeholder/zero catch-all;
 - the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes should still be assumed active until probed or root-fixed individually.

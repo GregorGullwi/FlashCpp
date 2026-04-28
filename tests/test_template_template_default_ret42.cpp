@@ -9,6 +9,7 @@ struct MyContainer {
 template <typename T, template <typename> class Container = MyContainer>
 struct Wrapper {
 	T data;
+	Container<T> stored;
 };
 
 // Explicit usage (not relying on default) to verify basic functionality
@@ -30,14 +31,17 @@ struct NsContainer {
 template <typename T, template <typename> class C = my_ns::NsContainer>
 struct QualifiedWrapper {
 	T data;
+	C<T> stored;
 };
 
 int main() {
 	Wrapper<int> w;
 	w.data = 42;
+	w.stored.value = w.data;
 
 	QualifiedWrapper<int> qw;
 	qw.data = 42;
+	qw.stored.val = qw.data;
 
-	return w.data;
+	return w.stored.value + qw.stored.val - 42;
 }

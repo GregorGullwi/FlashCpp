@@ -1251,6 +1251,29 @@ TypeIndex Parser::substitute_template_parameter(
 		template_params,
 		template_args,
 		[&](const TemplateParameterNode& template_param, const TemplateTypeArg& template_arg, size_t) {
+			if (template_param.kind() == TemplateParameterKind::Template &&
+				template_arg.is_template_template_arg &&
+				template_arg.template_name_handle.isValid()) {
+				if (const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
+					placeholder_info && placeholder_info->isTemplateInstantiation()) {
+					std::string_view placeholder_base_name =
+						StringTable::getStringView(placeholder_info->baseTemplateName());
+					if (placeholder_base_name == template_param.name()) {
+						std::vector<TemplateTypeArg> concrete_args =
+							materializeConcretePlaceholderArgs(*placeholder_info);
+						if (const TypeInfo* instantiated_type_info =
+								resolveConcreteInstantiatedMemberChain(
+									StringTable::getStringView(template_arg.template_name_handle),
+									concrete_args,
+									extractPlaceholderMemberChain(StringTable::getStringView(placeholder_info->name())));
+							instantiated_type_info != nullptr) {
+							assignResolvedType(*instantiated_type_info);
+							substitution_applied = true;
+						}
+					}
+				}
+				return;
+			}
 			if (substitution_applied || template_param.name() != type_name) {
 				return;
 			}
