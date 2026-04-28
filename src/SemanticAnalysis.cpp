@@ -251,6 +251,30 @@ struct PointerConversionInfo {
 	const FunctionDeclarationNode* function = nullptr;
 };
 
+// Builds a CanonicalTypeDesc for a base class subobject, inheriting the CV
+// qualifier of the derived object so that const-ness propagates through
+// inheritance when looking up pointer conversion operators.
+static CanonicalTypeDesc makeBaseFromDesc(
+	const CanonicalTypeDesc& from_desc,
+	const BaseClassSpecifier& base) {
+	CanonicalTypeDesc base_from_desc;
+	base_from_desc.type_index = base.type_index;
+	base_from_desc.base_cv = from_desc.base_cv;
+	return base_from_desc;
+}
+
+// Returns true if a and b have the same element base type, ignoring CV
+// qualifiers on the pointed-to type. Used to determine whether two pointer-
+// returning conversion operators are truly distinct (ambiguous) or merely
+// differ in the constness of their element type (resolved by cv-preference).
+static bool hasSamePointerElementBaseType(
+	const CanonicalTypeDesc& a,
+	const CanonicalTypeDesc& b) {
+	return a.category() == b.category() &&
+		   a.type_index == b.type_index &&
+		   a.pointer_levels.size() == b.pointer_levels.size();
+}
+
 std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 	const CanonicalTypeDesc& from_desc,
 	const CanonicalTypeDesc* optional_target_desc,
@@ -315,11 +339,8 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 	for (const auto& base : struct_info->base_classes) {
 		if (base.is_deferred)
 			continue;
-		CanonicalTypeDesc base_from_desc;
-		base_from_desc.type_index = base.type_index;
-		base_from_desc.base_cv = from_desc.base_cv;
 		if (auto result = findStructPointerConversionOperator(
-				base_from_desc, optional_target_desc, sema, prefer_const, depth + 1))
+				makeBaseFromDesc(from_desc, base), optional_target_desc, sema, prefer_const, depth + 1))
 			return result;
 	}
 
@@ -339,6 +360,99 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 	if (auto non_const = findStructPointerConversionOperator(from_desc, optional_target_desc, sema, false, depth))
 		return non_const;
 	return findStructPointerConversionOperator(from_desc, optional_target_desc, sema, true, depth);
+}
+
+// Collects viable pointer-returning conversion operators from from_desc into out_ops.
+// Considers all operators matching the given constness constraint: for const sources
+// only const operators are viable; for non-const sources both const and non-const
+// operators are viable (the caller is responsible for resolving preference).
+static void collectAllStructPointerConversionOperators(
+	const CanonicalTypeDesc& from_desc,
+	SemanticAnalysis* sema,
+	bool require_const,
+	int depth,
+	std::vector<PointerConversionInfo>& out_ops) {
+	static constexpr int kMaxInheritanceDepth = 8;
+	if (!sema || depth > kMaxInheritanceDepth)
+		return;
+
+	const TypeInfo* from_type_info = tryGetTypeInfo(from_desc.type_index);
+	if (!from_type_info)
+		return;
+	const StructTypeInfo* struct_info = from_type_info->getStructInfo();
+	if (!struct_info)
+		return;
+
+	for (const auto& mf : struct_info->member_functions) {
+		if (!mf.is_conversion_operator())
+			continue;
+		if (require_const && !mf.is_const())
+			continue;
+		if (!mf.function_decl.is<FunctionDeclarationNode>())
+			continue;
+
+		const FunctionDeclarationNode& function_decl = mf.function_decl.as<FunctionDeclarationNode>();
+		const ASTNode& return_type_node = function_decl.decl_node().type_node();
+		if (!return_type_node.is<TypeSpecifierNode>())
+			continue;
+
+		const CanonicalTypeId conv_op_return_type_id =
+			sema->canonicalizeTypeForImplicitConversion(return_type_node.as<TypeSpecifierNode>());
+		if (!conv_op_return_type_id)
+			continue;
+		const CanonicalTypeDesc& return_desc = sema->typeContext().get(conv_op_return_type_id);
+		if (return_desc.pointer_levels.empty() || !return_desc.array_dimensions.empty())
+			continue;
+
+		CanonicalTypeDesc element_desc = return_desc;
+		element_desc.pointer_levels.pop_back();
+		const CanonicalTypeId element_type_id =
+			sema->canonicalizeTypeForImplicitConversion(materializeTypeSpecifier(element_desc));
+		out_ops.push_back({conv_op_return_type_id, element_type_id, &function_decl});
+	}
+
+	for (const auto& base : struct_info->base_classes) {
+		if (base.is_deferred)
+			continue;
+		collectAllStructPointerConversionOperators(
+			makeBaseFromDesc(from_desc, base), sema, require_const, depth + 1, out_ops);
+	}
+}
+
+// Returns true if from_desc has multiple viable pointer conversion operators with
+// distinct element base types, making a built-in subscript expression ambiguous.
+// Two conversion operators with the same element base type (e.g. operator int*()
+// and operator const int*() const) are NOT ambiguous; the non-const is preferred.
+//
+// C++20 [over.match.sub]: each viable pointer conversion generates a separate
+// built-in operator[] candidate. Multiple candidates with different pointer types
+// produce an ambiguous overload set.
+static bool hasAmbiguousPointerConversionOperators(
+	const CanonicalTypeDesc& from_desc,
+	SemanticAnalysis* sema) {
+	if (!sema)
+		return false;
+
+	const bool source_is_const = hasCVQualifier(from_desc.base_cv, CVQualifier::Const);
+
+	// Collect all viable candidates: for a const source only const operators
+	// qualify; for a non-const source both const and non-const are viable.
+	std::vector<PointerConversionInfo> all_ops;
+	collectAllStructPointerConversionOperators(from_desc, sema, source_is_const, 0, all_ops);
+
+	if (all_ops.size() <= 1)
+		return false;
+
+	// Check whether all operators have the same underlying element type (ignoring
+	// CV qualifiers). Operators returning e.g. int* and const int* share the same
+	// underlying element type and are resolved by cv-preference, not ambiguity.
+	const CanonicalTypeDesc& first_elem = sema->typeContext().get(all_ops[0].element_type_id);
+	for (size_t i = 1; i < all_ops.size(); ++i) {
+		const CanonicalTypeDesc& elem_i = sema->typeContext().get(all_ops[i].element_type_id);
+		if (!hasSamePointerElementBaseType(first_elem, elem_i))
+			return true;
+	}
+	return false;
 }
 
 const FunctionDeclarationNode* getCallTargetFunctionCandidate(const ASTNode& overload) {
@@ -3133,6 +3247,15 @@ std::optional<CanonicalTypeId> SemanticAnalysis::normalizeBuiltinSubscriptOperan
 	const auto get_struct_pointer_conversion_target_type = [this](const CanonicalTypeDesc& desc) -> std::optional<CanonicalTypeId> {
 		if (desc.category() != TypeCategory::Struct)
 			return std::nullopt;
+		// C++20 [over.match.sub]: if multiple viable pointer conversion operators
+		// produce different element types the overload set is ambiguous.
+		if (hasAmbiguousPointerConversionOperators(desc, this)) {
+			const TypeInfo* type_info = tryGetTypeInfo(desc.type_index);
+			const std::string_view type_name =
+				type_info ? StringTable::getStringView(type_info->name()) : "<unknown>";
+			throw CompileError("ambiguous built-in subscript: '" + std::string(type_name) +
+							   "' has multiple pointer conversion operators with different element types");
+		}
 		if (auto pointer_conversion = findStructPointerConversionOperator(desc, nullptr, this, 0)) {
 			return pointer_conversion->target_type_id;
 		}
