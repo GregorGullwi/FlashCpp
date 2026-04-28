@@ -8599,7 +8599,8 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						};
 
 						switch (lv_info.kind) {
-						case LValueInfo::Kind::Indirect: {
+						case LValueInfo::Kind::Indirect:
+						case LValueInfo::Kind::ReferenceDeref: {
 							if (loadBaseAddress(lv_info.base, true)) {
 								if (lv_info.offset != 0) {
 									emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);

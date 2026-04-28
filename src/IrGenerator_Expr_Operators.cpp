@@ -4628,7 +4628,7 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 	};
 
 	auto diagnoseDeletedMetadataAssignment = [&]() {
-		if (lv_info.kind != LValueInfo::Kind::ArrayElement && lv_info.kind != LValueInfo::Kind::Member && lv_info.kind != LValueInfo::Kind::Indirect) {
+		if (lv_info.kind != LValueInfo::Kind::ArrayElement && lv_info.kind != LValueInfo::Kind::Member && lv_info.kind != LValueInfo::Kind::Indirect && lv_info.kind != LValueInfo::Kind::ReferenceDeref) {
 			return;
 		}
 
@@ -4757,8 +4757,9 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 		return true;
 	}
 
-	case LValueInfo::Kind::Indirect: {
-		// Dereference assignment: *ptr = value
+	case LValueInfo::Kind::Indirect:
+	case LValueInfo::Kind::ReferenceDeref: {
+		// Dereference assignment: *ptr = value, or reference variable lvalue = value
 		// This case works because we have all needed info in LValueInfo
 		FLASH_LOG(Codegen, Debug, "  -> DereferenceStore (handled via metadata)");
 		TypeCategory pointee_type = lvalue_type;
@@ -4865,7 +4866,7 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 
 	// Generate a Load instruction based on the lvalue kind
 	// Support both Member kind and Indirect kind (for dereferenced pointers like &y in lambda captures)
-	if (lv_info.kind == LValueInfo::Kind::Indirect) {
+	if (lv_info.kind == LValueInfo::Kind::Indirect || lv_info.kind == LValueInfo::Kind::ReferenceDeref) {
 		// For Indirect kind (dereferenced pointer), the base can be a TempVar or StringHandle
 		// Generate a Dereference instruction to load the current value
 		DereferenceOp deref_op;

@@ -465,7 +465,8 @@ bool AstToIr::exprResultAlreadyHoldsRuntimeAddress(const ExprResult& expr_result
 	}
 
 	return metadata.lvalue_info.has_value() &&
-		   metadata.lvalue_info->kind == LValueInfo::Kind::Indirect;
+		   (metadata.lvalue_info->kind == LValueInfo::Kind::Indirect ||
+			metadata.lvalue_info->kind == LValueInfo::Kind::ReferenceDeref);
 }
 
 std::optional<AstToIr::AddressComponents> AstToIr::makeAddressComponentsFromEvaluatedResult(
@@ -591,7 +592,8 @@ ExprResult AstToIr::materializeAddressResult(
 		if (const auto* temp_var = std::get_if<TempVar>(&expr_result.value)) {
 			const TempVarMetadata metadata = getTempVarMetadata(*temp_var);
 			if (metadata.lvalue_info.has_value() &&
-				metadata.lvalue_info->kind != LValueInfo::Kind::Indirect) {
+				metadata.lvalue_info->kind != LValueInfo::Kind::Indirect &&
+				metadata.lvalue_info->kind != LValueInfo::Kind::ReferenceDeref) {
 				throw InternalError("Lvalue-address result requires explicit address materialization");
 			}
 		}

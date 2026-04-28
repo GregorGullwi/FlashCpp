@@ -33,7 +33,7 @@ code path in `IRConverter_ConvertMain.cpp` / `IrGenerator_MemberAccess.cpp`.
 
 ## Built-in subscript via implicit pointer conversion on const references is incorrect
 
-**Status:** Open  
+**Status:** Fixed in PR-1375  
 **Area:** Sema / Codegen — `generateArraySubscriptIr` / `normalizeBuiltinSubscriptOperands`  
 **Discovered during:** Implementing follow-up tests for PR-1373 (subscript pointer conversion)
 
