@@ -607,76 +607,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 
-		if (func_type.category() == TypeCategory::Struct) {
-			const FunctionDeclarationNode* operator_call = nullptr;
-
-				// Fallback: replicate the arity-based lookup for call sites that were
-				// not reached by the semantic pass (e.g. template instantiation paths
-				// that create CallExprNodes after sema has run).
-			if (!operator_call) {
-				const TypeInfo* func_type_info = tryGetTypeInfo(func_type.type_index());
-				const StructTypeInfo* struct_info = func_type_info ? func_type_info->getStructInfo() : nullptr;
-				if (struct_info) {
-					const FunctionDeclarationNode* sole_operator_call = nullptr;
-					size_t operator_call_count = 0;
-					std::unordered_set<const StructTypeInfo*> visited;
-					auto collectOperatorCall = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
-						if (operator_call || !visited.insert(current_struct).second)
-							return;
-						for (const auto& member_func : current_struct->member_functions) {
-							if (member_func.operator_kind != OverloadableOperator::Call ||
-								!member_func.function_decl.is<FunctionDeclarationNode>()) {
-								continue;
-							}
-							const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-							++operator_call_count;
-							if (!sole_operator_call) {
-								sole_operator_call = &candidate;
-							}
-							if (candidate.parameter_nodes().size() == callExprNode.arguments().size()) {
-								operator_call = &candidate;
-								return;
-							}
-						}
-						for (const auto& base_spec : current_struct->base_classes) {
-							if (!base_spec.type_index.is_valid())
-								continue;
-							const TypeInfo* base_info = tryGetTypeInfo(base_spec.type_index);
-							if (!base_info)
-								continue;
-							const StructTypeInfo* base_struct = base_info->getStructInfo();
-							if (!base_struct)
-								continue;
-							self(self, base_struct);
-							if (operator_call)
-								return;
-						}
-					};
-					collectOperatorCall(collectOperatorCall, struct_info);
-					if (!operator_call && operator_call_count == 1) {
-							// Only fall back when the callable object exposes a single
-							// operator(); this avoids silently choosing an arbitrary overload.
-						operator_call = sole_operator_call;
-					}
-				}
-			}
-
-			if (operator_call) {
-				ChunkedVector<ASTNode> member_args;
-				callExprNode.arguments().visit([&](ASTNode argument) {
-					member_args.push_back(argument);
-				});
-
-				ASTNode object_expr = ASTNode::emplace_node<ExpressionNode>(
-					IdentifierNode(func_ptr_decl->identifier_token()));
-				CallExprNode member_call = makeResolvedMemberCallExpr(
-					object_expr,
-					*operator_call,
-					std::move(member_args),
-					callExprNode.called_from());
-				return generateMemberFunctionCallIr(member_call, context, sema_call_key);
-			}
-		}
+		// Audit 2026-04-27: the prior arity-based `operator()` codegen fallback
+		// here was probed across the full 2239-test corpus with a hard-fail
+		// guard and never hit. Sema reaches struct callable invocations as
+		// member calls, so codegen no longer needs to recover an `operator()`
+		// target by traversing the struct/base-class hierarchy.
 
 			// decltype(auto) is not a valid parameter type; reject it before
 			// the recursive-lambda auto&& callable fallback can mishandle it.
