@@ -124,10 +124,12 @@ Active fallback evidence from the 2026-04-27 audit:
   rebinding/dependency/evaluation work is now an unconditional post-substitution
   normalization step for every lazy static initializer rather than only the
   catch-all substitution branch;
-- function-template return-type substitution and body reparse are improved but
-  still have active fallback paths around abbreviated/auto forms,
-  function-try-blocks, SFINAE-heavy templates, and some forward-declaration
-  cases.
+- function-template declaration reparse now runs whenever saved declaration
+  source exists, including abbreviated/constrained forms and function-try-block
+  cases; the `T*` namespace-qualified call residual was fixed by consuming the
+  standard pointer/reference declarator helper during return-type reparse.
+  Signature synthesis remains only for instantiations without saved declaration
+  source, and body-pointer reuse remains active for some no-body-position cases.
 
 Removal direction: make template bindings and instantiated `TypeInfo` metadata
 authoritative at creation time, then replace name-based and positional recovery
@@ -205,6 +207,9 @@ Recent historical baselines recorded for this work:
 - 2026-04-27 Windows fallback audit probes: `.\build_flashcpp.bat` and
   `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`
   were used to classify active/dead fallback paths.
+
+- 2026-04-28 Windows fallback follow-up: full suite passed, 2268 regular tests
+  and 154 expected-fail tests.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.

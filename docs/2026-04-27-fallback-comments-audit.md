@@ -283,11 +283,13 @@ The initial audit above was architectural. Several template-instantiation fallba
    - Probe result: replacing the `type_name = full_type_name` path with a hard error broke `tests\test_variable_template_in_enable_if_ret0.cpp`.
    - Conclusion: template-argument dependency detection still needs the canonical `gTypeInfo` full-name path when the parsed token spelling is empty, especially around variable-template `enable_if` cases. The code now treats this as ordinary spelling selection rather than a special fallback branch.
 
-13. `src\Parser_Templates_Inst_Deduction.cpp` — function return-type substitution fallback
+13. `src\Parser_Templates_Inst_Deduction.cpp` — narrowed function return-type synthesis path
     - Probe result: hard-failing the “simple substitution” return-type path broke a broad deduction cluster including `concept_abbreviated_ret0.cpp`, `concept_comprehensive_ret15.cpp`, `template_inst_simple_ret5.cpp`, `test_func_template_dependent_default_nontype_sizeof_ret0.cpp`, `test_nested_pack_return_type_ret42.cpp`, and many other concept/pack/trailing-return cases.
     - Probe result: additionally copying `template_declaration_position()` / `template_body_position()` through `copy_function_properties(...)` was safe, but hard-failing the fallback still broke the same broad cluster, so missing saved parse positions are not the only reason this old path still fires.
     - Probe result: forcing reparse whenever declaration source was available shrank the failure set to `concept_abbreviated_ret0.cpp`, `test_abbrev_tmpl_trailing_decltype_ret0.cpp`, `test_constrained_auto_param_ret0.cpp`, `test_constrained_auto_u64_codegen_ret1.cpp`, `test_eh_function_try_block_auto_param_ret0.cpp`, plus a runtime crash in `test_ns_qualified_template_call_ret42.cpp`.
-    - Conclusion: the current reparse gate is too conservative for most template functions, but a smaller residual cluster around abbreviated/auto return handling, function-try-block parsing, and one namespace-qualified call case still prevents removing the old return-type path outright.
+    - Follow-up fix: declaration reparse now runs whenever saved declaration source exists. The namespace-qualified `T* addressof(T&)` residual was caused by return-type reparse consuming `T` but not the trailing `*`; it now uses `consume_pointer_ref_modifiers(...)` so pointer/reference declarators are preserved.
+    - Validation: the broad return-type cluster, the previous residual cluster, and the full Windows suite passed after this change.
+    - Conclusion: the old return-type dependency gate was too conservative and has been removed. The remaining synthesized return-type branch is limited to instantiations that genuinely lack saved declaration source.
 
 14. `src\Parser_Templates_Inst_Deduction.cpp` — template body copy fallback
    - Probe result: replacing the direct body-pointer copy with a hard error broke `decltype_trailing_return_ret0.cpp`, `test_dependent_swap_decltype_noexcept_ret0.cpp`, `test_namespaced_pair_swap_sfinae_ret0.cpp`, `test_std_swap_enable_if_alias_base_ret0.cpp`, and `test_template_template_forward_decl_definition_ret0.cpp`.
@@ -326,4 +328,5 @@ The audit is now backed by direct suite evidence for several representative temp
 - multiple dependent-type/deduction fallback paths are definitely active;
 - the `Parser_Templates_Params.cpp` invalid-placeholder dependency branch has been narrowed to explicit speculative-parse rejection, canonical current-template-parameter materialization, and invariant failure for any remaining active-template producer;
 - lazy static-member late rebinding/dependency/evaluation now runs as the shared post-substitution normalization tail for all substituted lazy static initializers;
+- function-template declaration reparse now covers all instantiations with saved declaration source; the return-type synthesis branch in `Parser_Templates_Inst_Deduction.cpp` remains only for no-source cases;
 - the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes should still be assumed active until probed or root-fixed individually.

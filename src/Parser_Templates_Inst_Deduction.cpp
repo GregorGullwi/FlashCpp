@@ -3084,44 +3084,14 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	ASTNode return_type;
 	Token func_name_token = orig_decl.identifier_token();
 
-	// Check if we have a saved declaration position for re-parsing (SFINAE support)
-	// Re-parse if we have a saved position AND the return type appears template-dependent
+	// Re-parse whenever declaration source is available. This preserves the
+	// declaration grammar, including abbreviated/constrained forms and pointer or
+	// reference declarators, instead of reconstructing the return type from a
+	// partially-substituted TypeIndex.
 	bool should_reparse = func_decl.has_template_declaration_position();
 
 	FLASH_LOG_FORMAT(Templates, Debug, "Checking re-parse for template function: has_position={}, return_type={}, type_index={}",
 					 should_reparse, static_cast<int>(orig_return_type.type()), orig_return_type.type_index());
-
-	// Only re-parse if the return type is a placeholder for template-dependent types
-	if (should_reparse) {
-		if (orig_return_type.category() == TypeCategory::Void) {
-			// Void return type - re-parse
-			FLASH_LOG(Templates, Debug, "Return type is void - will re-parse");
-			should_reparse = true;
-		} else if (orig_return_type.category() == TypeCategory::UserDefined || orig_return_type.category() == TypeCategory::TypeAlias || orig_return_type.category() == TypeCategory::Template) {
-			if (!orig_return_type.type_index().is_valid()) {
-				// UserDefined with type_index=0 is a placeholder (points to void)
-				FLASH_LOG(Templates, Debug, "Return type is UserDefined placeholder (void) - will re-parse");
-				should_reparse = true;
-			} else if (const TypeInfo* orig_type_info = tryGetTypeInfo(orig_return_type.type_index())) {
-				std::string_view type_name = StringTable::getStringView(orig_type_info->name());
-				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", type_name);
-				// Re-parse if type is incomplete instantiation (has unresolved template params)
-				// OR if type name contains template parameter markers like _T or ::type (typename member access)
-				bool has_unresolved = orig_type_info->is_incomplete_instantiation_;
-				bool has_template_param = type_name.find("_T") != std::string::npos ||
-										  type_name.find("::type") != std::string::npos;
-				should_reparse = has_unresolved || has_template_param;
-				if (should_reparse) {
-					FLASH_LOG(Templates, Debug, "Return type appears template-dependent - will re-parse");
-				}
-			} else {
-				should_reparse = false;
-			}
-		} else {
-			// Other types don't need re-parsing
-			should_reparse = false;
-		}
-	}
 
 	FLASH_LOG_FORMAT(Templates, Debug, "Should re-parse: {}", should_reparse);
 
@@ -3174,19 +3144,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		FLASH_LOG(Parser, Debug, "Template instantiation: parsed return type, is_error=", return_type_result.is_error(), ", has_node=", return_type_result.node().has_value(), ", current_token=", current_token_.value(), ", token_type=", (int)current_token_.type());
 		if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
 			auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
-
-			// Check if there are reference qualifiers after the type specifier
-			bool is_punctuator_or_operator = current_token_.type() == Token::Type::Punctuator || current_token_.type() == Token::Type::Operator;
-			bool is_ampamp = current_token_.value() == "&&";
-			bool is_amp = current_token_.value() == "&";
-
-			if (is_punctuator_or_operator && is_ampamp) {
-				advance();  // Consume &&
-				rt.set_reference_qualifier(ReferenceQualifier::RValueReference);	 // Set rvalue reference
-			} else if (is_punctuator_or_operator && is_amp) {
-				advance();  // Consume &
-				rt.set_reference_qualifier(ReferenceQualifier::LValueReference);	 // Set lvalue reference
-			}
+			consume_pointer_ref_modifiers(rt);
 		}
 
 		// Restore position
@@ -3254,7 +3212,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 
 	} else {
-		// Fallback: Use simple substitution (old behavior)
+		// Declaration source is unavailable, so synthesize the instantiated
+		// return type from the preserved template signature metadata.
 		TypeIndex return_type_index = substitute_template_parameter(
 			orig_return_type, template_params, template_args);
 
@@ -3272,7 +3231,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		);
 		new_return_type.set_type_index(return_type_index);
 
-		FLASH_LOG(Parser, Debug, "Template fallback: created return type with type=", (int)return_type_index.category(), ", type_index=", return_type_index);
+		FLASH_LOG(Parser, Debug, "Template signature synthesis: created return type with type=", (int)return_type_index.category(), ", type_index=", return_type_index);
 
 		// Preserve reference qualifiers from original return type
 		new_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
