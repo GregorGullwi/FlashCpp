@@ -4284,12 +4284,6 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		// directly rather than re-running lookup. structHasConversionOperatorTo
 		// is still useful as a side effect to mark ODR-use of any matching
 		// overload(s), so we call it for that purpose first.
-		if (!structHasConversionOperatorTo(from_desc, to_desc, this)) {
-			FLASH_LOG(General, Debug,
-					  "SemanticAnalysis: skipping UserDefined pointer annotation — "
-					  "no matching conversion operator found in struct source type");
-			return false;
-		}
 		const auto pointer_conversion =
 			findStructPointerConversionOperator(from_desc, &to_desc, this, 0);
 		if (!pointer_conversion) {
