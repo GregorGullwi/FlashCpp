@@ -918,6 +918,18 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		}
 
 		SaveHandle current_pos = save_token_position();
+		struct LexerRestoreGuard {
+			Parser* parser;
+			SaveHandle pos;
+			bool active = true;
+			~LexerRestoreGuard() {
+				if (!active) {
+					return;
+				}
+				parser->restore_lexer_position_only(pos);
+				parser->discard_saved_token(pos);
+			}
+		} lexer_restore_guard{this, current_pos};
 		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 		parsing_template_depth_ = 0;
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
@@ -933,13 +945,14 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			struct_type_index = type_it->second->type_index_;
 		}
 		member_function_context_stack_.push_back({instantiated_class_name, struct_type_index, nullptr, struct_info});
-		auto pop_member_ctx_guard = [this](void*) {
-			if (!member_function_context_stack_.empty()) {
-				member_function_context_stack_.pop_back();
+		struct MemberContextGuard {
+			Parser* parser;
+			~MemberContextGuard() {
+				if (!parser->member_function_context_stack_.empty()) {
+					parser->member_function_context_stack_.pop_back();
+				}
 			}
-		};
-		std::unique_ptr<void, decltype(pop_member_ctx_guard)> member_ctx_scope(
-			reinterpret_cast<void*>(1), pop_member_ctx_guard);
+		} member_ctx_scope{this};
 
 		restore_lexer_position_only(*lazy_info.initializer_position);
 
@@ -957,11 +970,10 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				substituted_initializer.reset();
 			}
 		} else {
-			restore_lexer_position_only(current_pos);
-			discard_saved_token(current_pos);
 			return false;
 		}
 
+		lexer_restore_guard.active = false;
 		restore_lexer_position_only(current_pos);
 		discard_saved_token(current_pos);
 		return substituted_initializer.has_value();
@@ -1203,7 +1215,9 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			lazy_info.reference_qualifier,
 			lazy_info.pointer_depth,
 			lazy_info.is_array,
-			lazy_info.array_dimensions);
+			lazy_info.array_dimensions,
+			lazy_info.declaration,
+			lazy_info.initializer_position);
 	}
 
 	// Mark as instantiated (remove from lazy registry)

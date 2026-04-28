@@ -1565,7 +1565,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				ref_qual,
 				ptr_depth,
 				is_array,
-				std::move(array_dimensions));
+				std::move(array_dimensions),
+				std::nullopt,
+				std::nullopt);
 
 			continue;
 		}

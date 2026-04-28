@@ -83,9 +83,12 @@ std::optional<std::vector<TemplateTypeArg>> extractNamedTemplateArgumentPack(
 		}
 
 		if (tparam.name() == pack_name) {
+			if (arg_index + pack_size > template_args.size()) {
+				return std::nullopt;
+			}
 			std::vector<TemplateTypeArg> pack_args;
 			pack_args.reserve(pack_size);
-			for (size_t i = 0; i < pack_size && (arg_index + i) < template_args.size(); ++i) {
+			for (size_t i = 0; i < pack_size; ++i) {
 				pack_args.push_back(template_args[arg_index + i]);
 			}
 			return pack_args;

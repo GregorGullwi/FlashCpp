@@ -3083,7 +3083,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							static_member.reference_qualifier,
 							static_member.pointer_depth,
 							static_member.is_array,
-							static_member.array_dimensions);
+							static_member.array_dimensions,
+							std::nullopt,
+							std::nullopt);
 					}
 				}
 			}
@@ -3148,7 +3150,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.reference_qualifier,
 						static_member.pointer_depth,
 						static_member.is_array,
-						static_member.array_dimensions);
+						static_member.array_dimensions,
+						static_member.declaration,
+						static_member.initializer_position);
 				}
 			}
 
@@ -5583,7 +5587,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_member.reference_qualifier,
 					static_member.pointer_depth,
 					is_array_member,
-					resolved_array_dimensions);
+					resolved_array_dimensions,
+					static_member.declaration,
+					static_member.initializer_position);
 
 				continue; // Skip the eager processing below
 			}
@@ -5625,7 +5631,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				static_member.reference_qualifier,
 				static_member.pointer_depth,
 				is_array_member,
-				resolved_array_dimensions);
+				resolved_array_dimensions,
+				static_member.declaration,
+				static_member.initializer_position);
 			if (normalized_initializer.has_value()) {
 				if (StructStaticMember* instantiated_static_member =
 						struct_info->findStaticMember(static_member.getName())) {
@@ -5766,7 +5774,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.reference_qualifier,
 						static_member.pointer_depth,
 						static_member.is_array,
-						static_member.array_dimensions);
+						static_member.array_dimensions,
+						static_member.declaration,
+						static_member.initializer_position);
 					instantiated_nested_struct_ref.add_static_member(
 						static_member.getName(),
 						substituted_type_index,
@@ -5778,7 +5788,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.reference_qualifier,
 						static_member.pointer_depth,
 						static_member.is_array,
-						static_member.array_dimensions);
+						static_member.array_dimensions,
+						static_member.initializer_position);
 				}
 			};
 
@@ -6351,7 +6362,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			static_member.reference_qualifier,
 			static_member.pointer_depth,
 			static_member.is_array,
-			static_member.array_dimensions);
+			static_member.array_dimensions,
+			static_member.initializer_position);
 	}
 
 	for (auto& nested_class_node : instantiated_nested_class_nodes) {
@@ -7904,7 +7916,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					type_spec.reference_qualifier(),
 					static_cast<int>(type_spec.pointer_depth()),
 					is_array,
-					std::move(array_dimensions));
+					std::move(array_dimensions),
+					std::nullopt,
+					std::nullopt);
 
 				FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name,
 						  " to instantiated struct ", instantiated_name);
@@ -8165,7 +8179,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.reference_qualifier,
 						static_member.pointer_depth,
 						static_member.is_array,
-						static_member.array_dimensions);
+						static_member.array_dimensions,
+						static_member.declaration,
+						static_member.initializer_position);
 				}
 			}
 		}

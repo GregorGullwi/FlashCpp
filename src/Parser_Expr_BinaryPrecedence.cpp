@@ -1915,20 +1915,20 @@ ParseResult Parser::parse_static_member_block(
 		}
 	} else {
 		// Normal case - use provided struct_info directly
-		struct_info->addStaticMember(
-			static_member_name_handle,
-			type_spec.type_index(),
+			struct_info->addStaticMember(
+				static_member_name_handle,
+				type_spec.type_index(),
 			member_size,
 			member_alignment,
 			access,
 			init_expr_opt,
 			cv_qual,
-			ref_qual,
-			ptr_depth,
-			is_array,
-			std::move(array_dimensions),
-			*type_and_name.node(),
-			initializer_position);
+				ref_qual,
+				ptr_depth,
+				is_array,
+				std::move(array_dimensions),
+				*type_and_name.node(),
+				initializer_position);
 	}
 
 	return ParseResult::success();  // Signal caller to continue

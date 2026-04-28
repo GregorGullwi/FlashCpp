@@ -162,14 +162,18 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	if (type_and_name_result.node().has_value() && type_and_name_result.node()->is<StructuredBindingNode>()) {
 		// Validate: structured bindings cannot have storage class specifiers
 		if (specs.storage_class != StorageClass::None || specs.is_thread_local) {
+			discard_saved_token(declaration_start);
 			return ParseResult::error("Structured bindings cannot have storage class specifiers (static, extern, etc.)", current_token_);
 		}
 		if (is_constexpr) {
+			discard_saved_token(declaration_start);
 			return ParseResult::error("Structured bindings cannot be constexpr", current_token_);
 		}
 		if (is_constinit) {
+			discard_saved_token(declaration_start);
 			return ParseResult::error("Structured bindings cannot be constinit", current_token_);
 		}
+		discard_saved_token(declaration_start);
 		return saved_position.success(type_and_name_result.node().value());
 	}
 
@@ -246,6 +250,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	}
 
 	if (peek() == "::"_tok) {
+		discard_saved_token(declaration_start);
 		// This is an out-of-line member function definition
 		advance();  // consume '::'
 
@@ -689,6 +694,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 						 std::string(current_token_.value()),
 						 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 		if (specs_result.is_error()) {
+			discard_saved_token(declaration_start);
 			return specs_result;
 		}
 
@@ -809,6 +815,9 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				if (peek() == ";"_tok) {
 					advance();  // consume ';'
 					clearCurrentTemplateParameters();
+					if (before_function_parse.has_value()) {
+						discard_saved_token(*before_function_parse);
+					}
 					return saved_position.success(template_func_node);
 				}
 
@@ -823,6 +832,9 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				}
 
 				clearCurrentTemplateParameters();
+				if (before_function_parse.has_value()) {
+					discard_saved_token(*before_function_parse);
+				}
 				return saved_position.success(template_func_node);
 			}
 		}

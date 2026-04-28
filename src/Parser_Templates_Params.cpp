@@ -80,14 +80,15 @@ TypeInfo& Parser::ensureTemplateParameterTypeRegistration(TemplateParameterNode&
 
 	TypeInfo* type_info = nullptr;
 	if (tparam.registered_type_index().is_valid()) {
-		type_info = const_cast<TypeInfo*>(tryGetTypeInfo(tparam.registered_type_index()));
+		type_info = tryGetTypeInfoMut(tparam.registered_type_index());
 	}
 
 	if (type_info == nullptr) {
-		if (const TypeInfo* existing = findTypeByName(tparam.nameHandle());
-			existing != nullptr &&
-			existing->isDependentPlaceholder()) {
-			type_info = const_cast<TypeInfo*>(existing);
+		if (auto existing_it = getTypesByNameMap().find(tparam.nameHandle());
+			existing_it != getTypesByNameMap().end() &&
+			existing_it->second != nullptr &&
+			existing_it->second->isDependentPlaceholder()) {
+			type_info = existing_it->second;
 		}
 	}
 
