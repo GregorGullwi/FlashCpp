@@ -83,6 +83,24 @@ ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_
 	return ParseResult::success();
 }
 
+void Parser::registerTemplateTypeParametersInScope(
+	InlineVector<ASTNode, 4>& template_params,
+	FlashCpp::TemplateParameterScope& template_scope) {
+	for (ASTNode& param : template_params) {
+		if (!param.is<TemplateParameterNode>()) {
+			continue;
+		}
+		TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+		if (tparam.kind() != TemplateParameterKind::Type) {
+			continue;
+		}
+		TypeInfo& type_info = add_template_param_type(tparam.nameHandle(), TypeCategory::UserDefined, 0);
+		type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+		tparam.set_registered_type_index(type_info.type_index_);
+		template_scope.addParameter(&type_info);
+	}
+}
+
 // Parse a single template parameter: typename T, class T, int N, etc.
 ParseResult Parser::parse_template_parameter() {
 	ScopedTokenPosition saved_position(*this);
@@ -1824,14 +1842,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// Dependent placeholders must be registered with a canonical TypeIndex by
 			// their template-parameter owner before they reach argument classification.
 			if (!arg.is_dependent && !type_node.type_index().is_valid()) {
-				const StringHandle token_name = StringTable::getOrInternStringHandle(type_node.token().value());
-				bool is_current_template_param = false;
-				for (StringHandle param_name : currentTemplateParamNames()) {
-					if (param_name == token_name) {
-						is_current_template_param = true;
-						break;
-					}
-				}
+				const StringHandle token_name = type_node.token().handle();
+				const auto& current_param_names = currentTemplateParamNames();
+				bool is_current_template_param = std::any_of(
+					current_param_names.begin(),
+					current_param_names.end(),
+					[token_name](StringHandle param_name) {
+						return param_name == token_name;
+					});
 				if (is_current_template_param) {
 					TypeInfo& type_info = add_template_param_type(token_name, TypeCategory::UserDefined, 0);
 					type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;

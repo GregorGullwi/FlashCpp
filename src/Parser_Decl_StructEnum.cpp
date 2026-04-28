@@ -4455,15 +4455,10 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	// visible when parsing the friend function declaration (e.g. return type T, param type T).
 	FlashCpp::TemplateParameterScope template_scope;
 	FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
+	registerTemplateTypeParametersInScope(template_params, template_scope);
 	for (auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
 			auto& tparam = param.as<TemplateParameterNode>();
-			if (tparam.kind() == TemplateParameterKind::Type) {
-				TypeInfo& type_info = add_template_param_type(tparam.nameHandle(), TypeCategory::UserDefined, 0);
-				type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
-				tparam.set_registered_type_index(type_info.type_index_);
-				template_scope.addParameter(&type_info);
-			}
 			pushCurrentTemplateParamName(tparam.nameHandle());
 		}
 	}

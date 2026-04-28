@@ -1135,6 +1135,9 @@ private:
 		ASTNode& out_template_node);
 	ParseResult parse_template_parameter_list(InlineVector<ASTNode, 4>& out_params);	 // NEW: Parse template parameter list
 	ParseResult parse_template_parameter();	// NEW: Parse a single template parameter
+	void registerTemplateTypeParametersInScope(
+		InlineVector<ASTNode, 4>& template_params,
+		FlashCpp::TemplateParameterScope& template_scope);
 	bool parseDeferredAliasTargetTemplateId(
 		StringHandle& out_target_template_name,
 		std::vector<ASTNode>& out_target_template_arg_nodes,
