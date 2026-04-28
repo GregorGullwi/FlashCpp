@@ -1042,13 +1042,13 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 		if (substituted_initializer.has_value()) {
 			std::unordered_set<StringHandle> referenced_lazy_members;
-			std::function<void(const ASTNode&)> collectLazyStaticDependencies = [&](const ASTNode& node) {
+			auto collectLazyStaticDependencies = [&](auto&& self, const ASTNode& node) -> void {
 				if (!node.has_value()) {
 					return;
 				}
 				if (node.is<InitializerListNode>()) {
 					for (const auto& initializer : node.as<InitializerListNode>().initializers()) {
-						collectLazyStaticDependencies(initializer);
+						self(self, initializer);
 					}
 					return;
 				}
@@ -1066,68 +1066,68 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 					return;
 				}
 				if (const auto* bin_op = std::get_if<BinaryOperatorNode>(&expr)) {
-					collectLazyStaticDependencies(bin_op->get_lhs());
-					collectLazyStaticDependencies(bin_op->get_rhs());
+					self(self, bin_op->get_lhs());
+					self(self, bin_op->get_rhs());
 					return;
 				}
 				if (const auto* unary_op = std::get_if<UnaryOperatorNode>(&expr)) {
-					collectLazyStaticDependencies(unary_op->get_operand());
+					self(self, unary_op->get_operand());
 					return;
 				}
 				if (const auto* ternary = std::get_if<TernaryOperatorNode>(&expr)) {
-					collectLazyStaticDependencies(ternary->condition());
-					collectLazyStaticDependencies(ternary->true_expr());
-					collectLazyStaticDependencies(ternary->false_expr());
+					self(self, ternary->condition());
+					self(self, ternary->true_expr());
+					self(self, ternary->false_expr());
 					return;
 				}
 				if (const auto call_info = CallInfo::tryFrom(expr)) {
 					if (call_info->has_receiver) {
-						collectLazyStaticDependencies(call_info->receiver);
+						self(self, call_info->receiver);
 					}
 					for (const auto& arg : *call_info->arguments) {
-						collectLazyStaticDependencies(arg);
+						self(self, arg);
 					}
 					if (call_info->template_arguments) {
 						for (const auto& template_arg : *call_info->template_arguments) {
-							collectLazyStaticDependencies(template_arg);
+							self(self, template_arg);
 						}
 					}
 					return;
 				}
 				if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
 					for (const auto& arg : ctor_call->arguments()) {
-						collectLazyStaticDependencies(arg);
+						self(self, arg);
 					}
 					return;
 				}
 				if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
-					collectLazyStaticDependencies(member_access->object());
+					self(self, member_access->object());
 					return;
 				}
 				if (const auto* array_sub = std::get_if<ArraySubscriptNode>(&expr)) {
-					collectLazyStaticDependencies(array_sub->array_expr());
-					collectLazyStaticDependencies(array_sub->index_expr());
+					self(self, array_sub->array_expr());
+					self(self, array_sub->index_expr());
 					return;
 				}
 				if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
-					collectLazyStaticDependencies(static_cast_node->expr());
+					self(self, static_cast_node->expr());
 					return;
 				}
 				if (const auto* dynamic_cast_node = std::get_if<DynamicCastNode>(&expr)) {
-					collectLazyStaticDependencies(dynamic_cast_node->expr());
+					self(self, dynamic_cast_node->expr());
 					return;
 				}
 				if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
-					collectLazyStaticDependencies(const_cast_node->expr());
+					self(self, const_cast_node->expr());
 					return;
 				}
 				if (const auto* reinterpret_cast_node = std::get_if<ReinterpretCastNode>(&expr)) {
-					collectLazyStaticDependencies(reinterpret_cast_node->expr());
+					self(self, reinterpret_cast_node->expr());
 					return;
 				}
 			};
 
-			collectLazyStaticDependencies(substituted_initializer.value());
+			collectLazyStaticDependencies(collectLazyStaticDependencies, substituted_initializer.value());
 			for (StringHandle referenced_name : referenced_lazy_members) {
 				instantiateLazyStaticMember(instantiated_class_name, referenced_name);
 			}

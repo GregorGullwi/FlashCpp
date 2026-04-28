@@ -1859,7 +1859,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					arg.dependent_name = token_name;
 					FLASH_LOG(Templates, Debug, "Registered missing dependent placeholder TypeIndex for template argument");
 				}
-				else if (full_type_name.empty()) {
+				else if (findTypeByName(token_name) == nullptr) {
 					restore_token_position(saved_pos);
 					last_failed_template_arg_parse_handle_ = saved_pos;
 					return std::nullopt;
