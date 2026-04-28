@@ -5,6 +5,7 @@
 #include "TypeTraitEvaluator.h"
 #include "ExpressionSubstitutor.h"
 #include "ParserTemplateClassShared.h"
+#include "RebindStaticMemberAst.h"
 
 std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info) {
 	FLASH_LOG(Templates, Debug, "instantiateLazyMemberFunction: ",
@@ -1031,145 +1032,69 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				substituted_initializer = substitutor.substitute(lazy_info.initializer.value());
 				FLASH_LOG(Templates, Debug, "Applied general template parameter substitution to lazy static member initializer");
 			}
+		}
 
-			if (substituted_initializer.has_value()) {
-				substituted_initializer = rebindStaticMemberInitializerFunctionCalls(
-					substituted_initializer.value(),
-					struct_info,
-					true);
+		if (substituted_initializer.has_value()) {
+			substituted_initializer = rebindStaticMemberInitializerFunctionCalls(
+				substituted_initializer.value(),
+				struct_info,
+				true);
+		}
+
+		if (substituted_initializer.has_value()) {
+			std::unordered_set<StringHandle> referenced_lazy_members;
+			RebindStaticMemberAst::visitAST(substituted_initializer.value(), [&](const ASTNode& node) {
+				if (node.is<IdentifierNode>()) {
+					StringHandle referenced_name = node.as<IdentifierNode>().getOrInternNameHandle();
+					if (referenced_name != lazy_info.member_name &&
+						LazyStaticMemberRegistry::getInstance().needsInstantiation(instantiated_class_name, referenced_name)) {
+						referenced_lazy_members.insert(referenced_name);
+					}
+				}
+			});
+
+			for (StringHandle referenced_name : referenced_lazy_members) {
+				instantiateLazyStaticMember(instantiated_class_name, referenced_name);
 			}
+		}
 
-			if (substituted_initializer.has_value()) {
-				std::unordered_set<StringHandle> referenced_lazy_members;
-				std::function<void(const ASTNode&)> collectLazyStaticDependencies = [&](const ASTNode& node) {
-					if (!node.has_value()) {
-						return;
-					}
-					if (node.is<InitializerListNode>()) {
-						for (const auto& initializer : node.as<InitializerListNode>().initializers()) {
-							collectLazyStaticDependencies(initializer);
-						}
-						return;
-					}
-					if (!node.is<ExpressionNode>()) {
-						return;
-					}
-
-					const ExpressionNode& expr = node.as<ExpressionNode>();
-					if (const auto* id_node = std::get_if<IdentifierNode>(&expr)) {
-						StringHandle referenced_name = id_node->getOrInternNameHandle();
-						if (referenced_name != lazy_info.member_name &&
-							LazyStaticMemberRegistry::getInstance().needsInstantiation(instantiated_class_name, referenced_name)) {
-							referenced_lazy_members.insert(referenced_name);
-						}
-						return;
-					}
-					if (const auto* bin_op = std::get_if<BinaryOperatorNode>(&expr)) {
-						collectLazyStaticDependencies(bin_op->get_lhs());
-						collectLazyStaticDependencies(bin_op->get_rhs());
-						return;
-					}
-					if (const auto* unary_op = std::get_if<UnaryOperatorNode>(&expr)) {
-						collectLazyStaticDependencies(unary_op->get_operand());
-						return;
-					}
-					if (const auto* ternary = std::get_if<TernaryOperatorNode>(&expr)) {
-						collectLazyStaticDependencies(ternary->condition());
-						collectLazyStaticDependencies(ternary->true_expr());
-						collectLazyStaticDependencies(ternary->false_expr());
-						return;
-					}
-					if (const auto call_info = CallInfo::tryFrom(expr)) {
-						if (call_info->has_receiver) {
-							collectLazyStaticDependencies(call_info->receiver);
-						}
-						for (const auto& arg : *call_info->arguments) {
-							collectLazyStaticDependencies(arg);
-						}
-						if (call_info->template_arguments) {
-							for (const auto& template_arg : *call_info->template_arguments) {
-								collectLazyStaticDependencies(template_arg);
-							}
-						}
-						return;
-					}
-					if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
-						for (const auto& arg : ctor_call->arguments()) {
-							collectLazyStaticDependencies(arg);
-						}
-						return;
-					}
-					if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
-						collectLazyStaticDependencies(member_access->object());
-						return;
-					}
-					if (const auto* array_sub = std::get_if<ArraySubscriptNode>(&expr)) {
-						collectLazyStaticDependencies(array_sub->array_expr());
-						collectLazyStaticDependencies(array_sub->index_expr());
-						return;
-					}
-					if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
-						collectLazyStaticDependencies(static_cast_node->expr());
-						return;
-					}
-					if (const auto* dynamic_cast_node = std::get_if<DynamicCastNode>(&expr)) {
-						collectLazyStaticDependencies(dynamic_cast_node->expr());
-						return;
-					}
-					if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
-						collectLazyStaticDependencies(const_cast_node->expr());
-						return;
-					}
-					if (const auto* reinterpret_cast_node = std::get_if<ReinterpretCastNode>(&expr)) {
-						collectLazyStaticDependencies(reinterpret_cast_node->expr());
-						return;
-					}
-				};
-
-				collectLazyStaticDependencies(substituted_initializer.value());
-				for (StringHandle referenced_name : referenced_lazy_members) {
-					instantiateLazyStaticMember(instantiated_class_name, referenced_name);
+		// Try to evaluate the substituted expression to a constant value.
+		// This turns expressions like "1 * __static_sign$hash::value / __static_gcd$hash::value"
+		// into a single NumericLiteralNode, enabling downstream constexpr evaluation.
+		if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+			eval_ctx.parser = this;
+			eval_ctx.sema = getActiveSemanticAnalysis();
+			// Provide struct context so the evaluator prefers same-struct member functions over globals.
+			eval_ctx.struct_info = struct_info;
+			// Provide template args so sizeof(T) etc. resolve correctly.
+			for (size_t i = 0; i < lazy_info.template_params.size() && i < lazy_info.template_args.size(); ++i) {
+				if (lazy_info.template_params[i].is<TemplateParameterNode>()) {
+					eval_ctx.template_param_names.push_back(lazy_info.template_params[i].as<TemplateParameterNode>().name());
+					eval_ctx.template_args.push_back(lazy_info.template_args[i]);
 				}
 			}
-
-			// Try to evaluate the substituted expression to a constant value.
-			// This turns expressions like "1 * __static_sign$hash::value / __static_gcd$hash::value"
-			// into a single NumericLiteralNode, enabling downstream constexpr evaluation.
-			if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
-				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-				eval_ctx.parser = this;
-				eval_ctx.sema = getActiveSemanticAnalysis();
-				// Provide struct context so the evaluator prefers same-struct member functions over globals.
-				eval_ctx.struct_info = struct_info;
-				// Provide template args so sizeof(T) etc. resolve correctly.
-				for (size_t i = 0; i < lazy_info.template_params.size() && i < lazy_info.template_args.size(); ++i) {
-					if (lazy_info.template_params[i].is<TemplateParameterNode>()) {
-						eval_ctx.template_param_names.push_back(lazy_info.template_params[i].as<TemplateParameterNode>().name());
-						eval_ctx.template_args.push_back(lazy_info.template_args[i]);
-					}
+			auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
+			if (eval_result.success()) {
+				int64_t val = eval_result.as_int();
+				if (val < 0) {
+					// For negative values, create UnaryOperator('-', NumericLiteral(abs(val)))
+					// to avoid uint64_t cast producing wrong string/value
+					std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(-static_cast<uint64_t>(val))).commit();
+					Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+					auto& literal_node = emplace_node_ref<ExpressionNode>(
+											 NumericLiteralNode(num_token, static_cast<unsigned long long>(-static_cast<uint64_t>(val)), TypeCategory::Int, TypeQualifier::None, 64))
+											 .second;
+					Token minus_token(Token::Type::Operator, "-"sv, 0, 0, 0);
+					substituted_initializer = emplace_node<ExpressionNode>(
+						UnaryOperatorNode(minus_token, ASTNode(&literal_node), true, false));
+				} else {
+					std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
+					Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+					substituted_initializer = emplace_node<ExpressionNode>(
+						NumericLiteralNode(num_token, static_cast<unsigned long long>(val), TypeCategory::Int, TypeQualifier::None, 64));
 				}
-				auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
-				if (eval_result.success()) {
-					int64_t val = eval_result.as_int();
-					if (val < 0) {
-						// For negative values, create UnaryOperator('-', NumericLiteral(abs(val)))
-						// to avoid uint64_t cast producing wrong string/value
-						std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(-static_cast<uint64_t>(val))).commit();
-						Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-						auto& literal_node = emplace_node_ref<ExpressionNode>(
-												 NumericLiteralNode(num_token, static_cast<unsigned long long>(-static_cast<uint64_t>(val)), TypeCategory::Int, TypeQualifier::None, 64))
-												 .second;
-						Token minus_token(Token::Type::Operator, "-"sv, 0, 0, 0);
-						substituted_initializer = emplace_node<ExpressionNode>(
-							UnaryOperatorNode(minus_token, ASTNode(&literal_node), true, false));
-					} else {
-						std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
-						Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-						substituted_initializer = emplace_node<ExpressionNode>(
-							NumericLiteralNode(num_token, static_cast<unsigned long long>(val), TypeCategory::Int, TypeQualifier::None, 64));
-					}
-					FLASH_LOG(Templates, Debug, "Evaluated lazy static member initializer to constant: ", val);
-				}
+				FLASH_LOG(Templates, Debug, "Evaluated lazy static member initializer to constant: ", val);
 			}
 		}
 	}
