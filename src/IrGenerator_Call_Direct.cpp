@@ -607,76 +607,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 
-		if (func_type.category() == TypeCategory::Struct) {
-			const FunctionDeclarationNode* operator_call = nullptr;
-
-				// Fallback: replicate the arity-based lookup for call sites that were
-				// not reached by the semantic pass (e.g. template instantiation paths
-				// that create CallExprNodes after sema has run).
-			if (!operator_call) {
-				const TypeInfo* func_type_info = tryGetTypeInfo(func_type.type_index());
-				const StructTypeInfo* struct_info = func_type_info ? func_type_info->getStructInfo() : nullptr;
-				if (struct_info) {
-					const FunctionDeclarationNode* sole_operator_call = nullptr;
-					size_t operator_call_count = 0;
-					std::unordered_set<const StructTypeInfo*> visited;
-					auto collectOperatorCall = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
-						if (operator_call || !visited.insert(current_struct).second)
-							return;
-						for (const auto& member_func : current_struct->member_functions) {
-							if (member_func.operator_kind != OverloadableOperator::Call ||
-								!member_func.function_decl.is<FunctionDeclarationNode>()) {
-								continue;
-							}
-							const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-							++operator_call_count;
-							if (!sole_operator_call) {
-								sole_operator_call = &candidate;
-							}
-							if (candidate.parameter_nodes().size() == callExprNode.arguments().size()) {
-								operator_call = &candidate;
-								return;
-							}
-						}
-						for (const auto& base_spec : current_struct->base_classes) {
-							if (!base_spec.type_index.is_valid())
-								continue;
-							const TypeInfo* base_info = tryGetTypeInfo(base_spec.type_index);
-							if (!base_info)
-								continue;
-							const StructTypeInfo* base_struct = base_info->getStructInfo();
-							if (!base_struct)
-								continue;
-							self(self, base_struct);
-							if (operator_call)
-								return;
-						}
-					};
-					collectOperatorCall(collectOperatorCall, struct_info);
-					if (!operator_call && operator_call_count == 1) {
-							// Only fall back when the callable object exposes a single
-							// operator(); this avoids silently choosing an arbitrary overload.
-						operator_call = sole_operator_call;
-					}
-				}
-			}
-
-			if (operator_call) {
-				ChunkedVector<ASTNode> member_args;
-				callExprNode.arguments().visit([&](ASTNode argument) {
-					member_args.push_back(argument);
-				});
-
-				ASTNode object_expr = ASTNode::emplace_node<ExpressionNode>(
-					IdentifierNode(func_ptr_decl->identifier_token()));
-				CallExprNode member_call = makeResolvedMemberCallExpr(
-					object_expr,
-					*operator_call,
-					std::move(member_args),
-					callExprNode.called_from());
-				return generateMemberFunctionCallIr(member_call, context, sema_call_key);
-			}
-		}
+		// Audit 2026-04-27: the prior arity-based `operator()` codegen fallback
+		// here was probed across the full 2239-test corpus with a hard-fail
+		// guard and never hit. Sema reaches struct callable invocations as
+		// member calls, so codegen no longer needs to recover an `operator()`
+		// target by traversing the struct/base-class hierarchy.
 
 			// decltype(auto) is not a valid parameter type; reject it before
 			// the recursive-lambda auto&& callable fallback can mishandle it.
@@ -1193,162 +1128,31 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		}
 	}
 
-		// Fallback: if pointer comparison failed (e.g., for template instantiations),
-		// try to find the function by checking if there's only one overload with this name
-	if (!matched_func_decl && !has_precomputed_mangled && scoped_overloads.size() == 1 &&
-		(scoped_overloads[0].is<FunctionDeclarationNode>() || scoped_overloads[0].is<TemplateFunctionDeclarationNode>())) {
-		matched_func_decl = scoped_overloads[0].is<FunctionDeclarationNode>()
-								? &scoped_overloads[0].as<FunctionDeclarationNode>()
-								: &scoped_overloads[0].as<TemplateFunctionDeclarationNode>().function_decl_node();
+		// Audit 2026-04-27: the prior `scoped_overloads` and `gSymbolTable_overloads`
+		// single-overload codegen recovery branches here were probed across the
+		// full 2239-test corpus with hard-fail guards and never hit. Sema's
+		// resolved direct-call target plus the precomputed-mangled path above
+		// already cover these cases.
 
-		resolveMangledName(matched_func_decl);
-	}
+		// Audit 2026-04-27: the `gSymbolTable` precomputed-mangled pointer-equality
+		// scan was probed and never hit; the consteval enforcement it was guarding
+		// is reached through the resolved target paths instead.
 
-		// Additional fallback: check gSymbolTable directly (for member functions added during delayed parsing)
-	if (!matched_func_decl && !has_precomputed_mangled && gSymbolTable_overloads.size() == 1 &&
-		(gSymbolTable_overloads[0].is<FunctionDeclarationNode>() || gSymbolTable_overloads[0].is<TemplateFunctionDeclarationNode>())) {
-		matched_func_decl = gSymbolTable_overloads[0].is<FunctionDeclarationNode>()
-								? &gSymbolTable_overloads[0].as<FunctionDeclarationNode>()
-								: &gSymbolTable_overloads[0].as<TemplateFunctionDeclarationNode>().function_decl_node();
+		// Audit 2026-04-27: the prior "Defensive fallback for precomputed-mangled
+		// calls" — a `gSymbolTable_overloads` scan that matched on
+		// `DeclarationNode` pointer equality — was probed across the full
+		// 2239-test corpus with a hard-fail guard and never hit. The earlier
+		// resolved-target paths already populate `matched_func_decl` for
+		// precomputed-mangled call sites (including consteval enforcement,
+		// C++20 [dcl.consteval]), so this fallback has been removed.
+	(void)gSymbolTable_overloads;
 
-		resolveMangledName(matched_func_decl);
-	}
-
-		// Defensive fallback for precomputed-mangled calls: if all lookups above failed to populate
-		// matched_func_decl (e.g., address comparison failed among multiple overloads), scan
-		// gSymbolTable by unqualified name and match on DeclarationNode pointer equality.
-		// Without this, a consteval function with a precomputed mangled name could bypass the
-		// consteval enforcement check below (C++20 [dcl.consteval]).
-	if (!matched_func_decl && has_precomputed_mangled) {
-		for (const auto& overload : gSymbolTable_overloads) {
-			const FunctionDeclarationNode* candidate = nullptr;
-			if (overload.is<FunctionDeclarationNode>())
-				candidate = &overload.as<FunctionDeclarationNode>();
-			else if (overload.is<TemplateFunctionDeclarationNode>())
-				candidate = &overload.as<TemplateFunctionDeclarationNode>().function_decl_node();
-			if (candidate && &candidate->decl_node() == &decl_node) {
-				matched_func_decl = candidate;
-				resolveMangledName(matched_func_decl);
-				FLASH_LOG_FORMAT(Codegen, Debug, "Matched function via gSymbolTable pointer scan (precomputed mangled): {}", function_name);
-				break;
-			}
-		}
-	}
-
-		// Final fallback: if we're in a member function, check the current struct's member functions
-	if (!matched_func_decl && current_struct_name_.isValid() && !callExprNode.has_qualified_name()) {
-		auto type_it = getTypesByNameMap().find(current_struct_name_);
-		if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
-			const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-			if (struct_info) {
-				for (const auto& member_func : struct_info->member_functions) {
-					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-						if (func_decl.decl_node().identifier_token().value() == func_name_view) {
-								// Found matching member function
-							matched_func_decl = &func_decl;
-							resolveMangledName(matched_func_decl, StringTable::getStringView(current_struct_name_));
-							break;
-						}
-					}
-				}
-			}
-
-				// If not found in current struct, check base classes
-			if (!matched_func_decl && struct_info) {
-					// Search through base classes recursively
-				std::function<void(const StructTypeInfo*)> searchBaseClasses = [&](const StructTypeInfo* current_struct) {
-					for (const auto& base_spec : current_struct->base_classes) {
-							// Look up base class in gTypeInfo
-						if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
-							if (base_type_info->isStruct()) {
-								const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
-								if (base_struct_info) {
-										// Check member functions in base class
-									for (const auto& member_func : base_struct_info->member_functions) {
-										if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-											const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-											if (func_decl.decl_node().identifier_token().value() == func_name_view) {
-													// Found matching member function in base class
-												matched_func_decl = &func_decl;
-												resolveMangledName(matched_func_decl, StringTable::getStringView(base_struct_info->getName()));
-												return; // Stop searching once found
-											}
-										}
-									}
-										// Recursively search base classes of this base class
-									if (!matched_func_decl) {
-										searchBaseClasses(base_struct_info);
-									}
-								}
-							}
-						}
-					}
-				};
-				searchBaseClasses(struct_info);
-			}
-		}
-	}
-
-		// Fallback: if the function is a qualified static member call (ClassName::method),
-		// look up the struct by iterating over known types and matching the function.
-		// Note: We match by function name AND parameter count to avoid false positives
-		// from identically named functions on different structs.
-	if (!matched_func_decl && !has_precomputed_mangled && !callExprNode.has_qualified_name()) {
-		size_t expected_param_count = 0;
-		callExprNode.arguments().visit([&](ASTNode) { ++expected_param_count; });
-
-		for (const auto& [name_handle, type_info_ptr] : getTypesByNameMap()) {
-			if (!type_info_ptr->isStruct())
-				continue;
-			const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
-			if (!struct_info)
-				continue;
-				// Skip pattern structs (templates) - they shouldn't be used for code generation
-			if (gTemplateRegistry.isPatternStructName(name_handle))
-				continue;
-			if (type_info_ptr->is_incomplete_instantiation_)
-				continue;
-				// Skip uninstantiated class template patterns — if the struct was registered
-				// as a class template but is NOT a template instantiation, it is an
-				// uninstantiated pattern and must not be used for codegen.
-				// Template instantiations (isTemplateInstantiation) are concrete types
-				// and should NOT be skipped.
-			if (!type_info_ptr->isTemplateInstantiation()) {
-				if (gTemplateRegistry.isClassTemplate(name_handle)) {
-					continue;
-				}
-			}
-
-			std::string_view struct_type_name = StringTable::getStringView(name_handle);
-			for (const auto& member_func : struct_info->member_functions) {
-				if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-					const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-					if (func_decl.decl_node().identifier_token().value() == func_name_view && func_decl.parameter_nodes().size() == expected_param_count) {
-						matched_func_decl = &func_decl;
-							// Use the struct type name for mangling (not parent_struct_name which
-							// may reference a template pattern)
-						std::string_view parent_for_mangling = func_decl.parent_struct_name();
-						if (gTemplateRegistry.isPatternStructName(StringTable::getOrInternStringHandle(parent_for_mangling))) {
-							parent_for_mangling = struct_type_name;
-						}
-						resolveMangledName(matched_func_decl, parent_for_mangling);
-						FLASH_LOG_FORMAT(Codegen, Debug, "Resolved static member function via struct search: {} -> {}", func_name_view, function_name);
-
-							// Queue all member functions of this struct for deferred generation
-							// since the matched function may call other members (e.g., lowest() calls min()).
-							// Derive namespace from the matched function's parent struct first (authoritative),
-							// then fall back to the resolved type name when needed.
-						queueDeferredMemberFunctions(type_info_ptr->name(), struct_info, parent_for_mangling);
-
-						break;
-					}
-				}
-			}
-			if (matched_func_decl)
-				break;
-		}
-	}
+		// Audit 2026-04-27: the "current-struct + base-class member by name"
+		// codegen recovery and the "qualified static member by struct iteration"
+		// recovery were both probed across the full 2239-test corpus with
+		// hard-fail guards and never hit. Sema resolves member calls (including
+		// inherited members and qualified static member calls) before codegen,
+		// so these two fallback blocks have been removed.
 
 		// Handle dependent qualified function names: Base$dependentHash::member
 		// These occur when a template body contains Base<T>::member() and T is substituted

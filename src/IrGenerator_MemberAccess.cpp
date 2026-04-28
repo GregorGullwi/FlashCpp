@@ -3011,22 +3011,11 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 								break;
 							}
 						}
-						// Fallback: if no exact match, try parameter count only
-						if (!selected_ctor) {
-							for (const auto& mf : struct_info->member_functions) {
-								if (!mf.is_constructor)
-									continue;
-								if (!mf.function_decl.is<ConstructorDeclarationNode>())
-									continue;
-								const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
-								if (ctor.is_implicit())
-									continue;
-								if (ctor.parameter_nodes().size() == arg_types.size()) {
-									selected_ctor = &mf;
-									break;
-								}
-							}
-						}
+						// Audit 2026-04-27: the prior arity-only constructor fallback
+						// here was probed across the full 2239-test corpus with a
+						// hard-fail guard and never hit. Exact-match constructor
+						// lookup above is sufficient for `__is_nothrow_constructible`
+						// in the current corpus.
 					}
 					if (selected_ctor) {
 						result = selected_ctor->is_noexcept;
@@ -3139,18 +3128,11 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 									selected_op = &mf;
 									break;
 								}
-								// Fallback: if no exact match, use first non-implicit operator=
-								if (!selected_op) {
-									for (const auto& mf : struct_info->member_functions) {
-										if (!isAssignOperator(mf.operator_kind))
-											continue;
-										const auto* func_node = get_function_decl_node(mf.function_decl);
-										if (func_node && func_node->is_implicit())
-											continue;
-										selected_op = &mf;
-										break;
-									}
-								}
+								// Audit 2026-04-27: the prior "first non-implicit
+								// operator=" fallback here was probed across the
+								// full 2239-test corpus with a hard-fail guard and
+								// never hit. The exact-match `operator=` lookup above
+								// is sufficient for `__is_nothrow_assignable`.
 								result = selected_op ? selected_op->is_noexcept : false;
 							}
 						}
