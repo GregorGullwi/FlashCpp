@@ -2106,7 +2106,6 @@ private:
 		const Token& source_token);
 	const TypeInfo* materializeInstantiatedMemberAliasTarget(
 		const TypeSpecifierNode& alias_type_spec,
-		TypeIndex fallback_type_index,
 		const InlineVector<ASTNode, 4>& template_params,
 		const std::vector<TemplateTypeArg>& template_args);
 	AliasTemplateMaterializationResult materializeAliasTemplateInstantiation(

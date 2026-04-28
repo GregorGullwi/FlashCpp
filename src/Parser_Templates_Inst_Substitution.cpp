@@ -311,13 +311,9 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	if (alias_node != nullptr &&
 		result.resolved_type_info != nullptr &&
 		alias_template_name.find("::") != std::string_view::npos) {
-		TypeIndex fallback_type_index =
-			result.resolved_type_info->registeredTypeIndex().withCategory(
-				result.resolved_type_info->typeEnum());
 		if (const TypeInfo* concrete_member_alias =
 				materializeInstantiatedMemberAliasTarget(
 					alias_node->target_type_node(),
-					fallback_type_index,
 					alias_node->template_parameters(),
 					template_args);
 			concrete_member_alias != nullptr) {
@@ -381,7 +377,6 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 
 const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	const TypeSpecifierNode& alias_type_spec,
-	[[maybe_unused]] TypeIndex fallback_type_index,
 	const InlineVector<ASTNode, 4>& template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
 	const TypeInfo* original_alias_target_info = tryGetTypeInfo(alias_type_spec.type_index());
@@ -1425,7 +1420,6 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			if (const TypeInfo* concrete_member_info =
 					materializeInstantiatedMemberAliasTarget(
 						alias_type_spec,
-						alias_target_index,
 						no_template_params,
 						template_args);
 				concrete_member_info != nullptr) {
