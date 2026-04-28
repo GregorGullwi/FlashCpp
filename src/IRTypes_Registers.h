@@ -198,12 +198,13 @@ using IrValue = std::variant<unsigned long long, double, TempVar, StringHandle>;
 // Information about an lvalue's storage location
 struct LValueInfo {
 	enum class Kind {
-		Direct,		// Direct variable access: x
-		Indirect,	  // Through pointer dereference: *ptr
-		Member,		// Struct member access: obj.member
-		ArrayElement,  // Array element access: arr[i]
-		Temporary,	   // Temporary materialization
-		Global		   // Global variable: base = StringHandle (global name)
+		Direct,		    // Direct variable access: x
+		Indirect,	    // Through pointer dereference: *ptr
+		ReferenceDeref, // Dereference of a reference variable: const T& cd = d; cd used as lvalue
+		Member,		    // Struct member access: obj.member
+		ArrayElement,   // Array element access: arr[i]
+		Temporary,	    // Temporary materialization
+		Global		    // Global variable: base = StringHandle (global name)
 	};
 
 	Kind kind;

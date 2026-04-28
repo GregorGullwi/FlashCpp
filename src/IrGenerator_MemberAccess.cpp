@@ -3949,6 +3949,23 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 			const bool is_direct_base = has_direct_lvalue && lvalue_info->kind == LValueInfo::Kind::Direct;
 			const bool has_zero_offset = has_direct_lvalue && lvalue_info->offset == 0;
 			if (!is_direct_base || !has_zero_offset) {
+				// A Kind::Indirect lvalue with a StringHandle base arises when the array
+				// expression is a reference-to-struct variable (e.g. `const T& cd = d`).
+				// The identifier visitor emits a Dereference and records the reference
+				// variable name as the Indirect base.  For calling the conversion operator
+				// we need `this = value stored in cd` (= &d), NOT the dereferenced struct
+				// value.  Route through the StringHandle path so that emitAddressOf is
+				// called on the reference variable name: since the IRConverter marks
+				// reference variable slots in indirect_stack_info_, handleAddressOf will
+				// use emitMovFromFrame (loading the stored pointer) rather than
+				// emitLeaFromFrame (taking the address of the reference slot itself).
+				if (lvalue_info.has_value() &&
+					lvalue_info->kind == LValueInfo::Kind::ReferenceDeref &&
+					lvalue_info->offset == 0) {
+					if (const auto* base_name = std::get_if<StringHandle>(&lvalue_info->base)) {
+						source_value = *base_name;
+					}
+				}
 				break;
 			}
 			if (const auto* base_name = std::get_if<StringHandle>(&lvalue_info->base)) {
