@@ -1066,15 +1066,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 									? global_symbol_table_->lookup_all(decl_node.identifier_token().value())
 									: symbol_table.lookup_all(decl_node.identifier_token().value());
 
-		// Also try looking up in gSymbolTable directly for comparison
-		extern SymbolTable gSymbolTable;
-		auto gSymbolTable_overloads = gSymbolTable.lookup_all(decl_node.identifier_token().value());
-
 		// Find the matching overload by comparing the DeclarationNode address
 		// This works because the call expression holds a reference to the specific
 		// DeclarationNode that was selected by overload resolution
-		FLASH_LOG_FORMAT(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}",
-						 lookup_name_view, scoped_overloads.size(), gSymbolTable_overloads.size());
+		FLASH_LOG_FORMAT(Codegen, Debug, "Looking for function: {}, all_overloads size: {}",
+						 lookup_name_view, scoped_overloads.size());
 		for (const auto& overload : scoped_overloads) {
 			const FunctionDeclarationNode* overload_func_decl = nullptr;
 			if (overload.is<FunctionDeclarationNode>()) {
@@ -1145,7 +1141,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// resolved-target paths already populate `matched_func_decl` for
 		// precomputed-mangled call sites (including consteval enforcement,
 		// C++20 [dcl.consteval]), so this fallback has been removed.
-	(void)gSymbolTable_overloads;
 
 		// Audit 2026-04-27: the "current-struct + base-class member by name"
 		// codegen recovery and the "qualified static member by struct iteration"
