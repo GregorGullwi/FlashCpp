@@ -907,6 +907,7 @@ ParseResult Parser::parse_template_declaration() {
 				// Use the shared capture helper to skip cv-qualifiers, optional `typename`,
 				// and optional global `::` prefix, then parse the (possibly qualified) name
 				// and any `<template-args>`.
+				SaveHandle after_target_type_pos = save_token_position();
 				restore_token_position(target_type_start_pos);
 				if (parseDeferredAliasTargetTemplateId(
 						target_template_name,
@@ -925,6 +926,10 @@ ParseResult Parser::parse_template_declaration() {
 							}
 						}
 					}
+					discard_saved_token(after_target_type_pos);
+				} else {
+					restore_token_position(after_target_type_pos);
+					discard_saved_token(after_target_type_pos);
 				}
 
 				// Note: We already consumed the tokens, so type_spec still points to the unresolved type

@@ -435,6 +435,10 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	if (!resolved_member_source) {
 		return nullptr;
 	}
+	if (resolved_member_source->is_incomplete_instantiation_ ||
+		resolved_member_source->isDependentPlaceholder()) {
+		return nullptr;
+	}
 	throw InternalError("Instantiated member alias target should resolve before alias copy");
 }
 
