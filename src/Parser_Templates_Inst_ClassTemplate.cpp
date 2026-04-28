@@ -1442,6 +1442,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return substituteTemplateParameters(default_node, params, toInlineTemplateArgs(current_args));
 	};
 
+	auto collectTemplateParamNames = [](const auto& params) {
+		std::vector<std::string_view> names;
+		names.reserve(params.size());
+		for (const auto& param_node : params) {
+			if (!param_node.template is<TemplateParameterNode>()) {
+				continue;
+			}
+			names.push_back(param_node.template as<TemplateParameterNode>().name());
+		}
+		return names;
+	};
+
 	auto tryAppendEvaluatedTemplateValue = [&](std::vector<TemplateTypeArg>& out_args,
 											   const ASTNode& expr_node,
 											   std::string_view log_context) -> bool {
@@ -1920,10 +1932,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					if (filled_args_for_pattern_match.size() == size_before) {
-						tryAppendEvaluatedTemplateValue(
-							filled_args_for_pattern_match,
-							expr_source,
-							"pattern-match non-type default");
+						std::vector<std::string_view> primary_param_names = collectTemplateParamNames(primary_params);
+						if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
+								default_node,
+								primary_params,
+								std::span<const TemplateTypeArg>(
+									filled_args_for_pattern_match.data(),
+									filled_args_for_pattern_match.size()),
+								std::span<const std::string_view>(
+									primary_param_names.data(),
+									primary_param_names.size()));
+							evaluated_default.has_value()) {
+							filled_args_for_pattern_match.push_back(*evaluated_default);
+						}
 					}
 
 					if (filled_args_for_pattern_match.size() == size_before) {
@@ -4043,12 +4064,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
-			// NonType fallback: if no handler above pushed a value, try ConstExprEvaluator
+			// NonType fallback: if no handler above pushed a value, retry through the shared
+			// template-default substitution/evaluation helper so ConstExpr sees the instantiated
+			// template bindings instead of a context-free expression.
 			if (filled_template_args.size() == size_before) {
-				tryAppendEvaluatedTemplateValue(
-					filled_template_args,
-					substituted_default_node,
-					"non-type default");
+				std::vector<std::string_view> template_param_names = collectTemplateParamNames(template_params);
+				if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
+						default_node,
+						template_params,
+						std::span<const TemplateTypeArg>(
+							filled_template_args.data(),
+							filled_template_args.size()),
+						std::span<const std::string_view>(
+							template_param_names.data(),
+							template_param_names.size()));
+					evaluated_default.has_value()) {
+					filled_template_args.push_back(*evaluated_default);
+				}
 			}
 		}
 

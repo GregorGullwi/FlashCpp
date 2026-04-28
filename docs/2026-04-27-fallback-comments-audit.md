@@ -243,8 +243,10 @@ The initial audit above was architectural. Several template-instantiation fallba
     - Conclusion: the broad invalid-`TypeIndex` dependency signal is removed from this site. Remaining producers, if any, should now surface as invariant failures rather than being silently accepted as dependent.
 
 4. `src\Parser_Templates_Inst_ClassTemplate.cpp` — non-type default evaluation fallback via `tryAppendEvaluatedTemplateValue(...)`
-   - Probe result: replacing it with a hard error broke `tests\test_expr_subst_noexcept_wrap_ret0.cpp`, `tests\test_template_spec_outofline_default_arg_ret42.cpp`, and `tests\test_template_spec_outofline_default_arg_namespaced_ret42.cpp`.
-   - Conclusion: this fallback is active in real default-argument instantiation paths and still covers NTTP defaults that the specialized handlers do not resolve.
+    - Probe result: replacing it with a hard error broke `tests\test_expr_subst_noexcept_wrap_ret0.cpp`, `tests\test_template_spec_outofline_default_arg_ret42.cpp`, and `tests\test_template_spec_outofline_default_arg_namespaced_ret42.cpp`.
+    - Follow-up root fix: class-template default filling now routes the final NTTP evaluation step through the shared `substituteAndEvaluateNonTypeDefault(...)` helper, so `ConstExpr` sees the instantiated template bindings instead of a context-free expression. This covers the previous residuals including `noexcept(true)` and substituted `sizeof(T) + 38` defaults.
+    - Validation: the documented residual NTTP-default cluster and the full Windows suite passed after the change.
+    - Conclusion: the old local `tryAppendEvaluatedTemplateValue(...)` fallback is removed from class-template default filling. Remaining default-argument fallback traffic is the outer unresolved-default catch-all, not a missing evaluation context for ordinary NTTP expressions.
 
 5. `src\Parser_Templates_Inst_ClassTemplate.cpp` — variable-template constexpr evaluation fallback
    - Probe result: replacing it with a hard error broke `tests\test_variable_template_nttp_base_class_ret0.cpp`.
@@ -329,6 +331,7 @@ The audit is now backed by direct suite evidence for several representative temp
 - the unknown-member-function copy fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was dead in the current corpus and has now been removed;
 - the `Parser_Templates_Substitution.cpp` direct unqualified type-lookup step is required ordinary lookup, so the misleading fallback wording has been removed even though the behavior stays;
 - multiple dependent-type/deduction fallback paths are definitely active;
+- class-template NTTP defaults now use the shared instantiated substitution/evaluation helper instead of the old context-free evaluator fallback;
 - the `Parser_Templates_Params.cpp` invalid-placeholder dependency branch has been narrowed to explicit speculative-parse rejection, canonical current-template-parameter materialization, and invariant failure for any remaining active-template producer;
 - lazy static-member late rebinding/dependency/evaluation now runs as the shared post-substitution normalization tail for all substituted lazy static initializers, with dependency discovery using the shared AST traversal helper;
 - lazy static-member instantiation now preserves declaration AST plus initializer source position on `StructStaticMember` and replays the initializer under instantiated template scope before using the residual AST-substitution branch;

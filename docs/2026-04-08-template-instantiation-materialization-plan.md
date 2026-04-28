@@ -110,6 +110,10 @@ Active fallback evidence from the 2026-04-27 audit:
   `TypeSpecifierNode`s for deferred-base and dependent-member cases;
 - unresolved template defaults still need catch-all handling for template
   template defaults and some NTTP defaults;
+- class-template NTTP defaults now use the shared
+  `substituteAndEvaluateNonTypeDefault(...)` path for final substituted
+  evaluation, so ordinary `noexcept(...)` / `sizeof(T)`-style defaults no longer
+  depend on a local context-free ConstExpr fallback;
 - `type_index == 0` dependent-placeholder handling has been narrowed in
   template-argument classification: ordinary comparison speculation now fails
   the tentative template-argument parse, known current template parameters are
