@@ -1157,6 +1157,12 @@ public:
 	bool is_materialized() const { return struct_body_state_tag_ == StructBodyStateTag::Materialized; }
 	bool is_failed_substitution() const { return struct_body_state_tag_ == StructBodyStateTag::FailedSubstitution; }
 
+	// Returns true when a cached ShapeOnly instantiation must be upgraded to a full
+	// materialized instantiation for the current request.
+	bool needs_shape_only_upgrade(bool current_wants_full) const {
+		return current_wants_full && struct_body_state_tag_ == StructBodyStateTag::ShapeOnly;
+	}
+
 	// True when a full instantiation should still be performed (i.e. the struct
 	// has not yet been fully committed or fatally failed).
 	bool needs_body_materialization() const {

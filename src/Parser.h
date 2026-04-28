@@ -2123,27 +2123,6 @@ public:	// Public methods for template instantiation
 
 private:	 // Resume private methods
 
-	// Returns true when a cached instantiation result needs to be upgraded from ShapeOnly to a
-	// full (Materialized) instantiation.
-	//
-	// A cache entry needs a ShapeOnly upgrade when:
-	//   - cached_node is a StructDeclarationNode, AND
-	//   - that node is currently tagged is_shape_only(), AND
-	//   - current_wants_full is true (i.e. the active mode is NOT ShapeOnly).
-	//
-	// This is the single authoritative test used at all four cache-check sites inside
-	// try_instantiate_class_template.  It replaces both the old cached_shape_only_needs_upgrade
-	// lambda and the equivalent inline check in the TemplateRegistry early-exit block.
-	static bool cachedInstNeedsShapeOnlyUpgrade(const ASTNode* cached_node, bool current_wants_full) {
-		if (!current_wants_full) {
-			return false;
-		}
-		if (!cached_node || !cached_node->is<StructDeclarationNode>()) {
-			return false;
-		}
-		return cached_node->as<StructDeclarationNode>().is_shape_only();
-	}
-
 
 	void register_builtin_functions();  // Register compiler builtin functions
 	ParseResult parse_block();
