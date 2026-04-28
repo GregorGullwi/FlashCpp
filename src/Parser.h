@@ -1427,7 +1427,9 @@ private:
 			}
 
 			if (arg_index >= template_args.size()) {
+				out_binding.param_args.push_back(TemplateTypeArg());
 				continue;
+			}
 			}
 
 			out_binding.param_args.push_back(template_args[arg_index]);
