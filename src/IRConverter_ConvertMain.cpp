@@ -4421,6 +4421,16 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					emitMovFromFrame(target_reg, var_offset);
 					continue;
 				}
+				// If the TempVar already holds a pointer/address (e.g. from `assign %t = %this`),
+				// use mov to load its value rather than lea to take its address again.
+				{
+					int var_offset = getStackOffsetFromTempVar(std::get<TempVar>(arg.value));
+					auto ref_info = getIndirectStackInfo(var_offset);
+					if (ref_info.has_value() && ref_info->holds_address_only) {
+						emitMovFromFrame(target_reg, var_offset);
+						continue;
+					}
+				}
 				if (!emitLoadAddressLikeArgument(target_reg, arg)) {
 					throw InternalError("Register call TempVar marked pass-by-address is not addressable");
 				}
@@ -12975,7 +12985,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			}
 			if (!found_global) {
 				FLASH_LOG(Codegen, Error, "MemberAccess missing object: ", StringTable::getStringView(object_name_handle), "\n");
-				throw InternalError("Struct object not found in scope or globals");
+				throw CompileError(std::string("Struct object '") + std::string(StringTable::getStringView(object_name_handle)) + "' not found in scope or globals");
 				return;
 			}
 		} else {
