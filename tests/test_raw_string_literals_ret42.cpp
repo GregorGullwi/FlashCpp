@@ -1,3 +1,10 @@
+constexpr const char* raw_constexpr = R"(a\nb)";
+static_assert(raw_constexpr[0] == 'a');
+static_assert(raw_constexpr[1] == '\\');
+static_assert(raw_constexpr[2] == 'n');
+static_assert(raw_constexpr[3] == 'b');
+static_assert(raw_constexpr[4] == '\0');
+
 int main() {
 	const char (&plain_size)[6] = R"(hello)";
 	const char (&delimited_size)[6] = R"tag(hello)tag";

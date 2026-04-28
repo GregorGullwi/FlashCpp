@@ -272,7 +272,7 @@ std::string_view ObjectFileWriter::add_string_literal(std::string_view str_conte
 		if (parsed_literal.has_delimited_content) {
 			string_literal_buffer_.append(parsed_literal.content);
 		} else {
-			string_literal_buffer_.append(str_content);
+			string_literal_buffer_.append(parsed_literal.normalized_token);
 		}
 	} else if (parsed_literal.has_delimited_content) {
 		// Remove quotes

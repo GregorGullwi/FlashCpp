@@ -1151,7 +1151,7 @@ std::string ElfFileWriter::processStringLiteral(std::string_view str_content) {
 		if (parsed_literal.has_delimited_content) {
 			result.append(parsed_literal.content);
 		} else {
-			result = std::string(str_content);
+			result = std::string(parsed_literal.normalized_token);
 		}
 	} else if (parsed_literal.has_delimited_content) {
 		// Remove quotes

@@ -42,17 +42,24 @@ inline ParsedStringLiteralToken parseStringLiteralToken(std::string_view token_r
 
 	if (token.front() == 'R') {
 		result.is_raw = true;
-		token.remove_prefix(1);
-		if (token.size() < 2 || token.front() != '"' || token.back() != '"') {
+		if (token.size() < 3 || token[1] != '"') {
 			return result;
 		}
 
-		token = token.substr(1, token.size() - 2);
-		const size_t open_paren = token.find('(');
-		const size_t close_paren = token.rfind(')');
-		if (open_paren == std::string_view::npos ||
-			close_paren == std::string_view::npos ||
-			close_paren <= open_paren) {
+		const size_t open_paren = token.find('(', 2);
+		if (open_paren == std::string_view::npos || token.back() != '"') {
+			return result;
+		}
+
+		const std::string_view delimiter = token.substr(2, open_paren - 2);
+		const size_t closing_marker_size = delimiter.size() + 2; // )delim"
+		if (token.size() < open_paren + 1 + closing_marker_size) {
+			return result;
+		}
+
+		const size_t close_paren = token.size() - closing_marker_size;
+		if (token[close_paren] != ')' ||
+			token.substr(close_paren + 1, delimiter.size()) != delimiter) {
 			return result;
 		}
 

@@ -753,9 +753,10 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// (e.g. constexpr const char* s = "Hi"; static_assert(s[0] == 'H');).
 	if (const auto* str_literal = std::get_if<StringLiteralNode>(&expr)) {
 		auto parsed_literal = FlashCpp::parseStringLiteralToken(str_literal->value());
+		const bool process_escapes = !parsed_literal.is_raw;
 		std::string_view str_content =
 			parsed_literal.is_raw && !parsed_literal.has_delimited_content
-			? str_literal->value()
+			? parsed_literal.normalized_token
 			: parsed_literal.content;
 		// Build an is_array result whose elements are the individual characters.
 		// The null terminator is appended so that str[n] == '\0' comparisons work.
@@ -764,7 +765,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 		result.is_array = true;
 		for (size_t si = 0; si < str_content.size(); ++si) {
 			char c = str_content[si];
-			if (c == '\\' && si + 1 < str_content.size()) {
+			if (process_escapes && c == '\\' && si + 1 < str_content.size()) {
 				// Match the same escape-handling logic as IrGenerator_Stmt_Decl.cpp.
 				switch (str_content[si + 1]) {
 				case 'n':
