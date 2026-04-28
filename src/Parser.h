@@ -1280,6 +1280,10 @@ private:
 		const std::vector<ASTNode>& template_params,
 		const OuterTemplateBinding* outer_binding,
 		InlineVector<TemplateTypeArg, 4>& template_args);
+	void appendOuterBindingSubstitutionInputs(
+		const OuterTemplateBinding& outer_binding,
+		InlineVector<ASTNode, 4>& out_params,
+		InlineVector<TemplateTypeArg, 4>& out_args);
 	ASTNode substituteNonTypeDefaultExpression(
 		const ASTNode& default_node,
 		const std::vector<ASTNode>& template_params,
@@ -1369,6 +1373,67 @@ private:
 
 			out_param_names.push_back(template_params[i].as<TemplateParameterNode>().nameHandle());
 			out_args.push_back(template_args[i]);
+		}
+	}
+	template <typename ArgContainer>
+	void collectOuterTemplateBinding(
+		const InlineVector<ASTNode, 4>& template_params,
+		const ArgContainer& template_args,
+		OuterTemplateBinding& out_binding) const {
+		out_binding.param_names.clear();
+		out_binding.param_args.clear();
+		out_binding.params.clear();
+		out_binding.all_args.clear();
+		out_binding.param_names.reserve(template_params.size());
+		out_binding.param_args.reserve(template_params.size());
+		out_binding.params.reserve(template_params.size());
+		out_binding.all_args.reserve(template_args.size());
+
+		size_t arg_index = 0;
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) {
+				continue;
+			}
+
+			const auto& tparam = template_params[i].as<TemplateParameterNode>();
+			out_binding.param_names.push_back(tparam.nameHandle());
+			out_binding.params.push_back(template_params[i]);
+
+			if (tparam.is_variadic()) {
+				size_t remaining_args = arg_index < template_args.size()
+										 ? template_args.size() - arg_index
+										 : 0;
+				size_t required_after = countRequiredTemplateArgsAfter<
+					InlineVector<ASTNode, 4>,
+					ArgContainer>(template_params, i + 1);
+				size_t pack_size = remaining_args > required_after
+									 ? remaining_args - required_after
+									 : 0;
+				// Maintain the 1:1 invariant between param_names/params and
+				// param_args that legacy consumers (e.g. the fallback path in
+				// appendOuterBindingSubstitutionInputs) rely on. For an empty
+				// pack, push a placeholder TemplateTypeArg so indices stay
+				// aligned with the variadic parameter entry above.
+				if (pack_size > 0) {
+					out_binding.param_args.push_back(template_args[arg_index]);
+				} else {
+					out_binding.param_args.push_back(TemplateTypeArg());
+				}
+				for (size_t pack_index = 0; pack_index < pack_size && (arg_index + pack_index) < template_args.size(); ++pack_index) {
+					out_binding.all_args.push_back(template_args[arg_index + pack_index]);
+				}
+				arg_index += pack_size;
+				continue;
+			}
+
+			if (arg_index >= template_args.size()) {
+				out_binding.param_args.push_back(TemplateTypeArg());
+				continue;
+			}
+
+			out_binding.param_args.push_back(template_args[arg_index]);
+			out_binding.all_args.push_back(template_args[arg_index]);
+			++arg_index;
 		}
 	}
 	template <typename NodeT, typename ArgContainer>

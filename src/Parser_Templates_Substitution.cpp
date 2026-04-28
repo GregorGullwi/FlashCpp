@@ -9,6 +9,12 @@
 
 namespace {
 
+struct NamedPackBinding {
+	bool found = false;
+	size_t count = 0;
+	std::optional<std::vector<TemplateTypeArg>> template_args;
+};
+
 size_t getSubstitutedTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 	if (arg.pointer_depth > 0 ||
 		arg.category() == TypeCategory::FunctionPointer ||
@@ -317,6 +323,48 @@ ASTNode Parser::substituteTemplateParameters(
 	};
 	auto exactPackSizeLookup = [this](std::string_view pack_name) {
 		return get_template_param_pack_size(pack_name);
+	};
+	auto resolveNamedPackBinding = [&](std::string_view pack_name) {
+		NamedPackBinding binding;
+
+		if (auto exact_size = exactPackSizeLookup(pack_name)) {
+			binding.found = true;
+			binding.count = *exact_size;
+			if (auto pack_args = extractNamedTemplateArgumentPack(
+					template_params,
+					template_args,
+					pack_name,
+					exactPackSizeLookup)) {
+				binding.template_args = std::move(*pack_args);
+				binding.count = binding.template_args->size();
+			}
+			return binding;
+		}
+
+		if (auto pack_args = extractNamedTemplateArgumentPack(
+				template_params,
+				template_args,
+				pack_name,
+				exactPackSizeLookup)) {
+			binding.found = true;
+			binding.count = pack_args->size();
+			binding.template_args = std::move(*pack_args);
+			return binding;
+		}
+
+		if (auto function_pack_size = get_pack_size(pack_name)) {
+			binding.found = true;
+			binding.count = *function_pack_size;
+			return binding;
+		}
+
+		size_t symbol_table_pack_size = count_pack_elements(pack_name);
+		if (symbol_table_pack_size > 0) {
+			binding.found = true;
+			binding.count = symbol_table_pack_size;
+		}
+
+		return binding;
 	};
 	auto substituteWithExpressionSubstitutor = [&](const ASTNode& substituted_call_node) -> ASTNode {
 		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
@@ -664,18 +712,14 @@ ASTNode Parser::substituteTemplateParameters(
 
 				size_t num_pack_elements = 0;
 				std::string_view func_pack_name;
-				std::optional<std::vector<TemplateTypeArg>> primary_pack_args;
 				if (variadic_param_idx != SIZE_MAX) {
-					primary_pack_args = extractNamedTemplateArgumentPack(
-						template_params,
-						template_args,
-						template_params[variadic_param_idx].as<TemplateParameterNode>().name(),
-						exactPackSizeLookup);
-				}
-				if (primary_pack_args.has_value()) {
-					num_pack_elements = primary_pack_args->size();
-				} else if (variadic_param_idx != SIZE_MAX && template_args.size() >= non_variadic_count) {
-					num_pack_elements = template_args.size() - non_variadic_count;
+					NamedPackBinding primary_pack_binding = resolveNamedPackBinding(
+						template_params[variadic_param_idx].as<TemplateParameterNode>().name());
+					if (primary_pack_binding.found) {
+						num_pack_elements = primary_pack_binding.count;
+					} else if (template_args.size() >= non_variadic_count) {
+						num_pack_elements = template_args.size() - non_variadic_count;
+					}
 				}
 				if (!pack_param_info_.empty()) {
 					func_pack_name = pack_param_info_[0].original_name;
@@ -727,10 +771,10 @@ ASTNode Parser::substituteTemplateParameters(
 								// Determine this pack's size from template_param_pack_sizes_ if available;
 								// fall back to num_pack_elements (correct for single-pack functions).
 								size_t pack_size = num_pack_elements;
-								if (auto pack_args = extractNamedTemplateArgumentPack(template_params, template_args, tparam.name(), exactPackSizeLookup)) {
-									pack_size = pack_args->size();
-								} else if (auto sz = get_template_param_pack_size(tparam.name())) {
-									pack_size = *sz;
+								if (NamedPackBinding pack_binding = resolveNamedPackBinding(
+										tparam.name());
+									pack_binding.found) {
+									pack_size = pack_binding.count;
 								}
 								if (template_arg_index + i < template_args.size()) {
 									// Create a non-variadic version of this parameter for single substitution
@@ -760,87 +804,82 @@ ASTNode Parser::substituteTemplateParameters(
 			} else {
 				// Simple pack name case: pack_name refers to a function parameter pack (like "args")
 				// or a non-type template parameter pack (like "Bs" in (Bs && ...))
-				size_t num_pack_elements = count_pack_elements(fold.pack_name());
+				NamedPackBinding pack_binding = resolveNamedPackBinding(fold.pack_name());
+				size_t num_pack_elements = pack_binding.found ? pack_binding.count : 0;
+				std::optional<size_t> pack_param_idx;
+				for (size_t p = 0; p < template_params.size(); ++p) {
+					if (template_params[p].is<TemplateParameterNode>()) {
+						const auto& tparam = template_params[p].as<TemplateParameterNode>();
+						if (tparam.is_variadic() && tparam.name() == fold.pack_name()) {
+							pack_param_idx = p;
+						}
+					}
+				}
 
 				FLASH_LOG(Templates, Debug, "Fold expansion: pack_name='", fold.pack_name(), "' num_pack_elements=", num_pack_elements);
 
-				if (num_pack_elements == 0) {
-					// Fallback: check template_params/template_args for non-type parameter packs
-					// This handles patterns like template<unsigned... args> constexpr unsigned f() { return (args | ...); }
-					std::optional<size_t> pack_param_idx;
-					for (size_t p = 0; p < template_params.size(); ++p) {
-						if (template_params[p].is<TemplateParameterNode>()) {
-							const auto& tparam = template_params[p].as<TemplateParameterNode>();
-							if (tparam.is_variadic() && tparam.name() == fold.pack_name()) {
-								pack_param_idx = p;
+				if (pack_param_idx.has_value()) {
+					size_t pack_size = pack_binding.found ? pack_binding.count : 0;
+
+					// Check if all pack elements are values (non-type parameters)
+					bool all_values = true;
+					std::vector<int64_t> pack_int_values;
+					if (pack_binding.template_args.has_value()) {
+						for (const auto& pack_arg : *pack_binding.template_args) {
+							if (pack_arg.is_value) {
+								pack_int_values.push_back(pack_arg.value);
+							} else {
+								all_values = false;
+								break;
 							}
 						}
+					} else {
+						all_values = false;
 					}
 
-					if (pack_param_idx.has_value()) {
-						auto pack_args = extractNamedTemplateArgumentPack(template_params, template_args, fold.pack_name(), exactPackSizeLookup);
-						size_t pack_size = pack_args.has_value() ? pack_args->size() : 0;
-
-						// Check if all pack elements are values (non-type parameters)
-						bool all_values = true;
-						std::vector<int64_t> pack_int_values;
-						if (pack_args.has_value()) {
-							for (const auto& pack_arg : *pack_args) {
-								if (pack_arg.is_value) {
-									pack_int_values.push_back(pack_arg.value);
-								} else {
-									all_values = false;
-									break;
-								}
-							}
-						} else {
-							all_values = false;
-						}
-
-						if (all_values && !pack_int_values.empty()) {
-							// Direct evaluation for non-type parameter pack folds
-							auto fold_result = ConstExpr::evaluate_fold_expression(fold.op(), pack_int_values);
-							if (fold_result.has_value()) {
-								std::string_view op = fold.op();
-								if (op == "&&" || op == "||") {
-									Token bool_token(Token::Type::Keyword, *fold_result ? "true"sv : "false"sv, 0, 0, 0);
-									return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, *fold_result != 0));
-								} else {
-									// Determine the result type from the variadic parameter's declared type
-									// e.g., template<unsigned... args> -> TypeCategory::UnsignedInt, 32 bits
-									TypeCategory result_type = TypeCategory::Int;
-									int result_size_bits = 32;
-									if (pack_param_idx.has_value()) {
-										const auto& tparam = template_params[*pack_param_idx].as<TemplateParameterNode>();
-										if (tparam.has_type()) {
-											const TypeSpecifierNode& param_type_spec = tparam.type_specifier_node();
-											result_type = param_type_spec.type();
-											result_size_bits = get_type_size_bits(result_type);
-										}
-									}
-									std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*fold_result)).commit();
-									Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-									return emplace_node<ExpressionNode>(NumericLiteralNode(
-										num_token, static_cast<unsigned long long>(*fold_result), result_type, TypeQualifier::None, result_size_bits));
-								}
-							}
-						} else if (pack_size == 0) {
-							// Empty pack - return identity value per C++17
+					if (all_values && !pack_int_values.empty()) {
+						// Direct evaluation for non-type parameter pack folds
+						auto fold_result = ConstExpr::evaluate_fold_expression(fold.op(), pack_int_values);
+						if (fold_result.has_value()) {
 							std::string_view op = fold.op();
-							if (op == "&&") {
-								Token bool_token(Token::Type::Keyword, "true"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
-								return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, true));
-							} else if (op == "||") {
-								Token bool_token(Token::Type::Keyword, "false"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
-								return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, false));
+							if (op == "&&" || op == "||") {
+								Token bool_token(Token::Type::Keyword, *fold_result ? "true"sv : "false"sv, 0, 0, 0);
+								return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, *fold_result != 0));
+							} else {
+								// Determine the result type from the variadic parameter's declared type
+								// e.g., template<unsigned... args> -> TypeCategory::UnsignedInt, 32 bits
+								TypeCategory result_type = TypeCategory::Int;
+								int result_size_bits = 32;
+								if (pack_param_idx.has_value()) {
+									const auto& tparam = template_params[*pack_param_idx].as<TemplateParameterNode>();
+									if (tparam.has_type()) {
+										const TypeSpecifierNode& param_type_spec = tparam.type_specifier_node();
+										result_type = param_type_spec.type();
+										result_size_bits = get_type_size_bits(result_type);
+									}
+								}
+								std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*fold_result)).commit();
+								Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+								return emplace_node<ExpressionNode>(NumericLiteralNode(
+									num_token, static_cast<unsigned long long>(*fold_result), result_type, TypeQualifier::None, result_size_bits));
 							}
 						}
+					} else if (pack_size == 0) {
+						// Empty pack - return identity value per C++17
+						std::string_view op = fold.op();
+						if (op == "&&") {
+							Token bool_token(Token::Type::Keyword, "true"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+							return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, true));
+						} else if (op == "||") {
+							Token bool_token(Token::Type::Keyword, "false"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+							return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, false));
+						}
 					}
+				}
 
-					if (num_pack_elements == 0) {
-						FLASH_LOG(Templates, Warning, "Fold expression pack '", fold.pack_name(), "' has no elements");
-						return node;
-					}
+				if (num_pack_elements == 0) {
+					FLASH_LOG(Templates, Warning, "Fold expression pack '", fold.pack_name(), "' has no elements");
+					return node;
 				}
 
 				// Create identifier nodes for each pack element: pack_name_0, pack_name_1, etc.
@@ -912,65 +951,9 @@ ASTNode Parser::substituteTemplateParameters(
 			std::string_view pack_name = sizeof_pack.pack_name();
 			FLASH_LOG(Templates, Debug, "*** SizeofPackNode handler entered for pack: '", pack_name, "'");
 
-			// Count pack elements using the helper function (works when symbol table scope is active)
-			size_t num_pack_elements = count_pack_elements(pack_name);
-
-			// Fallback: if count_pack_elements returns 0 (scope may have been exited),
-			// try to calculate from template_params/template_args by finding the variadic parameter
-			bool found_variadic = false;
-			if (num_pack_elements == 0) {
-				// First, try the per-pack sizes recorded by try_instantiate_template_explicit.
-				// This is the authoritative source when multiple variadic packs are present:
-				// the naive "template_args.size() - non_variadic_count" formula below
-				// overcounts by attributing ALL remaining args to whichever pack is found first.
-				if (auto exact_size = get_template_param_pack_size(pack_name)) {
-					found_variadic = true;
-					num_pack_elements = *exact_size;
-				}
-			}
-			if (num_pack_elements == 0 && !found_variadic) {
-				if (auto exact_pack_args = extractNamedTemplateArgumentPack(template_params, template_args, pack_name, exactPackSizeLookup)) {
-					found_variadic = true;
-					num_pack_elements = exact_pack_args->size();
-				}
-			}
-			if (num_pack_elements == 0 && !found_variadic) {
-				// The pack_name is the function parameter name (e.g., "rest")
-				// We need to find the corresponding variadic template parameter (e.g., "Rest")
-				// The mapping: function param type uses the template param name
-				// IMPORTANT: Only match the variadic parameter whose name matches pack_name.
-				// Without this check, a member function template with its own variadic params
-				// (e.g., Args...) would incorrectly match when sizeof... asks about the class
-				// template's pack (e.g., Elements...).
-				// NOTE: We guard with !found_variadic so an authoritative empty pack (size=0
-				// from get_template_param_pack_size) does not fall through to this naive
-				// formula, which overcounts when multiple packs are present.
-				size_t non_variadic_count = 0;
-				for (size_t i = 0; i < template_params.size(); ++i) {
-					if (template_params[i].is<TemplateParameterNode>()) {
-						const auto& tparam = template_params[i].as<TemplateParameterNode>();
-						if (tparam.is_variadic() && tparam.name() == pack_name) {
-							found_variadic = true;
-						} else if (!tparam.is_variadic()) {
-							non_variadic_count++;
-						}
-					}
-				}
-				if (found_variadic && template_args.size() >= non_variadic_count) {
-					num_pack_elements = template_args.size() - non_variadic_count;
-				}
-			} else if (num_pack_elements > 0) {
-				found_variadic = true; // count_pack_elements or get_template_param_pack_size found it
-			}
-
-			// If no variadic parameter was found, check pack_param_info_ as well
-			if (!found_variadic) {
-				auto pack_size = get_pack_size(pack_name);
-				if (pack_size.has_value()) {
-					found_variadic = true;
-					num_pack_elements = *pack_size;
-				}
-			}
+			NamedPackBinding pack_binding = resolveNamedPackBinding(pack_name);
+			size_t num_pack_elements = pack_binding.found ? pack_binding.count : 0;
+			bool found_variadic = pack_binding.found;
 
 			// If pack name not found, check if it's a known template parameter from an enclosing
 			// class template context (e.g., sizeof...(_Elements) in a member function of tuple<_Elements...>).

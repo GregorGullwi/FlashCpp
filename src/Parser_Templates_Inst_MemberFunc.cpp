@@ -75,36 +75,9 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 
 	InlineVector<ASTNode, 4> combined_template_params;
 	InlineVector<TemplateTypeArg, 4> combined_template_args;
-	combined_template_params.reserve(outer_binding->param_names.size() + template_params.size());
-	combined_template_args.reserve(outer_binding->param_args.size() + current_template_args.size());
-	if (outer_binding->param_names.size() != outer_binding->param_args.size()) {
-		throw InternalError("Outer template binding parameter state is inconsistent");
-	}
-
-	for (size_t i = 0; i < outer_binding->param_names.size(); ++i) {
-		StringHandle outer_name = outer_binding->param_names[i];
-		const TemplateTypeArg& outer_arg = outer_binding->param_args[i];
-		Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_name), 0, 0, 0);
-		if (outer_arg.is_value) {
-			auto outer_type_node = emplace_node<TypeSpecifierNode>(
-				outer_arg.type_index.withCategory(outer_arg.typeEnum()),
-				get_type_size_bits(outer_arg.typeEnum()),
-				outer_token,
-				CVQualifier::None,
-				ReferenceQualifier::None);
-			combined_template_params.push_back(
-				emplace_node<TemplateParameterNode>(outer_name, outer_type_node.as<TypeSpecifierNode>(), outer_token));
-		} else if (outer_arg.is_template_template_arg) {
-			combined_template_params.push_back(
-				emplace_node<TemplateParameterNode>(outer_name, std::vector<ASTNode>{}, outer_token));
-		} else {
-			auto outer_param = emplace_node<TemplateParameterNode>(outer_name, outer_token);
-			outer_param.as<TemplateParameterNode>().set_registered_type_index(
-				outer_arg.type_index.withCategory(outer_arg.typeEnum()));
-			combined_template_params.push_back(outer_param);
-		}
-		combined_template_args.push_back(outer_arg);
-	}
+	combined_template_params.reserve((outer_binding->params.empty() ? outer_binding->param_names.size() : outer_binding->params.size()) + template_params.size());
+	combined_template_args.reserve((outer_binding->all_args.empty() ? outer_binding->param_args.size() : outer_binding->all_args.size()) + current_template_args.size());
+	appendOuterBindingSubstitutionInputs(*outer_binding, combined_template_params, combined_template_args);
 
 	for (const auto& template_param_node : template_params) {
 		combined_template_params.push_back(template_param_node);
@@ -817,6 +790,50 @@ static TemplateParameterNode cloneNonVariadicTemplateParam(const TemplateParamet
 	return clone;
 }
 
+void Parser::appendOuterBindingSubstitutionInputs(
+	const OuterTemplateBinding& outer_binding,
+	InlineVector<ASTNode, 4>& out_params,
+	InlineVector<TemplateTypeArg, 4>& out_args) {
+	if (!outer_binding.params.empty()) {
+		for (const auto& outer_param : outer_binding.params) {
+			out_params.push_back(outer_param);
+		}
+		for (const auto& outer_arg : outer_binding.all_args) {
+			out_args.push_back(outer_arg);
+		}
+		return;
+	}
+
+	if (outer_binding.param_names.size() != outer_binding.param_args.size()) {
+		throw InternalError("Outer template binding parameter state is inconsistent");
+	}
+
+	for (size_t i = 0; i < outer_binding.param_names.size(); ++i) {
+		StringHandle outer_name = outer_binding.param_names[i];
+		const TemplateTypeArg& outer_arg = outer_binding.param_args[i];
+		Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_name), 0, 0, 0);
+		if (outer_arg.is_value) {
+			auto outer_type_node = emplace_node<TypeSpecifierNode>(
+				outer_arg.type_index.withCategory(outer_arg.typeEnum()),
+				get_type_size_bits(outer_arg.typeEnum()),
+				outer_token,
+				CVQualifier::None,
+				ReferenceQualifier::None);
+			out_params.push_back(
+				emplace_node<TemplateParameterNode>(outer_name, outer_type_node.as<TypeSpecifierNode>(), outer_token));
+		} else if (outer_arg.is_template_template_arg) {
+			out_params.push_back(
+				emplace_node<TemplateParameterNode>(outer_name, std::vector<ASTNode>{}, outer_token));
+		} else {
+			auto outer_param = emplace_node<TemplateParameterNode>(outer_name, outer_token);
+			outer_param.as<TemplateParameterNode>().set_registered_type_index(
+				outer_arg.type_index.withCategory(outer_arg.typeEnum()));
+			out_params.push_back(outer_param);
+		}
+		out_args.push_back(outer_arg);
+	}
+}
+
 bool Parser::buildSubstitutionForPackElement(
 	StringHandle pack_param_name,
 	size_t pack_element_offset,
@@ -1244,6 +1261,27 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			}
 		}
 	}
+
+	// Populate template_param_pack_sizes_ so substituteTemplateParameters can resolve
+	// sizeof...(Pack) correctly for member function templates, including unnamed
+	// function parameter packs where pack_param_info_ cannot help. Saved/restored
+	// around both the body reparse path and the direct AST-substitution fallback so
+	// nested instantiations do not observe stale pack metadata.
+	auto saved_template_pack_sizes = std::move(template_param_pack_sizes_);
+	ScopeGuard restore_template_pack_sizes([&]() {
+		template_param_pack_sizes_ = std::move(saved_template_pack_sizes);
+	});
+	template_param_pack_sizes_.clear();
+	for (size_t pi = 0; pi < template_params.size(); ++pi) {
+		if (!template_params[pi].is<TemplateParameterNode>()) {
+			continue;
+		}
+		const auto& tparam = template_params[pi].as<TemplateParameterNode>();
+		if (tparam.is_variadic() && template_param_arg_starts[pi] != SIZE_MAX) {
+			template_param_pack_sizes_.emplace_back(tparam.nameHandle(), template_param_arg_counts[pi]);
+		}
+	}
+
 	auto getPackParameterName = [&](const TypeSpecifierNode& type_spec,
 								   StringHandle& primary_pack_name,
 								   std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names) {
@@ -1545,22 +1583,10 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					*block_result.node(),
 					template_params,
 					template_args);
-				if (outer_binding && !outer_binding->param_names.empty()) {
+				if (outer_binding && (!outer_binding->params.empty() || !outer_binding->param_names.empty())) {
 					InlineVector<ASTNode, 4> outer_params;
 					InlineVector<TemplateTypeArg, 4> outer_args;
-					for (size_t i = 0;
-						 i < outer_binding->param_names.size() &&
-						 i < outer_binding->param_args.size();
-						 ++i) {
-						Token outer_param_token(
-							Token::Type::Identifier,
-							StringTable::getStringView(outer_binding->param_names[i]),
-							0, 0, 0);
-						outer_params.push_back(emplace_node<TemplateParameterNode>(
-							outer_binding->param_names[i],
-							outer_param_token));
-						outer_args.push_back(outer_binding->param_args[i]);
-					}
+					appendOuterBindingSubstitutionInputs(*outer_binding, outer_params, outer_args);
 					substituted_body = substituteTemplateParameters(
 						substituted_body,
 						outer_params,

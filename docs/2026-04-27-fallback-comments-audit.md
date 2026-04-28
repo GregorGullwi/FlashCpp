@@ -228,9 +228,11 @@ The initial audit above was architectural. Several template-instantiation fallba
 ### Proven active in the current corpus
 
 1. `src\Parser_Templates_Inst_ClassTemplate.cpp` — unresolved template-default catch-all
-   - Previous behavior: if no handler resolved a default template argument, the code pushed a placeholder (`void` for type params, `0` for non-type params).
-   - Probe result: replacing it with a hard error broke `tests\test_template_template_default_ret42.cpp`.
-   - Conclusion: this fallback is still active and cannot be removed safely until the default-argument substitution gap is fixed at the root.
+    - Previous behavior: if no handler resolved a default template argument, the code pushed a placeholder (`void` for type params, `0` for non-type params).
+    - Probe result: replacing it with a hard error broke `tests\test_template_template_default_ret42.cpp`.
+    - Follow-up narrowing: class-template template-template defaults now produce canonical `TemplateTypeArg::makeTemplate(...)` values, and `substitute_template_parameter(...)` materializes template-template placeholders such as `C<T>` through the bound concrete template before layout/codegen sees them. The catch-all now hard-fails unresolved template-template defaults instead of silently pushing `0`.
+    - Validation: the strengthened `tests\test_template_template_default_ret42.cpp` now instantiates both unqualified and namespace-qualified default templates as member object types, and the focused template-template cluster passed after the change.
+    - Conclusion: the catch-all no longer covers template-template defaults. It remains active for unresolved type defaults and some non-type defaults until those default-argument substitution gaps are fixed at the root.
 
 2. `src\Parser_Templates_Inst_ClassTemplate.cpp` — unresolved class-template type argument falls back to using the original `TypeSpecifierNode` as-is
    - Probe result: replacing this with a hard error broke deferred-base and pack-expansion cases including `tests\test_nttp_base_class_substitution_ret0.cpp`, `tests\test_pack_expansion_base_class_ret0.cpp`, `tests\test_ratio_negative_lazy_member_ret0.cpp`, and `tests\test_type_traits_dependent_member_nttp_ret42.cpp`.
@@ -254,9 +256,9 @@ The initial audit above was architectural. Several template-instantiation fallba
 
 6. `src\Parser_Templates_Substitution.cpp` — fold-expression non-type parameter-pack fallback
     - Probe result: replacing the path that reconstructs fold-pack values from `template_params`/`template_args` with a hard error broke `tests\test_fold_nontype_ret42.cpp`.
-    - Follow-up narrowing: fold substitution now uses a shared named-pack extractor to recover the exact `TemplateTypeArg` slice for a variadic template parameter, reusing authoritative per-pack sizes when available and only falling back to the old remaining-args formula for single-pack cases. This removes the duplicated ad hoc pack-slice reconstruction in the fold handlers.
+    - Follow-up narrowing: fold substitution now uses a shared named-pack binding helper to recover exact `TemplateTypeArg` slices when available, reuse authoritative per-pack sizes for both template-parameter and function-parameter packs, and only fall back to older single-pack reconstruction rules when no better metadata exists. This removes the duplicated ad hoc pack-slice/count logic in the fold handlers.
     - Validation: `tests\test_fold_nontype_ret42.cpp` and the focused pack reconstruction cluster passed after the change.
-    - Conclusion: fold substitution still depends on retained pack metadata, but the recovery is narrower and centralized instead of recomputing pack slices independently at each fold site.
+    - Conclusion: fold substitution still depends on retained pack metadata, but the recovery is narrower and centralized instead of recomputing pack slices or counts independently at each fold site.
 
 7. `src\Parser_Templates_Substitution.cpp` — `sizeof...` pack-size recovery via `pack_param_info_`
    - Probe result: replacing the `get_pack_size(pack_name)` rescue with a hard error broke `tests\test_explicit_template_pack_sizeof_param_name_ret0.cpp`.
@@ -265,9 +267,9 @@ The initial audit above was architectural. Several template-instantiation fallba
 8. `src\Parser_Templates_Substitution.cpp` — `sizeof...` template-argument reconstruction fallback
    - Probe result: replacing the `get_template_param_pack_size(pack_name)` branch with a hard error broke `tests\test_explicit_multi_dep_pack_ret0.cpp`, `tests\test_explicit_nontype_pack_not_in_func_sig_ret0.cpp`, `tests\test_explicit_template_pack_fill_c_varargs_ret0.cpp`, `tests\test_explicit_template_pack_sizeof_param_name_ret0.cpp`, `tests\test_explicit_type_pack_not_in_func_sig_ret0.cpp`, `tests\test_explicit_variadic_pack_deduction_ret0.cpp`, `tests\test_multi_dep_pack_ret0.cpp`, `tests\test_multi_pack_sizeof_deduction_ret0.cpp`, `tests\test_multi_type_pack_implicit_deduction_ret0.cpp`, `tests\test_nested_multi_dep_pack_ret0.cpp`, and `tests\test_pack_nonpack_mixed_explicit_deduction_ret0.cpp`.
    - Probe result: replacing the later path that derives the pack size from `template_params`/`template_args` with a hard error broke `tests\test_explicit_template_pack_sizeof_param_name_ret0.cpp`, `tests\test_method_on_temporary_ret0.cpp`, `tests\test_pack_expansion_in_template_body_ret0.cpp`, `tests\test_sizeof_pack_class_template_ret0.cpp`, `tests\test_sizeof_pack_name_match_ret0.cpp`, `tests\test_sizeof_pack_namespace_member_template_ret0.cpp`, `tests\test_template_sizeof_pack_ret3.cpp`, and `tests\test_var_template_variadic_primary_ret42.cpp`.
-    - Follow-up narrowing: `sizeof...` now shares the same named-pack extractor as fold substitution, so exact template-argument pack slices are recovered centrally before the older remaining-args reconstruction path is considered.
+    - Follow-up narrowing: `sizeof...` now shares the same named-pack binding helper as fold substitution, so exact template-argument pack slices, authoritative per-pack sizes, and function-pack metadata are consulted centrally before any older reconstruction path is considered.
     - Validation: `tests\test_explicit_template_pack_sizeof_param_name_ret0.cpp`, `tests\test_explicit_multi_dep_pack_ret0.cpp`, `tests\test_explicit_nontype_pack_not_in_func_sig_ret0.cpp`, `tests\test_multi_pack_sizeof_deduction_ret0.cpp`, `tests\test_var_template_variadic_primary_ret42.cpp`, and the full Windows suite passed after the change.
-    - Conclusion: `sizeof...` still depends on preserved per-pack size metadata, but the template-argument reconstruction path is narrower and no longer duplicated across handlers.
+    - Conclusion: `sizeof...` still depends on preserved pack metadata, but the count/slice recovery path is narrower and no longer duplicated across handlers.
 
 9. `src\Parser_Templates_Lazy.cpp` — lazy static-member general substitution path
     - Probe result: replacing the general ExpressionSubstitutor pass with a hard error broke a wide lazy-static-member cluster including `template_ttp_static_constexpr_member_ret0.cpp`, `test_alias_base_static_member_ret0.cpp`, `test_integral_constant_simple_ret30.cpp`, `test_ratio_lazy_static_member_ret0.cpp`, `test_template_static_member_initializer_scalar_brace_ret42.cpp`, and `test_type_traits_dependent_member_nttp_ret42.cpp`.
@@ -342,10 +344,11 @@ The audit is now backed by direct suite evidence for several representative temp
 - class-template NTTP defaults now use the shared instantiated substitution/evaluation helper instead of the old context-free evaluator fallback;
 - the `Parser_Templates_Params.cpp` invalid-placeholder dependency branch has been narrowed to explicit speculative-parse rejection, canonical current-template-parameter materialization, and invariant failure for any remaining active-template producer;
 - deferred `decltype(...)` bases now materialize placeholder template-instantiation `TypeInfo` through the shared base-template concretization helper before class registration;
-- fold-expression and `sizeof...` substitution now share a central named-pack extractor that recovers exact bound `TemplateTypeArg` slices before falling back to older pack-size reconstruction;
+- fold-expression and `sizeof...` substitution now share a central named-pack binding helper that recovers exact bound `TemplateTypeArg` slices, authoritative per-pack sizes, and function-pack metadata before falling back to older pack-size reconstruction;
 - the primary eager instantiated static-member initializer path now relies on `substituteTemplateParameters(...)` plus the shared normalization pipeline instead of a separate hand-written rewrite block and trailing general `ExpressionSubstitutor` pass;
 - lazy static-member late rebinding/dependency/evaluation now runs as the shared post-substitution normalization tail for all substituted lazy static initializers, with dependency discovery using the shared AST traversal helper;
 - lazy static-member instantiation now preserves declaration AST plus initializer source position on `StructStaticMember` and replays the initializer under instantiated template scope before using the residual AST-substitution branch;
 - function-template declaration reparse now covers all instantiations with saved declaration source, including abbreviated/constrained auto wrappers that now preserve their declaration-start position; the return-type synthesis branch in `Parser_Templates_Inst_Deduction.cpp` remains only for no-source cases;
 - function-template instantiations without saved body positions are now split: declaration-only instantiations are accepted, but real definitions without saved body positions hard-fail instead of copying body pointers;
+- class-template template-template defaults now materialize as canonical template-template arguments, and unresolved template-template defaults hard-fail instead of falling through to the placeholder/zero catch-all;
 - the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes should still be assumed active until probed or root-fixed individually.

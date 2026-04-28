@@ -54,6 +54,8 @@ struct OutOfLineMemberFunction {
 struct OuterTemplateBinding {
 	InlineVector<StringHandle, 4> param_names; // Outer param names (e.g., ["T"])
 	InlineVector<TemplateTypeArg, 4> param_args; // Concrete types (e.g., [int])
+	InlineVector<ASTNode, 4> params; // Original outer template params, preserving variadic/kind metadata
+	InlineVector<TemplateTypeArg, 4> all_args; // Full flattened outer arg list, including pack expansions
 };
 
 // Out-of-line template static member variable definition

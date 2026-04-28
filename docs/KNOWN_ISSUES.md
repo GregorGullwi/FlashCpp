@@ -28,4 +28,3 @@ Integer arrays (`int`, `short`, `long`, etc.) are unaffected.
 handle 64-bit (double) or 32-bit (float) element types correctly — likely using
 the wrong load size or IR type for floating-point elements in the array access
 code path in `IRConverter_ConvertMain.cpp` / `IrGenerator_MemberAccess.cpp`.
-
