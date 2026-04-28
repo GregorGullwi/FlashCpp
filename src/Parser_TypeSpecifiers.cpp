@@ -2461,7 +2461,7 @@ ParseResult Parser::parse_decltype_specifier() {
 	// Consume 'decltype' or '__typeof__' keyword
 	Token decltype_token = advance();
 	std::string_view keyword = decltype_token.value();
-	auto makeDependentDecltypeType = [&]() -> ASTNode {
+	auto makeDependentDecltypeType = [&](const Token& source_token) -> ASTNode {
 		StringHandle dependent_name = StringTable::getOrInternStringHandle(
 			StringBuilder()
 				.append("__dependent_decltype_")
@@ -2476,7 +2476,7 @@ ParseResult Parser::parse_decltype_specifier() {
 		return emplace_node<TypeSpecifierNode>(
 			type_info.type_index_.withCategory(TypeCategory::UserDefined),
 			0,
-			decltype_token,
+			source_token,
 			CVQualifier::None,
 			ReferenceQualifier::None);
 	};
@@ -2532,7 +2532,7 @@ ParseResult Parser::parse_decltype_specifier() {
 			if (!consume(")"_tok)) {
 				return ParseResult::error("Expected ')' after decltype expression", current_token_);
 			}
-			return saved_position.success(makeDependentDecltypeType());
+			return saved_position.success(makeDependentDecltypeType(decltype_token));
 		}
 		discard_saved_token(expr_start_pos);
 		return expr_result;
@@ -2565,7 +2565,7 @@ ParseResult Parser::parse_decltype_specifier() {
 					advance();
 				}
 				if (consume(")"_tok)) {
-					return saved_position.success(makeDependentDecltypeType());
+					return saved_position.success(makeDependentDecltypeType(decltype_token));
 				}
 			}
 			discard_saved_token(comma_expr_pos);
@@ -2591,7 +2591,7 @@ ParseResult Parser::parse_decltype_specifier() {
 		// set parsing_template_depth_ > 0 but will have template parameter names.
 		if (isTemplateParameterTrackingActive()) {
 			FLASH_LOG(Templates, Debug, "Creating dependent type for decltype expression in template context");
-			return saved_position.success(makeDependentDecltypeType());
+			return saved_position.success(makeDependentDecltypeType(decltype_token));
 		}
 		return ParseResult::error("Could not deduce type from decltype expression", decltype_token);
 	}
