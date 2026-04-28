@@ -34,10 +34,8 @@ static bool isConversionOperatorForTargetType(
 		return false;
 	}
 	const FunctionDeclarationNode& function_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-	const ASTNode& return_type_node = function_decl.decl_node().type_node();
-	if (!return_type_node.is<TypeSpecifierNode>())
-		return false;
-	const CanonicalTypeId return_type_id = sema->canonicalizeTypeForImplicitConversion(return_type_node.as<TypeSpecifierNode>());
+	const CanonicalTypeId return_type_id =
+		sema->canonicalizeTypeForImplicitConversion(function_decl.decl_node().type_specifier_node());
 	return return_type_id && sema->typeContext().get(return_type_id) == target_desc;
 }
 
@@ -46,8 +44,12 @@ static const StructMemberFunction* findConversionOperatorForSubscriptPointerTarg
 	const StructTypeInfo* struct_info,
 	const CanonicalTypeDesc& target_desc,
 	bool source_is_const,
-	bool prefer_const) {
+	bool prefer_const,
+	int depth) {
+	static constexpr int kMaxInheritanceDepth = 8;
 	if (!struct_info)
+		return nullptr;
+	if (depth > kMaxInheritanceDepth)
 		return nullptr;
 
 	for (const auto& member_func : struct_info->member_functions) {
@@ -61,10 +63,12 @@ static const StructMemberFunction* findConversionOperatorForSubscriptPointerTarg
 	}
 
 	for (const auto& base_spec : struct_info->base_classes) {
+		if (base_spec.is_deferred)
+			continue;
 		if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
 			if (const StructTypeInfo* base_struct_info = base_type_info->getStructInfo()) {
 				if (const StructMemberFunction* result = findConversionOperatorForSubscriptPointerTarget(
-						sema, base_struct_info, target_desc, source_is_const, prefer_const)) {
+						sema, base_struct_info, target_desc, source_is_const, prefer_const, depth + 1)) {
 					return result;
 				}
 			}
@@ -80,15 +84,15 @@ static const StructMemberFunction* findConversionOperatorForSubscriptPointerTarg
 	const CanonicalTypeDesc& target_desc,
 	bool source_is_const) {
 	if (source_is_const) {
-		return findConversionOperatorForSubscriptPointerTarget(sema, struct_info, target_desc, source_is_const, true);
+		return findConversionOperatorForSubscriptPointerTarget(sema, struct_info, target_desc, source_is_const, true, 0);
 	}
 	// Non-const objects prefer non-const conversion operators, but may call const
 	// conversion operators if no non-const overload matches the target type.
 	if (const StructMemberFunction* non_const = findConversionOperatorForSubscriptPointerTarget(
-			sema, struct_info, target_desc, source_is_const, false)) {
+			sema, struct_info, target_desc, source_is_const, false, 0)) {
 		return non_const;
 	}
-	return findConversionOperatorForSubscriptPointerTarget(sema, struct_info, target_desc, source_is_const, true);
+	return findConversionOperatorForSubscriptPointerTarget(sema, struct_info, target_desc, source_is_const, true, 0);
 }
 
 static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNode& type_spec) {
