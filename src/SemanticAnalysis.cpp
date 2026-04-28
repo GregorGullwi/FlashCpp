@@ -254,6 +254,7 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 	const CanonicalTypeDesc& from_desc,
 	const CanonicalTypeDesc* optional_target_desc,
 	SemanticAnalysis* sema,
+	bool prefer_const,
 	int depth) {
 	// Mirrors the existing conversion-operator inheritance recursion guard:
 	// deep or cyclic inheritance graphs stop probing and report no match.
@@ -273,6 +274,8 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 		if (!mf.is_conversion_operator())
 			continue;
 		if (source_is_const && !mf.is_const())
+			continue;
+		if (!source_is_const && (mf.is_const() != prefer_const))
 			continue;
 		if (!mf.function_decl.is<FunctionDeclarationNode>())
 			continue;
@@ -314,11 +317,27 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 		CanonicalTypeDesc base_from_desc;
 		base_from_desc.type_index = base.type_index;
 		base_from_desc.base_cv = from_desc.base_cv;
-		if (auto result = findStructPointerConversionOperator(base_from_desc, optional_target_desc, sema, depth + 1))
+		if (auto result = findStructPointerConversionOperator(
+				base_from_desc, optional_target_desc, sema, prefer_const, depth + 1))
 			return result;
 	}
 
 	return std::nullopt;
+}
+
+std::optional<PointerConversionInfo> findStructPointerConversionOperator(
+	const CanonicalTypeDesc& from_desc,
+	const CanonicalTypeDesc* optional_target_desc,
+	SemanticAnalysis* sema,
+	int depth) {
+	if (!sema)
+		return std::nullopt;
+	if (hasCVQualifier(from_desc.base_cv, CVQualifier::Const)) {
+		return findStructPointerConversionOperator(from_desc, optional_target_desc, sema, true, depth);
+	}
+	if (auto non_const = findStructPointerConversionOperator(from_desc, optional_target_desc, sema, false, depth))
+		return non_const;
+	return findStructPointerConversionOperator(from_desc, optional_target_desc, sema, true, depth);
 }
 
 const FunctionDeclarationNode* getCallTargetFunctionCandidate(const ASTNode& overload) {
@@ -2510,15 +2529,14 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				tryResolveSubscriptOperator(e);
 				if (!getResolvedOpSubscript(&e)) {
-					normalizeBuiltinSubscriptOperands(e);
+					const std::optional<CanonicalTypeId> pointer_conversion_target_type_id =
+						normalizeBuiltinSubscriptOperands(e);
 					const CanonicalTypeId array_type_id = inferExpressionType(e.array_expr());
-					if (array_type_id) {
-						const CanonicalTypeDesc& array_desc = type_context_.get(array_type_id);
-						if (array_desc.category() == TypeCategory::Struct) {
-							if (auto pointer_conversion = findStructPointerConversionOperator(array_desc, nullptr, this, 0)) {
-								tryAnnotateConversion(e.array_expr(), pointer_conversion->target_type_id, array_type_id);
-							}
-						}
+					if (array_type_id && pointer_conversion_target_type_id) {
+						tryAnnotateConversion(
+							e.array_expr(),
+							*pointer_conversion_target_type_id,
+							array_type_id);
 					}
 				}
 				// If sema resolved this subscript to operator[], annotate the index
@@ -3105,17 +3123,24 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const Ar
 	return it != op_subscript_table_.end() ? it->second : nullptr;
 }
 
-void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node) {
+std::optional<CanonicalTypeId> SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node) {
 	const CanonicalTypeId first_operand_type_id = inferExpressionType(subscript_node.array_expr());
 	const CanonicalTypeId second_operand_type_id = inferExpressionType(subscript_node.index_expr());
 	if (!first_operand_type_id || !second_operand_type_id)
-		return;
+		return std::nullopt;
 
-	const auto is_array_or_pointer = [this](const CanonicalTypeDesc& desc) -> bool {
+	const auto get_struct_pointer_conversion_target_type = [this](const CanonicalTypeDesc& desc) -> std::optional<CanonicalTypeId> {
+		if (desc.category() != TypeCategory::Struct)
+			return std::nullopt;
+		if (auto pointer_conversion = findStructPointerConversionOperator(desc, nullptr, this, 0)) {
+			return pointer_conversion->target_type_id;
+		}
+		return std::nullopt;
+	};
+	const auto is_array_or_pointer = [&](const CanonicalTypeDesc& desc) -> bool {
 		if (!desc.array_dimensions.empty() || !desc.pointer_levels.empty())
 			return true;
-		return desc.category() == TypeCategory::Struct &&
-			   findStructPointerConversionOperator(desc, nullptr, this, 0).has_value();
+		return get_struct_pointer_conversion_target_type(desc).has_value();
 	};
 	const auto is_subscript_index = [](const CanonicalTypeDesc& desc) -> bool {
 		return desc.pointer_levels.empty() &&
@@ -3126,6 +3151,8 @@ void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& sub
 	const CanonicalTypeDesc& first_operand_desc = type_context_.get(first_operand_type_id);
 	const CanonicalTypeDesc& second_operand_desc = type_context_.get(second_operand_type_id);
 	if (is_subscript_index(first_operand_desc) && is_array_or_pointer(second_operand_desc)) {
+		const std::optional<CanonicalTypeId> pointer_conversion_target_type_id =
+			get_struct_pointer_conversion_target_type(second_operand_desc);
 		// ArraySubscriptNode stores operands as (array, index). For built-in
 		// reversed subscripting such as 0[array], normalize to the semantic
 		// order mandated by C++20 built-in subscripting before downstream use.
@@ -3133,7 +3160,12 @@ void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& sub
 			subscript_node.index_expr(),
 			subscript_node.array_expr(),
 			subscript_node.bracket_token());
+		return pointer_conversion_target_type_id;
 	}
+	if (is_subscript_index(second_operand_desc)) {
+		return get_struct_pointer_conversion_target_type(first_operand_desc);
+	}
+	return std::nullopt;
 }
 
 const CallArgReferenceBindingInfo* SemanticAnalysis::getCallRefBinding(const void* key, size_t arg_index) const {
