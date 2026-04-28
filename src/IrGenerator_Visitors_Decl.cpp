@@ -1111,8 +1111,12 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	} else {
 		// User-defined function body
 		// Enter a scope for the function body to track destructors
+		FLASH_LOG_FORMAT(Codegen, Debug, "visitFunctionDeclarationNode: processing user-defined body for '{}'", func_decl.identifier_token().value());
 		enterScope();
 		const BlockNode& block = node.get_definition().value().as<BlockNode>();
+		size_t stmt_count = 0;
+		block.get_statements().visit([&](const ASTNode&) { ++stmt_count; });
+		FLASH_LOG_FORMAT(Codegen, Debug, "  body statement count: {}", stmt_count);
 		// Pre-scan: populate label_scope_depth_map_ with the scope depth of every
 		// label in this function body so that goto can emit the correct scope-exit
 		// destructors before the branch (forward and backward gotos both need this).
