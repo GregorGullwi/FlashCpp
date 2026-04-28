@@ -983,6 +983,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	FlashCpp::TemplateInstantiationKey cache_key =
 		FlashCpp::makeInstantiationKey(template_name_handle, template_args);
 	bool current_wants_full = (template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly);
+	auto getCachedStructDecl = [](const ASTNode* cached_node) -> const StructDeclarationNode* {
+		if (!cached_node || !cached_node->is<StructDeclarationNode>()) {
+			return nullptr;
+		}
+		return &cached_node->as<StructDeclarationNode>();
+	};
 	bool can_use_raw_cache_key = true;
 	if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 		template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
@@ -1000,11 +1006,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// struct.  This is safe because ShapeOnly entries are always committed to
 			// the cache, so a concurrent ShapeOnly path will still hit them.
 			const ASTNode* cached_node = cached.has_value() ? &cached.value() : nullptr;
-			bool cached_is_shape_only = cached_node && cached_node->is<StructDeclarationNode>() &&
-				cached_node->as<StructDeclarationNode>().is_shape_only();
-			bool cached_failed_substitution = cached_node && cached_node->is<StructDeclarationNode>() &&
-				cached_node->as<StructDeclarationNode>().is_failed_substitution();
-			if (cachedInstNeedsShapeOnlyUpgrade(cached_node, current_wants_full)) {
+			const StructDeclarationNode* cached_struct = getCachedStructDecl(cached_node);
+			bool cached_is_shape_only = cached_struct && cached_struct->is_shape_only();
+			bool cached_failed_substitution = cached_struct && cached_struct->is_failed_substitution();
+			if (current_wants_full && cached_is_shape_only) {
 				FLASH_LOG_FORMAT(Templates, Debug,
 					"Cache hit for '{}' is ShapeOnly but current mode is full — re-entering instantiation",
 					template_name);
@@ -1692,7 +1697,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	if (existing_type != getTypesByNameMap().end()) {
 		auto cached_reg = gTemplateRegistry.getInstantiation(cache_key);
 		const ASTNode* cached_node = cached_reg.has_value() ? &cached_reg.value() : nullptr;
-		if (cachedInstNeedsShapeOnlyUpgrade(cached_node, current_wants_full)) {
+		const StructDeclarationNode* cached_struct = getCachedStructDecl(cached_node);
+		if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
 			FLASH_LOG_FORMAT(Templates, Debug,
 				"Type-map hit for '{}' is backed by a ShapeOnly instantiation — re-entering full instantiation",
 				StringTable::getStringView(instantiated_name));
@@ -1972,7 +1978,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			auto cached_reg = gTemplateRegistry.getInstantiation(cache_key);
 			const ASTNode* cached_node = cached_reg.has_value() ? &cached_reg.value() : nullptr;
-			if (cachedInstNeedsShapeOnlyUpgrade(cached_node, current_wants_full)) {
+			const StructDeclarationNode* cached_struct = getCachedStructDecl(cached_node);
+			if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
 				FLASH_LOG(Templates, Debug, "Found ShapeOnly instantiation with filled-in defaults; re-entering full instantiation");
 			} else {
 				FLASH_LOG(Templates, Debug, "Found existing instantiation with filled-in defaults");
@@ -4240,7 +4247,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	if (existing_type != getTypesByNameMap().end()) {
 		auto cached_reg = gTemplateRegistry.getInstantiation(cache_key);
 		const ASTNode* cached_node = cached_reg.has_value() ? &cached_reg.value() : nullptr;
-		if (cachedInstNeedsShapeOnlyUpgrade(cached_node, current_wants_full)) {
+		const StructDeclarationNode* cached_struct = getCachedStructDecl(cached_node);
+		if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
 			FLASH_LOG(Templates, Debug, "Type already exists from ShapeOnly instantiation, continuing to upgrade");
 		} else {
 			FLASH_LOG(Templates, Debug, "Type already exists, returning nullopt");
