@@ -77,7 +77,6 @@ void AstToIr::visitNamespaceAliasNode(const NamespaceAliasNode& node) {
 }
 
 void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
-	FLASH_LOG_FORMAT(Codegen, Debug, "visitReturnStatementNode: has_expr={}", node.expression().has_value());
 	if (node.expression()) {
 		const auto& expr_opt = node.expression();
 
@@ -172,7 +171,6 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 
 			// Original handling for ExpressionNode
 		assert(expr_opt->is<ExpressionNode>());
-		FLASH_LOG_FORMAT(Codegen, Debug, "visitReturnStatementNode: expr_index={}", expr_opt->as<ExpressionNode>().index());
 
 			// Set flag if we should use RVO (returning struct by value with hidden return param)
 		if (current_function_has_hidden_return_param_) {

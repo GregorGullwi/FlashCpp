@@ -3549,7 +3549,23 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// functions entirely through its own type infrastructure.
 				const CanonicalTypeId object_type_id = inferExpressionType(e.object());
 				if (!object_type_id) {
-					return {};
+					// Fallback for cases where the object type can't be directly inferred
+					// (e.g. `this.member` inside a member function — `this` has no local type
+					// binding, but tryResolveMemberAccessInfo handles it via member_context_stack_).
+					// This is required so that array members like `return data;` inside
+					// `operator int*()` produce the correct array type (int[3]) which sema can
+					// annotate with ArrayToPointer, letting the existing codegen decay path fire.
+					ResolvedMemberAccessInfo fallback_info;
+					if (!tryResolveMemberAccessInfo(e, fallback_info))
+						return {};
+					const TypeInfo* owner_ti = tryGetTypeInfo(fallback_info.owner_type_index);
+					if (!owner_ti)
+						return {};
+					const StructTypeInfo* owner_si = owner_ti->getStructInfo();
+					if (!owner_si || fallback_info.member_index >= owner_si->members.size())
+						return {};
+					return type_context_.intern(canonicalTypeDescFromStructMember(
+						owner_si->members[fallback_info.member_index], CVQualifier::None));
 				}
 				const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
 				if (object_desc.category() != TypeCategory::Struct &&

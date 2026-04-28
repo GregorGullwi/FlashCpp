@@ -583,7 +583,6 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 	};
 
 		// If binding is NonStaticMember, handle member access directly
-	FLASH_LOG_FORMAT(Codegen, Debug, "generateIdentifierIr: '{}' binding={}", StringTable::getStringView(var_name_str), static_cast<int>(identifierNode.binding()));
 	if (identifierNode.binding() == IdentifierBinding::NonStaticMember) {
 		if (current_lambda_context_.isActive() && current_lambda_context_.has_this_pointer &&
 			current_lambda_context_.enclosing_struct_type_index.is_valid()) {
@@ -625,7 +624,6 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				TypeIndex struct_type_index = type_it->second->type_index_;
 				if (auto result = resolveImplicitMember(struct_type_index, var_name_str)) {
 					const StructMember* member = result->member;
-					FLASH_LOG_FORMAT(Codegen, Debug, "NonStaticMember '{}': is_array={}, size={}", StringTable::getStringView(var_name_str), member->is_array, member->size);
 					if (member->is_array) {
 						return emitArrayMemberDecay(
 							member,

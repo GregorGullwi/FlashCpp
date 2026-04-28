@@ -1761,30 +1761,6 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 								PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 	}
 
-	// Array member access: perform array-to-pointer decay (C++ [conv.array] p1).
-	// When an array data member is used in a value (Load) context — e.g. `return data;`
-	// inside `operator int*()` — it must decay to a pointer to its first element instead
-	// of being loaded as a raw N-bit aggregate.  Only StringHandle bases are supported
-	// here because the backend AddressOfMemberOp accepts a named variable as the base;
-	// TempVar bases reach this path only for temporary objects where the array is not
-	// independently addressable and are left to fall through to the generic load.
-	if (member->is_array && std::holds_alternative<StringHandle>(effective_base)) {
-		TempVar addr_temp = var_counter.next();
-		AddressOfMemberOp addr_op;
-		addr_op.result = addr_temp;
-		addr_op.base_object = std::get<StringHandle>(effective_base);
-		addr_op.member_offset = did_unwrap ? accumulated_offset : static_cast<int>(member_result.adjusted_offset);
-		addr_op.member_type_index = member->type_index.withCategory(member->memberType());
-		addr_op.member_size_in_bits = member_size_bits;
-		ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_op), Token()));
-		return makeExprResult(
-			member->type_index.withCategory(member->memberType()),
-			SizeInBits{POINTER_SIZE_BITS},
-			IrOperand{addr_temp},
-			PointerDepth{static_cast<int>(member->pointer_depth) + 1},
-			ValueStorage::ContainsData);
-	}
-
 	// Add the member access instruction (Load context - default)
 	ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
