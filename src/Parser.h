@@ -1430,7 +1430,6 @@ private:
 				out_binding.param_args.push_back(TemplateTypeArg());
 				continue;
 			}
-			}
 
 			out_binding.param_args.push_back(template_args[arg_index]);
 			out_binding.all_args.push_back(template_args[arg_index]);
