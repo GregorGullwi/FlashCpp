@@ -112,6 +112,10 @@ Active fallback evidence from the 2026-04-27 audit:
   template-instantiation `TypeInfo` through
   `materializeDeferredBasePlaceholderIfNeeded(...)` before registering the
   base, so that branch no longer preserves placeholder base results as final;
+- the primary eager instantiated static-member initializer path now runs
+  `substituteTemplateParameters(...)` first and then shares the existing static
+  initializer normalization pipeline, instead of maintaining a separate manual
+  rewrite ladder plus a trailing catch-all `ExpressionSubstitutor` pass;
 - unresolved template defaults still need catch-all handling for template
   template defaults and some NTTP defaults;
 - class-template NTTP defaults now use the shared
