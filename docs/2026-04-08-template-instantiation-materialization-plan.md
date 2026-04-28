@@ -120,7 +120,10 @@ Active fallback evidence from the 2026-04-27 audit:
 - `sizeof...` still depends on preserved per-pack size metadata plus broader
   reconstruction paths after scope-local pack facts are dropped;
 - lazy static-member initialization still needs general `ExpressionSubstitutor`,
-  call-target rebinding, and dependency pre-instantiation passes;
+  call-target rebinding, and dependency pre-instantiation passes, but the late
+  rebinding/dependency/evaluation work is now an unconditional post-substitution
+  normalization step for every lazy static initializer rather than only the
+  catch-all substitution branch;
 - function-template return-type substitution and body reparse are improved but
   still have active fallback paths around abbreviated/auto forms,
   function-try-blocks, SFINAE-heavy templates, and some forward-declaration
