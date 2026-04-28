@@ -11,6 +11,7 @@
 #include "IrGenerator.h"
 #include "ConstExprEvaluator.h"
 #include "ReachableStructWalker.h"
+#include "StringLiteralTokenUtils.h"
 
 namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
@@ -50,52 +51,16 @@ void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpec
 //   \UNNNNNNNN — exactly 8 hex digits
 //   all other named escapes (\n, \t, \\, etc.) — one source char after backslash
 static size_t computeStringContentLength(std::string_view token_raw) {
-	std::string_view content = token_raw;
-	// Strip optional encoding prefix (L, u8, u, U) before the quote or R.
-	if (!content.empty() && content.front() != '"' && content.front() != 'R') {
-		size_t q = content.find('"');
-		size_t r = content.find('R');
-		// Find the first occurrence of either " or R (after stripping prefix).
-		size_t pos = std::string_view::npos;
-		if (q != std::string_view::npos && r != std::string_view::npos)
-			pos = std::min(q, r);
-		else if (q != std::string_view::npos)
-			pos = q;
-		else if (r != std::string_view::npos)
-			pos = r;
-		if (pos == std::string_view::npos)
-			return 0; // malformed token
-		content = content.substr(pos);
+	const auto parsed_literal = FlashCpp::parseStringLiteralToken(token_raw);
+	if (parsed_literal.is_raw) {
+		return parsed_literal.has_delimited_content ? parsed_literal.content.size() : 0;
 	}
 
-	// Check if this is a raw string literal (starts with R).
-	if (!content.empty() && content.front() == 'R') {
-		// Raw string: R"delim(content)delim"
-		content = content.substr(1); // Skip 'R'
-
-		// Strip enclosing double-quotes.
-		if (content.size() >= 2 && content.front() == '"' && content.back() == '"')
-			content = content.substr(1, content.size() - 2);
-
-		// Find opening ( and closing )
-		size_t open_paren = content.find('(');
-		if (open_paren == std::string_view::npos)
-			return 0; // malformed raw string
-
-		// The delimiter is between " and (, or empty if ( is immediately after "
-		size_t close_paren = content.rfind(')');
-		if (close_paren == std::string_view::npos || close_paren <= open_paren)
-			return 0; // malformed raw string
-
-		// Extract content between ( and )
-		std::string_view raw_content = content.substr(open_paren + 1, close_paren - open_paren - 1);
-		// For raw strings, no escape processing; return length as-is
-		return raw_content.size();
+	if (!parsed_literal.has_delimited_content) {
+		return 0;
 	}
 
-	// Regular string: strip enclosing double-quotes.
-	if (content.size() >= 2 && content.front() == '"' && content.back() == '"')
-		content = content.substr(1, content.size() - 2);
+	std::string_view content = parsed_literal.content;
 
 	size_t len = 0;
 	for (size_t i = 0; i < content.size(); ++i) {

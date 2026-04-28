@@ -91,6 +91,8 @@ public:
 					// Handle division operator
 					return consume_operator();
 				}
+			} else if (c == 'R' && cursor_ + 1 < source_size_ && source_[cursor_ + 1] == '"') {
+				return consume_raw_string_literal(cursor_);
 			} else if (c == 'L' && cursor_ + 1 < source_size_ && (source_[cursor_ + 1] == '\"' || source_[cursor_ + 1] == '\'')) {
 				// Wide string/character literals (L"..." or L'...')
 				size_t start = cursor_;
@@ -101,6 +103,10 @@ public:
 				} else {
 					return consume_prefixed_character_literal(start);
 				}
+			} else if (is_raw_string_prefix_at_cursor()) {
+				size_t start = cursor_;
+				consume_raw_string_prefix();
+				return consume_raw_string_literal(start);
 			} else if (std::isalpha(c) || c == '_') {
 				return consume_identifier_or_keyword();
 			} else if (std::isdigit(c)) {
@@ -556,6 +562,85 @@ private:
 		if (cursor_ < source_size_ && source_[cursor_] == '\"') {
 			++cursor_;
 			++column_;
+		}
+
+		std::string_view value = source_.substr(start, cursor_ - start);
+		return Token(Token::Type::StringLiteral, value, line_, column_,
+					 current_file_index_);
+	}
+
+	bool is_raw_string_prefix_at_cursor() const {
+		if (cursor_ >= source_size_) {
+			return false;
+		}
+		if ((source_[cursor_] == 'u' || source_[cursor_] == 'U' || source_[cursor_] == 'L') &&
+			cursor_ + 2 < source_size_ &&
+			source_[cursor_ + 1] == 'R' &&
+			source_[cursor_ + 2] == '"') {
+			return true;
+		}
+		return source_[cursor_] == 'u' &&
+			cursor_ + 3 < source_size_ &&
+			source_[cursor_ + 1] == '8' &&
+			source_[cursor_ + 2] == 'R' &&
+			source_[cursor_ + 3] == '"';
+	}
+
+	void consume_raw_string_prefix() {
+		if (source_[cursor_] == 'u' && cursor_ + 1 < source_size_ && source_[cursor_ + 1] == '8') {
+			cursor_ += 2;
+			column_ += 2;
+		} else {
+			++cursor_;
+			++column_;
+		}
+	}
+
+	Token consume_raw_string_literal(size_t start) {
+		// Assumes current cursor_ is at R in R"delim(content)delim".
+		++cursor_;
+		++column_;
+		if (cursor_ >= source_size_ || source_[cursor_] != '"') {
+			std::string_view value = source_.substr(start, cursor_ - start);
+			return Token(Token::Type::Identifier, value, line_, column_, current_file_index_);
+		}
+
+		++cursor_;
+		++column_;
+		size_t delimiter_start = cursor_;
+		while (cursor_ < source_size_ && source_[cursor_] != '(') {
+			++cursor_;
+			++column_;
+		}
+
+		if (cursor_ >= source_size_) {
+			std::string_view value = source_.substr(start, cursor_ - start);
+			return Token(Token::Type::StringLiteral, value, line_, column_, current_file_index_);
+		}
+
+		std::string_view delimiter = source_.substr(delimiter_start, cursor_ - delimiter_start);
+		++cursor_;
+		++column_;
+
+		while (cursor_ < source_size_) {
+			if (source_[cursor_] == ')' &&
+				cursor_ + delimiter.size() + 1 < source_size_ &&
+				source_.substr(cursor_ + 1, delimiter.size()) == delimiter &&
+				source_[cursor_ + 1 + delimiter.size()] == '"') {
+				cursor_ += delimiter.size() + 2;
+				column_ += delimiter.size() + 2;
+				break;
+			}
+
+			if (source_[cursor_] == '\n') {
+				++cursor_;
+				++line_;
+				column_ = 1;
+				update_file_index_from_line();
+			} else {
+				++cursor_;
+				++column_;
+			}
 		}
 
 		std::string_view value = source_.substr(start, cursor_ - start);
