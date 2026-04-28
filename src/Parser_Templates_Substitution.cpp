@@ -39,6 +39,64 @@ size_t getSubstitutedTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 	return size_in_bytes;
 }
 
+template <typename ParamContainer, typename ArgContainer, typename ExactPackSizeLookup>
+std::optional<std::vector<TemplateTypeArg>> extractNamedTemplateArgumentPack(
+	const ParamContainer& template_params,
+	const ArgContainer& template_args,
+	std::string_view pack_name,
+	ExactPackSizeLookup&& exact_pack_size_lookup) {
+	size_t total_non_variadic = 0;
+	size_t total_variadic = 0;
+	for (const auto& param_node : template_params) {
+		if (!param_node.template is<TemplateParameterNode>()) {
+			continue;
+		}
+		const auto& tparam = param_node.template as<TemplateParameterNode>();
+		if (tparam.is_variadic()) {
+			++total_variadic;
+		} else {
+			++total_non_variadic;
+		}
+	}
+
+	size_t arg_index = 0;
+	for (const auto& param_node : template_params) {
+		if (!param_node.template is<TemplateParameterNode>()) {
+			continue;
+		}
+		const auto& tparam = param_node.template as<TemplateParameterNode>();
+		if (!tparam.is_variadic()) {
+			if (arg_index >= template_args.size()) {
+				return std::nullopt;
+			}
+			++arg_index;
+			continue;
+		}
+
+		size_t pack_size = 0;
+		if (auto exact_size = exact_pack_size_lookup(tparam.name())) {
+			pack_size = *exact_size;
+		} else if (total_variadic == 1 && template_args.size() >= total_non_variadic) {
+			pack_size = template_args.size() - total_non_variadic;
+		} else {
+			return std::nullopt;
+		}
+
+		if (tparam.name() == pack_name) {
+			std::vector<TemplateTypeArg> pack_args;
+			pack_args.reserve(pack_size);
+			for (size_t i = 0; i < pack_size && (arg_index + i) < template_args.size(); ++i) {
+				pack_args.push_back(template_args[arg_index + i]);
+			}
+			return pack_args;
+		}
+
+		arg_index += pack_size;
+	}
+
+	return std::nullopt;
+}
+
 std::optional<ASTNode> tryFoldSubstitutedSizeofTypeNode(
 	const ASTNode& type_node,
 	const Token& sizeof_token) {
@@ -253,6 +311,9 @@ ASTNode Parser::substituteTemplateParameters(
 		default:
 			return "unknown";
 		}
+	};
+	auto exactPackSizeLookup = [this](std::string_view pack_name) {
+		return get_template_param_pack_size(pack_name);
 	};
 	auto substituteWithExpressionSubstitutor = [&](const ASTNode& substituted_call_node) -> ASTNode {
 		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
@@ -600,7 +661,17 @@ ASTNode Parser::substituteTemplateParameters(
 
 				size_t num_pack_elements = 0;
 				std::string_view func_pack_name;
-				if (variadic_param_idx != SIZE_MAX && template_args.size() >= non_variadic_count) {
+				std::optional<std::vector<TemplateTypeArg>> primary_pack_args;
+				if (variadic_param_idx != SIZE_MAX) {
+					primary_pack_args = extractNamedTemplateArgumentPack(
+						template_params,
+						template_args,
+						template_params[variadic_param_idx].as<TemplateParameterNode>().name(),
+						exactPackSizeLookup);
+				}
+				if (primary_pack_args.has_value()) {
+					num_pack_elements = primary_pack_args->size();
+				} else if (variadic_param_idx != SIZE_MAX && template_args.size() >= non_variadic_count) {
 					num_pack_elements = template_args.size() - non_variadic_count;
 				}
 				if (!pack_param_info_.empty()) {
@@ -653,7 +724,9 @@ ASTNode Parser::substituteTemplateParameters(
 								// Determine this pack's size from template_param_pack_sizes_ if available;
 								// fall back to num_pack_elements (correct for single-pack functions).
 								size_t pack_size = num_pack_elements;
-								if (auto sz = get_template_param_pack_size(tparam.name())) {
+								if (auto pack_args = extractNamedTemplateArgumentPack(template_params, template_args, tparam.name(), exactPackSizeLookup)) {
+									pack_size = pack_args->size();
+								} else if (auto sz = get_template_param_pack_size(tparam.name())) {
 									pack_size = *sz;
 								}
 								if (template_arg_index + i < template_args.size()) {
@@ -692,31 +765,33 @@ ASTNode Parser::substituteTemplateParameters(
 					// Fallback: check template_params/template_args for non-type parameter packs
 					// This handles patterns like template<unsigned... args> constexpr unsigned f() { return (args | ...); }
 					std::optional<size_t> pack_param_idx;
-					size_t non_variadic_count = 0;
 					for (size_t p = 0; p < template_params.size(); ++p) {
 						if (template_params[p].is<TemplateParameterNode>()) {
 							const auto& tparam = template_params[p].as<TemplateParameterNode>();
 							if (tparam.is_variadic() && tparam.name() == fold.pack_name()) {
 								pack_param_idx = p;
-							} else if (!tparam.is_variadic()) {
-								non_variadic_count++;
 							}
 						}
 					}
 
-					if (pack_param_idx.has_value() && template_args.size() >= non_variadic_count) {
-						size_t pack_size = template_args.size() - non_variadic_count;
+					if (pack_param_idx.has_value()) {
+						auto pack_args = extractNamedTemplateArgumentPack(template_params, template_args, fold.pack_name(), exactPackSizeLookup);
+						size_t pack_size = pack_args.has_value() ? pack_args->size() : 0;
 
 						// Check if all pack elements are values (non-type parameters)
 						bool all_values = true;
 						std::vector<int64_t> pack_int_values;
-						for (size_t i = non_variadic_count; i < template_args.size(); ++i) {
-							if (template_args[i].is_value) {
-								pack_int_values.push_back(template_args[i].value);
-							} else {
-								all_values = false;
-								break;
+						if (pack_args.has_value()) {
+							for (const auto& pack_arg : *pack_args) {
+								if (pack_arg.is_value) {
+									pack_int_values.push_back(pack_arg.value);
+								} else {
+									all_values = false;
+									break;
+								}
 							}
+						} else {
+							all_values = false;
 						}
 
 						if (all_values && !pack_int_values.empty()) {
@@ -848,6 +923,12 @@ ASTNode Parser::substituteTemplateParameters(
 				if (auto exact_size = get_template_param_pack_size(pack_name)) {
 					found_variadic = true;
 					num_pack_elements = *exact_size;
+				}
+			}
+			if (num_pack_elements == 0 && !found_variadic) {
+				if (auto exact_pack_args = extractNamedTemplateArgumentPack(template_params, template_args, pack_name, exactPackSizeLookup)) {
+					found_variadic = true;
+					num_pack_elements = exact_pack_args->size();
 				}
 			}
 			if (num_pack_elements == 0 && !found_variadic) {

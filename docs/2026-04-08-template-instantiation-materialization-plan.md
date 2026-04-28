@@ -124,7 +124,9 @@ Active fallback evidence from the 2026-04-27 audit:
   materialized with canonical placeholder indices, and any remaining invalid
   placeholder in an active template context is an invariant failure;
 - fold substitution for non-type parameter packs still reconstructs values from
-  `template_params` / `template_args`;
+  `template_params` / `template_args`, but that reconstruction is now centralized
+  through a shared named-pack extractor instead of duplicated ad hoc slices in
+  the fold and `sizeof...` handlers;
 - `sizeof...` still depends on preserved per-pack size metadata plus broader
   reconstruction paths after scope-local pack facts are dropped;
 - lazy static-member initialization now preserves declaration AST plus saved
