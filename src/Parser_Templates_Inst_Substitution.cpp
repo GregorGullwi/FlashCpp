@@ -1668,7 +1668,9 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				static_member.reference_qualifier,
 				static_member.pointer_depth,
 				static_member.is_array,
-				static_member.array_dimensions);
+				static_member.array_dimensions,
+				std::nullopt,
+				std::nullopt);
 		}
 	} else {
 		// Fall back to the specialization's StructTypeInfo when the AST does not

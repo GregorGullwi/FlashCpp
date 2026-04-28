@@ -144,9 +144,11 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 	// Parse the type specifier and identifier (name)
 	// This will also extract any calling convention that appears after the type
+	SaveHandle declaration_start = save_token_position();
 	FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: About to parse type_and_name, current token: ", !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 	ParseResult type_and_name_result = parse_type_and_name();
 	if (type_and_name_result.is_error()) {
+		discard_saved_token(declaration_start);
 		FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: parse_type_and_name failed: ", type_and_name_result.error_message());
 		return type_and_name_result;
 	}
@@ -160,14 +162,18 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	if (type_and_name_result.node().has_value() && type_and_name_result.node()->is<StructuredBindingNode>()) {
 		// Validate: structured bindings cannot have storage class specifiers
 		if (specs.storage_class != StorageClass::None || specs.is_thread_local) {
+			discard_saved_token(declaration_start);
 			return ParseResult::error("Structured bindings cannot have storage class specifiers (static, extern, etc.)", current_token_);
 		}
 		if (is_constexpr) {
+			discard_saved_token(declaration_start);
 			return ParseResult::error("Structured bindings cannot be constexpr", current_token_);
 		}
 		if (is_constinit) {
+			discard_saved_token(declaration_start);
 			return ParseResult::error("Structured bindings cannot be constinit", current_token_);
 		}
+		discard_saved_token(declaration_start);
 		return saved_position.success(type_and_name_result.node().value());
 	}
 
@@ -244,6 +250,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	}
 
 	if (peek() == "::"_tok) {
+		discard_saved_token(declaration_start);
 		// This is an out-of-line member function definition
 		advance();  // consume '::'
 
@@ -651,10 +658,6 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 					 std::string(current_token_.value()),
 					 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 	if (!function_definition_result.is_error()) {
-		// Successfully parsed as function - discard saved position
-		if (before_function_parse.has_value()) {
-			discard_saved_token(*before_function_parse);
-		}
 		// It was successfully parsed as a function definition
 		// Apply attribute linkage if present (calling convention already set in parse_function_declaration)
 		if (auto func_node_ptr = function_definition_result.node()) {
@@ -691,6 +694,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 						 std::string(current_token_.value()),
 						 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 		if (specs_result.is_error()) {
+			discard_saved_token(declaration_start);
 			return specs_result;
 		}
 
@@ -793,6 +797,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 					*func_node_ptr,
 					std::nullopt	 // No requires clause for abbreviated templates
 				);
+				func_decl.set_template_declaration_position(declaration_start);
 
 				// Register the template in the template registry
 				gTemplateRegistry.registerTemplate(func_name, template_func_node);
@@ -810,6 +815,9 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				if (peek() == ";"_tok) {
 					advance();  // consume ';'
 					clearCurrentTemplateParameters();
+					if (before_function_parse.has_value()) {
+						discard_saved_token(*before_function_parse);
+					}
 					return saved_position.success(template_func_node);
 				}
 
@@ -824,9 +832,18 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				}
 
 				clearCurrentTemplateParameters();
+				if (before_function_parse.has_value()) {
+					discard_saved_token(*before_function_parse);
+				}
 				return saved_position.success(template_func_node);
 			}
 		}
+
+		// Successfully parsed as a non-template function - discard saved position
+		if (before_function_parse.has_value()) {
+			discard_saved_token(*before_function_parse);
+		}
+		discard_saved_token(declaration_start);
 
 		// Insert the FunctionDeclarationNode (which contains parameter info for overload resolution)
 		// instead of just the DeclarationNode
@@ -890,6 +907,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		if (before_function_parse.has_value()) {
 			restore_token_position(*before_function_parse);
 		}
+		discard_saved_token(declaration_start);
 
 		// If the error is a semantic error (not a syntax error about expecting '('),
 		// return it directly instead of trying variable declaration parsing

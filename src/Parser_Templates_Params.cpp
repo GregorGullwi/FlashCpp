@@ -40,40 +40,29 @@ ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_
 	// template<typename T, bool = is_arithmetic<T>::value>).
 	FlashCpp::ScopedStateCopy guard_template_params(currentTemplateParamState());
 
-	// Parse first parameter
-	auto param_result = parse_template_parameter();
-	if (param_result.is_error()) {
-		return param_result;
-	}
-
-	if (param_result.node().has_value()) {
-		out_params.push_back(*param_result.node());
-		// Add this parameter's name to current_template_param_names_ so that
-		// subsequent parameters can reference it in their default values.
-		// This enables patterns like: template<typename T, bool = is_arithmetic<T>::value>
-		if (param_result.node()->is<TemplateParameterNode>()) {
-			const auto& tparam = param_result.node()->as<TemplateParameterNode>();
-			pushCurrentTemplateParamName(tparam.nameHandle());
-			FLASH_LOG(Templates, Debug, "Added template parameter '", tparam.name(),
-					  "' to current_template_param_names_ (now has ", currentTemplateParamCount(), " params)");
+	bool first_parameter = true;
+	while (first_parameter || peek() == ","_tok) {
+		if (!first_parameter) {
+			advance(); // consume ','
 		}
-	}
+		first_parameter = false;
 
-	// Parse additional parameters separated by commas
-	while (peek() == ","_tok) {
-		advance(); // consume ','
-
-		param_result = parse_template_parameter();
+		auto param_result = parse_template_parameter();
 		if (param_result.is_error()) {
 			return param_result;
 		}
 
 		if (param_result.node().has_value()) {
 			out_params.push_back(*param_result.node());
-			// Add this parameter's name too
+			// Add this parameter's name so subsequent parameters can reference it in
+			// their default values, e.g. template<typename T, bool = is_arithmetic<T>::value>.
 			if (param_result.node()->is<TemplateParameterNode>()) {
-				const auto& tparam = param_result.node()->as<TemplateParameterNode>();
+				auto& tparam = out_params.back().as<TemplateParameterNode>();
 				pushCurrentTemplateParamName(tparam.nameHandle());
+				if (tparam.kind() == TemplateParameterKind::Type ||
+					tparam.kind() == TemplateParameterKind::Template) {
+					ensureTemplateParameterTypeRegistration(tparam);
+				}
 				FLASH_LOG(Templates, Debug, "Added template parameter '", tparam.name(),
 						  "' to current_template_param_names_ (now has ", currentTemplateParamCount(), " params)");
 			}
@@ -81,6 +70,38 @@ ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_
 	}
 
 	return ParseResult::success();
+}
+
+TypeInfo& Parser::ensureTemplateParameterTypeRegistration(TemplateParameterNode& tparam) {
+	if (tparam.kind() != TemplateParameterKind::Type &&
+		tparam.kind() != TemplateParameterKind::Template) {
+		throw InternalError("Template parameter type registration requires a type-like parameter");
+	}
+
+	TypeInfo* type_info = nullptr;
+	if (tparam.registered_type_index().is_valid()) {
+		type_info = tryGetTypeInfoMut(tparam.registered_type_index());
+	}
+
+	if (type_info == nullptr) {
+		if (auto existing_it = getTypesByNameMap().find(tparam.nameHandle());
+			existing_it != getTypesByNameMap().end() &&
+			existing_it->second != nullptr &&
+			existing_it->second->isDependentPlaceholder()) {
+			type_info = existing_it->second;
+		}
+	}
+
+	if (type_info == nullptr) {
+		type_info = &add_template_param_type(
+			tparam.nameHandle(),
+			tparam.kind() == TemplateParameterKind::Template ? TypeCategory::Template : TypeCategory::UserDefined,
+			0);
+	}
+
+	type_info->placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+	tparam.set_registered_type_index(type_info->type_index_);
+	return *type_info;
 }
 
 void Parser::registerTemplateTypeParametersInScope(
@@ -91,12 +112,11 @@ void Parser::registerTemplateTypeParametersInScope(
 			continue;
 		}
 		TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-		if (tparam.kind() != TemplateParameterKind::Type) {
+		if (tparam.kind() != TemplateParameterKind::Type &&
+			tparam.kind() != TemplateParameterKind::Template) {
 			continue;
 		}
-		TypeInfo& type_info = add_template_param_type(tparam.nameHandle(), TypeCategory::UserDefined, 0);
-		type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
-		tparam.set_registered_type_index(type_info.type_index_);
+		TypeInfo& type_info = ensureTemplateParameterTypeRegistration(tparam);
 		template_scope.addParameter(&type_info);
 	}
 }

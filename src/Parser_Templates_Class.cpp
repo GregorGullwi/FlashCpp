@@ -186,6 +186,7 @@ ParseResult Parser::parse_template_declaration() {
 	// Add template parameters to the type system temporarily using RAII scope guard (Phase 6)
 	// This allows them to be used in the function body or class members
 	FlashCpp::TemplateParameterScope template_scope;
+	registerTemplateTypeParametersInScope(template_params, template_scope);
 	InlineVector<StringHandle, 4> template_param_names;
 	InlineVector<TemplateParameterKind, 4> template_param_kinds;
 	bool has_packs = false;	// Track if any parameter is a pack
@@ -199,17 +200,6 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Check if this is a parameter pack
 			has_packs |= tparam.is_variadic();
-
-			// Type parameters and Template template parameters need TypeInfo registration
-			// This allows them to be recognized during type parsing (e.g., Container<T>)
-			if (tparam.kind() == TemplateParameterKind::Type || tparam.kind() == TemplateParameterKind::Template) {
-				// Register the template parameter as a user-defined type temporarily
-				// Create a TypeInfo entry for the template parameter
-				auto& type_info = add_template_param_type(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? TypeCategory::Template : TypeCategory::UserDefined, 0); // Do we need a correct size here?
-				type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
-				tparam.set_registered_type_index(type_info.type_index_);
-				template_scope.addParameter(&type_info);	 // RAII cleanup on all return paths
-			}
 		}
 	}
 
@@ -5116,7 +5106,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 					// Check for initialization (e.g., = sizeof(T))
 					std::optional<ASTNode> init_expr_opt;
+					std::optional<SaveHandle> initializer_position;
 					if (peek() == "="_tok) {
+						initializer_position = save_token_position();
 						advance(); // consume '='
 
 						// Parse the initializer expression
@@ -5188,7 +5180,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 							ref_qual,
 							ptr_depth,
 							is_array,
-							std::move(array_dimensions));
+							std::move(array_dimensions),
+							initializer_position);
 					}
 					continue;
 				}

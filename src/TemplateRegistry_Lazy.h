@@ -395,7 +395,9 @@ struct LazyStaticMemberInfo {
 	size_t size;							   // Size in bytes
 	size_t alignment;						  // Alignment requirement
 	AccessSpecifier access;					// Access specifier
+	std::optional<ASTNode> declaration;		// Original declaration AST for replay-based substitution
 	std::optional<ASTNode> initializer;		// Original initializer (may need substitution)
+	std::optional<SaveHandle> initializer_position; // Saved lexer position at '=' or '{' for replay
 	CVQualifier cv_qualifier = CVQualifier::None; // CV qualifiers (const/volatile)
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None; // Reference qualifier (lvalue/rvalue)
 	bool is_array = false;

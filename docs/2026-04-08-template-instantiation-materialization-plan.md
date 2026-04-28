@@ -108,31 +108,51 @@ Active fallback evidence from the 2026-04-27 audit:
 
 - unresolved class-template type arguments still pass through as original
   `TypeSpecifierNode`s for deferred-base and dependent-member cases;
+- deferred `decltype(...)` base evaluation now materializes placeholder
+  template-instantiation `TypeInfo` through
+  `materializeDeferredBasePlaceholderIfNeeded(...)` before registering the
+  base, so that branch no longer preserves placeholder base results as final;
+- the primary eager instantiated static-member initializer path now runs
+  `substituteTemplateParameters(...)` first and then shares the existing static
+  initializer normalization pipeline, instead of maintaining a separate manual
+  rewrite ladder plus a trailing catch-all `ExpressionSubstitutor` pass;
 - unresolved template defaults still need catch-all handling for template
   template defaults and some NTTP defaults;
+- class-template NTTP defaults now use the shared
+  `substituteAndEvaluateNonTypeDefault(...)` path for final substituted
+  evaluation, so ordinary `noexcept(...)` / `sizeof(T)`-style defaults no longer
+  depend on a local context-free ConstExpr fallback;
 - `type_index == 0` dependent-placeholder handling has been narrowed in
   template-argument classification: ordinary comparison speculation now fails
   the tentative template-argument parse, known current template parameters are
   materialized with canonical placeholder indices, and any remaining invalid
   placeholder in an active template context is an invariant failure;
 - fold substitution for non-type parameter packs still reconstructs values from
-  `template_params` / `template_args`;
+  `template_params` / `template_args`, but that reconstruction is now centralized
+  through a shared named-pack extractor instead of duplicated ad hoc slices in
+  the fold and `sizeof...` handlers;
 - `sizeof...` still depends on preserved per-pack size metadata plus broader
   reconstruction paths after scope-local pack facts are dropped;
-- lazy static-member initialization still needs general `ExpressionSubstitutor`,
-  call-target rebinding, and dependency pre-instantiation passes, but the late
-  rebinding/dependency/evaluation work is now an unconditional post-substitution
-  normalization step for every lazy static initializer rather than only the
-  catch-all substitution branch, and dependency discovery uses the shared AST
-  traversal helper;
+- lazy static-member initialization now preserves declaration AST plus saved
+  initializer source on `StructStaticMember` and replays that source under the
+  instantiated template scope first; general `ExpressionSubstitutor`,
+  call-target rebinding, and dependency pre-instantiation still remain for
+  residual no-source / specialized-expression cases, while the late
+  rebinding/dependency/evaluation work stays as the unconditional
+  post-substitution normalization step and dependency discovery uses the shared
+  AST traversal helper;
 - function-template declaration reparse now runs whenever saved declaration
   source exists, including abbreviated/constrained forms and function-try-block
   cases; the `T*` namespace-qualified call residual was fixed by consuming the
   standard pointer/reference declarator helper during return-type reparse.
-  Signature synthesis remains only for instantiations without saved declaration
-  source. Function-template instantiations without saved body positions are now
-  split: declaration-only instantiations are accepted, but real definitions
-  without saved body positions hard-fail instead of copying body pointers.
+  Abbreviated function templates now preserve that saved declaration start when
+  the parser synthesizes the implicit template wrapper, so their instantiations
+  stay on the declaration-reparse path instead of falling back to synthesized
+  return-type reconstruction. Signature synthesis remains only for
+  instantiations without saved declaration source. Function-template
+  instantiations without saved body positions are now split: declaration-only
+  instantiations are accepted, but real definitions without saved body
+  positions hard-fail instead of copying body pointers.
 
 Removal direction: make template bindings and instantiated `TypeInfo` metadata
 authoritative at creation time, then replace name-based and positional recovery

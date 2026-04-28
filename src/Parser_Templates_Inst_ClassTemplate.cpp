@@ -1442,6 +1442,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return substituteTemplateParameters(default_node, params, toInlineTemplateArgs(current_args));
 	};
 
+	auto collectTemplateParamNames = [](const auto& params) {
+		std::vector<std::string_view> names;
+		names.reserve(params.size());
+		for (const auto& param_node : params) {
+			if (!param_node.template is<TemplateParameterNode>()) {
+				continue;
+			}
+			names.push_back(param_node.template as<TemplateParameterNode>().name());
+		}
+		return names;
+	};
+
 	auto tryAppendEvaluatedTemplateValue = [&](std::vector<TemplateTypeArg>& out_args,
 											   const ASTNode& expr_node,
 											   std::string_view log_context) -> bool {
@@ -1920,10 +1932,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					if (filled_args_for_pattern_match.size() == size_before) {
-						tryAppendEvaluatedTemplateValue(
-							filled_args_for_pattern_match,
-							expr_source,
-							"pattern-match non-type default");
+						std::vector<std::string_view> primary_param_names = collectTemplateParamNames(primary_params);
+						if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
+								default_node,
+								primary_params,
+								std::span<const TemplateTypeArg>(
+									filled_args_for_pattern_match.data(),
+									filled_args_for_pattern_match.size()),
+								std::span<const std::string_view>(
+									primary_param_names.data(),
+									primary_param_names.size()));
+							evaluated_default.has_value()) {
+							filled_args_for_pattern_match.push_back(*evaluated_default);
+						}
 					}
 
 					if (filled_args_for_pattern_match.size() == size_before) {
@@ -3062,7 +3083,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							static_member.reference_qualifier,
 							static_member.pointer_depth,
 							static_member.is_array,
-							static_member.array_dimensions);
+							static_member.array_dimensions,
+							std::nullopt,
+							std::nullopt);
 					}
 				}
 			}
@@ -3127,7 +3150,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.reference_qualifier,
 						static_member.pointer_depth,
 						static_member.is_array,
-						static_member.array_dimensions);
+						static_member.array_dimensions,
+						static_member.declaration,
+						static_member.initializer_position);
 				}
 			}
 
@@ -4043,12 +4068,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
-			// NonType fallback: if no handler above pushed a value, try ConstExprEvaluator
+			// NonType fallback: if no handler above pushed a value, retry through the shared
+			// template-default substitution/evaluation helper so ConstExpr sees the instantiated
+			// template bindings instead of a context-free expression.
 			if (filled_template_args.size() == size_before) {
-				tryAppendEvaluatedTemplateValue(
-					filled_template_args,
-					substituted_default_node,
-					"non-type default");
+				std::vector<std::string_view> template_param_names = collectTemplateParamNames(template_params);
+				if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
+						default_node,
+						template_params,
+						std::span<const TemplateTypeArg>(
+							filled_template_args.data(),
+							filled_template_args.size()),
+						std::span<const std::string_view>(
+							template_param_names.data(),
+							template_param_names.size()));
+					evaluated_default.has_value()) {
+					filled_template_args.push_back(*evaluated_default);
+				}
 			}
 		}
 
@@ -4968,6 +5004,35 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& deferred_base : class_decl.deferred_base_classes()) {
 		FLASH_LOG(Templates, Debug, "Processing deferred decltype base class");
 
+		auto try_add_deferred_base_from_type = [&](const TypeInfo* candidate_base_type) -> bool {
+			if (candidate_base_type == nullptr) {
+				return false;
+			}
+
+			candidate_base_type = materializeDeferredBasePlaceholderIfNeeded(
+				candidate_base_type,
+				template_params,
+				template_args_to_use,
+				[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+					std::string_view mutable_template_name = concrete_base_template_name;
+					return instantiate_and_register_base_template(mutable_template_name, concrete_base_args);
+				});
+
+			if (candidate_base_type == nullptr || candidate_base_type->typeEnum() != TypeCategory::Struct) {
+				return false;
+			}
+
+			std::string_view base_class_name = StringTable::getStringView(candidate_base_type->name());
+			struct_info->addBaseClass(
+				base_class_name,
+				candidate_base_type->type_index_,
+				deferred_base.access,
+				deferred_base.is_virtual);
+			FLASH_LOG(Templates, Debug, "Added deferred base class: ", base_class_name,
+					  " with type_index=", candidate_base_type->type_index_);
+			return true;
+		};
+
 		// The deferred base contains an expression that needs to be evaluated
 		// with concrete template arguments to determine the actual base class
 		if (!deferred_base.decltype_expression.is<TypeSpecifierNode>()) {
@@ -4991,11 +5056,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Look up the base class type by its type index
 				if (base_type == TypeCategory::Struct) {
 					if (const TypeInfo* base_type_info = tryGetTypeInfo(base_type_index)) {
-						std::string_view base_class_name = StringTable::getStringView(base_type_info->name());
-
-						// Add the base class to the instantiated struct
-						struct_info->addBaseClass(base_class_name, base_type_index, deferred_base.access, deferred_base.is_virtual);
-						FLASH_LOG(Templates, Debug, "Added deferred base class: ", base_class_name, " with type_index=", base_type_index);
+						if (!try_add_deferred_base_from_type(base_type_info)) {
+							FLASH_LOG(Templates, Warning, "Deferred base class type did not materialize to a concrete struct: ",
+									  StringTable::getStringView(base_type_info->name()));
+						}
 					} else {
 						FLASH_LOG(Templates, Warning, "Deferred base class type is not a struct or invalid type_index=", base_type_index);
 						FLASH_LOG(Templates, Warning, "This likely means template parameter substitution in decltype expressions is needed");
@@ -5020,11 +5084,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Look up the base class type by its type index
 			if (base_type == TypeCategory::Struct) {
 				if (const TypeInfo* base_type_info = tryGetTypeInfo(base_type_index)) {
-					std::string_view base_class_name = StringTable::getStringView(base_type_info->name());
-
-					// Add the base class to the instantiated struct
-					struct_info->addBaseClass(base_class_name, base_type_index, deferred_base.access, deferred_base.is_virtual);
-					FLASH_LOG(Templates, Debug, "Added deferred base class: ", base_class_name, " with type_index=", base_type_index);
+					if (!try_add_deferred_base_from_type(base_type_info)) {
+						FLASH_LOG(Templates, Warning, "Deferred legacy base type did not materialize to a concrete struct: ",
+								  StringTable::getStringView(base_type_info->name()));
+					}
 				} else {
 					FLASH_LOG(Templates, Warning, "Deferred base class type is not a struct or invalid type_index=", base_type_index);
 				}
@@ -5493,7 +5556,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.size = static_member.size;
 				lazy_info.alignment = static_member.alignment;
 				lazy_info.access = static_member.access;
+				lazy_info.declaration = static_member.declaration;
 				lazy_info.initializer = static_member.initializer;
+				lazy_info.initializer_position = static_member.initializer_position;
 				lazy_info.cv_qualifier = static_member.cv_qualifier;
 				lazy_info.reference_qualifier = static_member.reference_qualifier;
 				lazy_info.is_array = static_member.is_array;
@@ -5522,275 +5587,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_member.reference_qualifier,
 					static_member.pointer_depth,
 					is_array_member,
-					resolved_array_dimensions);
+					resolved_array_dimensions,
+					static_member.declaration,
+					static_member.initializer_position);
 
 				continue; // Skip the eager processing below
 			}
 
 			// Eager processing path (when lazy is disabled or not needed)
-			// Check if initializer needs substitution (e.g., fold expressions, template parameters)
-			std::optional<ASTNode> substituted_initializer = static_member.initializer;
-			if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
-				const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
-
-				// Helper to calculate pack size for substitution
-				auto calculate_pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {
-					FLASH_LOG(Templates, Debug, "Looking for pack: ", pack_name);
-					for (size_t i = 0; i < template_params.size(); ++i) {
-						const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-						FLASH_LOG(Templates, Debug, "  Checking param ", tparam.name(), " is_variadic=", tparam.is_variadic() ? "true" : "false");
-						if (tparam.name() == pack_name && tparam.is_variadic()) {
-							size_t non_variadic_count = 0;
-							for (const auto& param : template_params) {
-								if (!param.as<TemplateParameterNode>().is_variadic()) {
-									non_variadic_count++;
-								}
-							}
-							return template_args_to_use.size() - non_variadic_count;
-						}
-					}
-					return std::nullopt;
-				};
-
-				// Helper to create a numeric literal from pack size
-				auto make_pack_size_literal = [&](size_t pack_size) -> ASTNode {
-					std::string_view pack_size_str = StringBuilder().append(pack_size).commit();
-					Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
-					return emplace_node<ExpressionNode>(
-						NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), TypeCategory::Int, TypeQualifier::None, 32));
-				};
-
-				// Handle SizeofPackNode (e.g., static constexpr int value = sizeof...(Ts);)
-				if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&expr)) {
-					const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
-					if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
-						substituted_initializer = make_pack_size_literal(*pack_size);
-						FLASH_LOG(Templates, Debug, "Substituted sizeof...(", sizeof_pack.pack_name(), ") with ", *pack_size);
-					}
-				}
-				// Handle static_cast<T>(sizeof...(Ts)) patterns
-				else if (std::holds_alternative<StaticCastNode>(expr)) {
-					const StaticCastNode& cast_node = std::get<StaticCastNode>(expr);
-					if (cast_node.expr().is<ExpressionNode>()) {
-						const ExpressionNode& cast_inner = cast_node.expr().as<ExpressionNode>();
-						if (const auto* cast_sizeof_pack_ptr = std::get_if<SizeofPackNode>(&cast_inner)) {
-							const SizeofPackNode& sizeof_pack = *cast_sizeof_pack_ptr;
-							if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
-								substituted_initializer = make_pack_size_literal(*pack_size);
-								FLASH_LOG(Templates, Debug, "Substituted static_cast of sizeof...(", sizeof_pack.pack_name(), ") with ", *pack_size);
-							}
-						}
-					}
-				}
-				// Handle complex expressions containing sizeof... using ConstExpr::Evaluator
-				// (e.g., static_cast<int>(sizeof...(Ts)) * 2 + 40, binary expressions, etc.)
-				else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
-					// Recursive helper to substitute SizeofPackNode with numeric literals in an expression
-					std::function<ASTNode(const ASTNode&)> substitute_sizeof_pack = [&](const ASTNode& node) -> ASTNode {
-						if (!node.is<ExpressionNode>()) {
-							return node;
-						}
-						const ExpressionNode& expr_node = node.as<ExpressionNode>();
-
-						// Handle SizeofPackNode directly
-						if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&expr_node)) {
-							const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
-							if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
-								return make_pack_size_literal(*pack_size);
-							}
-							return node;
-						}
-						// Handle static_cast wrapping sizeof...
-						if (std::holds_alternative<StaticCastNode>(expr_node)) {
-							const StaticCastNode& cast_node = std::get<StaticCastNode>(expr_node);
-							ASTNode substituted_inner = substitute_sizeof_pack(cast_node.expr());
-							// If inner was substituted to a literal, just use the literal (static_cast has no effect)
-							if (substituted_inner.is<ExpressionNode>()) {
-								const ExpressionNode& inner_expr = substituted_inner.as<ExpressionNode>();
-								if (std::holds_alternative<NumericLiteralNode>(inner_expr)) {
-									return substituted_inner;
-								}
-							}
-							return node;
-						}
-						// Handle BinaryOperatorNode - recursively substitute both sides
-						if (std::holds_alternative<BinaryOperatorNode>(expr_node)) {
-							const BinaryOperatorNode& bin_op = std::get<BinaryOperatorNode>(expr_node);
-							ASTNode subst_lhs = substitute_sizeof_pack(bin_op.get_lhs());
-							ASTNode subst_rhs = substitute_sizeof_pack(bin_op.get_rhs());
-							// Create new binary operator with substituted operands
-							BinaryOperatorNode& new_bin = gChunkedAnyStorage.emplace_back<BinaryOperatorNode>(
-								bin_op.get_token(), subst_lhs, subst_rhs);
-							return emplace_node<ExpressionNode>(new_bin);
-						}
-						return node;
-					};
-
-					// Substitute sizeof... in the expression
-					ASTNode substituted_expr = substitute_sizeof_pack(static_member.initializer.value());
-
-					// Now use ConstExpr::Evaluator to evaluate the expression
-					ConstExpr::EvaluationContext eval_context(gSymbolTable);
-					ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_context);
-
-					if (result.success()) {
-						substituted_initializer = make_pack_size_literal(static_cast<size_t>(result.as_int()));
-						FLASH_LOG(Templates, Debug, "Evaluated expression with sizeof... using ConstExpr::Evaluator to ", result.as_int());
-					}
-				}
-				// Handle FoldExpressionNode (e.g., static constexpr bool value = (Bs && ...);)
-				else if (std::holds_alternative<FoldExpressionNode>(expr)) {
-					const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
-					std::string_view pack_name = fold.pack_name();
-					std::string_view op = fold.op();
-					FLASH_LOG(Templates, Debug, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
-
-					// Find the parameter pack in template parameters
-					std::optional<size_t> pack_param_idx;
-					for (size_t p = 0; p < template_params.size(); ++p) {
-						const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
-						if (tparam.name() == pack_name && tparam.is_variadic()) {
-							pack_param_idx = p;
-							break;
-						}
-					}
-
-					if (pack_param_idx.has_value()) {
-						// Collect the values from the variadic pack arguments
-						std::vector<int64_t> pack_values;
-						bool all_values_found = true;
-
-						// For variadic packs, arguments after non-variadic parameters are the pack values
-						size_t non_variadic_count = 0;
-						for (const auto& param : template_params) {
-							if (!param.as<TemplateParameterNode>().is_variadic()) {
-								non_variadic_count++;
-							}
-						}
-
-						for (size_t i = non_variadic_count; i < template_args_to_use.size() && all_values_found; ++i) {
-							if (template_args_to_use[i].is_value) {
-								pack_values.push_back(template_args_to_use[i].value);
-								FLASH_LOG(Templates, Debug, "Pack value[", i - non_variadic_count, "] = ", template_args_to_use[i].value);
-							} else {
-								all_values_found = false;
-							}
-						}
-
-						if (all_values_found && !pack_values.empty()) {
-							auto fold_result = evaluate_fold_expression(op, pack_values);
-							if (fold_result.has_value()) {
-								substituted_initializer = *fold_result;
-							}
-						}
-					}
-				}
-				// Handle TemplateParameterReferenceNode (e.g., static constexpr T value = v;)
-				else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-					const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-					FLASH_LOG(Templates, Debug, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
-					if (auto subst = substitute_template_param_in_initializer(tparam_ref.param_name().view(), template_args_to_use, template_params)) {
-						substituted_initializer = subst;
-						FLASH_LOG(Templates, Debug, "Substituted template parameter '", tparam_ref.param_name(), "'");
-					}
-				}
-				// Handle IdentifierNode that might be a template parameter
-				else if (std::holds_alternative<IdentifierNode>(expr)) {
-					const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
-					std::string_view id_name = id_node.name();
-					FLASH_LOG(Templates, Debug, "Static member initializer contains IdentifierNode: ", id_name);
-					if (auto subst = substitute_template_param_in_initializer(id_name, template_args_to_use, template_params)) {
-						substituted_initializer = subst;
-						FLASH_LOG(Templates, Debug, "Substituted identifier '", id_name, "' (template parameter)");
-					}
-				}
-				// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : TypeIndex{})
-				else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
-					const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(expr);
-					const ASTNode& cond_node = ternary.condition();
-
-					// Check if condition is a template parameter reference or identifier
-					if (cond_node.is<ExpressionNode>()) {
-						const ExpressionNode& cond_expr = cond_node.as<ExpressionNode>();
-						std::optional<int64_t> cond_value;
-
-						if (std::holds_alternative<TemplateParameterReferenceNode>(cond_expr)) {
-							const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(cond_expr);
-							FLASH_LOG(Templates, Debug, "Ternary condition is template parameter: ", tparam_ref.param_name());
-
-							// Look up the parameter value
-							for (size_t p = 0; p < template_params.size(); ++p) {
-								const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
-								if (tparam.name() == tparam_ref.param_name() && tparam.kind() == TemplateParameterKind::NonType) {
-									if (p < template_args_to_use.size() && template_args_to_use[p].is_value) {
-										cond_value = template_args_to_use[p].value;
-										FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
-									}
-									break;
-								}
-							}
-						} else if (std::holds_alternative<IdentifierNode>(cond_expr)) {
-							const IdentifierNode& id_node = std::get<IdentifierNode>(cond_expr);
-							std::string_view id_name = id_node.name();
-							FLASH_LOG(Templates, Debug, "Ternary condition is identifier: ", id_name);
-
-							// Look up the identifier as a template parameter
-							for (size_t p = 0; p < template_params.size(); ++p) {
-								const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
-								if (tparam.name() == id_name && tparam.kind() == TemplateParameterKind::NonType) {
-									if (p < template_args_to_use.size() && template_args_to_use[p].is_value) {
-										cond_value = template_args_to_use[p].value;
-										FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
-									}
-									break;
-								}
-							}
-						}
-
-						// If we found the condition value, evaluate the ternary
-						if (cond_value.has_value()) {
-							const ASTNode& result_branch = (*cond_value != 0) ? ternary.true_expr() : ternary.false_expr();
-
-							if (result_branch.is<ExpressionNode>()) {
-								const ExpressionNode& result_expr = result_branch.as<ExpressionNode>();
-								if (std::holds_alternative<NumericLiteralNode>(result_expr)) {
-									const NumericLiteralNode& lit = std::get<NumericLiteralNode>(result_expr);
-									const auto& val = lit.value();
-									unsigned long long num_val = std::holds_alternative<unsigned long long>(val)
-																	 ? std::get<unsigned long long>(val)
-																	 : static_cast<unsigned long long>(std::get<double>(val));
-
-									// Create a new numeric literal with the evaluated result
-									std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(num_val)).commit();
-									Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-									substituted_initializer = emplace_node<ExpressionNode>(
-										NumericLiteralNode(num_token, num_val, lit.type(), lit.qualifier(), lit.sizeInBits()));
-									FLASH_LOG(Templates, Debug, "Evaluated ternary to: ", num_val);
-								}
-							}
-						}
-					}
-				}
-			}
-
-			if (substituted_initializer.has_value()) {
-				if (substituted_initializer->is<InitializerListNode>()) {
-					substituted_initializer = substituteTemplateParameters(
-						substituted_initializer.value(), template_params, template_args_to_use);
-					FLASH_LOG(Templates, Debug, "Substituted template parameters in InitializerListNode static member initializer");
-				} else {
-					ensure_substitution_maps();
-					if (!name_substitution_map.empty() || !pack_substitution_map.empty()) {
-						ExpressionSubstitutor substitutor(
-							name_substitution_map,
-							pack_substitution_map,
-							*this,
-							template_param_order);
-						substituted_initializer = substitutor.substitute(substituted_initializer.value());
-						FLASH_LOG(Templates, Debug, "Applied general ExpressionSubstitutor to static member initializer");
-					}
-				}
-			}
+			std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
+				? std::optional<ASTNode>(substituteTemplateParameters(
+					*static_member.initializer,
+					template_params,
+					template_args_to_use))
+				: std::nullopt;
 
 			auto [substituted_type_index, substituted_size, substituted_alignment, is_array_member, resolved_array_dimensions] =
 				compute_substituted_static_member_layout(static_member);
@@ -5821,7 +5631,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				static_member.reference_qualifier,
 				static_member.pointer_depth,
 				is_array_member,
-				resolved_array_dimensions);
+				resolved_array_dimensions,
+				static_member.declaration,
+				static_member.initializer_position);
 			if (normalized_initializer.has_value()) {
 				if (StructStaticMember* instantiated_static_member =
 						struct_info->findStaticMember(static_member.getName())) {
@@ -5962,7 +5774,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.reference_qualifier,
 						static_member.pointer_depth,
 						static_member.is_array,
-						static_member.array_dimensions);
+						static_member.array_dimensions,
+						static_member.declaration,
+						static_member.initializer_position);
 					instantiated_nested_struct_ref.add_static_member(
 						static_member.getName(),
 						substituted_type_index,
@@ -5974,7 +5788,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.reference_qualifier,
 						static_member.pointer_depth,
 						static_member.is_array,
-						static_member.array_dimensions);
+						static_member.array_dimensions,
+						static_member.initializer_position);
 				}
 			};
 
@@ -6547,7 +6362,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			static_member.reference_qualifier,
 			static_member.pointer_depth,
 			static_member.is_array,
-			static_member.array_dimensions);
+			static_member.array_dimensions,
+			static_member.initializer_position);
 	}
 
 	for (auto& nested_class_node : instantiated_nested_class_nodes) {
@@ -8100,7 +7916,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					type_spec.reference_qualifier(),
 					static_cast<int>(type_spec.pointer_depth()),
 					is_array,
-					std::move(array_dimensions));
+					std::move(array_dimensions),
+					std::nullopt,
+					std::nullopt);
 
 				FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name,
 						  " to instantiated struct ", instantiated_name);
@@ -8361,7 +8179,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.reference_qualifier,
 						static_member.pointer_depth,
 						static_member.is_array,
-						static_member.array_dimensions);
+						static_member.array_dimensions,
+						static_member.declaration,
+						static_member.initializer_position);
 				}
 			}
 		}

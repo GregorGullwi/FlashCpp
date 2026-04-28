@@ -37,18 +37,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 	SaveHandle declaration_start = save_token_position();
 
 	FlashCpp::TemplateParameterScope template_scope;
-	for (auto& param : template_params) {
-		if (!param.is<TemplateParameterNode>()) {
-			continue;
-		}
-		TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-		if (tparam.kind() == TemplateParameterKind::Type && !tparam.registered_type_index().is_valid()) {
-			TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0);
-			type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
-			tparam.set_registered_type_index(type_info.type_index_);
-			template_scope.addParameter(&type_info);
-		}
-	}
+	registerTemplateTypeParametersInScope(template_params, template_scope);
 
 	// Parse storage class specifiers (constexpr, inline, static, etc.)
 	// This must be done BEFORE parse_type_and_name() to capture constexpr for template functions
@@ -275,18 +264,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 	// Temporarily add template parameters to type system using RAII scope guard (Phase 3)
 	FlashCpp::TemplateParameterScope template_scope;
-	for (auto& param : template_params) {
-		if (param.is<TemplateParameterNode>()) {
-			TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-			if (tparam.kind() == TemplateParameterKind::Type) {
-				TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
-				type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
-				getTypesByNameMap().emplace(type_info.name(), &type_info);
-				tparam.set_registered_type_index(type_info.type_index_);
-				template_scope.addParameter(&type_info);
-			}
-		}
-	}
+	registerTemplateTypeParametersInScope(template_params, template_scope);
 
 	// Set up template parameter names for the body parsing phase
 	// This is needed for decltype expressions and other template-dependent constructs
