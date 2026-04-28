@@ -24,5 +24,6 @@ int main() {
 
 	// Non-const object: must prefer non-const operator -> nc_data[0] + nc_data[1] = 42
 	// Using the const operator would give c_data[0] + c_data[1] = 198 (wrong)
-	return d[0] + d[1];
+	const DualConv& cd = d;
+	return d[0] + d[1] + (cd[0] + cd[1] - 198);
 }
