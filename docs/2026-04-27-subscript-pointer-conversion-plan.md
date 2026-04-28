@@ -1,173 +1,226 @@
-# Subscript Operator + Implicit Pointer Conversion — Implementation Plan
+# Built-in Subscript + Implicit Pointer Conversion — Follow-up Plan
 
 **Date:** 2026-04-27  
-**Status:** Deferred — not in PR-1372  
-**Prerequisite:** PR-1372 merged (built-in reversed subscript normalization in sema)
+**Status:** Implemented in PR-1373, but follow-up architectural cleanup is still desirable
 
 ---
 
-## Background
+## What landed in PR-1373
 
-PR-1372 normalizes built-in reversed subscripts (`0[array]`) in semantic analysis so that
-`ArraySubscriptNode::array_expr()` always holds the pointer/array operand. It handles the
-case where both operands are directly of pointer/array or integral types.
+PR-1373 fixed built-in subscript handling for class types with implicit conversion
+operators to pointer types, including both:
 
-This document covers the deferred extension: supporting subscript expressions where the
-"array" operand is a **class type with an implicit conversion operator to a pointer or
-array type** — e.g. `0[pw]` and `pw[0]` where `PtrWrapper::operator int*()` exists.
+- `pw[0]`
+- `0[pw]`
 
-Per C++20 [expr.sub]/1, `E1[E2]` is defined as `*((E1)+(E2))`, and the pointer/array
-operand may result from an implicit conversion sequence. Both the reversed and forward
-forms must work correctly.
-
-### Current state (after PR-1372)
+when `pw` is a class such as:
 
 ```cpp
-struct PtrWrapper { int data[5]; operator int*() { return data; } };
-PtrWrapper pw;
-int a = pw[0];    // Compiles but produces WRONG result (conversion not applied in codegen)
-int b = 0[pw];    // Compile error: "Operator+ not defined for operand types"
+struct PtrWrapper {
+	int data[4];
+	operator int*() { return &data[0]; }
+};
 ```
 
-Clang compiles and runs both correctly. The forward case (`pw[0]`) is therefore a
-**pre-existing bug** that this plan must also fix.
+The shipped implementation now:
+
+1. Detects pointer-producing conversion operators during semantic analysis.
+2. Normalizes reversed built-in subscripts when the pointer operand is produced by such
+   a conversion operator.
+3. Infers the built-in subscript element type from the conversion operator result.
+4. Annotates the array operand with a user-defined struct-to-pointer conversion.
+5. Applies that conversion in codegen before built-in subscript address calculation.
+6. Covers forward, reversed, const, struct-element, dereference, and template cases in
+   regression tests.
+
+This is standards-aligned for the supported scope and fixes the original bug.
 
 ---
 
-## Why this is architecturally distinct
+## Evaluation of the current implementation
 
-The normalized AST after PR-1372 for `0[pw]` (once this feature exists) would be
-`ArraySubscriptNode(pw, 0)`. At that point `array_expr()` is a **struct**, not a pointer.
-Three separate compiler phases must then handle this:
+The current implementation is correct enough to ship, but it is not the best long-term
+architecture.
 
-1. **Sema – normalization detection** (`normalizeBuiltinSubscriptOperands`)
-2. **Sema – conversion annotation** (`tryAnnotateConversion` / new path)
-3. **Codegen – subscript IR generation** (`generateArraySubscriptIr`)
+### What is good about it
 
-Currently none of the three has the required support, making this a multi-layer change.
+- It keeps the behavioural change narrowly scoped to built-in subscript handling.
+- It reuses existing sema cast annotations and existing codegen conversion-operator call
+  emission.
+- It avoids changing overloaded `operator[]` resolution.
+- It passed the full regression suite after landing.
+
+### What is not ideal about it
+
+The current implementation duplicates conversion-operator discovery across phases:
+
+- semantic analysis has `findStructPointerConversionOperator`
+- codegen has `findConversionOperatorForSubscriptPointerTarget`
+
+That duplication means:
+
+- base-class traversal policy must stay in sync in two places
+- const-selection policy must stay in sync in two places
+- exact target-type matching logic must stay in sync in two places
+- lazy-member materialization and conversion lookup remain more coupled than necessary
+
+It also required exposing a sema helper (`canonicalizeTypeForImplicitConversion`) mainly
+so codegen could reproduce sema’s decision. That is a code smell: codegen is still
+partially re-solving a semantic question that sema already answered.
 
 ---
 
-## Required changes
+## Recommended long-term direction
 
-### 1. New sema helper: `structHasPointerConversionOperator`
+The better architecture is:
 
-`is_array_or_pointer` in `normalizeBuiltinSubscriptOperands` only checks
-`CanonicalTypeDesc::pointer_levels` and `array_dimensions`. For struct types it returns
-`false`, so `0[pw]` is never normalized.
+> **Semantic analysis should select the exact built-in subscript pointer conversion once,
+> record that selection explicitly, and codegen should consume that decision without
+> re-running conversion-operator lookup.**
 
-A new helper must:
-- Check `desc.category() == TypeCategory::Struct`
-- Retrieve the `StructTypeInfo` via `tryGetTypeInfo`
-- Scan `member_functions` for conversion operators (`is_conversion_operator() == true`)
-- For each, read the actual `FunctionDeclarationNode`'s return-type `TypeSpecifierNode`
-  and check `pointer_depth() > 0`
-- Return `true` (and optionally the pointee `CanonicalTypeId`) if any such operator exists
+In other words, sema should own *selection*, codegen should only own *execution*.
 
-**Note:** `StructMemberFunction::conversion_target_type` does **not** capture pointer
-levels (it stores only the base `TypeIndex`), so the function declaration's return type
-must be inspected directly. `operator int*()` and `operator int()` would both show
-`TypeIndex(Int)` in `conversion_target_type`.
+---
 
-The same helper (or a variant) must be added to the inline reversed-detection block in
-`inferExpressionType`'s `ArraySubscriptNode` case so that pre-normalization type queries
-are also correct.
+## Why this is better
 
-### 2. Extend `inferExpressionType` element-type logic for struct pointer-conversion
-
-Currently when `array_type_id` refers to a struct, the code falls through to
-"Plain type subscript — return base type", which is wrong; the element type should be
-the pointee of the conversion operator's return type.
-
-After the normalization check that picks the struct as the array operand, a new branch
-is needed:
-
-```
-if (array_desc.category() == TypeCategory::Struct) {
-    // Find the conversion operator's pointer return type
-    // Strip one pointer level to get the element type
-}
-```
-
-### 3. Extend `tryAnnotateConversion` for struct → pointer
-
-`tryAnnotateConversion` currently exits early at the check:
+Built-in subscript is semantically just:
 
 ```cpp
-if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty())
-    return false;
+*((E1) + (E2))
 ```
 
-For the subscript path (and the general `int* p = pw;` case), this must be extended to
-allow `Struct → pointer` when a matching conversion operator exists. A new
-`StandardConversionKind` may be needed (e.g. `UserDefinedToPointer`) or the existing
-`UserDefined` kind can be reused with the target type carrying a non-empty
-`pointer_levels`.
+If one operand is a class type, the hard question is not code generation. The hard
+question is semantic selection of the implicit conversion sequence and of the exact
+conversion operator that participates in that sequence.
 
-`structHasConversionOperatorTo` (the existing sema-level helper) must be extended to
-match conversion operators whose function-declaration return type has `pointer_depth > 0`,
-since `conversion_target_type` cannot distinguish `operator int()` from `operator int*()`.
+Once sema has made that choice, codegen should not need to:
 
-### 4. Annotate the subscript array-expr with the pointer conversion
+- walk the inheritance graph again
+- re-check const viability
+- re-check the return type shape
+- reconstruct which conversion operator sema must have intended
 
-After `normalizeBuiltinSubscriptOperands` confirms the array-side is a struct with a
-pointer conversion (and `tryResolveSubscriptOperator` found no `operator[]`), sema must
-call `tryAnnotateConversion(array_expr, pointer_type_id)` so that a
-`SemanticSlot` with the correct cast kind is written for the array expression. Codegen
-can then consume it uniformly without re-doing detection.
-
-### 5. Codegen — `generateArraySubscriptIr`
-
-This is the largest and most risk-prone change. The current function is already complex
-with branches for direct arrays, pointer variables, member arrays, multi-dimensional
-arrays, pointer-to-array parameters, etc.
-
-A new early branch is needed:
-
-```
-After evaluating array_result = visitExpressionNode(array_expr_node):
-  if array_result is a struct value AND its sema slot carries a pointer-conversion cast:
-      emit a call to operator T*() via emitConversionOperatorCall
-      rebind array_result to the returned pointer ExprResult
-      update element_type, element_size_bits, element_type_index accordingly
-```
-
-`emitConversionOperatorCall` already exists and handles calling a conversion operator
-and returning the converted `ExprResult`. The integration point is the section around
-line 690 in `IrGenerator_MemberAccess.cpp` just after `array_result` is obtained.
-
-**Red flag:** This change interacts with all existing subscript variants. Any regression
-here would be broad. It should be gated behind the sema annotation check so that no
-existing code path changes behaviour without a new annotation being present.
+That information should already be attached to the expression or the cast.
 
 ---
 
-## Suggested test cases for the new PR
+## Proposed follow-up refactor
 
-```cpp
-// Minimum: forward and reversed, single type
-struct IntPtr { int data[4]; operator int*() { return data; } };
-// pw[0], 0[pw], pw[1], 1[pw] all correct
+### 1. Introduce sema-owned selected-conversion metadata
 
-// Multiple element types
-struct ShortPtr { short data[4]; operator short*() { return data; } };
+Extend the semantic cast representation used for `StandardConversionKind::UserDefined`
+so it can carry the selected conversion function for struct-to-pointer conversions.
 
-// Const conversion operator
-struct CIntPtr { int data[4]; operator const int*() const { return data; } };
-const CIntPtr cp; int x = 0[cp];
+Preferred shape:
 
-// Through a pointer to struct
-IntPtr* ppw = ...; int y = 0[*ppw];
+- store a stable pointer/reference to the selected `FunctionDeclarationNode`, or
+- store a stable sema-owned lookup record that uniquely identifies the selected
+  `StructMemberFunction`
 
-// In larger expressions: 0[pw] + 1[pw] == expected sum
-```
+This should follow the same spirit as how converting constructors are already tracked
+explicitly instead of being re-resolved later.
+
+### 2. Remove subscript-specific conversion-operator lookup from codegen
+
+After sema records the selected conversion function, delete the dedicated codegen helper:
+
+- `findConversionOperatorForSubscriptPointerTarget`
+
+`generateArraySubscriptIr` should instead:
+
+1. read the sema slot on `array_expr`
+2. confirm the cast is a user-defined struct-to-pointer conversion
+3. fetch the selected conversion function from sema metadata
+4. call `emitConversionOperatorCall`
+
+That makes codegen a pure consumer of sema decisions.
+
+### 3. Unify the subscript path with the general user-defined conversion path
+
+Today the built-in subscript support has some special-case logic because codegen needs
+the converted pointer result before index arithmetic happens.
+
+That special timing is fine, but the semantic model should still match the general
+user-defined conversion machinery:
+
+- sema determines the selected conversion
+- codegen materializes it at the use site that needs the converted value
+
+The subscript case should become “same model, different insertion point”, not “special
+lookup path”.
+
+### 4. Move helper logic away from pointer-only probing where practical
+
+The current sema helper is specifically about pointer-returning conversion operators.
+That was appropriate for getting the bug fixed quickly.
+
+Long term, the more reusable abstraction is:
+
+- find viable user-defined conversions from a source class type to a target canonical type
+
+Then built-in subscript can simply ask:
+
+- “is there a viable conversion to a pointer type?”
+
+instead of using a bespoke pointer-conversion scanner.
+
+That would make future work easier for:
+
+- pointer conversions outside subscript contexts
+- other built-in operators that rely on implicit conversion to pointer types
+- future ambiguity diagnostics
+
+### 5. Make ambiguity a first-class semantic diagnostic
+
+The current implementation is intentionally narrow. A follow-up should explicitly
+diagnose ambiguous pointer conversion operators in the built-in subscript path rather
+than relying on whichever helper happens to find first.
+
+This belongs in sema, not codegen.
 
 ---
 
-## What is intentionally NOT in scope for that PR
+## Suggested concrete work items
 
-- Conversion operators returning array references (`operator int(&)[N]()`) — these require
-  a separate reference-binding path.
-- Multiple competing pointer conversion operators (ambiguity error must be diagnosed).
-- `operator[]` taking non-integral index types (those are already handled by the
-  overloaded-subscript resolution path).
+1. Extend `ImplicitCastInfo` (or an adjacent sema-owned side table) so a user-defined
+   struct conversion can carry the exact selected conversion function.
+2. Teach `tryAnnotateConversion` to record that selected conversion for struct-to-pointer
+   cases.
+3. Replace codegen’s subscript-specific conversion lookup with direct use of the sema
+   selection.
+4. Delete the now-redundant codegen helper and any bridging APIs that only existed to
+   support duplicate lookup.
+5. Add explicit tests for:
+   - inherited conversion operators
+   - const vs non-const conversion operator preference
+   - ambiguous multiple pointer conversions
+   - more than one pointer depth (`T**`) if that behaviour is intended to remain supported
+
+---
+
+## Scope that is still intentionally deferred
+
+These areas were not required to fix the original bug and should remain separate
+follow-up work:
+
+- conversion operators returning array references (`operator T(&)[N]()`)
+- ambiguity diagnostics for multiple viable pointer conversion operators
+- broader unification of all user-defined conversion selection across sema/codegen
+- non-subscript operators that may want to reuse the same infrastructure
+
+---
+
+## Bottom line
+
+PR-1373 fixed the correctness bug and is acceptable as a shipping change.
+
+However, the best long-term architecture is to move from:
+
+- **“sema annotates, codegen re-discovers the exact conversion operator”**
+
+to:
+
+- **“sema selects the exact conversion operator, codegen only emits it”**
+
+That should be the direction for any cleanup follow-up after this PR lands.

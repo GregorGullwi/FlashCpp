@@ -73,6 +73,9 @@ public:
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
 	std::optional<SemanticSlot> getSlot(const void* key) const;
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
+	// Public bridge for codegen/helper paths that need the same canonical type
+	// identity as sema while keeping the primary canonicalizeType helper private.
+	CanonicalTypeId canonicalizeTypeForImplicitConversion(const TypeSpecifierNode& type);
 	// Build the type/category view used specifically for overload-resolution arguments.
 	// Unlike getExpressionType(), this preserves overload-sensitive lvalue/xvalue details
 	// such as prvalue member access becoming an xvalue.
@@ -385,7 +388,7 @@ private:
 	// Stores the resolved FunctionDeclarationNode* in op_subscript_table_ so that codegen
 	// can dispatch to the member function call path instead of pointer arithmetic.
 	void tryResolveSubscriptOperator(const ArraySubscriptNode& subscript_node);
-	void normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node);
+	std::optional<CanonicalTypeId> normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node);
 
 	// Scope stack for local variable type tracking (used by inferExpressionType).
 	// Keys are StringHandles from the string pool (stable for the compilation lifetime).

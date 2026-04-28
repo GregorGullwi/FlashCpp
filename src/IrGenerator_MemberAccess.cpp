@@ -25,6 +25,76 @@ static std::optional<size_t> tryGetTypeSizeForSizeof(const TypeSpecifierNode& ty
 	return static_cast<size_t>(size_bits) / 8;
 }
 
+static bool isConversionOperatorForTargetType(
+	SemanticAnalysis* sema,
+	const StructMemberFunction& member_func,
+	const CanonicalTypeDesc& target_desc) {
+	if (!sema || !member_func.is_conversion_operator() ||
+		!member_func.function_decl.is<FunctionDeclarationNode>()) {
+		return false;
+	}
+	const FunctionDeclarationNode& function_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+	const CanonicalTypeId return_type_id =
+		sema->canonicalizeTypeForImplicitConversion(function_decl.decl_node().type_specifier_node());
+	return return_type_id && sema->typeContext().get(return_type_id) == target_desc;
+}
+
+static const StructMemberFunction* findConversionOperatorForSubscriptPointerTarget(
+	SemanticAnalysis* sema,
+	const StructTypeInfo* struct_info,
+	const CanonicalTypeDesc& target_desc,
+	bool source_is_const,
+	bool prefer_const,
+	int depth) {
+	static constexpr int kMaxInheritanceDepth = 8;
+	if (!struct_info)
+		return nullptr;
+	if (depth > kMaxInheritanceDepth)
+		return nullptr;
+
+	for (const auto& member_func : struct_info->member_functions) {
+		if (source_is_const && !member_func.is_const())
+			continue;
+		const bool const_preference_mismatch = prefer_const != member_func.is_const();
+		if (!source_is_const && const_preference_mismatch)
+			continue;
+		if (isConversionOperatorForTargetType(sema, member_func, target_desc))
+			return &member_func;
+	}
+
+	for (const auto& base_spec : struct_info->base_classes) {
+		if (base_spec.is_deferred)
+			continue;
+		if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
+			if (const StructTypeInfo* base_struct_info = base_type_info->getStructInfo()) {
+				if (const StructMemberFunction* result = findConversionOperatorForSubscriptPointerTarget(
+						sema, base_struct_info, target_desc, source_is_const, prefer_const, depth + 1)) {
+					return result;
+				}
+			}
+		}
+	}
+
+	return nullptr;
+}
+
+static const StructMemberFunction* findConversionOperatorForSubscriptPointerTarget(
+	SemanticAnalysis* sema,
+	const StructTypeInfo* struct_info,
+	const CanonicalTypeDesc& target_desc,
+	bool source_is_const) {
+	if (source_is_const) {
+		return findConversionOperatorForSubscriptPointerTarget(sema, struct_info, target_desc, source_is_const, true, 0);
+	}
+	// Non-const objects prefer non-const conversion operators, but may call const
+	// conversion operators if no non-const overload matches the target type.
+	if (const StructMemberFunction* non_const = findConversionOperatorForSubscriptPointerTarget(
+			sema, struct_info, target_desc, source_is_const, false, 0)) {
+		return non_const;
+	}
+	return findConversionOperatorForSubscriptPointerTarget(sema, struct_info, target_desc, source_is_const, true, 0);
+}
+
 static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNode& type_spec) {
 	TypeSpecifierNode aligned_type = type_spec;
 	if (aligned_type.is_array()) {
@@ -702,8 +772,65 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	bool is_pointer_to_array = false;
 	TypeIndex element_type_index = TypeIndex{}; // Track type_index for struct elements
 	int element_pointer_depth = 0; // Track pointer depth for pointer array elements
+	bool applied_subscript_pointer_conversion = false;
+	if (sema_ && array_expr_node.is<ExpressionNode>()) {
+		const void* array_key = static_cast<const void*>(&array_expr_node.as<ExpressionNode>());
+		const auto slot = sema_->getSlot(array_key);
+		if (slot.has_value() && slot->has_cast()) {
+			const ImplicitCastInfo& cast_info =
+				sema_->castInfoTable()[slot->cast_info_index.value - 1];
+			const CanonicalTypeDesc& source_desc = sema_->typeContext().get(cast_info.source_type_id);
+			const CanonicalTypeDesc& target_desc = sema_->typeContext().get(cast_info.target_type_id);
+			if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
+				source_desc.category() == TypeCategory::Struct &&
+				!target_desc.pointer_levels.empty()) {
+				if (const TypeInfo* source_type_info = tryGetTypeInfo(source_desc.type_index)) {
+					const bool source_is_const = hasCVQualifier(source_desc.base_cv, CVQualifier::Const);
+					const StructMemberFunction* conv_op = findConversionOperatorForSubscriptPointerTarget(
+						sema_, source_type_info->getStructInfo(), target_desc, source_is_const);
+					if (!conv_op) {
+						throw InternalError(std::string(StringBuilder()
+							.append("generateArraySubscriptIr: sema annotated struct-to-pointer subscript conversion for '")
+							.append(StringTable::getStringView(source_type_info->name()))
+							.append("' but no operator matching target type '")
+							.append(getTypeName(target_desc.category()))
+							.append(" with pointer depth ")
+							.append(std::to_string(target_desc.pointer_levels.size()))
+							.append("' was found")
+							.commit()));
+					}
+					if (auto converted = emitConversionOperatorCall(
+							array_result,
+							*source_type_info,
+							*conv_op,
+							target_desc.type_index.withCategory(target_desc.category()),
+							POINTER_SIZE_BITS,
+							arraySubscriptNode.bracket_token())) {
+						array_result = *converted;
+						CanonicalTypeDesc element_desc = target_desc;
+						element_desc.pointer_levels.pop_back();
+						element_type = element_desc.category();
+						element_type_index = element_desc.type_index.withCategory(element_type);
+						element_pointer_depth = static_cast<int>(element_desc.pointer_levels.size());
+						element_size_bits = element_pointer_depth > 0
+												? POINTER_SIZE_BITS
+												: get_type_size_bits(element_type);
+						if (element_size_bits == 0 && element_type == TypeCategory::Struct && element_type_index.is_valid()) {
+							if (const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index)) {
+								if (const StructTypeInfo* element_struct_info = element_type_info->getStructInfo()) {
+									element_size_bits = static_cast<int>(element_struct_info->sizeInBits().value);
+								}
+							}
+						}
+						is_pointer_to_array = true;
+						applied_subscript_pointer_conversion = true;
+					}
+				}
+			}
+		}
+	}
 	const ExpressionNode& arr_expr = array_expr_node.as<ExpressionNode>();
-	if (std::holds_alternative<IdentifierNode>(arr_expr)) {
+	if (!applied_subscript_pointer_conversion && std::holds_alternative<IdentifierNode>(arr_expr)) {
 		const IdentifierNode& arr_ident = std::get<IdentifierNode>(arr_expr);
 		const DeclarationNode* decl_ptr = lookupDeclaration(arr_ident.name());
 		if (decl_ptr) {

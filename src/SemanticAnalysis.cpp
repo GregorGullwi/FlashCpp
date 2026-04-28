@@ -245,6 +245,101 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	return type_node;
 }
 
+struct PointerConversionInfo {
+	CanonicalTypeId target_type_id;
+	CanonicalTypeId element_type_id;
+};
+
+std::optional<PointerConversionInfo> findStructPointerConversionOperator(
+	const CanonicalTypeDesc& from_desc,
+	const CanonicalTypeDesc* optional_target_desc,
+	SemanticAnalysis* sema,
+	bool prefer_const,
+	int depth) {
+	// Mirrors the existing conversion-operator inheritance recursion guard:
+	// deep or cyclic inheritance graphs stop probing and report no match.
+	static constexpr int kMaxInheritanceDepth = 8;
+	if (!sema || depth > kMaxInheritanceDepth)
+		return std::nullopt;
+
+	const TypeInfo* from_type_info = tryGetTypeInfo(from_desc.type_index);
+	if (!from_type_info)
+		return std::nullopt;
+	const StructTypeInfo* struct_info = from_type_info->getStructInfo();
+	if (!struct_info)
+		return std::nullopt;
+
+	const bool source_is_const = hasCVQualifier(from_desc.base_cv, CVQualifier::Const);
+	for (const auto& mf : struct_info->member_functions) {
+		if (!mf.is_conversion_operator())
+			continue;
+		if (source_is_const && !mf.is_const())
+			continue;
+		if (!source_is_const && (mf.is_const() != prefer_const))
+			continue;
+		if (!mf.function_decl.is<FunctionDeclarationNode>())
+			continue;
+
+		const FunctionDeclarationNode& function_decl = mf.function_decl.as<FunctionDeclarationNode>();
+		const ASTNode& return_type_node = function_decl.decl_node().type_node();
+		if (!return_type_node.is<TypeSpecifierNode>())
+			continue;
+
+		const CanonicalTypeId conv_op_return_type_id = sema->canonicalizeTypeForImplicitConversion(return_type_node.as<TypeSpecifierNode>());
+		if (!conv_op_return_type_id)
+			continue;
+		const CanonicalTypeDesc& return_desc = sema->typeContext().get(conv_op_return_type_id);
+		if (return_desc.pointer_levels.empty() || !return_desc.array_dimensions.empty())
+			continue;
+		if (optional_target_desc && !(return_desc == *optional_target_desc))
+			continue;
+
+		if (struct_info->name.isValid() && mf.getName().isValid()) {
+			LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
+				struct_info->name, mf.getName(), /*is_const=*/mf.is_const());
+			LazyMemberInstantiationRegistry::getInstance().markOdrUsedAllInClass(
+				struct_info->name);
+			if (function_decl.needs_body_materialization()) {
+				sema->ensureMemberFunctionMaterialized(
+					struct_info->name, mf.getName(), /*is_const_member=*/mf.is_const());
+			}
+		}
+
+		CanonicalTypeDesc element_desc = return_desc;
+		element_desc.pointer_levels.pop_back();
+		const CanonicalTypeId element_type_id = sema->canonicalizeTypeForImplicitConversion(materializeTypeSpecifier(element_desc));
+		return PointerConversionInfo{conv_op_return_type_id, element_type_id};
+	}
+
+	for (const auto& base : struct_info->base_classes) {
+		if (base.is_deferred)
+			continue;
+		CanonicalTypeDesc base_from_desc;
+		base_from_desc.type_index = base.type_index;
+		base_from_desc.base_cv = from_desc.base_cv;
+		if (auto result = findStructPointerConversionOperator(
+				base_from_desc, optional_target_desc, sema, prefer_const, depth + 1))
+			return result;
+	}
+
+	return std::nullopt;
+}
+
+std::optional<PointerConversionInfo> findStructPointerConversionOperator(
+	const CanonicalTypeDesc& from_desc,
+	const CanonicalTypeDesc* optional_target_desc,
+	SemanticAnalysis* sema,
+	int depth) {
+	if (!sema)
+		return std::nullopt;
+	if (hasCVQualifier(from_desc.base_cv, CVQualifier::Const)) {
+		return findStructPointerConversionOperator(from_desc, optional_target_desc, sema, true, depth);
+	}
+	if (auto non_const = findStructPointerConversionOperator(from_desc, optional_target_desc, sema, false, depth))
+		return non_const;
+	return findStructPointerConversionOperator(from_desc, optional_target_desc, sema, true, depth);
+}
+
 const FunctionDeclarationNode* getCallTargetFunctionCandidate(const ASTNode& overload) {
 	if (overload.is<FunctionDeclarationNode>()) {
 		return &overload.as<FunctionDeclarationNode>();
@@ -2434,7 +2529,15 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				tryResolveSubscriptOperator(e);
 				if (!getResolvedOpSubscript(&e)) {
-					normalizeBuiltinSubscriptOperands(e);
+					const std::optional<CanonicalTypeId> pointer_conversion_target_type_id =
+						normalizeBuiltinSubscriptOperands(e);
+					const CanonicalTypeId array_type_id = inferExpressionType(e.array_expr());
+					if (array_type_id && pointer_conversion_target_type_id) {
+						tryAnnotateConversion(
+							e.array_expr(),
+							*pointer_conversion_target_type_id,
+							array_type_id);
+					}
 				}
 				// If sema resolved this subscript to operator[], annotate the index
 				// argument against the operator's parameter type using the shared
@@ -2643,6 +2746,10 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	auto id = type_context_.intern(desc);
 	stats_.canonical_types_interned++;
 	return id;
+}
+
+CanonicalTypeId SemanticAnalysis::canonicalizeTypeForImplicitConversion(const TypeSpecifierNode& type) {
+	return canonicalizeType(type);
 }
 
 std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
@@ -3016,14 +3123,24 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const Ar
 	return it != op_subscript_table_.end() ? it->second : nullptr;
 }
 
-void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node) {
+std::optional<CanonicalTypeId> SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node) {
 	const CanonicalTypeId first_operand_type_id = inferExpressionType(subscript_node.array_expr());
 	const CanonicalTypeId second_operand_type_id = inferExpressionType(subscript_node.index_expr());
 	if (!first_operand_type_id || !second_operand_type_id)
-		return;
+		return std::nullopt;
 
-	const auto is_array_or_pointer = [](const CanonicalTypeDesc& desc) -> bool {
-		return !desc.array_dimensions.empty() || !desc.pointer_levels.empty();
+	const auto get_struct_pointer_conversion_target_type = [this](const CanonicalTypeDesc& desc) -> std::optional<CanonicalTypeId> {
+		if (desc.category() != TypeCategory::Struct)
+			return std::nullopt;
+		if (auto pointer_conversion = findStructPointerConversionOperator(desc, nullptr, this, 0)) {
+			return pointer_conversion->target_type_id;
+		}
+		return std::nullopt;
+	};
+	const auto is_array_or_pointer = [&](const CanonicalTypeDesc& desc) -> bool {
+		if (!desc.array_dimensions.empty() || !desc.pointer_levels.empty())
+			return true;
+		return get_struct_pointer_conversion_target_type(desc).has_value();
 	};
 	const auto is_subscript_index = [](const CanonicalTypeDesc& desc) -> bool {
 		return desc.pointer_levels.empty() &&
@@ -3034,6 +3151,8 @@ void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& sub
 	const CanonicalTypeDesc& first_operand_desc = type_context_.get(first_operand_type_id);
 	const CanonicalTypeDesc& second_operand_desc = type_context_.get(second_operand_type_id);
 	if (is_subscript_index(first_operand_desc) && is_array_or_pointer(second_operand_desc)) {
+		const std::optional<CanonicalTypeId> pointer_conversion_target_type_id =
+			get_struct_pointer_conversion_target_type(second_operand_desc);
 		// ArraySubscriptNode stores operands as (array, index). For built-in
 		// reversed subscripting such as 0[array], normalize to the semantic
 		// order mandated by C++20 built-in subscripting before downstream use.
@@ -3041,7 +3160,12 @@ void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& sub
 			subscript_node.index_expr(),
 			subscript_node.array_expr(),
 			subscript_node.bracket_token());
+		return pointer_conversion_target_type_id;
 	}
+	if (is_subscript_index(second_operand_desc)) {
+		return get_struct_pointer_conversion_target_type(first_operand_desc);
+	}
+	return std::nullopt;
 }
 
 const CallArgReferenceBindingInfo* SemanticAnalysis::getCallRefBinding(const void* key, size_t arg_index) const {
@@ -3405,6 +3529,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					CanonicalTypeDesc elem_desc = array_desc;
 					elem_desc.pointer_levels.pop_back();
 					return type_context_.intern(elem_desc);
+				}
+				if (array_desc.category() == TypeCategory::Struct) {
+					if (auto pointer_conversion = findStructPointerConversionOperator(array_desc, nullptr, this, 0))
+						return pointer_conversion->element_type_id;
 				}
 				// Plain type subscript — return base type.
 				return array_type_id;
@@ -3971,6 +4099,11 @@ static bool structHasConversionOperatorTo(
 	const StructTypeInfo* struct_info = from_type_info->getStructInfo();
 	if (!struct_info)
 		return false;
+	if (!to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty()) {
+		if (!sema)
+			return false;
+		return findStructPointerConversionOperator(from_desc, &to_desc, sema, depth).has_value();
+	}
 	TypeIndex canonical_target_type = canonicalize_conversion_target_type(to_desc.type_index, to_desc.category());
 	if (!canonical_target_type.is_valid())
 		return false;
@@ -4094,6 +4227,33 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		cast_info.cast_kind = StandardConversionKind::ArrayToPointer;
 		cast_info.value_category_after = ValueCategory::PRValue;
 		const CastInfoIndex idx = allocateCastInfo(cast_info);
+		SemanticSlot slot;
+		slot.type_id = target_type_id;
+		slot.cast_info_index = idx;
+		slot.value_category = ValueCategory::PRValue;
+		const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
+		setSlot(key, slot);
+		stats_.slots_filled++;
+		return true;
+	}
+
+	if (from_desc.category() == TypeCategory::Struct &&
+		!to_desc.pointer_levels.empty() &&
+		to_desc.array_dimensions.empty()) {
+		if (!structHasConversionOperatorTo(from_desc, to_desc, this)) {
+			FLASH_LOG(General, Debug,
+					  "SemanticAnalysis: skipping UserDefined pointer annotation — "
+					  "no matching conversion operator found in struct source type");
+			return false;
+		}
+
+		ImplicitCastInfo cast_info;
+		cast_info.source_type_id = expr_type_id;
+		cast_info.target_type_id = target_type_id;
+		cast_info.cast_kind = StandardConversionKind::UserDefined;
+		cast_info.value_category_after = ValueCategory::PRValue;
+		const CastInfoIndex idx = allocateCastInfo(cast_info);
+
 		SemanticSlot slot;
 		slot.type_id = target_type_id;
 		slot.cast_info_index = idx;
