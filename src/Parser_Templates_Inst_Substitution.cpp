@@ -381,7 +381,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 
 const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	const TypeSpecifierNode& alias_type_spec,
-	TypeIndex fallback_type_index,
+	[[maybe_unused]] TypeIndex fallback_type_index,
 	const InlineVector<ASTNode, 4>& template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
 	const TypeInfo* original_alias_target_info = tryGetTypeInfo(alias_type_spec.type_index());
@@ -431,15 +431,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		return concrete_member_it->second;
 	}
 
-	const TypeInfo* resolved_member_source = tryGetTypeInfo(fallback_type_index);
-	if (!resolved_member_source) {
-		return nullptr;
-	}
-	if (resolved_member_source->is_incomplete_instantiation_ ||
-		resolved_member_source->isDependentPlaceholder()) {
-		return nullptr;
-	}
-	throw InternalError("Instantiated member alias target should resolve before alias copy");
+	return nullptr;
 }
 
 bool Parser::resolveAliasTemplateInstantiation(
