@@ -97,16 +97,10 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Extract parameter names and register type parameters in one pass
 	FlashCpp::TemplateParameterScope template_scope;
+	registerTemplateTypeParametersInScope(template_params, template_scope);
 	for (auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
-			TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-			template_param_names.push_back(tparam.nameHandle());
-			if (tparam.kind() == TemplateParameterKind::Type) {
-				TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0);
-				type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
-				tparam.set_registered_type_index(type_info.type_index_);
-				template_scope.addParameter(&type_info);
-			}
+			template_param_names.push_back(param.as<TemplateParameterNode>().nameHandle());
 		}
 	}
 
@@ -252,16 +246,10 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 
 	// Extract parameter names and register type parameters in one pass
 	FlashCpp::TemplateParameterScope template_scope;
+	registerTemplateTypeParametersInScope(template_params, template_scope);
 	for (auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
-			TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-			template_param_names.push_back(tparam.name());
-			if (tparam.kind() == TemplateParameterKind::Type) {
-				TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0);
-				type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
-				tparam.set_registered_type_index(type_info.type_index_);
-				template_scope.addParameter(&type_info);
-			}
+			template_param_names.push_back(param.as<TemplateParameterNode>().name());
 		}
 	}
 
