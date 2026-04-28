@@ -5,6 +5,7 @@
 #include "TypeTraitEvaluator.h"
 #include "ExpressionSubstitutor.h"
 #include "ParserTemplateClassShared.h"
+#include "RebindStaticMemberAst.h"
 
 std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info) {
 	FLASH_LOG(Templates, Debug, "instantiateLazyMemberFunction: ",
@@ -1042,92 +1043,16 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 		if (substituted_initializer.has_value()) {
 			std::unordered_set<StringHandle> referenced_lazy_members;
-			auto collectLazyStaticDependencies = [&](auto&& self, const ASTNode& node) -> void {
-				if (!node.has_value()) {
-					return;
-				}
-				if (node.is<InitializerListNode>()) {
-					for (const auto& initializer : node.as<InitializerListNode>().initializers()) {
-						self(self, initializer);
-					}
-					return;
-				}
-				if (!node.is<ExpressionNode>()) {
-					return;
-				}
-
-				const ExpressionNode& expr = node.as<ExpressionNode>();
-				if (const auto* id_node = std::get_if<IdentifierNode>(&expr)) {
-					StringHandle referenced_name = id_node->getOrInternNameHandle();
+			RebindStaticMemberAst::visitAST(substituted_initializer.value(), [&](const ASTNode& node) {
+				if (node.is<IdentifierNode>()) {
+					StringHandle referenced_name = node.as<IdentifierNode>().getOrInternNameHandle();
 					if (referenced_name != lazy_info.member_name &&
 						LazyStaticMemberRegistry::getInstance().needsInstantiation(instantiated_class_name, referenced_name)) {
 						referenced_lazy_members.insert(referenced_name);
 					}
-					return;
 				}
-				if (const auto* bin_op = std::get_if<BinaryOperatorNode>(&expr)) {
-					self(self, bin_op->get_lhs());
-					self(self, bin_op->get_rhs());
-					return;
-				}
-				if (const auto* unary_op = std::get_if<UnaryOperatorNode>(&expr)) {
-					self(self, unary_op->get_operand());
-					return;
-				}
-				if (const auto* ternary = std::get_if<TernaryOperatorNode>(&expr)) {
-					self(self, ternary->condition());
-					self(self, ternary->true_expr());
-					self(self, ternary->false_expr());
-					return;
-				}
-				if (const auto call_info = CallInfo::tryFrom(expr)) {
-					if (call_info->has_receiver) {
-						self(self, call_info->receiver);
-					}
-					for (const auto& arg : *call_info->arguments) {
-						self(self, arg);
-					}
-					if (call_info->template_arguments) {
-						for (const auto& template_arg : *call_info->template_arguments) {
-							self(self, template_arg);
-						}
-					}
-					return;
-				}
-				if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
-					for (const auto& arg : ctor_call->arguments()) {
-						self(self, arg);
-					}
-					return;
-				}
-				if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
-					self(self, member_access->object());
-					return;
-				}
-				if (const auto* array_sub = std::get_if<ArraySubscriptNode>(&expr)) {
-					self(self, array_sub->array_expr());
-					self(self, array_sub->index_expr());
-					return;
-				}
-				if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
-					self(self, static_cast_node->expr());
-					return;
-				}
-				if (const auto* dynamic_cast_node = std::get_if<DynamicCastNode>(&expr)) {
-					self(self, dynamic_cast_node->expr());
-					return;
-				}
-				if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
-					self(self, const_cast_node->expr());
-					return;
-				}
-				if (const auto* reinterpret_cast_node = std::get_if<ReinterpretCastNode>(&expr)) {
-					self(self, reinterpret_cast_node->expr());
-					return;
-				}
-			};
+			});
 
-			collectLazyStaticDependencies(collectLazyStaticDependencies, substituted_initializer.value());
 			for (StringHandle referenced_name : referenced_lazy_members) {
 				instantiateLazyStaticMember(instantiated_class_name, referenced_name);
 			}

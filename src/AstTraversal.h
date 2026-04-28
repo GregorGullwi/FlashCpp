@@ -263,6 +263,11 @@ bool visitASTImpl(const ASTNode& node, VisitorFn&& visitor) {
 			if (call.has_receiver() && visit_child(call.receiver())) {
 				return true;
 			}
+			for (const auto& template_argument : call.template_arguments()) {
+				if (visit_child(template_argument)) {
+					return true;
+				}
+			}
 			for (const auto& argument : call.arguments()) {
 				if (visit_child(argument)) {
 					return true;

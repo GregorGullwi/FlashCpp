@@ -123,7 +123,8 @@ Active fallback evidence from the 2026-04-27 audit:
   call-target rebinding, and dependency pre-instantiation passes, but the late
   rebinding/dependency/evaluation work is now an unconditional post-substitution
   normalization step for every lazy static initializer rather than only the
-  catch-all substitution branch;
+  catch-all substitution branch, and dependency discovery uses the shared AST
+  traversal helper;
 - function-template declaration reparse now runs whenever saved declaration
   source exists, including abbreviated/constrained forms and function-try-block
   cases; the `T*` namespace-qualified call residual was fixed by consuming the
