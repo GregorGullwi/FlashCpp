@@ -1821,10 +1821,34 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				}
 			}
 
-			// An invalid type_index still marks an unresolved dependent placeholder type.
+			// Dependent placeholders must be registered with a canonical TypeIndex by
+			// their template-parameter owner before they reach argument classification.
 			if (!arg.is_dependent && !type_node.type_index().is_valid()) {
-				arg.is_dependent = true;
-				FLASH_LOG(Templates, Debug, "Template argument is dependent (placeholder with type_index=0)");
+				const StringHandle token_name = StringTable::getOrInternStringHandle(type_node.token().value());
+				bool is_current_template_param = false;
+				for (StringHandle param_name : currentTemplateParamNames()) {
+					if (param_name == token_name) {
+						is_current_template_param = true;
+						break;
+					}
+				}
+				if (is_current_template_param) {
+					TypeInfo& type_info = add_template_param_type(token_name, TypeCategory::UserDefined, 0);
+					type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+					type_node.set_type_index(type_info.type_index_.withCategory(TypeCategory::UserDefined));
+					arg.type_index = type_node.type_index();
+					arg.is_dependent = true;
+					arg.dependent_name = token_name;
+					FLASH_LOG(Templates, Debug, "Registered missing dependent placeholder TypeIndex for template argument");
+				}
+				else if (full_type_name.empty()) {
+					restore_token_position(saved_pos);
+					last_failed_template_arg_parse_handle_ = saved_pos;
+					return std::nullopt;
+				}
+				else {
+					throw InternalError("Unregistered dependent placeholder type reached template argument classification");
+				}
 			}
 		}
 

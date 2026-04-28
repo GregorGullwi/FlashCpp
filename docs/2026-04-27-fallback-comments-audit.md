@@ -76,7 +76,7 @@ Representative sites:
 - `src\ExpressionSubstitutor.cpp:1537` - recovers template arguments from type names when TypeInfo has no stored args.
 - `src\Parser_Templates_Inst_ClassTemplate.cpp:4049`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4589`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4787`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4813`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5246`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5844`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5904` - non-type defaults, variable templates, array dimensions, initializers, and static members use catch-all substitution or AST fallback passes.
 - `src\Parser_Templates_Substitution.cpp:692`, `src\Parser_Templates_Substitution.cpp:762`, `src\Parser_Templates_Substitution.cpp:848`, `src\Parser_Templates_Substitution.cpp:1633` - pack and template parameter lookup fallbacks after primary scope information is unavailable.
-- `src\Parser_Templates_Params.cpp:1826` - invalid `type_index` is still treated as an unresolved dependent placeholder signal.
+- `src\Parser_Templates_Params.cpp:1826` - invalid `type_index` is no longer a catch-all unresolved dependent-placeholder signal; classification now either materializes a canonical placeholder for a known current template parameter, rejects non-template speculative parses such as comparisons, or hard-fails active template contexts that still produce an invalid placeholder.
 
 Missing feature:
 
@@ -236,10 +236,11 @@ The initial audit above was architectural. Several template-instantiation fallba
    - Probe result: replacing this with a hard error broke deferred-base and pack-expansion cases including `tests\test_nttp_base_class_substitution_ret0.cpp`, `tests\test_pack_expansion_base_class_ret0.cpp`, `tests\test_ratio_negative_lazy_member_ret0.cpp`, and `tests\test_type_traits_dependent_member_nttp_ret42.cpp`.
    - Conclusion: this fallback is active and currently carries real class-template substitution traffic, especially around deferred base resolution and dependent member/type-trait cases.
 
-3. `src\Parser_Templates_Params.cpp` — `type_index == 0` dependent-placeholder path
-    - Probe result: replacing the dependent-marking path with a hard error broke comparison/operator template cases including `comparison_operators_ret1.cpp`, `float_comparisons_ret1.cpp`, `test_const_member_with_param_ret255.cpp`, `test_decltype_function_template_base_ret42.cpp`, and multiple spaceship tests.
-    - Probe result: wiring `parse_member_function_template(...)` in `src\Parser_Templates_Function.cpp` to preserve `registered_type_index()` on type template parameters was safe, but did not change that failing cluster, so member-function-template parameter registration is not the only remaining producer of invalid placeholder type indices.
-    - Conclusion: invalid/placeholder `TypeIndex` is still an active dependency signal in the current parser/template pipeline and cannot be removed before the placeholder metadata path is finished.
+3. `src\Parser_Templates_Params.cpp` — narrowed invalid `type_index` dependent-placeholder path
+    - Previous probe result: replacing the dependent-marking path with a hard error broke comparison/operator template cases including `comparison_operators_ret1.cpp`, `float_comparisons_ret1.cpp`, `test_const_member_with_param_ret255.cpp`, `test_decltype_function_template_base_ret42.cpp`, and multiple spaceship tests.
+    - Follow-up fix: friend-template and member-struct-template parameter registration now use canonical template-parameter TypeInfo entries and preserve `registered_type_index()`. Template-argument classification now rejects invalid non-template speculation by returning `std::nullopt` instead of treating the token as dependent, materializes a canonical placeholder for known current template parameters that reached the classifier without an index, and hard-fails any remaining active-template invalid placeholder.
+    - Validation: the comparison/operator cluster, `test_operator_overload_template_ret40.cpp`, all `*spaceship*.cpp` tests, and the full Windows suite passed after the narrowing.
+    - Conclusion: the broad invalid-`TypeIndex` dependency signal is removed from this site. Remaining producers, if any, should now surface as invariant failures rather than being silently accepted as dependent.
 
 4. `src\Parser_Templates_Inst_ClassTemplate.cpp` — non-type default evaluation fallback via `tryAppendEvaluatedTemplateValue(...)`
    - Probe result: replacing it with a hard error broke `tests\test_expr_subst_noexcept_wrap_ret0.cpp`, `tests\test_template_spec_outofline_default_arg_ret42.cpp`, and `tests\test_template_spec_outofline_default_arg_namespaced_ret42.cpp`.
@@ -321,4 +322,5 @@ The audit is now backed by direct suite evidence for several representative temp
 - the unknown-member-function copy fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was dead in the current corpus and has now been removed;
 - the `Parser_Templates_Substitution.cpp` direct unqualified type-lookup step is required ordinary lookup, so the misleading fallback wording has been removed even though the behavior stays;
 - multiple dependent-type/deduction fallback paths are definitely active;
-- the larger ExpressionSubstitutor/static-initializer/pack-size/dependent-placeholder fallback classes should still be assumed active until probed or root-fixed individually.
+- the `Parser_Templates_Params.cpp` invalid-placeholder dependency branch has been narrowed to explicit speculative-parse rejection, canonical current-template-parameter materialization, and invariant failure for any remaining active-template producer;
+- the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes should still be assumed active until probed or root-fixed individually.
