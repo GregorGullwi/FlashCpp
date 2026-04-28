@@ -803,14 +803,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		.append(effectiveLookupName(lazy_info.identity));
 	StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 	OuterTemplateBinding outer_binding;
-	for (const auto& tp : lazy_info.template_params) {
-		if (tp.is<TemplateParameterNode>()) {
-			outer_binding.param_names.push_back(tp.as<TemplateParameterNode>().nameHandle());
-		}
-	}
-	for (const auto& arg : lazy_info.template_args) {
-		outer_binding.param_args.push_back(arg);
-	}
+	collectOuterTemplateBinding(lazy_info.template_params, lazy_info.template_args, outer_binding);
 	gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
 
 	// Add the instantiated function to the AST so it gets visited during codegen

@@ -6710,7 +6710,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					.append(effective_name);
 				StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 				OuterTemplateBinding outer_binding;
-				collectOuterTemplateBindings(template_params, template_args_to_use, outer_binding.param_names, outer_binding.param_args);
+				collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
 				if (shouldCommitTemplateInstantiationArtifacts()) {
 					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
 				}
@@ -7596,7 +7596,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Register outer template parameter bindings
 				{
 					OuterTemplateBinding outer_binding;
-					collectOuterTemplateBindings(template_params, template_args_to_use, outer_binding.param_names, outer_binding.param_args);
+					collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
 					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
 					FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
 				}
@@ -7633,7 +7633,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Register outer template parameter bindings
 				{
 					OuterTemplateBinding outer_binding;
-					collectOuterTemplateBindings(template_params, template_args_to_use, outer_binding.param_names, outer_binding.param_args);
+					collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
 					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
 					FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
 				}
