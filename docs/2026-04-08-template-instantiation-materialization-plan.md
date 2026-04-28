@@ -110,8 +110,11 @@ Active fallback evidence from the 2026-04-27 audit:
   `TypeSpecifierNode`s for deferred-base and dependent-member cases;
 - unresolved template defaults still need catch-all handling for template
   template defaults and some NTTP defaults;
-- `type_index == 0` is still used as a dependent-placeholder signal in several
-  parser/template paths;
+- `type_index == 0` dependent-placeholder handling has been narrowed in
+  template-argument classification: ordinary comparison speculation now fails
+  the tentative template-argument parse, known current template parameters are
+  materialized with canonical placeholder indices, and any remaining invalid
+  placeholder in an active template context is an invariant failure;
 - fold substitution for non-type parameter packs still reconstructs values from
   `template_params` / `template_args`;
 - `sizeof...` still depends on preserved per-pack size metadata plus broader
