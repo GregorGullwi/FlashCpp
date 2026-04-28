@@ -1405,7 +1405,8 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				TempVar nested_temp = std::get<TempVar>(nested_result.value);
 				auto nested_lv = getTempVarLValueInfo(nested_temp);
 				if (nested_lv.has_value() &&
-					nested_lv->kind == LValueInfo::Kind::Indirect) {
+					(nested_lv->kind == LValueInfo::Kind::Indirect ||
+					 nested_lv->kind == LValueInfo::Kind::ReferenceDeref)) {
 					is_pointer_dereference = true;
 				}
 			}
@@ -3964,6 +3965,12 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 					lvalue_info->offset == 0) {
 					if (const auto* base_name = std::get_if<StringHandle>(&lvalue_info->base)) {
 						source_value = *base_name;
+					} else if (std::get_if<TempVar>(&lvalue_info->base)) {
+						// ReferenceDeref with a TempVar base is not yet supported for
+						// conversion-operator 'this' passing. Currently all ReferenceDeref
+						// lvalues are created with a StringHandle base (the reference variable
+						// name), so this path should never be reached.
+						throw InternalError("emitConversionOperatorCall: ReferenceDeref with TempVar base is not supported");
 					}
 				}
 				break;
