@@ -1409,8 +1409,15 @@ private:
 				size_t pack_size = remaining_args > required_after
 									 ? remaining_args - required_after
 									 : 0;
+				// Maintain the 1:1 invariant between param_names/params and
+				// param_args that legacy consumers (e.g. the fallback path in
+				// appendOuterBindingSubstitutionInputs) rely on. For an empty
+				// pack, push a placeholder TemplateTypeArg so indices stay
+				// aligned with the variadic parameter entry above.
 				if (pack_size > 0) {
 					out_binding.param_args.push_back(template_args[arg_index]);
+				} else {
+					out_binding.param_args.push_back(TemplateTypeArg());
 				}
 				for (size_t pack_index = 0; pack_index < pack_size && (arg_index + pack_index) < template_args.size(); ++pack_index) {
 					out_binding.all_args.push_back(template_args[arg_index + pack_index]);
