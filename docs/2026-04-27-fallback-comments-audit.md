@@ -413,14 +413,19 @@ The audit is now backed by direct suite evidence for several representative temp
   specializations that reach this branch always carry either type or non-type
   template arguments;
 - the `IrGenerator_Call_Indirect.cpp` `operator()` callable-type sema/parser
-  fallback (audit §1, line ~275) is confirmed *active*: probing the
-  parser-fallback step with a hard error when sema is present but returns an
-  inconclusive callable type breaks `tests\test_generic_lambda_callable_param_ret0.cpp`,
-  `tests\test_generic_lambda_callable_shadowed_name_ret0.cpp`,
-  `tests\test_generic_lambda_recursive_self_ret0.cpp`,
-  `tests\test_lambda_cpp20_comprehensive_ret135.cpp`, and
-  `tests\test_nested_function_returning_funcptr_direct_invoke_ret0.cpp`. Sema
-  does not yet annotate generic-lambda-introduced or recursive-`self`
-  callable parameters with a usable callable `TypeSpecifierNode`, so the
-  parser-side typing fallback remains required for now;
+  fallback (audit §1, line ~275) was narrowed on 2026-04-29. Codegen now
+  skips the parser callable-type fallback when sema already resolved the
+  `operator()` target for that call node, so generic-lambda callable
+  parameters and recursive-`self` cases stay on the sema-owned member-call
+  path even if `sema_->getExpressionType(object)` is still inconclusive.
+  The callable regression cluster
+  (`tests/test_callable_sema_resolved_ret0.cpp`,
+  `tests/test_generic_lambda_callable_param_ret0.cpp`,
+  `tests/test_generic_lambda_callable_shadowed_name_ret0.cpp`,
+  `tests/test_generic_lambda_recursive_self_ret0.cpp`,
+  `tests/test_lambda_cpp20_comprehensive_ret135.cpp`, and
+  `tests/test_nested_function_returning_funcptr_direct_invoke_ret0.cpp`)
+  passed after this change. The parser fallback remains required for true
+  indirect-call receivers that still lack a sema-resolved `operator()` target,
+  including the nested function-pointer-returning direct-invoke case;
 - the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes should still be assumed active until probed or root-fixed individually.
