@@ -214,20 +214,20 @@ public:
 	DeductionGuideNode() = delete;
 	DeductionGuideNode(InlineVector<TemplateParameterNode, 4> template_params,
 					   std::string_view class_name,
-					   std::vector<ASTNode> guide_params,
+					   InlineVector<TypeSpecifierNode, 4> guide_params,
 					   std::vector<ASTNode> deduced_template_args)
 		: template_parameters_(std::move(template_params)), class_name_(class_name), guide_parameters_(std::move(guide_params)), deduced_template_args_(std::move(deduced_template_args)) {}
 
 	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
 	std::string_view class_name() const { return class_name_; }
-	const std::vector<ASTNode>& guide_parameters() const { return guide_parameters_; }
-	const std::vector<ASTNode>& deduced_template_args_nodes() const { return deduced_template_args_; }
+	const InlineVector<TypeSpecifierNode, 4>& guide_parameters() const { return guide_parameters_; }
+	const std::vector<ASTNode>& deduced_template_args() const { return deduced_template_args_; }
 
 private:
 	InlineVector<TemplateParameterNode, 4> template_parameters_;
 	std::string_view class_name_;  // Name of the class template
-	std::vector<ASTNode> guide_parameters_;	// Parameters of the guide (like constructor params)
-	std::vector<ASTNode> deduced_template_args_;	 // RHS nodes for template arguments (TypeSpecifierNode instances)
+	InlineVector<TypeSpecifierNode, 4> guide_parameters_;
+	std::vector<ASTNode> deduced_template_args_;
 };
 
 // Forward declarations
@@ -242,15 +242,12 @@ public:
 		: template_parameters_(std::move(template_params)), variable_declaration_(variable_decl) {}
 
 	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
-	ASTNode variable_declaration() const { return variable_declaration_; }
+	VariableDeclarationNode& variable_declaration() { return variable_declaration_.as<VariableDeclarationNode>(); }
+	const VariableDeclarationNode& variable_declaration() const { return variable_declaration_.as<VariableDeclarationNode>(); }
 
 	// Get the underlying VariableDeclarationNode
-	VariableDeclarationNode& variable_decl_node() {
-		return variable_declaration_.as<VariableDeclarationNode>();
-	}
-	const VariableDeclarationNode& variable_decl_node() const {
-		return variable_declaration_.as<VariableDeclarationNode>();
-	}
+	VariableDeclarationNode& variable_decl_node() { return variable_declaration_.as<VariableDeclarationNode>(); }
+	const VariableDeclarationNode& variable_decl_node() const { return variable_declaration_.as<VariableDeclarationNode>(); }
 
 private:
 	InlineVector<TemplateParameterNode, 4> template_parameters_;

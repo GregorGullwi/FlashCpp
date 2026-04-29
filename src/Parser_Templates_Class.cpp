@@ -4069,7 +4069,7 @@ ParseResult Parser::parse_template_declaration() {
 			}
 			advance(); // consume '('
 
-			std::vector<ASTNode> guide_params;
+			InlineVector<TypeSpecifierNode, 4> guide_params;
 			if (peek() != ")"_tok) {
 				// Parse parameters
 				while (true) {
@@ -4077,11 +4077,14 @@ ParseResult Parser::parse_template_declaration() {
 					if (param_type_result.is_error()) {
 						return param_type_result;
 					}
-					guide_params.push_back(*param_type_result.node());
+					if (!param_type_result.node()->is<TypeSpecifierNode>()) {
+						return ParseResult::error("Expected type specifier in deduction guide parameter", current_token_);
+					}
+					guide_params.push_back(param_type_result.node()->as<TypeSpecifierNode>());
 
 					// Allow pointer/reference declarators directly in guide parameters (e.g., T*, const T&, etc.)
-					if (!guide_params.empty() && guide_params.back().is<TypeSpecifierNode>()) {
-						TypeSpecifierNode& param_type = guide_params.back().as<TypeSpecifierNode>();
+					if (!guide_params.empty()) {
+						TypeSpecifierNode& param_type = guide_params.back();
 
 						// Handle array reference pattern: _Type(&)[_ArrayExtent] or _Type(&&)[_ArrayExtent]
 						// Also handle function pointer pattern: _Type(*)(Args...)
