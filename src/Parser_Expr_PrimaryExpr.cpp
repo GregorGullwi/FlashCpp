@@ -1095,11 +1095,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 		const std::vector<std::string_view> template_param_names =
 			buildTemplateParamNames(template_params);
 		for (size_t param_idx = completed_args.size(); param_idx < template_params.size(); ++param_idx) {
-			if (!template_params[param_idx].is<TemplateParameterNode>()) {
-				continue;
-			}
-			const TemplateParameterNode& param =
-				template_params[param_idx].as<TemplateParameterNode>();
+			const TemplateParameterNode& param = template_params[param_idx];
 			if (param.is_variadic()) {
 				continue;
 			}

@@ -15,6 +15,7 @@
 #include <iterator>
 #include <limits>
 #include <span>
+#include <type_traits>
 
 // SaveHandle type for parser save/restore operations
 // Matches Parser::SaveHandle typedef in Parser.h
@@ -592,20 +593,43 @@ inline TemplateTypeArg deduceArgFromPattern(const TemplateTypeArg& concrete_arg,
 // substitute_template_parameter does not return through its TypeIndex result.
 // Templated on container types to avoid InlineVector -> std::vector conversion,
 // which would create temporaries and make the returned pointer dangle.
-template <typename ParamContainer, typename ArgContainer>
+inline const TemplateParameterNode* tryGetTemplateParameterNode(const ASTNode& node) {
+	return node.is<TemplateParameterNode>() ? &node.as<TemplateParameterNode>() : nullptr;
+}
+
+inline TemplateParameterNode* tryGetTemplateParameterNode(ASTNode& node) {
+	return node.is<TemplateParameterNode>() ? &node.as<TemplateParameterNode>() : nullptr;
+}
+
+inline const TemplateParameterNode* tryGetTemplateParameterNode(const TemplateParameterNode& node) {
+	return &node;
+}
+
+inline TemplateParameterNode* tryGetTemplateParameterNode(TemplateParameterNode& node) {
+	return &node;
+}
+
+template <typename ParamContainer>
 inline size_t countRequiredTemplateArgsAfter(
 	const ParamContainer& template_params,
 	size_t start_index) {
 	size_t required_args = 0;
 	for (size_t i = start_index; i < template_params.size(); ++i) {
-		if (!template_params[i].template is<TemplateParameterNode>())
+		const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+		if (param == nullptr)
 			continue;
-		const auto& param = template_params[i].template as<TemplateParameterNode>();
-		if (param.is_variadic() || param.has_default())
+		if (param->is_variadic() || param->has_default())
 			continue;
 		++required_args;
 	}
 	return required_args;
+}
+
+template <typename ParamContainer, typename ArgContainer>
+inline size_t countRequiredTemplateArgsAfter(
+	const ParamContainer& template_params,
+	size_t start_index) {
+	return countRequiredTemplateArgsAfter<ParamContainer>(template_params, start_index);
 }
 
 template <typename ParamContainer, typename ArgContainer, typename Callback>
@@ -615,10 +639,10 @@ inline void forEachNonPackTemplateParamArgBinding(
 	Callback&& callback) {
 	size_t arg_index = 0;
 	for (size_t i = 0; i < template_params.size(); ++i) {
-		if (!template_params[i].template is<TemplateParameterNode>())
+		const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+		if (param == nullptr)
 			continue;
-		const auto& param = template_params[i].template as<TemplateParameterNode>();
-		if (param.is_variadic()) {
+		if (param->is_variadic()) {
 			size_t remaining_args = arg_index < template_args.size()
 										? template_args.size() - arg_index
 										: 0;
@@ -632,7 +656,7 @@ inline void forEachNonPackTemplateParamArgBinding(
 		}
 		if (arg_index >= template_args.size())
 			break;
-		callback(param, template_args[arg_index], arg_index);
+		callback(*param, template_args[arg_index], arg_index);
 		++arg_index;
 	}
 }
@@ -910,9 +934,11 @@ inline TemplateTypeArg materializeTemplateArg(
 	if (arg_info.dependent_name.isValid()) {
 		std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);
 		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-			if (!template_params[i].template is<TemplateParameterNode>())
+			const TemplateParameterNode* template_param =
+				tryGetTemplateParameterNode(template_params[i]);
+			if (template_param == nullptr)
 				continue;
-			if (template_params[i].template as<TemplateParameterNode>().name() == dep_name) {
+			if (template_param->name() == dep_name) {
 				const TemplateTypeArg& substituted_arg = template_args[i];
 				if (!arg_info.is_value && !substituted_arg.is_value) {
 					concrete_arg = rebindDependentTemplateTypeArg(substituted_arg, arg_info);
@@ -926,13 +952,36 @@ inline TemplateTypeArg materializeTemplateArg(
 		// For dependent NTTP expressions (e.g., sizeof(T)), evaluate with concrete args.
 		// Only attempted when a non-null evaluator callback is provided.
 		if constexpr (!std::is_null_pointer_v<std::decay_t<EvalFn>>) {
-			if (auto evaluated = eval_dependent_expr(
-					*arg_info.dependent_expr,
-					std::span<const ASTNode>(std::data(template_params), std::size(template_params)),
-					std::span<const TemplateTypeArg>(std::data(template_args), std::size(template_args)))) {
-				concrete_arg.value = *evaluated;
-				concrete_arg.is_dependent = false;
-				concrete_arg.dependent_expr = std::nullopt;
+			using TemplateParamNodeType =
+				std::remove_cvref_t<decltype(*std::begin(template_params))>;
+			if constexpr (std::is_same_v<TemplateParamNodeType, ASTNode>) {
+				if (auto evaluated = eval_dependent_expr(
+						*arg_info.dependent_expr,
+						std::span<const ASTNode>(std::data(template_params), std::size(template_params)),
+						std::span<const TemplateTypeArg>(std::data(template_args), std::size(template_args)))) {
+					concrete_arg.value = *evaluated;
+					concrete_arg.is_dependent = false;
+					concrete_arg.dependent_expr = std::nullopt;
+				}
+			} else {
+				InlineVector<ASTNode, 4> ast_template_params;
+				ast_template_params.reserve(template_params.size());
+				for (const auto& template_param_node : template_params) {
+					if (const TemplateParameterNode* template_param =
+							tryGetTemplateParameterNode(template_param_node);
+						template_param != nullptr) {
+						ast_template_params.push_back(
+							ASTNode::emplace_node<TemplateParameterNode>(*template_param));
+					}
+				}
+				if (auto evaluated = eval_dependent_expr(
+						*arg_info.dependent_expr,
+						std::span<const ASTNode>(ast_template_params.data(), ast_template_params.size()),
+						std::span<const TemplateTypeArg>(std::data(template_args), std::size(template_args)))) {
+					concrete_arg.value = *evaluated;
+					concrete_arg.is_dependent = false;
+					concrete_arg.dependent_expr = std::nullopt;
+				}
 			}
 		}
 	}

@@ -185,7 +185,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// Create a template function declaration node
 	func_decl.set_is_template_pattern(true);
 	auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
-		createTemplateParameterAstNodes(template_params),
+		template_params,
 		*func_result_node,
 		final_requires_clause);
 
@@ -419,8 +419,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				for (const auto& param : header.params.parameters) {
 					ctor_ref.add_parameter_node(param);
 				}
-				InlineVector<ASTNode, 4> template_param_ast_nodes = createTemplateParameterAstNodes(template_params);
-				for (const auto& template_param : template_param_ast_nodes) {
+				for (const auto& template_param : template_params) {
 					ctor_ref.add_template_parameter(template_param);
 				}
 
@@ -707,7 +706,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						// Create template function declaration node
 						func_ref.set_is_template_pattern(true);
 						auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
-							createTemplateParameterAstNodes(template_params),
+							template_params,
 							func_node,
 							requires_clause);
 

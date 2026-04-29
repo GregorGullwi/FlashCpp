@@ -321,13 +321,13 @@ inline SubstitutionParamMap buildSubstitutionParamMap(
 	SubstitutionParamMap result;
 	result.param_order.reserve(std::min(template_params.size(), template_args.size()));
 	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-		if (!template_params[i].template is<TemplateParameterNode>()) {
+		const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+		if (param == nullptr) {
 			continue;
 		}
-		const TemplateParameterNode& param = template_params[i].template as<TemplateParameterNode>();
-		TemplateTypeArg arg_to_insert = enrichTemplateArgForParameter(param, template_args[i]);
-		result.param_map[param.name()] = arg_to_insert;
-		result.param_order.push_back(param.name());
+		TemplateTypeArg arg_to_insert = enrichTemplateArgForParameter(*param, template_args[i]);
+		result.param_map[param->name()] = arg_to_insert;
+		result.param_order.push_back(param->name());
 	}
 	return result;
 }
@@ -338,11 +338,12 @@ inline std::vector<std::string_view> buildTemplateParamNames(
 	std::vector<std::string_view> param_names;
 	param_names.reserve(template_params.size());
 	for (const auto& template_param_node : template_params) {
-		if (!template_param_node.template is<TemplateParameterNode>()) {
+		const TemplateParameterNode* template_param =
+			tryGetTemplateParameterNode(template_param_node);
+		if (template_param == nullptr) {
 			continue;
 		}
-		param_names.push_back(
-			template_param_node.template as<TemplateParameterNode>().name());
+		param_names.push_back(template_param->name());
 	}
 	return param_names;
 }
@@ -1145,7 +1146,7 @@ private:
 	TemplateParameterMetadata registerTemplateParametersInScope(
 		std::vector<TemplateParameterNode>& template_params,
 		FlashCpp::TemplateParameterScope& template_scope);
-	InlineVector<ASTNode, 4> createTemplateParameterAstNodes(const std::vector<TemplateParameterNode>& template_params);
+	InlineVector<ASTNode, 4> cloneTemplateParameterNodes(const std::vector<TemplateParameterNode>& template_params);
 	bool parseDeferredAliasTargetTemplateId(
 		StringHandle& out_target_template_name,
 		std::vector<ASTNode>& out_target_template_arg_nodes,
@@ -1279,12 +1280,17 @@ private:
 		int recursion_depth);
 	bool tryAppendDefaultTemplateArg(
 		const TemplateParameterNode& param,
+		const std::vector<TemplateParameterNode>& template_params,
+		InlineVector<TemplateTypeArg, 4>& template_args,
+		NamespaceHandle source_namespace);
+	bool tryAppendDefaultTemplateArg(
+		const TemplateParameterNode& param,
 		const std::vector<ASTNode>& template_params,
 		InlineVector<TemplateTypeArg, 4>& template_args,
 		NamespaceHandle source_namespace);
 	bool tryAppendMemberDefaultTemplateArg(
 		const TemplateParameterNode& param,
-		const std::vector<ASTNode>& template_params,
+		const std::vector<TemplateParameterNode>& template_params,
 		const OuterTemplateBinding* outer_binding,
 		InlineVector<TemplateTypeArg, 4>& template_args);
 	void appendOuterBindingSubstitutionInputs(
@@ -1297,11 +1303,20 @@ private:
 		std::span<const TemplateTypeArg> template_args);
 	ASTNode substituteNonTypeDefaultExpression(
 		const ASTNode& default_node,
+		const std::vector<TemplateParameterNode>& template_params,
+		std::span<const TemplateTypeArg> template_args);
+	ASTNode substituteNonTypeDefaultExpression(
+		const ASTNode& default_node,
 		const InlineVector<ASTNode, 4>& template_params,
 		std::span<const TemplateTypeArg> template_args);
 	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
 		const ASTNode& default_node,
 		const std::vector<ASTNode>& template_params,
+		std::span<const TemplateTypeArg> template_args,
+		std::span<const std::string_view> template_param_names);
+	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
+		const ASTNode& default_node,
+		const std::vector<TemplateParameterNode>& template_params,
 		std::span<const TemplateTypeArg> template_args,
 		std::span<const std::string_view> template_param_names);
 	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
@@ -1316,16 +1331,23 @@ private:
 		size_t function_pack_arg_start,
 		int recursion_depth,
 		NamespaceHandle source_namespace);
+	std::optional<InlineVector<TemplateTypeArg, 4>> deduceTemplateArgsFromCall(
+		const std::vector<TemplateParameterNode>& template_params,
+		const std::vector<TypeSpecifierNode>& arg_types,
+		const CallArgDeductionInfo& deduction_info,
+		size_t function_pack_arg_start,
+		int recursion_depth,
+		NamespaceHandle source_namespace);
 	// Shared pre-deduction helper for matching function-parameter slots to call-argument
 	// types. The returned metadata also carries the canonical function-param → call-arg
 	// mapping so deduction sites can reuse one pack-aware view of the call shape.
 	std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
-		const std::vector<ASTNode>& template_params,
+		const std::vector<TemplateParameterNode>& template_params,
 		const std::vector<ASTNode>& func_params,
 		const std::vector<TypeSpecifierNode>& arg_types,
 		int recursion_depth);
 	std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
-		const std::vector<ASTNode>& template_params,
+		const std::vector<TemplateParameterNode>& template_params,
 		const FunctionDeclarationNode& func_decl,
 		const std::vector<TypeSpecifierNode>& arg_types,
 		int recursion_depth);
@@ -1346,6 +1368,12 @@ private:
 		const InlineVector<ASTNode, 4>& template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args,
 		bool preserve_ref_qualifier = false);
+	void reparse_template_function_body(
+		FunctionDeclarationNode& new_func_ref,
+		const FunctionDeclarationNode& func_decl,
+		const std::vector<TemplateParameterNode>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args,
+		bool preserve_ref_qualifier);
 	// Populate template_param_substitutions_ from parallel (name, arg) pairs for
 	// body-reparse paths so non-type params (e.g. int N → 4) are resolved in parse_block().
 	// Overload 1: TemplateTypeArg source (lazy body-reparse path).
@@ -1361,9 +1389,9 @@ private:
 	// Build outer-template binding data from the AST template parameter list so
 	// parameter names and args stay index-aligned even if the parameter list
 	// ever stops being a pure TemplateParameterNode sequence.
-	template <typename ArgContainer, typename OutArgContainer>
+	template <typename ParamContainer, typename ArgContainer, typename OutArgContainer>
 	void collectOuterTemplateBindings(
-		const InlineVector<ASTNode, 4>& template_params,
+		const ParamContainer& template_params,
 		const ArgContainer& template_args,
 		InlineVector<StringHandle, 4>& out_param_names,
 		OutArgContainer& out_args) const {
@@ -1374,17 +1402,17 @@ private:
 		out_args.reserve(pair_count);
 
 		for (size_t i = 0; i < pair_count; ++i) {
-			if (!template_params[i].is<TemplateParameterNode>()) {
+			const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+			if (param == nullptr) {
 				continue;
 			}
-
-			out_param_names.push_back(template_params[i].as<TemplateParameterNode>().nameHandle());
+			out_param_names.push_back(param->nameHandle());
 			out_args.push_back(template_args[i]);
 		}
 	}
-	template <typename ArgContainer>
+	template <typename ParamContainer, typename ArgContainer>
 	void collectOuterTemplateBinding(
-		const InlineVector<ASTNode, 4>& template_params,
+		const ParamContainer& template_params,
 		const ArgContainer& template_args,
 		OuterTemplateBinding& out_binding) const {
 		out_binding.param_names.clear();
@@ -1398,21 +1426,22 @@ private:
 
 		size_t arg_index = 0;
 		for (size_t i = 0; i < template_params.size(); ++i) {
-			if (!template_params[i].is<TemplateParameterNode>()) {
+			const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+			if (tparam == nullptr) {
 				continue;
 			}
+			out_binding.param_names.push_back(tparam->nameHandle());
+			if constexpr (std::is_same_v<std::decay_t<decltype(template_params[i])>, ASTNode>) {
+				out_binding.params.push_back(template_params[i]);
+			} else {
+				out_binding.params.push_back(ASTNode::emplace_node<TemplateParameterNode>(*tparam));
+			}
 
-			const auto& tparam = template_params[i].as<TemplateParameterNode>();
-			out_binding.param_names.push_back(tparam.nameHandle());
-			out_binding.params.push_back(template_params[i]);
-
-			if (tparam.is_variadic()) {
+			if (tparam->is_variadic()) {
 				size_t remaining_args = arg_index < template_args.size()
 										 ? template_args.size() - arg_index
 										 : 0;
-				size_t required_after = countRequiredTemplateArgsAfter<
-					InlineVector<ASTNode, 4>,
-					ArgContainer>(template_params, i + 1);
+				size_t required_after = countRequiredTemplateArgsAfter(template_params, i + 1);
 				size_t pack_size = remaining_args > required_after
 									 ? remaining_args - required_after
 									 : 0;
@@ -1443,10 +1472,10 @@ private:
 			++arg_index;
 		}
 	}
-	template <typename NodeT, typename ArgContainer>
+	template <typename NodeT, typename ParamContainer, typename ArgContainer>
 	void setOuterTemplateBindingsFromParams(
 		NodeT& node,
-		const InlineVector<ASTNode, 4>& template_params,
+		const ParamContainer& template_params,
 		const ArgContainer& template_args) {
 		InlineVector<StringHandle, 4> outer_template_param_names;
 		std::vector<std::decay_t<decltype(template_args[0])>> filtered_template_args;
@@ -1462,12 +1491,12 @@ private:
 		const TemplateParamsContainer& template_params,
 		const TemplateArgsContainer& template_args) {
 		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-			if (!template_params[i].template is<TemplateParameterNode>()) {
+			const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+			if (param == nullptr) {
 				continue;
 			}
 
-			const TemplateParameterNode& param = template_params[i].template as<TemplateParameterNode>();
-			if (param.kind() != TemplateParameterKind::Type || param.nameHandle() != base_name) {
+			if (param->kind() != TemplateParameterKind::Type || param->nameHandle() != base_name) {
 				continue;
 			}
 
@@ -1521,13 +1550,12 @@ private:
 
 			size_t arg_index = 0;
 			for (size_t i = 0; i < template_params.size(); ++i) {
-				if (!template_params[i].template is<TemplateParameterNode>()) {
+				const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+				if (param == nullptr) {
 					continue;
 				}
 
-				const auto& param =
-					template_params[i].template as<TemplateParameterNode>();
-				if (param.is_variadic()) {
+				if (param->is_variadic()) {
 					size_t remaining_args = arg_index < template_args.size()
 						? template_args.size() - arg_index
 						: 0;
@@ -1539,7 +1567,7 @@ private:
 						? remaining_args - required_after
 						: 0;
 
-					if (param.nameHandle() == arg_info.dependent_name) {
+					if (param->nameHandle() == arg_info.dependent_name) {
 						for (size_t pack_index = 0;
 							 pack_index < pack_size &&
 							 (arg_index + pack_index) < template_args.size();
@@ -1744,6 +1772,11 @@ private:
 	std::optional<TemplateTypeArg> materializeDeferredAliasTemplateArg(
 		const ASTNode& arg_node,
 		const InlineVector<ASTNode, 4>& template_parameters,
+		const InlineVector<StringHandle, 4>& param_names,
+		const std::vector<TemplateTypeArg>& template_args);
+	std::optional<TemplateTypeArg> materializeDeferredAliasTemplateArg(
+		const ASTNode& arg_node,
+		const std::vector<TemplateParameterNode>& template_parameters,
 		const InlineVector<StringHandle, 4>& param_names,
 		const std::vector<TemplateTypeArg>& template_args);
 	std::optional<std::vector<TemplateTypeArg>> materializeDeferredAliasTemplateArgs(
@@ -2122,11 +2155,18 @@ private:
 		const TypeSpecifierNode& alias_type_spec,
 		const InlineVector<ASTNode, 4>& template_params,
 		const std::vector<TemplateTypeArg>& template_args);
+	const TypeInfo* materializeInstantiatedMemberAliasTarget(
+		const TypeSpecifierNode& alias_type_spec,
+		const std::vector<TemplateParameterNode>& template_params,
+		const std::vector<TemplateTypeArg>& template_args);
 	AliasTemplateMaterializationResult materializeAliasTemplateInstantiation(
 		std::string_view alias_template_name,
 		const std::vector<TemplateTypeArg>& template_args);
 	void normalizeDependentNonTypeTemplateArgs(
 		const InlineVector<ASTNode, 4>& template_parameters,
+		std::vector<TemplateTypeArg>& template_args);
+	void normalizeDependentNonTypeTemplateArgs(
+		const std::vector<TemplateParameterNode>& template_parameters,
 		std::vector<TemplateTypeArg>& template_args);
 	bool resolveAliasTemplateInstantiation(
 		TypeSpecifierNode& type_spec,
@@ -2159,7 +2199,7 @@ private:
 		const std::vector<TemplateTypeArg>& args,
 		const std::vector<ASTNode>& params);	 // Substitute non-type template parameter in initializer
 
-	std::optional<bool> try_parse_out_of_line_template_member(const InlineVector<ASTNode, 4>& template_params, const InlineVector<StringHandle, 4>& template_param_names, const InlineVector<ASTNode, 4>& inner_template_params = {}, const InlineVector<StringHandle, 4>& inner_template_param_names = {});	 // NEW: Parse out-of-line template member function
+	std::optional<bool> try_parse_out_of_line_template_member(const std::vector<TemplateParameterNode>& template_params, const InlineVector<StringHandle, 4>& template_param_names, const std::vector<TemplateParameterNode>& inner_template_params = {}, const InlineVector<StringHandle, 4>& inner_template_param_names = {});	 // NEW: Parse out-of-line template member function
 	bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
 	bool deduce_template_arguments_from_guide(const DeductionGuideNode& guide,
 											  const std::vector<TypeSpecifierNode>& argument_types,
@@ -2189,6 +2229,10 @@ public:	// Public methods for template instantiation
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
 		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args);
+	ASTNode substituteTemplateParameters(
+		const ASTNode& node,
+		const std::vector<TemplateParameterNode>& template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args);
 
 	// Helper to extract type from an expression for overload resolution.
@@ -2308,6 +2352,11 @@ private:	 // Resume private methods
 	bool expandPackExpansionArgs(
 		const PackExpansionExprNode& pack_expansion,
 		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args,
+		ChunkedVector<ASTNode>& out_args);
+	bool expandPackExpansionArgs(
+		const PackExpansionExprNode& pack_expansion,
+		const std::vector<TemplateParameterNode>& template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args,
 		ChunkedVector<ASTNode>& out_args);
 
@@ -2536,6 +2585,10 @@ private:	 // Resume private methods
 	TypeIndex substitute_template_parameter(
 		const TypeSpecifierNode& original_type,
 		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args);
+	TypeIndex substitute_template_parameter(
+		const TypeSpecifierNode& original_type,
+		const std::vector<TemplateParameterNode>& template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args);
 
 	// Lookup symbol with template parameter checking

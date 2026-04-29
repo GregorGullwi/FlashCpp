@@ -44,7 +44,7 @@ inline bool patternPointerDepthMatches(
 
 // Out-of-line template member function definition
 struct OutOfLineMemberFunction {
-	InlineVector<ASTNode, 4> template_params; // Template parameters (e.g., <typename T>)
+	std::vector<TemplateParameterNode> template_params; // Template parameters (e.g., <typename T>)
 	ASTNode function_node; // FunctionDeclarationNode
 	SaveHandle body_start; // Handle to saved position of function body for re-parsing
 	SaveHandle initializer_list_start{}; // Handle to saved position at ':' for ctor initializer re-parse
@@ -52,7 +52,7 @@ struct OutOfLineMemberFunction {
 	// For nested templates (member function templates of class templates):
 	// template<typename T> template<typename U> T Container<T>::convert(U u) { ... }
 	// inner_template_params stores the inner template params (U), while template_params stores the outer (T)
-	InlineVector<ASTNode, 4> inner_template_params;
+	std::vector<TemplateParameterNode> inner_template_params;
 	InlineVector<StringHandle, 4> inner_template_param_names;
 	// Function specifiers from out-of-line definition (= default, = delete)
 	bool has_initializer_list = false;

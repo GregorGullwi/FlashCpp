@@ -54,13 +54,25 @@ void registerTypeParamsInScope(
 	bool preserve_ref_qualifier = false);
 
 void registerTypeParamsInScope(
-	const std::vector<ASTNode>& template_param_nodes,
+	const std::vector<TemplateParameterNode>& template_param_nodes,
 	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier);
 
 void registerTypeParamsInScope(
-	const std::vector<ASTNode>& template_param_nodes,
+	const InlineVector<ASTNode, 4>& template_param_nodes,
+	const std::vector<TemplateTypeArg>& template_args,
+	FlashCpp::TemplateParameterScope& scope,
+	bool preserve_ref_qualifier);
+
+void registerTypeParamsInScope(
+	const std::vector<TemplateParameterNode>& template_param_nodes,
+	const std::vector<TemplateTypeArg>& template_args,
+	FlashCpp::TemplateParameterScope& scope,
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr);
+
+void registerTypeParamsInScope(
+	const InlineVector<ASTNode, 4>& template_param_nodes,
 	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr);

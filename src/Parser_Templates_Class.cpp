@@ -189,7 +189,10 @@ ParseResult Parser::parse_template_declaration() {
 	// This allows them to be used in the function body or class members
 	FlashCpp::TemplateParameterScope template_scope;
 	template_param_metadata = registerTemplateParametersInScope(template_param_nodes, template_scope);
-	template_params = createTemplateParameterAstNodes(template_param_nodes);
+	template_params.clear();
+	for (const auto& param : template_param_nodes) {
+		template_params.push_back(emplace_node<TemplateParameterNode>(param));
+	}
 	InlineVector<StringHandle, 4> template_param_names = template_param_metadata.names;
 
 	// Set the flag to enable fold expression parsing if we have parameter packs
@@ -275,7 +278,6 @@ ParseResult Parser::parse_template_declaration() {
 			FlashCpp::TemplateParameterScope inner_template_scope;
 			TemplateParameterMetadata inner_template_param_metadata = registerTemplateParametersInScope(inner_template_params, inner_template_scope);
 			InlineVector<StringHandle, 4> inner_template_param_names = inner_template_param_metadata.names;
-			InlineVector<ASTNode, 4> inner_template_param_ast_nodes = createTemplateParameterAstNodes(inner_template_params);
 
 			discard_saved_token(inner_saved);
 
@@ -510,12 +512,12 @@ ParseResult Parser::parse_template_declaration() {
 
 				// Register as out-of-line member with inner template params
 				OutOfLineMemberFunction out_of_line_member;
-				out_of_line_member.template_params = template_params;
+				out_of_line_member.template_params = template_param_nodes;
 				out_of_line_member.function_node = func_node;
 				out_of_line_member.body_start = body_start;
 				out_of_line_member.initializer_list_start = initializer_list_start;
 				out_of_line_member.template_param_names = template_param_names;
-				out_of_line_member.inner_template_params = inner_template_param_ast_nodes;
+				out_of_line_member.inner_template_params = inner_template_params;
 				out_of_line_member.inner_template_param_names = inner_template_param_names;
 				out_of_line_member.has_initializer_list = has_initializer_list;
 
@@ -938,7 +940,7 @@ ParseResult Parser::parse_template_declaration() {
 		if (has_unresolved_params && target_template_name.isValid()) {
 			FLASH_LOG(Parser, Debug, "Creating deferred TemplateAliasNode for '", alias_name, "' -> '", target_template_name.view(), "'");
 			alias_node = emplace_node<TemplateAliasNode>(
-				std::move(template_params),
+				template_param_nodes,
 				std::move(template_param_names),
 				StringTable::getOrInternStringHandle(alias_name),
 				type_result.node().value(),
@@ -947,7 +949,7 @@ ParseResult Parser::parse_template_declaration() {
 		} else {
 			// Regular (non-deferred) alias
 			alias_node = emplace_node<TemplateAliasNode>(
-				std::move(template_params),
+				template_param_nodes,
 				std::move(template_param_names),
 				StringTable::getOrInternStringHandle(alias_name),
 				type_result.node().value());
@@ -1154,7 +1156,7 @@ ParseResult Parser::parse_template_declaration() {
 
 		// Create TemplateVariableDeclarationNode
 		auto template_var_node = emplace_node<TemplateVariableDeclarationNode>(
-			std::move(template_params),
+			template_param_nodes,
 			var_decl_node);
 
 		// Register in template registry
@@ -4251,7 +4253,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Create DeductionGuideNode
 			auto guide_node = emplace_node<DeductionGuideNode>(
-				std::move(template_params),
+				template_param_nodes,
 				class_name,
 				std::move(guide_params),
 				std::move(deduced_type_nodes));
@@ -4264,7 +4266,7 @@ ParseResult Parser::parse_template_declaration() {
 
 		// Try to detect out-of-line member function definition
 		// Pattern: ReturnType ClassName<TemplateArgs>::FunctionName(...)
-		auto out_of_line_result = try_parse_out_of_line_template_member(template_params, template_param_names);
+		auto out_of_line_result = try_parse_out_of_line_template_member(template_param_nodes, template_param_names);
 		if (out_of_line_result.has_value()) {
 			return saved_position.success();	 // Successfully parsed out-of-line definition
 		}
@@ -4504,14 +4506,12 @@ ParseResult Parser::parse_template_declaration() {
 	if (decl_node.is<StructDeclarationNode>()) {
 		// Create a TemplateClassDeclarationNode with parameter names for lookup
 		std::vector<std::string_view> param_names;
-		for (const auto& param : template_params) {
-			if (param.is<TemplateParameterNode>()) {
-				param_names.push_back(param.as<TemplateParameterNode>().name());
-			}
+		for (std::string_view param_name : template_param_metadata.name_views) {
+			param_names.push_back(param_name);
 		}
 
 		auto template_class_node = emplace_node<TemplateClassDeclarationNode>(
-			std::move(template_params),
+			template_param_nodes,
 			std::move(param_names),
 			decl_node);
 
@@ -4791,7 +4791,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	FlashCpp::TemplateParameterScope template_scope;
 	TemplateParameterMetadata template_param_metadata = registerTemplateParametersInScope(template_param_nodes, template_scope);
 	InlineVector<std::string_view, 4> template_param_names = template_param_metadata.name_views;
-	template_params = createTemplateParameterAstNodes(template_param_nodes);
+	template_params.clear();
+	for (const auto& param : template_param_nodes) {
+		template_params.push_back(emplace_node<TemplateParameterNode>(param));
+	}
 
 	// Skip requires clause if present (for partial specializations with constraints)
 	// e.g., template<typename T> requires Constraint<T> struct Name<T> { ... };
@@ -4850,7 +4853,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 		// Create template struct node for the forward declaration
 		auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
-			std::move(template_params),
+			template_param_nodes,
 			std::move(template_param_names),
 			forward_struct_node);
 
@@ -5374,7 +5377,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 		// Create template struct node for the partial specialization
 		auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
-			template_params,	 // Copy, don't move yet
+			template_param_nodes,	 // Copy, don't move yet
 			template_param_names,  // Copy, don't move yet
 			member_struct_node);
 
@@ -5731,7 +5734,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 	// Create template struct node (using TemplateClassDeclarationNode which handles both struct and class)
 	auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
-		std::move(template_params),
+		template_param_nodes,
 		std::move(template_param_names),
 		member_struct_node);
 

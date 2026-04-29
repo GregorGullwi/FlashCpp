@@ -123,12 +123,13 @@ Parser::TemplateParameterMetadata Parser::registerTemplateParametersInScope(
 	return metadata;
 }
 
-InlineVector<ASTNode, 4> Parser::createTemplateParameterAstNodes(const std::vector<TemplateParameterNode>& template_params) {
-	InlineVector<ASTNode, 4> ast_params;
-	for (const TemplateParameterNode& tparam : template_params) {
-		ast_params.push_back(emplace_node<TemplateParameterNode>(tparam));
+InlineVector<ASTNode, 4> Parser::cloneTemplateParameterNodes(const std::vector<TemplateParameterNode>& template_params) {
+	InlineVector<ASTNode, 4> ast_nodes;
+	ast_nodes.reserve(template_params.size());
+	for (const TemplateParameterNode& template_param : template_params) {
+		ast_nodes.push_back(ASTNode::emplace_node<TemplateParameterNode>(template_param));
 	}
-	return ast_params;
+	return ast_nodes;
 }
 
 // Parse a single template parameter: typename T, class T, int N, etc.

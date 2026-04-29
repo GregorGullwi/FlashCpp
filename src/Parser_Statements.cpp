@@ -2361,11 +2361,9 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 	// Build template parameter name set for matching
 	std::unordered_map<std::string_view, size_t> tparam_name_to_index;
 	for (size_t i = 0; i < template_params.size(); ++i) {
-		if (template_params[i].is<TemplateParameterNode>()) {
-			const auto& tparam = template_params[i].as<TemplateParameterNode>();
-			if (tparam.kind() == TemplateParameterKind::Type) {
-				tparam_name_to_index[tparam.name()] = i;
-			}
+		if (const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+			tparam != nullptr && tparam->kind() == TemplateParameterKind::Type) {
+			tparam_name_to_index[tparam->name()] = i;
 		}
 	}
 
@@ -2419,13 +2417,13 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 			continue;
 
 		// Check all template type params were deduced
-		bool all_deduced = true;
-		for (size_t i = 0; i < template_params.size(); ++i) {
-			if (tparam_name_to_index.count(template_params[i].is<TemplateParameterNode>()
-											   ? template_params[i].as<TemplateParameterNode>().name()
-											   : "") > 0 &&
-				!deduced[i]) {
-				all_deduced = false;
+	bool all_deduced = true;
+	for (size_t i = 0; i < template_params.size(); ++i) {
+		const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+		if (tparam != nullptr &&
+			tparam_name_to_index.count(tparam->name()) > 0 &&
+			!deduced[i]) {
+			all_deduced = false;
 				break;
 			}
 		}
@@ -2449,10 +2447,7 @@ bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guid
 
 	std::unordered_map<std::string_view, const TemplateParameterNode*> template_params;
 	for (const auto& param_node : guide.template_parameters()) {
-		if (!param_node.is<TemplateParameterNode>()) {
-			continue;
-		}
-		const auto& tparam = param_node.as<TemplateParameterNode>();
+		const auto& tparam = param_node;
 		if (tparam.kind() == TemplateParameterKind::Type) {
 			template_params.emplace(tparam.name(), &tparam);
 		}

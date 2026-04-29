@@ -53,10 +53,8 @@ public:
 		auto& def_params = full_def.as<TemplateClassDeclarationNode>().template_parameters();
 		size_t count = std::min(fwd_params.size(), def_params.size());
 		for (size_t i = 0; i < count; ++i) {
-			if (!fwd_params[i].is<TemplateParameterNode>() || !def_params[i].is<TemplateParameterNode>())
-				continue;
-			const auto& fwd_p = fwd_params[i].as<TemplateParameterNode>();
-			auto& def_p = def_params[i].as<TemplateParameterNode>();
+			const auto& fwd_p = fwd_params[i];
+			auto& def_p = def_params[i];
 			if (fwd_p.has_default() && !def_p.has_default()) {
 				def_p.set_default_value(fwd_p.default_value());
 			}
@@ -142,6 +140,16 @@ public:
 		StringHandle key = StringTable::getOrInternStringHandle(base_name);
 		variable_template_specializations_[key].push_back(
 			TemplatePattern{template_params, pattern_args, specialized_node, std::nullopt});
+	}
+	void registerVariableTemplateSpecialization(std::string_view base_name,
+												const std::vector<TemplateParameterNode>& template_params,
+												const std::vector<TemplateTypeArg>& pattern_args,
+												ASTNode specialized_node) {
+		InlineVector<ASTNode, 4> ast_params;
+		for (const auto& param : template_params) {
+			ast_params.push_back(ASTNode::emplace_node<TemplateParameterNode>(param));
+		}
+		registerVariableTemplateSpecialization(base_name, std::vector<ASTNode>(ast_params.begin(), ast_params.end()), pattern_args, specialized_node);
 	}
 
 	// Find the best matching variable template partial specialization for concrete args.

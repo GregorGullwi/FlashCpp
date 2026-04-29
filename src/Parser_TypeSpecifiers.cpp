@@ -1378,8 +1378,9 @@ ParseResult Parser::parse_type_specifier() {
 							size_t count = std::min(placeholder_params.size(), template_args->size());
 							placeholder_param_names.reserve(count);
 							for (size_t i = 0; i < count; ++i) {
-								if (placeholder_params[i].is<TemplateParameterNode>()) {
-									placeholder_param_names.push_back(placeholder_params[i].as<TemplateParameterNode>().nameHandle());
+								if (const TemplateParameterNode* placeholder_param = tryGetTemplateParameterNode(placeholder_params[i]);
+									placeholder_param != nullptr) {
+									placeholder_param_names.push_back(placeholder_param->nameHandle());
 								}
 							}
 						}
@@ -1473,17 +1474,17 @@ ParseResult Parser::parse_type_specifier() {
 
 					// Fill in defaults for missing parameters
 					for (size_t i = filled_template_args.size(); i < template_params.size(); ++i) {
-						if (!template_params[i].is<TemplateParameterNode>()) {
+						const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+						if (param == nullptr) {
 							FLASH_LOG_FORMAT(Templates, Error, "Template parameter {} is not a TemplateParameterNode", i);
 							continue;
 						}
-						const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-						if (!param.has_default()) {
+						if (!param->has_default()) {
 							continue;
 						}
-						const ASTNode& default_node = param.default_value();
+						const ASTNode& default_node = param->default_value();
 						InlineVector<TemplateTypeArg, 4> inline_filled_args = toInlineTemplateArgs(filled_template_args);
-						if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
+						if (param->kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
 							ASTNode substituted_default_node = default_node;
 							if (!inline_filled_args.empty()) {
 								substituted_default_node = substituteTemplateParameters(default_node, template_params, inline_filled_args);
@@ -1491,7 +1492,7 @@ ParseResult Parser::parse_type_specifier() {
 							if (substituted_default_node.is<TypeSpecifierNode>()) {
 								filled_template_args.push_back(TemplateTypeArg(substituted_default_node.as<TypeSpecifierNode>()));
 							}
-						} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
+						} else if (param->kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
 							if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
 									default_node,
 									template_params,
@@ -2077,8 +2078,9 @@ ParseResult Parser::parse_type_specifier() {
 						size_t count = std::min(placeholder_params.size(), template_args->size());
 						placeholder_param_names.reserve(count);
 						for (size_t i = 0; i < count; ++i) {
-							if (placeholder_params[i].is<TemplateParameterNode>()) {
-								placeholder_param_names.push_back(placeholder_params[i].as<TemplateParameterNode>().nameHandle());
+							if (const TemplateParameterNode* placeholder_param = tryGetTemplateParameterNode(placeholder_params[i]);
+								placeholder_param != nullptr) {
+								placeholder_param_names.push_back(placeholder_param->nameHandle());
 							}
 						}
 					}
@@ -2106,12 +2108,10 @@ ParseResult Parser::parse_type_specifier() {
 			// Check if all parameters have defaults
 			bool all_have_defaults = true;
 			for (const auto& param_node : template_params) {
-				if (param_node.is<TemplateParameterNode>()) {
-					const auto& param = param_node.as<TemplateParameterNode>();
-					if (!param.has_default()) {
-						all_have_defaults = false;
-						break;
-					}
+				const TemplateParameterNode* param = tryGetTemplateParameterNode(param_node);
+				if (param != nullptr && !param->has_default()) {
+					all_have_defaults = false;
+					break;
 				}
 			}
 
@@ -2126,17 +2126,17 @@ ParseResult Parser::parse_type_specifier() {
 				const std::vector<std::string_view> template_param_names =
 					buildTemplateParamNames(template_params);
 				for (size_t i = 0; i < template_params.size(); ++i) {
-					if (!template_params[i].is<TemplateParameterNode>()) {
+					const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+					if (param == nullptr) {
 						FLASH_LOG_FORMAT(Templates, Error, "Template parameter {} is not a TemplateParameterNode", i);
 						continue;
 					}
-					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-					if (!param.has_default()) {
+					if (!param->has_default()) {
 						continue;
 					}
-					const ASTNode& default_node = param.default_value();
+					const ASTNode& default_node = param->default_value();
 					InlineVector<TemplateTypeArg, 4> inline_filled_args = toInlineTemplateArgs(filled_template_args);
-					if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
+					if (param->kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
 						ASTNode substituted_default_node = default_node;
 						if (!inline_filled_args.empty()) {
 							substituted_default_node = substituteTemplateParameters(default_node, template_params, inline_filled_args);
@@ -2144,7 +2144,7 @@ ParseResult Parser::parse_type_specifier() {
 						if (substituted_default_node.is<TypeSpecifierNode>()) {
 							filled_template_args.push_back(TemplateTypeArg(substituted_default_node.as<TypeSpecifierNode>()));
 						}
-					} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
+					} else if (param->kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
 						if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
 								default_node,
 								template_params,

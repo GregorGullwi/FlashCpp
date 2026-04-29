@@ -56,11 +56,11 @@ std::optional<std::vector<TemplateTypeArg>> extractNamedTemplateArgumentPack(
 	size_t total_non_variadic = 0;
 	size_t total_variadic = 0;
 	for (const auto& param_node : template_params) {
-		if (!param_node.template is<TemplateParameterNode>()) {
+		const TemplateParameterNode* tparam = tryGetTemplateParameterNode(param_node);
+		if (tparam == nullptr) {
 			continue;
 		}
-		const auto& tparam = param_node.template as<TemplateParameterNode>();
-		if (tparam.is_variadic()) {
+		if (tparam->is_variadic()) {
 			++total_variadic;
 		} else {
 			++total_non_variadic;
@@ -69,11 +69,11 @@ std::optional<std::vector<TemplateTypeArg>> extractNamedTemplateArgumentPack(
 
 	size_t arg_index = 0;
 	for (const auto& param_node : template_params) {
-		if (!param_node.template is<TemplateParameterNode>()) {
+		const TemplateParameterNode* tparam = tryGetTemplateParameterNode(param_node);
+		if (tparam == nullptr) {
 			continue;
 		}
-		const auto& tparam = param_node.template as<TemplateParameterNode>();
-		if (!tparam.is_variadic()) {
+		if (!tparam->is_variadic()) {
 			if (arg_index >= template_args.size()) {
 				return std::nullopt;
 			}
@@ -82,7 +82,7 @@ std::optional<std::vector<TemplateTypeArg>> extractNamedTemplateArgumentPack(
 		}
 
 		size_t pack_size = 0;
-		if (auto exact_size = exact_pack_size_lookup(tparam.name())) {
+		if (auto exact_size = exact_pack_size_lookup(tparam->name())) {
 			pack_size = *exact_size;
 		} else if (total_variadic == 1 && template_args.size() >= total_non_variadic) {
 			pack_size = template_args.size() - total_non_variadic;
@@ -90,7 +90,7 @@ std::optional<std::vector<TemplateTypeArg>> extractNamedTemplateArgumentPack(
 			return std::nullopt;
 		}
 
-		if (tparam.name() == pack_name) {
+		if (tparam->name() == pack_name) {
 			if (arg_index + pack_size > template_args.size()) {
 				return std::nullopt;
 			}
@@ -383,7 +383,7 @@ ASTNode Parser::substituteTemplateParameters(
 				size_t remaining_args = arg_index < template_args.size()
 											? template_args.size() - arg_index
 											: 0;
-				size_t required_after = countRequiredTemplateArgsAfter<InlineVector<ASTNode, 4>, InlineVector<TemplateTypeArg, 4>>(
+				size_t required_after = countRequiredTemplateArgsAfter(
 					template_params, i + 1);
 				size_t pack_size = remaining_args > required_after
 									   ? remaining_args - required_after
@@ -1049,15 +1049,12 @@ ASTNode Parser::substituteTemplateParameters(
 									if (tmpl_node.is<TemplateClassDeclarationNode>()) {
 										const auto& tmpl_class = tmpl_node.as<TemplateClassDeclarationNode>();
 										for (const auto& param : tmpl_class.template_parameters()) {
-											if (param.is<TemplateParameterNode>()) {
-												const auto& tparam = param.as<TemplateParameterNode>();
-												if (tparam.is_variadic()) {
-													// Match by name, or match if the stored name is anonymous
-													// (from forward declarations like `template<typename...> class tuple;`)
-													if (tparam.name() == pack_name || tparam.name().starts_with("__anon_type_")) {
-														is_known_template_param = true;
-														break;
-													}
+											if (param.is_variadic()) {
+												// Match by name, or match if the stored name is anonymous
+												// (from forward declarations like `template<typename...> class tuple;`)
+												if (param.name() == pack_name || param.name().starts_with("__anon_type_")) {
+													is_known_template_param = true;
+													break;
 												}
 											}
 										}
@@ -1617,6 +1614,16 @@ ASTNode Parser::substituteTemplateParameters(
 	return node;
 }
 
+ASTNode Parser::substituteTemplateParameters(
+	const ASTNode& node,
+	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	return substituteTemplateParameters(
+		node,
+		cloneTemplateParameterNodes(template_params),
+		template_args);
+}
+
 // Extract base template name from a mangled template instantiation name
 // Supports underscore-based naming: "enable_if_void_int" -> "enable_if"
 // Future: Will support hash-based naming: "enable_if$abc123" -> "enable_if"
@@ -1842,6 +1849,18 @@ bool Parser::expandPackExpansionArgs(
 		out_args.push_back(substituted);
 	}
 	return true;
+}
+
+bool Parser::expandPackExpansionArgs(
+	const PackExpansionExprNode& pack_expansion,
+	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args,
+	ChunkedVector<ASTNode>& out_args) {
+	return expandPackExpansionArgs(
+		pack_expansion,
+		cloneTemplateParameterNodes(template_params),
+		template_args,
+		out_args);
 }
 
 // Substitute a single argument, expanding PackExpansionExprNode when present.

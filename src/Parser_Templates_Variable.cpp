@@ -98,7 +98,6 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	FlashCpp::TemplateParameterScope template_scope;
 	TemplateParameterMetadata template_param_metadata = registerTemplateParametersInScope(template_params, template_scope);
 	InlineVector<StringHandle, 4> template_param_names = template_param_metadata.names;
-	InlineVector<ASTNode, 4> template_param_ast_nodes = createTemplateParameterAstNodes(template_params);
 
 	// Set template parameter context for parsing the requires clause
 	FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
@@ -190,7 +189,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	ASTNode alias_node;
 	if (has_deferred_target && target_template_name.isValid()) {
 		alias_node = emplace_node<TemplateAliasNode>(
-			std::move(template_param_ast_nodes),
+			template_params,
 			std::move(template_param_names),
 			alias_name_handle,
 			type_result.node().value(),
@@ -198,7 +197,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 			std::move(target_template_arg_nodes));
 	} else {
 		alias_node = emplace_node<TemplateAliasNode>(
-			std::move(template_param_ast_nodes),
+			template_params,
 			std::move(template_param_names),
 			alias_name_handle,
 			type_result.node().value());
@@ -243,7 +242,6 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	FlashCpp::TemplateParameterScope template_scope;
 	TemplateParameterMetadata template_param_metadata = registerTemplateParametersInScope(template_params, template_scope);
 	InlineVector<std::string_view, 4> template_param_names = template_param_metadata.name_views;
-	InlineVector<ASTNode, 4> template_param_ast_nodes = createTemplateParameterAstNodes(template_params);
 
 	// Expect '>'
 	if (peek() != ">"_tok) {
@@ -331,7 +329,7 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 
 	// Create TemplateVariableDeclarationNode
 	auto template_var_node = emplace_node<TemplateVariableDeclarationNode>(
-		std::move(template_param_ast_nodes),
+		template_params,
 		var_decl_node);
 
 	// Build qualified name for registration

@@ -297,13 +297,15 @@ static int getTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 // Extract template parameter names (as StringHandles) from a list of
 // TemplateParameterNode AST nodes.  Only collects names for the first
 // `max_count` parameters to stay in sync with the argument vector.
+template <typename ParamContainer>
 static InlineVector<StringHandle, 4> collectParamNameHandles(
-	const InlineVector<ASTNode, 4>& template_params,
+	const ParamContainer& template_params,
 	size_t max_count) {
 	InlineVector<StringHandle, 4> names;
 	for (size_t i = 0; i < template_params.size() && i < max_count; ++i) {
-		if (template_params[i].is<TemplateParameterNode>()) {
-			names.push_back(template_params[i].as<TemplateParameterNode>().nameHandle());
+		if (const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+			param != nullptr) {
+			names.push_back(param->nameHandle());
 		}
 	}
 	return names;
@@ -1058,7 +1060,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	auto substitute_default_initializer = [&](
 											  const std::optional<ASTNode>& default_init,
 											  const std::vector<TemplateTypeArg>& args,
-											  const std::vector<ASTNode>& params) -> std::optional<ASTNode> {
+											  const auto& params) -> std::optional<ASTNode> {
 		if (!default_init.has_value()) {
 			return std::nullopt;
 		}
@@ -1074,8 +1076,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		eval_ctx.template_args = args;
 		eval_ctx.template_param_names.reserve(params.size());
 		for (const auto& param : params) {
-			if (param.is<TemplateParameterNode>()) {
-				eval_ctx.template_param_names.push_back(param.as<TemplateParameterNode>().name());
+			if (const TemplateParameterNode* template_param = tryGetTemplateParameterNode(param);
+				template_param != nullptr) {
+				eval_ctx.template_param_names.push_back(template_param->name());
 			}
 		}
 
@@ -1202,14 +1205,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				size_t pack_size = 0;
 				bool found_pack = false;
 				for (size_t i = 0; i < tmpl_params.size(); ++i) {
-					if (!tmpl_params[i].template is<TemplateParameterNode>())
+					const TemplateParameterNode* tparam = tryGetTemplateParameterNode(tmpl_params[i]);
+					if (tparam == nullptr)
 						continue;
-					const TemplateParameterNode& tparam = tmpl_params[i].template as<TemplateParameterNode>();
-					if (!tparam.is_variadic()) {
+					if (!tparam->is_variadic()) {
 						non_variadic++;
 						continue;
 					}
-					if (tparam.name() == type_name) {
+					if (tparam->name() == type_name) {
 						pack_size = tmpl_args.size() > non_variadic ? tmpl_args.size() - non_variadic : 0;
 						found_pack = true;
 						break;
@@ -1440,7 +1443,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	};
 
 	auto substituteDefaultTemplateArg = [&](const ASTNode& default_node,
-											const InlineVector<ASTNode, 4>& params,
+											const auto& params,
 											const std::vector<TemplateTypeArg>& current_args) -> ASTNode {
 		if (current_args.empty()) {
 			return default_node;
@@ -1452,10 +1455,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		std::vector<std::string_view> names;
 		names.reserve(params.size());
 		for (const auto& param_node : params) {
-			if (!param_node.template is<TemplateParameterNode>()) {
+			const TemplateParameterNode* param = tryGetTemplateParameterNode(param_node);
+			if (param == nullptr) {
 				continue;
 			}
-			names.push_back(param_node.template as<TemplateParameterNode>().name());
+			names.push_back(param->name());
 		}
 		return names;
 	};
@@ -1482,7 +1486,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Helper lambda to resolve a deferred bitfield width from non-type template parameters
 	auto resolve_bitfield_width = [&](
 									  const StructMemberDecl& member_decl,
-									  const std::vector<ASTNode>& params,
+									  const auto& params,
 									  const std::vector<TemplateTypeArg>& args) -> std::optional<size_t> {
 		if (member_decl.bitfield_width.has_value())
 			return member_decl.bitfield_width;
@@ -1491,11 +1495,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
 		std::unordered_map<std::string_view, int64_t> nontype_sub_map;
 		for (size_t pi = 0; pi < params.size() && pi < args.size(); ++pi) {
-			if (!params[pi].template is<TemplateParameterNode>())
+			const TemplateParameterNode* tparam = tryGetTemplateParameterNode(params[pi]);
+			if (tparam == nullptr)
 				continue;
-			const auto& tparam = params[pi].template as<TemplateParameterNode>();
-			if (tparam.kind() == TemplateParameterKind::NonType && args[pi].is_value)
-				nontype_sub_map[tparam.name()] = args[pi].value;
+			if (tparam->kind() == TemplateParameterKind::NonType && args[pi].is_value)
+				nontype_sub_map[tparam->name()] = args[pi].value;
 		}
 		ASTNode substituted = substitute_template_params_in_expression(
 			*member_decl.bitfield_width_expr, type_sub_map, nontype_sub_map, StringHandle{});
@@ -1508,7 +1512,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	auto resolve_array_dimensions = [&](
 										const DeclarationNode& decl,
-										const std::vector<ASTNode>& params,
+										const auto& params,
 										const std::vector<TemplateTypeArg>& args) -> std::vector<size_t> {
 		std::vector<size_t> resolved_dims;
 		if (!decl.is_array()) {
@@ -1517,11 +1521,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
 		std::unordered_map<std::string_view, int64_t> nontype_sub_map;
 		for (size_t pi = 0; pi < params.size() && pi < args.size(); ++pi) {
-			if (!params[pi].template is<TemplateParameterNode>())
+			const TemplateParameterNode* tparam = tryGetTemplateParameterNode(params[pi]);
+			if (tparam == nullptr)
 				continue;
-			const auto& tparam = params[pi].template as<TemplateParameterNode>();
-			if (tparam.kind() == TemplateParameterKind::NonType && args[pi].is_value) {
-				nontype_sub_map[tparam.name()] = args[pi].value;
+			if (tparam->kind() == TemplateParameterKind::NonType && args[pi].is_value) {
+				nontype_sub_map[tparam->name()] = args[pi].value;
 			}
 		}
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
@@ -1723,23 +1727,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Fill in defaults for missing arguments
 			for (size_t i = filled_args_for_pattern_match.size(); i < primary_params.size(); ++i) {
-				if (!primary_params[i].is<TemplateParameterNode>())
+				const TemplateParameterNode* param = tryGetTemplateParameterNode(primary_params[i]);
+				if (param == nullptr)
 					continue;
 
-				const TemplateParameterNode& param = primary_params[i].as<TemplateParameterNode>();
-
 				// Skip variadic parameters
-				if (param.is_variadic())
+				if (param->is_variadic())
 					continue;
 
 				// Check if parameter has a default
-				if (!param.has_default())
+				if (!param->has_default())
 					break; // No default = can't fill in
 
 				// Get the default value
-				const ASTNode& default_node = param.default_value();
+				const ASTNode& default_node = param->default_value();
 
-				if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
+				if (param->kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
 					bool handled_type_default = false;
 
@@ -1806,7 +1809,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						filled_args_for_pattern_match.push_back(TemplateTypeArg(default_type));
 						FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
 					}
-				} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
+				} else if (param->kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
 					// Handle non-type template parameter defaults like is_arithmetic<T>::value
 					size_t size_before = filled_args_for_pattern_match.size();
 					ASTNode substituted_default_node = substituteNonTypeDefaultExpression(
@@ -1907,9 +1910,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								if (!type_name.empty()) {
 									// Check if this is one of the template parameters we've already filled
 									for (size_t j = 0; j < primary_params.size() && j < filled_args_for_pattern_match.size(); ++j) {
-										if (primary_params[j].is<TemplateParameterNode>()) {
-											const TemplateParameterNode& prev_param = primary_params[j].as<TemplateParameterNode>();
-											if (prev_param.name() == type_name) {
+										if (const TemplateParameterNode* prev_param = tryGetTemplateParameterNode(primary_params[j]);
+											prev_param != nullptr) {
+											if (prev_param->name() == type_name) {
 												// Found the matching template parameter - use its filled value
 												const TemplateTypeArg& filled_arg = filled_args_for_pattern_match[j];
 												if (filled_arg.category() != TypeCategory::Invalid) {
@@ -2066,11 +2069,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								bool current_has_anon = false;
 								bool best_has_anon = false;
 								for (const auto& param : tmpl_class.template_parameters()) {
-									if (param.is<TemplateParameterNode>() && param.as<TemplateParameterNode>().name().starts_with("__anon_type_"))
+									if (param.name().starts_with("__anon_type_"))
 										current_has_anon = true;
 								}
 								for (const auto& param : best->template_parameters()) {
-									if (param.is<TemplateParameterNode>() && param.as<TemplateParameterNode>().name().starts_with("__anon_type_"))
+									if (param.name().starts_with("__anon_type_"))
 										best_has_anon = true;
 								}
 								if (best_has_anon && !current_has_anon)
@@ -2079,8 +2082,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					if (best) {
-						pattern_template_params = std::vector<ASTNode>(best->template_parameters().begin(),
-																	   best->template_parameters().end());
+						const InlineVector<ASTNode, 4> best_template_params_ast =
+							cloneTemplateParameterNodes(best->template_parameters());
+						pattern_template_params.assign(
+							best_template_params_ast.begin(),
+							best_template_params_ast.end());
 					}
 				}
 			}
@@ -3751,6 +3757,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	const TemplateClassDeclarationNode& template_class = template_node.as<TemplateClassDeclarationNode>();
 	const auto& template_params = template_class.template_parameters();
+	const InlineVector<ASTNode, 4> template_params_inline_ast = cloneTemplateParameterNodes(template_params);
+	const std::vector<ASTNode> template_params_ast(
+		template_params_inline_ast.begin(),
+		template_params_inline_ast.end());
 	const StructDeclarationNode& class_decl = template_class.class_decl_node();
 
 	// Count non-variadic parameters
@@ -3758,8 +3768,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	bool has_parameter_pack = false;
 
 	for (size_t i = 0; i < template_params.size(); ++i) {
-		const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-		if (param.is_variadic()) {
+		const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+		if (param == nullptr) {
+			continue;
+		}
+		if (param->is_variadic()) {
 			has_parameter_pack = true;
 		} else {
 			non_variadic_param_count++;
@@ -3772,13 +3785,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	if (has_parameter_pack) {
 		std::vector<ClassTemplatePackInfo> pack_infos;
 		for (size_t i = 0; i < template_params.size(); ++i) {
-			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-			if (param.is_variadic()) {
+			const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+			if (param != nullptr && param->is_variadic()) {
 				size_t pack_size = template_args.size() >= non_variadic_param_count
 									   ? template_args.size() - non_variadic_param_count
 									   : 0;
-				pack_infos.push_back({param.name(), pack_size});
-				FLASH_LOG(Templates, Debug, "Registered class template pack '", param.name(), "' with size ", pack_size);
+				pack_infos.push_back({param->name(), pack_size});
+				FLASH_LOG(Templates, Debug, "Registered class template pack '", param->name(), "' with size ", pack_size);
 			}
 		}
 		if (!pack_infos.empty()) {
@@ -3809,13 +3822,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Fill in default arguments for missing parameters
 	for (size_t i = filled_template_args.size(); i < template_params.size(); ++i) {
-		const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+		const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+		if (param == nullptr) {
+			continue;
+		}
 		// Skip variadic parameters - they're allowed to be empty
-		if (param.is_variadic()) {
+		if (param->is_variadic()) {
 			continue;
 		}
 
-		if (!param.has_default()) {
+		if (!param->has_default()) {
 			FLASH_LOG(Templates, Error, "Template '", template_name, "': Param ", i, " has no default (got ",
 					  template_args.size(), " args, need ", template_params.size(), "), returning nullopt");
 			return std::nullopt; // Missing required template argument
@@ -3827,9 +3843,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		size_t size_before = filled_template_args.size();
 
 		// Use the default value
-		if (param.kind() == TemplateParameterKind::Type) {
+		if (param->kind() == TemplateParameterKind::Type) {
 			// For type parameters with defaults, extract the type
-			const ASTNode& default_node = param.default_value();
+			const ASTNode& default_node = param->default_value();
 			if (default_node.is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
 
@@ -3864,9 +3880,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					filled_template_args.push_back(TemplateTypeArg(default_type));
 				}
 			}
-		} else if (param.kind() == TemplateParameterKind::NonType) {
+		} else if (param->kind() == TemplateParameterKind::NonType) {
 			// For non-type parameters with defaults, evaluate the expression
-			const ASTNode& default_node = param.default_value();
+			const ASTNode& default_node = param->default_value();
 			FLASH_LOG(Templates, Debug, "Processing non-type param default, is_expression=", default_node.is<ExpressionNode>());
 
 			// Substitute template parameters in the default expression
@@ -4044,9 +4060,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if (!sizeof_type_name.empty()) {
 								// Check if this is one of the template parameters we've already filled
 								for (size_t j = 0; j < template_params.size() && j < filled_template_args.size(); ++j) {
-									if (template_params[j].is<TemplateParameterNode>()) {
-										const TemplateParameterNode& prev_param = template_params[j].as<TemplateParameterNode>();
-										if (prev_param.name() == sizeof_type_name) {
+									if (const TemplateParameterNode* prev_param = tryGetTemplateParameterNode(template_params[j]);
+										prev_param != nullptr) {
+										if (prev_param->name() == sizeof_type_name) {
 											// Found the matching template parameter - use its filled value
 											const TemplateTypeArg& filled_arg = filled_template_args[j];
 											if (filled_arg.category() != TypeCategory::Invalid) {
@@ -4093,8 +4109,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					filled_template_args.push_back(*evaluated_default);
 				}
 			}
-		} else if (param.kind() == TemplateParameterKind::Template && param.has_default()) {
-			const ASTNode& default_node = param.default_value();
+		} else if (param->kind() == TemplateParameterKind::Template && param->has_default()) {
+			const ASTNode& default_node = param->default_value();
 			if (default_node.is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
 				StringHandle tpl_name_handle = StringTable::getOrInternStringHandle(default_type.token().value());
@@ -4110,14 +4126,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// This covers: Type defaults whose node isn't TypeSpecifierNode, NonType defaults
 		// that no handler could evaluate, and any other unhandled parameter kind.
 		if (filled_template_args.size() == size_before) {
-			if (param.kind() == TemplateParameterKind::Type) {
+			if (param->kind() == TemplateParameterKind::Type) {
 				// Push a void-like placeholder type
 				TemplateTypeArg placeholder;
 				placeholder.setType(TypeCategory::Void);
 				filled_template_args.push_back(placeholder);
 				FLASH_LOG(Templates, Warning, "Could not resolve type default for param ", i,
 						  " of '", template_name, "', using placeholder");
-			} else if (param.kind() == TemplateParameterKind::Template) {
+			} else if (param->kind() == TemplateParameterKind::Template) {
 				throw InternalError(
 					std::string("Could not resolve template-template default for param ") +
 					std::to_string(i) + " of '" + std::string(template_name) + "'");
@@ -4152,16 +4168,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		size_t arg_index = 0;
 		for (size_t i = 0; i < template_params.size(); ++i) {
-			if (!template_params[i].is<TemplateParameterNode>())
+			const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+			if (tparam == nullptr)
 				continue;
 
-			const auto& tparam = template_params[i].as<TemplateParameterNode>();
-
-			std::string_view param_name = tparam.name();
+			std::string_view param_name = tparam->name();
 			template_param_order.push_back(param_name);
 
 			// Check if this is a variadic pack parameter
-			if (tparam.is_variadic()) {
+			if (tparam->is_variadic()) {
 				// Collect remaining arguments as a pack
 				std::vector<TemplateTypeArg> pack_args;
 				for (size_t j = arg_index; j < template_args_to_use.size(); ++j) {
@@ -4177,7 +4192,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Regular scalar parameter (type or non-type)
 				if (arg_index < template_args_to_use.size()) {
 					TemplateTypeArg arg_to_insert =
-						enrichTemplateArgForParameter(tparam, template_args_to_use[arg_index]);
+						enrichTemplateArgForParameter(*tparam, template_args_to_use[arg_index]);
 					name_substitution_map[param_name] = arg_to_insert;
 					FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", static_cast<int>(arg_to_insert.typeEnum()), " type_index=", arg_to_insert.type_index, " is_value=", arg_to_insert.is_value, " is_ttp=", arg_to_insert.is_template_template_arg);
 					arg_index++;
@@ -4309,12 +4324,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	if (has_parameter_pack) {
 		std::vector<ClassTemplatePackInfo> pack_infos;
 		for (size_t i = 0; i < template_params.size(); ++i) {
-			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-			if (param.is_variadic()) {
+			const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+			if (param != nullptr && param->is_variadic()) {
 				size_t pack_size = template_args_to_use.size() >= non_variadic_param_count
 									   ? template_args_to_use.size() - non_variadic_param_count
 									   : 0;
-				pack_infos.push_back({param.name(), pack_size});
+				pack_infos.push_back({param->name(), pack_size});
 			}
 		}
 		if (!pack_infos.empty()) {
@@ -5294,8 +5309,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (identifier_name.has_value()) {
 					// Try to find which non-type template parameter this is
 					for (size_t i = 0; i < template_params.size(); ++i) {
-						const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-						if (tparam.kind() == TemplateParameterKind::NonType && tparam.name() == *identifier_name) {
+						const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+						if (tparam != nullptr &&
+							tparam->kind() == TemplateParameterKind::NonType &&
+							tparam->name() == *identifier_name) {
 							// Found the non-type parameter - substitute with the actual value
 							if (i < template_args_to_use.size() && template_args_to_use[i].is_value) {
 								// Create a numeric literal node with the substituted value
@@ -5625,7 +5642,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.is_array = static_member.is_array;
 				lazy_info.array_dimensions = static_member.array_dimensions;
 				lazy_info.pointer_depth = static_member.pointer_depth;
-				lazy_info.template_params = template_params;
+				lazy_info.template_params = template_params_ast;
 				lazy_info.template_args = template_args_to_use;
 				lazy_info.needs_substitution = true;
 
@@ -5659,7 +5676,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
 				? std::optional<ASTNode>(substituteTemplateParameters(
 					*static_member.initializer,
-					template_params,
+					template_params_inline_ast,
 					template_args_to_use))
 				: std::nullopt;
 
@@ -5671,7 +5688,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					gSymbolTable,
 					this,
 					struct_info.get(),
-					template_params,
+					template_params_inline_ast,
 					template_args_to_use,
 					substituted_type_index,
 					substituted_size,
@@ -6497,7 +6514,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					id.cv_qualifier = mem_func.cv_qualifier;
 					id.kind = DeferredMemberIdentity::Kind::Function;
 				}
-				lazy_info.template_params = template_params;
+				lazy_info.template_params = template_params_inline_ast;
 				lazy_info.template_args = template_args_to_use;
 				lazy_info.access = mem_func.access;
 				lazy_info.is_virtual = mem_func.is_virtual;
@@ -6922,8 +6939,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					InlineVector<StringHandle, 4> param_names;
 					param_names.reserve(template_params.size());
 					for (const auto& tparam_node : template_params) {
-						if (tparam_node.is<TemplateParameterNode>()) {
-							param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
+						if (const TemplateParameterNode* tparam = tryGetTemplateParameterNode(tparam_node);
+							tparam != nullptr) {
+							param_names.push_back(tparam->nameHandle());
 						}
 					}
 
@@ -7258,8 +7276,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Ensure template_param_order is populated (used by ExpressionSubstitutor later)
 					if (template_param_order.empty()) {
 						for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
-							if (template_params[i].is<TemplateParameterNode>()) {
-								template_param_order.push_back(template_params[i].as<TemplateParameterNode>().name());
+							if (const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+								tparam != nullptr) {
+								template_param_order.push_back(tparam->name());
 							}
 						}
 					}
@@ -7327,8 +7346,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Ensure template_param_order is populated (used by ExpressionSubstitutor)
 					if (template_param_order.empty()) {
 						for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
-							if (template_params[i].is<TemplateParameterNode>()) {
-								template_param_order.push_back(template_params[i].as<TemplateParameterNode>().name());
+							if (const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+								tparam != nullptr) {
+								template_param_order.push_back(tparam->name());
 							}
 						}
 					}
@@ -7564,18 +7584,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
 							std::unordered_map<std::string_view, int64_t> nontype_sub_map;
 							for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
-								if (!template_params[i].is<TemplateParameterNode>())
+								const TemplateParameterNode* template_param = tryGetTemplateParameterNode(template_params[i]);
+								if (template_param == nullptr)
 									continue;
-								const auto& template_param = template_params[i].as<TemplateParameterNode>();
-								if (template_param.kind() == TemplateParameterKind::Type && !template_args_to_use[i].is_value) {
-									auto type_it = getTypesByNameMap().find(template_param.nameHandle());
+								if (template_param->kind() == TemplateParameterKind::Type && !template_args_to_use[i].is_value) {
+									auto type_it = getTypesByNameMap().find(template_param->nameHandle());
 									if (type_it != getTypesByNameMap().end()) {
 										type_sub_map[type_it->second->type_index_] = template_args_to_use[i];
 									} else {
 										type_sub_map[TypeIndex{getTypeInfoCount() + type_sub_map.size() + 1}] = template_args_to_use[i];
 									}
-								} else if (template_param.kind() == TemplateParameterKind::NonType && template_args_to_use[i].is_value) {
-									nontype_sub_map[template_param.name()] = template_args_to_use[i].value;
+								} else if (template_param->kind() == TemplateParameterKind::NonType && template_args_to_use[i].is_value) {
+									nontype_sub_map[template_param->name()] = template_args_to_use[i].value;
 								}
 							}
 							ASTNode substituted_default = substitute_template_params_in_expression(
@@ -8003,11 +8023,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Calculate pack size for substitution
 					auto calculate_pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {
 						for (size_t i = 0; i < template_params.size(); ++i) {
-							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-							if (tparam.name() == pack_name && tparam.is_variadic()) {
+							const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+							if (tparam != nullptr && tparam->name() == pack_name && tparam->is_variadic()) {
 								size_t non_variadic_count = 0;
 								for (const auto& param : template_params) {
-									if (!param.as<TemplateParameterNode>().is_variadic()) {
+									const TemplateParameterNode* inner_param = tryGetTemplateParameterNode(param);
+									if (inner_param != nullptr && !inner_param->is_variadic()) {
 										non_variadic_count++;
 									}
 								}
@@ -8139,7 +8160,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 
 						// Use shared helper lambda defined at function scope
-						if (auto subst = substitute_template_param_in_initializer(param_name, template_args_to_use, template_params)) {
+						if (auto subst = substitute_template_param_in_initializer(param_name, template_args_to_use, template_params_ast)) {
 							substituted_initializer = subst;
 							FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", param_name, "'");
 						}
@@ -8160,8 +8181,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 								// Look up the parameter value
 								for (size_t p = 0; p < template_params.size(); ++p) {
-									const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
-									if (tparam.name() == tparam_ref.param_name() && tparam.kind() == TemplateParameterKind::NonType) {
+									const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[p]);
+									if (tparam != nullptr &&
+										tparam->name() == tparam_ref.param_name() &&
+										tparam->kind() == TemplateParameterKind::NonType) {
 										if (p < template_args_to_use.size() && template_args_to_use[p].is_value) {
 											cond_value = template_args_to_use[p].value;
 											FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
@@ -8176,8 +8199,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 								// Look up the identifier as a template parameter
 								for (size_t p = 0; p < template_params.size(); ++p) {
-									const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
-									if (tparam.name() == id_name && tparam.kind() == TemplateParameterKind::NonType) {
+									const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[p]);
+									if (tparam != nullptr &&
+										tparam->name() == id_name &&
+										tparam->kind() == TemplateParameterKind::NonType) {
 										if (p < template_args_to_use.size() && template_args_to_use[p].is_value) {
 											cond_value = template_args_to_use[p].value;
 											FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
@@ -8335,7 +8360,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// and type parameters like '_R1' in '__is_ratio_v<_R1>' to be substituted with actual types
 			template_param_substitutions_.clear();
 			for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
-				const auto& param = template_params[i].as<TemplateParameterNode>();
+				const TemplateParameterNode& param = template_params[i];
 				const auto& arg = template_args_to_use[i];
 
 				if (param.kind() == TemplateParameterKind::NonType && arg.is_value) {
@@ -8404,7 +8429,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	retryNormalizeTemplateStaticMembersAfterDeferredBodies(
 		struct_info_ptr,
 		this,
-		template_params,
+		template_params_inline_ast,
 		template_args_to_use);
 
 	FLASH_LOG(Templates, Debug, "About to return instantiated_struct for ", instantiated_name);
