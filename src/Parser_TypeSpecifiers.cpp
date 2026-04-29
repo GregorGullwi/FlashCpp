@@ -1183,6 +1183,24 @@ ParseResult Parser::parse_type_specifier() {
 						instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
 							*rebound_arg,
 							Token());
+					} else if (const TypeInfo* concrete_member_info =
+								   materializeInstantiatedMemberAliasTarget(
+									   instantiated_type,
+									   alias_node.template_parameters(),
+									   *template_args);
+							   concrete_member_info != nullptr) {
+						ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(
+							concrete_member_info->registeredTypeIndex().withCategory(
+								concrete_member_info->typeEnum()));
+						TemplateTypeArg rebound_member_arg = rebindDependentTemplateTypeArg(
+							makeTemplateTypeArgFromResolvedAlias(
+								resolved_member_alias,
+								concrete_member_info->registeredTypeIndex().withCategory(
+									concrete_member_info->typeEnum())),
+							TemplateTypeArg(instantiated_type));
+						instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
+							rebound_member_arg,
+							Token());
 					} else if (const TypeInfo* alias_target_info =
 								   tryGetTypeInfo(instantiated_type.type_index());
 							   alias_target_info != nullptr &&
@@ -1229,6 +1247,27 @@ ParseResult Parser::parse_type_specifier() {
 									rebound_materialized_arg,
 									Token());
 							}
+						}
+					}
+
+					if (const TypeInfo* instantiated_type_info =
+							tryGetTypeInfo(instantiated_type.type_index());
+						instantiated_type_info != nullptr &&
+						(instantiated_type_info->isTypeAlias() ||
+						 instantiated_type_info->isTemplateInstantiation())) {
+						ResolvedAliasTypeInfo resolved_instantiated_alias = resolveAliasTypeInfo(
+							instantiated_type.type_index());
+						if (resolved_instantiated_alias.type_index.is_valid() &&
+							resolved_instantiated_alias.type_index != instantiated_type.type_index()) {
+							TemplateTypeArg rebound_resolved_arg = rebindDependentTemplateTypeArg(
+								makeTemplateTypeArgFromResolvedAlias(
+									resolved_instantiated_alias,
+									instantiated_type_info->registeredTypeIndex().withCategory(
+										instantiated_type_info->typeEnum())),
+							TemplateTypeArg(instantiated_type));
+							instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
+								rebound_resolved_arg,
+								Token());
 						}
 					}
 

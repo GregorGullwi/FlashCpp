@@ -255,11 +255,11 @@ std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasTemp
 }
 
 StringHandle Parser::getAliasTargetNameHandle(const TypeSpecifierNode& alias_target) const {
-	if (alias_target.token().handle().isValid()) {
-		return alias_target.token().handle();
-	}
 	if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target.type_index())) {
 		return alias_target_info->name();
+	}
+	if (alias_target.token().handle().isValid()) {
+		return alias_target.token().handle();
 	}
 	return {};
 }
