@@ -757,12 +757,13 @@ inline int computeTemplateTypeArgSizeBits(const TemplateTypeArg& arg) {
 		if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
 			return static_cast<int>(arg_type_info->sizeInBits().value);
 		}
+		throw InternalError("Missing TypeInfo while computing template argument size");
 	}
 	return get_type_size_bits(arg.category());
 }
 
 inline uint8_t checkedPointerDepthToUint8(size_t pointer_depth) {
-	if (pointer_depth > static_cast<size_t>(std::numeric_limits<uint8_t>::max())) {
+	if (pointer_depth > std::numeric_limits<uint8_t>::max()) {
 		throw InternalError("Pointer depth overflow while rebuilding template argument");
 	}
 	return static_cast<uint8_t>(pointer_depth);
