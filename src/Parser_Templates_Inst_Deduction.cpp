@@ -834,6 +834,37 @@ void Parser::populateTemplateParamSubstitutions(
 			subs.push_back(subst);
 		});
 }
+
+void Parser::populateTemplateParamSubstitutions(
+	InlineVector<TemplateParamSubstitution, 4>& subs,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	forEachNonPackTemplateParamArgBinding(
+		template_params,
+		template_args,
+		[&](const TemplateParameterNode& template_param, const TemplateTypeArg& arg, size_t) {
+			if (arg.is_template_template_arg) {
+				TemplateParamSubstitution subst;
+				subst.param_name = template_param.nameHandle();
+				subst.is_template_template_param = true;
+				subst.concrete_template_name = arg.template_name_handle;
+				subs.push_back(subst);
+				return;
+			}
+			TemplateParamSubstitution subst;
+			subst.param_name = template_param.nameHandle();
+			if (arg.is_value) {
+				subst.is_value_param = true;
+				subst.value = arg.value;
+				subst.value_type = arg.typeEnum();
+			} else {
+				subst.is_value_param = false;
+				subst.is_type_param = true;
+				subst.substituted_type = arg;
+			}
+			subs.push_back(subst);
+		});
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helper: re-parse a template function body with concrete argument
 // substitution and set the result as new_func_ref's definition.

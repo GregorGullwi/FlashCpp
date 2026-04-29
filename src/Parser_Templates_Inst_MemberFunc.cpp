@@ -1542,7 +1542,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// try_instantiate_template_explicit for free function templates.
 	{
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-		populateTemplateParamSubstitutions(template_param_substitutions_, param_names, template_args);
+		populateTemplateParamSubstitutions(template_param_substitutions_, template_params, template_args);
 
 		// Parse the function body
 		{

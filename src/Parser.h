@@ -1360,6 +1360,10 @@ private:
 		InlineVector<TemplateParamSubstitution, 4>& subs,
 		const std::vector<ASTNode>& template_params,
 		const std::vector<TemplateTypeArg>& template_args);
+	void populateTemplateParamSubstitutions(
+		InlineVector<TemplateParamSubstitution, 4>& subs,
+		const InlineVector<TemplateParameterNode, 4>& template_params,
+		const std::vector<TemplateTypeArg>& template_args);
 	// Build outer-template binding data from the AST template parameter list so
 	// parameter names and args stay index-aligned even if the parameter list
 	// ever stops being a pure TemplateParameterNode sequence.
