@@ -1088,6 +1088,14 @@ ParseResult Parser::parse_type_specifier() {
 						// member against the concrete instantiated base before falling back to the
 						// placeholder type carried by the alias target.
 						if (peek() != "::"_tok && targetMemberName.has_value()) {
+							if (const TypeInfo* concrete_member_info =
+									materializeInstantiatedMemberAliasTarget(
+										alias_node.target_type_node(),
+										alias_node.template_parameters(),
+										*template_args);
+								concrete_member_info != nullptr) {
+								return buildTypeFromInfo(*concrete_member_info, type_name_token, true);
+							}
 							const TypeInfo& member_type_info =
 								findOrCreateQualifiedMemberType(resolved_instantiated_type_name, *targetMemberName);
 							return buildTypeFromInfo(member_type_info, type_name_token, true);
@@ -1165,67 +1173,70 @@ ParseResult Parser::parse_type_specifier() {
 					// Handle non-deferred aliases (e.g., template<typename T> using Ptr = T*)
 					// Substitute template arguments into the target type
 					TypeSpecifierNode instantiated_type = alias_node.target_type_node();
-					[[maybe_unused]] const auto& template_params = alias_node.template_parameters();
-					const auto& param_names = alias_node.template_param_names();
-
-					// Perform substitution for template parameters in the target type
-					for (size_t i = 0; i < template_args->size() && i < param_names.size(); ++i) {
-						const auto& arg = (*template_args)[i];
-						std::string_view param_name = param_names[i].view();
-
-						// Check if the target type refers to this template parameter
-						// The target type will have TypeCategory::UserDefined and a type_index pointing to
-						// the TypeInfo we created for the template parameter
-						bool is_template_param = false;
-						if ((instantiated_type.category() == TypeCategory::UserDefined || instantiated_type.category() == TypeCategory::TypeAlias || instantiated_type.category() == TypeCategory::Template)) {
-							const TypeInfo& ti = getTypeInfo(instantiated_type.type_index());
-							if (StringTable::getStringView(ti.name()) == param_name) {
-								is_template_param = true;
+					if (std::optional<TemplateTypeArg> rebound_arg =
+							tryRebindAliasTargetTemplateArg(alias_node, *template_args);
+						rebound_arg.has_value()) {
+						if (rebound_arg->is_value) {
+							FLASH_LOG(Parser, Error, "Non-type template arguments not supported in alias templates yet");
+							return ParseResult::error("Non-type template arguments not supported in alias templates", type_name_token);
+						}
+						instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
+							*rebound_arg,
+							Token());
+					} else if (const TypeInfo* concrete_member_info =
+								   materializeInstantiatedMemberAliasTarget(
+									   instantiated_type,
+									   alias_node.template_parameters(),
+									   *template_args);
+							   concrete_member_info != nullptr) {
+						instantiated_type = resolveTypeInfoToTypeSpec(*concrete_member_info, instantiated_type);
+					} else if (const TypeInfo* alias_target_info =
+								   tryGetTypeInfo(instantiated_type.type_index());
+							   alias_target_info != nullptr &&
+							   alias_target_info->isTemplateInstantiation()) {
+						StringHandle qualified_target_template_name =
+							gNamespaceRegistry.buildQualifiedIdentifier(
+								alias_target_info->sourceNamespace(),
+								alias_target_info->baseTemplateName());
+						auto alias_target_entry =
+							gTemplateRegistry.lookup_alias_template(qualified_target_template_name);
+						if (!alias_target_entry.has_value()) {
+							alias_target_entry = gTemplateRegistry.lookup_alias_template(
+								alias_target_info->baseTemplateName());
+						}
+						if (alias_target_entry.has_value()) {
+							std::vector<TemplateTypeArg> concrete_target_args =
+								materializeTemplateArgs(
+									*alias_target_info,
+									alias_node.template_parameters(),
+									*template_args);
+							AliasTemplateMaterializationResult materialized_target =
+								materializeTemplateInstantiationForLookup(
+									StringTable::getStringView(qualified_target_template_name),
+									concrete_target_args);
+							if (!materialized_target.resolved_type_info &&
+								qualified_target_template_name != alias_target_info->baseTemplateName()) {
+								materialized_target = materializeTemplateInstantiationForLookup(
+									StringTable::getStringView(alias_target_info->baseTemplateName()),
+									concrete_target_args);
+							}
+							if (materialized_target.resolved_type_info != nullptr) {
+								instantiated_type = resolveTypeInfoToTypeSpec(
+									*materialized_target.resolved_type_info, instantiated_type);
 							}
 						}
+					}
 
-						if (is_template_param) {
-							// The target type is using this template parameter
-							if (arg.is_value) {
-								FLASH_LOG(Parser, Error, "Non-type template arguments not supported in alias templates yet");
-								return ParseResult::error("Non-type template arguments not supported in alias templates", type_name_token);
-							}
-
-							// Save pointer/reference modifiers from target type
-							size_t ptr_depth = instantiated_type.pointer_depth();
-							bool is_ref = instantiated_type.is_reference();
-							bool is_rval_ref = instantiated_type.is_rvalue_reference();
-							CVQualifier cv = instantiated_type.cv_qualifier();
-
-							// Get the size in bits for the argument type
-							int size_bits = 0;
-							if (is_struct_type(arg.category())) {
-								// Look up the struct size from type_index
-								const TypeInfo& ti = getTypeInfo(arg.type_index);
-								size_bits = static_cast<unsigned char>(ti.sizeInBits().value);
-							} else {
-								// Use standard type sizes
-								size_bits = static_cast<unsigned char>(get_type_size_bits(arg.category()));
-							}
-
-							// Create new type with substituted base type
-							instantiated_type = TypeSpecifierNode(
-								arg.type_index.withCategory(arg.typeEnum()),
-								size_bits,
-								Token(), // No token for instantiated type
-								cv,
-								ReferenceQualifier::None);
-
-							// Reapply pointer/reference modifiers from target type
-							// e.g., if target is T* and we substitute int for T, we get int*
-							for (size_t p = 0; p < ptr_depth; ++p) {
-								instantiated_type.add_pointer_level(CVQualifier::None);
-							}
-							if (is_rval_ref) {
-								instantiated_type.set_reference_qualifier(ReferenceQualifier::RValueReference); // rvalue ref
-							} else if (is_ref) {
-								instantiated_type.set_reference_qualifier(ReferenceQualifier::LValueReference); // lvalue ref
-							}
+					if (const TypeInfo* instantiated_type_info =
+							tryGetTypeInfo(instantiated_type.type_index());
+						instantiated_type_info != nullptr &&
+						(instantiated_type_info->isTypeAlias() ||
+						 instantiated_type_info->isTemplateInstantiation())) {
+						ResolvedAliasTypeInfo resolved_instantiated_alias = resolveAliasTypeInfo(
+							instantiated_type.type_index());
+						if (resolved_instantiated_alias.type_index.is_valid() &&
+							resolved_instantiated_alias.type_index != instantiated_type.type_index()) {
+							instantiated_type = resolveTypeInfoToTypeSpec(*instantiated_type_info, instantiated_type);
 						}
 					}
 
@@ -1238,7 +1249,10 @@ ParseResult Parser::parse_type_specifier() {
 					// Only route through finalizeInstantiatedAliasType when the instantiated
 					// type has no such modifiers that would be dropped.
 					if (instantiated_type.pointer_depth() == 0 &&
-						instantiated_type.reference_qualifier() == ReferenceQualifier::None) {
+						instantiated_type.reference_qualifier() == ReferenceQualifier::None &&
+						instantiated_type.cv_qualifier() == CVQualifier::None &&
+						!instantiated_type.is_array() &&
+						!instantiated_type.has_function_signature()) {
 						if (const TypeInfo* instantiated_type_info = tryGetTypeInfo(instantiated_type.type_index())) {
 							if (std::optional<ParseResult> finalized_alias =
 									finalizeInstantiatedAliasType(
@@ -1979,66 +1993,16 @@ ParseResult Parser::parse_type_specifier() {
 
 							// Instantiate the member template alias with the provided arguments
 							TypeSpecifierNode instantiated_type = alias_node.target_type_node();
-							[[maybe_unused]] const auto& template_params = alias_node.template_parameters();
-							const auto& param_names = alias_node.template_param_names();
-
-							// Perform substitution for template parameters in the target type
-							for (size_t i = 0; i < member_template_args->size() && i < param_names.size(); ++i) {
-								const auto& arg = (*member_template_args)[i];
-								std::string_view param_name = param_names[i].view();
-
-								// Check if the target type refers to this template parameter
-								bool is_template_param = false;
-								if ((instantiated_type.category() == TypeCategory::UserDefined || instantiated_type.category() == TypeCategory::TypeAlias || instantiated_type.category() == TypeCategory::Template)) {
-									const TypeInfo& ti = getTypeInfo(instantiated_type.type_index());
-									if (StringTable::getStringView(ti.name()) == param_name) {
-										is_template_param = true;
-									}
+							if (std::optional<TemplateTypeArg> rebound_arg =
+									tryRebindAliasTargetTemplateArg(alias_node, *member_template_args);
+								rebound_arg.has_value()) {
+								if (rebound_arg->is_value) {
+									FLASH_LOG(Parser, Error, "Non-type template arguments not supported in member template aliases yet");
+									return ParseResult::error("Non-type template arguments not supported in member template aliases", type_name_token);
 								}
-
-								if (is_template_param) {
-									// The target type is using this template parameter
-									if (arg.is_value) {
-										FLASH_LOG(Parser, Error, "Non-type template arguments not supported in member template aliases yet");
-										return ParseResult::error("Non-type template arguments not supported in member template aliases", type_name_token);
-									}
-
-									// Save pointer/reference modifiers from target type
-									size_t ptr_depth = instantiated_type.pointer_depth();
-									bool is_ref = instantiated_type.is_reference();
-									bool is_rval_ref = instantiated_type.is_rvalue_reference();
-									CVQualifier cv_qual = instantiated_type.cv_qualifier();
-
-									// Get the size in bits for the argument type
-									int size_bits = 0;
-									if (is_struct_type(arg.category())) {
-										// Look up the struct size from type_index
-										const TypeInfo& ti = getTypeInfo(arg.type_index);
-								size_bits = static_cast<unsigned char>(ti.sizeInBits().value);
-									} else {
-										// Use standard type sizes
-										size_bits = static_cast<unsigned char>(get_type_size_bits(arg.category()));
-									}
-									FLASH_LOG_FORMAT(Parser, Debug, "Before substitution - arg.category={}, size_bits={}", static_cast<int>(arg.category()), size_bits);
-
-									// Create new type with substituted base type
-									instantiated_type = TypeSpecifierNode(
-										arg.type_index.withCategory(arg.typeEnum()),
-										size_bits,
-										Token(), // No token for instantiated type
-										cv_qual,
-										ReferenceQualifier::None);
-
-									// Reapply pointer/reference modifiers from target type
-									for (size_t p = 0; p < ptr_depth; ++p) {
-										instantiated_type.add_pointer_level(CVQualifier::None);
-									}
-									if (is_rval_ref) {
-										instantiated_type.set_reference_qualifier(ReferenceQualifier::RValueReference); // rvalue ref
-									} else if (is_ref) {
-										instantiated_type.set_reference_qualifier(ReferenceQualifier::LValueReference); // lvalue ref
-									}
-								}
+								instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
+									*rebound_arg,
+									Token());
 							}
 
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));

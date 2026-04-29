@@ -1168,10 +1168,33 @@ TypeIndex Parser::substitute_template_parameter(
 				self(self, nested_arg);
 			}
 
+			// Alias-template placeholders are not necessarily backed by a materialized
+			// TypeInfo node for the substituted type.  For aliases whose type-id is a
+			// dependent type-specifier such as `using identity_t = T` or
+			// `using add_pointer_t = T*`, C++ substitution composes the alias target's
+			// cv/ref/pointer metadata with the substituted template argument.  Preserve
+			// that rich TemplateTypeArg here before falling back to TypeIndex-only
+			// materialization, which cannot represent `int*` distinct from `int`.
+			StringHandle alias_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
+				arg_type_info->sourceNamespace(),
+				arg_type_info->baseTemplateName());
+			auto alias_template_entry = gTemplateRegistry.lookup_alias_template(alias_template_name);
+			if (!alias_template_entry.has_value()) {
+				alias_template_entry = gTemplateRegistry.lookup_alias_template(
+					arg_type_info->baseTemplateName());
+			}
+			if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
+				const TemplateAliasNode& alias_node = alias_template_entry->as<TemplateAliasNode>();
+				if (std::optional<TemplateTypeArg> rebound_arg =
+						tryRebindAliasTargetTemplateArg(alias_node, nested_args);
+					rebound_arg.has_value()) {
+					concrete_arg = *rebound_arg;
+					return;
+				}
+			}
+
 			const TypeInfo* resolved_arg_type = resolveConcreteInstantiatedMemberChain(
-				buildQualifiedNameFromHandle(
-					arg_type_info->sourceNamespace(),
-					StringTable::getStringView(arg_type_info->baseTemplateName())),
+				StringTable::getStringView(alias_template_name),
 				nested_args,
 				extractPlaceholderMemberChain(StringTable::getStringView(arg_type_info->name())));
 			if (resolved_arg_type == nullptr) {

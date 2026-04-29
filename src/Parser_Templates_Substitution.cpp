@@ -25,8 +25,9 @@ size_t getSubstitutedTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 
 	size_t size_in_bytes = get_type_size_bits(arg.category()) / 8;
 	if (size_in_bytes > 0) {
-		if (arg.is_array && arg.array_size.has_value()) {
-			return size_in_bytes * *arg.array_size;
+		if (arg.is_array && !arg.array_dimensions.empty()) {
+			for (size_t dim : arg.array_dimensions) size_in_bytes *= dim;
+			return size_in_bytes;
 		}
 		return size_in_bytes;
 	}
@@ -39,8 +40,9 @@ size_t getSubstitutedTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 		}
 	}
 
-	if (arg.is_array && arg.array_size.has_value() && size_in_bytes > 0) {
-		return size_in_bytes * *arg.array_size;
+	if (arg.is_array && !arg.array_dimensions.empty() && size_in_bytes > 0) {
+		for (size_t dim : arg.array_dimensions) size_in_bytes *= dim;
+		return size_in_bytes;
 	}
 	return size_in_bytes;
 }
@@ -1255,6 +1257,35 @@ ASTNode Parser::substituteTemplateParameters(
 
 	} else if (node.is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& type_spec = node.as<TypeSpecifierNode>();
+		const auto makeTypeSpecifierFromTemplateArg = [&](const TemplateTypeArg& arg) -> ASTNode {
+			Token substituted_token = type_spec.token();
+			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+				substituted_token = Token(
+					is_struct_type(arg.category()) ? Token::Type::Identifier : Token::Type::Keyword,
+					is_struct_type(arg.category()) ? StringTable::getStringView(arg_type_info->name()) : get_type_name(arg.category()),
+					type_spec.token().line(),
+					type_spec.token().column(),
+					type_spec.token().file_index());
+			} else if (std::string_view substituted_type_name = get_type_name(arg.category());
+					   !substituted_type_name.empty() && substituted_type_name != "unknown"sv) {
+				substituted_token = Token(
+					Token::Type::Keyword,
+					substituted_type_name,
+					type_spec.token().line(),
+					type_spec.token().column(),
+					type_spec.token().file_index());
+			}
+			TypeSpecifierNode substituted_spec =
+				makeTypeSpecifierFromTemplateTypeArg(arg, substituted_token);
+			for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
+				substituted_spec.add_pointer_level(pointer_level.cv_qualifier);
+			}
+			substituted_spec.add_cv_qualifier(type_spec.cv_qualifier());
+			substituted_spec.set_reference_qualifier(collapseReferenceQualifiers(
+				arg.ref_qualifier,
+				type_spec.reference_qualifier()));
+			return emplace_node<TypeSpecifierNode>(substituted_spec);
+		};
 		const auto makeTypeSpecifier = [&](const TypeInfo& target_type_info) -> ASTNode {
 			const bool is_struct_like = target_type_info.type_index_.category() == TypeCategory::Struct ||
 										target_type_info.getStructInfo() != nullptr;
@@ -1303,6 +1334,31 @@ ASTNode Parser::substituteTemplateParameters(
 			type_spec.category() == TypeCategory::TypeAlias ||
 			type_spec.category() == TypeCategory::Template ||
 			type_spec.category() == TypeCategory::Auto) {
+			bool exact_template_param_substituted = false;
+			std::optional<ASTNode> exact_template_param_node;
+			std::string_view direct_type_name = type_spec.token().value();
+			if (direct_type_name.empty()) {
+				if (const TypeInfo* direct_type_info = tryGetTypeInfo(type_spec.type_index())) {
+					direct_type_name = StringTable::getStringView(direct_type_info->name());
+				}
+			}
+			forEachNonPackTemplateParamArgBinding(
+				template_params,
+				template_args,
+				[&](const TemplateParameterNode& template_param, const TemplateTypeArg& template_arg, size_t) {
+					if (exact_template_param_substituted ||
+						template_param.kind() != TemplateParameterKind::Type ||
+						template_param.name() != direct_type_name ||
+						!template_arg.isTypeArgument()) {
+						return;
+					}
+					exact_template_param_node = makeTypeSpecifierFromTemplateArg(template_arg);
+					exact_template_param_substituted = true;
+				});
+			if (exact_template_param_substituted) {
+				return *exact_template_param_node;
+			}
+
 			TypeIndex substituted_type_index = substitute_template_parameter(
 				type_spec,
 				template_params,

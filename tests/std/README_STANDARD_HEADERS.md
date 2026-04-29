@@ -102,6 +102,40 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
 
+#### 2026-04-29 Alias-template modifier retest (Linux/libstdc++-14)
+
+This pass retested a small set of standard-header probes against
+`x64/Sharded/FlashCpp` after rebuilding with clang++.
+
+Fixes landed:
+
+- **Non-dependent alias template substitutions now preserve substituted type
+  pointer/cv/ref metadata before partial-specialization matching.**  Direct
+  aliases such as `identity_t<int*>` and `add_pointer_t<int>` now keep the
+  pointer levels required for `T*` partial specializations instead of reducing
+  the argument to the base `TypeIndex` only.
+
+Regression:
+
+- `tests/test_alias_template_pointer_modifiers_ret0.cpp`
+
+Focused std-header impact:
+
+- `<type_traits>` (`test_std_type_traits.cpp`) still fails at
+  `static_assert(std::is_pointer<int*>::value)` in ~330ms.  The remaining
+  blocker is the dependent/member-alias form used by libstdc++:
+  `is_pointer<T>` derives from
+  `__is_pointer_helper<__remove_cv_t<T>>::type`, and concrete metadata from
+  `typename remove_cv<T>::type` is still not preserved through the deferred
+  base-class argument path.
+- `<array>` (`test_std_array.cpp`) still reaches semantic/codegen and fails on
+  copy-initialization of explicit `std::reverse_iterator` in ~1240ms.
+- `<atomic>` (`test_std_atomic.cpp`) currently stops parsing
+  `__atomic_impl::is_lock_free<sizeof(_Tp), required_alignment>()` in ~810ms.
+- `<variant>` (`test_std_variant.cpp`) currently stops at libstdc++
+  `variant:597` while parsing `in_place_index<__j>` in ~930ms.
+- `<utility>` (`test_std_utility.cpp`) still compiles successfully.
+
 #### 2026-04-28 Dependent `decltype` / Member Alias Deferral Sweep (Linux/libstdc++-14)
 
 This sweep targeted the current first-order stop shared by many standard

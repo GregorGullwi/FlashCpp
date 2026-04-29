@@ -2754,8 +2754,8 @@ ParseResult Parser::parse_template_declaration() {
 				// Add array marker
 				if (arg.is_array) {
 					pattern_name_builder.append("A");
-					if (arg.array_size.has_value()) {
-						pattern_name_builder.append("[").append(static_cast<int64_t>(*arg.array_size)).append("]");
+					if (arg.array_size().has_value()) {
+						pattern_name_builder.append("[").append(static_cast<int64_t>(*arg.array_size())).append("]");
 					}
 				}
 				if (arg.member_pointer_kind == MemberPointerKind::Object) {
@@ -4938,8 +4938,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			// Add array marker
 			if (arg.is_array) {
 				pattern_name.append("A"sv);
-				if (arg.array_size.has_value()) {
-					pattern_name.append("["sv).append(static_cast<int64_t>(*arg.array_size)).append("]"sv);
+				if (arg.array_size().has_value()) {
+					pattern_name.append("["sv).append(static_cast<int64_t>(*arg.array_size())).append("]"sv);
 				}
 			}
 			if (arg.member_pointer_kind == MemberPointerKind::Object) {

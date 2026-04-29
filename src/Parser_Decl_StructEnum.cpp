@@ -469,7 +469,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 									}
 									type_node.set_reference_qualifier(targ.ref_qualifier);
 									if (targ.is_array) {
-										type_node.set_array(true, targ.array_size);
+										type_node.set_array_dimensions(targ.array_dimensions);
 									}
 
 									info.node = emplace_node<TypeSpecifierNode>(type_node);

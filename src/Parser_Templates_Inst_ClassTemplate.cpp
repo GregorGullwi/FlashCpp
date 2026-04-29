@@ -1,3 +1,5 @@
+#include <cctype>
+
 #include "Parser.h"
 #include "CallNodeHelpers.h"
 #include "RebindStaticMemberAst.h"
@@ -7,7 +9,6 @@
 #include "TypeTraitEvaluator.h"
 #include "InstantiationQueue.h"
 #include "ParserTemplateClassShared.h"
-#include <cctype>
 
 static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
@@ -4530,10 +4531,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							std::string_view type_name = StringTable::getStringView(resolved_ti->name());
 							auto subst_it = name_substitution_map.find(type_name);
 							if (subst_it != name_substitution_map.end()) {
-								TemplateTypeArg subst = subst_it->second;
-								subst.pointer_depth = type_spec.pointer_depth();
-								subst.ref_qualifier = type_spec.reference_qualifier();
-								subst.cv_qualifier = type_spec.cv_qualifier();
+								TemplateTypeArg subst = rebindDependentTemplateTypeArg(
+									subst_it->second,
+									TemplateTypeArg(type_spec));
+								subst.is_pack = arg_info.is_pack;
 								resolved_args.push_back(subst);
 								resolved = true;
 							} else if (type_name.find("::") != std::string_view::npos) {
@@ -4550,34 +4551,74 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											type_spec,
 											template_params,
 											template_args_to_use)) {
-									TypeIndex terminal_index =
-										concrete_member_alias->registeredTypeIndex().withCategory(
-											concrete_member_alias->typeEnum());
-									ResolvedAliasTypeInfo terminal =
-										resolveAliasTypeInfo(terminal_index);
-									if (terminal.type_index.is_valid()) {
-										terminal_index = terminal.type_index;
-									}
-
-									TemplateTypeArg member_arg;
-									member_arg.type_index = terminal_index;
-									member_arg.pointer_depth = type_spec.pointer_depth();
-									member_arg.ref_qualifier = type_spec.reference_qualifier();
-									member_arg.cv_qualifier = type_spec.cv_qualifier();
+									TemplateTypeArg member_arg = resolveTypeInfoToTemplateArg(*concrete_member_alias, type_spec);
+									member_arg.is_pack = arg_info.is_pack;
 									resolved_args.push_back(member_arg);
 									resolved = true;
 									FLASH_LOG_FORMAT(Templates, Debug,
 										"Resolved deferred base member alias '{}' to terminal type_index={}",
-										type_name, terminal_index);
+										type_name, member_arg.type_index);
 								}
 							}
 							if (!resolved) {
 								const StructTypeInfo* resolved_struct_info = resolved_ti->getStructInfo();
 								if (resolved_ti->isTemplateInstantiation() &&
 									(!resolved_struct_info || !resolved_struct_info->sizeInBytes().is_set())) {
-									std::string_view base_template_name = StringTable::getStringView(resolved_ti->baseTemplateName());
+									StringHandle qualified_base_template_name =
+										gNamespaceRegistry.buildQualifiedIdentifier(
+											resolved_ti->sourceNamespace(),
+											resolved_ti->baseTemplateName());
 									std::vector<TemplateTypeArg> instantiated_args = materializeTemplateArgs(*resolved_ti, template_params, template_args_to_use);
-									std::string_view inst_name = instantiateAndResolveBaseName(base_template_name, instantiated_args, false);
+									auto alias_template_entry =
+										gTemplateRegistry.lookup_alias_template(qualified_base_template_name);
+									if (!alias_template_entry.has_value()) {
+										alias_template_entry = gTemplateRegistry.lookup_alias_template(
+											resolved_ti->baseTemplateName());
+									}
+									if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
+										const TemplateAliasNode& alias_node = alias_template_entry->as<TemplateAliasNode>();
+										if (const TypeInfo* concrete_member_alias =
+												materializeInstantiatedMemberAliasTarget(
+													alias_node.target_type_node(),
+													alias_node.template_parameters(),
+													instantiated_args)) {
+											TemplateTypeArg inst_arg = resolveTypeInfoToTemplateArg(*concrete_member_alias, type_spec);
+											inst_arg.is_pack = arg_info.is_pack;
+											resolved_args.push_back(inst_arg);
+											resolved = true;
+											FLASH_LOG_FORMAT(Templates, Debug,
+												"Resolved deferred base alias-template member argument '{}' via alias target",
+												type_name);
+										}
+										if (resolved) {
+											continue;
+										}
+										if (std::optional<TemplateTypeArg> rebound_arg =
+												tryRebindAliasTargetTemplateArg(alias_node, instantiated_args);
+											rebound_arg.has_value()) {
+											TemplateTypeArg inst_arg = *rebound_arg;
+											inst_arg.is_pack = arg_info.is_pack;
+											resolved_args.push_back(inst_arg);
+											resolved = true;
+											FLASH_LOG_FORMAT(Templates, Debug,
+												"Resolved deferred base alias-template argument '{}' via alias target metadata",
+												type_name);
+										}
+									}
+									if (resolved) {
+										continue;
+									}
+									std::string_view inst_name = instantiateAndResolveBaseName(
+										StringTable::getStringView(qualified_base_template_name),
+										instantiated_args,
+										false);
+									if (inst_name.empty() &&
+										qualified_base_template_name != resolved_ti->baseTemplateName()) {
+										inst_name = instantiateAndResolveBaseName(
+											StringTable::getStringView(resolved_ti->baseTemplateName()),
+											instantiated_args,
+											false);
+									}
 									auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 									if (inst_it != getTypesByNameMap().end()) {
 										TemplateTypeArg inst_arg;
@@ -4625,10 +4666,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								if (!resolved) {
 									for (const auto& subst_entry : name_substitution_map) {
 										if (identifier_matches(type_name, subst_entry.first)) {
-											TemplateTypeArg subst = subst_entry.second;
-											subst.pointer_depth = type_spec.pointer_depth();
-											subst.ref_qualifier = type_spec.reference_qualifier();
-											subst.cv_qualifier = type_spec.cv_qualifier();
+											TemplateTypeArg subst = rebindDependentTemplateTypeArg(
+												subst_entry.second,
+												TemplateTypeArg(type_spec));
+											subst.is_pack = arg_info.is_pack;
 											resolved_args.push_back(subst);
 											resolved = true;
 											break;
