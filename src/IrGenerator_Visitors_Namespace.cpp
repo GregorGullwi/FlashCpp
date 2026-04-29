@@ -405,12 +405,13 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							source_struct_info, ret_type_idx, isExprConstQualified(*expr_opt));
 
 						if (conv_op) {
-							FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ",
-									  StringTable::getStringView(source_type_info->name()),
-									  " to return type");
-							if (auto result = emitConversionOperatorCall(operands, *source_type_info, *conv_op,
-																		 ret_type_idx, return_size, node.return_token()))
-								operands = *result;
+								// Probed 2026-04-29 across the full 2243-test corpus with a hard-fail
+								// guard and never hit. Sema's return-conversion annotation already
+								// covers struct-with-conversion-operator returns; this codegen-side
+								// fallback is dead.
+							throw InternalError(
+								"Codegen-side return conversion-operator fallback should not run: "
+								"sema must annotate struct-to-non-struct return conversions");
 						} else {
 								// No conversion operator found - fall back to generateTypeConversion
 							operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());

@@ -2534,18 +2534,21 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 	if (condition.pointer_depth.value == 0 && is_floating_point_type(condition.typeEnum())) {
 		return emitFloatNonZeroTest(condition);
 	}
-		// Fallback: struct → bool via operator bool() when sema did not annotate.
+		// Note 2026-04-29: the codegen-side struct → bool conversion-operator fallback
+		// previously located here was probed across the full 2243-test corpus with a
+		// hard-fail guard and never hit. Sema's contextual-bool annotation already
+		// covers struct-to-bool conversions in if/while/for/&&/|| conditions, so the
+		// fallback was removed. If a future regression reaches this point with an
+		// unannotated struct condition, the assertion below will surface it instead
+		// of silently emitting a runtime call.
 	if (!sema_applied_bool_conv && condition.category() == TypeCategory::Struct) {
 		TypeIndex cond_type_idx = condition.type_index;
 		if (const TypeInfo* src_type_info = tryGetTypeInfo(cond_type_idx)) {
-			const StructMemberFunction* conv_op = findConversionOperator(
-				src_type_info->getStructInfo(), nativeTypeIndex(TypeCategory::Bool), false);
-			if (conv_op) {
-				FLASH_LOG(Codegen, Debug, "Fallback user-defined conversion in contextual bool from ",
-						  StringTable::getStringView(src_type_info->name()), " to bool");
-				if (auto result = emitConversionOperatorCall(condition, *src_type_info, *conv_op,
-															 nativeTypeIndex(TypeCategory::Bool), 8, source_token))
-					return *result;
+			if (findConversionOperator(
+					src_type_info->getStructInfo(), nativeTypeIndex(TypeCategory::Bool), false)) {
+				throw InternalError(
+					"Codegen-side contextual-bool conversion-operator fallback should not run: "
+					"sema must annotate struct-to-bool contextual conversions");
 			}
 		}
 	}
