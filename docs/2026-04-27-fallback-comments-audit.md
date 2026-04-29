@@ -382,12 +382,30 @@ The audit is now backed by direct suite evidence for several representative temp
   probed across the full 2243-test corpus with a hard-fail guard, never hit,
   and has been replaced with an `InternalError` invariant;
 - the `IrGenerator_Stmt_Decl.cpp:1975` variable-initialization
-  conversion-operator fallback (audit §2) is confirmed *active*: probing it
-  with a hard error breaks `tests\test_const_cast_conv_op_ret0.cpp`,
-  `tests\test_static_cast_base_ref_conv_op_ret0.cpp`, and
-  `tests\test_xvalue_all_casts_ret0.cpp`. Sema does not yet annotate
-  user-defined conversion operators in variable-initialization context for
-  these cases, so the codegen-side search remains required;
+  conversion-operator fallback (audit §2) was confirmed *active* in the
+  2026-04-29 pass but has now been root-fixed and replaced with an
+  `InternalError` invariant. Root fix: `SemanticAnalysis::tryAnnotateConversion`
+  now allows struct reference sources (`T&`, `const T&`, `T&&`) to proceed
+  through the `UserDefined` conversion operator annotation instead of bailing
+  out at the `ref_qualifier != None` guard. After the fix, probing the fallback
+  with a hard error across the full 2243-test corpus showed zero hits, including
+  `tests/test_const_cast_conv_op_ret0.cpp`,
+  `tests/test_static_cast_base_ref_conv_op_ret0.cpp`, and
+  `tests/test_xvalue_all_casts_ret0.cpp`;
+- `SemanticAnalysis::tryAnnotateConversion` was also extended (2026-04-29) to
+  handle `UserDefined`/`TypeAlias` → non-struct primitive conversions by
+  attempting `canonicalize_type_alias` alias-chain resolution when a TypeInfo
+  entry exists. When the alias resolves to a primitive, the annotation records
+  the *resolved* source type id so that codegen's return/arg/init handlers
+  enter the `!is_struct_type(annotated_source_type)` branch and call
+  `generateTypeConversion(primitive, target)` with `sema_applied_conversion=true`.
+  Probing showed the active `IrGenerator_Visitors_Namespace.cpp`
+  `generateTypeConversion` fallbacks (alias-template, `__underlying_type`,
+  lambda return, member-alias cases) are in **non-normalized template bodies**
+  where `tryAnnotateReturnConversion` is not called, so these remain active and
+  the new sema path is not yet exercised by the current corpus. The fallbacks
+  remain safe (all 2243 tests pass) but cannot be replaced with hard assertions
+  until sema normalization extends to template-instantiated bodies;
 - the `Parser_Templates_Class.cpp` "regular specialization without any
   template args" branch (audit §5, formerly line ~4454) was probed across the
   full 2243-test corpus with a hard-fail guard, never hit, and has been
@@ -395,14 +413,19 @@ The audit is now backed by direct suite evidence for several representative temp
   specializations that reach this branch always carry either type or non-type
   template arguments;
 - the `IrGenerator_Call_Indirect.cpp` `operator()` callable-type sema/parser
-  fallback (audit §1, line ~275) is confirmed *active*: probing the
-  parser-fallback step with a hard error when sema is present but returns an
-  inconclusive callable type breaks `tests\test_generic_lambda_callable_param_ret0.cpp`,
-  `tests\test_generic_lambda_callable_shadowed_name_ret0.cpp`,
-  `tests\test_generic_lambda_recursive_self_ret0.cpp`,
-  `tests\test_lambda_cpp20_comprehensive_ret135.cpp`, and
-  `tests\test_nested_function_returning_funcptr_direct_invoke_ret0.cpp`. Sema
-  does not yet annotate generic-lambda-introduced or recursive-`self`
-  callable parameters with a usable callable `TypeSpecifierNode`, so the
-  parser-side typing fallback remains required for now;
+  fallback (audit §1, line ~275) was narrowed on 2026-04-29. Codegen now
+  skips the parser callable-type fallback when sema already resolved the
+  `operator()` target for that call node, so generic-lambda callable
+  parameters and recursive-`self` cases stay on the sema-owned member-call
+  path even if `sema_->getExpressionType(object)` is still inconclusive.
+  The callable regression cluster
+  (`tests/test_callable_sema_resolved_ret0.cpp`,
+  `tests/test_generic_lambda_callable_param_ret0.cpp`,
+  `tests/test_generic_lambda_callable_shadowed_name_ret0.cpp`,
+  `tests/test_generic_lambda_recursive_self_ret0.cpp`,
+  `tests/test_lambda_cpp20_comprehensive_ret135.cpp`, and
+  `tests/test_nested_function_returning_funcptr_direct_invoke_ret0.cpp`)
+  passed after this change. The parser fallback remains required for true
+  indirect-call receivers that still lack a sema-resolved `operator()` target,
+  including the nested function-pointer-returning direct-invoke case;
 - the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes should still be assumed active until probed or root-fixed individually.

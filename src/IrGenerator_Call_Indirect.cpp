@@ -261,6 +261,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		object_node.is<ExpressionNode>() &&
 		(parser_ || sema_)) {
 		std::optional<TypeSpecifierNode> callee_type;
+		const FunctionDeclarationNode* resolved_op_call =
+			sema_ ? sema_->getResolvedOpCall(sema_call_key) : nullptr;
 		const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
 		const auto* object_ident = std::get_if<IdentifierNode>(&object_expr);
 		auto isInconclusiveCallableType = [](const std::optional<TypeSpecifierNode>& candidate) {
@@ -272,7 +274,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		if (sema_) {
 			callee_type = sema_->getExpressionType(object_node);
 		}
-		const bool needs_parser_fallback = isInconclusiveCallableType(callee_type);
+		const bool needs_parser_fallback =
+			isInconclusiveCallableType(callee_type) &&
+			!resolved_op_call;
 		if (needs_parser_fallback && parser_) {
 			callee_type = parser_->get_expression_type(object_node);
 		}
