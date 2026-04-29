@@ -73,6 +73,9 @@ public:
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
 	std::optional<SemanticSlot> getSlot(const void* key) const;
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
+	// Like getExpressionType(), but falls back to sema-owned canonical inference
+	// when no slot-backed type was recorded for the expression.
+	std::optional<TypeSpecifierNode> getExpressionTypeOrInfer(const ASTNode& node);
 	// Public bridge for codegen/helper paths that need the same canonical type
 	// identity as sema while keeping the primary canonicalizeType helper private.
 	CanonicalTypeId canonicalizeTypeForImplicitConversion(const TypeSpecifierNode& type);

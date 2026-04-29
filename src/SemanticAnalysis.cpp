@@ -2924,6 +2924,20 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 	return type;
 }
 
+std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionTypeOrInfer(const ASTNode& node) {
+	if (auto slot_backed_type = getExpressionType(node); slot_backed_type.has_value()) {
+		return slot_backed_type;
+	}
+	if (!node.is<ExpressionNode>()) {
+		return std::nullopt;
+	}
+	const CanonicalTypeId inferred_type_id = inferExpressionType(node);
+	if (!inferred_type_id) {
+		return std::nullopt;
+	}
+	return materializeTypeSpecifier(type_context_.get(inferred_type_id));
+}
+
 std::optional<TypeSpecifierNode> SemanticAnalysis::getOverloadResolutionArgType(const ASTNode& arg) {
 	if (arg.is<ExpressionNode>()) {
 		const void* key = getExpressionKey(arg);

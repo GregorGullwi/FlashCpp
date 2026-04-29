@@ -272,7 +272,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					!candidate->has_function_signature());
 		};
 		if (sema_) {
-			callee_type = sema_->getExpressionType(object_node);
+			callee_type = sema_->getExpressionTypeOrInfer(object_node);
 		}
 		const bool needs_parser_fallback =
 			isInconclusiveCallableType(callee_type) &&

@@ -750,8 +750,8 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// Fallback: use sema-backed expression types when no explicit conversion
 	// annotation was recorded for either branch.
 	if (common_cat == TypeCategory::Invalid && sema_) {
-		auto true_ts = sema_->getExpressionType(ternaryNode.true_expr());
-		auto false_ts = sema_->getExpressionType(ternaryNode.false_expr());
+		auto true_ts = sema_->getExpressionTypeOrInfer(ternaryNode.true_expr());
+		auto false_ts = sema_->getExpressionTypeOrInfer(ternaryNode.false_expr());
 		if (true_ts.has_value() && false_ts.has_value())
 			common_cat = get_common_type(true_ts->category(), false_ts->category());
 	}
