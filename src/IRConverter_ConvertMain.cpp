@@ -2216,13 +2216,13 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 						}
 					}
 
-						// Try BinaryOp (arithmetic, comparisons, logic)
+					// Try BinaryOp (arithmetic, comparisons, logic)
 					if (const BinaryOp* bin_op = std::any_cast<BinaryOp>(&instruction.getTypedPayload())) {
 						if (std::holds_alternative<TempVar>(bin_op->result)) {
 							auto temp_var = std::get<TempVar>(bin_op->result);
-								// Phase 5: Convert temp var name to StringHandle
-								// For comparison operations, result is always bool (8 bits)
-								// For arithmetic/logical operations, result size matches operand size
+							// Convert temp var name to StringHandle
+							// For comparison operations, result is always bool (8 bits)
+							// For arithmetic/logical operations, result size matches operand size
 							auto opcode = instruction.getOpcode();
 							bool is_comparison = (opcode == IrOpcode::Equal || opcode == IrOpcode::NotEqual ||
 												  opcode == IrOpcode::LessThan || opcode == IrOpcode::LessEqual ||
@@ -2237,17 +2237,17 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 							handled_by_typed_payload = true;
 						}
 					}
-						// Try UnaryOp (logical not, bitwise not, negate)
+					// Try UnaryOp (logical not, bitwise not, negate)
 					else if (const UnaryOp* unary_op = std::any_cast<UnaryOp>(&instruction.getTypedPayload())) {
-							// Phase 5: Convert temp var name to StringHandle
-							// For logical not, result is always bool (8 bits)
-							// For bitwise not and negate, result size matches operand size
+						// Convert temp var name to StringHandle
+						// For logical not, result is always bool (8 bits)
+						// For bitwise not and negate, result size matches operand size
 						temp_var_sizes_[StringTable::getOrInternStringHandle(unary_op->result.name())] = unary_op->value.size_in_bits.value;
 						handled_by_typed_payload = true;
 					}
-						// Try CallOp (function calls)
+					// Try CallOp (function calls)
 					else if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
-							// Phase 5: Convert temp var name to StringHandle
+						// Convert temp var name to StringHandle
 						temp_var_sizes_[StringTable::getOrInternStringHandle(call_op->result.name())] = call_op->return_size_in_bits.value;
 						handled_by_typed_payload = true;
 					}
@@ -2265,29 +2265,29 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 						temp_var_sizes_[StringTable::getOrInternStringHandle(indirect_call_op->result.name())] = result_size;
 						handled_by_typed_payload = true;
 					}
-						// Try ArrayAccessOp (array element load)
+					// Try ArrayAccessOp (array element load)
 					else if (const ArrayAccessOp* array_op = std::any_cast<ArrayAccessOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
 						temp_var_sizes_[StringTable::getOrInternStringHandle(array_op->result.name())] = array_op->element_size_in_bits;
 						handled_by_typed_payload = true;
 					}
-						// Try ArrayElementAddressOp (get address of array element)
+					// Try ArrayElementAddressOp (get address of array element)
 					else if (const ArrayElementAddressOp* addr_op = std::any_cast<ArrayElementAddressOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
 						temp_var_sizes_[StringTable::getOrInternStringHandle(addr_op->result.name())] = 64; // Pointer is always 64-bit
 						handled_by_typed_payload = true;
 					}
-						// Try DereferenceOp (for dereferencing pointers/references)
+					// Try DereferenceOp (for dereferencing pointers/references)
 					else if (const DereferenceOp* deref_op = std::any_cast<DereferenceOp>(&instruction.getTypedPayload())) {
-							// Phase 5: Convert temp var name to StringHandle
-							// Determine size based on pointer depth: if depth > 1, result is a pointer (64 bits)
+						// Convert temp var name to StringHandle
+						// Determine size based on pointer depth: if depth > 1, result is a pointer (64 bits)
 						int result_size = (deref_op->pointer.pointer_depth.value > 1) ? 64 : deref_op->pointer.size_in_bits.value;
 						temp_var_sizes_[StringTable::getOrInternStringHandle(deref_op->result.name())] = result_size;
 						handled_by_typed_payload = true;
 					}
-						// Try AssignmentOp (for materializing literals to temporaries)
+					// Try AssignmentOp (for materializing literals to temporaries)
 					else if (const AssignmentOp* assign_op = std::any_cast<AssignmentOp>(&instruction.getTypedPayload())) {
-							// Track the LHS TempVar if it's a TempVar
+						// Track the LHS TempVar if it's a TempVar
 						if (const auto* temp_var_ptr = std::get_if<TempVar>(&assign_op->lhs.value)) {
 							auto temp_var = *temp_var_ptr;
 								// Phase 5: Convert temp var name to StringHandle
@@ -2295,15 +2295,15 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 							handled_by_typed_payload = true;
 						}
 					}
-						// Try AddressOfOp (for taking address of temporaries)
+					// Try AddressOfOp (for taking address of temporaries)
 					else if (const AddressOfOp* addr_of_op = std::any_cast<AddressOfOp>(&instruction.getTypedPayload())) {
-							// Phase 5: Convert temp var name to StringHandle
+						// Phase 5: Convert temp var name to StringHandle
 						temp_var_sizes_[StringTable::getOrInternStringHandle(addr_of_op->result.name())] = 64; // Pointer is always 64-bit
 						handled_by_typed_payload = true;
 					}
 						// Try AddressOfMemberOp (for taking address of struct members)
 					else if (const AddressOfMemberOp* addr_member_op = std::any_cast<AddressOfMemberOp>(&instruction.getTypedPayload())) {
-							// Phase 5: Convert temp var name to StringHandle
+						// Convert temp var name to StringHandle
 						temp_var_sizes_[StringTable::getOrInternStringHandle(addr_member_op->result.name())] = 64; // Pointer is always 64-bit
 						handled_by_typed_payload = true;
 					}
@@ -2315,10 +2315,10 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 							handled_by_typed_payload = true;
 						}
 					}
-						// Try MemberLoadOp (member access — e.g. %2 = member_access bool8 %obj.flag)
-						// Large struct members (>64 bits) are stored as pointer addresses (64-bit) by
-						// handleMemberAccess, so clamp to 64 in that case.  Zero size can arise from
-						// incomplete/void members; treat those as 64-bit pointers as well.
+					// Try MemberLoadOp (member access — e.g. %2 = member_access bool8 %obj.flag)
+					// Large struct members (>64 bits) are stored as pointer addresses (64-bit) by
+					// handleMemberAccess, so clamp to 64 in that case.  Zero size can arise from
+					// incomplete/void members; treat those as 64-bit pointers as well.
 					else if (const MemberLoadOp* member_load_op = std::any_cast<MemberLoadOp>(&instruction.getTypedPayload())) {
 						if (std::holds_alternative<TempVar>(member_load_op->result.value)) {
 							auto temp_var = std::get<TempVar>(member_load_op->result.value);
@@ -2328,7 +2328,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 							handled_by_typed_payload = true;
 						}
 					}
-						// Add more payload types here as they produce TempVars
+					// Add more payload types here as they produce TempVars
 				} catch (const std::exception& e) {
 					FLASH_LOG(Codegen, Warning, "[calculateFunctionStackSpace]: Exception while processing typed payload for opcode ",
 							  static_cast<int>(instruction.getOpcode()), ": ", e.what());
@@ -2338,9 +2338,9 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				}
 			}
 
-				// Fallback: Track TempVars from legacy operand format
-				// Most arithmetic/logic instructions have format: [result_var, type, size, ...]
-				// where operand 0 is result, operand 1 is type, operand 2 is size
+			// Fallback: Track TempVars from legacy operand format
+			// Most arithmetic/logic instructions have format: [result_var, type, size, ...]
+			// where operand 0 is result, operand 1 is type, operand 2 is size
 			if (!handled_by_typed_payload &&
 				instruction.getOperandCount() >= 3 &&
 				instruction.isOperandType<TempVar>(0) &&
@@ -2352,35 +2352,35 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		}
 	}
 
-		// TempVars are now allocated dynamically via formula, not pre-allocated
+	// TempVars are now allocated dynamically via formula, not pre-allocated
 
-		// Start stack allocation AFTER parameter home space
-		// Windows x64 ABI: first 4 parameters get home space at [rbp-8], [rbp-16], [rbp-24], [rbp-32]
-		// Additional parameters are passed on the stack at positive RBP offsets
-		// Local variables start AFTER the parameter home space
+	// Start stack allocation AFTER parameter home space
+	// Windows x64 ABI: first 4 parameters get home space at [rbp-8], [rbp-16], [rbp-24], [rbp-32]
+	// Additional parameters are passed on the stack at positive RBP offsets
+	// Local variables start AFTER the parameter home space
 	int param_home_space = std::max(static_cast<int>(param_count), 4) * 8;  // At least 32 bytes for register parameters
-		// For C++ EH functions, reserve [rbp-8] for the FH3 unwind help state variable.
-		// Shift parameter home space down by 8 bytes so it starts at [rbp-16].
+	// For C++ EH functions, reserve [rbp-8] for the FH3 unwind help state variable.
+	// Shift parameter home space down by 8 bytes so it starts at [rbp-16].
 	int eh_state_reserve = (current_function_has_cpp_eh_ && !std::is_same_v<TWriterClass, ElfFileWriter>) ? 8 : 0;
 	int_fast32_t stack_offset = -(param_home_space + eh_state_reserve);
 
 	for (const VarDecl& local_var : local_vars) {
-			// Apply alignment if specified, otherwise use natural alignment (8 bytes for x64)
+		// Apply alignment if specified, otherwise use natural alignment (8 bytes for x64)
 		size_t var_alignment = local_var.alignment > 0 ? local_var.alignment : 8;
 
-			// Align the stack offset down to the required alignment
-			// Stack grows downward, so we need to align down (toward more negative values)
+		// Align the stack offset down to the required alignment
+		// Stack grows downward, so we need to align down (toward more negative values)
 		int_fast32_t aligned_offset = stack_offset;
 		if (var_alignment > 1) {
-				// Round down to nearest multiple of alignment
-				// For negative offsets: (-16 & ~15) = -16, (-15 & ~15) = -16, (-17 & ~15) = -32
+			// Round down to nearest multiple of alignment
+			// For negative offsets: (-16 & ~15) = -16, (-15 & ~15) = -16, (-17 & ~15) = -32
 			aligned_offset = (stack_offset - static_cast<int_fast32_t>(var_alignment) + 1) & ~(static_cast<int_fast32_t>(var_alignment) - 1);
 		}
 
-			// Allocate space for the variable
+		// Allocate space for the variable
 		stack_offset = aligned_offset - (local_var.size_in_bits.value / 8);
 
-			// Store both offset and size in unified structure, including is_array flag
+		// Store both offset and size in unified structure, including is_array flag
 		var_scope.variables.insert_or_assign(local_var.var_name, VariableInfo{static_cast<int>(stack_offset), local_var.size_in_bits, local_var.is_array});
 	}
 
@@ -2396,9 +2396,9 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		}
 	}
 
-		// Calculate space needed for TempVars
-		// Each TempVar uses 8 bytes (64-bit alignment)
-		// Calculate space for temp vars using actual sizes, not just count * 8
+	// Calculate space needed for TempVars
+	// Each TempVar uses 8 bytes (64-bit alignment)
+	// Calculate space for temp vars using actual sizes, not just count * 8
 	int temp_var_space = 0;
 	for (const auto& [temp_var_name, size_bits] : temp_var_sizes_) {
 		int size_in_bytes = (size_bits + 7) / 8;
@@ -2406,25 +2406,25 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		temp_var_space += size_in_bytes;
 	}
 
-		// Don't subtract from stack_offset - TempVars are allocated separately via getStackOffsetFromTempVar
+	// Don't subtract from stack_offset - TempVars are allocated separately via getStackOffsetFromTempVar
 
-		// Store TempVar sizes for later use during code generation
-		// TempVars will have their offsets set when actually allocated via getStackOffsetFromTempVar
-		// Use INT_MIN as a sentinel value to indicate "not yet allocated"
+	// Store TempVar sizes for later use during code generation
+	// TempVars will have their offsets set when actually allocated via getStackOffsetFromTempVar
+	// Use INT_MIN as a sentinel value to indicate "not yet allocated"
 	for (const auto& [temp_var_name, size_bits] : temp_var_sizes_) {
 			// Initialize with sentinel offset (INT_MIN), actual offset set later
 		var_scope.variables.insert_or_assign(temp_var_name, VariableInfo{INT_MIN, SizeInBits{size_bits}});
 	}
 
-		// Calculate total stack space needed
+	// Calculate total stack space needed
 	func_stack_space.temp_vars_size = temp_var_space;  // TempVar space (added to total separately)
 	func_stack_space.named_vars_size = -stack_offset;  // Just named variables space
 	func_stack_space.outgoing_args_space = static_cast<uint16_t>(max_outgoing_arg_bytes);  // Outgoing call argument space
 
-		// if we are a leaf function (don't call other functions), we can get by with just register if we don't have more than 8 * 64 bytes of values to store
-		//if (shadow_stack_space == 0 && max_temp_var_index <= 8) {
-			//return 0;
-		//}
+	// if we are a leaf function (don't call other functions), we can get by with just register if we don't have more than 8 * 64 bytes of values to store
+	//if (shadow_stack_space == 0 && max_temp_var_index <= 8) {
+		//return 0;
+	//}
 
 	return func_stack_space;
 }
@@ -12622,12 +12622,12 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instruction) {
-		// Ensure all computed values (especially indices from expressions) are spilled to stack
-		// before we load them. This is necessary because variable indices (TempVars) may still
-		// be in registers and not yet written to their stack locations.
+	// Ensure all computed values (especially indices from expressions) are spilled to stack
+	// before we load them. This is necessary because variable indices (TempVars) may still
+	// be in registers and not yet written to their stack locations.
 	flushAllDirtyRegisters();
 
-		// Try typed payload first
+	// Try typed payload first
 	if (instruction.hasTypedPayload()) {
 		const ArrayStoreOp& op = std::any_cast<const ArrayStoreOp&>(instruction.getTypedPayload());
 
@@ -12635,7 +12635,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 		int element_size_bytes = element_size_bits / 8;
 		bool is_pointer_to_array = op.is_pointer_to_array;
 
-			// Get the array base address
+		// Get the array base address
 		StringHandle array_name_handle;
 		std::string_view array_name_view;
 		int64_t array_base_offset = 0;
@@ -12645,31 +12645,31 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			array_name_handle = *string_ptr;
 			array_name_view = StringTable::getStringView(array_name_handle);
 		} else if (const auto* temp_var = std::get_if<TempVar>(&op.array)) {
-				// Array is a TempVar (e.g., from member_access for struct.array_member)
-				// The TempVar holds a pointer to the array base
+			// Array is a TempVar (e.g., from member_access for struct.array_member)
+			// The TempVar holds a pointer to the array base
 			TempVar array_temp = *temp_var;
 			array_base_offset = getStackOffsetFromTempVar(array_temp);
 			array_is_tempvar = true;
 		}
 
-			// Check if this is a member array access (object.member format)
+		// Check if this is a member array access (object.member format)
 		bool is_member_array = array_name_view.find('.') != std::string::npos;
 		std::string_view object_name;
 		std::string_view member_name;
 		int64_t member_offset = op.member_offset;  // Get from payload
 
 		if (is_member_array) {
-				// Parse object.member
+			// Parse object.member
 			size_t dot_pos = array_name_view.find('.');
 			object_name = array_name_view.substr(0, dot_pos);
 			member_name = array_name_view.substr(dot_pos + 1);
 		}
 
-			// Get the value to store into RDX or XMM0 (we use RCX for index, RAX for address)
+		// Get the value to store into RDX or XMM0 (we use RCX for index, RAX for address)
 		bool is_float_store = is_floating_point_type(op.elementType());
 
 		if (std::holds_alternative<unsigned long long>(op.value.value)) {
-				// Constant value
+			// Constant value
 			uint64_t value = std::get<unsigned long long>(op.value.value);
 			if (is_float_store) {
 					// For float constants, we need to load into XMM0
@@ -12685,40 +12685,40 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				emitMovImm64(X64Register::RDX, value);
 			}
 		} else if (std::holds_alternative<TempVar>(op.value.value)) {
-				// Value from temp var: check if already in register, otherwise load from stack
+			// Value from temp var: check if already in register, otherwise load from stack
 			TempVar value_var = std::get<TempVar>(op.value.value);
 			int64_t value_offset = getStackOffsetFromTempVar(value_var, op.value.size_in_bits.value);
 
 			if (is_float_store) {
-					// For floats, check if already in XMM register, otherwise load from stack
+				// For floats, check if already in XMM register, otherwise load from stack
 				if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
-						// Value is already in a register
-						// If it's an XMM register and not XMM0, move it
+					// Value is already in a register
+					// If it's an XMM register and not XMM0, move it
 					if (value_reg.value() != X64Register::XMM0) {
 						bool is_double = (op.value.size_in_bits == SizeInBits{64});
 						emitFloatMovRegToReg(X64Register::XMM0, value_reg.value(), is_double);
 					}
 				} else {
-						// Load float from stack into XMM0
+					// Load float from stack into XMM0
 					bool is_double = (op.value.size_in_bits == SizeInBits{64});
 					emitFloatMovFromFrame(X64Register::XMM0, value_offset, !is_double);
 				}
 			} else {
-					// Integer/pointer value
-					// For pointer array elements, always use element_size_bits (64) not op.value.size_in_bits
-					// This ensures pointers are loaded as 64-bit values, not sign-extended 32-bit ints
+				// Integer/pointer value
+				// For pointer array elements, always use element_size_bits (64) not op.value.size_in_bits
+				// This ensures pointers are loaded as 64-bit values, not sign-extended 32-bit ints
 				int actual_size_bits = element_size_bits;
 
-					// Check if value is already in a register
+				// Check if value is already in a register
 				if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
-						// Value is already in a register - move it to RDX if not already there
+					// Value is already in a register - move it to RDX if not already there
 					if (value_reg.value() != X64Register::RDX) {
 						emitMovRegToReg(value_reg.value(), X64Register::RDX, actual_size_bits);
 					}
-						// If already in RDX, no move needed
+					// If already in RDX, no move needed
 				} else {
-						// Not in register - load from stack
-						// Use element_size_bits to ensure pointers are loaded correctly as 64-bit
+					// Not in register - load from stack
+					// Use element_size_bits to ensure pointers are loaded correctly as 64-bit
 					emitMovFromFrameSized(
 						SizedRegister{X64Register::RDX, 64, false},	// dest: 64-bit register
 						SizedStackSlot{static_cast<int32_t>(value_offset), actual_size_bits, false}	// source: Never sign-extend pointers!
@@ -12726,7 +12726,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				}
 			}
 		} else if (std::holds_alternative<StringHandle>(op.value.value)) {
-				// Value from named variable (e.g., array_store arr, 0, %pa where pa is a pointer variable)
+			// Value from named variable (e.g., array_store arr, 0, %pa where pa is a pointer variable)
 			StringHandle value_name = std::get<StringHandle>(op.value.value);
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(value_name);
@@ -12763,23 +12763,38 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			emitMovqGprToXmm(X64Register::RAX, X64Register::XMM0);
 		}
 
-			// Get array base offset (only needed if array is StringHandle, not TempVar)
+		// Get array base offset (only needed if array is StringHandle, not TempVar)
+		bool is_global_array = false;
+		StringHandle global_array_name;
 		if (!array_is_tempvar) {
 			StringHandle lookup_name_handle = is_member_array ? StringTable::getOrInternStringHandle(object_name) : array_name_handle;
-			array_base_offset = variable_scopes.back().variables[lookup_name_handle].offset;
-				// Fallback: if not found (offset == INT_MIN), try matching by string to tolerate handle mismatches
+			// Use find() to avoid creating phantom entries with INT_MIN offset for missing keys
+			const auto& scope_vars = variable_scopes.back().variables;
+			auto it = scope_vars.find(lookup_name_handle);
+			array_base_offset = (it != scope_vars.end()) ? it->second.offset : INT_MIN;
+			// Fallback: if not found (offset == INT_MIN), try matching by string to tolerate handle mismatches
 			if (array_base_offset == INT_MIN) {
-				for (const auto& [handle, info] : variable_scopes.back().variables) {
+				for (const auto& [handle, info] : scope_vars) {
 					if (StringTable::getStringView(handle) == (is_member_array ? object_name : array_name_view)) {
 						array_base_offset = info.offset;
 						break;
 					}
 				}
 			}
+				// If still not found locally, check if it is a global variable
+			if (array_base_offset == INT_MIN) {
+				StringHandle global_name_handle = is_member_array
+					? StringTable::getOrInternStringHandle(object_name)
+					: array_name_handle;
+				if (isGlobalVariable(global_name_handle)) {
+					is_global_array = true;
+					global_array_name = global_name_handle;
+				}
+			}
 		}
 
-			// Check if the object (not the array) is a pointer (reference parameter or 'this')
-			// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
+		// Check if the object (not the array) is a pointer (reference parameter or 'this')
+		// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
 		bool is_object_pointer = false;
 		if (is_member_array) {
 			if (isPointerBaseStorage(array_base_offset)) {
@@ -12787,47 +12802,60 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			}
 		}
 
-			// When array is from a TempVar (member_access result), it holds a pointer to the array
-			// We need to treat it like is_pointer_to_array case
+		// When array is from a TempVar (member_access result), it holds a pointer to the array
+		// We need to treat it like is_pointer_to_array case
 		if (array_is_tempvar) {
 			is_pointer_to_array = true;
 		}
 
 		FLASH_LOG_FORMAT(Codegen, Debug,
-						 "ArrayStore: is_member_array={}, object_name='{}', is_object_pointer={}, is_pointer_to_array={}, array_is_tempvar={}, array_base_offset={}, member_offset={}",
-						 is_member_array, (is_member_array ? object_name : "N/A"), is_object_pointer, is_pointer_to_array, array_is_tempvar, array_base_offset, member_offset);
+						 "ArrayStore: is_member_array={}, object_name='{}', is_object_pointer={}, is_pointer_to_array={}, array_is_tempvar={}, array_base_offset={}, member_offset={}, is_global_array={}",
+						 is_member_array, (is_member_array ? object_name : "N/A"), is_object_pointer, is_pointer_to_array, array_is_tempvar, array_base_offset, member_offset, is_global_array);
 
-			// Handle constant vs variable index
+		// Shared helper: emit store to [RAX] using is_float_store flag
+		auto emitStoreToRAX = [&]() {
+			if (is_float_store) {
+				bool is_double = (element_size_bits == 64);
+				if (is_double) {
+					textSectionData.push_back(0xF2);
+				} else {
+					textSectionData.push_back(0xF3);
+				}
+				textSectionData.push_back(0x0F);
+				textSectionData.push_back(0x11);
+				textSectionData.push_back(0x00);
+			} else {
+				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+			}
+		};
+
+		// Handle constant vs variable index
 		if (std::holds_alternative<unsigned long long>(op.index.value)) {
-				// Constant index
+			// Constant index
 			uint64_t index_value = std::get<unsigned long long>(op.index.value);
 
-			if (is_pointer_to_array) {
-					// Load the pointer value first
+			if (is_global_array) {
+				// Global variable array member: LEA RAX, [RIP + global], then store
+				uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
+				pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
+				int64_t offset_bytes = member_offset + (index_value * element_size_bytes);
+				if (offset_bytes != 0) {
+					emitAddImmToReg(textSectionData, X64Register::RAX, offset_bytes);
+				}
+				emitStoreToRAX();
+			} else if (is_pointer_to_array) {
+				// Load the pointer value first
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 
-					// Add offset to pointer: ADD RAX, (index * element_size)
+				// Add offset to pointer: ADD RAX, (index * element_size)
 				int64_t offset_bytes = index_value * element_size_bytes;
 				emitAddImmToReg(textSectionData, X64Register::RAX, offset_bytes);
 
-					// Store to [RAX] with appropriate size
-				if (is_float_store) {
-						// MOVSS/MOVSD [RAX], XMM0
-					bool is_double = (element_size_bits == 64);
-					if (is_double) {
-						textSectionData.push_back(0xF2);	 // MOVSD prefix
-					} else {
-						textSectionData.push_back(0xF3);	 // MOVSS prefix
-					}
-					textSectionData.push_back(0x0F);
-					textSectionData.push_back(0x11);	 // Store opcode
-					textSectionData.push_back(0x00);	 // ModR/M: [RAX]
-				} else {
-					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
-				}
+				// Store to [RAX] with appropriate size
+				emitStoreToRAX();
 			} else if (is_object_pointer) {
-					// Member array of a pointer object (like this.values[i])
-					// Load the object pointer first
+				// Member array of a pointer object (like this.values[i])
+				// Load the object pointer first
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 
 					// Add member offset + index offset: ADD RAX, (member_offset + index * element_size)
@@ -12839,23 +12867,10 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 
 				emitAddImmToReg(textSectionData, X64Register::RAX, total_offset);
 
-					// Store to [RAX] with appropriate size
-				if (is_float_store) {
-						// MOVSS/MOVSD [RAX], XMM0
-					bool is_double = (element_size_bits == 64);
-					if (is_double) {
-						textSectionData.push_back(0xF2);	 // MOVSD prefix
-					} else {
-						textSectionData.push_back(0xF3);	 // MOVSS prefix
-					}
-					textSectionData.push_back(0x0F);
-					textSectionData.push_back(0x11);	 // Store opcode
-					textSectionData.push_back(0x00);	 // ModR/M: [RAX]
-				} else {
-					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
-				}
+				// Store to [RAX] with appropriate size
+				emitStoreToRAX();
 			} else {
-					// Regular array - direct stack access
+				// Regular array - direct stack access
 				int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
 
 				if (is_float_store) {
@@ -12868,57 +12883,52 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				}
 			}
 		} else if (std::holds_alternative<TempVar>(op.index.value)) {
-				// Variable index - compute address at runtime
+			// Variable index - compute address at runtime
 			TempVar index_var = std::get<TempVar>(op.index.value);
 			int64_t index_var_offset = getStackOffsetFromTempVar(index_var, op.index.size_in_bits.value);
 
-				// Load index into RCX (value is already in RDX)
+			// Load index into RCX (value is already in RDX)
 			emitLoadIndexIntoRCX(textSectionData, index_var_offset, op.index.size_in_bits.value);
 			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 
-			if (is_pointer_to_array) {
-					// Load pointer into RAX
+			if (is_global_array) {
+				// Global variable array member: LEA RAX, [RIP + global], then add member_offset, then add RCX (runtime index)
+				uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
+				pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
+				if (member_offset != 0) {
+					emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
+				}
+				emitAddRAXRCX(textSectionData);
+			} else if (is_pointer_to_array) {
+				// Load pointer into RAX
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
-					// RAX += RCX (add index offset to pointer)
+				// RAX += RCX (add index offset to pointer)
 				emitAddRAXRCX(textSectionData);
 			} else if (is_object_pointer) {
-					// Member array of a pointer object (like this.values[i])
-					// Load the object pointer first
+				// Member array of a pointer object (like this.values[i])
+				// Load the object pointer first
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
-					// Add member offset: ADD RAX, member_offset
+				// Add member offset: ADD RAX, member_offset
 				if (member_offset != 0) {
 					FLASH_LOG_FORMAT(Codegen, Debug,
 									 "ArrayStore (var index): object_pointer path, base_offset={}, member_offset={}, elem_size={}",
 									 array_base_offset, member_offset, element_size_bytes);
 					emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
 				}
-					// RAX += RCX (add index offset)
+				// RAX += RCX (add index offset)
 				emitAddRAXRCX(textSectionData);
 			} else {
-					// LEA RAX, [RBP + array_base_offset]
+				// LEA RAX, [RBP + array_base_offset]
 				int64_t combined_offset = array_base_offset + member_offset;
 				emitLEAFromFrame(textSectionData, X64Register::RAX, combined_offset);
-					// RAX += RCX
+				// RAX += RCX
 				emitAddRAXRCX(textSectionData);
 			}
 
-				// Store to [RAX]
-			if (is_float_store) {
-					// MOVSS/MOVSD [RAX], XMM0
-				bool is_double = (element_size_bits == 64);
-				if (is_double) {
-					textSectionData.push_back(0xF2);	 // MOVSD prefix
-				} else {
-					textSectionData.push_back(0xF3);	 // MOVSS prefix
-				}
-				textSectionData.push_back(0x0F);
-				textSectionData.push_back(0x11);	 // Store opcode
-				textSectionData.push_back(0x00);	 // ModR/M: [RAX]
-			} else {
-				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
-			}
+			// Store to [RAX]
+			emitStoreToRAX();
 		} else if (std::holds_alternative<StringHandle>(op.index.value)) {
-				// Index is a named variable - get its stack offset
+			// Index is a named variable - get its stack offset
 			StringHandle index_handle = std::get<StringHandle>(op.index.value);
 			auto it = variable_scopes.back().variables.find(index_handle);
 			if (it == variable_scopes.back().variables.end()) {
@@ -12928,55 +12938,50 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			int64_t index_var_offset = it->second.offset;
 			int index_size_in_bits = it->second.size_in_bits.value;
 
-				// Load index into RCX (value is already in RDX)
+			// Load index into RCX (value is already in RDX)
 			emitLoadIndexIntoRCX(textSectionData, index_var_offset, index_size_in_bits);
 			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 
-			if (is_pointer_to_array) {
-					// Load pointer into RAX
+			if (is_global_array) {
+				// Global variable array member: LEA RAX, [RIP + global], then add member_offset, then add RCX
+				uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
+				pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
+				if (member_offset != 0) {
+					emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
+				}
+				emitAddRAXRCX(textSectionData);
+			} else if (is_pointer_to_array) {
+				// Load pointer into RAX
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
-					// RAX += RCX (add index offset to pointer)
+				// RAX += RCX (add index offset to pointer)
 				emitAddRAXRCX(textSectionData);
 			} else if (is_object_pointer) {
-					// Member array of a pointer object (like this.values[i])
-					// Load the object pointer first
+				// Member array of a pointer object (like this.values[i])
+				// Load the object pointer first
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 					// Add member offset: ADD RAX, member_offset
 				if (member_offset != 0) {
 					emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
 				}
-					// RAX += RCX (add index offset)
+				// RAX += RCX (add index offset)
 				emitAddRAXRCX(textSectionData);
 			} else {
-					// LEA RAX, [RBP + array_base_offset]
+				// LEA RAX, [RBP + array_base_offset]
 				int64_t combined_offset = array_base_offset + member_offset;
 				emitLEAFromFrame(textSectionData, X64Register::RAX, combined_offset);
-					// RAX += RCX
+				// RAX += RCX
 				emitAddRAXRCX(textSectionData);
 			}
 
-				// Store to [RAX]
-			if (is_float_store) {
-					// MOVSS/MOVSD [RAX], XMM0
-				bool is_double = (element_size_bits == 64);
-				if (is_double) {
-					textSectionData.push_back(0xF2);	 // MOVSD prefix
-				} else {
-					textSectionData.push_back(0xF3);	 // MOVSS prefix
-				}
-				textSectionData.push_back(0x0F);
-				textSectionData.push_back(0x11);	 // Store opcode
-				textSectionData.push_back(0x00);	 // ModR/M: [RAX]
-			} else {
-				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
-			}
+			// Store to [RAX]
+			emitStoreToRAX();
 		} else {
 			throw InternalError("ArrayStore index must be constant, TempVar, or StringHandle");
 		}
 		return;
 	}
 
-		// All array store now uses typed payload - no legacy code path
+	// All array store now uses typed payload - no legacy code path
 	throw InternalError("ArrayStore without typed payload - should not happen");
 }
 
@@ -12985,39 +12990,39 @@ void IrToObjConverter<TWriterClass>::handleStringLiteral(const IrInstruction& in
 	const StringLiteralOp& op = instruction.getTypedPayload<StringLiteralOp>();
 	TempVar result_var = std::get<TempVar>(op.result);
 
-		// Add string literal to .rdata and get symbol
+	// Add string literal to .rdata and get symbol
 	std::string_view symbol_name = writer.add_string_literal(op.content);
 	int64_t stack_offset = getStackOffsetFromTempVar(result_var);
 	variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = stack_offset;
 
-		// LEA RAX, [RIP + symbol] with relocation
+	// LEA RAX, [RIP + symbol] with relocation
 	uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
 	writer.add_relocation(reloc_offset, symbol_name);
 
-		// Store address to stack (64-bit pointer)
+	// Store address to stack (64-bit pointer)
 	emitMovToFrame(X64Register::RAX, stack_offset, 64);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& instruction) {
-		// MemberAccess: %result = member_access [MemberType][MemberSize] %object, member_name, offset
+	// MemberAccess: %result = member_access [MemberType][MemberSize] %object, member_name, offset
 
-		// Extract typed payload - all MemberAccess instructions use typed payloads
+	// Extract typed payload - all MemberAccess instructions use typed payloads
 	const MemberLoadOp& op = std::any_cast<const MemberLoadOp&>(instruction.getTypedPayload());
 
-		// Get the object's base stack offset or pointer
+	// Get the object's base stack offset or pointer
 	int32_t object_base_offset = 0;
 	bool is_pointer_access = false;	// true if object is 'this' or a reference parameter (both are pointers)
 	bool is_global_access = false;   // true if object is a global variable
 	StringHandle global_object_name;	 // name for global variable access
 	const StackVariableScope& current_scope = variable_scopes.back();
 
-		// Get object base offset
+	// Get object base offset
 	if (std::holds_alternative<StringHandle>(op.object)) {
 		StringHandle object_name_handle = std::get<StringHandle>(op.object);
 		auto it = current_scope.variables.find(object_name_handle);
 		if (it == current_scope.variables.end()) {
-				// Not found in local scope - check if it's a global variable
+			// Not found in local scope - check if it's a global variable
 			bool found_global = false;
 			for (const auto& global : global_variables_) {
 				if (global.name == object_name_handle) {
@@ -13035,8 +13040,8 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		} else {
 			object_base_offset = it->second.offset;
 
-				// Check if base is a pointer (reference, 'this', or pointer-to-member)
-				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
+			// Check if base is a pointer (reference, 'this', or pointer-to-member)
+			// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
 			bool in_indirect_storage = isPointerBaseStorage(object_base_offset);
 			FLASH_LOG(Codegen, Debug, "MemberAccess check: object='", StringTable::getStringView(object_name_handle),
 					  "' offset=", object_base_offset,
@@ -13047,41 +13052,41 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			}
 		}
 	} else {
-			// Nested case: object is the result of a previous member access
+		// Nested case: object is the result of a previous member access
 		auto object_temp = std::get<TempVar>(op.object);
 		object_base_offset = getStackOffsetFromTempVar(object_temp);
 
-			// Check if this temp var holds a pointer/address (from large member access) or is pointer-to-member
+		// Check if this temp var holds a pointer/address (from large member access) or is pointer-to-member
 		if (isPointerBaseStorage(object_base_offset, object_temp) || op.is_pointer_to_member) {
 			is_pointer_access = true;
 		}
 	}
 
-		// Calculate the member's actual stack offset
+	// Calculate the member's actual stack offset
 	int32_t member_stack_offset;
 	if (is_pointer_access) {
 		member_stack_offset = 0;	 // Not used for pointer access
 	} else {
-			// For a struct at [RBP - 8] with member at offset 4: member is at [RBP - 8 + 4] = [RBP - 4]
+		// For a struct at [RBP - 8] with member at offset 4: member is at [RBP - 8 + 4] = [RBP - 4]
 		member_stack_offset = object_base_offset + op.offset;
 	}
 
-		// Calculate member size in bytes
+	// Calculate member size in bytes
 	int member_size_bytes = op.result.size_in_bits.value / 8;
-		// Silently skip access to 0-size struct members (function-only / empty structs).
-		// Two known cases:
-		//  (a) Type::UserDefined with unresolved metadata — a transitional state for typedefs.
-		//  (b) Type::Struct with size 0 — a struct that has only member functions and no data
-		//      members (e.g. struct Adder { int sum(int); }). The address is simply the base
-		//      pointer (offset 0), so no load instruction is needed.
+	// Silently skip access to 0-size struct members (function-only / empty structs).
+	// Two known cases:
+	//  (a) Type::UserDefined with unresolved metadata — a transitional state for typedefs.
+	//  (b) Type::Struct with size 0 — a struct that has only member functions and no data
+	//      members (e.g. struct Adder { int sum(int); }). The address is simply the base
+	//      pointer (offset 0), so no load instruction is needed.
 	bool unresolved_user_defined_member = (member_size_bytes == 0 &&
 										   isIrStructType(op.result.effectiveIrType()) &&
 										   (op.result.category() != TypeCategory::Struct || !op.result.type_index.is_valid()));
 
-		// Flush all dirty registers to ensure values are saved before allocating
+	// Flush all dirty registers to ensure values are saved before allocating
 	flushAllDirtyRegisters();
 
-		// Get the result variable's stack offset (needed for both paths)
+	// Get the result variable's stack offset (needed for both paths)
 	auto result_var = std::get<TempVar>(op.result.value);
 	int32_t result_offset;
 	StringHandle result_var_handle = StringTable::getOrInternStringHandle(result_var.name());
@@ -13089,16 +13094,16 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 	if (it != current_scope.variables.end() && it->second.offset != INT_MIN) {
 		result_offset = it->second.offset;
 	} else {
-			// Allocate stack space for the result TempVar (or if offset is sentinel INT_MIN)
+		// Allocate stack space for the result TempVar (or if offset is sentinel INT_MIN)
 		result_offset = allocateStackSlotForTempVar(result_var.var_number);
-			// Note: allocateStackSlotForTempVar already updates the variables map
+		// Note: allocateStackSlotForTempVar already updates the variables map
 	}
 
-		// Non-union struct members must preserve their address so nested member access keeps
-		// using the subobject as an aggregate base instead of loading raw bytes as though
-		// the struct were a scalar value. Large members already require address storage for
-		// the same reason. Unions stay load-by-value here so existing scalar-style union
-		// member reads and copies keep their current behavior.
+	// Non-union struct members must preserve their address so nested member access keeps
+	// using the subobject as an aggregate base instead of loading raw bytes as though
+	// the struct were a scalar value. Large members already require address storage for
+	// the same reason. Unions stay load-by-value here so existing scalar-style union
+	// member reads and copies keep their current behavior.
 	bool keep_member_address = false;
 	bool is_addressable_struct_member =
 		isIrStructType(op.result.effectiveIrType()) && !op.is_reference() && op.result.type_index.is_valid();
@@ -13110,12 +13115,12 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		}
 	}
 	if (member_size_bytes > 8 || keep_member_address) {
-			// Allocate a register to compute the address
+		// Allocate a register to compute the address
 		X64Register addr_reg = allocateRegisterWithSpilling();
 
 		if (is_global_access) {
-				// LEA addr_reg, [RIP + global_name]
-				// REX.W + 8D /r for LEA r64, m
+			// LEA addr_reg, [RIP + global_name]
+			// REX.W + 8D /r for LEA r64, m
 			uint8_t rex = 0x48; // REX.W
 			if (static_cast<uint8_t>(addr_reg) >= 8) {
 				rex |= 0x04; // REX.R
@@ -13123,11 +13128,11 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			textSectionData.push_back(rex);
 			textSectionData.push_back(0x8D);	 // LEA opcode
 
-				// ModR/M: mod=00 (RIP-relative), reg=addr_reg, r/m=101 (RIP+disp32)
+			// ModR/M: mod=00 (RIP-relative), reg=addr_reg, r/m=101 (RIP+disp32)
 			uint8_t modrm = 0x05 | ((static_cast<uint8_t>(addr_reg) & 0x7) << 3);
 			textSectionData.push_back(modrm);
 
-				// Placeholder for relocation (disp32)
+			// Placeholder for relocation (disp32)
 			uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
 			textSectionData.push_back(0x00);
 			textSectionData.push_back(0x00);
@@ -13140,7 +13145,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 				emitAddRegImm32(textSectionData, addr_reg, op.offset);
 			}
 		} else if (is_pointer_access) {
-				// Load pointer into addr_reg, then add offset if needed
+			// Load pointer into addr_reg, then add offset if needed
 			auto load_ptr = generatePtrMovFromFrame(addr_reg, object_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(),
 								   load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
@@ -13148,37 +13153,37 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 				emitAddRegImm32(textSectionData, addr_reg, op.offset);
 			}
 		} else {
-				// LEA addr_reg, [RBP + member_stack_offset]
+			// LEA addr_reg, [RBP + member_stack_offset]
 			int32_t effective_offset = object_base_offset + op.offset;
 			auto lea_opcodes = generateLeaFromFrame(addr_reg, effective_offset);
 			textSectionData.insert(textSectionData.end(), lea_opcodes.op_codes.begin(),
 								   lea_opcodes.op_codes.begin() + lea_opcodes.size_in_bytes);
 		}
 
-			// Store the address to result_offset
+		// Store the address to result_offset
 		auto store_addr = generatePtrMovToFrame(addr_reg, result_offset);
 		textSectionData.insert(textSectionData.end(), store_addr.op_codes.begin(),
 							   store_addr.op_codes.begin() + store_addr.size_in_bytes);
 		regAlloc.release(addr_reg);
 
-			// Mark this temp var as containing a pointer/address
+		// Mark this temp var as containing a pointer/address
 		setReferenceInfo(result_offset, TypeIndex{0, op.result.typeEnum()}, op.result.size_in_bits.value, false, result_var);
 		return;
 	}
 
-		// Allocate a register for loading the member value
+	// Allocate a register for loading the member value
 	X64Register temp_reg = allocateRegisterWithSpilling();
 
 	if (is_global_access) {
-			// LEA temp_reg, [RIP + global] with relocation
+		// LEA temp_reg, [RIP + global] with relocation
 		uint32_t reloc_offset = emitLeaRipRelative(temp_reg);
 		pending_global_relocations_.push_back({reloc_offset, global_object_name, IMAGE_REL_AMD64_REL32});
 
-			// Load member from [temp_reg + offset]
+		// Load member from [temp_reg + offset]
 		bool is_float_type = isIrFloatingPointType(op.result.effectiveIrType());
 
 		if (is_float_type) {
-				// For floating-point: load into XMM and store to stack
+			// For floating-point: load into XMM and store to stack
 			X64Register xmm_reg = X64Register::XMM0;
 			bool is_float = (op.result.effectiveIrType() == IrType::Float);
 			emitFloatLoadFromAddressWithOffset(textSectionData, xmm_reg, temp_reg, op.offset, is_float);
@@ -13191,7 +13196,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = float_result_offset;
 			return;
 		} else {
-				// For integers: use standard integer load
+			// For integers: use standard integer load
 			OpCodeWithSize load_opcodes;
 			if (member_size_bytes == 8) {
 				load_opcodes = generateMovFromMemory(temp_reg, temp_reg, op.offset);
@@ -13202,7 +13207,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			} else if (member_size_bytes == 1) {
 				load_opcodes = generateMovFromMemory8(temp_reg, temp_reg, op.offset);
 			} else {
-					// Unsupported member size (0, 3, 5, 6, 7, etc.) - skip quietly
+				// Unsupported member size (0, 3, 5, 6, 7, etc.) - skip quietly
 				if (unresolved_user_defined_member) {
 					regAlloc.release(temp_reg);
 					return;
@@ -13217,7 +13222,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 								   load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 
-				// Extract bitfield value if this is a bitfield member
+			// Extract bitfield value if this is a bitfield member
 			if (op.bitfield_width.has_value()) {
 				size_t bit_offset = op.bitfield_bit_offset;
 				size_t width = *op.bitfield_width;
@@ -13228,21 +13233,21 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 				emitAndImm64(temp_reg, mask);
 			}
 
-				// Store loaded value to result_offset for later use (e.g., indirect_call)
+			// Store loaded value to result_offset for later use (e.g., indirect_call)
 			emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 			regAlloc.release(temp_reg);
 			variable_scopes.back().variables[result_var_handle].offset = result_offset;
 			return;
 		}
 	} else if (is_pointer_access) {
-			// Load pointer into an allocated register, then load from [ptr_reg + offset]
+		// Load pointer into an allocated register, then load from [ptr_reg + offset]
 		FLASH_LOG_FORMAT(Codegen, Debug,
 						 "MemberAccess pointer path: object_base_offset={}, op.offset={}, member_size_bytes={}",
 						 object_base_offset, op.offset, member_size_bytes);
 		X64Register ptr_reg = allocateRegisterWithSpilling();
 		emitMovFromFrame(ptr_reg, object_base_offset);
 
-			// Load from [ptr_reg + offset] into temp_reg
+		// Load from [ptr_reg + offset] into temp_reg
 		OpCodeWithSize load_opcodes;
 		if (member_size_bytes == 8) {
 			load_opcodes = generateMovFromMemory(temp_reg, ptr_reg, op.offset);
@@ -13253,7 +13258,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		} else if (member_size_bytes == 1) {
 			load_opcodes = generateMovFromMemory8(temp_reg, ptr_reg, op.offset);
 		} else {
-				// Unsupported member size (0, 3, 5, 6, 7, etc.) - skip quietly
+			// Unsupported member size (0, 3, 5, 6, 7, etc.) - skip quietly
 			if (unresolved_user_defined_member) {
 				regAlloc.release(temp_reg);
 				regAlloc.release(ptr_reg);
@@ -13270,10 +13275,10 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 							   load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 
-			// Release pointer register - no longer needed
+		// Release pointer register - no longer needed
 		regAlloc.release(ptr_reg);
 
-			// Extract bitfield value if this is a bitfield member
+		// Extract bitfield value if this is a bitfield member
 		if (op.bitfield_width.has_value()) {
 			size_t bit_offset = op.bitfield_bit_offset;
 			size_t width = *op.bitfield_width;
@@ -13284,17 +13289,17 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			emitAndImm64(temp_reg, mask);
 		}
 
-			// Store loaded value to result_offset for later use (e.g., indirect_call)
+		// Store loaded value to result_offset for later use (e.g., indirect_call)
 		emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 		regAlloc.release(temp_reg);
 		variable_scopes.back().variables[result_var_handle].offset = result_offset;
 		return;
 	} else {
-			// For regular struct variables on the stack, load from computed offset
+		// For regular struct variables on the stack, load from computed offset
 		emitLoadFromFrame(textSectionData, temp_reg, member_stack_offset, member_size_bytes);
 	}
 
-		// Extract bitfield value if this is a bitfield member
+	// Extract bitfield value if this is a bitfield member
 	if (op.bitfield_width.has_value()) {
 		size_t bit_offset = op.bitfield_bit_offset;
 		size_t width = *op.bitfield_width;
@@ -13314,8 +13319,8 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		return;
 	}
 
-		// Store the loaded value into the temp slot so subsequent uses read the value,
-		// avoiding aliasing the TempVar to the struct member location.
+	// Store the loaded value into the temp slot so subsequent uses read the value,
+	// avoiding aliasing the TempVar to the struct member location.
 	emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 	regAlloc.release(temp_reg);
 	variable_scopes.back().variables[result_var_handle].offset = result_offset;
@@ -13324,15 +13329,15 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& instruction) {
-		// MemberStore: member_store [MemberType][MemberSize] %object, member_name, offset, %value
+	// MemberStore: member_store [MemberType][MemberSize] %object, member_name, offset, %value
 
-		// Extract typed payload - all MemberStore instructions use typed payloads
+	// Extract typed payload - all MemberStore instructions use typed payloads
 	const MemberStoreOp& op = std::any_cast<const MemberStoreOp&>(instruction.getTypedPayload());
 
-		// Check if this is a vtable pointer initialization (vptr)
+	// Check if this is a vtable pointer initialization (vptr)
 	if (op.vtable_symbol.isValid()) {
-			// This is a vptr initialization - load vtable address and store to offset 0
-			// Get the object's base stack offset
+		// This is a vptr initialization - load vtable address and store to offset 0
+		// Get the object's base stack offset
 		int32_t object_base_offset = 0;
 		const StackVariableScope& current_scope = variable_scopes.back();
 
@@ -13346,20 +13351,20 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 			object_base_offset = it->second.offset;
 		}
 
-			// Load vtable address using LEA with relocation
-			// The vtable symbol (_ZTV...) already points to the function pointer array
-			// (the ElfFileWriter's add_vtable creates the symbol at offset +16 past the RTTI header)
-			// So we just need a standard PC-relative relocation with the default addend
+		// Load vtable address using LEA with relocation
+		// The vtable symbol (_ZTV...) already points to the function pointer array
+		// (the ElfFileWriter's add_vtable creates the symbol at offset +16 past the RTTI header)
+		// So we just need a standard PC-relative relocation with the default addend
 		uint32_t relocation_offset = emitLeaRipRelative(X64Register::RAX);
 
-			// Add a relocation for the vtable symbol
+		// Add a relocation for the vtable symbol
 		writer.add_relocation(relocation_offset, StringTable::getStringView(op.vtable_symbol));
 
-			// Store vtable pointer to [RCX + op.offset] (this pointer is in RCX)
-			// First load 'this' pointer into RCX
+		// Store vtable pointer to [RCX + op.offset] (this pointer is in RCX)
+		// First load 'this' pointer into RCX
 		emitMovFromFrame(X64Register::RCX, object_base_offset);
 
-			// Store RAX (vtable address) to [RCX + op.offset]
+		// Store RAX (vtable address) to [RCX + op.offset]
 		emitStoreToMemory(textSectionData, X64Register::RAX, X64Register::RCX, op.offset, 8);
 
 		return;	// Done with vptr initialization
