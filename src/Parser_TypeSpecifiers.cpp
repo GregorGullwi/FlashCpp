@@ -1191,11 +1191,19 @@ ParseResult Parser::parse_type_specifier() {
 								return ParseResult::error("Non-type template arguments not supported in alias templates", type_name_token);
 							}
 
-							// Save pointer/reference modifiers from target type
-							size_t ptr_depth = instantiated_type.pointer_depth();
-							bool is_ref = instantiated_type.is_reference();
-							bool is_rval_ref = instantiated_type.is_rvalue_reference();
-							CVQualifier cv = instantiated_type.cv_qualifier();
+							size_t target_ptr_depth = instantiated_type.pointer_depth();
+							std::vector<CVQualifier> target_pointer_cvs;
+							target_pointer_cvs.reserve(instantiated_type.pointer_levels().size());
+							for (const PointerLevel& pointer_level : instantiated_type.pointer_levels()) {
+								target_pointer_cvs.push_back(pointer_level.cv_qualifier);
+							}
+							ReferenceQualifier target_ref_qualifier = instantiated_type.reference_qualifier();
+							CVQualifier target_cv = instantiated_type.cv_qualifier();
+							std::vector<size_t> target_array_dimensions = instantiated_type.array_dimensions();
+							std::optional<FunctionSignature> target_function_signature;
+							if (instantiated_type.has_function_signature()) {
+								target_function_signature = instantiated_type.function_signature();
+							}
 
 							// Get the size in bits for the argument type
 							int size_bits = 0;
@@ -1208,23 +1216,47 @@ ParseResult Parser::parse_type_specifier() {
 								size_bits = static_cast<unsigned char>(get_type_size_bits(arg.category()));
 							}
 
-							// Create new type with substituted base type
 							instantiated_type = TypeSpecifierNode(
 								arg.type_index.withCategory(arg.typeEnum()),
 								size_bits,
 								Token(), // No token for instantiated type
-								cv,
+								arg.cv_qualifier,
 								ReferenceQualifier::None);
 
-							// Reapply pointer/reference modifiers from target type
-							// e.g., if target is T* and we substitute int for T, we get int*
-							for (size_t p = 0; p < ptr_depth; ++p) {
-								instantiated_type.add_pointer_level(CVQualifier::None);
+							for (size_t p = 0; p < arg.pointer_depth; ++p) {
+								CVQualifier pointer_cv = p < arg.pointer_cv_qualifiers.size()
+									? arg.pointer_cv_qualifiers[p]
+									: CVQualifier::None;
+								instantiated_type.add_pointer_level(pointer_cv);
 							}
-							if (is_rval_ref) {
-								instantiated_type.set_reference_qualifier(ReferenceQualifier::RValueReference); // rvalue ref
-							} else if (is_ref) {
-								instantiated_type.set_reference_qualifier(ReferenceQualifier::LValueReference); // lvalue ref
+							for (size_t p = 0; p < target_ptr_depth; ++p) {
+								CVQualifier pointer_cv = p < target_pointer_cvs.size()
+									? target_pointer_cvs[p]
+									: CVQualifier::None;
+								instantiated_type.add_pointer_level(pointer_cv);
+							}
+							instantiated_type.add_cv_qualifier(target_cv);
+							instantiated_type.set_reference_qualifier(arg.ref_qualifier);
+							if (target_ref_qualifier == ReferenceQualifier::LValueReference) {
+								instantiated_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+							} else if (target_ref_qualifier == ReferenceQualifier::RValueReference &&
+									   instantiated_type.reference_qualifier() == ReferenceQualifier::None) {
+								instantiated_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+							}
+							if (arg.is_array) {
+								instantiated_type.set_array(true, arg.array_size);
+							}
+							if (!target_array_dimensions.empty()) {
+								std::vector<size_t> combined_dimensions = target_array_dimensions;
+								const std::vector<size_t>& arg_dimensions = instantiated_type.array_dimensions();
+								combined_dimensions.insert(combined_dimensions.end(), arg_dimensions.begin(), arg_dimensions.end());
+								instantiated_type.set_array_dimensions(combined_dimensions);
+							}
+							if (arg.function_signature.has_value()) {
+								instantiated_type.set_function_signature(*arg.function_signature);
+							}
+							if (target_function_signature.has_value() && !instantiated_type.has_function_signature()) {
+								instantiated_type.set_function_signature(*target_function_signature);
 							}
 						}
 					}
