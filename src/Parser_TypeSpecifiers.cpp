@@ -1183,6 +1183,53 @@ ParseResult Parser::parse_type_specifier() {
 						instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
 							*rebound_arg,
 							Token());
+					} else if (const TypeInfo* alias_target_info =
+								   tryGetTypeInfo(instantiated_type.type_index());
+							   alias_target_info != nullptr &&
+							   alias_target_info->isTemplateInstantiation()) {
+						StringHandle qualified_target_template_name =
+							gNamespaceRegistry.buildQualifiedIdentifier(
+								alias_target_info->sourceNamespace(),
+								alias_target_info->baseTemplateName());
+						auto alias_target_entry =
+							gTemplateRegistry.lookup_alias_template(qualified_target_template_name);
+						if (!alias_target_entry.has_value()) {
+							alias_target_entry = gTemplateRegistry.lookup_alias_template(
+								alias_target_info->baseTemplateName());
+						}
+						if (alias_target_entry.has_value()) {
+							std::vector<TemplateTypeArg> concrete_target_args =
+								materializeTemplateArgs(
+									*alias_target_info,
+									alias_node.template_parameters(),
+									*template_args);
+							AliasTemplateMaterializationResult materialized_target =
+								materializeTemplateInstantiationForLookup(
+									StringTable::getStringView(qualified_target_template_name),
+									concrete_target_args);
+							if (!materialized_target.resolved_type_info &&
+								qualified_target_template_name != alias_target_info->baseTemplateName()) {
+								materialized_target = materializeTemplateInstantiationForLookup(
+									StringTable::getStringView(alias_target_info->baseTemplateName()),
+									concrete_target_args);
+							}
+							if (materialized_target.resolved_type_info != nullptr) {
+								const TypeInfo* resolved_target_info =
+									materialized_target.resolved_type_info;
+								ResolvedAliasTypeInfo resolved_target_alias = resolveAliasTypeInfo(
+									resolved_target_info->registeredTypeIndex().withCategory(
+										resolved_target_info->typeEnum()));
+								TemplateTypeArg rebound_materialized_arg = rebindDependentTemplateTypeArg(
+									makeTemplateTypeArgFromResolvedAlias(
+										resolved_target_alias,
+										resolved_target_info->registeredTypeIndex().withCategory(
+											resolved_target_info->typeEnum())),
+									TemplateTypeArg(instantiated_type));
+								instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
+									rebound_materialized_arg,
+									Token());
+							}
+						}
 					}
 
 					// When the substituted type carries pointer/reference modifiers from the
