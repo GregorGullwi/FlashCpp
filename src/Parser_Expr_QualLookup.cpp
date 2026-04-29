@@ -1462,7 +1462,7 @@ TypeIndex Parser::substitute_template_parameter(
 
 TypeIndex Parser::substitute_template_parameter(
 	const TypeSpecifierNode& original_type,
-	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args) {
 	return substitute_template_parameter(
 		original_type,

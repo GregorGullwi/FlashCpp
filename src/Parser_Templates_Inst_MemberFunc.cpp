@@ -61,7 +61,7 @@ std::optional<StringHandle> getTemplateLookupOwnerName(std::string_view struct_n
 
 bool Parser::tryAppendMemberDefaultTemplateArg(
 	const TemplateParameterNode& param,
-	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const OuterTemplateBinding* outer_binding,
 	InlineVector<TemplateTypeArg, 4>& current_template_args) {
 	// Member templates don't have a separate namespace context - use invalid handle
@@ -1461,7 +1461,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Also add outer template parameter bindings (e.g., T→int from class template)
 	if (outer_binding) {
-		registerOuterBindingInScope(*outer_binding, template_scope);
+		registerOuterBindingInScope(*outer_binding, template_scope, nullptr);
 		FLASH_LOG(Templates, Debug, "Added ", outer_binding->param_names.size(), " outer template param bindings for body parsing");
 	}
 

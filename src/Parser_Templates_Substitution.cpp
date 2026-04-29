@@ -1616,7 +1616,7 @@ ASTNode Parser::substituteTemplateParameters(
 
 ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
-	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args) {
 	return substituteTemplateParameters(
 		node,
@@ -1853,7 +1853,7 @@ bool Parser::expandPackExpansionArgs(
 
 bool Parser::expandPackExpansionArgs(
 	const PackExpansionExprNode& pack_expansion,
-	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args,
 	ChunkedVector<ASTNode>& out_args) {
 	return expandPackExpansionArgs(

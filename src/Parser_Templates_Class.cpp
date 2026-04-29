@@ -150,7 +150,7 @@ ParseResult Parser::parse_template_declaration() {
 	}
 
 	// Parse template parameter list (unless it's a specialization)
-	std::vector<TemplateParameterNode> template_param_nodes;
+	InlineVector<TemplateParameterNode, 4> template_param_nodes;
 	TemplateParameterMetadata template_param_metadata;
 	InlineVector<ASTNode, 4> template_params;
 	if (!is_specialization) {
@@ -193,7 +193,7 @@ ParseResult Parser::parse_template_declaration() {
 	for (const auto& param : template_param_nodes) {
 		template_params.push_back(emplace_node<TemplateParameterNode>(param));
 	}
-	InlineVector<StringHandle, 4> template_param_names = template_param_metadata.names;
+	const InlineVector<StringHandle, 4>& template_param_names = template_param_metadata.names;
 
 	// Set the flag to enable fold expression parsing if we have parameter packs
 	bool saved_has_packs = has_parameter_packs_;
@@ -223,7 +223,7 @@ ParseResult Parser::parse_template_declaration() {
 			advance(); // consume '<'
 
 			// Parse inner template parameters
-			std::vector<TemplateParameterNode> inner_template_params;
+			InlineVector<TemplateParameterNode, 4> inner_template_params;
 			auto inner_param_result = parse_template_parameter_list(inner_template_params);
 			if (inner_param_result.is_error()) {
 				// Fallback: skip the rest (for standard headers that use unsupported features)
@@ -277,7 +277,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Extract inner template parameter names
 			FlashCpp::TemplateParameterScope inner_template_scope;
 			TemplateParameterMetadata inner_template_param_metadata = registerTemplateParametersInScope(inner_template_params, inner_template_scope);
-			InlineVector<StringHandle, 4> inner_template_param_names = inner_template_param_metadata.names;
+			const InlineVector<StringHandle, 4>& inner_template_param_names = inner_template_param_metadata.names;
 
 			discard_saved_token(inner_saved);
 
@@ -747,17 +747,17 @@ ParseResult Parser::parse_template_declaration() {
 		}
 
 		// Convert template_params (ASTNode vector) to TemplateParameterNode vector
-		std::vector<TemplateParameterNode> template_param_nodes;
+		InlineVector<TemplateParameterNode, 4> concept_template_param_nodes;
 		for (const auto& param : template_params) {
 			if (param.is<TemplateParameterNode>()) {
-				template_param_nodes.push_back(param.as<TemplateParameterNode>());
+				concept_template_param_nodes.push_back(param.as<TemplateParameterNode>());
 			}
 		}
 
 		// Create the ConceptDeclarationNode with template parameters
 		auto concept_node = emplace_node<ConceptDeclarationNode>(
 			concept_name_token,
-			std::move(template_param_nodes),
+			std::move(concept_template_param_nodes),
 			*constraint_result.node(),
 			concept_token);
 
@@ -3975,8 +3975,8 @@ ParseResult Parser::parse_template_declaration() {
 		// This will prevent delayed function bodies from being parsed immediately
 		parsing_template_class_ = true;
 		template_param_names_.clear();
-		for (std::string_view param_name : template_param_metadata.name_views) {
-			template_param_names_.push_back(param_name);
+		for (StringHandle param_name : template_param_metadata.names) {
+			template_param_names_.push_back(StringTable::getStringView(param_name));
 		}
 
 		// Set template parameter context for current_template_param_names_
@@ -4266,7 +4266,13 @@ ParseResult Parser::parse_template_declaration() {
 
 		// Try to detect out-of-line member function definition
 		// Pattern: ReturnType ClassName<TemplateArgs>::FunctionName(...)
-		auto out_of_line_result = try_parse_out_of_line_template_member(template_param_nodes, template_param_names);
+		InlineVector<TemplateParameterNode, 4> inner_template_param_nodes;
+		InlineVector<StringHandle, 4> inner_template_param_names;
+		auto out_of_line_result = try_parse_out_of_line_template_member(
+			template_param_nodes,
+			template_param_names,
+			inner_template_param_nodes,
+			inner_template_param_names);
 		if (out_of_line_result.has_value()) {
 			return saved_position.success();	 // Successfully parsed out-of-line definition
 		}
@@ -4505,9 +4511,9 @@ ParseResult Parser::parse_template_declaration() {
 	// Note: Function templates are now handled above via parse_template_function_declaration_body() (Phase 6)
 	if (decl_node.is<StructDeclarationNode>()) {
 		// Create a TemplateClassDeclarationNode with parameter names for lookup
-		std::vector<std::string_view> param_names;
-		for (std::string_view param_name : template_param_metadata.name_views) {
-			param_names.push_back(param_name);
+		InlineVector<std::string_view, 4> param_names;
+		for (StringHandle param_name : template_param_metadata.names) {
+			param_names.push_back(StringTable::getStringView(param_name));
 		}
 
 		auto template_class_node = emplace_node<TemplateClassDeclarationNode>(
@@ -4643,7 +4649,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	advance(); // consume '<'
 
 	// Parse template parameter list
-	std::vector<TemplateParameterNode> template_param_nodes;
+	InlineVector<TemplateParameterNode, 4> template_param_nodes;
 	InlineVector<ASTNode, 4> template_params;
 
 	auto param_list_result = parse_template_parameter_list(template_param_nodes);
@@ -4790,7 +4796,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	// Temporarily add template parameters to type system using RAII scope guard
 	FlashCpp::TemplateParameterScope template_scope;
 	TemplateParameterMetadata template_param_metadata = registerTemplateParametersInScope(template_param_nodes, template_scope);
-	InlineVector<std::string_view, 4> template_param_names = template_param_metadata.name_views;
+	InlineVector<std::string_view, 4> template_param_names;
+	template_param_names.reserve(template_param_metadata.names.size());
+	for (StringHandle param_name : template_param_metadata.names) {
+		template_param_names.push_back(StringTable::getStringView(param_name));
+	}
 	template_params.clear();
 	for (const auto& param : template_param_nodes) {
 		template_params.push_back(emplace_node<TemplateParameterNode>(param));

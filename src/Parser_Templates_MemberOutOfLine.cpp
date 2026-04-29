@@ -5,9 +5,9 @@
 #include "TypeTraitEvaluator.h"
 
 std::optional<bool> Parser::try_parse_out_of_line_template_member(
-	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const InlineVector<StringHandle, 4>& template_param_names,
-	const std::vector<TemplateParameterNode>& inner_template_params,
+	const InlineVector<TemplateParameterNode, 4>& inner_template_params,
 	const InlineVector<StringHandle, 4>& inner_template_param_names) {
 	auto makeQualifiedClassIdentifier = [&](std::string_view class_name) {
 		return QualifiedIdentifier::fromQualifiedName(

@@ -142,7 +142,7 @@ public:
 			TemplatePattern{template_params, pattern_args, specialized_node, std::nullopt});
 	}
 	void registerVariableTemplateSpecialization(std::string_view base_name,
-												const std::vector<TemplateParameterNode>& template_params,
+												const InlineVector<TemplateParameterNode, 4>& template_params,
 												const std::vector<TemplateTypeArg>& pattern_args,
 												ASTNode specialized_node) {
 		InlineVector<ASTNode, 4> ast_params;

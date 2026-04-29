@@ -77,7 +77,7 @@ void appendLazyTemplateSequence(TDest& destination, const TSource& source) {
 
 inline void appendLazyTemplateSequence(
 	InlineVector<ASTNode, 4>& destination,
-	const std::vector<TemplateParameterNode>& source) {
+	const InlineVector<TemplateParameterNode, 4>& source) {
 	for (const auto& value : source) {
 		destination.push_back(ASTNode::emplace_node<TemplateParameterNode>(value));
 	}

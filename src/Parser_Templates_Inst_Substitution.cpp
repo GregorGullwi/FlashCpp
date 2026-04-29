@@ -90,7 +90,7 @@ ASTNode Parser::substituteNonTypeDefaultExpression(
 
 ASTNode Parser::substituteNonTypeDefaultExpression(
 	const ASTNode& default_node,
-	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	std::span<const TemplateTypeArg> template_args) {
 	return substituteNonTypeDefaultExpressionImpl(
 		*this,
@@ -125,7 +125,7 @@ std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
 
 std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
 	const ASTNode& default_node,
-	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	std::span<const TemplateTypeArg> template_args,
 	std::span<const std::string_view> template_param_names) {
 	return substituteAndEvaluateNonTypeDefaultImpl(
@@ -256,7 +256,7 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 
 std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	const ASTNode& arg_node,
-	const std::vector<TemplateParameterNode>& template_parameters,
+	const InlineVector<TemplateParameterNode, 4>& template_parameters,
 	const InlineVector<StringHandle, 4>& param_names,
 	const std::vector<TemplateTypeArg>& template_args) {
 	return materializeDeferredAliasTemplateArg(
@@ -368,7 +368,7 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 }
 
 void Parser::normalizeDependentNonTypeTemplateArgs(
-	const std::vector<TemplateParameterNode>& template_parameters,
+	const InlineVector<TemplateParameterNode, 4>& template_parameters,
 	std::vector<TemplateTypeArg>& template_args) {
 	normalizeDependentNonTypeTemplateArgs(
 		cloneTemplateParameterNodes(template_parameters),
@@ -539,7 +539,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 
 const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	const TypeSpecifierNode& alias_type_spec,
-	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
 	return materializeInstantiatedMemberAliasTarget(
 		alias_type_spec,

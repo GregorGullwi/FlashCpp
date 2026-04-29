@@ -46,7 +46,7 @@ ParseResult Parser::parse_concept_declaration() {
 
 	// Create the ConceptDeclarationNode
 	// For simplified concepts (without template<>), we use an empty template parameter list
-	std::vector<TemplateParameterNode> template_params;
+	InlineVector<TemplateParameterNode, 4> template_params;
 
 	auto concept_node = emplace_node<ConceptDeclarationNode>(
 		concept_name_token,

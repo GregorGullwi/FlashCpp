@@ -11,6 +11,9 @@ enum class TemplateParameterKind {
 // Template parameter node - represents a single template parameter
 class TemplateParameterNode {
 public:
+	TemplateParameterNode()
+		: kind_(TemplateParameterKind::Type) {}
+
 	// Type parameter: template<typename T> or template<class T>
 	TemplateParameterNode(StringHandle name, Token token)
 		: kind_(TemplateParameterKind::Type), name_(name), token_(token) {}
@@ -80,13 +83,13 @@ private:
 class TemplateFunctionDeclarationNode {
 public:
 	TemplateFunctionDeclarationNode() = delete;
-	TemplateFunctionDeclarationNode(std::vector<TemplateParameterNode> template_params, ASTNode function_decl,
-									std::optional<ASTNode> requires_clause = std::nullopt)
+	TemplateFunctionDeclarationNode(InlineVector<TemplateParameterNode, 4> template_params, ASTNode function_decl,
+									std::optional<ASTNode> requires_clause)
 		: template_parameters_(std::move(template_params)),
 		  function_declaration_(function_decl),
 		  requires_clause_(requires_clause) {}
-	TemplateFunctionDeclarationNode(std::vector<ASTNode> template_params, ASTNode function_decl,
-									std::optional<ASTNode> requires_clause = std::nullopt)
+	TemplateFunctionDeclarationNode(InlineVector<ASTNode, 4> template_params, ASTNode function_decl,
+									std::optional<ASTNode> requires_clause)
 		: function_declaration_(function_decl),
 		  requires_clause_(requires_clause) {
 		template_parameters_.reserve(template_params.size());
@@ -97,7 +100,7 @@ public:
 		}
 	}
 
-	const std::vector<TemplateParameterNode>& template_parameters() const { return template_parameters_; }
+	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
 	ASTNode function_declaration() const { return function_declaration_; }
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }
@@ -111,7 +114,7 @@ public:
 	}
 
 private:
-	std::vector<TemplateParameterNode> template_parameters_;
+	InlineVector<TemplateParameterNode, 4> template_parameters_;
 	ASTNode function_declaration_;  // FunctionDeclarationNode
 	std::optional<ASTNode> requires_clause_;	 // Optional RequiresClauseNode
 };
@@ -151,26 +154,26 @@ inline FunctionDeclarationNode* get_function_decl_node_mut(ASTNode& node) {
 class TemplateAliasNode {
 public:
 	TemplateAliasNode() = delete;
-	TemplateAliasNode(std::vector<TemplateParameterNode> template_params,
+	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
 					  InlineVector<StringHandle, 4> param_names,
 					  StringHandle alias_name,
 					  const TypeSpecifierNode& target_type)
 		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), alias_name_(alias_name), target_type_(target_type), is_deferred_(false) {}
-	TemplateAliasNode(std::vector<TemplateParameterNode> template_params,
+	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
 					  InlineVector<StringHandle, 4> param_names,
 					  StringHandle alias_name,
 					  ASTNode target_type)
 		: TemplateAliasNode(std::move(template_params), std::move(param_names), alias_name, target_type.as<TypeSpecifierNode>()) {}
 
 	// Constructor for deferred template instantiation (Option 1)
-	TemplateAliasNode(std::vector<TemplateParameterNode> template_params,
+	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
 					  InlineVector<StringHandle, 4> param_names,
 					  StringHandle alias_name,
 					  const TypeSpecifierNode& target_type,
 					  StringHandle target_template_name,
 					  std::vector<ASTNode> target_template_args)
 		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), alias_name_(alias_name), target_type_(target_type), is_deferred_(true), target_template_name_(target_template_name), target_template_args_(std::move(target_template_args)) {}
-	TemplateAliasNode(std::vector<TemplateParameterNode> template_params,
+	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
 					  InlineVector<StringHandle, 4> param_names,
 					  StringHandle alias_name,
 					  ASTNode target_type,
@@ -178,7 +181,7 @@ public:
 					  std::vector<ASTNode> target_template_args)
 		: TemplateAliasNode(std::move(template_params), std::move(param_names), alias_name, target_type.as<TypeSpecifierNode>(), target_template_name, std::move(target_template_args)) {}
 
-	const std::vector<TemplateParameterNode>& template_parameters() const { return template_parameters_; }
+	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
 	const InlineVector<StringHandle, 4>& template_param_names() const { return template_param_names_; }
 	std::string_view alias_name() const { return alias_name_.view(); }
 	const TypeSpecifierNode& target_type() const { return target_type_; }
@@ -193,7 +196,7 @@ public:
 	const TypeSpecifierNode& target_type_node() const { return target_type_; }
 
 private:
-	std::vector<TemplateParameterNode> template_parameters_;
+	InlineVector<TemplateParameterNode, 4> template_parameters_;
 	InlineVector<StringHandle, 4> template_param_names_;	 // Parameter names for lookup
 	StringHandle alias_name_;  // The name of the alias (e.g., "Ptr")
 	TypeSpecifierNode target_type_;  // The target type (e.g., T*)
@@ -209,19 +212,19 @@ private:
 class DeductionGuideNode {
 public:
 	DeductionGuideNode() = delete;
-	DeductionGuideNode(std::vector<TemplateParameterNode> template_params,
+	DeductionGuideNode(InlineVector<TemplateParameterNode, 4> template_params,
 					   std::string_view class_name,
 					   std::vector<ASTNode> guide_params,
 					   std::vector<ASTNode> deduced_template_args)
 		: template_parameters_(std::move(template_params)), class_name_(class_name), guide_parameters_(std::move(guide_params)), deduced_template_args_(std::move(deduced_template_args)) {}
 
-	const std::vector<TemplateParameterNode>& template_parameters() const { return template_parameters_; }
+	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
 	std::string_view class_name() const { return class_name_; }
 	const std::vector<ASTNode>& guide_parameters() const { return guide_parameters_; }
 	const std::vector<ASTNode>& deduced_template_args_nodes() const { return deduced_template_args_; }
 
 private:
-	std::vector<TemplateParameterNode> template_parameters_;
+	InlineVector<TemplateParameterNode, 4> template_parameters_;
 	std::string_view class_name_;  // Name of the class template
 	std::vector<ASTNode> guide_parameters_;	// Parameters of the guide (like constructor params)
 	std::vector<ASTNode> deduced_template_args_;	 // RHS nodes for template arguments (TypeSpecifierNode instances)
@@ -235,10 +238,10 @@ class VariableDeclarationNode;
 class TemplateVariableDeclarationNode {
 public:
 	TemplateVariableDeclarationNode() = delete;
-	TemplateVariableDeclarationNode(std::vector<TemplateParameterNode> template_params, ASTNode variable_decl)
+	TemplateVariableDeclarationNode(InlineVector<TemplateParameterNode, 4> template_params, ASTNode variable_decl)
 		: template_parameters_(std::move(template_params)), variable_declaration_(variable_decl) {}
 
-	const std::vector<TemplateParameterNode>& template_parameters() const { return template_parameters_; }
+	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
 	ASTNode variable_declaration() const { return variable_declaration_; }
 
 	// Get the underlying VariableDeclarationNode
@@ -250,7 +253,7 @@ public:
 	}
 
 private:
-	std::vector<TemplateParameterNode> template_parameters_;
+	InlineVector<TemplateParameterNode, 4> template_parameters_;
 	ASTNode variable_declaration_;  // VariableDeclarationNode
 };
 
@@ -521,13 +524,13 @@ public:
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }
 
-	void set_template_parameters(const std::vector<TemplateParameterNode>& template_parameters) {
+	void set_template_parameters(const InlineVector<TemplateParameterNode, 4>& template_parameters) {
 		template_parameters_ = template_parameters;
 	}
 	void add_template_parameter(const TemplateParameterNode& template_parameter) {
 		template_parameters_.push_back(template_parameter);
 	}
-	const std::vector<TemplateParameterNode>& template_parameters() const { return template_parameters_; }
+	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
 	bool has_template_parameters() const { return !template_parameters_.empty(); }
 
 	// Template body position: for member function template constructors whose bodies
@@ -597,7 +600,7 @@ private:
 	bool is_constexpr_ = false;	// constexpr specifier
 	std::string_view mangled_name_;	// Pre-computed mangled name (points to ChunkedStringAllocator storage)
 	std::optional<ASTNode> requires_clause_;	 // C++20 trailing requires clause
-	std::vector<TemplateParameterNode> template_parameters_;
+	InlineVector<TemplateParameterNode, 4> template_parameters_;
 	bool has_template_body_ = false;
 	bool has_template_initializer_list_ = false;
 	SaveHandle template_body_position_handle_;  // Handle to saved position for template body
@@ -1285,7 +1288,7 @@ private:
 class TemplateClassDeclarationNode {
 public:
 	TemplateClassDeclarationNode() = delete;
-	TemplateClassDeclarationNode(std::vector<TemplateParameterNode> template_params,
+	TemplateClassDeclarationNode(InlineVector<TemplateParameterNode, 4> template_params,
 								 InlineVector<std::string_view, 4> param_names,
 								 ASTNode class_decl)
 		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), class_declaration_(class_decl) {}
@@ -1301,8 +1304,8 @@ public:
 		}
 	}
 
-	const std::vector<TemplateParameterNode>& template_parameters() const { return template_parameters_; }
-	std::vector<TemplateParameterNode>& template_parameters() { return template_parameters_; }
+	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
+	InlineVector<TemplateParameterNode, 4>& template_parameters() { return template_parameters_; }
 	const InlineVector<std::string_view, 4>& template_param_names() const { return template_param_names_; }
 	ASTNode class_declaration() const { return class_declaration_; }
 
@@ -1326,7 +1329,7 @@ public:
 	}
 
 private:
-	std::vector<TemplateParameterNode> template_parameters_;
+	InlineVector<TemplateParameterNode, 4> template_parameters_;
 	InlineVector<std::string_view, 4> template_param_names_;	 // Parameter names for lookup
 	ASTNode class_declaration_;	// StructDeclarationNode
 	std::vector<DeferredTemplateMemberBody> deferred_bodies_;  // Member function bodies to parse at instantiation

@@ -370,7 +370,7 @@ static int computeTemplateFunctionSpecificity(const TemplateFunctionDeclarationN
 
 bool Parser::tryAppendDefaultTemplateArg(
 	const TemplateParameterNode& param,
-	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	InlineVector<TemplateTypeArg, 4>& template_args,
 	NamespaceHandle source_namespace) {
 	FLASH_LOG_FORMAT(Templates, Debug,
@@ -566,7 +566,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 	const std::vector<ASTNode>& template_params,
 	InlineVector<TemplateTypeArg, 4>& template_args,
 	NamespaceHandle source_namespace) {
-	std::vector<TemplateParameterNode> typed_template_params;
+	InlineVector<TemplateParameterNode, 4> typed_template_params;
 	typed_template_params.reserve(template_params.size());
 	for (const ASTNode& template_param : template_params) {
 		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
@@ -652,7 +652,7 @@ void registerTypeParamsInScope(
 // so the caller avoids index-alignment issues.
 // ─────────────────────────────────────────────────────────────────────────────
 void registerTypeParamsInScope(
-	const std::vector<TemplateParameterNode>& template_param_nodes,
+	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
 	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier) {
@@ -686,7 +686,7 @@ void registerTypeParamsInScope(
 }
 
 void registerTypeParamsInScope(
-	const std::vector<TemplateParameterNode>& template_param_nodes,
+	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
 	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map) {
@@ -967,7 +967,7 @@ void Parser::reparse_template_function_body(
 void Parser::reparse_template_function_body(
 	FunctionDeclarationNode& new_func_ref,
 	const FunctionDeclarationNode& func_decl,
-	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args,
 	bool preserve_ref_qualifier) {
 	reparse_template_function_body(
@@ -1217,7 +1217,7 @@ std::optional<bool> Parser::preDeduceTemplateArgsFromMatchingTypes(
 }
 
 std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArgs(
-	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const std::vector<ASTNode>& func_params,
 	const std::vector<TypeSpecifierNode>& arg_types,
 	int recursion_depth) {
@@ -1551,7 +1551,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 }
 
 std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArgs(
-	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const FunctionDeclarationNode& func_decl,
 	const std::vector<TypeSpecifierNode>& arg_types,
 	int recursion_depth) {
@@ -2865,7 +2865,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 }
 
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCall(
-	const std::vector<TemplateParameterNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const std::vector<TypeSpecifierNode>& arg_types,
 	const CallArgDeductionInfo& deduction_info,
 	size_t function_pack_arg_start,

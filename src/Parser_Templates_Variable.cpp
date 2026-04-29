@@ -81,7 +81,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	advance(); // consume '<'
 
 	// Parse template parameter list
-	std::vector<TemplateParameterNode> template_params;
+	InlineVector<TemplateParameterNode, 4> template_params;
 
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {
@@ -97,7 +97,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	// Extract parameter names and register type parameters in one pass
 	FlashCpp::TemplateParameterScope template_scope;
 	TemplateParameterMetadata template_param_metadata = registerTemplateParametersInScope(template_params, template_scope);
-	InlineVector<StringHandle, 4> template_param_names = template_param_metadata.names;
+	const InlineVector<StringHandle, 4>& template_param_names = template_param_metadata.names;
 
 	// Set template parameter context for parsing the requires clause
 	FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
@@ -231,7 +231,7 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	}
 	advance(); // consume '<'
 
-	std::vector<TemplateParameterNode> template_params;
+	InlineVector<TemplateParameterNode, 4> template_params;
 
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {
@@ -241,7 +241,11 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	// Extract parameter names and register type parameters in one pass
 	FlashCpp::TemplateParameterScope template_scope;
 	TemplateParameterMetadata template_param_metadata = registerTemplateParametersInScope(template_params, template_scope);
-	InlineVector<std::string_view, 4> template_param_names = template_param_metadata.name_views;
+	InlineVector<std::string_view, 4> template_param_names;
+	template_param_names.reserve(template_param_metadata.names.size());
+	for (StringHandle param_name : template_param_metadata.names) {
+		template_param_names.push_back(StringTable::getStringView(param_name));
+	}
 
 	// Expect '>'
 	if (peek() != ">"_tok) {

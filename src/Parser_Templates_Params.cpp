@@ -32,7 +32,7 @@ bool Parser::parse_noexcept_value() {
 	return true; // dependent — assume true
 }
 
-ParseResult Parser::parse_template_parameter_list(std::vector<TemplateParameterNode>& out_params) {
+ParseResult Parser::parse_template_parameter_list(InlineVector<TemplateParameterNode, 4>& out_params) {
 	// Save and restore the current template parameter state that existed before
 	// parsing this list so names added here do not persist after the parse.
 	// ScopedStateCopy keeps the field populated so that outer template parameter
@@ -106,12 +106,11 @@ TypeInfo& Parser::ensureTemplateParameterTypeRegistration(TemplateParameterNode&
 }
 
 Parser::TemplateParameterMetadata Parser::registerTemplateParametersInScope(
-	std::vector<TemplateParameterNode>& template_params,
+	InlineVector<TemplateParameterNode, 4>& template_params,
 	FlashCpp::TemplateParameterScope& template_scope) {
 	TemplateParameterMetadata metadata;
 	for (TemplateParameterNode& tparam : template_params) {
 		metadata.names.push_back(tparam.nameHandle());
-		metadata.name_views.push_back(tparam.name());
 		metadata.kinds.push_back(tparam.kind());
 		metadata.has_packs |= tparam.is_variadic();
 		if (tparam.kind() == TemplateParameterKind::Type ||
@@ -123,7 +122,7 @@ Parser::TemplateParameterMetadata Parser::registerTemplateParametersInScope(
 	return metadata;
 }
 
-InlineVector<ASTNode, 4> Parser::cloneTemplateParameterNodes(const std::vector<TemplateParameterNode>& template_params) {
+InlineVector<ASTNode, 4> Parser::cloneTemplateParameterNodes(const InlineVector<TemplateParameterNode, 4>& template_params) {
 	InlineVector<ASTNode, 4> ast_nodes;
 	ast_nodes.reserve(template_params.size());
 	for (const TemplateParameterNode& template_param : template_params) {

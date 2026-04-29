@@ -29,7 +29,7 @@ StringHandle Parser::getStructQualifiedNameForRegistration(const StructDeclarati
 }
 
 ParseResult Parser::parse_template_function_declaration_body(
-	std::vector<TemplateParameterNode>& template_params,
+	InlineVector<TemplateParameterNode, 4>& template_params,
 	std::optional<ASTNode> requires_clause,
 	ASTNode& out_template_node) {
 	// Save position for template declaration re-parsing (needed for SFINAE)
@@ -249,7 +249,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	advance(); // consume '<'
 
 	// Parse template parameter list
-	std::vector<TemplateParameterNode> template_params;
+	InlineVector<TemplateParameterNode, 4> template_params;
 
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {
