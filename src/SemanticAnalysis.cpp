@@ -5391,7 +5391,10 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 void SemanticAnalysis::annotateExpressionTypeSlot(const ASTNode& expr_node,
 												  CanonicalTypeId type_id,
 												  ValueCategory value_category) {
-	if (!expr_node.is<ExpressionNode>() || !type_id) {
+	if (!expr_node.is<ExpressionNode>()) {
+		return;
+	}
+	if (!type_id) {
 		return;
 	}
 	const void* key = getExpressionKey(expr_node);
