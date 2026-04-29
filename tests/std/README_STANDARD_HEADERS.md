@@ -4,12 +4,12 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
-> **Note (2026-04-24 post-member-overload-fix sweep):** the rows below marked "✅ Compiled" for `<atomic>`, `<exception>`, `<variant>`, and `<latch>` with a 2026-04-24 timestamp reflect an earlier state.  After the 2026-04-24 depth-guard sweep those headers again failed; `<exception>` still compiles cleanly on Linux/libstdc++-14, but `<atomic>`, `<latch>`, and `<variant>` no longer do.  The authoritative current state is the **2026-04-24 Member-Function Overload Registration Fix** dated section below the table.
+> **Note (2026-04-28 dependent-decltype/member-alias sweep):** the rows below still include historical timings from earlier hosts and commits.  The authoritative current Linux/libstdc++-14 state for the retested `tests/std/test_std_*.cpp` files is the **2026-04-28 Dependent `decltype` / Member Alias Deferral Sweep** section below the table.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1369ms |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~239ms (retested 2026-04-25, Linux/libstdc++-14). The `std::is_integral<int>::value` static assert now passes after constant-evaluation synthesis of standard unary type-trait `::value` from the resolved template arguments, plus exact-specialization lookup through alias-normalized primitive arguments. Regression: `tests/test_template_full_specialization_alias_arg_ret0.cpp`. |
+| `<type_traits>` | `test_std_type_traits.cpp` | ❌ Compile Error | ~282ms (retested 2026-04-28, Linux/libstdc++-14). `std::is_integral<int>::value` still passes, but the current first failure is `static_assert(std::is_pointer<int*>::value)`. |
 | `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | ~609ms (retested 2026-04-11). Targeted test still compiles, but bare `#include <compare>` now fails with "Ambiguous constructor call" during codegen of a namespace-level node. |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
@@ -18,7 +18,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~639ms. The header still compiles, but `std::ratio_less` remains blocked because non-type default template arguments that depend on qualified constexpr members (for example `__ratio_less_impl`'s bool defaults) are still not fully instantiated/evaluated. |
 | `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | ~2861ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". **2026-04-23 (Linux/libstdc++):** the long-standing `Expected identifier token` parse stops at `_Optional_payload_base::_Storage`'s templated constructor (`<optional>:209`) and partial-specialization destructor (`<optional>:259`) are now fixed. On Linux, `<optional>` parses completely and fails later in codegen on deferred `_Optional_base` / `_Optional_payload` placeholder resolution. Regression: `tests/test_nested_member_template_ctor_dtor_ret0.cpp`. |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
-| `<utility>` | `test_std_utility.cpp` | ❌ Codegen Error | ~830ms (retested 2026-04-11). Targeted test now fails with codegen errors from template deduction / Non-type parameter issues. |
+| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~587ms (retested 2026-04-28, Linux/libstdc++-14). The dependent `decltype` alias target in `__do_common_type_impl::__cond_t` is no longer collapsed to concrete `auto`, so the full targeted header compiles. Regression: `tests/test_dependent_decltype_alias_template_ret0.cpp`. |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~1460ms (retested 2026-04-11). Call to deleted function 'swap' in `stl_pair.h:308`. Blocked by eager inline member body parsing during implicit template class instantiation (std::pair::swap tries to swap const members). |
@@ -101,6 +101,72 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+
+#### 2026-04-28 Dependent `decltype` / Member Alias Deferral Sweep (Linux/libstdc++-14)
+
+This sweep targeted the current first-order stop shared by many standard
+headers: `Fatal error: Instantiated member alias target should resolve before
+alias copy` after registering libstdc++'s
+`__do_common_type_impl::__cond_t`.
+
+Fixes landed:
+
+- **Dependent `decltype(expr)` in active template contexts now materializes as
+  an explicit incomplete dependent placeholder, not as concrete `auto`**
+  (`src/Parser_TypeSpecifiers.cpp`).  This keeps
+  `decltype(true ? declval<T>() : declval<U>())` dependent per C++20 template
+  dependency rules instead of instantiating downstream aliases such as
+  `decay<auto>`.
+- **Instantiated member-alias target probing now defers when the concrete
+  `Base::member` alias is not materialized yet** rather than throwing an
+  `InternalError` (`src/Parser_Templates_Inst_Substitution.cpp`).  The caller's
+  normal alias-copy path keeps the unresolved dependent target visible for later
+  substitution.
+- **Deferred alias-target capture now restores the already-consumed token
+  position if the target is not a template-id** (`src/Parser_Templates_Class.cpp`).
+  This preserves valid non-template-id alias targets such as
+  `decltype((typename __promote<T>::__type(0) + ...))`.
+
+Regression:
+
+- `tests/test_dependent_decltype_alias_template_ret0.cpp`
+- Existing `tests/test_typename_funccast_fold_ret0.cpp` was re-run because the
+  same `decltype`/fold-expression alias shape appears in libstdc++'s
+  `ext/type_traits.h`.
+
+Focused std-header impact:
+
+- **Newly clean**: `<utility>` (`test_std_utility.cpp`) ~587ms.  This test now
+  compiles fully instead of stopping in `__do_common_type_impl::__cond_t`.
+- **Still clean in this sweep**: `<aggregate_brace_elision_follow>` ~35ms,
+  `<bit>` ~412ms, `<compare_ret42>` ~25ms, `<concepts>` ~340ms,
+  `<exception>` ~370ms, `<limits>` ~1268ms, `<new>` ~45ms,
+  `<pair_swap_deleted_member>` ~21ms, `<rel_ops_no_false_instantiation_ret0>`
+  ~586ms, `<source_location>` ~34ms, `<span>` ~34ms, `<typeinfo_ret0>` ~46ms,
+  and `<version>` ~33ms.
+- **Remaining first-order blockers after this fix**:
+  - `<algorithm>` ~1683ms and `<array>` ~1018ms — copy-initialization is still
+    used for explicit `std::reverse_iterator` construction.
+  - `<string>`, `<string_view>`, and `<stdexcept>` — copy-initialization is still
+    used for explicit `std::ranges::__detail::__max_size_type` construction.
+  - `<atomic>` ~662ms and `<latch>` ~658ms — parser stops at
+    `__atomic_impl::is_lock_free<sizeof(_Tp), required_alignment>()`.
+  - `<tuple>` ~1536ms and `<list>` ~2051ms — unsupported
+    `PackExpansionExprNode` instances still reach the sema-owned AST surface.
+  - `<deque>` ~1624ms, `<queue>` ~1737ms, and `<stack>` ~1712ms —
+    depth-guard-related non-dependent-name false positive on
+    `_M_deallocate_node`.
+  - `<fstream>` ~6088ms, `<iostream>` ~6072ms, and `<sstream>` ~6496ms —
+    non-dependent-name false positive on `__cerb`.
+  - `<functional>` ~2337ms, `<map>` ~1718ms, `<set>` ~1722ms,
+    `<shared_mutex>` ~1926ms, and `<chrono>` ~2871ms — current first stop is
+    `Unregistered dependent placeholder type reached template argument classification`.
+  - `<ratio>` ~421ms — no longer hits the member-alias `InternalError`; now
+    returns to the known `ratio_less<...>::value` constant-evaluation gap.
+  - `<type_traits>` ~282ms — `std::is_integral<int>::value` still passes, but
+    `std::is_pointer<int*>::value` currently fails.
+  - `<variant>` ~777ms — no longer SIGSEGVs in this sweep; current first stop is
+    `variant:597` "Expected primary expression".
 
 #### 2026-04-27 std::pair constructor-template retest (Linux/libstdc++-14)
 

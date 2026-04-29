@@ -3330,7 +3330,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (const TypeInfo* concrete_member_info =
 						materializeInstantiatedMemberAliasTarget(
 							alias_type_spec,
-							substituted_type_index,
 							template_params,
 							template_args);
 					concrete_member_info != nullptr) {
@@ -4549,7 +4548,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								if (const TypeInfo* concrete_member_alias =
 										materializeInstantiatedMemberAliasTarget(
 											type_spec,
-											resolved_index,
 											template_params,
 											template_args_to_use)) {
 									TypeIndex terminal_index =
@@ -6185,7 +6183,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (const TypeInfo* concrete_member_info =
 				materializeInstantiatedMemberAliasTarget(
 					alias_type_spec,
-					substituted_type_index,
 					template_params,
 					template_args_to_use);
 			concrete_member_info != nullptr) {
