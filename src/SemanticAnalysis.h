@@ -73,9 +73,6 @@ public:
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
 	std::optional<SemanticSlot> getSlot(const void* key) const;
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
-	// Like getExpressionType(), but falls back to sema-owned canonical inference
-	// when no slot-backed type was recorded for the expression.
-	std::optional<TypeSpecifierNode> getExpressionTypeOrInfer(const ASTNode& node);
 	// Public bridge for codegen/helper paths that need the same canonical type
 	// identity as sema while keeping the primary canonicalizeType helper private.
 	CanonicalTypeId canonicalizeTypeForImplicitConversion(const TypeSpecifierNode& type);
@@ -332,6 +329,11 @@ private:
 	void tryAnnotateSingleArgConversion(const ASTNode& arg,
 										const TypeSpecifierNode& param_type,
 										const char* context_description);
+	void annotateExpressionTypeSlot(const ASTNode& expr_node,
+									CanonicalTypeId type_id,
+									ValueCategory value_category);
+	void annotateResolvedCallResultType(const ASTNode& call_node,
+										const FunctionDeclarationNode& func_decl);
 	std::optional<CallArgReferenceBindingInfo> buildCallArgReferenceBinding(const ASTNode& arg,
 																			const TypeSpecifierNode& param_type,
 																			const char* context_description);
@@ -339,7 +341,8 @@ private:
 											const ChunkedVector<ASTNode>& arguments,
 											const FunctionDeclarationNode& func_decl,
 											const char* context_description);
-	void tryAnnotateCallArgConversionsImpl(const CallInfo& call_info,
+	void tryAnnotateCallArgConversionsImpl(const ASTNode& call_expr_node,
+										   const CallInfo& call_info,
 										   const void* call_key,
 										   const char* context_description);
 	const FunctionDeclarationNode* resolveCallArgAnnotationTarget(const CallInfo& call_info,
