@@ -167,7 +167,7 @@ struct TemplateTypeArg {
 	InlineVector<CVQualifier, 4> pointer_cv_qualifiers;	// CV for each pointer level
 	CVQualifier cv_qualifier;  // const/volatile qualifiers
 	bool is_array;
-	std::optional<size_t> array_size;  // Known array size if available
+	std::vector<size_t> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
 	MemberPointerKind member_pointer_kind;
 
 	// For non-type template parameters
@@ -198,6 +198,12 @@ struct TemplateTypeArg {
 	void setType(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 	void setCategory(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 
+	// Backward-compatible accessor: returns the first array dimension if present.
+	// Prefer direct use of array_dimensions for multi-dimensional correctness.
+	std::optional<size_t> array_size() const {
+		return array_dimensions.empty() ? std::nullopt : std::optional<size_t>(array_dimensions[0]);
+	}
+
 	bool is_reference() const { return ref_qualifier != ReferenceQualifier::None; }
 	bool is_lvalue_reference() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
@@ -219,10 +225,10 @@ struct TemplateTypeArg {
 	}
 
 	TemplateTypeArg()
-		: type_index(TypeIndex{}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_size(std::nullopt), member_pointer_kind(MemberPointerKind::None), is_value(false), value(0), is_pack(false), is_dependent(false), dependent_name(), is_template_template_arg(false), template_name_handle() {}
+		: type_index(TypeIndex{}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), is_value(false), value(0), is_pack(false), is_dependent(false), dependent_name(), is_template_template_arg(false), template_name_handle() {}
 
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
-		: type_index(makeTypeIndex(type_spec.type_index().withCategory(type_spec.type()))), ref_qualifier(type_spec.reference_qualifier()), pointer_depth(type_spec.pointer_depth()), pointer_cv_qualifiers(), cv_qualifier(type_spec.cv_qualifier()), is_array(type_spec.is_array()), array_size(type_spec.array_size()), member_pointer_kind(MemberPointerKind::None), is_value(false), value(0), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle(), function_signature(type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt) {
+		: type_index(makeTypeIndex(type_spec.type_index().withCategory(type_spec.type()))), ref_qualifier(type_spec.reference_qualifier()), pointer_depth(type_spec.pointer_depth()), pointer_cv_qualifiers(), cv_qualifier(type_spec.cv_qualifier()), is_array(type_spec.is_array()), array_dimensions(type_spec.array_dimensions()), member_pointer_kind(MemberPointerKind::None), is_value(false), value(0), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle(), function_signature(type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt) {
 		for (const auto& level : type_spec.pointer_levels()) {
 			pointer_cv_qualifiers.push_back(level.cv_qualifier);
 		}
@@ -230,11 +236,11 @@ struct TemplateTypeArg {
 
 	// Constructor for non-type template parameters (default int type)
 	explicit TemplateTypeArg(int64_t val)
-		: type_index(nativeTypeIndex(TypeCategory::Int)), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_size(std::nullopt), member_pointer_kind(MemberPointerKind::None), is_value(true), value(val), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
+		: type_index(nativeTypeIndex(TypeCategory::Int)), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), is_value(true), value(val), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
 
 	// Constructor for non-type template parameters with explicit type
 	TemplateTypeArg(int64_t val, TypeCategory category)
-		: type_index(TypeIndex{0, category}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_size(std::nullopt), member_pointer_kind(MemberPointerKind::None), is_value(true), value(val), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
+		: type_index(TypeIndex{0, category}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), is_value(true), value(val), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
 
 	// Factory methods
 	static TemplateTypeArg makeType(TypeIndex idx) {
@@ -301,8 +307,9 @@ struct TemplateTypeArg {
 		h ^= std::hash<size_t>{}(pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(cv_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<bool>{}(is_array) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		if (array_size.has_value()) {
-			h ^= std::hash<size_t>{}(*array_size) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<size_t>{}(array_dimensions.size()) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		for (size_t dim : array_dimensions) {
+			h ^= std::hash<size_t>{}(dim) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(member_pointer_kind)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<bool>{}(is_value) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -356,7 +363,7 @@ struct TemplateTypeArg {
 			  pointer_cv_qualifiers == other.pointer_cv_qualifiers &&
 			  cv_qualifier == other.cv_qualifier &&
 			  is_array == other.is_array &&
-			  array_size == other.array_size &&
+			  array_dimensions == other.array_dimensions &&
 			  member_pointer_kind == other.member_pointer_kind &&
 			  is_value == other.is_value &&
 			  is_dependent == other.is_dependent &&
@@ -492,10 +499,12 @@ struct TemplateTypeArg {
 
 		if (is_array) {
 			result += "A";  // Array marker
-			if (array_size.has_value()) {
-				result += "[" + std::to_string(*array_size) + "]";
-			} else {
+			if (array_dimensions.empty()) {
 				result += "[]";
+			} else {
+				for (size_t dim : array_dimensions) {
+					result += "[" + std::to_string(dim) + "]";
+				}
 			}
 		}
 
@@ -562,7 +571,7 @@ inline TemplateTypeArg deduceArgFromPattern(const TemplateTypeArg& concrete_arg,
 	}
 	if (pattern_arg.is_array) {
 		deduced.is_array = false;
-		deduced.array_size = std::nullopt;
+		deduced.array_dimensions.clear();
 	}
 	// Strip cv_qualifier contributed by the pattern (e.g., const T → T=int, not T=const int)
 	if (pattern_arg.cv_qualifier != CVQualifier::None) {
@@ -659,7 +668,7 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.pointer_depth = std::min(arg.pointer_depth, uint8_t(255));
 	// Include array info - critical for differentiating T[] from T[N] from T
 	result.is_array = arg.is_array;
-	result.array_size = arg.array_size;
+	result.array_size = arg.array_size();  // TypeIndexArg carries only first dim for key identity
 	result.function_signature = arg.function_signature;
 	result.is_dependent = arg.is_dependent;
 	result.dependent_name = arg.dependent_name;
@@ -785,7 +794,11 @@ inline TypeSpecifierNode makeTypeSpecifierFromTemplateTypeArg(
 		substituted_spec.add_pointer_level(pointer_cv);
 	}
 	if (arg.is_array) {
-		substituted_spec.set_array(true, arg.array_size);
+		if (arg.array_dimensions.empty()) {
+			substituted_spec.set_array(true, std::nullopt);
+		} else {
+			substituted_spec.set_array_dimensions(arg.array_dimensions);
+		}
 	}
 	if (arg.function_signature.has_value()) {
 		substituted_spec.set_function_signature(*arg.function_signature);
@@ -804,9 +817,7 @@ inline TemplateTypeArg makeTemplateTypeArgFromResolvedAlias(
 	resolved_arg.ref_qualifier = resolved_alias.reference_qualifier;
 	resolved_arg.cv_qualifier = resolved_alias.cv_qualifier;
 	resolved_arg.is_array = resolved_alias.isArray();
-	resolved_arg.array_size = resolved_alias.array_dimensions.empty()
-		? std::nullopt
-		: std::optional<size_t>(resolved_alias.array_dimensions.front());
+	resolved_arg.array_dimensions = resolved_alias.array_dimensions;
 	resolved_arg.function_signature = resolved_alias.function_signature;
 	return resolved_arg;
 }
@@ -822,7 +833,9 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 	pattern_arg.pointer_cv_qualifiers = dependent_pattern.pointer_cv_qualifiers;
 	pattern_arg.ref_qualifier = dependent_pattern.ref_qualifier;
 	pattern_arg.cv_qualifier = dependent_pattern.cv_qualifier;
-	pattern_arg.array_size = dependent_pattern.array_size;
+	pattern_arg.array_dimensions = dependent_pattern.array_size.has_value()
+		? std::vector<size_t>{*dependent_pattern.array_size}
+		: std::vector<size_t>{};
 	pattern_arg.is_array = dependent_pattern.is_array;
 	pattern_arg.function_signature = dependent_pattern.function_signature;
 	pattern_arg.dependent_name = dependent_pattern.dependent_name;
@@ -880,7 +893,9 @@ inline TemplateTypeArg materializeTemplateArg(
 	concrete_arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
 	concrete_arg.ref_qualifier = arg_info.ref_qualifier;
 	concrete_arg.cv_qualifier = arg_info.cv_qualifier;
-	concrete_arg.array_size = arg_info.array_size;
+	concrete_arg.array_dimensions = arg_info.array_size.has_value()
+		? std::vector<size_t>{*arg_info.array_size}
+		: std::vector<size_t>{};
 	concrete_arg.is_array = arg_info.is_array;
 	concrete_arg.function_signature = arg_info.function_signature;
 	concrete_arg.dependent_name = arg_info.dependent_name;

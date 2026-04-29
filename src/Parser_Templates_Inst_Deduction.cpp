@@ -590,7 +590,11 @@ static void applyTemplateArgIndirection(
 					arg->ref_qualifier));
 		}
 		if (!substituted_type.is_array() && arg->is_array) {
-			substituted_type.set_array(true, arg->array_size);
+			if constexpr (requires(decltype(*arg) a) { a.array_size(); }) {
+				substituted_type.set_array_dimensions(arg->array_dimensions);
+			} else {
+				substituted_type.set_array(true, arg->array_size);
+			}
 		}
 	}
 }

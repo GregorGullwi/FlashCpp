@@ -25,8 +25,9 @@ size_t getSubstitutedTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 
 	size_t size_in_bytes = get_type_size_bits(arg.category()) / 8;
 	if (size_in_bytes > 0) {
-		if (arg.is_array && arg.array_size.has_value()) {
-			return size_in_bytes * *arg.array_size;
+		if (arg.is_array && !arg.array_dimensions.empty()) {
+			for (size_t dim : arg.array_dimensions) size_in_bytes *= dim;
+			return size_in_bytes;
 		}
 		return size_in_bytes;
 	}
@@ -39,8 +40,9 @@ size_t getSubstitutedTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 		}
 	}
 
-	if (arg.is_array && arg.array_size.has_value() && size_in_bytes > 0) {
-		return size_in_bytes * *arg.array_size;
+	if (arg.is_array && !arg.array_dimensions.empty() && size_in_bytes > 0) {
+		for (size_t dim : arg.array_dimensions) size_in_bytes *= dim;
+		return size_in_bytes;
 	}
 	return size_in_bytes;
 }

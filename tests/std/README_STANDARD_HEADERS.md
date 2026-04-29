@@ -117,7 +117,7 @@ Fixes landed:
 
 Regression:
 
-- `tests/alias_template_pointer_modifiers_ret0.cpp`
+- `tests/test_alias_template_pointer_modifiers_ret0.cpp`
 
 Focused std-header impact:
 

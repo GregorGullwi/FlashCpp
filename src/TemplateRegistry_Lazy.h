@@ -1230,10 +1230,12 @@ inline std::optional<long long> evaluateConstraintExpression(
 						}
 
 						if (concrete_arg.is_array) {
-							if (!concrete_arg.array_size.has_value()) {
+							if (concrete_arg.array_dimensions.empty()) {
 								return std::nullopt;
 							}
-							size *= static_cast<long long>(*concrete_arg.array_size);
+							for (size_t dim : concrete_arg.array_dimensions) {
+								size *= static_cast<long long>(dim);
+							}
 						}
 						return size;
 					}

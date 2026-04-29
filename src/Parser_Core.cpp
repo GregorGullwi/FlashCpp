@@ -191,7 +191,7 @@ InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const std::v
 		info.ref_qualifier = arg.ref_qualifier;
 		info.cv_qualifier = arg.cv_qualifier;
 		info.is_array = arg.is_array;
-		info.array_size = arg.array_size;
+		info.array_size = arg.array_size();
 		info.value = arg.value;
 		info.is_value = arg.is_value;
 		info.dependent_name = arg.dependent_name;

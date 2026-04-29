@@ -115,7 +115,7 @@ bool Parser::templateArgMatchesCurrentInstantiationSlot(
 		parsed_arg.pointer_cv_qualifiers == concrete_arg->pointer_cv_qualifiers &&
 		parsed_arg.cv_qualifier == concrete_arg->cv_qualifier &&
 		parsed_arg.is_array == concrete_arg->is_array &&
-		parsed_arg.array_size == concrete_arg->array_size;
+		parsed_arg.array_size() == concrete_arg->array_size;
 }
 
 std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurrentInstantiationTemplateOwner(

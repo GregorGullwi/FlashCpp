@@ -1133,7 +1133,7 @@ ParseResult Parser::parse_lambda_expression() {
 					info.cv_qualifier = subst.substituted_type.cv_qualifier;
 					info.ref_qualifier = subst.substituted_type.ref_qualifier;
 					info.is_array = subst.substituted_type.is_array;
-					info.array_size = subst.substituted_type.array_size;
+					info.array_size = subst.substituted_type.array_size();
 					info.dependent_name = subst.substituted_type.dependent_name;
 					info.function_signature = subst.substituted_type.function_signature;
 				} else {

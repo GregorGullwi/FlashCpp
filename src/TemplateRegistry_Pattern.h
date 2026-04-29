@@ -19,7 +19,9 @@ inline TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.ref_qualifier = arg.ref_qualifier;
 	ta.pointer_depth = static_cast<uint8_t>(arg.pointer_depth);
 	ta.is_array = arg.is_array;
-	ta.array_size = arg.array_size;
+	ta.array_dimensions = arg.array_size.has_value()
+		? std::vector<size_t>{*arg.array_size}
+		: std::vector<size_t>{};
 	ta.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
 	ta.dependent_name = arg.dependent_name;
 	ta.function_signature = arg.function_signature;
@@ -153,7 +155,9 @@ struct TemplatePattern {
 			deduced.ref_qualifier = c.ref_qualifier;
 			deduced.pointer_cv_qualifiers = c.pointer_cv_qualifiers;
 			deduced.is_array = c.is_array;
-			deduced.array_size = c.array_size;
+			deduced.array_dimensions = c.array_size.has_value()
+				? std::vector<size_t>{*c.array_size}
+				: std::vector<size_t>{};
 			deduced.function_signature = c.function_signature;
 		}
 		return deduced;
@@ -450,17 +454,17 @@ struct TemplatePattern {
 			// - If pattern has no size (T[]), it matches any array
 			// - If pattern has SIZE_MAX (T[N] where N is template param), it matches any sized array but not unsized arrays
 			// - If pattern has a specific size (T[3]), it must match exactly
-			if (pattern_arg.is_array && pattern_arg.array_size.has_value() && concrete_arg.array_size.has_value()) {
+			if (pattern_arg.is_array && pattern_arg.array_size().has_value() && concrete_arg.array_size().has_value()) {
 				// Both have sizes - check if they match
 				// SIZE_MAX in pattern means "any size" (template parameter like N)
-				if (*pattern_arg.array_size != SIZE_MAX && *pattern_arg.array_size != *concrete_arg.array_size) {
+				if (*pattern_arg.array_size() != SIZE_MAX && *pattern_arg.array_size() != *concrete_arg.array_size()) {
 					FLASH_LOG(Templates, Trace, "  FAILED: array size mismatch");
 					return false;
 				}
-			} else if (pattern_arg.is_array && pattern_arg.array_size.has_value() && *pattern_arg.array_size == SIZE_MAX) {
+			} else if (pattern_arg.is_array && pattern_arg.array_size().has_value() && *pattern_arg.array_size() == SIZE_MAX) {
 				// Pattern has SIZE_MAX (like T[N]) but concrete has no size (like int[])
 				// This should not match - T[N] requires a sized array
-				if (!concrete_arg.array_size.has_value()) {
+				if (!concrete_arg.array_size().has_value()) {
 					FLASH_LOG(Templates, Trace, "  FAILED: pattern requires sized array but concrete is unsized");
 					return false;
 				}
@@ -773,7 +777,7 @@ struct TemplatePattern {
 
 			// Array modifiers add specificity
 			if (arg.is_array) {
-				if (arg.array_size.has_value()) {
+				if (arg.array_size().has_value()) {
 					// SIZE_MAX indicates "array with size expression but value unknown" (like T[N])
 					// Concrete sizes (like T[3]) and template parameter sizes (like T[N]) both get score of 2
 					score += 2; // T[N] or T[3] is more specific than T[]

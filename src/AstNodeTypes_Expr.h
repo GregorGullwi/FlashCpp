@@ -821,7 +821,7 @@ public:
 			info.value = arg.value;
 			info.is_value = arg.is_value;
 			info.is_array = arg.is_array;
-			info.array_size = arg.array_size;
+			if constexpr (requires(decltype(arg) a) { a.array_size(); }) { info.array_size = arg.array_size(); } else { info.array_size = arg.array_size; }
 			info.dependent_name = arg.dependent_name;
 			info.function_signature = arg.function_signature;
 			outer_template_args_.push_back(std::move(info));
