@@ -1189,18 +1189,7 @@ ParseResult Parser::parse_type_specifier() {
 									   alias_node.template_parameters(),
 									   *template_args);
 							   concrete_member_info != nullptr) {
-						ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(
-							concrete_member_info->registeredTypeIndex().withCategory(
-								concrete_member_info->typeEnum()));
-						TemplateTypeArg rebound_member_arg = rebindDependentTemplateTypeArg(
-							makeTemplateTypeArgFromResolvedAlias(
-								resolved_member_alias,
-								concrete_member_info->registeredTypeIndex().withCategory(
-									concrete_member_info->typeEnum())),
-							TemplateTypeArg(instantiated_type));
-						instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
-							rebound_member_arg,
-							Token());
+						instantiated_type = resolveTypeInfoToTypeSpec(*concrete_member_info, instantiated_type);
 					} else if (const TypeInfo* alias_target_info =
 								   tryGetTypeInfo(instantiated_type.type_index());
 							   alias_target_info != nullptr &&
@@ -1232,20 +1221,8 @@ ParseResult Parser::parse_type_specifier() {
 									concrete_target_args);
 							}
 							if (materialized_target.resolved_type_info != nullptr) {
-								const TypeInfo* resolved_target_info =
-									materialized_target.resolved_type_info;
-								ResolvedAliasTypeInfo resolved_target_alias = resolveAliasTypeInfo(
-									resolved_target_info->registeredTypeIndex().withCategory(
-										resolved_target_info->typeEnum()));
-								TemplateTypeArg rebound_materialized_arg = rebindDependentTemplateTypeArg(
-									makeTemplateTypeArgFromResolvedAlias(
-										resolved_target_alias,
-										resolved_target_info->registeredTypeIndex().withCategory(
-											resolved_target_info->typeEnum())),
-									TemplateTypeArg(instantiated_type));
-								instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
-									rebound_materialized_arg,
-									Token());
+								instantiated_type = resolveTypeInfoToTypeSpec(
+									*materialized_target.resolved_type_info, instantiated_type);
 							}
 						}
 					}
@@ -1259,15 +1236,7 @@ ParseResult Parser::parse_type_specifier() {
 							instantiated_type.type_index());
 						if (resolved_instantiated_alias.type_index.is_valid() &&
 							resolved_instantiated_alias.type_index != instantiated_type.type_index()) {
-							TemplateTypeArg rebound_resolved_arg = rebindDependentTemplateTypeArg(
-								makeTemplateTypeArgFromResolvedAlias(
-									resolved_instantiated_alias,
-									instantiated_type_info->registeredTypeIndex().withCategory(
-										instantiated_type_info->typeEnum())),
-							TemplateTypeArg(instantiated_type));
-							instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
-								rebound_resolved_arg,
-								Token());
+							instantiated_type = resolveTypeInfoToTypeSpec(*instantiated_type_info, instantiated_type);
 						}
 					}
 

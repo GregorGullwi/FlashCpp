@@ -830,6 +830,35 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 	return rebindDependentTemplateTypeArg(substituted_arg, pattern_arg);
 }
 
+// Resolve `type_info` through its full alias chain, then compose the outer
+// modifiers carried by `outer_spec` (cv-qualifier, pointer depth,
+// reference-collapsing) into the result via rebindDependentTemplateTypeArg.
+// Returns the composed TemplateTypeArg ready for further use.
+// All three layers (resolveAliasTypeInfo → makeTemplateTypeArgFromResolvedAlias →
+// rebindDependentTemplateTypeArg) are already present individually across many
+// call sites; this helper removes the boilerplate of computing the fallback
+// TypeIndex and calling them in order.
+inline TemplateTypeArg resolveTypeInfoToTemplateArg(
+	const TypeInfo& type_info,
+	const TypeSpecifierNode& outer_spec) {
+	const TypeIndex fallback = type_info.registeredTypeIndex().withCategory(type_info.typeEnum());
+	const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(fallback);
+	return rebindDependentTemplateTypeArg(
+		makeTemplateTypeArgFromResolvedAlias(resolved, fallback),
+		TemplateTypeArg(outer_spec));
+}
+
+// Convenience wrapper: resolve a TypeInfo through its alias chain, compose outer
+// modifiers from `outer_spec`, and convert the result to a TypeSpecifierNode.
+// This is the most common pattern in alias-template substitution paths.
+inline TypeSpecifierNode resolveTypeInfoToTypeSpec(
+	const TypeInfo& type_info,
+	const TypeSpecifierNode& outer_spec) {
+	return makeTypeSpecifierFromTemplateTypeArg(
+		resolveTypeInfoToTemplateArg(type_info, outer_spec),
+		Token());
+}
+
 // Convert a TypeInfo::TemplateArgInfo to a TemplateTypeArg, optionally substituting
 // dependent names from the provided template parameter/argument lists.
 // This is the single authoritative conversion point — all call sites that previously

@@ -4551,27 +4551,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											type_spec,
 											template_params,
 											template_args_to_use)) {
-									TypeIndex terminal_index =
-										concrete_member_alias->registeredTypeIndex().withCategory(
-											concrete_member_alias->typeEnum());
-									ResolvedAliasTypeInfo terminal =
-										resolveAliasTypeInfo(terminal_index);
-									if (terminal.type_index.is_valid()) {
-										terminal_index = terminal.type_index;
-									}
-
-									TemplateTypeArg member_arg = makeTemplateTypeArgFromResolvedAlias(
-										terminal,
-										terminal_index);
-									member_arg = rebindDependentTemplateTypeArg(
-										member_arg,
-										TemplateTypeArg(type_spec));
+									TemplateTypeArg member_arg = resolveTypeInfoToTemplateArg(*concrete_member_alias, type_spec);
 									member_arg.is_pack = arg_info.is_pack;
 									resolved_args.push_back(member_arg);
 									resolved = true;
 									FLASH_LOG_FORMAT(Templates, Debug,
 										"Resolved deferred base member alias '{}' to terminal type_index={}",
-										type_name, terminal_index);
+										type_name, member_arg.type_index);
 								}
 							}
 							if (!resolved) {
@@ -4596,17 +4582,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 													alias_node.target_type_node(),
 													alias_node.template_parameters(),
 													instantiated_args)) {
-											ResolvedAliasTypeInfo resolved_member_alias =
-												resolveAliasTypeInfo(
-													concrete_member_alias->registeredTypeIndex().withCategory(
-														concrete_member_alias->typeEnum()));
-											TemplateTypeArg inst_arg = makeTemplateTypeArgFromResolvedAlias(
-												resolved_member_alias,
-												concrete_member_alias->registeredTypeIndex().withCategory(
-													concrete_member_alias->typeEnum()));
-											inst_arg = rebindDependentTemplateTypeArg(
-												inst_arg,
-												TemplateTypeArg(type_spec));
+											TemplateTypeArg inst_arg = resolveTypeInfoToTemplateArg(*concrete_member_alias, type_spec);
 											inst_arg.is_pack = arg_info.is_pack;
 											resolved_args.push_back(inst_arg);
 											resolved = true;
