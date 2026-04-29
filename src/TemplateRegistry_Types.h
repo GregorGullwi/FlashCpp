@@ -198,8 +198,13 @@ struct TemplateTypeArg {
 	void setType(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 	void setCategory(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 
-	// Backward-compatible accessor: returns the first array dimension if present.
-	// Prefer direct use of array_dimensions for multi-dimensional correctness.
+	// Backward-compatible accessor: returns the first (outermost) array dimension if the type
+	// is a 1-D or multi-dimensional array, or nullopt if it is not an array.
+	// NOTE: For multi-dimensional arrays this is intentionally lossy — it returns only the first
+	// dimension and drops the rest.  Callers that need all dimensions (e.g. for codegen sizing
+	// or type matching) must use array_dimensions directly.  This accessor exists solely for
+	// interoperability with TypeInfo::TemplateArgInfo::array_size (std::optional<size_t> field)
+	// which remains single-dimensional by design.
 	std::optional<size_t> array_size() const {
 		return array_dimensions.empty() ? std::nullopt : std::optional<size_t>(array_dimensions[0]);
 	}

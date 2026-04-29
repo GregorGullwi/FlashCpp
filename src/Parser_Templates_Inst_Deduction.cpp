@@ -590,6 +590,10 @@ static void applyTemplateArgIndirection(
 					arg->ref_qualifier));
 		}
 		if (!substituted_type.is_array() && arg->is_array) {
+			// ArgContainer can be either std::vector<TemplateTypeArg> (which stores full
+			// array_dimensions) or InlineVector<TypeInfo::TemplateArgInfo> (single optional
+			// array_size field).  Both remain live in the codebase so both branches are
+			// permanent, not transitional.
 			if constexpr (requires(decltype(*arg) a) { a.array_size(); }) {
 				substituted_type.set_array_dimensions(arg->array_dimensions);
 			} else {
