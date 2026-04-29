@@ -2465,7 +2465,7 @@ ParseResult Parser::parse_decltype_specifier() {
 		StringHandle dependent_name = StringTable::getOrInternStringHandle(
 			StringBuilder()
 				.append("__dependent_decltype_")
-				.append(std::to_string(getTypeInfoCount()))
+				.append(static_cast<int64_t>(getTypeInfoCount()))
 				.commit());
 		TypeInfo& type_info = add_empty_type_entry();
 		type_info.fallback_size_bits_ = 0;
