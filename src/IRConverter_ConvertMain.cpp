@@ -12769,11 +12769,12 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 		if (!array_is_tempvar) {
 			StringHandle lookup_name_handle = is_member_array ? StringTable::getOrInternStringHandle(object_name) : array_name_handle;
 				// Use find() to avoid creating phantom entries with INT_MIN offset for missing keys
-			auto it = variable_scopes.back().variables.find(lookup_name_handle);
-			array_base_offset = (it != variable_scopes.back().variables.end()) ? it->second.offset : INT_MIN;
+			const auto& scope_vars = variable_scopes.back().variables;
+			auto it = scope_vars.find(lookup_name_handle);
+			array_base_offset = (it != scope_vars.end()) ? it->second.offset : INT_MIN;
 				// Fallback: if not found (offset == INT_MIN), try matching by string to tolerate handle mismatches
 			if (array_base_offset == INT_MIN) {
-				for (const auto& [handle, info] : variable_scopes.back().variables) {
+				for (const auto& [handle, info] : scope_vars) {
 					if (StringTable::getStringView(handle) == (is_member_array ? object_name : array_name_view)) {
 						array_base_offset = info.offset;
 						break;
