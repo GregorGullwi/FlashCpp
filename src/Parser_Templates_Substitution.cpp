@@ -1256,14 +1256,6 @@ ASTNode Parser::substituteTemplateParameters(
 	} else if (node.is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& type_spec = node.as<TypeSpecifierNode>();
 		const auto makeTypeSpecifierFromTemplateArg = [&](const TemplateTypeArg& arg) -> ASTNode {
-			int size_bits = 0;
-			if (is_struct_type(arg.category())) {
-				if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
-					size_bits = static_cast<int>(arg_type_info->sizeInBits().value);
-				}
-			} else {
-				size_bits = get_type_size_bits(arg.category());
-			}
 			Token substituted_token = type_spec.token();
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
 				substituted_token = Token(
@@ -1281,36 +1273,15 @@ ASTNode Parser::substituteTemplateParameters(
 					type_spec.token().column(),
 					type_spec.token().file_index());
 			}
-			TypeSpecifierNode substituted_spec(
-				arg.type_index.withCategory(arg.typeEnum()),
-				size_bits,
-				substituted_token,
-				arg.cv_qualifier,
-				ReferenceQualifier::None);
-			for (size_t p = 0; p < arg.pointer_depth; ++p) {
-				CVQualifier pointer_cv = p < arg.pointer_cv_qualifiers.size()
-					? arg.pointer_cv_qualifiers[p]
-					: CVQualifier::None;
-				substituted_spec.add_pointer_level(pointer_cv);
-			}
+			TypeSpecifierNode substituted_spec =
+				makeTypeSpecifierFromTemplateTypeArg(arg, substituted_token);
 			for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
 				substituted_spec.add_pointer_level(pointer_level.cv_qualifier);
 			}
 			substituted_spec.add_cv_qualifier(type_spec.cv_qualifier());
-			ReferenceQualifier final_ref_qualifier = arg.ref_qualifier;
-			if (type_spec.reference_qualifier() == ReferenceQualifier::LValueReference) {
-				final_ref_qualifier = ReferenceQualifier::LValueReference;
-			} else if (type_spec.reference_qualifier() == ReferenceQualifier::RValueReference &&
-					   final_ref_qualifier == ReferenceQualifier::None) {
-				final_ref_qualifier = ReferenceQualifier::RValueReference;
-			}
-			substituted_spec.set_reference_qualifier(final_ref_qualifier);
-			if (arg.is_array) {
-				substituted_spec.set_array(true, arg.array_size);
-			}
-			if (arg.function_signature.has_value()) {
-				substituted_spec.set_function_signature(*arg.function_signature);
-			}
+			substituted_spec.set_reference_qualifier(collapseReferenceQualifiers(
+				arg.ref_qualifier,
+				type_spec.reference_qualifier()));
 			return emplace_node<TypeSpecifierNode>(substituted_spec);
 		};
 		const auto makeTypeSpecifier = [&](const TypeInfo& target_type_info) -> ASTNode {

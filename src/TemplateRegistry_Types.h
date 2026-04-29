@@ -13,6 +13,7 @@
 #include <optional>
 #include <algorithm>
 #include <iterator>
+#include <limits>
 #include <span>
 
 // SaveHandle type for parser save/restore operations
@@ -736,6 +737,71 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 	rebound_arg.is_dependent = false;
 	rebound_arg.dependent_name = {};
 	return rebound_arg;
+}
+
+inline ReferenceQualifier collapseReferenceQualifiers(
+	ReferenceQualifier substituted_ref_qualifier,
+	ReferenceQualifier outer_ref_qualifier) {
+	if (outer_ref_qualifier == ReferenceQualifier::LValueReference) {
+		return ReferenceQualifier::LValueReference;
+	}
+	if (outer_ref_qualifier == ReferenceQualifier::RValueReference &&
+		substituted_ref_qualifier == ReferenceQualifier::None) {
+		return ReferenceQualifier::RValueReference;
+	}
+	return substituted_ref_qualifier;
+}
+
+inline int computeTemplateTypeArgSizeBits(const TemplateTypeArg& arg) {
+	if (is_struct_type(arg.category())) {
+		if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+			return static_cast<int>(arg_type_info->sizeInBits().value);
+		}
+	}
+	return get_type_size_bits(arg.category());
+}
+
+inline TypeSpecifierNode makeTypeSpecifierFromTemplateTypeArg(
+	const TemplateTypeArg& arg,
+	const Token& token) {
+	TypeSpecifierNode substituted_spec(
+		arg.type_index.withCategory(arg.typeEnum()),
+		computeTemplateTypeArgSizeBits(arg),
+		token,
+		arg.cv_qualifier,
+		arg.ref_qualifier);
+	for (size_t pointer_index = 0; pointer_index < arg.pointer_depth; ++pointer_index) {
+		CVQualifier pointer_cv = pointer_index < arg.pointer_cv_qualifiers.size()
+			? arg.pointer_cv_qualifiers[pointer_index]
+			: CVQualifier::None;
+		substituted_spec.add_pointer_level(pointer_cv);
+	}
+	if (arg.is_array) {
+		substituted_spec.set_array(true, arg.array_size);
+	}
+	if (arg.function_signature.has_value()) {
+		substituted_spec.set_function_signature(*arg.function_signature);
+	}
+	return substituted_spec;
+}
+
+inline TemplateTypeArg makeTemplateTypeArgFromResolvedAlias(
+	const ResolvedAliasTypeInfo& resolved_alias,
+	TypeIndex fallback_type_index) {
+	TemplateTypeArg resolved_arg;
+	resolved_arg.type_index = resolved_alias.type_index.is_valid()
+		? resolved_alias.type_index
+		: fallback_type_index;
+	resolved_arg.pointer_depth = static_cast<uint8_t>(
+		std::min<size_t>(resolved_alias.pointer_depth, std::numeric_limits<uint8_t>::max()));
+	resolved_arg.ref_qualifier = resolved_alias.reference_qualifier;
+	resolved_arg.cv_qualifier = resolved_alias.cv_qualifier;
+	resolved_arg.is_array = resolved_alias.isArray();
+	resolved_arg.array_size = resolved_alias.array_dimensions.empty()
+		? std::nullopt
+		: std::optional<size_t>(resolved_alias.array_dimensions.front());
+	resolved_arg.function_signature = resolved_alias.function_signature;
+	return resolved_arg;
 }
 
 inline TemplateTypeArg rebindDependentTemplateTypeArg(

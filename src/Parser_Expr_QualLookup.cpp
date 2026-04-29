@@ -1175,41 +1175,26 @@ TypeIndex Parser::substitute_template_parameter(
 			// cv/ref/pointer metadata with the substituted template argument.  Preserve
 			// that rich TemplateTypeArg here before falling back to TypeIndex-only
 			// materialization, which cannot represent `int*` distinct from `int`.
-			std::string_view alias_template_name = buildQualifiedNameFromHandle(
+			StringHandle alias_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
 				arg_type_info->sourceNamespace(),
-				StringTable::getStringView(arg_type_info->baseTemplateName()));
+				arg_type_info->baseTemplateName());
 			auto alias_template_entry = gTemplateRegistry.lookup_alias_template(alias_template_name);
 			if (!alias_template_entry.has_value()) {
 				alias_template_entry = gTemplateRegistry.lookup_alias_template(
-					StringTable::getStringView(arg_type_info->baseTemplateName()));
+					arg_type_info->baseTemplateName());
 			}
 			if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
 				const TemplateAliasNode& alias_node = alias_template_entry->as<TemplateAliasNode>();
-				const TypeSpecifierNode& alias_target = alias_node.target_type_node();
-				std::string_view alias_target_name = alias_target.token().value();
-				if (alias_target_name.empty()) {
-					if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target.type_index())) {
-						alias_target_name = StringTable::getStringView(alias_target_info->name());
-					}
-				}
-				const auto& alias_param_names = alias_node.template_param_names();
-				for (size_t alias_param_index = 0;
-					 alias_param_index < alias_param_names.size() && alias_param_index < nested_args.size();
-					 ++alias_param_index) {
-					if (alias_param_names[alias_param_index].view() != alias_target_name) {
-						continue;
-					}
-					concrete_arg = rebindDependentTemplateTypeArg(
-						nested_args[alias_param_index],
-						TemplateTypeArg(alias_target));
+				if (std::optional<TemplateTypeArg> rebound_arg =
+						tryRebindAliasTargetTemplateArg(alias_node, nested_args);
+					rebound_arg.has_value()) {
+					concrete_arg = *rebound_arg;
 					return;
 				}
 			}
 
 			const TypeInfo* resolved_arg_type = resolveConcreteInstantiatedMemberChain(
-				buildQualifiedNameFromHandle(
-					arg_type_info->sourceNamespace(),
-					StringTable::getStringView(arg_type_info->baseTemplateName())),
+				StringTable::getStringView(alias_template_name),
 				nested_args,
 				extractPlaceholderMemberChain(StringTable::getStringView(arg_type_info->name())));
 			if (resolved_arg_type == nullptr) {

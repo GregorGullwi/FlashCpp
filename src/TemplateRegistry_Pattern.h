@@ -30,6 +30,16 @@ inline TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	return ta;
 }
 
+inline bool patternPointerDepthMatches(
+	const TemplateTypeArg& pattern_arg,
+	const TemplateTypeArg& concrete_arg,
+	bool pattern_arg_is_deduced_type_param) {
+	if (pattern_arg_is_deduced_type_param) {
+		return pattern_arg.pointer_depth <= concrete_arg.pointer_depth;
+	}
+	return pattern_arg.pointer_depth == concrete_arg.pointer_depth;
+}
+
 // Out-of-line template member function definition
 struct OutOfLineMemberFunction {
 	InlineVector<ASTNode, 4> template_params; // Template parameters (e.g., <typename T>)
@@ -421,9 +431,10 @@ struct TemplatePattern {
 				FLASH_LOG(Templates, Trace, "  FAILED: ref_qualifier mismatch");
 				return false;
 			}
-			if (pattern_arg_is_deduced_type_param
-					? pattern_arg.pointer_depth > concrete_arg.pointer_depth
-					: pattern_arg.pointer_depth != concrete_arg.pointer_depth) {
+			if (!patternPointerDepthMatches(
+					pattern_arg,
+					concrete_arg,
+					pattern_arg_is_deduced_type_param)) {
 				FLASH_LOG(Templates, Trace, "  FAILED: pointer_depth mismatch");
 				return false;
 			}

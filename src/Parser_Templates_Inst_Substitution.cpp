@@ -254,6 +254,47 @@ std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasTemp
 	return substituted_args;
 }
 
+StringHandle Parser::getAliasTargetNameHandle(const TypeSpecifierNode& alias_target) const {
+	if (alias_target.token().handle().isValid()) {
+		return alias_target.token().handle();
+	}
+	if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target.type_index())) {
+		return alias_target_info->name();
+	}
+	return {};
+}
+
+std::optional<size_t> Parser::findAliasTargetTemplateParamIndex(
+	const TemplateAliasNode& alias_node,
+	std::span<const TemplateTypeArg> concrete_args) const {
+	StringHandle alias_target_name = getAliasTargetNameHandle(alias_node.target_type_node());
+	if (!alias_target_name.isValid()) {
+		return std::nullopt;
+	}
+
+	const auto& alias_param_names = alias_node.template_param_names();
+	size_t max_alias_param_index = std::min(alias_param_names.size(), concrete_args.size());
+	for (size_t alias_param_index = 0; alias_param_index < max_alias_param_index; ++alias_param_index) {
+		if (alias_param_names[alias_param_index] == alias_target_name) {
+			return alias_param_index;
+		}
+	}
+	return std::nullopt;
+}
+
+std::optional<TemplateTypeArg> Parser::tryRebindAliasTargetTemplateArg(
+	const TemplateAliasNode& alias_node,
+	std::span<const TemplateTypeArg> concrete_args) const {
+	std::optional<size_t> alias_param_index =
+		findAliasTargetTemplateParamIndex(alias_node, concrete_args);
+	if (!alias_param_index.has_value()) {
+		return std::nullopt;
+	}
+	return rebindDependentTemplateTypeArg(
+		concrete_args[*alias_param_index],
+		TemplateTypeArg(alias_node.target_type_node()));
+}
+
 void Parser::normalizeDependentNonTypeTemplateArgs(
 	const InlineVector<ASTNode, 4>& template_parameters,
 	std::vector<TemplateTypeArg>& template_args) {
@@ -414,14 +455,21 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		return direct_concrete_member_it->second;
 	}
 
-	std::string_view base_template_name =
-		StringTable::getStringView(dependent_base_info->baseTemplateName());
+	StringHandle base_template_name_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+		dependent_base_info->sourceNamespace(),
+		dependent_base_info->baseTemplateName());
 	std::vector<TemplateTypeArg> concrete_base_args =
 		materializeTemplateArgs(*dependent_base_info, template_params, template_args);
 	AliasTemplateMaterializationResult materialized_alias_base =
 		materializeTemplateInstantiationForLookup(
-			base_template_name,
+			StringTable::getStringView(base_template_name_handle),
 			concrete_base_args);
+	if (materialized_alias_base.instantiated_name.empty() &&
+		base_template_name_handle != dependent_base_info->baseTemplateName()) {
+		materialized_alias_base = materializeTemplateInstantiationForLookup(
+			StringTable::getStringView(dependent_base_info->baseTemplateName()),
+			concrete_base_args);
+	}
 	if (materialized_alias_base.instantiated_name.empty()) {
 		return nullptr;
 	}

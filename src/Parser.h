@@ -1742,6 +1742,13 @@ private:
 	std::optional<std::vector<TemplateTypeArg>> materializeDeferredAliasTemplateArgs(
 		const TemplateAliasNode& alias_node,
 		const std::vector<TemplateTypeArg>& template_args);
+	StringHandle getAliasTargetNameHandle(const TypeSpecifierNode& alias_target) const;
+	std::optional<size_t> findAliasTargetTemplateParamIndex(
+		const TemplateAliasNode& alias_node,
+		std::span<const TemplateTypeArg> concrete_args) const;
+	std::optional<TemplateTypeArg> tryRebindAliasTargetTemplateArg(
+		const TemplateAliasNode& alias_node,
+		std::span<const TemplateTypeArg> concrete_args) const;
 	// Substitute template parameters in an expression.
 	// substitution_owner: when valid, member aliases of that instantiation are resolved for sizeof/alignof.
 	ASTNode substitute_template_params_in_expression(
