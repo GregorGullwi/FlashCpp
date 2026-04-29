@@ -1,329 +1,43 @@
 # Template Instantiation / Constexpr Architecture Audit
 
-**Date:** 2026-04-06
+**Date:** 2026-04-06  
+**Last Updated:** 2026-04-29
 
-## Executive summary
+## Current relevance
 
-I **partly agree** with the premise.
+This document is still relevant as a **status snapshot**, not as an active
+multi-phase implementation plan.
 
-FlashCpp already has a post-instantiation semantic-analysis step for the main eager pipeline:
+The core audit conclusion still matches the current code:
 
-1. parse source
-2. instantiate many templates during parsing
-3. run `SemanticAnalysis::run()`
-4. lower to IR
+- eager parse -> sema -> codegen is established;
+- late/lazy instantiation remains the main pressure point;
+- constexpr still contains some fallback-style recovery paths.
 
-That means the compiler does **not** need a brand-new second global sema pass just to cover the normal eager template-instantiation path.
+## What has changed since the original audit
 
-However, the architecture would still benefit a lot from making semantic analysis the owner of **all materialized instantiated AST**, because today there are still important instantiation paths that happen **after** the main sema pass or inside parser/constexpr-owned machinery:
+The original long workstream checklist is mostly superseded by:
 
-- lazy template class/member instantiation
-- deferred template member-body parsing
-- some on-demand template instantiation triggered from constexpr evaluation
-- constexpr member/function fallback logic that re-derives facts from parser/type state instead of consuming sema-owned annotations
+- `docs/2026-04-08-template-instantiation-materialization-plan.md` for the
+  active template/materialization roadmap;
+- `docs/2026-04-27-fallback-comments-audit.md` for fallback-site status and
+  probe results.
 
-So the right direction is:
+## Verified codebase state (2026-04-29)
 
-- **keep** the existing post-parse sema pass for eagerly materialized instantiated AST
-- **extend sema ownership** to late-instantiated AST and constexpr-relevant instantiated bodies
-- **reduce parser/constexpr fallback semantics** over time
+- `SemanticAnalysis.cpp` no longer calls `parser_.get_expression_type(...)`.
+- Codegen still contains fallback-oriented type reconstruction via
+  `buildCodegenOverloadResolutionArgType(...)` (`IrGenerator_Stmt_Decl.cpp` and
+  users).
+- Parser/constexpr/template code still has remaining fold/pack and
+  late-materialization complexity; boundary enforcement is stronger than before,
+  but not fully "no-fallback" end-state.
 
-## Current architecture audit
+## Keep / compact policy
 
-### 1. The eager top-level pipeline already runs sema after template instantiation
+Keep this file as a short architectural context note.  
+Do **not** add new phase logs here. Record active work in:
 
-`src/FlashCppMain.cpp` clearly establishes the main pipeline:
-
-- parsing comments explicitly say template instantiation happens during parsing
-- `SemanticAnalysis sema(*parser, ...)` runs immediately after parsing
-- IR/codegen happens only after `sema.run()`
-
-This is already the architecture you are asking for at a high level.
-
-### 2. Template instantiation is still parser-owned, not sema-owned
-
-The parser is still responsible for materializing instantiated declarations and bodies:
-
-- `Parser::try_instantiate_template(...)`
-- `Parser::try_instantiate_template_explicit(...)`
-- `Parser::try_instantiate_class_template(...)`
-- `Parser::instantiateLazyMemberFunction(...)`
-- `Parser::instantiateLazyClassToPhase(...)`
-- `Parser::reparse_template_function_body(...)`
-
-The key pattern is:
-
-- parser restores token positions
-- parser registers temporary template bindings in parser/type state
-- parser reparses or substitutes bodies
-- parser appends new AST nodes to `ast_nodes_`
-
-This means instantiation is still tightly coupled to parser state, token replay, symbol-table mutation, and substitution helpers.
-
-### 3. The biggest sema gap is late instantiation after `SemanticAnalysis::run()`
-
-The main architectural problem is **not** “templates instantiate before sema”.
-The bigger issue is that some instantiations happen **after sema has already finished**.
-
-### Evidence
-
-- `SemanticAnalysis::run()` walks `parser_.get_nodes()` once.
-- `FlashCppMain.cpp` constructs sema, runs it once, then starts IR lowering.
-- during IR/codegen, the pipeline still triggers lazy materialization:
-  - `AstToIr::generateDeferredMemberFunctions()`
-  - `IrGenerator_Call_Direct.cpp`
-  - `IrGenerator_Call_Indirect.cpp`
-  - `IrGenerator_MemberAccess.cpp`
-  - `IrGenerator_Stmt_Decl.cpp`
-  - `IrGenerator_Visitors_TypeInit.cpp`
-- those paths call back into:
-  - `parser_->instantiateLazyMemberFunction(...)`
-  - `parser_->instantiateLazyStaticMember(...)`
-  - `parser_->instantiateLazyClassToPhase(...)`
-
-So late-instantiated nodes can reach codegen without going through the same top-level sema normalization pass that eager nodes receive.
-
-### 4. Lazy class instantiation phases amplify the split ownership
-
-`TemplateRegistry_Lazy.h` and `Parser_Templates_Lazy.cpp` define a phased model:
-
-- `Minimal`
-- `Layout`
-- `Full`
-
-That is useful for performance, but it means the compiler can progressively materialize more of a template instantiation in response to later use sites.
-
-In practice this creates a second semantic boundary:
-
-- the type exists early
-- some members/bodies/initializers appear later
-- codegen and member-lookup paths must tolerate partially materialized class state
-
-This is exactly the kind of architecture that benefits from an **incremental post-instantiation sema step**.
-
-### 5. Existing sema-boundary work already points in this direction
-
-`docs/2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md` documents a lot of successful cleanup:
-
-- parser-only fold/pack nodes are now forbidden on the sema-owned surface
-- direct `parser_.get_expression_type(...)` fallbacks were removed from `SemanticAnalysis.cpp`
-- outer template bindings are carried into more instantiated AST
-
-That work already proves the codebase is moving toward stronger sema ownership.
-
-The remaining issue is no longer “should sema own post-parse AST?”.
-It is “how do we make **late materialized** AST obey the same contract?”.
-
-### 6. Constexpr currently mixes value evaluation with template/materialization responsibilities
-
-The constexpr layer is also a partial architecture smell.
-
-`ConstExprEvaluator.h` and `ConstExprEvaluator_*.cpp` show that the evaluator still owns or reaches into:
-
-- parser-triggered template instantiation through `EvaluationContext::parser`
-- variable-template instantiation from constexpr call sites
-- template-function on-demand instantiation
-- current-struct template-binding recovery
-- fallback-to-base-template member-function lookup
-- special-case synthesis such as `integral_constant::value`
-
-This means constexpr evaluation is not just evaluating semantically known AST; it is still compensating for missing earlier normalization/materialization.
-
-### 7. Constexpr already has sema-style fallback pressure points
-
-A few examples from the current tree:
-
-- `evaluate_function_call()` can instantiate template functions on demand
-- `tryEvaluateAsVariableTemplate()` can instantiate variable templates on demand
-- `call_constexpr_member_fn_on_object()` falls back from an instantiation to the base template's `StructTypeInfo`
-- `ConstExprEvaluator_Members.cpp` synthesises `integral_constant::value` when lookup data is missing
-- the non-standard docs already record runtime-style fallback behavior for some constexpr failures
-
-All of these are signs that constexpr is still carrying semantic/materialization recovery logic that would be cleaner upstream.
-
-## Conclusion
-
-I agree with the **goal**, but I would phrase it more precisely:
-
-> FlashCpp does not primarily need “a sema pass after template instantiation” for the eager path, because it already has one.
-> It needs a way to ensure that **every instantiated AST body that becomes real** — especially lazy and constexpr-triggered ones — is brought onto the same sema-owned surface before codegen or constexpr-specific fallback logic relies on it.
-
-So I recommend an **incremental/fixpoint sema-after-materialization architecture**, not a naive “run the whole sema pass twice” design.
-
-## Recommended target architecture
-
-### Target invariant
-
-Any instantiated declaration/body/initializer that is materialized into AST and is intended for:
-
-- codegen
-- constexpr evaluation
-- overload resolution reuse
-- member lookup reuse
-
-must first pass through the same semantic-normalization boundary.
-
-### Desired pipeline shape
-
-```text
-Parse / initial eager instantiation
-    ↓
-Semantic normalization of current AST roots
-    ↓
-Late instantiation work queue drains:
-    - lazy class phase promotion
-    - lazy member/static-member instantiation
-    - deferred template body materialization
-    - constexpr-requested instantiation handoff
-    ↓
-Semantic normalization of newly materialized roots
-    ↓
-Repeat until no new semantic roots are produced
-    ↓
-IR lowering / backend / constexpr consumers read sema-owned facts first
-```
-
-The important part is **normalize newly materialized roots**, not “rerun everything blindly”.
-
-## Plan
-
-### Workstream 1 — Inventory all post-sema materialization points
-
-- enumerate every parser entry point that can append new instantiated AST after `SemanticAnalysis::run()`
-- classify each site as eager, lazy, deferred-body, or constexpr-triggered
-- define which of those sites must become sema-visible before downstream use
-- document which ones can remain parser-internal because they never escape into sema/codegen surfaces
-
-### Workstream 2 — Introduce a first-class “new semantic roots” queue
-
-- create a single ownership concept for newly materialized AST nodes that still need semantic normalization
-- stop relying on ad-hoc “append to `ast_nodes_` and hope downstream paths cope”
-- make eager instantiation and lazy instantiation register new roots through the same mechanism
-- ensure nested late instantiations can enqueue more work without losing ordering or cycle protection
-
-### Workstream 3 — Make semantic analysis incremental over newly materialized nodes
-
-- split “walk the whole translation unit” from “normalize one newly materialized root”
-- reuse existing `normalizeTopLevelNode(...)`-style logic as the incremental unit
-- preserve the current boundary checks and template-binding seeding for those late roots
-- guarantee that a root is normalized at most once per concrete materialization
-
-### Workstream 4 — Move lazy template materialization in front of codegen consumption
-
-- stop using codegen as the first consumer that discovers semantically unnormalized instantiated bodies
-- when a lazy member/static member/class phase is forced, hand the resulting AST back through the semantic-root queue before continuing
-- keep codegen fallback only for truly unsupported or still-deferred cases during migration
-- tighten the invariant so IR generation assumes “materialized means sema-normalized”
-
-### Workstream 5 — Reduce constexpr's parser-owned responsibilities
-
-- treat constexpr as a consumer of sema-normalized AST rather than a secondary materialization engine
-- progressively remove direct parser-triggered template instantiation from evaluator hot paths
-- replace evaluator-side fallback lookup/synthesis with sema-owned resolution data where possible
-- keep constexpr-specific logic focused on value computation, not AST recovery
-
-### Workstream 6 — Make sema annotations the preferred constexpr inputs
-
-- audit constexpr call resolution, constructor resolution, member access, and static-member lookup for existing sema annotations/caches they can trust first
-- extend sema-owned annotations where constexpr still has to re-resolve facts independently
-- eliminate evaluator-side special cases that exist only because earlier phases did not record enough semantic information
-
-### Workstream 7 — Decide the end-state for late instantiation
-
-There are two viable end-states:
-
-### Option A — Full fixpoint before IR
-
-- drive all reachable lazy materialization before codegen starts
-- sema completes on the final AST surface
-- codegen becomes much simpler
-
-### Option B — Incremental on-demand sema during late materialization
-
-- keep lazy instantiation for performance/architecture reasons
-- but every newly materialized node is sema-normalized immediately before downstream use
-
-Given the current architecture, **Option B** looks like the lower-risk migration path.
-If that works well, the project can later decide whether a more eager “drain everything before IR” model is worthwhile.
-
-### Workstream 8 — Tighten docs and invariants
-
-- update the parser/template/non-standard docs to distinguish eager vs late instantiation clearly
-- document which AST surfaces are parser-owned, sema-owned, and constexpr-owned
-- document which fallback paths are temporary migration bridges
-- add TODO/known-issues entries for any remaining constexpr synthesis or late-semantic gaps that are intentionally deferred
-
-## Recommended implementation order
-
-1. inventory all late materialization sites
-2. add a semantic-root queue abstraction
-3. teach lazy member/static-member instantiation to enqueue roots
-4. normalize newly materialized roots before codegen continues
-5. migrate constexpr to consume the new invariant
-6. remove now-redundant fallback logic
-
-## 2026-04-07 progress update
-
-Started implementation of the low-risk **Option B** path:
-
-- added a parser-owned pending semantic-root queue for late materialized AST
-- taught late lazy/template materialization paths to register new roots there
-- added `SemanticAnalysis::normalizePendingSemanticRoots()` so the main pass can drain late roots incrementally
-- hooked codegen and constexpr-triggered lazy/template materialization paths to normalize pending roots before continuing
-- kept the active `SemanticAnalysis` reachable from parser-owned late constexpr evaluation contexts
-- taught `ExpressionSubstitutor` late template/lazy instantiation recovery paths to drain pending semantic roots before reusing the materialized AST/type state
-
-This does **not** finish the audit plan yet, but it establishes the first concrete sema handoff for:
-
-- lazy member-function instantiation
-- lazy static-member instantiation
-- constexpr-triggered function-template instantiation
-- constexpr-triggered variable-template instantiation
-- parser-owned constexpr evaluation during lazy static-member and deferred `static_assert` instantiation
-- `ExpressionSubstitutor`-triggered class/function/member-function/variable-template recovery paths
-
-Progress since that initial checkpoint:
-
-- routed the remaining parser-side class-template materialization sites that still did raw `ast_nodes_.push_back(...)` through `registerLateMaterializedTopLevelNode(...)` instead, so those late struct roots now consistently enqueue pending semantic work
-- taught `instantiateLazyClassToPhase(...)` to drain pending semantic roots when an active `SemanticAnalysis` is present, so late phase promotion no longer leaves queued semantic work behind when parser-owned lazy instantiation advances a class
-- added `tests/test_late_member_body_class_template_paths_ret42.cpp` as a regression for late member-body class-template materialization via a local `Box<T>` declaration inside a lazily instantiated member body
-- fixed the adjacent functional-style constructor path so token-only concrete instantiated class names inside lazily instantiated member bodies are rebound to the registered instantiated type during substitution instead of reaching IR as stale placeholder type metadata
-- added `tests/test_late_member_body_class_template_functional_style_ret42.cpp` as a regression for `Box<T>(42)` inside a lazily instantiated member body
-- fixed `substituteTemplateParameters(...)` so late template body substitution preserves `MemberAccessNode::is_arrow()` and `UnaryOperatorNode::is_builtin_addressof()` instead of silently dropping those flags while rebuilding expression AST
-- added `tests/test_late_member_body_operator_arrow_ret42.cpp` as a regression for `forward(&inner)->value` inside a lazily instantiated template member body, covering the parser-owned substitution path that previously flattened `->` into `.`
-- restored `tests/test_arrow_member_in_template_body_ret42.cpp` for the original smart-pointer-member case (`ptr->value` on a `SmartPtr` data member inside a template member body)
-- taught `IrGenerator_MemberAccess.cpp` to preserve the operator-`->` handoff across nested member-access lowering, so `this.ptr->value` no longer gets forced down the plain pointer-dereference path before overload resolution can call `SmartPtr::operator->()`
-- taught `substituteTemplateParameters(...)` and `replacePackIdentifierInExpr(...)` to recurse through `PointerToMemberAccessNode` and to handle direct `ConstructorCallNode` / `PointerToMemberAccessNode` AST nodes instead of only their `ExpressionNode`-wrapped forms
-- widened late type-specifier substitution so placeholder `Auto` type nodes created for dependent functional-style constructor calls can still rebind through `substitute_template_parameter(...)` onto the concrete instantiated class before sema/codegen consume them
-- added `tests/test_late_member_body_pointer_to_member_ret42.cpp` as a regression for `decltype((Box<T>(42)).*member)` inside a lazily instantiated member body, covering the pointer-to-member path that previously left the nested `Box<T>(...)` constructor call bound to the parser placeholder type
-- taught `Parser::substitute_template_parameter(...)` to route its late dependent-type class-template recovery sites through the pending semantic-root handoff, so qualified member-type lookup (`typename Box<T>::value_type`), dependent placeholder suffix recovery, and template-template placeholder recovery now drain incremental sema work before they reuse the instantiated type information
-- added `tests/test_late_member_signature_qualified_dependent_type_ret42.cpp` as a regression for a lazily instantiated member whose return type is `typename Box<T>::value_type`, covering the qualified dependent-type recovery path that now crosses the same sema boundary as the already-fixed late constructor/materialization cases
-
-Remaining work is still needed to reduce fallback logic and tighten the invariant across all late-materialization sites.
-
-The next obvious late-materialization gap is now narrower and sits beyond the constructor type rebinding above:
-
-- declaration-style local class-template materialization now crosses the sema boundary correctly
-- functional-style calls like `Box<T>(2)` now also rebind their constructor-call type node onto the concrete instantiated class before sema/codegen consume it
-- operator-arrow and builtin-addressof metadata now also survive late template body substitution instead of being lost while rebuilding expression nodes
-- nested member-access lowering now keeps `ptr->member` eligible for operator-`->` overload dispatch even when the `ptr` subexpression is first materialized as `this.ptr`
-- pointer-to-member substitution now also walks into late-instantiated child expressions instead of leaving nested constructor calls stuck on parser placeholder types when `.*` / `->*` expressions materialize after the main sema pass
-- `substitute_template_parameter(...)` now also normalizes pending semantic roots when it has to instantiate concrete class templates while resolving dependent placeholder types, reducing one more parser-owned recovery surface near the late-instantiation boundary
-- the remaining follow-up should focus on the still-unmigrated fallback reductions around late alias/member lookup and other parser-owned recovery sites where late substitution still rebuilds AST instead of consuming fully sema-owned annotations
-- additional 2026-04-07 audit work narrowed one concrete remaining gap to dependent member class-template placeholders produced by `Parser::parse_type_specifier()` for names like `typename Holder<T>::template Box<T>::value_type` inside lazily instantiated member bodies
-- a reduced repro (`Holder<T>::template Box<T> box{42}; return box.value;`) shows the current failure is no longer the sema-root handoff itself: the late member body still reaches IR with `Holder$...::Box<1 args>` recorded only as a dependent placeholder, so codegen cannot find concrete `StructTypeInfo` for the local object
-- fixed that member-template placeholder path by recording the dependent member template's own instantiation metadata in `Parser_TypeSpecifiers.cpp`, so placeholders like `Holder$...::Box<1 args>` now remember `Holder::Box` plus their concrete template-argument recipe instead of inheriting only the outer `Holder` metadata
-- taught `Parser::substitute_template_parameter(...)` to rebuild fully qualified template names from placeholder namespace metadata and to treat unresolved self-lookups like `Holder$...::Box<1 args>` as direct template placeholders, so late substitution now resolves them onto the concrete instantiated member struct (`Box$...`) instead of recursively reusing the placeholder entry
-- taught late body substitution to clear stale local identifier bindings before sema revisits the instantiated body, so local references like `box.value` no longer keep pointing at the pre-substitution placeholder-typed declaration after the declaration type has been rebuilt onto the concrete member-template instantiation
-- added `tests/test_late_member_body_member_template_ret42.cpp` as a regression for a lazily instantiated member body that declares `typename Holder<T>::template Box<T> box{42};` and returns `box.value`
-
-## Why this should simplify the code
-
-If this plan succeeds:
-
-- parser stops being responsible for more and more downstream semantic recovery
-- codegen stops discovering fresh template bodies first
-- constexpr stops doing as much ad-hoc lookup/materialization repair
-- sema becomes the single place where newly-real AST becomes trustworthy
-
-That should reduce duplicated overload/member/type reasoning across parser, constexpr, and codegen, while fitting the direction the existing sema-boundary work has already started.
+1. `docs/2026-04-08-template-instantiation-materialization-plan.md`
+2. `docs/2026-04-27-fallback-comments-audit.md`
+3. `docs/2026-04-04-codegen-name-lookup-investigation.md` (for sema/codegen ownership gaps)

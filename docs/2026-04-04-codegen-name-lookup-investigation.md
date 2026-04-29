@@ -1,5 +1,32 @@
 # 2026-04-04 codegen lookup investigation
 
+**Last Updated:** 2026-04-29
+
+## Current relevance snapshot
+
+This investigation is still relevant, but only parts of the original plan are
+active.
+
+### Still active
+
+- Codegen still reconstructs argument typing in
+  `buildCodegenOverloadResolutionArgType(...)` and related call sites.
+- Several fallback paths identified in the 2026-04-27 audit are still active and
+  should be removed by strengthening sema annotations/ownership first.
+
+### Partly superseded
+
+- Some direct-call and fallback branches discussed in the original write-up were
+  already removed or hardened by invariant checks.
+- The exact fallback inventory is now maintained in
+  `docs/2026-04-27-fallback-comments-audit.md`.
+
+### How to use this document now
+
+Use the phase intent and architecture rationale below as context, but treat
+`docs/2026-04-27-fallback-comments-audit.md` as the source of truth for
+"active vs dead" fallback status.
+
 ## Concrete implementation plan
 
 This top section is the execution plan.
