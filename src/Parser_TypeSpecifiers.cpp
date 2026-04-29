@@ -1088,6 +1088,14 @@ ParseResult Parser::parse_type_specifier() {
 						// member against the concrete instantiated base before falling back to the
 						// placeholder type carried by the alias target.
 						if (peek() != "::"_tok && targetMemberName.has_value()) {
+							if (const TypeInfo* concrete_member_info =
+									materializeInstantiatedMemberAliasTarget(
+										alias_node.target_type_node(),
+										alias_node.template_parameters(),
+										*template_args);
+								concrete_member_info != nullptr) {
+								return buildTypeFromInfo(*concrete_member_info, type_name_token, true);
+							}
 							const TypeInfo& member_type_info =
 								findOrCreateQualifiedMemberType(resolved_instantiated_type_name, *targetMemberName);
 							return buildTypeFromInfo(member_type_info, type_name_token, true);

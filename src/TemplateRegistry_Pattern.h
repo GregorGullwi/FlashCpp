@@ -639,10 +639,13 @@ struct TemplatePattern {
 			// because Derived<T*, T> means both args bind to the same T, but with different modifiers
 			auto it = param_substitutions.find(param_name);
 			if (it != param_substitutions.end()) {
-				// Parameter already bound - check consistency of BASE TYPE only
-				if (it->second.category() != concrete_arg.category()) {
+				// Parameter already bound - compare the freshly deduced binding, not the
+				// raw concrete argument, so repeated uses like T* / T still agree on T
+				// while mismatches like T / T against int / int* are rejected.
+				TemplateTypeArg deduced_arg = deduceArgFromPattern(concrete_arg, pattern_arg);
+				if (!(it->second == deduced_arg)) {
 					FLASH_LOG(Templates, Trace, "  FAILED: Inconsistent substitution for parameter ", StringTable::getStringView(param_name));
-					return false; // Inconsistent substitution (different base types)
+					return false;
 				}
 				FLASH_LOG(Templates, Trace, "  SUCCESS: Reused parameter ", StringTable::getStringView(param_name), " - consistency check passed");
 				// Don't increment param_index - we reused an existing parameter binding

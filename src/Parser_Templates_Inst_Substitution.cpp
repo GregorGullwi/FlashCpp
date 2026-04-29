@@ -451,7 +451,9 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 				.commit());
 	auto direct_concrete_member_it = getTypesByNameMap().find(direct_concrete_member_handle);
 	if (direct_concrete_member_it != getTypesByNameMap().end() &&
-		direct_concrete_member_it->second != nullptr) {
+		direct_concrete_member_it->second != nullptr &&
+		!(direct_concrete_member_it->second->is_incomplete_instantiation_ &&
+		  direct_concrete_member_it->second->isDependentMemberType())) {
 		return direct_concrete_member_it->second;
 	}
 
@@ -483,7 +485,9 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 				.commit());
 	auto concrete_member_it = getTypesByNameMap().find(concrete_member_handle);
 	if (concrete_member_it != getTypesByNameMap().end() &&
-		concrete_member_it->second != nullptr) {
+		concrete_member_it->second != nullptr &&
+		!(concrete_member_it->second->is_incomplete_instantiation_ &&
+		  concrete_member_it->second->isDependentMemberType())) {
 		return concrete_member_it->second;
 	}
 
