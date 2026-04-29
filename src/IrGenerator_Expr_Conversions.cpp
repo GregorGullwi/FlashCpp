@@ -1597,7 +1597,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		AddressOfOp op;
 		op.result = result_var;
 
-			// Populate TypedValue with full type information
+		// Populate TypedValue with full type information
 		op.operand.setType(operandType);
 		op.operand.size_in_bits = operandIrOperands.size_in_bits;
 		op.operand.pointer_depth = PointerDepth{static_cast<int>(operand_ptr_depth)};
@@ -1619,17 +1619,17 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
-			// Return 64-bit pointer with incremented pointer depth
+		// Return 64-bit pointer with incremented pointer depth
 		return makeExprResult(operandIrOperands.type_index.withCategory(operandType), SizeInBits{64}, IrOperand{result_var}, PointerDepth{static_cast<int>(operand_ptr_depth + 1)}, ValueStorage::ContainsData);
 	} else if (unaryOperatorNode.op() == "*") {
-			// Dereference operator: *x
-			// When dereferencing a pointer, the result size depends on the pointer depth:
-			// - For single pointer (int*), result is the base type size (e.g., 32 for int)
-			// - For multi-level pointer (int**), result is still a pointer (64 bits)
+		// Dereference operator: *x
+		// When dereferencing a pointer, the result size depends on the pointer depth:
+		// - For single pointer (int*), result is the base type size (e.g., 32 for int)
+		// - For multi-level pointer (int**), result is still a pointer (64 bits)
 
-			// For LValueAddress context (e.g., assignment LHS like *ptr = value),
-			// we need to return operands with lvalue metadata so handleLValueAssignment
-			// can detect this is a dereference store.
+		// For LValueAddress context (e.g., assignment LHS like *ptr = value),
+		// we need to return operands with lvalue metadata so handleLValueAssignment
+		// can detect this is a dereference store.
 		if (context == ExpressionContext::LValueAddress) {
 				// Get the element size (what we're storing to)
 			int element_size = 64; // Default to pointer size
@@ -1658,27 +1658,27 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				}
 			}
 
-				// Create a TempVar with Indirect lvalue metadata
-				// This allows handleLValueAssignment to recognize this as a dereference store
+			// Create a TempVar with Indirect lvalue metadata
+			// This allows handleLValueAssignment to recognize this as a dereference store
 			TempVar lvalue_temp = var_counter.next();
 
-				// Extract the pointer base (StringHandle or TempVar)
+			// Extract the pointer base (StringHandle or TempVar)
 			std::variant<StringHandle, TempVar> base;
 			if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
 				base = *string;
 			} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&operandIrOperands.value)) {
 				base = *temp_var_ptr;
 			} else {
-					// Fall back to old behavior if we can't extract base
-					// This can happen with complex expressions that don't have a simple base
+				// Fall back to old behavior if we can't extract base
+				// This can happen with complex expressions that don't have a simple base
 				FLASH_LOG(Codegen, Debug, "Dereference LValueAddress fallback: operand is not StringHandle or TempVar");
 				return operandIrOperands;
 			}
 
-				// Emit assignment to copy the pointer value into lvalue_temp.
-				// This is needed for reference initialization from *ptr (e.g., int& x = *__begin;).
-				// The reference init code reads the TempVar's stack value; without this
-				// assignment the slot would be uninitialized.
+			// Emit assignment to copy the pointer value into lvalue_temp.
+			// This is needed for reference initialization from *ptr (e.g., int& x = *__begin;).
+			// The reference init code reads the TempVar's stack value; without this
+			// assignment the slot would be uninitialized.
 			IrValue rhs_value;
 			if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
 				rhs_value = *string;
@@ -1697,7 +1697,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			copy_op.dereference_rhs_references = false;
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(copy_op), Token()));
 
-				// Set lvalue metadata with Indirect kind (dereference)
+			// Set lvalue metadata with Indirect kind (dereference)
 			LValueInfo lvalue_info(
 				LValueInfo::Kind::Indirect,
 				base,
@@ -1705,8 +1705,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			);
 			setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
-				// Return with TempVar that has the lvalue metadata.
-				// The TempVar holds a 64-bit pointer (the address this lvalue refers to).
+			// Return with TempVar that has the lvalue metadata.
+			// The TempVar holds a 64-bit pointer (the address this lvalue refers to).
 			unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
 			return makeExprResult(operandIrOperands.type_index.withCategory(operandType), SizeInBits{64}, IrOperand{lvalue_temp}, PointerDepth{static_cast<int>(result_ptr_depth)}, ValueStorage::ContainsAddress);
 		}
@@ -1714,9 +1714,9 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		int element_size = 64; // Default to pointer size
 		int pointer_depth = 0;
 
-			// First, try to get pointer depth from operandIrOperands (for TempVar results from previous operations)
+		// First, try to get pointer depth from operandIrOperands (for TempVar results from previous operations)
 		pointer_depth = operandIrOperands.pointer_depth.value;
-			// If pointer_depth is still 0, look up the pointer operand in the symbol table.
+		// If pointer_depth is still 0, look up the pointer operand in the symbol table.
 		if (pointer_depth == 0 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
@@ -1736,9 +1736,9 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			}
 		}
 
-			// After dereferencing, pointer_depth decreases by 1
-			// If still > 0, result is a pointer (64 bits)
-			// If == 0, result is the base type
+		// After dereferencing, pointer_depth decreases by 1
+		// If still > 0, result is a pointer (64 bits)
+		// If == 0, result is the base type
 		if (pointer_depth <= 1) {
 				// Single-level pointer or less: result is base type size
 			switch (operandType) {
@@ -1768,20 +1768,20 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				break;  // Fallback for unknown types
 			}
 		}
-			// else: multi-level pointer, element_size stays 64 (pointer)
+		// else: multi-level pointer, element_size stays 64 (pointer)
 
-			// Create typed payload with TypedValue
+		// Create typed payload with TypedValue
 		DereferenceOp op;
 		op.result = result_var;
 
-			// Populate TypedValue with full type information
+		// Populate TypedValue with full type information
 		op.pointer.setType(operandType);
 		op.pointer.type_index = operandIrOperands.type_index.withCategory(operandType);
-			// Use element_size as pointee size so IRConverter can load correct width
+		// Use element_size as pointee size so IRConverter can load correct width
 		op.pointer.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 		op.pointer.pointer_depth = PointerDepth{pointer_depth};
 
-			// Get the pointer value - it's at index 2 in operandIrOperands
+		// Get the pointer value - it's at index 2 in operandIrOperands
 		if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
 			op.pointer.value = *string;
 		} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
@@ -1792,9 +1792,9 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 
 		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, op, Token()));
 
-			// Mark dereference result as lvalue (Option 2: Value Category Tracking)
-			// *ptr is an lvalue - it designates the dereferenced object
-			// Extract StringHandle or TempVar from pointer.value (IrValue)
+		// Mark dereference result as lvalue (Option 2: Value Category Tracking)
+		// *ptr is an lvalue - it designates the dereferenced object
+		// Extract StringHandle or TempVar from pointer.value (IrValue)
 		std::variant<StringHandle, TempVar> base;
 		if (const auto* string = std::get_if<StringHandle>(&op.pointer.value)) {
 			base = *string;
@@ -1808,14 +1808,14 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		);
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
-			// Return the dereferenced value with the decremented pointer depth
+		// Return the dereferenced value with the decremented pointer depth
 		unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
 		return makeExprResult(operandIrOperands.type_index.withCategory(operandType), SizeInBits{static_cast<int>(element_size)}, IrOperand{result_var}, PointerDepth{static_cast<int>(result_ptr_depth)}, ValueStorage::ContainsData);
 	} else {
 		throw InternalError("Unary operator not implemented yet");
 	}
 
-		// Return the result
+	// Return the result
 	return makeExprResult(nativeTypeIndex(operandType), operandIrOperands.size_in_bits, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
@@ -1912,7 +1912,6 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	this_arg.value = this_addr;
 	call_op.args.push_back(this_arg);
 
-	// For postfix operators, pass dummy int argument (value 0)
 	// For postfix operators, pass dummy int argument (value 0)
 	// Use the matched function's actual parameter count (not the call form) to decide,
 	// since the fallback path may match a prefix function for a postfix call or vice versa.
@@ -2453,24 +2452,24 @@ TypeCategory AstToIr::getSemaAnnotatedTargetType(const ASTNode& node) const {
 }
 
 ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const ASTNode& cond_node, const Token& source_token) {
-		// C++20 [conv.bool]: convert condition to bool for control-flow statements.
-		//
-		// Integer types: the backend's TEST instruction already implements the
-		// correct "nonzero → true, zero → false" semantics.  No conversion needed.
-		//
-		// Floating-point types: we emit a FloatNotEqual comparison against 0.0.
-		// This correctly handles:
-		//   - -0.0: UCOMISD/UCOMISS treats -0.0 == +0.0, so SETNE → 0 (false). ✓
-		//   - Fractional values (e.g. 0.5): 0.5 != 0.0 → SETNE → 1 (true). ✓
-		//   - NaN: unordered comparison → PF=1, SETNE → 1 (truthy per C++20). ✓
-		// The previous FloatToInt (cvttsd2si) truncation was wrong because it
-		// mapped fractional values like 0.5 to integer 0 (false).
+	// C++20 [conv.bool]: convert condition to bool for control-flow statements.
+	//
+	// Integer types: the backend's TEST instruction already implements the
+	// correct "nonzero → true, zero → false" semantics.  No conversion needed.
+	//
+	// Floating-point types: we emit a FloatNotEqual comparison against 0.0.
+	// This correctly handles:
+	//   - -0.0: UCOMISD/UCOMISS treats -0.0 == +0.0, so SETNE → 0 (false). ✓
+	//   - Fractional values (e.g. 0.5): 0.5 != 0.0 → SETNE → 1 (true). ✓
+	//   - NaN: unordered comparison → PF=1, SETNE → 1 (truthy per C++20). ✓
+	// The previous FloatToInt (cvttsd2si) truncation was wrong because it
+	// mapped fractional values like 0.5 to integer 0 (false).
 
 	auto emitFloatNonZeroTest = [&](ExprResult cond) -> ExprResult {
-			// Materialize a 0.0 constant with the same float type as the condition.
-			// The caller guarantees cond.typeEnum() is Float or Double.
+		// Materialize a 0.0 constant with the same float type as the condition.
+		// The caller guarantees cond.typeEnum() is Float or Double.
 		ExprResult zero = makeExprResult(nativeTypeIndex(cond.typeEnum()), cond.size_in_bits, IrOperand{0.0}, PointerDepth{}, ValueStorage::ContainsData);
-			// Emit: result = (cond != 0.0)
+		// Emit: result = (cond != 0.0)
 		TempVar result_var = var_counter.next();
 		BinaryOp bin_op{
 			.lhs = toTypedValue(cond),
@@ -2478,12 +2477,12 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 			.result = result_var,
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), source_token));
-			// FloatNotEqual produces a bool8 result via SETNE; the backend's
-			// conditional branch already handles bool8 values correctly.
+		// FloatNotEqual produces a bool8 result via SETNE; the backend's
+		// conditional branch already handles bool8 values correctly.
 		return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 	};
 
-		// 1. Try sema annotation (Phase 6/8 contextual bool).
+	// 1. Try sema annotation
 	bool sema_applied_bool_conv = false;
 	if (sema_ && cond_node.is<ExpressionNode>()) {
 		const void* key = &cond_node.as<ExpressionNode>();
@@ -2492,13 +2491,13 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 			const ImplicitCastInfo& cast_info =
 				sema_->castInfoTable()[slot->cast_info_index.value - 1];
 			const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
-				// Float/double → bool: emit FloatNotEqual(cond, 0.0).
+			// Float/double → bool: emit FloatNotEqual(cond, 0.0).
 			if (from_desc.pointer_levels.empty() && is_floating_point_type(from_desc.category())) {
 				return emitFloatNonZeroTest(condition);
 			}
-				// Enum/pointer → bool (Phase 9): backend TEST already implements
-				// correct zero/null → false, non-zero/non-null → true semantics.
-				// Consume the annotation without emitting extra code.
+			// Enum/pointer → bool (Phase 9): backend TEST already implements
+			// correct zero/null → false, non-zero/non-null → true semantics.
+			// Consume the annotation without emitting extra code.
 			if (cast_info.cast_kind == StandardConversionKind::BooleanConversion ||
 				cast_info.cast_kind == StandardConversionKind::PointerConversion) {
 				return condition;
@@ -2526,21 +2525,21 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 			}
 		}
 	}
-		// 2. Fallback: floating-point conditions need explicit conversion because
-		//    the backend's TEST instruction operates on integer bit patterns and
-		//    would mishandle -0.0, which has nonzero bits but is semantically false.
-		//    Guard: pointer types (even float*/double*) are integer-width addresses
-		//    and must use TEST, not FloatNotEqual.
+	// 2. Fallback: floating-point conditions need explicit conversion because
+	//    the backend's TEST instruction operates on integer bit patterns and
+	//    would mishandle -0.0, which has nonzero bits but is semantically false.
+	//    Guard: pointer types (even float*/double*) are integer-width addresses
+	//    and must use TEST, not FloatNotEqual.
 	if (condition.pointer_depth.value == 0 && is_floating_point_type(condition.typeEnum())) {
 		return emitFloatNonZeroTest(condition);
 	}
-		// Note 2026-04-29: the codegen-side struct → bool conversion-operator fallback
-		// previously located here was probed across the full 2243-test corpus with a
-		// hard-fail guard and never hit. Sema's contextual-bool annotation already
-		// covers struct-to-bool conversions in if/while/for/&&/|| conditions, so the
-		// fallback was removed. If a future regression reaches this point with an
-		// unannotated struct condition, the assertion below will surface it instead
-		// of silently emitting a runtime call.
+	// Note 2026-04-29: the codegen-side struct → bool conversion-operator fallback
+	// previously located here was probed across the full 2243-test corpus with a
+	// hard-fail guard and never hit. Sema's contextual-bool annotation already
+	// covers struct-to-bool conversions in if/while/for/&&/|| conditions, so the
+	// fallback was removed. If a future regression reaches this point with an
+	// unannotated struct condition, the assertion below will surface it instead
+	// of silently emitting a runtime call.
 	if (!sema_applied_bool_conv && condition.category() == TypeCategory::Struct) {
 		TypeIndex cond_type_idx = condition.type_index;
 		if (const TypeInfo* src_type_info = tryGetTypeInfo(cond_type_idx)) {
@@ -2557,13 +2556,13 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 
 ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 												  const ASTNode& arg_expr, const TypeSpecifierNode& param_type, const Token& source_token) {
-		// For reference/rvalue-reference parameters, apply any sema-annotated or standard
-		// pre-bind type conversion (e.g. int → const double& needs int→double first).
-		// The *address-of* step for the converted value is handled by buildConstructorArgumentValue.
+	// For reference/rvalue-reference parameters, apply any sema-annotated or standard
+	// pre-bind type conversion (e.g. int → const double& needs int→double first).
+	// The *address-of* step for the converted value is handled by buildConstructorArgumentValue.
 	const TypeCategory param_base_type = param_type.type();
 	bool sema_applied = false;
 
-		// 1. Try sema annotation (most accurate path).
+	// 1. Try sema annotation (most accurate path).
 	if (sema_ && arg_expr.is<ExpressionNode>()) {
 		const void* key = &arg_expr.as<ExpressionNode>();
 		const auto slot = sema_->getSlot(key);
@@ -2622,14 +2621,14 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 		}
 	}
 
-		// Phase 15: sema must annotate all standard constructor arg conversions.
+	// sema must annotate all standard constructor arg conversions.
 	if (!sema_applied && param_type.pointer_depth() == 0 &&
 		arg_result.typeEnum() != param_base_type) {
 		TypeConversionResult conv = can_convert_type(arg_result.typeEnum(), param_base_type);
 		if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
 			if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.typeEnum()) && is_standard_arithmetic_type(param_base_type))
 				throw InternalError(std::string("Phase 15: sema missed constructor arg conversion (") + std::string(getTypeName(arg_result.typeEnum())) + " -> " + std::string(getTypeName(param_base_type)) + ")");
-				// Fallback for non-arithmetic types (enum, etc.)
+			// Fallback for non-arithmetic types (enum, etc.)
 			arg_result = generateTypeConversion(arg_result, arg_result.category(), param_base_type, source_token);
 		}
 	}
@@ -2755,17 +2754,17 @@ TypedValue AstToIr::materializeConvertedReferenceArgument(
 	const TypeSpecifierNode& ref_param_type,
 	const Token& source_token) {
 	const TypeCategory referred_type = ref_param_type.type();
-		// Convert the source value to the referred-to type.
+	// Convert the source value to the referred-to type.
 	ExprResult converted = generateTypeConversion(source_result, source_result.category(), referred_type, source_token);
 	const int ref_type_bits = get_type_size_bits(referred_type);
-		// Materialize the converted value into a stack temporary.
+	// Materialize the converted value into a stack temporary.
 	TempVar conv_temp = var_counter.next();
 	AssignmentOp assign_op;
 	assign_op.result = conv_temp;
 	assign_op.lhs = makeTypedValue(referred_type, SizeInBits{ref_type_bits}, conv_temp);
 	assign_op.rhs = toTypedValue(converted);
 	ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), source_token));
-		// Take the address of the temporary and return it as the reference argument.
+	// Take the address of the temporary and return it as the reference argument.
 	TempVar addr_var = emitAddressOf(referred_type, ref_type_bits, IrValue(conv_temp), source_token);
 	TypedValue result;
 	result.setType(referred_type);
@@ -2822,10 +2821,10 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
 	source_result = applyConstructorArgConversion(source_result, source_expr, param_type, source_token);
 
-		// applyConstructorArgConversion may already have performed the pre-bind scalar conversion
-		// for reference parameters (e.g. int→double for const double&). Reuse the shared
-		// constructor-argument helper so identifier, literal, and general expression sources all
-		// get the correct direct-bind vs temporary-materialization/address-of handling.
+	// applyConstructorArgConversion may already have performed the pre-bind scalar conversion
+	// for reference parameters (e.g. int→double for const double&). Reuse the shared
+	// constructor-argument helper so identifier, literal, and general expression sources all
+	// get the correct direct-bind vs temporary-materialization/address-of handling.
 	TypedValue init_arg = buildConstructorArgumentValue(source_result, source_expr, &param_type, source_token);
 
 	init_arg.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
