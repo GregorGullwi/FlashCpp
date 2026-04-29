@@ -409,12 +409,21 @@ struct TemplatePattern {
 			// 6. If pattern is "T" and concrete is "int", then T=int (exact match)
 			// 7. Reference/pointer/const modifiers must match
 
+			const TypeInfo* pattern_arg_type_info_for_modifiers = tryGetTypeInfo(pattern_arg.type_index);
+			const bool pattern_arg_is_deduced_type_param =
+				(pattern_arg.category() == TypeCategory::UserDefined) ||
+				(pattern_arg.category() == TypeCategory::Invalid &&
+				 pattern_arg_type_info_for_modifiers &&
+				 !pattern_arg_type_info_for_modifiers->isTemplateInstantiation());
+
 			// Check if modifiers match
 			if (pattern_arg.ref_qualifier != concrete_arg.ref_qualifier) {
 				FLASH_LOG(Templates, Trace, "  FAILED: ref_qualifier mismatch");
 				return false;
 			}
-			if (pattern_arg.pointer_depth != concrete_arg.pointer_depth) {
+			if (pattern_arg_is_deduced_type_param
+					? pattern_arg.pointer_depth > concrete_arg.pointer_depth
+					: pattern_arg.pointer_depth != concrete_arg.pointer_depth) {
 				FLASH_LOG(Templates, Trace, "  FAILED: pointer_depth mismatch");
 				return false;
 			}

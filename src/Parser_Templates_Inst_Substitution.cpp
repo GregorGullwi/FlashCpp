@@ -401,6 +401,19 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		return nullptr;
 	}
 
+	StringHandle direct_concrete_member_handle =
+		StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(dependent_base_name)
+				.append("::")
+				.append(dependent_member_name)
+				.commit());
+	auto direct_concrete_member_it = getTypesByNameMap().find(direct_concrete_member_handle);
+	if (direct_concrete_member_it != getTypesByNameMap().end() &&
+		direct_concrete_member_it->second != nullptr) {
+		return direct_concrete_member_it->second;
+	}
+
 	std::string_view base_template_name =
 		StringTable::getStringView(dependent_base_info->baseTemplateName());
 	std::vector<TemplateTypeArg> concrete_base_args =

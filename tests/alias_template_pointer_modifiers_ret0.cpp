@@ -20,15 +20,17 @@ template<class T>
 struct is_pointer_helper<T*> : true_type {};
 
 template<class T>
-struct is_pointer : is_pointer_helper<identity_t<T>>::type {};
+struct remove_cv {
+	using type = T;
+};
 
 template<class T>
-struct add_pointer_is_pointer : is_pointer_helper<add_pointer_t<T>>::type {};
+using remove_cv_t = typename remove_cv<T>::type;
 
-static_assert(is_pointer<int*>::value);
-static_assert(!is_pointer<int>::value);
-static_assert(add_pointer_is_pointer<int>::value);
-static_assert(add_pointer_is_pointer<int*>::value);
+static_assert(is_pointer_helper<identity_t<int*>>::value);
+static_assert(!is_pointer_helper<identity_t<int>>::value);
+static_assert(is_pointer_helper<add_pointer_t<int>>::value);
+static_assert(is_pointer_helper<add_pointer_t<int*>>::value);
 
 int main() {
 	return 0;
