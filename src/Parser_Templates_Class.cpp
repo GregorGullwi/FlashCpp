@@ -4451,9 +4451,14 @@ ParseResult Parser::parse_template_declaration() {
 					func_base_name, return_type, param_types, spec_template_args,
 					func_for_mangling.is_variadic(), "", ns_path, false);
 			} else {
-				// Regular specialization without any template args (shouldn't happen but fallback)
-				specialization_mangled_name =
-					NameMangling::generateMangledNameFromNode(func_for_mangling, ns_path);
+				// Regular specialization without any template args.
+				// Probed 2026-04-29 across the full 2243-test corpus with a hard-fail guard
+				// and never hit: every function-template specialization that reaches this
+				// branch carries either non-type or type template arguments. The previous
+				// "shouldn't happen but fallback" comment is now an explicit invariant.
+				throw InternalError(
+					"Function-template specialization without template arguments: "
+					"specializations must carry either type or non-type template args");
 			}
 
 			func_for_mangling.set_mangled_name(specialization_mangled_name.view());
