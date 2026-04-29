@@ -12764,9 +12764,13 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 		}
 
 			// Get array base offset (only needed if array is StringHandle, not TempVar)
+		bool is_global_array = false;
+		StringHandle global_array_name;
 		if (!array_is_tempvar) {
 			StringHandle lookup_name_handle = is_member_array ? StringTable::getOrInternStringHandle(object_name) : array_name_handle;
-			array_base_offset = variable_scopes.back().variables[lookup_name_handle].offset;
+				// Use find() to avoid creating phantom entries with INT_MIN offset for missing keys
+			auto it = variable_scopes.back().variables.find(lookup_name_handle);
+			array_base_offset = (it != variable_scopes.back().variables.end()) ? it->second.offset : INT_MIN;
 				// Fallback: if not found (offset == INT_MIN), try matching by string to tolerate handle mismatches
 			if (array_base_offset == INT_MIN) {
 				for (const auto& [handle, info] : variable_scopes.back().variables) {
@@ -12774,6 +12778,16 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 						array_base_offset = info.offset;
 						break;
 					}
+				}
+			}
+				// If still not found locally, check if it is a global variable
+			if (array_base_offset == INT_MIN) {
+				StringHandle global_name_handle = is_member_array
+					? StringTable::getOrInternStringHandle(object_name)
+					: array_name_handle;
+				if (isGlobalVariable(global_name_handle)) {
+					is_global_array = true;
+					global_array_name = global_name_handle;
 				}
 			}
 		}
@@ -12794,15 +12808,41 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 		}
 
 		FLASH_LOG_FORMAT(Codegen, Debug,
-						 "ArrayStore: is_member_array={}, object_name='{}', is_object_pointer={}, is_pointer_to_array={}, array_is_tempvar={}, array_base_offset={}, member_offset={}",
-						 is_member_array, (is_member_array ? object_name : "N/A"), is_object_pointer, is_pointer_to_array, array_is_tempvar, array_base_offset, member_offset);
+						 "ArrayStore: is_member_array={}, object_name='{}', is_object_pointer={}, is_pointer_to_array={}, array_is_tempvar={}, array_base_offset={}, member_offset={}, is_global_array={}",
+						 is_member_array, (is_member_array ? object_name : "N/A"), is_object_pointer, is_pointer_to_array, array_is_tempvar, array_base_offset, member_offset, is_global_array);
+
+			// Shared helper: emit store to [RAX] using is_float_store flag
+		auto emitStoreToRAX = [&]() {
+			if (is_float_store) {
+				bool is_double = (element_size_bits == 64);
+				if (is_double) {
+					textSectionData.push_back(0xF2);
+				} else {
+					textSectionData.push_back(0xF3);
+				}
+				textSectionData.push_back(0x0F);
+				textSectionData.push_back(0x11);
+				textSectionData.push_back(0x00);
+			} else {
+				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+			}
+		};
 
 			// Handle constant vs variable index
 		if (std::holds_alternative<unsigned long long>(op.index.value)) {
 				// Constant index
 			uint64_t index_value = std::get<unsigned long long>(op.index.value);
 
-			if (is_pointer_to_array) {
+			if (is_global_array) {
+					// Global variable array member: LEA RAX, [RIP + global], then store
+				uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
+				pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
+				int64_t offset_bytes = member_offset + (index_value * element_size_bytes);
+				if (offset_bytes != 0) {
+					emitAddImmToReg(textSectionData, X64Register::RAX, offset_bytes);
+				}
+				emitStoreToRAX();
+			} else if (is_pointer_to_array) {
 					// Load the pointer value first
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 
@@ -12811,20 +12851,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				emitAddImmToReg(textSectionData, X64Register::RAX, offset_bytes);
 
 					// Store to [RAX] with appropriate size
-				if (is_float_store) {
-						// MOVSS/MOVSD [RAX], XMM0
-					bool is_double = (element_size_bits == 64);
-					if (is_double) {
-						textSectionData.push_back(0xF2);	 // MOVSD prefix
-					} else {
-						textSectionData.push_back(0xF3);	 // MOVSS prefix
-					}
-					textSectionData.push_back(0x0F);
-					textSectionData.push_back(0x11);	 // Store opcode
-					textSectionData.push_back(0x00);	 // ModR/M: [RAX]
-				} else {
-					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
-				}
+				emitStoreToRAX();
 			} else if (is_object_pointer) {
 					// Member array of a pointer object (like this.values[i])
 					// Load the object pointer first
@@ -12840,20 +12867,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				emitAddImmToReg(textSectionData, X64Register::RAX, total_offset);
 
 					// Store to [RAX] with appropriate size
-				if (is_float_store) {
-						// MOVSS/MOVSD [RAX], XMM0
-					bool is_double = (element_size_bits == 64);
-					if (is_double) {
-						textSectionData.push_back(0xF2);	 // MOVSD prefix
-					} else {
-						textSectionData.push_back(0xF3);	 // MOVSS prefix
-					}
-					textSectionData.push_back(0x0F);
-					textSectionData.push_back(0x11);	 // Store opcode
-					textSectionData.push_back(0x00);	 // ModR/M: [RAX]
-				} else {
-					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
-				}
+				emitStoreToRAX();
 			} else {
 					// Regular array - direct stack access
 				int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
@@ -12876,7 +12890,15 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			emitLoadIndexIntoRCX(textSectionData, index_var_offset, op.index.size_in_bits.value);
 			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 
-			if (is_pointer_to_array) {
+			if (is_global_array) {
+					// Global variable array member: LEA RAX, [RIP + global], then add member_offset, then add RCX (runtime index)
+				uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
+				pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
+				if (member_offset != 0) {
+					emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
+				}
+				emitAddRAXRCX(textSectionData);
+			} else if (is_pointer_to_array) {
 					// Load pointer into RAX
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 					// RAX += RCX (add index offset to pointer)
@@ -12903,20 +12925,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			}
 
 				// Store to [RAX]
-			if (is_float_store) {
-					// MOVSS/MOVSD [RAX], XMM0
-				bool is_double = (element_size_bits == 64);
-				if (is_double) {
-					textSectionData.push_back(0xF2);	 // MOVSD prefix
-				} else {
-					textSectionData.push_back(0xF3);	 // MOVSS prefix
-				}
-				textSectionData.push_back(0x0F);
-				textSectionData.push_back(0x11);	 // Store opcode
-				textSectionData.push_back(0x00);	 // ModR/M: [RAX]
-			} else {
-				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
-			}
+			emitStoreToRAX();
 		} else if (std::holds_alternative<StringHandle>(op.index.value)) {
 				// Index is a named variable - get its stack offset
 			StringHandle index_handle = std::get<StringHandle>(op.index.value);
@@ -12932,7 +12941,15 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			emitLoadIndexIntoRCX(textSectionData, index_var_offset, index_size_in_bits);
 			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 
-			if (is_pointer_to_array) {
+			if (is_global_array) {
+					// Global variable array member: LEA RAX, [RIP + global], then add member_offset, then add RCX
+				uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
+				pending_global_relocations_.push_back({reloc_offset, global_array_name, IMAGE_REL_AMD64_REL32});
+				if (member_offset != 0) {
+					emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
+				}
+				emitAddRAXRCX(textSectionData);
+			} else if (is_pointer_to_array) {
 					// Load pointer into RAX
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 					// RAX += RCX (add index offset to pointer)
@@ -12956,20 +12973,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			}
 
 				// Store to [RAX]
-			if (is_float_store) {
-					// MOVSS/MOVSD [RAX], XMM0
-				bool is_double = (element_size_bits == 64);
-				if (is_double) {
-					textSectionData.push_back(0xF2);	 // MOVSD prefix
-				} else {
-					textSectionData.push_back(0xF3);	 // MOVSS prefix
-				}
-				textSectionData.push_back(0x0F);
-				textSectionData.push_back(0x11);	 // Store opcode
-				textSectionData.push_back(0x00);	 // ModR/M: [RAX]
-			} else {
-				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
-			}
+			emitStoreToRAX();
 		} else {
 			throw InternalError("ArrayStore index must be constant, TempVar, or StringHandle");
 		}
