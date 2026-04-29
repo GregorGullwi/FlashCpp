@@ -239,12 +239,13 @@ Recent historical baselines recorded for this work:
   `IrGenerator_Visitors_Namespace.cpp` return struct-conversion-operator
   branch, and the `IrGenerator_Expr_Conversions.cpp` contextual-`bool`
   struct-conversion-operator fallback; root-fixing the
-  `IrGenerator_Stmt_Decl.cpp` variable-init conversion-operator fallback; and
-  narrowing the `IrGenerator_Call_Indirect.cpp` callable-type plus
-  `IrGenerator_Expr_Operators.cpp` ternary parser-typing fallbacks behind a
-  sema-owned slot-backed-or-inferred expression-type bridge. The remaining
-  return-side `generateTypeConversion` fallbacks are still active in
-  non-normalized template bodies.
+  `IrGenerator_Stmt_Decl.cpp` variable-init conversion-operator fallback;
+  root-fixing nested direct-invoke callable typing by stamping resolved
+  call-expression result slots in sema instead of using the temporary
+  codegen-side `getExpressionTypeOrInfer(...)` bridge; and tightening ternary
+  normalization so branch-conversion annotation runs after child normalization.
+  The remaining return-side `generateTypeConversion` fallbacks are still active
+  in non-normalized template bodies.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.

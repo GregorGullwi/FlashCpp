@@ -23,7 +23,7 @@ The removal strategy should be to make the higher phase produce complete metadat
 Representative sites:
 
 - `src\IrGenerator_Call_Direct.cpp` — the prior arity-based `operator()` lookup, the `scoped_overloads` / `gSymbolTable_overloads` single-overload recovery branches, the precomputed-mangled `gSymbolTable` pointer-equality scan, the current-struct + base-class member-by-name recovery, and the qualified-static-member struct-iteration recovery were probed across the full 2239-test corpus with hard-fail guards, never hit, and have been removed.
-- `src\IrGenerator_Call_Indirect.cpp:275` - parser fallback for inconclusive callable type, now narrowed behind a sema-owned slot-backed-or-inferred expression-type bridge.
+- `src\IrGenerator_Call_Indirect.cpp:275` - parser fallback for inconclusive callable type; sema now explicitly annotates resolved call-expression result types so nested callable receivers no longer need codegen-side inference.
 - `src\IrGenerator_MemberAccess.cpp` — the arity-only constructor fallback for `__is_nothrow_constructible` and the "first non-implicit `operator=`" fallback for `__is_nothrow_assignable` (audit §1, formerly lines 2919 and 3047) were probed across the full 2239-test corpus with hard-fail guards, never hit, and have been removed. The exact-match constructor / `operator=` lookups above already cover the corpus.
 - `src\OverloadResolution.h:1130` - arity-only constructor overload resolution when argument type information is unavailable.
 
@@ -46,7 +46,7 @@ Removal direction:
 
 Representative sites:
 
-- `src\IrGenerator_Expr_Operators.cpp:738`, `src\IrGenerator_Expr_Operators.cpp:750`, `src\IrGenerator_Expr_Operators.cpp:758` - ternary lowering falls back from sema annotations to sema expression types and then parser expression typing; the sema step now includes slot-backed-or-inferred expression types before parser recovery runs.
+- `src\IrGenerator_Expr_Operators.cpp:738`, `src\IrGenerator_Expr_Operators.cpp:750`, `src\IrGenerator_Expr_Operators.cpp:758` - ternary lowering falls back from sema annotations to sema expression types and then parser expression typing; sema now normalizes ternary children before branch-conversion annotation so child slots/call targets exist before codegen consults them.
 - `src\IrGenerator_Expr_Operators.cpp:2840` through `src\IrGenerator_Expr_Operators.cpp:2875` - binary operators prefer sema conversions but still generate fallback standard arithmetic conversions.
 - `src\IrGenerator_Expr_Conversions.cpp:1484`, `src\IrGenerator_Expr_Conversions.cpp:1506` - conversion lowering falls back to promotion when sema is missing or unavailable. The contextual-`bool` struct → `bool` conversion-operator fallback (formerly line 2535/2538) was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant.
 - `src\IrGenerator_Visitors_Namespace.cpp` - the return-statement struct-with-conversion-operator branch (formerly the `if (conv_op)` arm) was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant. The two surrounding `generateTypeConversion` fallbacks (no conv-op found, no `TypeInfo`) are confirmed *active*: probing them broke alias-template, lambda returned-closure, and member-alias return cases including `tests\test_alias_template_global_scope_ret42.cpp`, `tests\test_constexpr_lambda_returned_closure_ret0.cpp`, `tests\test_lambda_advanced_features_ret47.cpp`, and `tests\test_underlying_type_ret42.cpp`.
@@ -325,8 +325,9 @@ The initial audit above was architectural. Several template-instantiation fallba
 
 18. `src\IrGenerator_Call_Indirect.cpp` — `operator()` callable-type sema/parser fallback (line ~275)
     - Probe result: replacing the `parser_->get_expression_type(object_node)` step with a hard error whenever `sema_` was present but returned an inconclusive callable type broke `tests\test_generic_lambda_callable_param_ret0.cpp`, `tests\test_generic_lambda_callable_shadowed_name_ret0.cpp`, `tests\test_generic_lambda_recursive_self_ret0.cpp`, `tests\test_lambda_cpp20_comprehensive_ret135.cpp`, and `tests\test_nested_function_returning_funcptr_direct_invoke_ret0.cpp`.
-    - Follow-up narrowing (2026-04-29): codegen now asks sema for a slot-backed-or-inferred expression type before consulting parser typing. This moved nested function-pointer-returning direct invocation receivers (for example `tests\test_nested_function_returning_funcptr_direct_invoke_ret0.cpp` and the new `tests\test_nested_funcptr_direct_invoke_ternary_ret0.cpp`) onto the sema-owned path without regressing the generic-lambda callable cluster.
-    - Conclusion: the parser fallback is still active, but only for receivers that still lack both a sema-resolved `operator()` target and a sema-inferred callable type. The remaining live cases are the generic-lambda-introduced callable parameters / recursive `self` cluster rather than nested function-pointer-returning direct invokes.
+    - Follow-up root fix (2026-04-29): sema now explicitly stamps the result type/value-category slot for every resolved call expression, instead of relying on a later codegen-side `getExpressionTypeOrInfer(...)` helper. Nested function-pointer-returning direct invocation receivers therefore arrive in codegen with ordinary slot-backed sema metadata, and the temporary codegen-side inference bridge was removed again.
+    - Validation: `tests\test_nested_function_returning_funcptr_direct_invoke_ret0.cpp`, `tests\test_nested_funcptr_direct_invoke_ternary_ret0.cpp`, `tests\test_generic_lambda_callable_param_ret0.cpp`, and `tests\test_generic_lambda_recursive_self_ret0.cpp` all still passed after the sema-side change.
+    - Conclusion: the parser fallback is still active, but only for receivers that still lack both a sema-resolved `operator()` target and a slot-backed callable type from sema. The remaining live cases are the generic-lambda-introduced callable parameters / recursive `self` cluster rather than nested function-pointer-returning direct invokes.
 
 ### Confidence update
 
@@ -426,17 +427,23 @@ The audit is now backed by direct suite evidence for several representative temp
   `tests/test_generic_lambda_recursive_self_ret0.cpp`,
   `tests/test_lambda_cpp20_comprehensive_ret135.cpp`, and
   `tests/test_nested_function_returning_funcptr_direct_invoke_ret0.cpp`)
-  passed after this change. A second 2026-04-29 narrowing now asks sema for a
-  slot-backed-or-inferred receiver type before consulting parser typing, which
-  moves the nested function-pointer-returning direct-invoke case onto the
-  sema-owned path (`tests/test_nested_function_returning_funcptr_direct_invoke_ret0.cpp`
-  and `tests/test_nested_funcptr_direct_invoke_ternary_ret0.cpp` both pass).
-  The parser fallback remains required only for true indirect-call receivers
-  that still lack both a sema-resolved `operator()` target and a sema-inferred
+  passed after this change. A second 2026-04-29 follow-up then removed the
+  temporary codegen-side `getExpressionTypeOrInfer(...)` bridge and moved the
+  missing metadata back into sema itself: resolved call expressions now get an
+  explicit result-type slot as part of call-argument normalization, so nested
+  function-pointer-returning direct-invoke receivers stay on the sema-owned
+  path with ordinary slot-backed typing
+  (`tests/test_nested_function_returning_funcptr_direct_invoke_ret0.cpp` and
+  `tests/test_nested_funcptr_direct_invoke_ternary_ret0.cpp` both pass). The
+  parser fallback remains required only for true indirect-call receivers that
+  still lack both a sema-resolved `operator()` target and a slot-backed
   callable type, notably the generic-lambda / recursive-`self` cluster;
 - the ternary common-type fallback in `IrGenerator_Expr_Operators.cpp`
-  (audit §2) was also narrowed on 2026-04-29: codegen now asks sema for
-  slot-backed-or-inferred branch types before consulting parser expression
-  typing, so sema-owned call-expression inference covers nested direct-invoke
-  ternary branches such as `tests/test_nested_funcptr_direct_invoke_ternary_ret0.cpp`;
+  (audit §2) was also narrowed on 2026-04-29: ternary normalization now walks
+  the condition/branches before running branch-conversion annotation, so
+  call-expression children have sema-owned result slots and resolved call
+  targets in place before ternary common-type lowering consults them. The
+  focused ternary/callable cluster including
+  `tests/test_nested_funcptr_direct_invoke_ternary_ret0.cpp` and
+  `tests/test_ternary_sema_consumption_ret0.cpp` passed after this root fix;
 - the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes should still be assumed active until probed or root-fixed individually.
