@@ -527,8 +527,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			if (std::holds_alternative<IdentifierNode>(obj_expr)) {
 				const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
 				std::string_view object_name = object_ident.name();
-				// Look up the object to get struct type
-				const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+				// Look up the object to get struct type (also checks global scope for global vars)
+				const std::optional<ASTNode> symbol = lookupSymbol(object_name);
 				auto emitResolvedArrayAccess = [&](TypeCategory element_type,
 												  int element_size_bits,
 												  TypeIndex element_type_index,
