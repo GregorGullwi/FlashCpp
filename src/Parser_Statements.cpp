@@ -2417,13 +2417,13 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 			continue;
 
 		// Check all template type params were deduced
-	bool all_deduced = true;
-	for (size_t i = 0; i < template_params.size(); ++i) {
-		const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
-		if (tparam != nullptr &&
-			tparam_name_to_index.count(tparam->name()) > 0 &&
-			!deduced[i]) {
-			all_deduced = false;
+		bool all_deduced = true;
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+			if (tparam != nullptr &&
+				tparam_name_to_index.count(tparam->name()) > 0 &&
+				!deduced[i]) {
+				all_deduced = false;
 				break;
 			}
 		}
