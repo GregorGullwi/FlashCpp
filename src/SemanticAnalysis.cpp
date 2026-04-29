@@ -4463,6 +4463,58 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// Reject Struct->Struct (handled elsewhere) and primitive->Struct (converting constructors).
 	if (from_desc.category() == TypeCategory::Struct && to_desc.category() == TypeCategory::Struct)
 		return false;
+	// UserDefined/TypeAlias → non-struct primitive: attempt alias-chain resolution.
+	// Handles patterns like `__underlying_type(Enum) → int`, `typedef int` aliases,
+	// and member-type aliases (e.g. `conditional_t<...>::type`) that codegen sees as
+	// UserDefined but that sema can bottom out to a concrete primitive via
+	// canonicalize_type_alias.  We annotate with the RESOLVED primitive source_type_id
+	// so codegen's return/arg/init handlers enter the !is_struct_type branch and call
+	// generateTypeConversion(primitive, target), setting sema_applied_conversion=true
+	// and eliminating the codegen-side type-alias return fallback.
+	if ((from_desc.category() == TypeCategory::UserDefined ||
+		 from_desc.category() == TypeCategory::TypeAlias) &&
+		from_desc.pointer_levels.empty() && from_desc.array_dimensions.empty() &&
+		from_desc.ref_qualifier == ReferenceQualifier::None &&
+		to_desc.pointer_levels.empty() && to_desc.array_dimensions.empty() &&
+		!is_struct_type(to_desc.category()) && !is_non_primitive_target(to_desc.category()) &&
+		from_desc.type_index.is_valid() && tryGetTypeInfo(from_desc.type_index) != nullptr) {
+		const CanonicalTypeAlias resolved = canonicalize_type_alias(from_desc.type_index);
+		const TypeCategory resolved_cat = resolved.typeEnum();
+		if (!is_unresolved_type(resolved_cat) && !is_struct_type(resolved_cat) &&
+			resolved_cat != TypeCategory::Invalid) {
+			const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to_desc.type_index);
+			const ConversionPlan alias_plan = buildConversionPlan(resolved_cat, to_canonical.typeEnum());
+			if (alias_plan.is_valid && alias_plan.rank != ConversionRank::UserDefined) {
+				TypeIndex resolved_tidx = resolved.resolvedTypeIndex();
+				if (!resolved_tidx.is_valid())
+					resolved_tidx = nativeTypeIndex(resolved_cat);
+				CanonicalTypeDesc prim_desc;
+				prim_desc.type_index = resolved_tidx;
+				const CanonicalTypeId resolved_from_id = type_context_.intern(prim_desc);
+				if (resolved_from_id) {
+					ImplicitCastInfo cast_info;
+					cast_info.source_type_id = resolved_from_id;
+					cast_info.target_type_id = target_type_id;
+					cast_info.cast_kind = alias_plan.kind;
+					cast_info.value_category_after = ValueCategory::PRValue;
+					const CastInfoIndex idx = allocateCastInfo(cast_info);
+					SemanticSlot slot;
+					slot.type_id = target_type_id;
+					slot.cast_info_index = idx;
+					slot.value_category = ValueCategory::PRValue;
+					const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
+					setSlot(key, slot);
+					stats_.slots_filled++;
+					FLASH_LOG(General, Debug,
+							  "SemanticAnalysis: annotated UserDefined alias conversion (",
+							  static_cast<int>(from_desc.category()), " resolved to ",
+							  static_cast<int>(resolved_cat), " -> ",
+							  static_cast<int>(to_desc.category()), ")");
+					return true;
+				}
+			}
+		}
+	}
 	if (from_desc.category() != TypeCategory::Struct && is_unresolved_type(from_desc.category()))
 		return false;
 	if (is_non_primitive_target(to_desc.category()))
@@ -4484,7 +4536,14 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 			}
 		}
 	}
-	if (from_desc.ref_qualifier != ReferenceQualifier::None)
+	// A reference to a struct type still participates in user-defined conversion
+	// operator selection (e.g. `int x = const_cast<const T&>(obj)` or
+	// `int x = static_cast<T&&>(obj)` where T has `operator int()`).
+	// For all other source reference types, bail out: there is no implicit
+	// primitive-to-primitive or enum-to-primitive conversion from a reference
+	// that is not already handled by lvalue-to-rvalue loading in the expression.
+	if (from_desc.ref_qualifier != ReferenceQualifier::None &&
+		from_desc.category() != TypeCategory::Struct)
 		return false;
 
 	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from_desc.type_index);

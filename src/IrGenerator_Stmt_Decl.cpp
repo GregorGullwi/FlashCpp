@@ -1972,19 +1972,20 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 						}
 
-							// Fallback: no sema annotation — search for a conversion operator directly
+						// Probed 2026-04-29 across the full 2243-test corpus: the codegen-side
+						// var-init conversion-operator fallback was never hit after
+						// SemanticAnalysis::tryAnnotateConversion was extended to handle struct
+						// reference sources (T&, const T&, T&&). The sema-annotated path above
+						// is now the only active route.
 						if (!conv_op_applied) {
 							if (const TypeInfo* source_type_info = tryGetTypeInfo(init_type_index)) {
 								const StructMemberFunction* conv_op = findConversionOperator(
 									source_type_info->getStructInfo(), type_node.type_index(),
 									isExprConstQualified(init_node));
 								if (conv_op) {
-									FLASH_LOG(Codegen, Debug, "Found conversion operator from ",
-											  StringTable::getStringView(source_type_info->name()),
-											  " to target type");
-									if (auto result = emitConversionOperatorCall(init_operands, *source_type_info, *conv_op,
-																				 type_node.type_index(), target_size, decl.identifier_token()))
-										init_operands = *result;
+									throw InternalError(
+										"Codegen-side var-init conversion-operator fallback should not run: "
+										"sema must annotate struct-to-primitive variable initialization conversions");
 								}
 							}
 						}

@@ -382,12 +382,30 @@ The audit is now backed by direct suite evidence for several representative temp
   probed across the full 2243-test corpus with a hard-fail guard, never hit,
   and has been replaced with an `InternalError` invariant;
 - the `IrGenerator_Stmt_Decl.cpp:1975` variable-initialization
-  conversion-operator fallback (audit §2) is confirmed *active*: probing it
-  with a hard error breaks `tests\test_const_cast_conv_op_ret0.cpp`,
-  `tests\test_static_cast_base_ref_conv_op_ret0.cpp`, and
-  `tests\test_xvalue_all_casts_ret0.cpp`. Sema does not yet annotate
-  user-defined conversion operators in variable-initialization context for
-  these cases, so the codegen-side search remains required;
+  conversion-operator fallback (audit §2) was confirmed *active* in the
+  2026-04-29 pass but has now been root-fixed and replaced with an
+  `InternalError` invariant. Root fix: `SemanticAnalysis::tryAnnotateConversion`
+  now allows struct reference sources (`T&`, `const T&`, `T&&`) to proceed
+  through the `UserDefined` conversion operator annotation instead of bailing
+  out at the `ref_qualifier != None` guard. After the fix, probing the fallback
+  with a hard error across the full 2243-test corpus showed zero hits, including
+  `tests/test_const_cast_conv_op_ret0.cpp`,
+  `tests/test_static_cast_base_ref_conv_op_ret0.cpp`, and
+  `tests/test_xvalue_all_casts_ret0.cpp`;
+- `SemanticAnalysis::tryAnnotateConversion` was also extended (2026-04-29) to
+  handle `UserDefined`/`TypeAlias` → non-struct primitive conversions by
+  attempting `canonicalize_type_alias` alias-chain resolution when a TypeInfo
+  entry exists. When the alias resolves to a primitive, the annotation records
+  the *resolved* source type id so that codegen's return/arg/init handlers
+  enter the `!is_struct_type(annotated_source_type)` branch and call
+  `generateTypeConversion(primitive, target)` with `sema_applied_conversion=true`.
+  Probing showed the active `IrGenerator_Visitors_Namespace.cpp`
+  `generateTypeConversion` fallbacks (alias-template, `__underlying_type`,
+  lambda return, member-alias cases) are in **non-normalized template bodies**
+  where `tryAnnotateReturnConversion` is not called, so these remain active and
+  the new sema path is not yet exercised by the current corpus. The fallbacks
+  remain safe (all 2243 tests pass) but cannot be replaced with hard assertions
+  until sema normalization extends to template-instantiated bodies;
 - the `Parser_Templates_Class.cpp` "regular specialization without any
   template args" branch (audit §5, formerly line ~4454) was probed across the
   full 2243-test corpus with a hard-fail guard, never hit, and has been
