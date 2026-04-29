@@ -4429,7 +4429,7 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	advance(); // consume '<'
 
 	// Parse template parameters so type names like T are visible when parsing the function declaration.
-	InlineVector<ASTNode, 4> template_params;
+	std::vector<TemplateParameterNode> template_params;
 	auto param_list_result = parse_template_parameter_list(template_params);
 	// On error: fall back to raw skip of this declaration
 	if (param_list_result.is_error()) {
@@ -4457,12 +4457,9 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	// visible when parsing the friend function declaration (e.g. return type T, param type T).
 	FlashCpp::TemplateParameterScope template_scope;
 	FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
-	registerTemplateTypeParametersInScope(template_params, template_scope);
-	for (auto& param : template_params) {
-		if (param.is<TemplateParameterNode>()) {
-			auto& tparam = param.as<TemplateParameterNode>();
-			pushCurrentTemplateParamName(tparam.nameHandle());
-		}
+	TemplateParameterMetadata template_param_metadata = registerTemplateParametersInScope(template_params, template_scope);
+	for (StringHandle param_name : template_param_metadata.names) {
+		pushCurrentTemplateParamName(param_name);
 	}
 
 	// Parse optional requires clause between template parameters and 'friend'

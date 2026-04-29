@@ -150,9 +150,11 @@ ParseResult Parser::parse_template_declaration() {
 	}
 
 	// Parse template parameter list (unless it's a specialization)
+	std::vector<TemplateParameterNode> template_param_nodes;
+	TemplateParameterMetadata template_param_metadata;
 	InlineVector<ASTNode, 4> template_params;
 	if (!is_specialization) {
-		auto param_list_result = parse_template_parameter_list(template_params);
+		auto param_list_result = parse_template_parameter_list(template_param_nodes);
 		if (param_list_result.is_error()) {
 			return param_list_result;
 		}
@@ -186,31 +188,18 @@ ParseResult Parser::parse_template_declaration() {
 	// Add template parameters to the type system temporarily using RAII scope guard (Phase 6)
 	// This allows them to be used in the function body or class members
 	FlashCpp::TemplateParameterScope template_scope;
-	registerTemplateTypeParametersInScope(template_params, template_scope);
-	InlineVector<StringHandle, 4> template_param_names;
-	InlineVector<TemplateParameterKind, 4> template_param_kinds;
-	bool has_packs = false;	// Track if any parameter is a pack
-	for (auto& param : template_params) {
-		if (param.is<TemplateParameterNode>()) {
-			TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-			// Add ALL template parameters to the name list (Type, NonType, and Template)
-			// This allows them to be recognized when referenced in the template body
-			template_param_names.push_back(tparam.nameHandle());	 // string_view from Token
-			template_param_kinds.push_back(tparam.kind());
-
-			// Check if this is a parameter pack
-			has_packs |= tparam.is_variadic();
-		}
-	}
+	template_param_metadata = registerTemplateParametersInScope(template_param_nodes, template_scope);
+	template_params = createTemplateParameterAstNodes(template_param_nodes);
+	InlineVector<StringHandle, 4> template_param_names = template_param_metadata.names;
 
 	// Set the flag to enable fold expression parsing if we have parameter packs
 	bool saved_has_packs = has_parameter_packs_;
-	has_parameter_packs_ = has_packs;
+	has_parameter_packs_ = template_param_metadata.has_packs;
 
 	// Set template parameter context EARLY, before any code that might call parse_type_specifier()
 	// This includes variable template detection below which needs to recognize template params
 	// like _Int in return types: typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&
-	setCurrentTemplateParameters(template_param_names, template_param_kinds);
+	setCurrentTemplateParameters(template_param_metadata.names, template_param_metadata.kinds);
 	FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
 
 	// Check if this is a nested template (member function template of a class template)
@@ -231,7 +220,7 @@ ParseResult Parser::parse_template_declaration() {
 			advance(); // consume '<'
 
 			// Parse inner template parameters
-			InlineVector<ASTNode, 4> inner_template_params;
+			std::vector<TemplateParameterNode> inner_template_params;
 			auto inner_param_result = parse_template_parameter_list(inner_template_params);
 			if (inner_param_result.is_error()) {
 				// Fallback: skip the rest (for standard headers that use unsupported features)
@@ -283,12 +272,10 @@ ParseResult Parser::parse_template_declaration() {
 			advance(); // consume '>'
 
 			// Extract inner template parameter names
-			InlineVector<StringHandle, 4> inner_template_param_names;
-			for (const auto& param : inner_template_params) {
-				if (param.is<TemplateParameterNode>()) {
-					inner_template_param_names.push_back(param.as<TemplateParameterNode>().nameHandle());
-				}
-			}
+			FlashCpp::TemplateParameterScope inner_template_scope;
+			TemplateParameterMetadata inner_template_param_metadata = registerTemplateParametersInScope(inner_template_params, inner_template_scope);
+			InlineVector<StringHandle, 4> inner_template_param_names = inner_template_param_metadata.names;
+			InlineVector<ASTNode, 4> inner_template_param_ast_nodes = createTemplateParameterAstNodes(inner_template_params);
 
 			discard_saved_token(inner_saved);
 
@@ -528,7 +515,7 @@ ParseResult Parser::parse_template_declaration() {
 				out_of_line_member.body_start = body_start;
 				out_of_line_member.initializer_list_start = initializer_list_start;
 				out_of_line_member.template_param_names = template_param_names;
-				out_of_line_member.inner_template_params = inner_template_params;
+				out_of_line_member.inner_template_params = inner_template_param_ast_nodes;
 				out_of_line_member.inner_template_param_names = inner_template_param_names;
 				out_of_line_member.has_initializer_list = has_initializer_list;
 
@@ -3986,24 +3973,12 @@ ParseResult Parser::parse_template_declaration() {
 		// This will prevent delayed function bodies from being parsed immediately
 		parsing_template_class_ = true;
 		template_param_names_.clear();
-		for (const auto& param : template_params) {
-			if (param.is<TemplateParameterNode>()) {
-				const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-				template_param_names_.push_back(tparam.name());
-			}
+		for (std::string_view param_name : template_param_metadata.name_views) {
+			template_param_names_.push_back(param_name);
 		}
 
 		// Set template parameter context for current_template_param_names_
-		InlineVector<StringHandle, 4> template_param_names_for_body;
-		InlineVector<TemplateParameterKind, 4> template_param_kinds_for_body;
-		for (const auto& param : template_params) {
-			if (param.is<TemplateParameterNode>()) {
-				const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-				template_param_names_for_body.push_back(tparam.nameHandle());
-				template_param_kinds_for_body.push_back(tparam.kind());
-			}
-		}
-		setCurrentTemplateParameters(std::move(template_param_names_for_body), std::move(template_param_kinds_for_body));
+		setCurrentTemplateParameters(template_param_metadata.names, template_param_metadata.kinds);
 
 		// Parse class template
 		// Save scope/stack state before try block so we can restore on exception
@@ -4478,7 +4453,7 @@ ParseResult Parser::parse_template_declaration() {
 		// parsing, so template parameters are recognized when parsing the return type.
 
 		ASTNode template_func_node;
-		auto body_result = parse_template_function_declaration_body(template_params, requires_clause, template_func_node);
+		auto body_result = parse_template_function_declaration_body(template_param_nodes, requires_clause, template_func_node);
 
 		// Clean up template parameter context
 		clearCurrentTemplateParameters();
@@ -4668,10 +4643,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	advance(); // consume '<'
 
 	// Parse template parameter list
+	std::vector<TemplateParameterNode> template_param_nodes;
 	InlineVector<ASTNode, 4> template_params;
-	std::vector<std::string_view> template_param_names;
 
-	auto param_list_result = parse_template_parameter_list(template_params);
+	auto param_list_result = parse_template_parameter_list(template_param_nodes);
 	if (param_list_result.is_error()) {
 		return param_list_result;
 	}
@@ -4806,13 +4781,6 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		skipMemberTemplateFunctionTail();
 	};
 
-	// Extract parameter names for later lookup
-	for (const auto& param : template_params) {
-		if (param.is<TemplateParameterNode>()) {
-			template_param_names.push_back(param.as<TemplateParameterNode>().name());
-		}
-	}
-
 	// Expect '>' to close template parameter list
 	if (peek() != ">"_tok) {
 		return ParseResult::error("Expected '>' after template parameter list", current_token_);
@@ -4821,7 +4789,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 	// Temporarily add template parameters to type system using RAII scope guard
 	FlashCpp::TemplateParameterScope template_scope;
-	registerTemplateTypeParametersInScope(template_params, template_scope);
+	TemplateParameterMetadata template_param_metadata = registerTemplateParametersInScope(template_param_nodes, template_scope);
+	InlineVector<std::string_view, 4> template_param_names = template_param_metadata.name_views;
+	template_params = createTemplateParameterAstNodes(template_param_nodes);
 
 	// Skip requires clause if present (for partial specializations with constraints)
 	// e.g., template<typename T> requires Constraint<T> struct Name<T> { ... };
