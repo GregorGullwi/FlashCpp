@@ -2616,11 +2616,13 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 				// C++20 [expr.cond]/1: the condition is contextually converted to bool.
 				tryAnnotateContextualBool(e.condition());
-				// C++20 [expr.cond]/7: usual arithmetic conversions on branches.
-				tryAnnotateTernaryBranchConversions(e);
 				normalizeExpression(e.condition(), ctx);
 				normalizeExpression(e.true_expr(), ctx);
 				normalizeExpression(e.false_expr(), ctx);
+				// C++20 [expr.cond]/7: usual arithmetic conversions on branches.
+				// Normalize the branches first so sema-owned child slots/call targets
+				// exist before we compute and annotate the common-type conversions.
+				tryAnnotateTernaryBranchConversions(e);
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				tryAnnotateConstructorCallArgConversions(e);
 				for (const auto& arg : e.arguments()) {
@@ -5386,6 +5388,44 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 	}
 }
 
+void SemanticAnalysis::annotateExpressionTypeSlot(const ASTNode& expr_node,
+												  CanonicalTypeId type_id,
+												  ValueCategory value_category) {
+	if (!expr_node.is<ExpressionNode>()) {
+		return;
+	}
+	if (!type_id) {
+		return;
+	}
+	const void* key = getExpressionKey(expr_node);
+	SemanticSlot slot = getSlot(key).value_or(SemanticSlot{});
+	slot.type_id = type_id;
+	slot.value_category = value_category;
+	setSlot(key, slot);
+}
+
+void SemanticAnalysis::annotateResolvedCallResultType(const ASTNode& call_node,
+													  const FunctionDeclarationNode& func_decl) {
+	if (!call_node.is<ExpressionNode>()) {
+		return;
+	}
+	const ASTNode return_type_node = func_decl.decl_node().type_node();
+	if (!return_type_node.has_value() || !return_type_node.is<TypeSpecifierNode>()) {
+		return;
+	}
+	const TypeSpecifierNode& return_type = return_type_node.as<TypeSpecifierNode>();
+	if (isPlaceholderAutoType(return_type.type())) {
+		return;
+	}
+	ValueCategory value_category = ValueCategory::PRValue;
+	if (return_type.is_rvalue_reference()) {
+		value_category = ValueCategory::XValue;
+	} else if (return_type.is_reference()) {
+		value_category = ValueCategory::LValue;
+	}
+	annotateExpressionTypeSlot(call_node, canonicalizeType(return_type), value_category);
+}
+
 // --- Function call argument conversion annotation ---
 
 void SemanticAnalysis::annotateResolvedCallArgConversions(const void* call_key,
@@ -6032,7 +6072,8 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	return result;
 }
 
-void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const CallInfo& call_info,
+void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_expr_node,
+														 const CallInfo& call_info,
 														 const void* call_key,
 														 const char* context_description) {
 	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
@@ -6062,12 +6103,13 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const CallInfo& call_in
 	}
 	unresolved_call_args_.erase(call_key);
 
+	annotateResolvedCallResultType(call_expr_node, *func_decl);
 	annotateResolvedCallArgConversions(call_key, *call_info.arguments, *func_decl, context_description);
 }
 
 
 void SemanticAnalysis::tryAnnotateCallArgConversions(const CallExprNode& call_node) {
-	tryAnnotateCallArgConversionsImpl(CallInfo::from(call_node), &call_node, " in call argument");
+	tryAnnotateCallArgConversionsImpl(ASTNode(&call_node), CallInfo::from(call_node), &call_node, " in call argument");
 }
 
 
