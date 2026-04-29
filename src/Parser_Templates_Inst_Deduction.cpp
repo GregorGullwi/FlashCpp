@@ -2702,7 +2702,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 }
 
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCall(
-	const std::vector<ASTNode>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const std::vector<TypeSpecifierNode>& arg_types,
 	const CallArgDeductionInfo& deduction_info,
 	size_t function_pack_arg_start,
@@ -2724,13 +2724,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 		}
 	};
 
-	for (const auto& template_param_node : template_params) {
-		const TemplateParameterNode* param_ptr = tryGetTemplateParameterNode(template_param_node);
-		if (param_ptr == nullptr) {
-			continue;
-		}
-		const TemplateParameterNode& param = *param_ptr;
-
+	for (const TemplateParameterNode& param : template_params) {
 		if (param.kind() == TemplateParameterKind::Template) {
 			skipPreDeducedArgs();
 			if (arg_index >= arg_types.size()) {
@@ -2862,23 +2856,6 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 	}
 
 	return template_args;
-}
-
-std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCall(
-	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const std::vector<TypeSpecifierNode>& arg_types,
-	const CallArgDeductionInfo& deduction_info,
-	size_t function_pack_arg_start,
-	int recursion_depth,
-	NamespaceHandle source_namespace) {
-	const InlineVector<ASTNode, 4> ast_template_params = cloneTemplateParameterNodes(template_params);
-	return deduceTemplateArgsFromCall(
-		std::vector<ASTNode>(ast_template_params.begin(), ast_template_params.end()),
-		arg_types,
-		deduction_info,
-		function_pack_arg_start,
-		recursion_depth,
-		source_namespace);
 }
 
 // Helper function: Try to instantiate a specific template node

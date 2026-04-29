@@ -24,12 +24,11 @@ TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_
 
 namespace {
 
-template <typename ParamContainer>
-ASTNode substituteNonTypeDefaultExpressionImpl(
-	Parser& parser,
-	const ASTNode& default_node,
-	const ParamContainer& template_params,
-	std::span<const TemplateTypeArg> template_args) {
+	ASTNode substituteNonTypeDefaultExpressionImpl(
+		Parser& parser,
+		const ASTNode& default_node,
+		const InlineVector<TemplateParameterNode, 4>& template_params,
+		std::span<const TemplateTypeArg> template_args) {
 	if (!default_node.is<ExpressionNode>() || template_args.empty()) {
 		return default_node;
 	}
@@ -43,13 +42,12 @@ ASTNode substituteNonTypeDefaultExpressionImpl(
 	return substitutor.substitute(default_node);
 }
 
-template <typename ParamContainer>
-std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefaultImpl(
-	Parser& parser,
-	const ASTNode& default_node,
-	const ParamContainer& template_params,
-	std::span<const TemplateTypeArg> template_args,
-	std::span<const std::string_view> template_param_names) {
+	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefaultImpl(
+		Parser& parser,
+		const ASTNode& default_node,
+		const InlineVector<TemplateParameterNode, 4>& template_params,
+		std::span<const TemplateTypeArg> template_args,
+		std::span<const std::string_view> template_param_names) {
 	ASTNode substituted_default_node = substituteNonTypeDefaultExpressionImpl(
 		parser,
 		default_node,
@@ -79,17 +77,6 @@ std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefaultImpl(
 
 ASTNode Parser::substituteNonTypeDefaultExpression(
 	const ASTNode& default_node,
-	const std::vector<ASTNode>& template_params,
-	std::span<const TemplateTypeArg> template_args) {
-	return substituteNonTypeDefaultExpressionImpl(
-		*this,
-		default_node,
-		template_params,
-		template_args);
-}
-
-ASTNode Parser::substituteNonTypeDefaultExpression(
-	const ASTNode& default_node,
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	std::span<const TemplateTypeArg> template_args) {
 	return substituteNonTypeDefaultExpressionImpl(
@@ -99,46 +86,9 @@ ASTNode Parser::substituteNonTypeDefaultExpression(
 		template_args);
 }
 
-ASTNode Parser::substituteNonTypeDefaultExpression(
-	const ASTNode& default_node,
-	const InlineVector<ASTNode, 4>& template_params,
-	std::span<const TemplateTypeArg> template_args) {
-	return substituteNonTypeDefaultExpressionImpl(
-		*this,
-		default_node,
-		template_params,
-		template_args);
-}
-
-std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
-	const ASTNode& default_node,
-	const std::vector<ASTNode>& template_params,
-	std::span<const TemplateTypeArg> template_args,
-	std::span<const std::string_view> template_param_names) {
-	return substituteAndEvaluateNonTypeDefaultImpl(
-		*this,
-		default_node,
-		template_params,
-		template_args,
-		template_param_names);
-}
-
 std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
 	const ASTNode& default_node,
 	const InlineVector<TemplateParameterNode, 4>& template_params,
-	std::span<const TemplateTypeArg> template_args,
-	std::span<const std::string_view> template_param_names) {
-	return substituteAndEvaluateNonTypeDefaultImpl(
-		*this,
-		default_node,
-		template_params,
-		template_args,
-		template_param_names);
-}
-
-std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
-	const ASTNode& default_node,
-	const InlineVector<ASTNode, 4>& template_params,
 	std::span<const TemplateTypeArg> template_args,
 	std::span<const std::string_view> template_param_names) {
 	return substituteAndEvaluateNonTypeDefaultImpl(
@@ -237,9 +187,19 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		template_param_names_sv.push_back(StringTable::getStringView(param_name));
 	}
 
+	InlineVector<TemplateParameterNode, 4> typed_template_parameters;
+	typed_template_parameters.reserve(template_parameters.size());
+	for (const ASTNode& template_param : template_parameters) {
+		const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
+		if (typed_param == nullptr) {
+			return std::nullopt;
+		}
+		typed_template_parameters.push_back(*typed_param);
+	}
+
 	if (auto substituted_eval = substituteAndEvaluateNonTypeDefault(
 			arg_node,
-			template_parameters,
+			typed_template_parameters,
 			std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
 			std::span<const std::string_view>(template_param_names_sv.data(), template_param_names_sv.size()))) {
 		return *substituted_eval;

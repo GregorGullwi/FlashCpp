@@ -1298,38 +1298,13 @@ private:
 		InlineVector<TemplateTypeArg, 4>& out_args);
 	ASTNode substituteNonTypeDefaultExpression(
 		const ASTNode& default_node,
-		const std::vector<ASTNode>& template_params,
-		std::span<const TemplateTypeArg> template_args);
-	ASTNode substituteNonTypeDefaultExpression(
-		const ASTNode& default_node,
 		const InlineVector<TemplateParameterNode, 4>& template_params,
 		std::span<const TemplateTypeArg> template_args);
-	ASTNode substituteNonTypeDefaultExpression(
-		const ASTNode& default_node,
-		const InlineVector<ASTNode, 4>& template_params,
-		std::span<const TemplateTypeArg> template_args);
-	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
-		const ASTNode& default_node,
-		const std::vector<ASTNode>& template_params,
-		std::span<const TemplateTypeArg> template_args,
-		std::span<const std::string_view> template_param_names);
 	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
 		const ASTNode& default_node,
 		const InlineVector<TemplateParameterNode, 4>& template_params,
 		std::span<const TemplateTypeArg> template_args,
 		std::span<const std::string_view> template_param_names);
-	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
-		const ASTNode& default_node,
-		const InlineVector<ASTNode, 4>& template_params,
-		std::span<const TemplateTypeArg> template_args,
-		std::span<const std::string_view> template_param_names);
-	std::optional<InlineVector<TemplateTypeArg, 4>> deduceTemplateArgsFromCall(
-		const std::vector<ASTNode>& template_params,
-		const std::vector<TypeSpecifierNode>& arg_types,
-		const CallArgDeductionInfo& deduction_info,
-		size_t function_pack_arg_start,
-		int recursion_depth,
-		NamespaceHandle source_namespace);
 	std::optional<InlineVector<TemplateTypeArg, 4>> deduceTemplateArgsFromCall(
 		const InlineVector<TemplateParameterNode, 4>& template_params,
 		const std::vector<TypeSpecifierNode>& arg_types,
