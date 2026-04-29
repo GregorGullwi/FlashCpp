@@ -48,9 +48,9 @@ Representative sites:
 
 - `src\IrGenerator_Expr_Operators.cpp:738`, `src\IrGenerator_Expr_Operators.cpp:750`, `src\IrGenerator_Expr_Operators.cpp:758` - ternary lowering falls back from sema annotations to sema expression types and then parser expression typing.
 - `src\IrGenerator_Expr_Operators.cpp:2840` through `src\IrGenerator_Expr_Operators.cpp:2875` - binary operators prefer sema conversions but still generate fallback standard arithmetic conversions.
-- `src\IrGenerator_Expr_Conversions.cpp:1484`, `src\IrGenerator_Expr_Conversions.cpp:1506`, `src\IrGenerator_Expr_Conversions.cpp:2535` - conversion lowering falls back to promotion or direct user-defined conversion search when sema is missing or unavailable.
-- `src\IrGenerator_Visitors_Namespace.cpp:360` - namespace visitor checks conversion operators when sema did not run.
-- `src\IrGenerator_Stmt_Decl.cpp:1975` - variable initialization searches conversion operators directly when sema annotation is absent.
+- `src\IrGenerator_Expr_Conversions.cpp:1484`, `src\IrGenerator_Expr_Conversions.cpp:1506` - conversion lowering falls back to promotion when sema is missing or unavailable. The contextual-`bool` struct → `bool` conversion-operator fallback (formerly line 2535/2538) was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant.
+- `src\IrGenerator_Visitors_Namespace.cpp` - the return-statement struct-with-conversion-operator branch (formerly the `if (conv_op)` arm) was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant. The two surrounding `generateTypeConversion` fallbacks (no conv-op found, no `TypeInfo`) are confirmed *active*: probing them broke alias-template, lambda returned-closure, and member-alias return cases including `tests\test_alias_template_global_scope_ret42.cpp`, `tests\test_constexpr_lambda_returned_closure_ret0.cpp`, `tests\test_lambda_advanced_features_ret47.cpp`, and `tests\test_underlying_type_ret42.cpp`.
+- `src\IrGenerator_Stmt_Decl.cpp:1975` - variable initialization searches conversion operators directly when sema annotation is absent. Confirmed *active* on 2026-04-29: replacing it with a hard error broke `tests\test_const_cast_conv_op_ret0.cpp`, `tests\test_static_cast_base_ref_conv_op_ret0.cpp`, and `tests\test_xvalue_all_casts_ret0.cpp`.
 
 Missing feature:
 
@@ -121,9 +121,10 @@ Removal direction:
 Representative sites:
 
 - `src\Parser_Templates_Class.cpp:246` and `src\Parser_Templates_Class.cpp:559` - nested template parsing skips the rest when parsing fails or the pattern is not recognized.
-- `src\Parser_Templates_Class.cpp:4459` - specialization without template arguments uses a should-not-happen fallback.
 - `src\Parser_Decl_StructEnum.cpp:4339` - qualified friends or unparsed params skip bodies.
 - `src\Parser_FunctionHeaders.cpp:126` - falls back to normal expression parsing after failing another interpretation.
+
+The "regular specialization without any template args" branch in `src\Parser_Templates_Class.cpp` (formerly line ~4454, "shouldn't happen but fallback") was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant: function-template specializations that reach this branch always carry either type or non-type template arguments.
 
 Missing feature:
 
@@ -369,6 +370,30 @@ The audit is now backed by direct suite evidence for several representative temp
   2239-test corpus with hard-fail guards, never hit, and have been removed.
   The exact-match constructor / `operator=` lookup above is sufficient for
   these noexcept type-trait queries on the current corpus;
+- the `IrGenerator_Visitors_Namespace.cpp` return-statement
+  struct-with-conversion-operator branch (audit §2) was probed across the
+  full 2243-test corpus with a hard-fail guard, never hit, and has been
+  replaced with an `InternalError` invariant. The two surrounding
+  `generateTypeConversion` fallbacks (no conv-op found, no `TypeInfo`) are
+  confirmed *active* for alias-template, lambda returned-closure, and
+  member-alias return cases;
+- the contextual-`bool` struct → `bool` conversion-operator fallback in
+  `IrGenerator_Expr_Conversions.cpp` (audit §2, formerly line ~2535) was also
+  probed across the full 2243-test corpus with a hard-fail guard, never hit,
+  and has been replaced with an `InternalError` invariant;
+- the `IrGenerator_Stmt_Decl.cpp:1975` variable-initialization
+  conversion-operator fallback (audit §2) is confirmed *active*: probing it
+  with a hard error breaks `tests\test_const_cast_conv_op_ret0.cpp`,
+  `tests\test_static_cast_base_ref_conv_op_ret0.cpp`, and
+  `tests\test_xvalue_all_casts_ret0.cpp`. Sema does not yet annotate
+  user-defined conversion operators in variable-initialization context for
+  these cases, so the codegen-side search remains required;
+- the `Parser_Templates_Class.cpp` "regular specialization without any
+  template args" branch (audit §5, formerly line ~4454) was probed across the
+  full 2243-test corpus with a hard-fail guard, never hit, and has been
+  replaced with an `InternalError` invariant. Function-template
+  specializations that reach this branch always carry either type or non-type
+  template arguments;
 - the `IrGenerator_Call_Indirect.cpp` `operator()` callable-type sema/parser
   fallback (audit §1, line ~275) is confirmed *active*: probing the
   parser-fallback step with a hard error when sema is present but returns an

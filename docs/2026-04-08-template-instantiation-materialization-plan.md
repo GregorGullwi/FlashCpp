@@ -233,6 +233,14 @@ Recent historical baselines recorded for this work:
 
 - 2026-04-28 Windows fallback follow-up: full suite passed, 2268 regular tests
   and 154 expected-fail tests.
+- 2026-04-29 Linux/clang fallback follow-up: full suite passed, 2243 regular
+  tests and 154 expected-fail tests after probing and removing the dead
+  `Parser_Templates_Class.cpp` specialization-without-args fallback, the
+  `IrGenerator_Visitors_Namespace.cpp` return struct-conversion-operator
+  branch, and the `IrGenerator_Expr_Conversions.cpp` contextual-`bool`
+  struct-conversion-operator fallback. The remaining return-side
+  `generateTypeConversion` fallbacks and the `IrGenerator_Stmt_Decl.cpp`
+  variable-init conversion-operator fallback are confirmed still active.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.
