@@ -1236,13 +1236,14 @@ ParseResult Parser::parse_type_specifier() {
 								instantiated_type.add_pointer_level(pointer_cv);
 							}
 							instantiated_type.add_cv_qualifier(target_cv);
-							instantiated_type.set_reference_qualifier(arg.ref_qualifier);
+							ReferenceQualifier final_ref_qualifier = arg.ref_qualifier;
 							if (target_ref_qualifier == ReferenceQualifier::LValueReference) {
-								instantiated_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+								final_ref_qualifier = ReferenceQualifier::LValueReference;
 							} else if (target_ref_qualifier == ReferenceQualifier::RValueReference &&
-									   instantiated_type.reference_qualifier() == ReferenceQualifier::None) {
-								instantiated_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+									   final_ref_qualifier == ReferenceQualifier::None) {
+								final_ref_qualifier = ReferenceQualifier::RValueReference;
 							}
+							instantiated_type.set_reference_qualifier(final_ref_qualifier);
 							if (arg.is_array) {
 								instantiated_type.set_array(true, arg.array_size);
 							}

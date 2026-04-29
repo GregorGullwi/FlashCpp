@@ -1297,13 +1297,14 @@ ASTNode Parser::substituteTemplateParameters(
 				substituted_spec.add_pointer_level(pointer_level.cv_qualifier);
 			}
 			substituted_spec.add_cv_qualifier(type_spec.cv_qualifier());
-			substituted_spec.set_reference_qualifier(arg.ref_qualifier);
+			ReferenceQualifier final_ref_qualifier = arg.ref_qualifier;
 			if (type_spec.reference_qualifier() == ReferenceQualifier::LValueReference) {
-				substituted_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);
+				final_ref_qualifier = ReferenceQualifier::LValueReference;
 			} else if (type_spec.reference_qualifier() == ReferenceQualifier::RValueReference &&
-					   substituted_spec.reference_qualifier() == ReferenceQualifier::None) {
-				substituted_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);
+					   final_ref_qualifier == ReferenceQualifier::None) {
+				final_ref_qualifier = ReferenceQualifier::RValueReference;
 			}
+			substituted_spec.set_reference_qualifier(final_ref_qualifier);
 			if (arg.is_array) {
 				substituted_spec.set_array(true, arg.array_size);
 			}
