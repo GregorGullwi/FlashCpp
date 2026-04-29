@@ -81,8 +81,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	advance(); // consume '<'
 
 	// Parse template parameter list
-	InlineVector<ASTNode, 4> template_params;
-	InlineVector<StringHandle, 4> template_param_names;
+	InlineVector<TemplateParameterNode, 4> template_params;
 
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {
@@ -97,12 +96,8 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Extract parameter names and register type parameters in one pass
 	FlashCpp::TemplateParameterScope template_scope;
-	registerTemplateTypeParametersInScope(template_params, template_scope);
-	for (auto& param : template_params) {
-		if (param.is<TemplateParameterNode>()) {
-			template_param_names.push_back(param.as<TemplateParameterNode>().nameHandle());
-		}
-	}
+	TemplateParameterMetadata template_param_metadata = registerTemplateParametersInScope(template_params, template_scope);
+	const InlineVector<StringHandle, 4>& template_param_names = template_param_metadata.names;
 
 	// Set template parameter context for parsing the requires clause
 	FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
@@ -194,7 +189,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	ASTNode alias_node;
 	if (has_deferred_target && target_template_name.isValid()) {
 		alias_node = emplace_node<TemplateAliasNode>(
-			std::move(template_params),
+			template_params,
 			std::move(template_param_names),
 			alias_name_handle,
 			type_result.node().value(),
@@ -202,7 +197,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 			std::move(target_template_arg_nodes));
 	} else {
 		alias_node = emplace_node<TemplateAliasNode>(
-			std::move(template_params),
+			template_params,
 			std::move(template_param_names),
 			alias_name_handle,
 			type_result.node().value());
@@ -236,8 +231,7 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	}
 	advance(); // consume '<'
 
-	InlineVector<ASTNode, 4> template_params;
-	InlineVector<std::string_view, 4> template_param_names;
+	InlineVector<TemplateParameterNode, 4> template_params;
 
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {
@@ -246,11 +240,11 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 
 	// Extract parameter names and register type parameters in one pass
 	FlashCpp::TemplateParameterScope template_scope;
-	registerTemplateTypeParametersInScope(template_params, template_scope);
-	for (auto& param : template_params) {
-		if (param.is<TemplateParameterNode>()) {
-			template_param_names.push_back(param.as<TemplateParameterNode>().name());
-		}
+	TemplateParameterMetadata template_param_metadata = registerTemplateParametersInScope(template_params, template_scope);
+	InlineVector<std::string_view, 4> template_param_names;
+	template_param_names.reserve(template_param_metadata.names.size());
+	for (StringHandle param_name : template_param_metadata.names) {
+		template_param_names.push_back(StringTable::getStringView(param_name));
 	}
 
 	// Expect '>'
@@ -339,7 +333,7 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 
 	// Create TemplateVariableDeclarationNode
 	auto template_var_node = emplace_node<TemplateVariableDeclarationNode>(
-		std::move(template_params),
+		template_params,
 		var_decl_node);
 
 	// Build qualified name for registration

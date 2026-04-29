@@ -51,24 +51,36 @@ void registerTypeParamsInScope(
 	const InlineVector<StringHandle, 4>& param_names,
 	const InlineVector<TemplateTypeArg, 4>& type_args,
 	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier = false);
+	bool preserve_ref_qualifier);
 
 void registerTypeParamsInScope(
-	const std::vector<ASTNode>& template_param_nodes,
+	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
 	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier);
 
 void registerTypeParamsInScope(
-	const std::vector<ASTNode>& template_param_nodes,
+	const InlineVector<ASTNode, 4>& template_param_nodes,
 	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
-	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr);
+	bool preserve_ref_qualifier);
+
+void registerTypeParamsInScope(
+	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
+	const std::vector<TemplateTypeArg>& template_args,
+	FlashCpp::TemplateParameterScope& scope,
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map);
+
+void registerTypeParamsInScope(
+	const InlineVector<ASTNode, 4>& template_param_nodes,
+	const std::vector<TemplateTypeArg>& template_args,
+	FlashCpp::TemplateParameterScope& scope,
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map);
 
 void registerOuterBindingInScope(
 	const OuterTemplateBinding& outer_binding,
 	FlashCpp::TemplateParameterScope& scope,
-	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr);
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map);
 
 bool is_known_type_trait_name(std::string_view name);
 

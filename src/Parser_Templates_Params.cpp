@@ -32,7 +32,7 @@ bool Parser::parse_noexcept_value() {
 	return true; // dependent — assume true
 }
 
-ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_params) {
+ParseResult Parser::parse_template_parameter_list(InlineVector<TemplateParameterNode, 4>& out_params) {
 	// Save and restore the current template parameter state that existed before
 	// parsing this list so names added here do not persist after the parse.
 	// ScopedStateCopy keeps the field populated so that outer template parameter
@@ -53,19 +53,20 @@ ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_
 		}
 
 		if (param_result.node().has_value()) {
-			out_params.push_back(*param_result.node());
+			if (!param_result.node()->is<TemplateParameterNode>()) {
+				return ParseResult::error("Expected template parameter node", current_token_);
+			}
+			out_params.push_back(param_result.node()->as<TemplateParameterNode>());
 			// Add this parameter's name so subsequent parameters can reference it in
 			// their default values, e.g. template<typename T, bool = is_arithmetic<T>::value>.
-			if (param_result.node()->is<TemplateParameterNode>()) {
-				auto& tparam = out_params.back().as<TemplateParameterNode>();
-				pushCurrentTemplateParamName(tparam.nameHandle());
-				if (tparam.kind() == TemplateParameterKind::Type ||
-					tparam.kind() == TemplateParameterKind::Template) {
-					ensureTemplateParameterTypeRegistration(tparam);
-				}
-				FLASH_LOG(Templates, Debug, "Added template parameter '", tparam.name(),
-						  "' to current_template_param_names_ (now has ", currentTemplateParamCount(), " params)");
+			auto& tparam = out_params.back();
+			pushCurrentTemplateParamName(tparam.nameHandle());
+			if (tparam.kind() == TemplateParameterKind::Type ||
+				tparam.kind() == TemplateParameterKind::Template) {
+				ensureTemplateParameterTypeRegistration(tparam);
 			}
+			FLASH_LOG(Templates, Debug, "Added template parameter '", tparam.name(),
+					  "' to current_template_param_names_ (now has ", currentTemplateParamCount(), " params)");
 		}
 	}
 
@@ -104,21 +105,30 @@ TypeInfo& Parser::ensureTemplateParameterTypeRegistration(TemplateParameterNode&
 	return *type_info;
 }
 
-void Parser::registerTemplateTypeParametersInScope(
-	InlineVector<ASTNode, 4>& template_params,
+Parser::TemplateParameterMetadata Parser::registerTemplateParametersInScope(
+	InlineVector<TemplateParameterNode, 4>& template_params,
 	FlashCpp::TemplateParameterScope& template_scope) {
-	for (ASTNode& param : template_params) {
-		if (!param.is<TemplateParameterNode>()) {
-			continue;
+	TemplateParameterMetadata metadata;
+	for (TemplateParameterNode& tparam : template_params) {
+		metadata.names.push_back(tparam.nameHandle());
+		metadata.kinds.push_back(tparam.kind());
+		metadata.has_packs |= tparam.is_variadic();
+		if (tparam.kind() == TemplateParameterKind::Type ||
+			tparam.kind() == TemplateParameterKind::Template) {
+			TypeInfo& type_info = ensureTemplateParameterTypeRegistration(tparam);
+			template_scope.addParameter(&type_info);
 		}
-		TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-		if (tparam.kind() != TemplateParameterKind::Type &&
-			tparam.kind() != TemplateParameterKind::Template) {
-			continue;
-		}
-		TypeInfo& type_info = ensureTemplateParameterTypeRegistration(tparam);
-		template_scope.addParameter(&type_info);
 	}
+	return metadata;
+}
+
+InlineVector<ASTNode, 4> Parser::cloneTemplateParameterNodes(const InlineVector<TemplateParameterNode, 4>& template_params) {
+	InlineVector<ASTNode, 4> ast_nodes;
+	ast_nodes.reserve(template_params.size());
+	for (const TemplateParameterNode& template_param : template_params) {
+		ast_nodes.push_back(ASTNode::emplace_node<TemplateParameterNode>(template_param));
+	}
+	return ast_nodes;
 }
 
 // Parse a single template parameter: typename T, class T, int N, etc.

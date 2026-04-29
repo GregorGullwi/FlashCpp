@@ -10,9 +10,7 @@ namespace {
 static int computeFunctionTemplateSpecificity(const TemplateFunctionDeclarationNode& template_func) {
 	std::unordered_set<StringHandle, StringHandleHash> param_name_handles;
 	for (const auto& tp : template_func.template_parameters()) {
-		if (tp.is<TemplateParameterNode>()) {
-			param_name_handles.insert(tp.as<TemplateParameterNode>().nameHandle());
-		}
+		param_name_handles.insert(tp.nameHandle());
 	}
 
 	int score = 0;

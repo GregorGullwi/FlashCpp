@@ -2361,11 +2361,9 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 	// Build template parameter name set for matching
 	std::unordered_map<std::string_view, size_t> tparam_name_to_index;
 	for (size_t i = 0; i < template_params.size(); ++i) {
-		if (template_params[i].is<TemplateParameterNode>()) {
-			const auto& tparam = template_params[i].as<TemplateParameterNode>();
-			if (tparam.kind() == TemplateParameterKind::Type) {
-				tparam_name_to_index[tparam.name()] = i;
-			}
+		if (const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+			tparam != nullptr && tparam->kind() == TemplateParameterKind::Type) {
+			tparam_name_to_index[tparam->name()] = i;
 		}
 	}
 
@@ -2421,9 +2419,9 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 		// Check all template type params were deduced
 		bool all_deduced = true;
 		for (size_t i = 0; i < template_params.size(); ++i) {
-			if (tparam_name_to_index.count(template_params[i].is<TemplateParameterNode>()
-											   ? template_params[i].as<TemplateParameterNode>().name()
-											   : "") > 0 &&
+			const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+			if (tparam != nullptr &&
+				tparam_name_to_index.count(tparam->name()) > 0 &&
 				!deduced[i]) {
 				all_deduced = false;
 				break;
@@ -2449,49 +2447,23 @@ bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guid
 
 	std::unordered_map<std::string_view, const TemplateParameterNode*> template_params;
 	for (const auto& param_node : guide.template_parameters()) {
-		if (!param_node.is<TemplateParameterNode>()) {
-			continue;
-		}
-		const auto& tparam = param_node.as<TemplateParameterNode>();
+		const auto& tparam = param_node;
 		if (tparam.kind() == TemplateParameterKind::Type) {
 			template_params.emplace(tparam.name(), &tparam);
 		}
 	}
 
-	auto tryGetTypeSpecifierFromGuideParameter = [](const ASTNode& param_node) -> const TypeSpecifierNode* {
-		if (param_node.is<TypeSpecifierNode>()) {
-			return &param_node.as<TypeSpecifierNode>();
-		}
-		if (param_node.is<DeclarationNode>()) {
-			const auto& decl = param_node.as<DeclarationNode>();
-			{
-				return &decl.type_specifier_node();
-			}
-		}
-		if (param_node.is<VariableDeclarationNode>()) {
-			const auto& var_decl = param_node.as<VariableDeclarationNode>();
-			{
-				return &var_decl.declaration().type_specifier_node();
-			}
-		}
-		return nullptr;
-	};
-
 	std::unordered_map<std::string_view, TypeSpecifierNode> bindings;
 	for (size_t i = 0; i < guide.guide_parameters().size(); ++i) {
-		const TypeSpecifierNode* param_type = tryGetTypeSpecifierFromGuideParameter(guide.guide_parameters()[i]);
-		if (!param_type) {
-			return false;
-		}
 		const auto& arg_type = argument_types[i];
-		if (!match_template_parameter_type(*param_type, arg_type, template_params, bindings)) {
+		if (!match_template_parameter_type(guide.guide_parameters()[i], arg_type, template_params, bindings)) {
 			return false;
 		}
 	}
 
 	out_template_args.clear();
-	out_template_args.reserve(guide.deduced_template_args_nodes().size());
-	for (const auto& rhs_node : guide.deduced_template_args_nodes()) {
+	out_template_args.reserve(guide.deduced_template_args().size());
+	for (const ASTNode& rhs_node : guide.deduced_template_args()) {
 		if (!rhs_node.is<TypeSpecifierNode>()) {
 			return false;
 		}

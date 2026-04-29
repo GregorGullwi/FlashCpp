@@ -75,6 +75,14 @@ void appendLazyTemplateSequence(TDest& destination, const TSource& source) {
 	}
 }
 
+inline void appendLazyTemplateSequence(
+	InlineVector<ASTNode, 4>& destination,
+	const InlineVector<TemplateParameterNode, 4>& source) {
+	for (const auto& value : source) {
+		destination.push_back(ASTNode::emplace_node<TemplateParameterNode>(value));
+	}
+}
+
 template <typename TParams, typename TArgs>
 LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	const StructMemberFunctionDecl& mem_func,

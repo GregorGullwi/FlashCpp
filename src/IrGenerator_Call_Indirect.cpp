@@ -1265,9 +1265,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 							// Get template parameter names for evaluation
 							InlineVector<std::string_view, 4> eval_param_names;
 							for (const auto& tparam_node : template_func.template_parameters()) {
-								if (tparam_node.is<TemplateParameterNode>()) {
-									eval_param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
-								}
+								eval_param_names.push_back(tparam_node.name());
 							}
 
 							// Convert arg_types to TemplateTypeArg for evaluation
@@ -1313,9 +1311,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						// Get template parameter names
 						InlineVector<std::string_view, 4> param_names;
 						for (const auto& tparam_node : template_func.template_parameters()) {
-							if (tparam_node.is<TemplateParameterNode>()) {
-								param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
-							}
+							param_names.push_back(tparam_node.name());
 						}
 
 						// Generate the mangled name

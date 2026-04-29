@@ -29,7 +29,7 @@ StringHandle Parser::getStructQualifiedNameForRegistration(const StructDeclarati
 }
 
 ParseResult Parser::parse_template_function_declaration_body(
-	InlineVector<ASTNode, 4>& template_params,
+	InlineVector<TemplateParameterNode, 4>& template_params,
 	std::optional<ASTNode> requires_clause,
 	ASTNode& out_template_node) {
 	// Save position for template declaration re-parsing (needed for SFINAE)
@@ -37,7 +37,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 	SaveHandle declaration_start = save_token_position();
 
 	FlashCpp::TemplateParameterScope template_scope;
-	registerTemplateTypeParametersInScope(template_params, template_scope);
+	registerTemplateParametersInScope(template_params, template_scope);
 
 	// Parse storage class specifiers (constexpr, inline, static, etc.)
 	// This must be done BEFORE parse_type_and_name() to capture constexpr for template functions
@@ -185,7 +185,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// Create a template function declaration node
 	func_decl.set_is_template_pattern(true);
 	auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
-		std::move(template_params),
+		template_params,
 		*func_result_node,
 		final_requires_clause);
 
@@ -249,7 +249,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	advance(); // consume '<'
 
 	// Parse template parameter list
-	InlineVector<ASTNode, 4> template_params;
+	InlineVector<TemplateParameterNode, 4> template_params;
 
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {
@@ -264,16 +264,13 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 	// Temporarily add template parameters to type system using RAII scope guard (Phase 3)
 	FlashCpp::TemplateParameterScope template_scope;
-	registerTemplateTypeParametersInScope(template_params, template_scope);
+	TemplateParameterMetadata template_param_metadata = registerTemplateParametersInScope(template_params, template_scope);
 
 	// Set up template parameter names for the body parsing phase
 	// This is needed for decltype expressions and other template-dependent constructs
 	FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
-	for (const auto& param : template_params) {
-		if (param.is<TemplateParameterNode>()) {
-			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-			pushCurrentTemplateParamName(tparam.nameHandle());
-		}
+	for (StringHandle param_name : template_param_metadata.names) {
+		pushCurrentTemplateParamName(param_name);
 	}
 
 	// Check for requires clause after template parameters
@@ -595,10 +592,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 					// Extract template parameter names for use during delayed body parsing
 					InlineVector<StringHandle, 4> template_param_name_handles;
-					for (const auto& param : template_params) {
-						if (param.is<TemplateParameterNode>()) {
-							template_param_name_handles.push_back(param.as<TemplateParameterNode>().nameHandle());
-						}
+					for (StringHandle param_name : template_param_metadata.names) {
+						template_param_name_handles.push_back(param_name);
 					}
 
 					FLASH_LOG_FORMAT(Parser, Debug, "Deferring template constructor body parsing for struct='{}', param_count={}",
@@ -711,7 +706,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						// Create template function declaration node
 						func_ref.set_is_template_pattern(true);
 						auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
-							std::move(template_params),
+							template_params,
 							func_node,
 							requires_clause);
 

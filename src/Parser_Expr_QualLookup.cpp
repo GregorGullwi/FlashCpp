@@ -1460,6 +1460,16 @@ TypeIndex Parser::substitute_template_parameter(
 	return current_type_index.withCategory(current_type);
 }
 
+TypeIndex Parser::substitute_template_parameter(
+	const TypeSpecifierNode& original_type,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	return substitute_template_parameter(
+		original_type,
+		cloneTemplateParameterNodes(template_params),
+		template_args);
+}
+
 // Lookup symbol with template parameter checking
 std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle identifier) {
 	// First check if it's a template parameter using the new method

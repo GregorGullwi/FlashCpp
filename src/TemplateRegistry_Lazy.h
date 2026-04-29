@@ -1311,7 +1311,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 
 					std::optional<long long> resolveAliasTypeSpecSize(
 						const TypeSpecifierNode& alias_type_spec,
-						std::span<const ASTNode> primary_params,
+						std::span<const TemplateParameterNode> primary_params,
 						std::span<const TemplateTypeArg> concrete_member_args) {
 						if (depth_ >= kMaxDepth) return std::nullopt;
 						DepthGuard guard{depth_};
@@ -1321,11 +1321,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 							for (size_t i = 0; i < primary_params.size() &&
 									i < concrete_member_args.size();
 								 ++i) {
-								if (!primary_params[i].is<TemplateParameterNode>()) {
-									continue;
-								}
-								const auto& param =
-									primary_params[i].as<TemplateParameterNode>();
+								const auto& param = primary_params[i];
 								if (param.name() == param_name) {
 									return &concrete_member_args[i];
 								}
@@ -1980,9 +1976,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 									// and map outer template args to them via positional matching
 									std::vector<std::string_view> callee_param_names;
 									for (const auto& param_node : tfdn.template_parameters()) {
-										if (param_node.is<TemplateParameterNode>()) {
-											callee_param_names.push_back(param_node.as<TemplateParameterNode>().name());
-										}
+										callee_param_names.push_back(param_node.name());
 									}
 									// Evaluate using the callee's param names with the outer args
 									// (positional: concept's T maps to callee's T by position)

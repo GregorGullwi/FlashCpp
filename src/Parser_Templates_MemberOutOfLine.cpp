@@ -5,9 +5,9 @@
 #include "TypeTraitEvaluator.h"
 
 std::optional<bool> Parser::try_parse_out_of_line_template_member(
-	const InlineVector<ASTNode, 4>& template_params,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const InlineVector<StringHandle, 4>& template_param_names,
-	const InlineVector<ASTNode, 4>& inner_template_params,
+	const InlineVector<TemplateParameterNode, 4>& inner_template_params,
 	const InlineVector<StringHandle, 4>& inner_template_param_names) {
 	auto makeQualifiedClassIdentifier = [&](std::string_view class_name) {
 		return QualifiedIdentifier::fromQualifiedName(
@@ -607,7 +607,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 		// Register the static member variable definition
 		OutOfLineMemberVariable out_of_line_var;
-		out_of_line_var.template_params = template_params;
+		out_of_line_var.template_params = cloneTemplateParameterNodes(template_params);
 		out_of_line_var.member_name = function_name_token.handle();	// Actually the variable name
 		out_of_line_var.type_node = return_type_node;				  // Actually the variable type
 		out_of_line_var.initializer = *init_result.node();
@@ -631,7 +631,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		// Register the static member variable definition without initializer
 		// This is used for providing storage for static constexpr members declared in the class
 		OutOfLineMemberVariable out_of_line_var;
-		out_of_line_var.template_params = template_params;
+		out_of_line_var.template_params = cloneTemplateParameterNodes(template_params);
 		out_of_line_var.member_name = function_name_token.handle();	// Actually the variable name
 		out_of_line_var.type_node = return_type_node;				  // Actually the variable type
 		// No initializer for this case
