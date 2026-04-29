@@ -19,6 +19,7 @@ Prefer StringHandle primarily or `std::string_view` secondary for non-owning par
 Prefer StringBuilder instead of using std::string concatenation, apart from when throwing exceptions, since we don't care about performance in that context.
 Call `emit` functions like `emitMovFromFrameBySize` instead of `generateMov`. Do not add opcodes manually to `textSectionData` in `IRConverter.h`, make helper functions if no fitting `emit` function exist.
 Never use default parameter values in function or method signatures. Every argument must be passed explicitly by the caller. Default parameters hide misuse (e.g., forgetting to propagate a flag) and make call sites silently wrong instead of producing a compile error.
+Multi-line comments should have the same indentation as the code it describes.
 
 ## Testing Guidelines
 When adding new test cases and files, verify that they are valid C++20 source file by compiling them with clang first in c++20 mode.
