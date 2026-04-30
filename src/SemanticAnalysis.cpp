@@ -3872,8 +3872,31 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return {};
 					if (isPlaceholderAutoType(l.category()) || isPlaceholderAutoType(r.category()))
 						return {};
-					if (!l.pointer_levels.empty() || !r.pointer_levels.empty())
+					// C++20 [expr.add]: pointer arithmetic.
+					//   T* + integral -> T*; integral + T* -> T*
+					//   T* - integral -> T*; T* - T*       -> ptrdiff_t
+					const bool l_is_ptr = !l.pointer_levels.empty();
+					const bool r_is_ptr = !r.pointer_levels.empty();
+					if (l_is_ptr || r_is_ptr) {
+						if (op == "+") {
+							if (l_is_ptr && !r_is_ptr && (isIntegralType(r.category()) || r.category() == TypeCategory::Bool))
+								return lhs_id;
+							if (r_is_ptr && !l_is_ptr && (isIntegralType(l.category()) || l.category() == TypeCategory::Bool))
+								return rhs_id;
+							return {};
+						}
+						if (op == "-") {
+							if (l_is_ptr && !r_is_ptr && (isIntegralType(r.category()) || r.category() == TypeCategory::Bool))
+								return lhs_id;
+							if (l_is_ptr && r_is_ptr) {
+								CanonicalTypeDesc diff_desc;
+								diff_desc.type_index = nativeTypeIndex(TypeCategory::Long);
+								return type_context_.intern(diff_desc);
+							}
+							return {};
+						}
 						return {};
+					}
 					const TypeCategory common_cat = get_common_type(l.category(), r.category());
 					if (common_cat == TypeCategory::Invalid)
 						return {};
@@ -3893,6 +3916,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const CanonicalTypeDesc& f_desc = type_context_.get(f_id);
 				if (t_desc.category() == TypeCategory::Struct || f_desc.category() == TypeCategory::Struct)
 					return {};
+				// If both branches are pointers and they canonicalize to the same
+				// type (handled above), we already returned. Mixed pointer/non-pointer
+				// or pointer-to-different types still fall back to nullopt for now.
 				if (!t_desc.pointer_levels.empty() || !f_desc.pointer_levels.empty())
 					return {};
 				const TypeCategory common_cat = get_common_type(t_desc.category(), f_desc.category());
