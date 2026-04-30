@@ -7063,7 +7063,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 			}
 
-			if (!consume("}"_tok)) {
+			if (current_token_.value() != "}") {
 				return ParseResult::error("Expected '}' to close braced initializer", current_token_);
 			}
 
