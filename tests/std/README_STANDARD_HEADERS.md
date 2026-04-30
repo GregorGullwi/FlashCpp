@@ -4,7 +4,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
-> **Note (2026-04-30 pointer-arithmetic ternary fix sweep):** the rows below still include historical timings from earlier hosts and commits.  The authoritative current Linux/libstdc++-14 state for the retested `tests/std/test_std_*.cpp` files is the **2026-04-30 Pointer-arithmetic ternary result type fix** section below the table.
+> **Note (2026-04-30 dependent-identifier NTTP fix sweep):** the rows below still include historical timings from earlier hosts and commits.  The authoritative current Linux/libstdc++-14 state for the retested `tests/std/test_std_*.cpp` files is the latest dated section below the table.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
@@ -100,6 +100,37 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+
+#### 2026-04-30 Dependent identifier NTTP template-argument fix (Linux/libstdc++-14)
+
+This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested the
+current `<atomic>`, `<latch>`, and `<variant>` blockers after a parser-only
+fix for dependent identifier non-type template arguments.
+
+Fixes landed:
+
+- **`parse_explicit_template_arguments` now accepts bare dependent identifier
+  NTTP arguments without reparsing them as types.**  This covers cases such as
+  `required_alignment` and `__j` when constant evaluation is intentionally
+  deferred inside a template body.
+- **Expression parsing no longer treats every `lookupTemplate()` hit as a class
+  template.**  In expression context, only names explicitly registered as class
+  templates take the type-like path, so function-template ids such as
+  `is_lock_free<...>()` stay expression-like.
+
+Regression tests:
+
+- `tests/test_function_template_dependent_identifier_nttp_ret0.cpp`
+- `tests/test_variable_template_dependent_identifier_nttp_ret0.cpp`
+
+Focused std-header impact (current first-order stops, Linux/libstdc++-14):
+
+| Header | Status | Time | First-order stop / note |
+|--------|--------|------|-------------------------|
+| `<atomic>` | ❌ Compile Error | 1060ms | The old `required_alignment` parse stop is gone. It now instantiates deeper and first stops at `Variable template '__compare_exchange' not found`, then throws `Fatal error: Base class instantiation name should resolve after default filling`. |
+| `<latch>` | ❌ Compile Error | 1050ms | Same blocker as `<atomic>` through `<bits/atomic_base.h>`; the previous `is_lock_free<sizeof(_Tp), required_alignment>()` parse regression is fixed. |
+| `<variant>` | 💥 Crash | 2910ms | The `in_place_index<__j>` parse stop is gone. The test now reaches deeper visitation / `std::__invoke` instantiation before crashing with signal 11. |
 
 
 #### 2026-04-30 Pointer-arithmetic ternary result type fix (Linux/libstdc++-14)
