@@ -10,20 +10,6 @@ Covers `src/IrGenerator_MemberAccess.cpp`, `src/IrGenerator_Expr_*.cpp`,
 
 ---
 
-### 1.4 Conversion Operator Lookup Uses "operator user_defined" Workaround ⚠️
-
-**Standard (C++20 [class.conv.fct]):** Conversion functions are named `operator T()`.
-Lookup proceeds through normal member name lookup.
-
-**FlashCpp:** For conversion operators whose return type was stored as `UserDefined` (often
-via a template type alias), the compiler falls back to searching for the string literal
-`"operator user_defined"` and uses type-size matching as a tiebreaker. This can produce
-"undefined reference to `operator user_defined`" linker errors for pattern templates.
-
-**Location:** `src/IrGenerator_MemberAccess.cpp:3678`
-
----
-
 ### 5.2 No Distinct Pointer Type in the IR `Type` Enum ⚠️
 
 **Standard / ABI:** Pointer arguments must be distinguishable from integer arguments at the
@@ -113,16 +99,17 @@ user-visible error.
 
 **Standard:** All declared variables must have a known, non-zero type size.
 
-**FlashCpp:** `IrGenerator_Expr_Primitives.cpp:256–262` contains an explicit workaround:
+**FlashCpp:** `IrGenerator_Expr_Primitives.cpp:256–262` still contains an explicit workaround:
 
 ```cpp
 // Fallback: if size_bits is 0, calculate from type (parser bug workaround)
 FLASH_LOG(Codegen, Warning,
     "Parser returned size_bits=0 for identifier '...' (type=...) - using fallback calculation");
-size_bits = get_type_size_bits(type_node.type());
+size_bits = getTypeSpecSizeBits(type_node);
 ```
 
-The fallback uses only the scalar type kind and ignores struct sizes entirely; struct
-variables that hit this path may be given the wrong size.
+The fallback is better than the earlier scalar-only version because it now delegates to
+`getTypeSpecSizeBits(type_node)`, but the underlying parser bug still exists and codegen still
+needs to recover from it late.
 
-**Location:** `src/IrGenerator_Expr_Primitives.cpp:256–262`
+**Location:** `src/IrGenerator_Expr_Primitives.cpp:254–262`

@@ -8,48 +8,24 @@ Covers `src/Parser.h` (`createBoundIdentifier`), `src/Parser_Templates_Inst_Dedu
 
 ---
 
-### 1.6 Two-Phase Template Name Lookup Not Formally Separated ⚠️
+### 1.6 Two-Phase Template Name Lookup Still Uses a Unified Binding Path ⚠️
 
-**Standard (C++20 [temp.dep]):** Non-dependent names in a template body must be resolved at
-*definition* time (Phase 1); dependent names are deferred to *instantiation* time (Phase 2).
+**Standard (C++20 [temp.dep], [temp.res]):** Non-dependent names in a template body must be
+resolved at *definition* time (Phase 1); dependent names are deferred to *instantiation*
+time (Phase 2).
 
-**FlashCpp:** `createBoundIdentifier` (Parser.h:1321) performs a single lookup at parse time
-and returns `IdentifierBinding::Unresolved` for anything it cannot immediately classify,
-including types and structs. There is no formal Phase 1 / Phase 2 separation. In practice
-most non-dependent names bind correctly because codegen falls back to runtime lookup, but
-certain non-dependent names that happen to be types fall through to `Unresolved` and rely on
-the codegen fallback path.
+**FlashCpp:** The previous "everything is looked up once at parse time" behavior has been
+narrowed. Template body reparsing now records and diagnoses at least one class of Phase 1
+violation: non-dependent names that were declared only after the template definition are
+rejected during instantiation. However, `createBoundIdentifier` still uses a unified
+lookup/binding path with `IdentifierBinding::Unresolved` as a fallback for names it cannot
+classify immediately, rather than a fully separate semantic Phase 1 / Phase 2 pipeline.
 
-**Location:** `src/Parser.h:1321–1410`
-**Plan:** Phase 3 of the Identifier Resolution Plan (`docs/2026-03-06_IdentifierResolutionPlan.md`).
+This is therefore no longer a blanket absence of two-phase checking, but it is still not a
+fully formal two-phase lookup implementation.
 
----
-
-### 3.1 Non-Type Template Parameter (NTTP) Deduction Not Implemented ❌
-
-**Standard (C++20 [temp.deduct]):** Template argument deduction must handle NTTPs, deducing
-their values from the corresponding function arguments treated as constant expressions.
-
-**FlashCpp:** `deduceTemplateArguments` (Parser_Templates_Inst_Deduction.cpp) has:
-
-```
-// TODO: Add support for non-type parameters and more complex deduction
-```
-
-NTTPs without default values that cannot be deduced cause a logged error and `std::nullopt`.
-NTTPs with defaults are silently skipped. Users must always supply NTTP values explicitly.
-
-**Location:** `src/Parser_Templates_Inst_Deduction.cpp:1119`
+**Location:** `src/Parser.h:2696–2858`, `src/Parser_Templates_Inst_Deduction.cpp:956–994`
 
 ---
 
-### 3.2 Complex Dependent-Type Instantiation Falls Back Silently ⚠️
-
-**Standard:** Template instantiation must correctly substitute all dependent type forms.
-
-**FlashCpp:** When the primary type-resolution path fails during instantiation,
-Parser_Templates_Inst_Deduction.cpp falls back to a "simple substitution (old
-behavior)" path without emitting a diagnostic. Incorrectly instantiated templates can reach
-codegen and link.
-
-**Location:** `src/Parser_Templates_Inst_Deduction.cpp:1775`
+No other currently-audited non-standard template parsing items remain in this file.

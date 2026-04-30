@@ -47,41 +47,20 @@ take unexpected paths.
 **Standard (SD-6):** `__cpp_*` macros shall only be defined if the corresponding feature is
 fully implemented.
 
-- `__cpp_consteval` is no longer defined.
-- `__cpp_constexpr_dynamic_alloc` is no longer defined.
-- `__cpp_constexpr` has been reduced from `202002L` to `201603L`.
+- `__cpp_constexpr_dynamic_alloc` is not defined.
+- `__cpp_constexpr` is reduced to `201603L`.
+- But `__cpp_consteval` is currently still defined as `201811L` even though FlashCpp's
+  constexpr/consteval support remains incomplete.
 
-This avoids advertising full C++20 `consteval` / constexpr-dynamic-allocation support to system
-headers, but FlashCpp's constexpr evaluator still has documented gaps beyond what real-world code
-may expect from a mature C++17/C++20 compiler.
+So the macro surface is only partially conservative: some over-advertising was removed, but
+`__cpp_consteval` still claims support that the implementation does not fully provide.
 
 | Macro | Value | Gap |
 |-------|-------|-----|
-| `__cpp_consteval` | *(now undefined)* | Kept undefined conservatively to avoid over-advertising feature completeness to system headers |
+| `__cpp_consteval` | `201811L` | Advertises consteval support more strongly than the implementation justifies |
 | `__cpp_constexpr` | `201603L` | Some constexpr evaluator gaps remain; see `docs/non_standard/05_constexpr.md` and `docs/CONSTEXPR_LIMITATIONS.md` |
 | `__cpp_constexpr_dynamic_alloc` | *(now undefined)* | `constexpr std::string` / `std::vector` and dynamic allocation in constexpr are not implemented |
 
-**Regression coverage:** `tests/test_constexpr_feature_macros_ret0.cpp`
+**Regression coverage:** `tests/test_feature_macros_ret0.cpp`
 
-**Location:** `src/FileReader_Macros.cpp:1513`
-
----
-
-### 7.4 `__asm` / `__asm__` Parsed as Suffixes; Function and Variable Symbol Rename Preserved ✅
-
-**Context:** `asm` declarations (`extern T f() __asm("impl_name")`) appear in system headers
-for symbol renaming.
-
-- `__asm("...")` and `__asm__("...")` are no longer preprocessor macros.
-- The parser now accepts them as ignorable declaration suffixes on variables and functions.
-- Function and variable declarations now preserve the requested external symbol name instead of
-  discarding it.
-
-This fixes the keyword-vs-macro mismatch and makes `#ifdef __asm` / `#ifdef __asm__` evaluate
-to false, matching GCC-style keyword behavior more closely.
-
-**Regression coverage:** `tests/test_asm_function_rename_ret42.cpp`,
-`tests/test_asm_variable_rename_ret42.cpp`
-
-**Location:** parser handling in `src/Parser_Expr_BinaryPrecedence.cpp` and
-`src/Parser_Decl_DeclaratorCore.cpp`
+**Location:** `src/FileReader_Macros.cpp:1549–1550`
