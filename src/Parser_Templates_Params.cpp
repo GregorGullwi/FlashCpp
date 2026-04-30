@@ -753,7 +753,15 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			}
 		}
 
-		if (lookup_symbol_with_template_check(name_handle).has_value()) {
+		if (std::optional<ASTNode> symbol_lookup = lookup_symbol_with_template_check(name_handle);
+			symbol_lookup.has_value()) {
+			if (symbol_lookup->is<ExpressionNode>()) {
+				const ExpressionNode& lookup_expr = symbol_lookup->as<ExpressionNode>();
+				if (std::holds_alternative<TemplateParameterReferenceNode>(lookup_expr) &&
+					findTypeByName(name_handle) != nullptr) {
+					return { SimpleTemplateArgKind::TypeLike, std::nullopt };
+				}
+			}
 			return { SimpleTemplateArgKind::ValueLike, std::nullopt };
 		}
 
