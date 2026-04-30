@@ -602,6 +602,10 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 							bool trust_zero_sized_type_id = false;
 							if (type_spec.type_index().is_valid()) {
 								if (const TypeInfo* parsed_type_info = tryGetTypeInfo(type_spec.type_index())) {
+									// Lazy-instantiated current-instantiation spellings such as Box<T>,
+									// qualified placeholders like Owner::member, and other template
+									// instantiation placeholders can legitimately carry size 0 at parse time
+									// while still being an unambiguous type-id for sizeof(type).
 									std::string_view parsed_type_name = StringTable::getStringView(parsed_type_info->name());
 									trust_zero_sized_type_id =
 										parsed_type_info->isStruct() ||

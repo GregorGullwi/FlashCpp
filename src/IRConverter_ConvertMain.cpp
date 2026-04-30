@@ -12684,6 +12684,9 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 		}
 
 		auto emitStructCopyToRAX = [&](int64_t source_offset) {
+			// Array element stores need to handle small structs whose size is not encodable as a
+			// single scalar register move. Copy the source stack object in 8/4/2/1-byte chunks so
+			// the same path works for arbitrary small aggregates without relying on helper calls.
 			spillAndInvalidateRegisterForManualOverwrite(X64Register::RDX);
 			int bytes_copied = 0;
 			while (bytes_copied + 8 <= element_size_bytes) {

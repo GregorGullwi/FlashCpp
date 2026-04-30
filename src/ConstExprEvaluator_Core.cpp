@@ -154,6 +154,9 @@ std::optional<size_t> tryGetConstexprTypeAlignment(const TypeSpecifierNode& type
 	return calculate_alignment_from_size(size_in_bytes, aligned_type.category());
 }
 
+// Resolve sizeof bytes for placeholder type-ids that actually name a qualified member
+// such as "Struct::member". This is used by constexpr sizeof(type) recovery when the
+// parser kept the operand as a type-id placeholder instead of an expression AST.
 std::optional<size_t> tryGetConstexprQualifiedMemberSizeBytes(const TypeSpecifierNode& type_spec) {
 	if (!type_spec.type_index().is_valid()) {
 		return std::nullopt;
