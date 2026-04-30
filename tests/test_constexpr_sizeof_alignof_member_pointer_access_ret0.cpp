@@ -22,8 +22,14 @@ constexpr int testAlignof() {
 		+ alignof(s.*int_member);
 }
 
+constexpr int testParameter(double S::* member) {
+	S s{1, 2.0};
+	return sizeof(s.*member) + alignof(s.*member) - static_cast<int>(sizeof(double) + alignof(double));
+}
+
 static_assert(testSizeof() == sizeof(double) + sizeof(double) + sizeof(int));
 static_assert(testAlignof() == alignof(double) + alignof(double) + alignof(int));
+static_assert(testParameter(double_member) == 0);
 
 int main() {
 	return 0;

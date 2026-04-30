@@ -18,6 +18,14 @@ constexpr std::string_view kStatementExecutedWithoutReturn = "Statement executed
 constexpr std::string_view kBreakExecuted = "Break executed";
 constexpr std::string_view kContinueExecuted = "Continue executed";
 
+struct MemberPointerTarget {
+	StringHandle member_name;
+	int64_t offset = 0;
+};
+
+std::optional<MemberPointerTarget> tryResolveMemberPointerTarget(const QualifiedIdentifierNode& qualified_id);
+std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNode& expr_node, EvaluationContext& context);
+
 bool isStatementExecutedWithoutReturn(const EvalResult& result) {
 	return !result.success() && result.error_message == kStatementExecutedWithoutReturn;
 }
@@ -584,11 +592,6 @@ const StructTypeInfo* tryResolveStructInfoFromQualifiedScope(NamespaceHandle sco
 
 	return nullptr;
 }
-
-struct MemberPointerTarget {
-	StringHandle member_name;
-	int64_t offset = 0;
-};
 
 std::optional<MemberPointerTarget> tryResolveMemberPointerTargetRecursive(
 	const StructTypeInfo* struct_info,
