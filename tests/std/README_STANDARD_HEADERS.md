@@ -4,7 +4,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
-> **Note (2026-04-28 dependent-decltype/member-alias sweep):** the rows below still include historical timings from earlier hosts and commits.  The authoritative current Linux/libstdc++-14 state for the retested `tests/std/test_std_*.cpp` files is the **2026-04-28 Dependent `decltype` / Member Alias Deferral Sweep** section below the table.
+> **Note (2026-04-30 pointer-arithmetic ternary fix sweep):** the rows below still include historical timings from earlier hosts and commits.  The authoritative current Linux/libstdc++-14 state for the retested `tests/std/test_std_*.cpp` files is the **2026-04-30 Pointer-arithmetic ternary result type fix** section below the table.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
@@ -45,7 +45,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<new>` | `test_std_new.cpp` | ✅ Compiled | ~56ms |
 | `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~368ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `exception_ptr` copy-vs-move-constructor ambiguity is resolved by the rvalue overload-rank fix. Regression: `tests/test_rvalue_ref_overload_preference_ret0.cpp`. |
 | `<stdexcept>` | `test_std_stdexcept.cpp` | 💥 Crash | ~4390ms (retested 2026-04-11). |
-| `<typeinfo>` | N/A | ✅ Compiled | ~54ms |
+| `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ✅ Compiled | ~46ms (retested 2026-04-30, Linux/libstdc++-14). Sema now models pointer arithmetic (`T* + integral`, `T* - integral`, `T* - T*`) so the ternary in `type_info::name()` (`__name[0] == '*' ? __name + 1 : __name`) gets a sema-owned exact result type and codegen no longer throws. Regression: `tests/test_ternary_pointer_arithmetic_branches_ret0.cpp`. |
 | `<typeindex>` | N/A | ❌ Codegen Error | ~640ms (retested 2026-04-11). "Cannot use copy initialization with explicit constructor". |
 | `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | ~2299ms (retested 2026-04-11). Targeted test now fails with codegen errors. |
 | `<iterator>` | `test_std_iterator.cpp` | ❌ Compile Error | ~2481ms (retested 2026-04-11). Call to deleted function 'swap'. |
@@ -102,7 +102,79 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
 
-#### 2026-04-29 Alias-template modifier retest (Linux/libstdc++-14)
+#### 2026-04-30 Pointer-arithmetic ternary result type fix (Linux/libstdc++-14)
+
+This pass retested every `tests/std/test_std_*.cpp` after rebuilding
+`x64/Sharded/FlashCpp` with clang++.  It also includes one targeted fix.
+
+Fix landed:
+
+- **Sema now models pointer arithmetic in `inferExpressionType`** per
+  C++20 [expr.add]:
+  - `T* + integral` and `integral + T*` -> `T*`
+  - `T* - integral` -> `T*`
+  - `T* - T*` -> `ptrdiff_t`
+
+  Previously, any binary operator with a pointer operand returned
+  `nullopt` from sema's expression type inference, so a sema-normalized
+  ternary whose branches involved pointer arithmetic could not compute
+  a sema-owned result type.  After the recent commit that made codegen
+  *require* an exact ternary result type for normalized function bodies,
+  this regressed `<typeinfo>`'s `name()` member, whose body is exactly
+  `return __name[0] == '*' ? __name + 1 : __name;`, with codegen
+  throwing `Sema-normalized ternary expression missing exact result
+  type`.
+
+Regression: `tests/test_ternary_pointer_arithmetic_branches_ret0.cpp`.
+
+Focused std-header impact (current first-order stops, Linux/libstdc++-14):
+
+| Header | Status | Time | First-order stop / note |
+|--------|--------|------|-------------------------|
+| `<typeinfo>` | ✅ Compiled | 46ms | Now passes via the pointer-arithmetic ternary fix above. |
+| `<limits>` | ✅ Compiled | 1222ms | |
+| `<utility>` | ✅ Compiled | 639ms | |
+| `<concepts>` | ✅ Compiled | 392ms | |
+| `<exception>` | ✅ Compiled | 418ms | |
+| `<bit>` | ✅ Compiled | 464ms | |
+| `<new>` | ✅ Compiled | 46ms | |
+| `<span>` | ✅ Compiled | 34ms | |
+| `<source_location>` | ✅ Compiled | 33ms | |
+| `<version>` | ✅ Compiled | 34ms | |
+| `<compare>` | ✅ Compiled (focused) | 26ms | `test_std_compare_ret42.cpp` only. |
+| `<type_traits>` | ❌ Compile Error | 318ms | Still `static_assert(std::is_pointer<int*>::value)`. |
+| `<atomic>` | ❌ Parse Error | 706ms | Still stops at `__atomic_impl::is_lock_free<sizeof(_Tp), required_alignment>();`.  Investigation: deferred template-body parsing accepts `sizeof(_Tp)` as a dependent compile-time NTTP arg, but a bare identifier NTTP arg referring to a class-template static constexpr member (here `required_alignment`) is reparsed as a *type* in the second slot, which then forces the parser to abandon the call as comparison.  Fix would extend `parse_explicit_template_arguments` to accept dependent identifier NTTP args (similar to the existing `is_compile_time_expr` path) when the expression branch's constant evaluation cannot succeed because we're parsing a deferred template body. |
+| `<variant>` | ❌ Parse Error | 841ms | Still stops at libstdc++ `variant:597` while parsing `in_place_index<__j>`. |
+| `<ratio>` | ❌ Compile Error | 471ms | |
+| `<latch>` | ❌ Parse Error | 704ms | (Regressed since the 2026-04-24 sweep — needs a re-investigation.) |
+| `<any>` | ❌ Compile Error | 461ms | |
+| `<optional>` | ❌ Compile Error | 971ms | |
+| `<array>` | ❌ Compile Error | 1131ms | |
+| `<vector>` / `<deque>` / `<list>` / `<stack>` / `<queue>` | ❌ Compile Error | 1.1–1.4s | |
+| `<set>` / `<map>` | ❌ Compile Error | 1.9s | |
+| `<tuple>` | ❌ Compile Error | 1591ms | |
+| `<string>` / `<string_view>` / `<wstring_view_find_ret0>` | ❌ Compile Error | ~2.0s | |
+| `<algorithm>` / `<numeric>` / `<functional>` / `<iterator>` / `<ranges>` | ❌ Compile Error | 1.9–2.4s | |
+| `<chrono>` | ❌ Compile Error | 2880ms | |
+| `<cmath>` | ❌ Compile Error | 3324ms | |
+| `<memory>` | ❌ Compile Error | 1788ms | |
+| `<shared_mutex>` | ❌ Compile Error | 1915ms | |
+| `<stdexcept>` | ❌ Compile Error | 2257ms | |
+| `<iostream>` / `<sstream>` / `<fstream>` | ❌ Compile Error | ~2.4s | (No longer crashing — now reports compile errors.) |
+
+Notes:
+
+- Previously crashing tests `<deque>`, `<queue>`, `<stack>`, `<iostream>`,
+  `<sstream>`, `<fstream>`, `<stdexcept>`, `<barrier>` are now reaching
+  compile errors instead of hard crashes (rc=1, signal 0).
+- Prior tests reported as ✅ in the 2026-04-24 sweep — `<latch>`,
+  `<atomic>`, `<exception>`, `<variant>` — were retested individually:
+  `<exception>` still passes; `<atomic>`, `<variant>`, `<latch>` regressed
+  to first-order parse / compile errors and need re-investigation
+  (likely candidates: the recent template-parameter / deferred
+  template-body changes).
+
+
 
 This pass retested a small set of standard-header probes against
 `x64/Sharded/FlashCpp` after rebuilding with clang++.
@@ -708,6 +780,10 @@ As of the 2026-04-20 targeted retest, the global namespace prefix blocker and th
 11. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). Affects: `<vector>`, `<list>`, `<map>`.
 
 12. **Late iostream-family codegen / IR lowering crash**: After the InstantiationContext fix below, `<iostream>` gets through parsing and much deeper into codegen before crashing in `IROperandHelpers::toIrValue` after `_S_empty`/`_S_size`/`move` failures. `<sstream>` / `<fstream>` still need targeted retests to see whether they now fail in the same later phase. Affects: `<iostream>`, likely `<sstream>`, `<fstream>`.
+
+### Recent Fixes (2026-04-30)
+
+1. **Sema models pointer arithmetic in `inferExpressionType`**: previously every binary operator with a pointer operand returned `nullopt`, so a sema-normalized ternary whose branches involved pointer arithmetic could not compute a sema-owned result type.  After the recent commit that made codegen require an exact ternary result type for normalized function bodies, this regressed `<typeinfo>`'s `name()` member, whose body is exactly `return __name[0] == '*' ? __name + 1 : __name;`.  Sema now follows C++20 [expr.add]: `T* + integral` and `integral + T*` yield `T*`, `T* - integral` yields `T*`, and `T* - T*` yields `ptrdiff_t`.  Regression: `tests/test_ternary_pointer_arithmetic_branches_ret0.cpp`.  Std-header impact: `tests/std/test_std_typeinfo_ret0.cpp` passes again on Linux/libstdc++-14 in ~46ms.
 
 ### Recent Fixes (2026-04-24, post-depth-guard)
 
