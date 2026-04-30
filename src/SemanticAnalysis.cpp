@@ -3831,7 +3831,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 								return lhs_id;
 							if (l_is_ptr && r_is_ptr) {
 								CanonicalTypeDesc diff_desc;
-								diff_desc.type_index = nativeTypeIndex(TypeCategory::Long);
+								const TypeCategory diff_cat = (g_target_data_model == TargetDataModel::LLP64) ? TypeCategory::LongLong : TypeCategory::Long;
+								diff_desc.type_index = nativeTypeIndex(diff_cat);
 								return type_context_.intern(diff_desc);
 							}
 							return {};

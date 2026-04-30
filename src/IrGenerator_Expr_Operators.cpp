@@ -2591,8 +2591,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(div_op), binaryOperatorNode.get_token()));
 
-		// Return result as Long (ptrdiff_t) with 64-bit size
-		return makeExprResult(nativeTypeIndex(TypeCategory::Long), SizeInBits{64}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+		const TypeCategory diff_cat = (g_target_data_model == TargetDataModel::LLP64) ? TypeCategory::LongLong : TypeCategory::Long;
+		return makeExprResult(nativeTypeIndex(diff_cat), SizeInBits{64}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	// Special handling for pointer arithmetic (ptr + int or ptr - int)
