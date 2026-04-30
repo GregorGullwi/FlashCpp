@@ -507,6 +507,28 @@ struct TemplatePattern {
 										(pattern_arg.category() == TypeCategory::Invalid && p_arg_ti &&
 										 !p_arg_ti->isTemplateInstantiation());
 
+			if (pattern_arg.is_dependent && pattern_arg.is_value) {
+				StringHandle param_name = pattern_arg.dependent_name;
+				if (!param_name.isValid()) {
+					if (param_index >= template_params.size()) {
+						FLASH_LOG(Templates, Trace, "  FAILED: dependent value param_index ", param_index,
+								  " >= template_params.size() ", template_params.size());
+						return false;
+					}
+					if (!template_params[param_index].is<TemplateParameterNode>()) {
+						FLASH_LOG(Templates, Trace, "  FAILED: dependent value template parameter at param_index ",
+								  param_index, " is not a TemplateParameterNode");
+						return false;
+					}
+					param_name = template_params[param_index].as<TemplateParameterNode>().nameHandle();
+				}
+				if (!recordDeduction(param_name, concrete_arg, param_substitutions)) {
+					return false;
+				}
+				++param_index;
+				continue;
+			}
+
 			if (!is_userdefined_param && !is_struct_template_inst) {
 				// This is a concrete type or value in the pattern
 				// (e.g., partial specialization Container<int, T> or enable_if<true, T>)
