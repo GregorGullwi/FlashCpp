@@ -735,14 +735,19 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 
 	// C++20 [expr.cond]/7: if the second and third operands have different
 	// arithmetic types, the usual arithmetic conversions determine the common type.
-	// The sema pass annotates each branch with a conversion to the common type.
-	// We also try parser type inference as a fallback.
+	// Sema owns the full ternary result type for normalized bodies. The fallbacks
+	// below are only for legacy non-normalized bodies that can still reach codegen.
 	TypeCategory common_cat = TypeCategory::Invalid;
 	if (context != ExpressionContext::LValueAddress && sema_) {
 		exact_ternary_result_type = sema_->getTernaryResultType(ternaryNode);
 		if (exact_ternary_result_type.has_value()) {
 			common_cat = exact_ternary_result_type->category();
 		}
+	}
+	if (context != ExpressionContext::LValueAddress &&
+		sema_normalized_current_function_ &&
+		!exact_ternary_result_type.has_value()) {
+		throw InternalError("Sema-normalized ternary expression missing exact result type");
 	}
 	// Check sema annotations: if either branch has a conversion annotation, that
 	// tells us the target (common) type.
@@ -780,11 +785,9 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 			ternaryNode.get_token());
 	}
 
-	// Finalize common_cat: if both sema and parser inference failed, fall back to
-	// true branch type.  This is correct for same-type ternaries; for mixed-type
-	// ternaries the sema or parser paths above should have resolved the common type.
-	// NOTE: sema does not yet cover all contexts (e.g. catch-block bodies), so we
-	// cannot treat a miss here as an InternalError even in normalized bodies.
+	// Finalize common_cat for legacy non-normalized bodies if sema and parser
+	// inference both failed. Normalized ternaries must already have sema's exact
+	// result type above.
 	if (context != ExpressionContext::LValueAddress &&
 		common_cat == TypeCategory::Invalid)
 		common_cat = true_result.category();
@@ -804,11 +807,16 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		true_result.typeEnum() != common_type)
 		true_result = generateTypeConversion(true_result, true_result.category(), common_type, ternaryNode.get_token());
 
-	int result_size = exact_ternary_result_type.has_value()
-		? getTypeSpecSizeBits(*exact_ternary_result_type)
-		: get_type_size_bits(common_type);
-	if (context == ExpressionContext::LValueAddress || result_size == 0)
+	int result_size = 0;
+	if (context == ExpressionContext::LValueAddress) {
 		result_size = true_result.size_in_bits.value;
+	} else if (exact_ternary_result_type.has_value()) {
+		result_size = getTypeSpecSizeBits(*exact_ternary_result_type);
+	} else {
+		result_size = get_type_size_bits(common_type);
+		if (result_size == 0)
+			result_size = true_result.size_in_bits.value;
+	}
 
 	// Build the LHS (destination slot) TypedValue for a branch assignment.
 	// For LValueAddress context, the slot is always a pointer-sized unsigned integer.

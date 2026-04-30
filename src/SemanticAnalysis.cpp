@@ -2439,7 +2439,21 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		normalizeStatement(stmt.try_block(), ctx);
 		for (const auto& handler : stmt.catch_clauses()) {
 			if (handler.is<CatchClauseNode>()) {
-				normalizeStatement(handler.as<CatchClauseNode>().body(), ctx);
+				pushScope();
+				auto guard = ScopeGuard([this]() { popScope(); });
+				const auto& catch_clause = handler.as<CatchClauseNode>();
+				if (catch_clause.exception_declaration().has_value() &&
+					catch_clause.exception_declaration()->is<DeclarationNode>()) {
+					const auto& catch_decl = catch_clause.exception_declaration()->as<DeclarationNode>();
+					TypeSpecifierNode catch_type = catch_decl.type_specifier_node();
+					applyDeclarationArrayBoundsToTypeSpec(catch_decl, catch_type);
+					const CanonicalTypeId tid = canonicalizeType(catch_type);
+					const StringHandle name = catch_decl.identifier_token().handle();
+					if (name.isValid()) {
+						addLocalType(name, tid);
+					}
+				}
+				normalizeStatement(catch_clause.body(), ctx);
 			}
 		}
 	} else if (node.is<SehTryExceptStatementNode>()) {
