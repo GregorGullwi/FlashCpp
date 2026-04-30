@@ -182,6 +182,119 @@ std::optional<TypeSpecifierNode> tryGetConstexprSubscriptResultType(const TypeSp
 	return std::nullopt;
 }
 
+std::optional<StringHandle> tryResolveConstexprMemberPointerTargetName(const ASTNode& member_pointer_node, EvaluationContext& context) {
+	if (!member_pointer_node.is<ExpressionNode>()) {
+		return std::nullopt;
+	}
+
+	const ExpressionNode& member_pointer_expr = member_pointer_node.as<ExpressionNode>();
+	if (const auto* qualified_id = std::get_if<QualifiedIdentifierNode>(&member_pointer_expr)) {
+		if (auto member_target = tryResolveMemberPointerTarget(*qualified_id)) {
+			return member_target->member_name;
+		}
+		return std::nullopt;
+	}
+
+	if (const auto* unary = std::get_if<UnaryOperatorNode>(&member_pointer_expr)) {
+		if (unary->op() == "&") {
+			return tryResolveConstexprMemberPointerTargetName(unary->get_operand(), context);
+		}
+		return std::nullopt;
+	}
+
+	if (const auto* identifier = std::get_if<IdentifierNode>(&member_pointer_expr)) {
+		if (context.local_bindings) {
+			auto local_it = context.local_bindings->find(identifier->name());
+			if (local_it != context.local_bindings->end() && local_it->second.member_pointer_member.isValid()) {
+				return local_it->second.member_pointer_member;
+			}
+		}
+
+		auto try_resolve_from_symbols =
+			[&](const SymbolTable* symbols) -> std::optional<StringHandle> {
+			if (!symbols) {
+				return std::nullopt;
+			}
+
+			auto symbol = symbols->lookup(identifier->name());
+			if (!symbol.has_value() || !symbol->is<VariableDeclarationNode>()) {
+				return std::nullopt;
+			}
+
+			const auto& var_decl = symbol->as<VariableDeclarationNode>();
+			if (!var_decl.initializer().has_value()) {
+				return std::nullopt;
+			}
+
+			return tryResolveConstexprMemberPointerTargetName(*var_decl.initializer(), context);
+		};
+
+		if (auto member_name = try_resolve_from_symbols(context.symbols); member_name.has_value()) {
+			return member_name;
+		}
+		return try_resolve_from_symbols(context.global_symbols);
+	}
+
+	return std::nullopt;
+}
+
+std::optional<TypeSpecifierNode> tryGetConstexprPointerToMemberAccessType(
+	const PointerToMemberAccessNode& member_access,
+	EvaluationContext& context) {
+	auto object_type_opt = tryGetConstexprBoundExpressionType(member_access.object(), context);
+	if (!object_type_opt.has_value() && context.parser) {
+		object_type_opt = context.parser->get_expression_type(member_access.object());
+	}
+	if (!object_type_opt.has_value()) {
+		return std::nullopt;
+	}
+
+	TypeSpecifierNode object_type = *object_type_opt;
+	if (member_access.is_arrow()) {
+		if (object_type.pointer_levels().empty()) {
+			return std::nullopt;
+		}
+		object_type.remove_pointer_level();
+	}
+
+	if (!is_struct_type(object_type.category())) {
+		return std::nullopt;
+	}
+
+	TypeIndex struct_type_index = object_type.type_index();
+	if (!struct_type_index.is_valid()) {
+		return std::nullopt;
+	}
+
+	auto member_name = tryResolveConstexprMemberPointerTargetName(member_access.member_pointer(), context);
+	if (!member_name.has_value()) {
+		return std::nullopt;
+	}
+
+	auto member_result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, *member_name);
+	if (!member_result) {
+		return std::nullopt;
+	}
+
+	TypeSpecifierNode member_type(
+		member_result.member->memberType(),
+		TypeQualifier::None,
+		member_result.member->size * 8,
+		Token{},
+		CVQualifier::None);
+	member_type.set_type_index(member_result.member->type_index);
+	if (member_result.member->is_array) {
+		member_type.set_array_dimensions(member_result.member->array_dimensions);
+	}
+	if (member_result.member->pointer_depth > 0) {
+		member_type.add_pointer_levels(member_result.member->pointer_depth);
+	}
+	if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
+		member_type.set_reference_qualifier(member_result.member->reference_qualifier);
+	}
+	return member_type;
+}
+
 // Try to infer an expression type from active constexpr local bindings before
 // falling back to the parser's broader expression-type machinery. This keeps
 // sizeof/alignof working inside bound constexpr function evaluation where the
@@ -279,6 +392,12 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 			member_type.set_reference_qualifier(member_result.member->reference_qualifier);
 		}
 		return member_type;
+	}
+
+	if (std::holds_alternative<PointerToMemberAccessNode>(expr)) {
+		return tryGetConstexprPointerToMemberAccessType(
+			std::get<PointerToMemberAccessNode>(expr),
+			context);
 	}
 
 	if (std::holds_alternative<ArraySubscriptNode>(expr)) {
