@@ -728,42 +728,7 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		}
 		return nativeTypeIndex(merged_type);
 	};
-	auto sameFunctionSignature = [](const FunctionSignature& lhs, const FunctionSignature& rhs) {
-		return lhs.return_type_index == rhs.return_type_index &&
-			   lhs.return_pointer_depth == rhs.return_pointer_depth &&
-			   lhs.return_reference_qualifier == rhs.return_reference_qualifier &&
-			   lhs.parameter_type_indices == rhs.parameter_type_indices &&
-			   lhs.linkage == rhs.linkage &&
-			   lhs.class_name == rhs.class_name &&
-			   lhs.calling_convention == rhs.calling_convention &&
-			   lhs.is_const == rhs.is_const &&
-			   lhs.function_reference_qualifier == rhs.function_reference_qualifier &&
-			   lhs.is_noexcept == rhs.is_noexcept;
-	};
-	auto sameTypeSpec = [&](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
-		if (lhs.type() != rhs.type() ||
-			lhs.type_index() != rhs.type_index() ||
-			lhs.pointer_depth() != rhs.pointer_depth() ||
-			lhs.reference_qualifier() != rhs.reference_qualifier() ||
-			lhs.cv_qualifier() != rhs.cv_qualifier() ||
-			lhs.has_function_signature() != rhs.has_function_signature()) {
-			return false;
-		}
-		return !lhs.has_function_signature() || sameFunctionSignature(lhs.function_signature(), rhs.function_signature());
-	};
 	std::optional<TypeSpecifierNode> exact_ternary_result_type;
-	std::optional<TypeSpecifierNode> fallback_pointer_like_branch_type;
-	auto captureFallbackPointerLikeBranchType = [&](const std::optional<TypeSpecifierNode>& true_ts,
-												   const std::optional<TypeSpecifierNode>& false_ts) {
-		if (!true_ts.has_value() || !false_ts.has_value() || !sameTypeSpec(*true_ts, *false_ts)) {
-			return;
-		}
-		if (true_ts->pointer_depth() > 0 &&
-			!true_ts->is_reference() &&
-			!true_ts->is_rvalue_reference()) {
-			fallback_pointer_like_branch_type = *true_ts;
-		}
-	};
 
 	// True branch label
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = true_label}, ternaryNode.get_token()));
@@ -798,7 +763,6 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	if (common_cat == TypeCategory::Invalid && sema_) {
 		auto true_ts = sema_->getExpressionType(ternaryNode.true_expr());
 		auto false_ts = sema_->getExpressionType(ternaryNode.false_expr());
-		captureFallbackPointerLikeBranchType(true_ts, false_ts);
 		if (true_ts.has_value() && false_ts.has_value())
 			common_cat = get_common_type(true_ts->category(), false_ts->category());
 	}
@@ -807,7 +771,6 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	if (common_cat == TypeCategory::Invalid && parser_) {
 		auto true_ts = parser_->get_expression_type(ternaryNode.true_expr());
 		auto false_ts = parser_->get_expression_type(ternaryNode.false_expr());
-		captureFallbackPointerLikeBranchType(true_ts, false_ts);
 		if (true_ts.has_value() && false_ts.has_value())
 			common_cat = get_common_type(true_ts->category(), false_ts->category());
 	}
@@ -832,9 +795,7 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		: common_cat;
 	PointerDepth result_pointer_depth = exact_ternary_result_type.has_value()
 		? PointerDepth{static_cast<int>(exact_ternary_result_type->pointer_depth())}
-		: (fallback_pointer_like_branch_type.has_value()
-			? PointerDepth{static_cast<int>(fallback_pointer_like_branch_type->pointer_depth())}
-			: PointerDepth{});
+		: PointerDepth{};
 
 	// Convert true result to common type if needed.
 	// NOTE: sema annotations were already consumed above when determining common_type
