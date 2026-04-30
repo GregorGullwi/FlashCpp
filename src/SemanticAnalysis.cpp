@@ -13,6 +13,7 @@
 #include "ReachableStructWalker.h"
 #include "StringLiteralTokenUtils.h"
 #include "Parser_FunctionTypeHelpers.h"
+#include "ParserInternal.h"
 
 namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
@@ -2742,6 +2743,12 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 				if (auto resolved = tryResolveQualifiedIdentifier(e); resolved.has_value()) {
 					resolved_qualified_identifier_table_[&e] = *resolved;
+					if (resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::StaticMember) {
+						SemanticSlot slot = getSlot(static_cast<const void*>(&expr)).value_or(SemanticSlot{});
+						slot.type_id = canonicalizeType(resolved->type);
+						slot.value_category = ValueCategory::LValue;
+						setSlot(static_cast<const void*>(&expr), slot);
+					}
 				} else {
 					resolved_qualified_identifier_table_.erase(&e);
 				}
@@ -3154,16 +3161,105 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 	}
 
 	if (!ns_handle.isGlobal()) {
-		StringHandle owner_handle = StringTable::getOrInternStringHandle(gNamespaceRegistry.getName(ns_handle));
-		auto owner_it = getTypesByNameMap().find(owner_handle);
-		if (owner_it == getTypesByNameMap().end() && gNamespaceRegistry.getDepth(ns_handle) > 1) {
-			owner_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
-			owner_it = getTypesByNameMap().find(owner_handle);
-		}
+		auto resolve_alias_target = [this](const TypeInfo* type_info) -> const TypeInfo* {
+			if (!type_info || (type_info->isStruct() && type_info->getStructInfo())) {
+				return type_info;
+			}
 
-		if (owner_it != getTypesByNameMap().end()) {
-			if (owner_it->second->isStruct()) {
-				const StructTypeInfo* struct_info = owner_it->second->getStructInfo();
+			if (type_info->isTypeAlias() && type_info->type_index_.is_valid()) {
+				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+					type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+				const TypeInfo* resolved_type_info = resolved_alias.terminal_type_info;
+				if (!resolved_type_info && resolved_alias.type_index.is_valid()) {
+					resolved_type_info = tryGetTypeInfo(resolved_alias.type_index);
+				}
+				if (resolved_type_info && resolved_type_info->isTemplateInstantiation() &&
+					!resolved_type_info->getStructInfo() &&
+					!tryGetStructTypeInfo(resolved_type_info->registeredTypeIndex())) {
+					std::string_view base_template_name = StringTable::getStringView(resolved_type_info->baseTemplateName());
+					if (!base_template_name.empty()) {
+						std::vector<TemplateTypeArg> exact_args;
+						exact_args.reserve(resolved_type_info->templateArgs().size());
+						for (const auto& arg_info : resolved_type_info->templateArgs()) {
+							exact_args.push_back(toTemplateTypeArg(arg_info));
+						}
+
+						Parser::AliasTemplateMaterializationResult materialized_type =
+							parser_.materializeTemplateInstantiationForLookup(base_template_name, exact_args);
+						if (materialized_type.resolved_type_info) {
+							resolved_type_info = materialized_type.resolved_type_info;
+						} else if (!materialized_type.instantiated_name.empty()) {
+							auto materialized_it = getTypesByNameMap().find(
+								StringTable::getOrInternStringHandle(materialized_type.instantiated_name));
+							if (materialized_it != getTypesByNameMap().end()) {
+								resolved_type_info = materialized_it->second;
+							}
+						}
+					}
+				}
+				if (resolved_type_info) {
+					return resolved_type_info;
+				}
+			}
+
+			return type_info;
+		};
+
+		auto resolve_owner_type = [&resolve_alias_target](NamespaceHandle owner_ns) -> const TypeInfo* {
+			std::vector<StringHandle> components;
+			NamespaceHandle current = owner_ns;
+			while (current.isValid() && !current.isGlobal()) {
+				components.insert(components.begin(), StringTable::getOrInternStringHandle(gNamespaceRegistry.getName(current)));
+				current = gNamespaceRegistry.getParent(current);
+			}
+
+			if (components.empty()) {
+				return nullptr;
+			}
+
+			const TypeInfo* owner_type_info = lookupTypeInCurrentContext(components.front());
+			auto owner_it = getTypesByNameMap().end();
+			if (!owner_type_info) {
+				owner_it = getTypesByNameMap().find(components.front());
+				if (owner_it != getTypesByNameMap().end()) {
+					owner_type_info = owner_it->second;
+				}
+			}
+			if (owner_type_info == nullptr) {
+				StringHandle qualified_owner = gNamespaceRegistry.buildQualifiedIdentifier(components);
+				owner_it = getTypesByNameMap().find(qualified_owner);
+				if (owner_it == getTypesByNameMap().end() || owner_it->second == nullptr) {
+					return nullptr;
+				}
+				return resolve_alias_target(owner_it->second);
+			}
+
+			owner_type_info = resolve_alias_target(owner_type_info);
+			for (size_t i = 1; i < components.size() && owner_type_info != nullptr; ++i) {
+				StringHandle nested_type_name = StringTable::getOrInternStringHandle(
+					StringBuilder()
+						.append(owner_type_info->name())
+						.append("::"sv)
+						.append(components[i])
+						.commit());
+				auto nested_it = getTypesByNameMap().find(nested_type_name);
+				if (nested_it == getTypesByNameMap().end() || nested_it->second == nullptr) {
+					return nullptr;
+				}
+				owner_type_info = resolve_alias_target(nested_it->second);
+			}
+
+			return owner_type_info;
+		};
+
+		const TypeInfo* owner_type_info = resolve_owner_type(ns_handle);
+		if (owner_type_info) {
+			if (owner_type_info->isStruct() || owner_type_info->getStructInfo() ||
+				tryGetStructTypeInfo(owner_type_info->registeredTypeIndex())) {
+				const StructTypeInfo* struct_info = owner_type_info->getStructInfo();
+				if (!struct_info) {
+					struct_info = tryGetStructTypeInfo(owner_type_info->registeredTypeIndex());
+				}
 				if (struct_info) {
 					parser_.instantiateLazyStaticMember(struct_info->name, name_handle);
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(name_handle);
@@ -3180,8 +3276,8 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 						return resolved;
 					}
 				}
-			} else if (owner_it->second->isEnum()) {
-				const EnumTypeInfo* enum_info = owner_it->second->getEnumInfo();
+			} else if (owner_type_info && owner_type_info->isEnum()) {
+				const EnumTypeInfo* enum_info = owner_type_info->getEnumInfo();
 				if (enum_info && enum_info->findEnumerator(name_handle)) {
 					ResolvedQualifiedIdentifierInfo resolved;
 					resolved.kind = ResolvedQualifiedIdentifierInfo::Kind::EnumConstant;
