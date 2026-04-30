@@ -12,6 +12,7 @@
 #include "ConstExprEvaluator.h"
 #include "ReachableStructWalker.h"
 #include "StringLiteralTokenUtils.h"
+#include "Parser_FunctionTypeHelpers.h"
 
 namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
@@ -2438,7 +2439,21 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		normalizeStatement(stmt.try_block(), ctx);
 		for (const auto& handler : stmt.catch_clauses()) {
 			if (handler.is<CatchClauseNode>()) {
-				normalizeStatement(handler.as<CatchClauseNode>().body(), ctx);
+				pushScope();
+				auto guard = ScopeGuard([this]() { popScope(); });
+				const auto& catch_clause = handler.as<CatchClauseNode>();
+				if (catch_clause.exception_declaration().has_value() &&
+					catch_clause.exception_declaration()->is<DeclarationNode>()) {
+					const auto& catch_decl = catch_clause.exception_declaration()->as<DeclarationNode>();
+					TypeSpecifierNode catch_type = catch_decl.type_specifier_node();
+					applyDeclarationArrayBoundsToTypeSpec(catch_decl, catch_type);
+					const CanonicalTypeId tid = canonicalizeType(catch_type);
+					const StringHandle name = catch_decl.identifier_token().handle();
+					if (name.isValid()) {
+						addLocalType(name, tid);
+					}
+				}
+				normalizeStatement(catch_clause.body(), ctx);
 			}
 		}
 	} else if (node.is<SehTryExceptStatementNode>()) {
@@ -2623,6 +2638,10 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				// Normalize the branches first so sema-owned child slots/call targets
 				// exist before we compute and annotate the common-type conversions.
 				tryAnnotateTernaryBranchConversions(e);
+				if (const CanonicalTypeId result_type_id = inferExpressionType(node)) {
+					ternary_result_types_[&e] = result_type_id;
+					annotateExpressionTypeSlot(node, result_type_id, inferExpressionValueCategory(node));
+				}
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				tryAnnotateConstructorCallArgConversions(e);
 				for (const auto& arg : e.arguments()) {
@@ -2924,6 +2943,14 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 			throw InternalError("Unexpected semantic value category");
 	}
 	return type;
+}
+
+std::optional<TypeSpecifierNode> SemanticAnalysis::getTernaryResultType(const TernaryOperatorNode& ternary_node) const {
+	auto it = ternary_result_types_.find(&ternary_node);
+	if (it == ternary_result_types_.end()) {
+		return std::nullopt;
+	}
+	return materializeTypeSpecifier(type_context_.get(it->second));
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getOverloadResolutionArgType(const ASTNode& arg) {
@@ -3482,10 +3509,7 @@ CanonicalTypeId SemanticAnalysis::inferResolvedSymbolType(const ASTNode& symbol)
 
 	if (symbol.is<FunctionDeclarationNode>()) {
 		const auto& func = symbol.as<FunctionDeclarationNode>();
-		const ASTNode ret_type_node = func.decl_node().type_node();
-		if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
-			return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
-		}
+		return canonicalizeType(FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(func));
 	}
 
 	return {};

@@ -728,54 +728,29 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		}
 		return nativeTypeIndex(merged_type);
 	};
-	auto sameFunctionSignature = [](const FunctionSignature& lhs, const FunctionSignature& rhs) {
-		return lhs.return_type_index == rhs.return_type_index &&
-			   lhs.return_pointer_depth == rhs.return_pointer_depth &&
-			   lhs.return_reference_qualifier == rhs.return_reference_qualifier &&
-			   lhs.parameter_type_indices == rhs.parameter_type_indices &&
-			   lhs.linkage == rhs.linkage &&
-			   lhs.class_name == rhs.class_name &&
-			   lhs.calling_convention == rhs.calling_convention &&
-			   lhs.is_const == rhs.is_const &&
-			   lhs.is_volatile == rhs.is_volatile &&
-			   lhs.function_reference_qualifier == rhs.function_reference_qualifier &&
-			   lhs.is_noexcept == rhs.is_noexcept;
-	};
-	auto sameTypeSpec = [&](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
-		if (lhs.type() != rhs.type() ||
-			lhs.type_index() != rhs.type_index() ||
-			lhs.pointer_depth() != rhs.pointer_depth() ||
-			lhs.reference_qualifier() != rhs.reference_qualifier() ||
-			lhs.cv_qualifier() != rhs.cv_qualifier() ||
-			lhs.has_function_signature() != rhs.has_function_signature()) {
-			return false;
-		}
-		return !lhs.has_function_signature() || sameFunctionSignature(lhs.function_signature(), rhs.function_signature());
-	};
-	std::optional<TypeSpecifierNode> exact_pointer_like_branch_type;
+	std::optional<TypeSpecifierNode> exact_ternary_result_type;
 
 	// True branch label
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = true_label}, ternaryNode.get_token()));
 
 	// C++20 [expr.cond]/7: if the second and third operands have different
 	// arithmetic types, the usual arithmetic conversions determine the common type.
-	// The sema pass annotates each branch with a conversion to the common type.
-	// We also try parser type inference as a fallback.
+	// Sema owns the full ternary result type for normalized bodies. The fallbacks
+	// below are only for legacy non-normalized bodies that can still reach codegen.
 	TypeCategory common_cat = TypeCategory::Invalid;
-	auto captureExactPointerLikeBranchType = [&](const std::optional<TypeSpecifierNode>& true_ts,
-												 const std::optional<TypeSpecifierNode>& false_ts) {
-		if (!true_ts.has_value() || !false_ts.has_value() || !sameTypeSpec(*true_ts, *false_ts)) {
-			return;
+	if (sema_) {
+		exact_ternary_result_type = sema_->getTernaryResultType(ternaryNode);
+		if (context != ExpressionContext::LValueAddress && exact_ternary_result_type.has_value()) {
+			common_cat = exact_ternary_result_type->category();
 		}
-		if (true_ts->pointer_depth() > 0 &&
-			!true_ts->is_reference() &&
-			!true_ts->is_rvalue_reference()) {
-			exact_pointer_like_branch_type = *true_ts;
-		}
-	};
+	}
+	if (sema_normalized_current_function_ &&
+		!exact_ternary_result_type.has_value()) {
+		throw InternalError("Sema-normalized ternary expression missing exact result type");
+	}
 	// Check sema annotations: if either branch has a conversion annotation, that
 	// tells us the target (common) type.
-	if (sema_) {
+	if (common_cat == TypeCategory::Invalid && sema_) {
 		TypeCategory true_cat = getSemaAnnotatedTargetType(ternaryNode.true_expr());
 		TypeCategory false_cat = getSemaAnnotatedTargetType(ternaryNode.false_expr());
 		if (true_cat != TypeCategory::Invalid)
@@ -788,7 +763,6 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	if (common_cat == TypeCategory::Invalid && sema_) {
 		auto true_ts = sema_->getExpressionType(ternaryNode.true_expr());
 		auto false_ts = sema_->getExpressionType(ternaryNode.false_expr());
-		captureExactPointerLikeBranchType(true_ts, false_ts);
 		if (true_ts.has_value() && false_ts.has_value())
 			common_cat = get_common_type(true_ts->category(), false_ts->category());
 	}
@@ -797,7 +771,6 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	if (common_cat == TypeCategory::Invalid && parser_) {
 		auto true_ts = parser_->get_expression_type(ternaryNode.true_expr());
 		auto false_ts = parser_->get_expression_type(ternaryNode.false_expr());
-		captureExactPointerLikeBranchType(true_ts, false_ts);
 		if (true_ts.has_value() && false_ts.has_value())
 			common_cat = get_common_type(true_ts->category(), false_ts->category());
 	}
@@ -811,20 +784,17 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 			ternaryNode.get_token());
 	}
 
-	// Finalize common_cat: if both sema and parser inference failed, fall back to
-	// true branch type.  This is correct for same-type ternaries; for mixed-type
-	// ternaries the sema or parser paths above should have resolved the common type.
-	// NOTE: sema does not yet cover all contexts (e.g. catch-block bodies), so we
-	// cannot treat a miss here as an InternalError even in normalized bodies.
+	// Finalize common_cat for legacy non-normalized bodies if sema and parser
+	// inference both failed. Normalized ternaries must already have sema's exact
+	// result type above.
 	if (context != ExpressionContext::LValueAddress &&
-		!exact_pointer_like_branch_type.has_value() &&
 		common_cat == TypeCategory::Invalid)
 		common_cat = true_result.category();
 	TypeCategory common_type = context == ExpressionContext::LValueAddress
 		? true_result.category()
-		: (exact_pointer_like_branch_type.has_value() ? exact_pointer_like_branch_type->type() : common_cat);
-	PointerDepth result_pointer_depth = exact_pointer_like_branch_type.has_value()
-		? PointerDepth{static_cast<int>(exact_pointer_like_branch_type->pointer_depth())}
+		: common_cat;
+	PointerDepth result_pointer_depth = exact_ternary_result_type.has_value()
+		? PointerDepth{static_cast<int>(exact_ternary_result_type->pointer_depth())}
 		: PointerDepth{};
 
 	// Convert true result to common type if needed.
@@ -836,11 +806,16 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		true_result.typeEnum() != common_type)
 		true_result = generateTypeConversion(true_result, true_result.category(), common_type, ternaryNode.get_token());
 
-	int result_size = exact_pointer_like_branch_type.has_value()
-		? getTypeSpecSizeBits(*exact_pointer_like_branch_type)
-		: get_type_size_bits(common_type);
-	if (context == ExpressionContext::LValueAddress || result_size == 0)
+	int result_size = 0;
+	if (context == ExpressionContext::LValueAddress) {
 		result_size = true_result.size_in_bits.value;
+	} else if (exact_ternary_result_type.has_value()) {
+		result_size = getTypeSpecSizeBits(*exact_ternary_result_type);
+	} else {
+		result_size = get_type_size_bits(common_type);
+		if (result_size == 0)
+			result_size = true_result.size_in_bits.value;
+	}
 
 	// Build the LHS (destination slot) TypedValue for a branch assignment.
 	// For LValueAddress context, the slot is always a pointer-sized unsigned integer.

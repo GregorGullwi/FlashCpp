@@ -62,9 +62,10 @@ Usual arithmetic conversions, contextual conversions, user-defined conversions, 
 
 Removal direction:
 
-- Require sema to annotate every implicit conversion, including ternary branch conversions, assignment RHS conversions, binary arithmetic conversions, contextual `bool`, and user-defined conversions.
+- Require sema to own the exact result type for every ternary expression and annotate every implicit conversion, including ternary branch conversions, assignment RHS conversions, binary arithmetic conversions, contextual `bool`, and user-defined conversions.
 - Extend sema coverage to template-instantiated, catch-block, lambda, and delayed member bodies so parser expression typing is never needed by codegen.
 - Replace codegen fallbacks with assertions once all normalized body contexts are covered.
+- TODO: remove the remaining non-normalized ternary category/size fallback once template-instantiated, catch-block, lambda, and delayed member bodies all carry sema-owned exact ternary result types.
 - Keep codegen conversion helpers only as emitters for an already-selected conversion, not as selectors.
 
 ### 3. Template instantiation and substitution recovery
@@ -445,5 +446,8 @@ The audit is now backed by direct suite evidence for several representative temp
   targets in place before ternary common-type lowering consults them. The
   focused ternary/callable cluster including
   `tests/test_nested_funcptr_direct_invoke_ternary_ret0.cpp` and
-  `tests/test_ternary_sema_consumption_ret0.cpp` passed after this root fix;
+  `tests/test_ternary_sema_consumption_ret0.cpp` passed after this root fix.
+  A 2026-04-30 follow-up made normalized ternary lowering require sema's exact
+  result `TypeSpecifierNode`; the remaining category/size fallback is now
+  limited to non-normalized bodies and tracked above as future cleanup;
 - the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes should still be assumed active until probed or root-fixed individually.
