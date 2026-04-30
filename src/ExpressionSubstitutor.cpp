@@ -1930,6 +1930,59 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::expandPacksInArguments(
 					if (it != param_map_.end()) {
 						expanded_args.push_back(it->second);
 					}
+				} else if (const auto* identifier = std::get_if<IdentifierNode>(&expr_variant)) {
+					auto it = param_map_.find(identifier->name());
+					if (it != param_map_.end()) {
+						expanded_args.push_back(it->second);
+						continue;
+					}
+				}
+
+				ASTNode substituted_arg_node = substitute(arg_node);
+				if (substituted_arg_node.is<TypeSpecifierNode>()) {
+					expanded_args.emplace_back(substituted_arg_node.as<TypeSpecifierNode>());
+					continue;
+				}
+				if (!substituted_arg_node.is<ExpressionNode>()) {
+					continue;
+				}
+
+				const ExpressionNode& substituted_expr = substituted_arg_node.as<ExpressionNode>();
+				if (const auto* identifier = std::get_if<IdentifierNode>(&substituted_expr)) {
+					StringHandle type_name = StringTable::getOrInternStringHandle(identifier->name());
+					if (const TypeInfo* type_info = findTypeByName(type_name)) {
+						expanded_args.push_back(TemplateTypeArg::makeType(type_info->type_index_));
+						continue;
+					}
+					if (auto builtin_type = parser_.get_builtin_type_info(identifier->name())) {
+						expanded_args.push_back(
+							TemplateTypeArg::makeType(nativeTypeIndex(builtin_type->first)));
+						continue;
+					}
+				}
+				if (std::holds_alternative<NumericLiteralNode>(substituted_expr)) {
+					const NumericLiteralNode& lit = std::get<NumericLiteralNode>(substituted_expr);
+					const NumericLiteralValue& raw_value = lit.value();
+					int64_t value = 0;
+					if (const auto* ull_val = std::get_if<unsigned long long>(&raw_value)) {
+						value = static_cast<int64_t>(*ull_val);
+					} else if (const auto* d_val = std::get_if<double>(&raw_value)) {
+						value = static_cast<int64_t>(*d_val);
+					} else {
+						continue;
+					}
+					expanded_args.emplace_back(value, lit.type());
+					continue;
+				}
+				if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&substituted_expr)) {
+					expanded_args.emplace_back(bool_literal->value() ? 1 : 0, TypeCategory::Bool);
+					continue;
+				}
+				if (const auto* template_param_ref = std::get_if<TemplateParameterReferenceNode>(&substituted_expr)) {
+					auto it = param_map_.find(template_param_ref->param_name().view());
+					if (it != param_map_.end()) {
+						expanded_args.push_back(it->second);
+					}
 				}
 			}
 		}

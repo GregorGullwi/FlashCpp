@@ -14,6 +14,7 @@
 #include "StringLiteralTokenUtils.h"
 #include "Parser_FunctionTypeHelpers.h"
 #include "ParserInternal.h"
+#include <algorithm>
 
 namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
@@ -3209,9 +3210,10 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 			std::vector<StringHandle> components;
 			NamespaceHandle current = owner_ns;
 			while (current.isValid() && !current.isGlobal()) {
-				components.insert(components.begin(), StringTable::getOrInternStringHandle(gNamespaceRegistry.getName(current)));
+				components.push_back(StringTable::getOrInternStringHandle(gNamespaceRegistry.getName(current)));
 				current = gNamespaceRegistry.getParent(current);
 			}
+			std::reverse(components.begin(), components.end());
 
 			if (components.empty()) {
 				return nullptr;

@@ -813,7 +813,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 
 			if (peek() == ">"_tok || peek() == ","_tok) {
 				auto [simple_identifier_kind, prebuilt_arg] = classifySimpleTemplateArgName(identifier_handle);
-				if (simple_identifier_kind != SimpleTemplateArgKind::TypeLike) {
+				if (simple_identifier_kind == SimpleTemplateArgKind::ValueLike) {
 					// Use the concrete arg returned by the classify call (avoids a second loop over
 					// template_param_substitutions_). Fall back to a dependent-value placeholder when
 					// no concrete substitution was found yet (deferred template-body parse context).
