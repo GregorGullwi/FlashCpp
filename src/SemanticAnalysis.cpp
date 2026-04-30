@@ -3561,11 +3561,30 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 		return {};
 
 	if (node.is<ExpressionNode>()) {
-		if (auto slot = getSlot(getExpressionKey(node)); slot.has_value() && slot->has_type()) {
-			return slot->type_id;
+		const auto& expr = node.as<ExpressionNode>();
+		const MemberContext* member_context = getCurrentMemberContext();
+		const IdentifierNode* identifier = std::get_if<IdentifierNode>(&expr);
+		const bool bypass_slot_cache =
+			(identifier != nullptr || std::holds_alternative<MemberAccessNode>(expr)) &&
+			member_context && member_context->has_implicit_this && member_context->type_index.is_valid();
+
+		if (identifier) {
+			if (identifier->name() != "this"sv) {
+				// Keep ordinary local/parameter lookup ahead of the member-context
+				// slot-cache bypass so shadowing locals still win over implicit-this
+				// member names in instantiated member bodies.
+				if (const CanonicalTypeId local_id = lookupLocalType(identifier->nameHandle()); local_id.value != 0) {
+					return local_id;
+				}
+			}
 		}
 
-		const auto& expr = node.as<ExpressionNode>();
+		if (!bypass_slot_cache) {
+			if (auto slot = getSlot(getExpressionKey(node)); slot.has_value() && slot->has_type()) {
+				return slot->type_id;
+			}
+		}
+
 		return std::visit([this](const auto& e) -> CanonicalTypeId {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, NumericLiteralNode>) {
