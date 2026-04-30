@@ -246,6 +246,16 @@ Recent historical baselines recorded for this work:
   normalization so branch-conversion annotation runs after child normalization.
   The remaining return-side `generateTypeConversion` fallbacks are still active
   in non-normalized template bodies.
+- 2026-04-30 Linux/clang arithmetic-fallback probe follow-up: full suite
+  passed, 2254 regular tests and 154 expected-fail tests after hard-failing
+  normalized-body binary arithmetic conversion fallbacks in
+  `IrGenerator_Expr_Operators.cpp` and root-fixing the only live hit
+  (`tests/test_lazy_conv_op_multi_cv_types_ret0.cpp`). The root cause was
+  shared AST node pointers across template member instantiations combined with
+  sema type-slot caching of `this` / member-access expressions. Sema now
+  bypasses cached type slots for `IdentifierNode` / `MemberAccessNode`
+  expressions while an implicit-`this` member context is active, forcing
+  per-instantiation type recomputation for shared template member bodies.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.

@@ -2483,7 +2483,6 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				if (needs_binary_type_inference) {
 					lhs_type_id = inferExpressionType(e.get_lhs());
 					rhs_type_id = inferExpressionType(e.get_rhs());
-					rhs_type_id = inferExpressionType(e.get_rhs());
 					// C++20: scoped enums do not participate in implicit arithmetic
 					// conversions. Diagnose before annotation so the error fires
 					// early with a clear message.
@@ -3563,27 +3562,24 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 
 	if (node.is<ExpressionNode>()) {
 		const auto& expr = node.as<ExpressionNode>();
+		const MemberContext* member_context = getCurrentMemberContext();
+		const bool bypass_slot_cache =
+			(std::holds_alternative<IdentifierNode>(expr) || std::holds_alternative<MemberAccessNode>(expr)) &&
+			member_context && member_context->has_implicit_this && member_context->type_index.is_valid();
+
 		if (std::holds_alternative<IdentifierNode>(expr)) {
 			const IdentifierNode& identifier = std::get<IdentifierNode>(expr);
 			if (identifier.name() != "this"sv) {
-				const CanonicalTypeId local_id = lookupLocalType(identifier.nameHandle());
-				if (local_id) {
+				if (const CanonicalTypeId local_id = lookupLocalType(identifier.nameHandle()); local_id) {
 					return local_id;
-				}
-
-				if (const MemberContext* member_context = getCurrentMemberContext();
-					member_context && member_context->has_implicit_this && member_context->type_index.is_valid()) {
-					if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(
-							member_context->type_index, identifier.getOrInternNameHandle())) {
-						return type_context_.intern(canonicalTypeDescFromStructMember(
-							*member_result.member, member_context->this_base_cv));
-					}
 				}
 			}
 		}
 
-		if (auto slot = getSlot(getExpressionKey(node)); slot.has_value() && slot->has_type()) {
-			return slot->type_id;
+		if (!bypass_slot_cache) {
+			if (auto slot = getSlot(getExpressionKey(node)); slot.has_value() && slot->has_type()) {
+				return slot->type_id;
+			}
 		}
 
 		return std::visit([this](const auto& e) -> CanonicalTypeId {
