@@ -184,7 +184,6 @@ std::optional<size_t> tryGetConstexprQualifiedMemberSizeBytes(const TypeSpecifie
 	}
 
 	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-	instantiateLazyStaticMember(struct_info->name, member_name_handle);
 
 	auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 	if (static_member && owner_struct) {
