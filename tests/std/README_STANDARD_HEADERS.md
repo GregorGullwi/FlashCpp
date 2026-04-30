@@ -21,20 +21,20 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~587ms (retested 2026-04-28, Linux/libstdc++-14). The dependent `decltype` alias target in `__do_common_type_impl::__cond_t` is no longer collapsed to concrete `auto`, so the full targeted header compiles. Regression: `tests/test_dependent_decltype_alias_template_ret0.cpp`. |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~1460ms (retested 2026-04-11). Call to deleted function 'swap' in `stl_pair.h:308`. Blocked by eager inline member body parsing during implicit template class instantiation (std::pair::swap tries to swap const members). |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~2583ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; the current first hard error is `Cannot use copy initialization with explicit constructor` for `std::ranges::__detail::__max_size_type` in a return statement. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~2192ms (retested 2026-04-11). Call to deleted function 'swap' — same `stl_pair.h:308` blocker as `<string_view>`. |
 | `<array>` | `test_std_array.cpp` | ❌ Parse Error | ~2554ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | ~3882ms (retested 2026-04-20). The simple std-style `(max)` / `(min)` focused regression now passes (`tests/test_std_algorithm_max_ret3.cpp`), but the real header now stops earlier in MSVC `<utility>:82` on parenthesized function-template declaration parsing. |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2450ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; the current first hard error is `Cannot use copy initialization with explicit constructor` for `std::reverse_iterator` in variable initialization. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~2262ms (retested 2026-04-24, Linux/libstdc++). Previous `tuple:399` `_M_tail` blocker resolved by the member-function overload registration fix; now first-order error is `unsupported PackExpansionExprNode reached semantic analysis` deeper in tuple's pack expansion machinery. |
-| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2337ms (retested 2026-04-20). Still stops in UCRT with "No matching function for call to '__stdio_common_vfwprintf'" during overload resolution; not a crash. Distilled expected-failure repro: `tests/test_ucrt_vfwprintf_const_pointer_alias_arg_fail.cpp`. |
+| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2062ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Itanium name mangling: unknown type — cannot generate valid symbol` after several deferred/incomplete `reverse_iterator` instantiations. |
 | `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
 | `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2999ms (retested 2026-04-24, Linux/libstdc++). `_M_tail` blocker resolved by the member-function overload fix; now first-order error is `unsupported PackExpansionExprNode reached semantic analysis` deeper in shared tuple pack-expansion code. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~4669ms (retested 2026-04-24, Linux/libstdc++). `tuple:399` `_M_tail` blocker resolved by the member-function overload fix; now first-order error is `/usr/include/c++/14/string_view:863:31: error: Template instantiation failed or type not found`. |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~3067ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `ExpressionSubstitutor missing binding for ordered template parameter '_Head'` in tuple machinery. |
 | `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~3763ms (retested 2026-04-24, Linux/libstdc++). `_M_tail` blocker resolved by the member-function overload fix; now first-order error is non-dependent name `__node_gen` C++20 [temp.res]/9 violation (false positive triggered by template reparse depth-guard firing during deep instantiation). |
-| `<map>` | `test_std_map.cpp` | ❌ Parse Error | ~2988ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". |
+| `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2906ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~4559ms (retested 2026-04-11). |
@@ -131,7 +131,7 @@ errors that are still triaged separately:
 | Header | Status | Time | First-order stop / note |
 |--------|--------|------|-------------------------|
 | `<aggregate_brace_elision_follow>` | ✅ PASS | 44ms | |
-| `<algorithm>` | ❌ Compile Error | 2497ms | `Missing TypeInfo while computing template argument size`. |
+| `<algorithm>` | ❌ Compile Error | 2450ms | `Cannot use copy initialization with explicit constructor` (`std::reverse_iterator` variable initialization). |
 | `<any>` | ❌ Compile Error | 603ms | Earlier alias-template registration log; first hard error is later. |
 | `<array>` | ❌ Compile Error | 1459ms | `Cannot use copy initialization with explicit constructor`. |
 | `<atomic>` | ❌ Compile Error | 936ms | Old `Missing semicolon(;)` parse stop **fixed**.  Now stops further in at `Fatal error: Base class instantiation name should resolve after default filling` (same blocker as `<latch>` — `__atomic_impl::__compare_exchange<_AtomicRef>(...)` is mis-classified as a variable template). |
@@ -149,8 +149,8 @@ errors that are still triaged separately:
 | `<latch>` | ❌ Compile Error | 932ms | Same `Base class instantiation name should resolve after default filling` blocker as `<atomic>` after the static-member NTTP fix. |
 | `<limits>` | ✅ PASS | 1501ms | |
 | `<list>` | ❌ Compile Error | 1754ms | `Missing TypeInfo while computing template argument size`. |
-| `<map>` | ❌ Compile Error | 2476ms | `Missing TypeInfo while computing template argument size`. |
-| `<memory>` | ❌ Compile Error | 2375ms | `Missing TypeInfo while computing template argument size`. |
+| `<map>` | ❌ Compile Error | 2498ms | `Unregistered dependent placeholder type reached template argument classification`. |
+| `<memory>` | ❌ Compile Error | 3067ms | `ExpressionSubstitutor missing binding for ordered template parameter '_Head'`. |
 | `<new>` | ✅ PASS | 62ms | |
 | `<numeric>` | ❌ Compile Error | 2448ms | First-order error not surfaced as `error:`/`Fatal:`. |
 | `<optional>` | ❌ Compile Error | 1255ms | `struct type info not found`. |
@@ -168,34 +168,53 @@ errors that are still triaged separately:
 | `<stack>` | ❌ Compile Error | 1758ms | `Missing TypeInfo while computing template argument size`. |
 | `<stdexcept>` | ❌ Compile Error | 2933ms | `Missing TypeInfo while computing template argument size`. |
 | `<string>` | ❌ Compile Error | 2838ms | `Missing TypeInfo while computing template argument size`. |
-| `<string_view>` | ❌ Compile Error | 2529ms | `Missing TypeInfo while computing template argument size`. |
+| `<string_view>` | ❌ Compile Error | 2583ms | `Cannot use copy initialization with explicit constructor` (`std::ranges::__detail::__max_size_type` return statement). |
 | `<tuple>` | ❌ Compile Error | 1875ms | `ExpressionSubstitutor missing binding for ordered template parameter '_Head'`. |
 | `<type_traits>` | ❌ Compile Error | 418ms | `static_assert failed`. |
 | `<type_traits_is_integral_any_of_fail>` | ✅ PASS | 20ms | |
 | `<typeinfo_ret0>` | ✅ PASS | 63ms | |
 | `<utility>` | ✅ PASS | 830ms | |
 | `<variant>` | 💥 Crash | 2801ms | Still SIGSEGVs deep in `std::__invoke` overload resolution. |
-| `<vector>` | ❌ Compile Error | 1760ms | `Missing TypeInfo while computing template argument size`. |
+| `<vector>` | ❌ Compile Error | 2062ms | `Itanium name mangling: unknown type — cannot generate valid symbol`. |
 | `<version>` | ✅ PASS | 45ms | |
 | `<wstring_view_find_ret0>` | ❌ Compile Error | 2504ms | `No matching member function for call to 'find'`. |
 
-The two new dominant first-order blockers across the suite are:
+The latest retest no longer reproduces the old `Missing TypeInfo while
+computing template argument size` crash in the headers rechecked in this pass;
+those files now reach later semantic-analysis / template-substitution blockers
+instead. The most visible current next-stop blockers in this slice are:
 
-1. **`Missing TypeInfo while computing template argument size`** —
-   thrown from `computeTemplateTypeArgSizeBits` in
-   `src/TemplateRegistry_Types.h` when a struct-category
-   `TemplateTypeArg` resolves to a `TypeIndex` whose `TypeInfo` is not
-   yet registered.  This regressed several headers that were marked
-   "✅ Compiled" in the older table rows above (`<string>`, `<vector>`,
-   `<map>`, `<list>`, `<memory>`, etc.).  Likely fallout from a recent
-   template-parameter parsing change; not addressed in this pass.
-2. **`Base class instantiation name should resolve after default
-   filling`** — the `<atomic>` / `<latch>` next-stop after the
-   static-member NTTP fix.  Caused by
-   `__atomic_impl::__compare_exchange<_AtomicRef>(...)` (a function
-   template) being looked up as a *variable template*, which fails
-   and then falls through into the base-class default-filling path
-   that throws.  Tracked separately.
+1. **Explicit-constructor copy-init misclassification** —
+   `<string_view>` and `<algorithm>` now fail later with
+   `Cannot use copy initialization with explicit constructor`.
+2. **Deep template binding / placeholder recovery** —
+   `<memory>` now stops at
+   `ExpressionSubstitutor missing binding for ordered template parameter '_Head'`,
+   `<map>` stops at
+   `Unregistered dependent placeholder type reached template argument classification`,
+   and `<vector>` now reaches
+   `Itanium name mangling: unknown type — cannot generate valid symbol`.
+
+
+#### 2026-04-30 Template type-arg size deferral + direct-init regression fix (Linux/libstdc++-14)
+
+This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested
+`<string_view>`, `<algorithm>`, `<vector>`, `<memory>`, and `<map>`.
+
+Fixes landed:
+
+- **Template type-argument reification no longer hard-fails on
+  missing/incomplete struct `TypeInfo`.** `computeTemplateTypeArgSizeBits`
+  now resolves aliases, keeps known sizes when available, and otherwise returns
+  `0` so later sema can diagnose only contexts that really require a complete
+  object type.
+- **Copy-initialization from a same-type constructor-call prvalue no longer
+  incorrectly rejects explicit constructors in the focused regression case.**
+  This covers patterns like `T x = T(args);` and `return T(args);`.
+
+Regression tests:
+
+- `tests/test_copy_init_same_type_ctor_ret0.cpp`
 
 
 #### 2026-04-30 Dependent identifier NTTP template-argument fix (Linux/libstdc++-14)

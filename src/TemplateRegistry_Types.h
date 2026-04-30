@@ -792,10 +792,19 @@ inline ReferenceQualifier collapseReferenceQualifiers(
 
 inline int computeTemplateTypeArgSizeBits(const TemplateTypeArg& arg) {
 	if (is_struct_type(arg.category())) {
-		if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
-			return static_cast<int>(arg_type_info->sizeInBits().value);
+		if (arg.type_index.is_valid()) {
+			const ResolvedAliasTypeInfo resolved_arg = resolveAliasTypeInfo(arg.type_index);
+			if (const TypeInfo* arg_type_info = resolved_arg.terminal_type_info) {
+				if (const StructTypeInfo* struct_info = arg_type_info->getStructInfo();
+					struct_info != nullptr && !struct_info->hasCompleteObjectLayout()) {
+					return 0;
+				}
+				if (arg_type_info->hasStoredSize()) {
+					return static_cast<int>(arg_type_info->sizeInBits().value);
+				}
+			}
 		}
-		throw InternalError("Missing TypeInfo while computing template argument size");
+		return 0;
 	}
 	return get_type_size_bits(arg.category());
 }
