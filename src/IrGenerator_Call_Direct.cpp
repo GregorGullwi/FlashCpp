@@ -607,11 +607,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 
-		// Audit 2026-04-27: the prior arity-based `operator()` codegen fallback
-		// here was probed across the full 2239-test corpus with a hard-fail
-		// guard and never hit. Sema reaches struct callable invocations as
-		// member calls, so codegen no longer needs to recover an `operator()`
-		// target by traversing the struct/base-class hierarchy.
+		// Invariant (audit 2026-04-27): sema reaches struct callable invocations
+		// as member calls; codegen no longer recovers `operator()` targets by
+		// traversing the struct/base-class hierarchy.
 
 			// decltype(auto) is not a valid parameter type; reject it before
 			// the recursive-lambda auto&& callable fallback can mishandle it.
@@ -1006,10 +1004,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (owner_struct_info && !owner_struct_info->member_functions.empty()) {
 			queueDeferredMemberFunctions(owner_handle, owner_struct_info, owner_for_mangling);
 		}
-		// Phase 5 Slice K: the historical `instantiateAndQueueLazyMember` fallback
-		// here was audited across the full 2201-test corpus with a hard-fail guard
-		// and never hit — sema's drain has already materialized every reachable
-		// struct's members by this point, so the lazy registry is empty for them.
+		// Phase 5 Slice K invariant: sema's drain has already materialized every
+		// reachable struct's members by this point, so the lazy registry is empty
+		// for them.
 		FLASH_LOG_FORMAT(Codegen, Debug, "Using {} cross-struct direct call target for: {}", source_label, func_name_view);
 	};
 
@@ -1130,24 +1127,13 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// resolved direct-call target plus the precomputed-mangled path above
 		// already cover these cases.
 
-		// Audit 2026-04-27: the `gSymbolTable` precomputed-mangled pointer-equality
-		// scan was probed and never hit; the consteval enforcement it was guarding
-		// is reached through the resolved target paths instead.
-
-		// Audit 2026-04-27: the prior "Defensive fallback for precomputed-mangled
-		// calls" — a `gSymbolTable_overloads` scan that matched on
-		// `DeclarationNode` pointer equality — was probed across the full
-		// 2239-test corpus with a hard-fail guard and never hit. The earlier
-		// resolved-target paths already populate `matched_func_decl` for
-		// precomputed-mangled call sites (including consteval enforcement,
-		// C++20 [dcl.consteval]), so this fallback has been removed.
-
-		// Audit 2026-04-27: the "current-struct + base-class member by name"
-		// codegen recovery and the "qualified static member by struct iteration"
-		// recovery were both probed across the full 2239-test corpus with
-		// hard-fail guards and never hit. Sema resolves member calls (including
-		// inherited members and qualified static member calls) before codegen,
-		// so these two fallback blocks have been removed.
+		// Invariant (audit 2026-04-27): the resolved-target paths above already
+		// populate `matched_func_decl` for precomputed-mangled call sites
+		// (including consteval enforcement, C++20 [dcl.consteval]). The earlier
+		// `gSymbolTable` and `gSymbolTable_overloads` defensive scans, the
+		// "current-struct + base-class member by name" recovery, and the
+		// "qualified static member by struct iteration" recovery were all
+		// removed after probing showed zero hits.
 
 		// Handle dependent qualified function names: Base$dependentHash::member
 		// These occur when a template body contains Base<T>::member() and T is substituted
@@ -1183,11 +1169,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 							}
 						}
 					}
-						// If member_functions is empty (lazy-instantiated template), the
-						// Phase 5 Slice K audit confirmed that sema's drain has already
-						// materialized members by this point. The previous lazy-registry
-						// fallback here never hit across the full corpus and has been
-						// removed.
+						// Invariant: empty `member_functions` (lazy-instantiated template)
+						// is impossible here — sema's drain materializes members
+						// before this point.
 				}
 			}
 		}
