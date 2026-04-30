@@ -2483,6 +2483,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				if (needs_binary_type_inference) {
 					lhs_type_id = inferExpressionType(e.get_lhs());
 					rhs_type_id = inferExpressionType(e.get_rhs());
+					rhs_type_id = inferExpressionType(e.get_rhs());
 					// C++20: scoped enums do not participate in implicit arithmetic
 					// conversions. Diagnose before annotation so the error fires
 					// early with a clear message.
