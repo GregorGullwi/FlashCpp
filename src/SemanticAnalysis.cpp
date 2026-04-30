@@ -12,6 +12,7 @@
 #include "ConstExprEvaluator.h"
 #include "ReachableStructWalker.h"
 #include "StringLiteralTokenUtils.h"
+#include "Parser_FunctionTypeHelpers.h"
 
 namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
@@ -3482,10 +3483,7 @@ CanonicalTypeId SemanticAnalysis::inferResolvedSymbolType(const ASTNode& symbol)
 
 	if (symbol.is<FunctionDeclarationNode>()) {
 		const auto& func = symbol.as<FunctionDeclarationNode>();
-		const ASTNode ret_type_node = func.decl_node().type_node();
-		if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
-			return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
-		}
+		return canonicalizeType(FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(func));
 	}
 
 	return {};

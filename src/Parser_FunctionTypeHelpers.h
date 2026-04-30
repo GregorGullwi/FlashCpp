@@ -36,7 +36,10 @@ inline const FunctionDeclarationNode* findFunctionDeclarationForSymbol(const AST
 
 inline TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const FunctionDeclarationNode& func_decl) {
 	FunctionSignature sig;
-	sig.return_type_index = func_decl.decl_node().type_specifier_node().type_index();
+	const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
+	sig.return_type_index = return_type.type_index();
+	sig.return_pointer_depth = static_cast<int>(return_type.pointer_depth());
+	sig.return_reference_qualifier = return_type.reference_qualifier();
 	for (const auto& param_node : func_decl.parameter_nodes()) {
 		if (!param_node.is<DeclarationNode>()) {
 			continue;
