@@ -769,6 +769,9 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// Fallback: try parser type inference when sema did not populate expression types
 	// (e.g. non-normalized function bodies, template instantiations).
 	if (common_cat == TypeCategory::Invalid && parser_) {
+		if (sema_) {
+			throw InternalError("Codegen-side ternary parser fallback should not run when sema is available");
+		}
 		auto true_ts = parser_->get_expression_type(ternaryNode.true_expr());
 		auto false_ts = parser_->get_expression_type(ternaryNode.false_expr());
 		if (true_ts.has_value() && false_ts.has_value())
