@@ -3563,14 +3563,17 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	if (node.is<ExpressionNode>()) {
 		const auto& expr = node.as<ExpressionNode>();
 		const MemberContext* member_context = getCurrentMemberContext();
+		const IdentifierNode* identifier = std::get_if<IdentifierNode>(&expr);
 		const bool bypass_slot_cache =
-			(std::holds_alternative<IdentifierNode>(expr) || std::holds_alternative<MemberAccessNode>(expr)) &&
+			(identifier != nullptr || std::holds_alternative<MemberAccessNode>(expr)) &&
 			member_context && member_context->has_implicit_this && member_context->type_index.is_valid();
 
-		if (std::holds_alternative<IdentifierNode>(expr)) {
-			const IdentifierNode& identifier = std::get<IdentifierNode>(expr);
-			if (identifier.name() != "this"sv) {
-				if (const CanonicalTypeId local_id = lookupLocalType(identifier.nameHandle()); local_id) {
+		if (identifier) {
+			if (identifier->name() != "this"sv) {
+				// Keep ordinary local/parameter lookup ahead of the member-context
+				// slot-cache bypass so shadowing locals still win over implicit-this
+				// member names in instantiated member bodies.
+				if (const CanonicalTypeId local_id = lookupLocalType(identifier->nameHandle()); local_id.value != 0) {
 					return local_id;
 				}
 			}
