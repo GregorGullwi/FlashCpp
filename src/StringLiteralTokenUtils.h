@@ -173,6 +173,18 @@ inline std::string decodeStringLiteralBytes(std::string_view token_raw) {
 			decoded.push_back(static_cast<char>(value & 0xFFu));
 			break;
 		}
+		case 'a':
+			decoded.push_back('\a');
+			break;
+		case 'b':
+			decoded.push_back('\b');
+			break;
+		case 'f':
+			decoded.push_back('\f');
+			break;
+		case 'v':
+			decoded.push_back('\v');
+			break;
 		default:
 			decoded.push_back(esc);
 			break;
