@@ -44,8 +44,8 @@ int main() {
 	if (maybe_back_one(mid, true)[0]  != 'l') return 3; // "plain"[1]
 	if (maybe_back_one(mid, false)[0] != 'a') return 4; // "plain"[2]
 
-	const char* end = base + 5; // points at the trailing nul terminator
-	if (ptr_diff_via_ternary(base, end, false) != -5) return 5;
-	if (ptr_diff_via_ternary(base, end, true)  !=  5) return 6;
+	const char* end = base + 5; // points at the trailing nul terminator of "plain" (5 chars)
+	if (ptr_diff_via_ternary(base, end, false) != -5) return 5; // base - end == -strlen("plain")
+	if (ptr_diff_via_ternary(base, end, true)  !=  5) return 6; // end  - base ==  strlen("plain")
 	return 0;
 }
