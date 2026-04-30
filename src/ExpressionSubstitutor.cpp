@@ -647,12 +647,32 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					// Non-dependent template argument - substitute/evaluate to a value if possible
 						FLASH_LOG(Templates, Debug, "    Template argument is non-dependent expression");
 						ASTNode substituted_arg_node = substitute(arg_node);
+						if (substituted_arg_node.is<TypeSpecifierNode>()) {
+							const TypeSpecifierNode& type_spec = substituted_arg_node.as<TypeSpecifierNode>();
+							substituted_template_args.emplace_back(type_spec);
+							continue;
+						}
 						if (!substituted_arg_node.is<ExpressionNode>()) {
 							FLASH_LOG(Templates, Debug, "    Substituted template argument is not an ExpressionNode");
 							failed_value_extraction = true;
 							break;
 						}
 						const ExpressionNode& substituted_expr = substituted_arg_node.as<ExpressionNode>();
+						if (const auto* identifier = std::get_if<IdentifierNode>(&substituted_expr)) {
+							StringHandle type_name = StringTable::getOrInternStringHandle(identifier->name());
+							if (const TypeInfo* type_info = findTypeByName(type_name)) {
+								substituted_template_args.push_back(TemplateTypeArg::makeType(type_info->type_index_));
+								continue;
+							}
+							if (auto builtin_type = parser_.get_builtin_type_info(identifier->name())) {
+								substituted_template_args.push_back(
+									TemplateTypeArg::makeType(nativeTypeIndex(builtin_type->first)));
+								continue;
+							}
+							FLASH_LOG(Templates, Debug, "    Substituted identifier template argument is not a known type: ", identifier->name());
+							failed_value_extraction = true;
+							break;
+						}
 						if (std::holds_alternative<NumericLiteralNode>(substituted_expr)) {
 							const NumericLiteralNode& lit = std::get<NumericLiteralNode>(substituted_expr);
 							const NumericLiteralValue& raw_value = lit.value();
