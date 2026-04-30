@@ -494,15 +494,10 @@ void AstToIr::generateStaticMemberDeclarations() {
 				if (auto call_info = CallInfo::tryFrom(expr)) {
 					StringHandle func_name_handle = call_info->declaration->identifier_token().handle();
 
-					// Phase 5 Slice D: the first ConstExpr::Evaluator pass above is invoked
-					// with ctx.parser/ctx.sema, and now routes its own lazy member-function
-					// materialization through SemanticAnalysis::ensureMemberFunctionMaterialized
-					// (see ConstExprEvaluator_Members.cpp). Codegen no longer needs a
-					// materialize-and-retry fallback here; by the time we reach the retry
-					// path the selected static member's body is already present on the
-					// struct. The retry itself still performs the symbol-table rebind and
-					// template-binding rebuild that make the static call resolvable from the
-					// static-initializer context.
+					// The first ConstExpr::Evaluator pass above already materializes any
+					// needed lazy member bodies through sema. This retry only rebuilds the
+					// static-initializer lookup context (symbol-table rebind + template
+					// bindings) so the selected static member call becomes resolvable here.
 
 					const ASTNode* member_function_node = nullptr;
 					const FunctionDeclarationNode* member_function_decl = nullptr;
@@ -802,7 +797,8 @@ void AstToIr::generateStaticMemberDeclarations() {
 					op.init_data.resize(byte_count, 0);
 					FLASH_LOG(Codegen, Debug, "Using pre-materialized relocation for static member '", qualified_name, "'");
 				} else {
- // --- existing AST-based classification (fallback) ---
+				// No pre-packed NormalizedInitializer was available, so classify the
+				// user-written initializer AST directly.
 				auto zero_initialize = [&]() {
 					size_t byte_count = op.size_in_bits.value / 8;
 					for (size_t i = 0; i < byte_count; ++i) {

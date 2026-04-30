@@ -468,7 +468,14 @@ The audit is now backed by direct suite evidence for several representative temp
   re-enqueuing deferred member functions/constructors/destructors into the
   pending semantic-root queue before codegen emits them. After that change, the
   focused ternary cluster plus the full 2256-test Linux suite passed with the
-  sema-present parser fallback disabled;
+  sema-present parser fallback disabled and the stricter invariant enabled;
+- several stale historical fallback comments in `FlashCppMain.cpp`,
+  `IrGenerator_Visitors_Decl.cpp`, `IrGenerator_Visitors_TypeInit.cpp`, and
+  `Parser_Templates_Class.cpp` were then compacted to describe the current
+  sema/materialization invariants instead of removed recovery behavior. This was
+  validation-only cleanup, but it closes one of the audit's explicit follow-up
+  tasks ("Prefer deleting comments for already-removed historical fallbacks…")
+  without changing the remaining active fallback classifications;
 - the normalized-body binary arithmetic fallback warning in
   `IrGenerator_Expr_Operators.cpp` was also hard-fail probed on 2026-04-30.
   The only hit was `tests/test_lazy_conv_op_multi_cv_types_ret0.cpp`, where

@@ -1,7 +1,7 @@
 # Template Instantiation / Materialization Status
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-28
+**Last Updated:** 2026-04-30
 
 This document tracks the current state of template instantiation, lazy
 materialization, and the sema/codegen boundary. It is intentionally compact:
@@ -38,6 +38,11 @@ The original template materialization plan is mostly closed.
   direct `parser_.get_expression_type(...)` fallbacks; codegen fold/pack
   handlers are assertion-only; and late materialization has a pending
   semantic-root handoff.
+- **Historical fallback comments continue to shrink toward executable
+  invariants.** The latest cleanup rewrote several stale "fallback" comments in
+  codegen/template paths so they describe the current sema-owned
+  materialization/deferred-instantiation contract instead of referring to
+  removed recovery behavior.
 - **`docs/KNOWN_ISSUES.md` no longer tracks template-pack materialization
   issues.** It currently records an unrelated floating-point array-subscript
   codegen bug.
@@ -268,6 +273,12 @@ Recent historical baselines recorded for this work:
   `tests/test_underlying_type_return_identity_ret42.cpp`, and the existing
   `tests/test_template_delayed_static_member_cast_rebinding_ret0.cpp` stayed
   green under the stricter ternary invariant.
+- 2026-04-30 Linux/clang fallback-comment cleanup follow-up: full suite passed,
+  2256 regular tests and 154 expected-fail tests after compacting stale
+  historical fallback comments in `FlashCppMain.cpp`,
+  `IrGenerator_Visitors_Decl.cpp`, `IrGenerator_Visitors_TypeInit.cpp`, and
+  `Parser_Templates_Class.cpp` so they describe the current sema/materialization
+  invariants instead of removed recovery behavior.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.
