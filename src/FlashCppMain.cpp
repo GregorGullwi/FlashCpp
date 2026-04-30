@@ -597,8 +597,9 @@ int main_impl(int argc, char* argv[]) {
 			++deferred_gen_error_count;
 		}
 
-		// Generate deferred member functions (from struct search fallback in generateFunctionCallIr)
-		// Per-function try-catch is inside generateDeferredMemberFunctions to avoid one failure blocking all.
+		// Generate the remaining deferred member functions that sema/codegen queued during
+		// normalization. Per-function try-catch is inside generateDeferredMemberFunctions so
+		// one failure does not block the rest.
 		deferred_gen_error_count += converter.generateDeferredMemberFunctions();
 
 		// Note: Template instantiations happen during parsing, not here

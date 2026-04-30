@@ -1287,18 +1287,10 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 								" member=", StringTable::getStringView(member_name),
 								" const=", fn.is_const_member_function());
 						}
-						// sema's end-of-normalization drain
-						// (AST-walk pass + ODR-use fixpoint pass) materializes every
-						// lazy member reachable from the top-level AST plus every
-						// sema-proven ODR-used residual before codegen runs. By the
-						// time this loop runs, any member listed in
-						// node.member_functions() that can be materialized already
-						// has a body. If fn still has no body here, it is either
-						// implicit (handled by visitFunctionDeclarationNode's
-						// implicit-member paths) or a template pattern/SFINAE-only
-						// stub that must not be emitted — visitFunctionDeclarationNode
-						// handles both cases by early-returning. No defensive
-						// materialization fallback needed here.
+						// Sema's end-of-normalization drain materializes every reachable or
+						// ODR-used lazy member before codegen. If fn still has no body here,
+						// it is either implicit or a pattern-only/SFINAE-only stub that
+						// visitFunctionDeclarationNode will ignore.
 						visitFunctionDeclarationNode(fn);
 					} else {
 						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping member function with auto params (will be instantiated on call)");
@@ -1340,11 +1332,10 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 								"struct=", StringTable::getStringView(current_struct_name_),
 								" ctor=", StringTable::getStringView(member_name));
 						}
-						// Phase 5 Slices F-L: sema's drain materializes every reachable
-						// lazy constructor before codegen. If ctor still has no body
-						// here it is either implicit (handled by visitConstructorDeclarationNode)
-						// or an uninstantiated SFINAE-only stub; no defensive materialization
-						// fallback needed.
+						// Sema's drain materializes every reachable lazy constructor before
+						// codegen. If ctor still has no body here it is either implicit or an
+						// uninstantiated SFINAE-only stub, and visitConstructorDeclarationNode
+						// handles that split.
 						visitConstructorDeclarationNode(ctor);
 					} else {
 						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - skipping constructor with auto/unresolved params or unbound template params (will be instantiated on call)");

@@ -859,12 +859,11 @@ ParseResult Parser::parse_template_declaration() {
 					FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a resolved member type (not a dependent placeholder)");
 				}
 			}
-			// FALLBACK: Check if the resolved type name is a registered primary template
-			// This happens when template arguments are dependent and instantiation was skipped,
-			// so the type falls back to the primary template name without any instantiation suffix.
+			// Dependent template arguments can leave the alias target spelled as the
+			// primary template name without an instantiation suffix. Treat that as a
+			// deferred primary-template reference.
 			else {
-				// Check if this is a registered template - if so, the parsing of template args
-				// with dependent parameters resulted in fallback to the primary template
+				// Check whether the unresolved spelling names a registered primary template.
 				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
 				if (template_opt.has_value()) {
 					FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a primary template (instantiation was skipped due to dependent args) - using deferred instantiation");
