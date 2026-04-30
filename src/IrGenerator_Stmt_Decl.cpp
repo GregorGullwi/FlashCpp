@@ -3,6 +3,7 @@
 #include "IrGenerator.h"
 #include "OverloadResolution.h"
 #include "SemanticAnalysis.h"
+#include "StringLiteralTokenUtils.h"
 
 namespace {
 [[noreturn]] void throwDeletedSameTypeConstructorCompileError(const StructTypeInfo& struct_info, bool prefer_move) {
@@ -1102,47 +1103,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						// Emit the string bytes as a .rodata global (same copy-bytes path as any other global),
 						// then use its name as reloc_target -- identical to the &var case.
 					const auto& str_node = std::get<StringLiteralNode>(init_expr);
-					std::string_view raw = str_node.value();
-						// Process the string literal: strip quotes and handle escape sequences.
-					std::string str_bytes;
-					std::string_view str_content = (raw.size() >= 2 && raw.front() == '"' && raw.back() == '"')
-													   ? std::string_view(raw.data() + 1, raw.size() - 2)
-													   : raw;
-					for (size_t si = 0; si < str_content.size(); ++si) {
-						if (str_content[si] == '\\' && si + 1 < str_content.size()) {
-							switch (str_content[si + 1]) {
-							case 'n':
-								str_bytes += '\n';
-								++si;
-								break;
-							case 't':
-								str_bytes += '\t';
-								++si;
-								break;
-							case 'r':
-								str_bytes += '\r';
-								++si;
-								break;
-							case '\\':
-								str_bytes += '\\';
-								++si;
-								break;
-							case '"':
-								str_bytes += '"';
-								++si;
-								break;
-							case '0':
-								str_bytes += '\0';
-								++si;
-								break;
-							default:
-								str_bytes += str_content[si];
-								break;
-							}
-						} else {
-							str_bytes += str_content[si];
-						}
-					}
+					std::string str_bytes = FlashCpp::decodeStringLiteralBytes(str_node.value());
 					str_bytes += '\0';  // null terminator
 						// Emit a synthetic .rodata global for the string content.
 					StringBuilder str_name_builder;
@@ -2196,10 +2157,47 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
-		// Handle array initialization with initializer list
+	// Handle array initialization with initializer list
 	if (decl.is_array() && node.initializer().has_value()) {
 		const ASTNode& init_node = *node.initializer();
-		if (init_node.is<InitializerListNode>()) {
+		if (init_node.is<ExpressionNode>() &&
+			std::holds_alternative<StringLiteralNode>(init_node.as<ExpressionNode>()) &&
+			type_node.category() == TypeCategory::Char &&
+			type_node.pointer_depth() == 0 &&
+			type_node.array_dimension_count() <= 1) {
+			const auto& string_literal = std::get<StringLiteralNode>(init_node.as<ExpressionNode>());
+			std::string literal_bytes = FlashCpp::decodeStringLiteralBytes(string_literal.value());
+			const size_t required_elements = literal_bytes.size();
+			if (array_count < required_elements) {
+				throw CompileError("initializer-string for char array is too long");
+			}
+
+			const auto emitCharStore = [&](size_t index, char value) {
+				ArrayStoreOp store_op;
+				store_op.element_type_index = type_node.type_index();
+				store_op.element_size_in_bits = size_in_bits;
+				store_op.array = decl.identifier_token().handle();
+				store_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(index));
+				store_op.value = makeTypedValue(TypeCategory::Char,
+					SizeInBits{size_in_bits},
+					static_cast<unsigned long long>(static_cast<unsigned char>(value)));
+				store_op.member_offset = 0;
+				store_op.is_pointer_to_array = false;
+				ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op),
+												 node.declaration().identifier_token()));
+			};
+
+			size_t store_index = 0;
+			for (; store_index < literal_bytes.size(); ++store_index) {
+				emitCharStore(store_index, literal_bytes[store_index]);
+			}
+			if (store_index < array_count) {
+				emitCharStore(store_index++, '\0');
+			}
+			for (; store_index < array_count; ++store_index) {
+				emitCharStore(store_index, '\0');
+			}
+		} else if (init_node.is<InitializerListNode>()) {
 			const InitializerListNode& init_list = init_node.as<InitializerListNode>();
 			const auto& initializers = init_list.initializers();
 			auto resolveArrayElementSizeBits = [&]() -> int {

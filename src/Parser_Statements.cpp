@@ -2,6 +2,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "StringLiteralTokenUtils.h"
 #include "TypeTraitEvaluator.h"
 
 // Tokens that can ONLY follow an expression after Type(args), never a declaration.
@@ -1145,56 +1146,71 @@ void Parser::prepareArrayTypeForBraceInitializer(const DeclarationNode& decl_nod
 void Parser::inferUnsizedArraySizeFromInitializer(const DeclarationNode& decl_node,
 												  TypeSpecifierNode& type_specifier,
 												  const std::optional<ASTNode>& initializer) {
-	if (!decl_node.is_unsized_array() || !initializer.has_value() || !initializer->is<InitializerListNode>()) {
+	if (!decl_node.is_unsized_array() || !initializer.has_value()) {
 		return;
 	}
 
-	const InitializerListNode& init_list = initializer->as<InitializerListNode>();
-	if (!type_specifier.has_unsized_outer_array_dimension()) {
-		type_specifier.set_array(true, init_list.initializers().size());
+	size_t outer_size = 0;
+	if (initializer->is<InitializerListNode>()) {
+		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
+		if (!type_specifier.has_unsized_outer_array_dimension()) {
+			type_specifier.set_array(true, init_list.initializers().size());
+			return;
+		}
+
+		const std::vector<size_t> trailing_dims = type_specifier.array_dimensions();
+		if (trailing_dims.empty()) {
+			outer_size = init_list.initializers().size();
+		} else {
+			size_t subarray_flat_count = 1;
+			bool valid_subarray_size = true;
+			for (size_t dim_size : trailing_dims) {
+				if (dim_size == 0 || dim_size > std::numeric_limits<size_t>::max() / subarray_flat_count) {
+					valid_subarray_size = false;
+					break;
+				}
+				subarray_flat_count *= dim_size;
+			}
+
+			if (!valid_subarray_size || subarray_flat_count == 0) {
+				outer_size = init_list.initializers().size();
+			} else {
+				size_t pending_scalar_count = 0;
+				auto flush_scalar_run = [&]() {
+					if (pending_scalar_count == 0) {
+						return;
+					}
+					outer_size += (pending_scalar_count + subarray_flat_count - 1) / subarray_flat_count;
+					pending_scalar_count = 0;
+				};
+
+				for (const auto& element_init : init_list.initializers()) {
+					if (element_init.is<InitializerListNode>()) {
+						flush_scalar_run();
+						outer_size++;
+					} else {
+						pending_scalar_count++;
+					}
+				}
+
+				flush_scalar_run();
+			}
+		}
+	} else if (initializer->is<ExpressionNode>()) {
+		const ExpressionNode& init_expr = initializer->as<ExpressionNode>();
+		const auto* string_literal = std::get_if<StringLiteralNode>(&init_expr);
+		if (!string_literal ||
+			type_specifier.category() != TypeCategory::Char ||
+			type_specifier.pointer_depth() != 0 ||
+			type_specifier.array_dimension_count() > 0) {
+			return;
+		}
+		outer_size = FlashCpp::computeStringLiteralContentLength(string_literal->value()) + 1;
+	} else {
 		return;
 	}
 
 	const std::vector<size_t> trailing_dims = type_specifier.array_dimensions();
-	size_t outer_size = 0;
-	if (trailing_dims.empty()) {
-		outer_size = init_list.initializers().size();
-	} else {
-		size_t subarray_flat_count = 1;
-		bool valid_subarray_size = true;
-		for (size_t dim_size : trailing_dims) {
-			if (dim_size == 0 || dim_size > std::numeric_limits<size_t>::max() / subarray_flat_count) {
-				valid_subarray_size = false;
-				break;
-			}
-			subarray_flat_count *= dim_size;
-		}
-
-		if (!valid_subarray_size || subarray_flat_count == 0) {
-			outer_size = init_list.initializers().size();
-		} else {
-			size_t pending_scalar_count = 0;
-			auto flush_scalar_run = [&]() {
-				if (pending_scalar_count == 0) {
-					return;
-				}
-				outer_size += (pending_scalar_count + subarray_flat_count - 1) / subarray_flat_count;
-				pending_scalar_count = 0;
-			};
-
-			for (const auto& element_init : init_list.initializers()) {
-				if (element_init.is<InitializerListNode>()) {
-					flush_scalar_run();
-					outer_size++;
-				} else {
-					pending_scalar_count++;
-				}
-			}
-
-			flush_scalar_run();
-		}
-	}
-
 	std::vector<size_t> inferred_dims;
 	inferred_dims.reserve(trailing_dims.size() + 1);
 	inferred_dims.push_back(outer_size);
@@ -1332,6 +1348,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 			}
 		}
 
+		inferUnsizedArraySizeFromInitializer(decl_node, type_specifier, initializer);
 		return initializer;
 	}
 }

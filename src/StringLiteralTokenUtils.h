@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cctype>
+#include <string>
 #include <string_view>
 
 namespace FlashCpp {
@@ -74,6 +76,114 @@ inline ParsedStringLiteralToken parseStringLiteralToken(std::string_view token_r
 	}
 
 	return result;
+}
+
+inline unsigned parseHexDigit(char c) {
+	if (c >= '0' && c <= '9') {
+		return static_cast<unsigned>(c - '0');
+	}
+	if (c >= 'a' && c <= 'f') {
+		return static_cast<unsigned>(10 + (c - 'a'));
+	}
+	if (c >= 'A' && c <= 'F') {
+		return static_cast<unsigned>(10 + (c - 'A'));
+	}
+	return 0;
+}
+
+inline std::string decodeStringLiteralBytes(std::string_view token_raw) {
+	const auto parsed_literal = parseStringLiteralToken(token_raw);
+	const bool process_escapes = !parsed_literal.is_raw;
+	std::string_view content =
+		parsed_literal.is_raw && !parsed_literal.has_delimited_content
+		? parsed_literal.normalized_token
+		: parsed_literal.content;
+
+	std::string decoded;
+	decoded.reserve(content.size());
+
+	for (size_t i = 0; i < content.size(); ++i) {
+		char c = content[i];
+		if (!process_escapes || c != '\\' || i + 1 >= content.size()) {
+			decoded.push_back(c);
+			continue;
+		}
+
+		++i;
+		const char esc = content[i];
+		switch (esc) {
+		case 'n':
+			decoded.push_back('\n');
+			break;
+		case 't':
+			decoded.push_back('\t');
+			break;
+		case 'r':
+			decoded.push_back('\r');
+			break;
+		case '\\':
+			decoded.push_back('\\');
+			break;
+		case '"':
+			decoded.push_back('"');
+			break;
+		case '\'':
+			decoded.push_back('\'');
+			break;
+		case '0':
+		case '1':
+		case '2':
+		case '3':
+		case '4':
+		case '5':
+		case '6':
+		case '7': {
+			unsigned value = static_cast<unsigned>(esc - '0');
+			for (int d = 0; d < 2 && i + 1 < content.size() &&
+				 content[i + 1] >= '0' && content[i + 1] <= '7'; ++d) {
+				++i;
+				value = (value * 8) + static_cast<unsigned>(content[i] - '0');
+			}
+			decoded.push_back(static_cast<char>(value & 0xFFu));
+			break;
+		}
+		case 'x': {
+			unsigned value = 0;
+			bool saw_digit = false;
+			while (i + 1 < content.size() &&
+				   std::isxdigit(static_cast<unsigned char>(content[i + 1]))) {
+				++i;
+				saw_digit = true;
+				value = (value * 16) + parseHexDigit(content[i]);
+			}
+			decoded.push_back(static_cast<char>((saw_digit ? value : static_cast<unsigned>('x')) & 0xFFu));
+			break;
+		}
+		case 'u':
+		case 'U': {
+			const int digits = (esc == 'u') ? 4 : 8;
+			unsigned value = 0;
+			int consumed = 0;
+			while (consumed < digits && i + 1 < content.size() &&
+				   std::isxdigit(static_cast<unsigned char>(content[i + 1]))) {
+				++i;
+				++consumed;
+				value = (value * 16) + parseHexDigit(content[i]);
+			}
+			decoded.push_back(static_cast<char>(value & 0xFFu));
+			break;
+		}
+		default:
+			decoded.push_back(esc);
+			break;
+		}
+	}
+
+	return decoded;
+}
+
+inline size_t computeStringLiteralContentLength(std::string_view token_raw) {
+	return decodeStringLiteralBytes(token_raw).size();
 }
 
 }

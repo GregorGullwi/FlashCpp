@@ -39,65 +39,6 @@ void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpec
 	}
 }
 
-// Compute the number of logical characters in a string literal token, excluding
-// the null terminator.  The raw token includes the surrounding double-quote
-// delimiters and an optional encoding prefix (e.g. L, u8, u, U).
-// For raw string literals (R"delim(content)delim"), no escape sequences are
-// processed; the content between ( and ) is returned as-is.
-// For regular strings, each escape sequence (however many source characters it
-// occupies) counts as a single logical character, following C++20 [lex.ccon]:
-//   \ooo  — up to 3 octal digits
-//   \xHH  — one or more hex digits
-//   \uNNNN  — exactly 4 hex digits
-//   \UNNNNNNNN — exactly 8 hex digits
-//   all other named escapes (\n, \t, \\, etc.) — one source char after backslash
-static size_t computeStringContentLength(std::string_view token_raw) {
-	const auto parsed_literal = FlashCpp::parseStringLiteralToken(token_raw);
-	if (parsed_literal.is_raw) {
-		return parsed_literal.has_delimited_content ? parsed_literal.content.size() : 0;
-	}
-
-	if (!parsed_literal.has_delimited_content) {
-		return 0;
-	}
-
-	std::string_view content = parsed_literal.content;
-
-	size_t len = 0;
-	for (size_t i = 0; i < content.size(); ++i) {
-		if (content[i] == '\\' && i + 1 < content.size()) {
-			++i; // advance to the first char of the escape body
-			const char esc = content[i];
-			if (esc == 'x') {
-				// Hex escape \xH[H...]: consume all contiguous hex digits.
-				while (i + 1 < content.size() &&
-					   std::isxdigit(static_cast<unsigned char>(content[i + 1])))
-					++i;
-			} else if (esc >= '0' && esc <= '7') {
-				// Octal escape \ooo: the first digit is already at i;
-				// consume up to 2 additional octal digits.
-				for (int d = 0; d < 2 && i + 1 < content.size() &&
-					 content[i + 1] >= '0' && content[i + 1] <= '7'; ++d)
-					++i;
-			} else if (esc == 'u') {
-				// Universal character name \uNNNN: exactly 4 hex digits.
-				for (int d = 0; d < 4 && i + 1 < content.size() &&
-					 std::isxdigit(static_cast<unsigned char>(content[i + 1])); ++d)
-					++i;
-			} else if (esc == 'U') {
-				// Universal character name \UNNNNNNNN: exactly 8 hex digits.
-				for (int d = 0; d < 8 && i + 1 < content.size() &&
-					 std::isxdigit(static_cast<unsigned char>(content[i + 1])); ++d)
-					++i;
-			}
-			// For named single-char escapes (\n, \t, \\, \", \', etc.) the
-			// single character already consumed above is the complete body.
-		}
-		++len; // one logical character regardless of escape sequence width
-	}
-	return len;
-}
-
 // Placeholder return-type finalization requires every return statement in the
 // body to deduce to the same full type identity, including cv/reference and
 // pointer qualifiers. This prevents plain `auto` and `decltype(auto)` from
@@ -3964,7 +3905,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::Char);
 				desc.base_cv = CVQualifier::Const;
-				const size_t n = computeStringContentLength(e.value()) + 1;
+				const size_t n = FlashCpp::computeStringLiteralContentLength(e.value()) + 1;
 				desc.array_dimensions.push_back(n);
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
