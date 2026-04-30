@@ -3562,11 +3562,30 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 		return {};
 
 	if (node.is<ExpressionNode>()) {
+		const auto& expr = node.as<ExpressionNode>();
+		if (std::holds_alternative<IdentifierNode>(expr)) {
+			const IdentifierNode& identifier = std::get<IdentifierNode>(expr);
+			if (identifier.name() != "this"sv) {
+				const CanonicalTypeId local_id = lookupLocalType(identifier.nameHandle());
+				if (local_id) {
+					return local_id;
+				}
+
+				if (const MemberContext* member_context = getCurrentMemberContext();
+					member_context && member_context->has_implicit_this && member_context->type_index.is_valid()) {
+					if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+							member_context->type_index, identifier.getOrInternNameHandle())) {
+						return type_context_.intern(canonicalTypeDescFromStructMember(
+							*member_result.member, member_context->this_base_cv));
+					}
+				}
+			}
+		}
+
 		if (auto slot = getSlot(getExpressionKey(node)); slot.has_value() && slot->has_type()) {
 			return slot->type_id;
 		}
 
-		const auto& expr = node.as<ExpressionNode>();
 		return std::visit([this](const auto& e) -> CanonicalTypeId {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, NumericLiteralNode>) {
