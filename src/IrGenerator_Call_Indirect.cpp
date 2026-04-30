@@ -1082,11 +1082,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				searchBaseClasses(searchBaseClasses, struct_info);
 			}
 
-			// Phase 5 Slice K: historical `instantiateLazySelectedMember` fallback
-			// removed — sema's end-of-normalization drain has already materialized
-			// every reachable instantiation's members by the time we reach codegen.
-			// An audit across the full 2201-test corpus confirmed 0 first-materializer
-			// hits at this site.
+			// Phase 5 Slice K invariant: sema's end-of-normalization drain has
+			// already materialized every reachable instantiation's members by
+			// the time we reach codegen.
 
 			const FunctionDeclarationNode* resolved_member_func =
 				materialized_member_func_decl ? materialized_member_func_decl : &func_decl;
