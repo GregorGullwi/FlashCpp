@@ -114,12 +114,13 @@ Common non-type operands for `sizeof` and `alignof` now work in constexpr evalua
 - binary expressions such as `a + b`
 - constexpr function calls such as `makeInt()`
 - member access such as `obj.member`
+- pointer-to-member access such as `obj.*pm` and `ptr->*pm`
 - array subscripts such as `arr[1]`, `obj.data[2]`, and `matrix[0]`
 - ternary expressions such as `cond ? a : b`
 - cast expressions such as `static_cast<short>(x)`
 - dereference expressions such as `*ptr`
 
-See `tests/test_constexpr_sizeof_alignof_complex_expr_ret0.cpp` for full coverage.
+See `tests/test_constexpr_sizeof_alignof_complex_expr_ret0.cpp` and `tests/test_constexpr_sizeof_alignof_member_pointer_access_ret0.cpp` for coverage.
 
 ### ✅ Constexpr Struct Construction
 ```cpp
@@ -1470,6 +1471,7 @@ struct CaptureExample {
 - `tests/test_constexpr_inferred_multidim_array_ret0.cpp` - Unsized-first multidimensional array inference with nested-brace init in global/local constexpr contexts, including runtime materialization
 - `tests/test_constexpr_ternary_struct_ret0.cpp` - Ternary operator returning struct types in constexpr (global and function-returned)
 - `tests/test_constexpr_nested_member_ctor_local_ret0.cpp` - Nested member access on local constructor-initialized objects in constexpr functions
+- `tests/test_constexpr_sizeof_alignof_member_pointer_access_ret0.cpp` - `sizeof` / `alignof` on `obj.*pm` and `ptr->*pm` in constexpr
 - `tests/test_constexpr_empty_brace_nodefault_ctor_fail.cpp` - Empty-brace init rejected for non-aggregate types without default constructor (expected failure)
 - `tests/test_constexpr_local_nodefault_ctor_fail.cpp` - Uninitialized local constexpr object rejects missing default constructor on non-aggregate types (expected failure)
 - `tests/test_constexpr_new_nodefault_ctor_fail.cpp` - `new` on non-aggregate type without default constructor rejected (expected failure)
