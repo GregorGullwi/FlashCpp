@@ -218,7 +218,7 @@ std::optional<StringHandle> tryResolveConstexprMemberPointerTargetName(const AST
 			}
 		}
 
-		auto try_resolve_from_symbols =
+		auto tryResolveFromSymbols =
 			[&](const SymbolTable* symbols) -> std::optional<StringHandle> {
 			if (!symbols) {
 				return std::nullopt;
@@ -237,10 +237,10 @@ std::optional<StringHandle> tryResolveConstexprMemberPointerTargetName(const AST
 			return tryResolveConstexprMemberPointerTargetName(*var_decl.initializer(), context);
 		};
 
-		if (auto member_name = try_resolve_from_symbols(context.symbols); member_name.has_value()) {
+		if (auto member_name = tryResolveFromSymbols(context.symbols); member_name.has_value()) {
 			return member_name;
 		}
-		return try_resolve_from_symbols(context.global_symbols);
+		return tryResolveFromSymbols(context.global_symbols);
 	}
 
 	return std::nullopt;
