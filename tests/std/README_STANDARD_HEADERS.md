@@ -102,6 +102,102 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
 
+#### 2026-04-30 Static-member NTTP fast-path fix in partial specializations (Linux/libstdc++-14)
+
+This pass retested every `tests/std/test_std_*.cpp` after rebuilding
+`x64/Sharded/FlashCpp` with clang++ and includes one targeted parser fix.
+
+Fix landed:
+
+- **`classifySimpleTemplateArgName` now also probes the surrounding struct /
+  member-function parsing contexts (resolving the `StructTypeInfo` from
+  `MemberFunctionContext::struct_type_index` when the cached
+  `local_struct_info` is null).**  Static data members of an *eagerly
+  reparsed* partial-specialization member function body — e.g.
+  `__atomic_ref<_Tp,false,false>::is_lock_free()`'s
+  `is_lock_free<sizeof(_Tp), required_alignment>()` in
+  `<bits/atomic_base.h>` line 1523 — are now classified as **ValueLike**
+  NTTP arguments instead of **Unknown**, so the parser no longer
+  mis-interprets them as types and aborts with `Missing semicolon(;)`.
+
+Regression: `tests/test_partial_spec_static_member_nttp_ret0.cpp`.
+
+Re-run snapshot of `tests/std/test_std_*.cpp` (Linux/libstdc++-14, clang++
+build, 60 s timeout per file).  Many headers regressed from earlier dated
+sections because of unrelated *Missing TypeInfo while computing template
+argument size* and *Unregistered dependent placeholder type* internal
+errors that are still triaged separately:
+
+| Header | Status | Time | First-order stop / note |
+|--------|--------|------|-------------------------|
+| `<aggregate_brace_elision_follow>` | ✅ PASS | 44ms | |
+| `<algorithm>` | ❌ Compile Error | 2497ms | `Missing TypeInfo while computing template argument size`. |
+| `<any>` | ❌ Compile Error | 603ms | Earlier alias-template registration log; first hard error is later. |
+| `<array>` | ❌ Compile Error | 1459ms | `Cannot use copy initialization with explicit constructor`. |
+| `<atomic>` | ❌ Compile Error | 936ms | Old `Missing semicolon(;)` parse stop **fixed**.  Now stops further in at `Fatal error: Base class instantiation name should resolve after default filling` (same blocker as `<latch>` — `__atomic_impl::__compare_exchange<_AtomicRef>(...)` is mis-classified as a variable template). |
+| `<bit>` | ✅ PASS | 597ms | |
+| `<chrono>` | ❌ Compile Error | 3726ms | `Unregistered dependent placeholder type reached template argument classification`. |
+| `<cmath>` | ❌ Compile Error | 4254ms | `Missing TypeInfo while computing template argument size`. |
+| `<compare>` | ✅ PASS | 34ms | |
+| `<concepts>` | ✅ PASS | 509ms | |
+| `<deque>` | ❌ Compile Error | 1734ms | `Missing TypeInfo while computing template argument size`. |
+| `<exception>` | ✅ PASS | 546ms | |
+| `<fstream>` | ❌ Compile Error | 3150ms | `Missing TypeInfo while computing template argument size`. |
+| `<functional>` | ❌ Compile Error | 2455ms | `ExpressionSubstitutor missing binding for ordered template parameter '_Head'`. |
+| `<iostream>` | ❌ Compile Error | 3144ms | `Missing TypeInfo while computing template argument size`. |
+| `<iterator>` | ❌ Compile Error | 2910ms | `stl_pair.h:308: Call to deleted function 'swap'`. |
+| `<latch>` | ❌ Compile Error | 932ms | Same `Base class instantiation name should resolve after default filling` blocker as `<atomic>` after the static-member NTTP fix. |
+| `<limits>` | ✅ PASS | 1501ms | |
+| `<list>` | ❌ Compile Error | 1754ms | `Missing TypeInfo while computing template argument size`. |
+| `<map>` | ❌ Compile Error | 2476ms | `Missing TypeInfo while computing template argument size`. |
+| `<memory>` | ❌ Compile Error | 2375ms | `Missing TypeInfo while computing template argument size`. |
+| `<new>` | ✅ PASS | 62ms | |
+| `<numeric>` | ❌ Compile Error | 2448ms | First-order error not surfaced as `error:`/`Fatal:`. |
+| `<optional>` | ❌ Compile Error | 1255ms | `struct type info not found`. |
+| `<optional_codegen_recovery>` | ❌ Compile Error | 1288ms | `struct type info not found`. |
+| `<pair_swap_deleted_member>` | ✅ PASS | 28ms | |
+| `<queue>` | ❌ Compile Error | 1820ms | `Missing TypeInfo while computing template argument size`. |
+| `<ranges>` | ❌ Compile Error | 3084ms | `stl_pair.h:308: Call to deleted function 'swap'`. |
+| `<ratio>` | ❌ Compile Error | 604ms | `static_assert condition is not a constant expression: Undefined qualified identifier in constant expression: ratio_less$...::value`. |
+| `<rel_ops_no_false_instantiation_ret0>` | ✅ PASS | 833ms | |
+| `<set>` | ❌ Compile Error | 2481ms | `Missing TypeInfo while computing template argument size`. |
+| `<shared_mutex>` | ❌ Compile Error | 2400ms | `Unregistered dependent placeholder type reached template argument classification`. |
+| `<source_location>` | ✅ PASS | 46ms | |
+| `<span>` | ✅ PASS | 47ms | |
+| `<sstream>` | ❌ Compile Error | 3144ms | `Missing TypeInfo while computing template argument size`. |
+| `<stack>` | ❌ Compile Error | 1758ms | `Missing TypeInfo while computing template argument size`. |
+| `<stdexcept>` | ❌ Compile Error | 2933ms | `Missing TypeInfo while computing template argument size`. |
+| `<string>` | ❌ Compile Error | 2838ms | `Missing TypeInfo while computing template argument size`. |
+| `<string_view>` | ❌ Compile Error | 2529ms | `Missing TypeInfo while computing template argument size`. |
+| `<tuple>` | ❌ Compile Error | 1875ms | `ExpressionSubstitutor missing binding for ordered template parameter '_Head'`. |
+| `<type_traits>` | ❌ Compile Error | 418ms | `static_assert failed`. |
+| `<type_traits_is_integral_any_of_fail>` | ✅ PASS | 20ms | |
+| `<typeinfo_ret0>` | ✅ PASS | 63ms | |
+| `<utility>` | ✅ PASS | 830ms | |
+| `<variant>` | 💥 Crash | 2801ms | Still SIGSEGVs deep in `std::__invoke` overload resolution. |
+| `<vector>` | ❌ Compile Error | 1760ms | `Missing TypeInfo while computing template argument size`. |
+| `<version>` | ✅ PASS | 45ms | |
+| `<wstring_view_find_ret0>` | ❌ Compile Error | 2504ms | `No matching member function for call to 'find'`. |
+
+The two new dominant first-order blockers across the suite are:
+
+1. **`Missing TypeInfo while computing template argument size`** —
+   thrown from `computeTemplateTypeArgSizeBits` in
+   `src/TemplateRegistry_Types.h` when a struct-category
+   `TemplateTypeArg` resolves to a `TypeIndex` whose `TypeInfo` is not
+   yet registered.  This regressed several headers that were marked
+   "✅ Compiled" in the older table rows above (`<string>`, `<vector>`,
+   `<map>`, `<list>`, `<memory>`, etc.).  Likely fallout from a recent
+   template-parameter parsing change; not addressed in this pass.
+2. **`Base class instantiation name should resolve after default
+   filling`** — the `<atomic>` / `<latch>` next-stop after the
+   static-member NTTP fix.  Caused by
+   `__atomic_impl::__compare_exchange<_AtomicRef>(...)` (a function
+   template) being looked up as a *variable template*, which fails
+   and then falls through into the base-class default-filling path
+   that throws.  Tracked separately.
+
+
 #### 2026-04-30 Dependent identifier NTTP template-argument fix (Linux/libstdc++-14)
 
 This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested the
