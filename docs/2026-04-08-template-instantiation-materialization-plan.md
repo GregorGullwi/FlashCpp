@@ -279,6 +279,18 @@ Recent historical baselines recorded for this work:
   `IrGenerator_Visitors_Decl.cpp`, `IrGenerator_Visitors_TypeInit.cpp`, and
   `Parser_Templates_Class.cpp` so they describe the current sema/materialization
   invariants instead of removed recovery behavior.
+- 2026-04-30 Linux/clang return-side fallback probe + comment cleanup: full
+  suite passed, 2256 regular tests and 154 expected-fail tests. Probe of the
+  remaining `IrGenerator_Visitors_Namespace.cpp` return-side `generateTypeConversion`
+  fallbacks (lines ~416, ~434, ~439) identified the active cluster: alias-template
+  return paths and lambda returned-closure / member-alias cases. Diagnosis: the
+  `enable_if_t` alias-template name is recorded as a phantom `TypeInfo` with
+  category=`Struct`, no `StructInfo`, self-pointing `type_index_`, and
+  `is_alias=false` — so `canonicalize_type_alias` cannot resolve to the
+  underlying primitive. Audit doc updated with the cluster list and the root
+  cause for future cleanup. Verbose historical fallback comments in
+  `IrGenerator_Call_Direct.cpp` and `IrGenerator_Call_Indirect.cpp` were also
+  compacted to short invariant statements.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.
