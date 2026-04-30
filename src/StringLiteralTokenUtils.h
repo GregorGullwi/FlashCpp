@@ -195,7 +195,42 @@ inline std::string decodeStringLiteralBytes(std::string_view token_raw) {
 }
 
 inline size_t computeStringLiteralContentLength(std::string_view token_raw) {
-	return decodeStringLiteralBytes(token_raw).size();
+	const auto parsed_literal = parseStringLiteralToken(token_raw);
+	if (parsed_literal.is_raw) {
+		return parsed_literal.has_delimited_content ? parsed_literal.content.size() : 0;
+	}
+
+	if (!parsed_literal.has_delimited_content) {
+		return 0;
+	}
+
+	std::string_view content = parsed_literal.content;
+	size_t len = 0;
+	for (size_t i = 0; i < content.size(); ++i) {
+		if (content[i] == '\\' && i + 1 < content.size()) {
+			++i;
+			const char esc = content[i];
+			if (esc == 'x') {
+				while (i + 1 < content.size() &&
+					   std::isxdigit(static_cast<unsigned char>(content[i + 1])))
+					++i;
+			} else if (esc >= '0' && esc <= '7') {
+				for (int d = 0; d < 2 && i + 1 < content.size() &&
+					 content[i + 1] >= '0' && content[i + 1] <= '7'; ++d)
+					++i;
+			} else if (esc == 'u') {
+				for (int d = 0; d < 4 && i + 1 < content.size() &&
+					 std::isxdigit(static_cast<unsigned char>(content[i + 1])); ++d)
+					++i;
+			} else if (esc == 'U') {
+				for (int d = 0; d < 8 && i + 1 < content.size() &&
+					 std::isxdigit(static_cast<unsigned char>(content[i + 1])); ++d)
+					++i;
+			}
+		}
+		++len;
+	}
+	return len;
 }
 
 }
