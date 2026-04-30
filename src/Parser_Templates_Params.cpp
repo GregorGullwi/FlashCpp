@@ -769,6 +769,63 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			return { SimpleTemplateArgKind::ValueLike, std::nullopt };
 		}
 
+		// Static data members of the enclosing class being parsed (e.g. partial
+		// specializations whose member function bodies are parsed eagerly) are
+		// not yet in the symbol table.  Mirror the static-member lookup that
+		// `parse_primary_expression` performs against the struct/member-function
+		// parsing contexts so dependent NTTP arguments like
+		// `is_lock_free<sizeof(_Tp), required_alignment>()` classify as
+		// ValueLike instead of Unknown.
+		auto isStaticDataMemberOfEnclosingClass = [&](StringHandle handle) -> bool {
+			auto checkStruct = [&](const StructTypeInfo* info) -> bool {
+				if (info == nullptr) {
+					return false;
+				}
+				for (const auto& static_member : info->static_members) {
+					if (static_member.getName() == handle) {
+						return true;
+					}
+				}
+				return info->findStaticMemberRecursive(handle).first != nullptr;
+			};
+			auto checkStructNode = [&](const StructDeclarationNode* node) -> bool {
+				if (node == nullptr) {
+					return false;
+				}
+				for (const auto& static_member : node->static_members()) {
+					if (static_member.name == handle) {
+						return true;
+					}
+				}
+				return false;
+			};
+			auto checkByTypeIndex = [&](TypeIndex idx) -> bool {
+				if (const TypeInfo* type_info = tryGetTypeInfo(idx)) {
+					return checkStruct(type_info->getStructInfo());
+				}
+				return false;
+			};
+			for (auto it = struct_parsing_context_stack_.rbegin();
+				 it != struct_parsing_context_stack_.rend(); ++it) {
+				if (checkStructNode(it->struct_node) || checkStruct(it->local_struct_info)) {
+					return true;
+				}
+			}
+			for (auto it = member_function_context_stack_.rbegin();
+				 it != member_function_context_stack_.rend(); ++it) {
+				if (checkStructNode(it->struct_node) || checkStruct(it->local_struct_info)) {
+					return true;
+				}
+				if (checkByTypeIndex(it->struct_type_index)) {
+					return true;
+				}
+			}
+			return false;
+		};
+		if (isStaticDataMemberOfEnclosingClass(name_handle)) {
+			return { SimpleTemplateArgKind::ValueLike, std::nullopt };
+		}
+
 		if (gTemplateRegistry.lookup_alias_template(name_handle).has_value() ||
 			gTemplateRegistry.isClassTemplate(name_handle) ||
 			findTypeByName(name_handle) != nullptr) {
