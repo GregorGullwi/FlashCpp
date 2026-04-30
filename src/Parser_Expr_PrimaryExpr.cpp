@@ -5557,26 +5557,29 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						FLASH_LOG(Parser, Debug, "Found alias template '", identifier_token.value(), "' in expression context");
 						// Don't return yet - let it fall through to template argument parsing below
 					} else {
-						// Check if this is a class template (for expressions like type_identity<T>{})
-						auto class_template_opt = gTemplateRegistry.lookupTemplate(identifier_token.value());
-						FLASH_LOG(Parser, Debug, "Looking up class template '", identifier_token.value(), "', found=", class_template_opt.has_value());
+						// Check if this is a class template (for expressions like type_identity<T>{}).
+						// lookupTemplate() also finds function templates, so only treat names explicitly
+						// registered as class templates as type-like in expression context.
+						bool found_class_template = gTemplateRegistry.isClassTemplate(identifier_token.handle());
+						FLASH_LOG(Parser, Debug, "Looking up class template '", identifier_token.value(), "', found=", found_class_template);
 
 						// If not found directly, try looking up as a member struct template of the enclosing class
 						// This handles patterns like: template<typename T> struct Select<Wrapper<T>> { };
 						// where Wrapper is a member struct template of the same class
-						if (!class_template_opt.has_value() && !struct_parsing_context_stack_.empty()) {
+						if (!found_class_template && !struct_parsing_context_stack_.empty()) {
 							const auto& sp_ctx4 = struct_parsing_context_stack_.back();
 							// Build qualified name: EnclosingClass::MemberTemplate
 							StringBuilder qualified_name;
 							qualified_name.append(sp_ctx4.struct_name).append("::"sv).append(identifier_token.value());
 							std::string_view qualified_name_sv = qualified_name.commit();
-							class_template_opt = gTemplateRegistry.lookupTemplate(qualified_name_sv);
-							if (class_template_opt.has_value()) {
+							found_class_template = gTemplateRegistry.isClassTemplate(
+								StringTable::getOrInternStringHandle(qualified_name_sv));
+							if (found_class_template) {
 								FLASH_LOG(Parser, Debug, "Found member struct template '", identifier_token.value(), "' as '", qualified_name_sv, "'");
 							}
 						}
 
-						if (class_template_opt.has_value()) {
+						if (found_class_template) {
 							FLASH_LOG(Parser, Debug, "Found class template '", identifier_token.value(), "' in expression context");
 							// Mark as found to prevent "Missing identifier" error
 							found_as_type_alias = true;	// Reuse this flag - class template acts like a type name

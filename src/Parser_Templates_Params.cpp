@@ -716,9 +716,128 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 	}
 
 	// Parse template arguments
+	enum class SimpleTemplateArgKind {
+		NotSimple,
+		TypeLike,
+		ValueLike,
+		Unknown,
+	};
+
+	auto classify_simple_template_arg_name = [&](StringHandle name_handle) {
+		if (auto param_kind = currentTemplateParamKind(name_handle)) {
+			return *param_kind == TemplateParameterKind::NonType
+					   ? SimpleTemplateArgKind::ValueLike
+					   : SimpleTemplateArgKind::TypeLike;
+		}
+
+		for (const auto& subst : template_param_substitutions_) {
+			if (subst.param_name != name_handle) {
+				continue;
+			}
+			if (subst.is_value_param) {
+				return SimpleTemplateArgKind::ValueLike;
+			}
+			if (subst.is_type_param || subst.is_template_template_param) {
+				return SimpleTemplateArgKind::TypeLike;
+			}
+		}
+
+		if (lookup_symbol_with_template_check(name_handle).has_value()) {
+			return SimpleTemplateArgKind::ValueLike;
+		}
+
+		if (gTemplateRegistry.lookupVariableTemplate(name_handle).has_value()) {
+			return SimpleTemplateArgKind::ValueLike;
+		}
+
+		if (gTemplateRegistry.lookup_alias_template(name_handle).has_value() ||
+			gTemplateRegistry.isClassTemplate(name_handle) ||
+			findTypeByName(name_handle) != nullptr) {
+			return SimpleTemplateArgKind::TypeLike;
+		}
+
+		return SimpleTemplateArgKind::Unknown;
+	};
+
+	auto classify_simple_template_arg = [&](const ExpressionNode& expr) {
+		if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&expr)) {
+			return classify_simple_template_arg_name(tparam_ref->param_name());
+		}
+		if (const auto* id = std::get_if<IdentifierNode>(&expr)) {
+			return classify_simple_template_arg_name(StringTable::getOrInternStringHandle(id->name()));
+		}
+		return SimpleTemplateArgKind::NotSimple;
+	};
+
 	while (true) {
 		// Save position in case type parsing fails
 		SaveHandle arg_saved_pos = save_token_position();
+
+		if (peek().is_identifier()) {
+			const Token identifier_token = current_token_;
+			const StringHandle identifier_handle = identifier_token.handle();
+			SaveHandle identifier_saved_pos = save_token_position();
+			advance();
+
+			if (peek() == ">>"_tok) {
+				split_right_shift_token();
+			}
+
+			bool is_pack_expansion = false;
+			if (peek() == "..."_tok) {
+				advance();
+				is_pack_expansion = true;
+				if (peek() == ">>"_tok) {
+					split_right_shift_token();
+				}
+			}
+
+			if (peek() == ">"_tok || peek() == ","_tok) {
+				SimpleTemplateArgKind simple_identifier_kind = classify_simple_template_arg_name(identifier_handle);
+				if (simple_identifier_kind != SimpleTemplateArgKind::TypeLike) {
+					TemplateTypeArg simple_arg;
+					bool handled_simple_identifier = false;
+
+					for (const auto& subst : template_param_substitutions_) {
+						if (subst.param_name != identifier_handle) {
+							continue;
+						}
+						if (subst.is_value_param) {
+							simple_arg = TemplateTypeArg::makeValue(subst.value, subst.value_type);
+							handled_simple_identifier = true;
+							break;
+						}
+					}
+
+					if (!handled_simple_identifier) {
+						auto stored_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(identifier_token));
+						simple_arg = TemplateTypeArg::makeDependentValue(
+							identifier_handle,
+							TypeCategory::Int,
+							0,
+							std::move(stored_expr));
+					}
+
+					simple_arg.is_pack = is_pack_expansion;
+					template_args.push_back(simple_arg);
+					if (out_type_nodes) {
+						out_type_nodes->push_back(ASTNode::emplace_node<ExpressionNode>(IdentifierNode(identifier_token)));
+					}
+					discard_saved_token(identifier_saved_pos);
+					discard_saved_token(arg_saved_pos);
+
+					if (peek() == ">"_tok) {
+						advance();
+						break;
+					}
+
+					advance();
+					continue;
+				}
+			}
+
+			restore_token_position(identifier_saved_pos);
+		}
 
 		// First, try to parse an expression (for non-type template parameters)
 		// Use parse_expression with ExpressionContext::TemplateTypeArg to handle
@@ -1108,14 +1227,17 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// IMPORTANT: If followed by '...', this is pack expansion, NOT a type - accept as dependent expression
 					bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) ||
 												std::holds_alternative<TemplateParameterReferenceNode>(expr);
+					SimpleTemplateArgKind simple_identifier_kind = classify_simple_template_arg(expr);
+					bool simple_identifier_is_value_like = simple_identifier_kind == SimpleTemplateArgKind::ValueLike;
 					[[maybe_unused]] bool is_function_call_expr = CallInfo::tryFrom(expr).has_value();
 					bool followed_by_template_args = peek() == "<"_tok;
 					bool followed_by_array_declarator = peek() == "["_tok;
 					bool followed_by_pack_expansion = peek() == "..."_tok;
 					bool followed_by_reference = !peek().is_eof() && (peek() == "&"_tok || peek() == "&&"_tok);
 					bool followed_by_pointer = peek() == "*"_tok;
-					bool should_try_type_parsing = (out_type_nodes != nullptr && is_simple_identifier && !followed_by_pack_expansion) ||
-												   (is_simple_identifier && followed_by_template_args) ||
+					bool should_try_type_parsing = (out_type_nodes != nullptr && is_simple_identifier &&
+													!followed_by_pack_expansion && !simple_identifier_is_value_like) ||
+												   (is_simple_identifier && followed_by_template_args && !simple_identifier_is_value_like) ||
 												   (is_simple_identifier && followed_by_array_declarator) ||
 												   (is_simple_identifier && followed_by_reference) ||
 												   (is_simple_identifier && followed_by_pointer);
@@ -1285,7 +1407,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								std::holds_alternative<SizeofExprNode>(expr) ||
 								std::holds_alternative<AlignofExprNode>(expr) ||
 								std::holds_alternative<TypeTraitExprNode>(expr) ||
-								std::holds_alternative<BinaryOperatorNode>(expr);
+								std::holds_alternative<BinaryOperatorNode>(expr) ||
+								simple_identifier_kind == SimpleTemplateArgKind::ValueLike;
 							if (is_value_like_dependent_expr) {
 								// For sizeof/alignof expressions, use UnsignedLongLong (size_t) as the type
 								TypeCategory value_category = TypeCategory::Bool;
@@ -1296,7 +1419,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								// Store the original AST expression for dependent NTTP expressions
 								// so it can be re-evaluated during template instantiation
 								std::optional<ASTNode> stored_expr = std::nullopt;
-								if ((std::holds_alternative<SizeofExprNode>(expr) ||
+								if ((std::holds_alternative<IdentifierNode>(expr) ||
+									 std::holds_alternative<TemplateParameterReferenceNode>(expr) ||
+									 std::holds_alternative<QualifiedIdentifierNode>(expr) ||
+									 std::holds_alternative<SizeofExprNode>(expr) ||
 									 std::holds_alternative<AlignofExprNode>(expr) ||
 									 std::holds_alternative<NoexceptExprNode>(expr) ||
 									 std::holds_alternative<TypeTraitExprNode>(expr) ||
