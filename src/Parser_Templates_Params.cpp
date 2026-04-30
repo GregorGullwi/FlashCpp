@@ -723,11 +723,22 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		Unknown,
 	};
 
-	auto classifySimpleTemplateArgName = [&](StringHandle name_handle) {
+	// Classifies a simple identifier name and – when it turns out to be ValueLike due to a
+	// concrete substitution – also returns the already-built TemplateTypeArg so the caller
+	// does not need a second loop over template_param_substitutions_.
+	auto classifySimpleTemplateArgName = [&](StringHandle name_handle)
+		-> std::pair<SimpleTemplateArgKind, std::optional<TemplateTypeArg>> {
 		if (auto param_kind = currentTemplateParamKind(name_handle)) {
-			return *param_kind == TemplateParameterKind::NonType
-					   ? SimpleTemplateArgKind::ValueLike
-					   : SimpleTemplateArgKind::TypeLike;
+			if (*param_kind != TemplateParameterKind::NonType) {
+				return { SimpleTemplateArgKind::TypeLike, std::nullopt };
+			}
+			// NonType param – also scan substitutions so we can return a concrete arg in one pass
+			for (const auto& subst : template_param_substitutions_) {
+				if (subst.param_name == name_handle && subst.is_value_param) {
+					return { SimpleTemplateArgKind::ValueLike, TemplateTypeArg::makeValue(subst.value, subst.value_type) };
+				}
+			}
+			return { SimpleTemplateArgKind::ValueLike, std::nullopt };
 		}
 
 		for (const auto& subst : template_param_substitutions_) {
@@ -735,36 +746,36 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				continue;
 			}
 			if (subst.is_value_param) {
-				return SimpleTemplateArgKind::ValueLike;
+				return { SimpleTemplateArgKind::ValueLike, TemplateTypeArg::makeValue(subst.value, subst.value_type) };
 			}
 			if (subst.is_type_param || subst.is_template_template_param) {
-				return SimpleTemplateArgKind::TypeLike;
+				return { SimpleTemplateArgKind::TypeLike, std::nullopt };
 			}
 		}
 
 		if (lookup_symbol_with_template_check(name_handle).has_value()) {
-			return SimpleTemplateArgKind::ValueLike;
+			return { SimpleTemplateArgKind::ValueLike, std::nullopt };
 		}
 
 		if (gTemplateRegistry.lookupVariableTemplate(name_handle).has_value()) {
-			return SimpleTemplateArgKind::ValueLike;
+			return { SimpleTemplateArgKind::ValueLike, std::nullopt };
 		}
 
 		if (gTemplateRegistry.lookup_alias_template(name_handle).has_value() ||
 			gTemplateRegistry.isClassTemplate(name_handle) ||
 			findTypeByName(name_handle) != nullptr) {
-			return SimpleTemplateArgKind::TypeLike;
+			return { SimpleTemplateArgKind::TypeLike, std::nullopt };
 		}
 
-		return SimpleTemplateArgKind::Unknown;
+		return { SimpleTemplateArgKind::Unknown, std::nullopt };
 	};
 
 	auto classifySimpleTemplateArg = [&](const ExpressionNode& expr) {
 		if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&expr)) {
-			return classifySimpleTemplateArgName(tparam_ref->param_name());
+			return classifySimpleTemplateArgName(tparam_ref->param_name()).first;
 		}
 		if (const auto* id = std::get_if<IdentifierNode>(&expr)) {
-			return classifySimpleTemplateArgName(StringTable::getOrInternStringHandle(id->name()));
+			return classifySimpleTemplateArgName(StringTable::getOrInternStringHandle(id->name())).first;
 		}
 		return SimpleTemplateArgKind::NotSimple;
 	};
@@ -793,35 +804,22 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			}
 
 			if (peek() == ">"_tok || peek() == ","_tok) {
-				SimpleTemplateArgKind simple_identifier_kind = classifySimpleTemplateArgName(identifier_handle);
+				auto [simple_identifier_kind, prebuilt_arg] = classifySimpleTemplateArgName(identifier_handle);
 				if (simple_identifier_kind != SimpleTemplateArgKind::TypeLike) {
-					TemplateTypeArg simple_arg;
-					bool handled_simple_identifier = false;
-
-					for (const auto& subst : template_param_substitutions_) {
-						if (subst.param_name != identifier_handle) {
-							continue;
-						}
-						if (subst.is_value_param) {
-							simple_arg = TemplateTypeArg::makeValue(subst.value, subst.value_type);
-							handled_simple_identifier = true;
-							break;
-						}
-					}
-
-					if (!handled_simple_identifier) {
-						auto stored_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(identifier_token));
-						// Deferred bare identifier NTTPs do not yet carry an authoritative
-						// value type here. Use Int as the same neutral placeholder category
-						// already used elsewhere for dependent NTTP identities; template
-						// instantiation later re-evaluates the stored expression and replaces
-						// this placeholder with the concrete value/category.
-						simple_arg = TemplateTypeArg::makeDependentValue(
+					// Use the concrete arg returned by the classify call (avoids a second loop over
+					// template_param_substitutions_). Fall back to a dependent-value placeholder when
+					// no concrete substitution was found yet (deferred template-body parse context).
+					TemplateTypeArg simple_arg = prebuilt_arg.value_or(
+						TemplateTypeArg::makeDependentValue(
 							identifier_handle,
+							// Deferred bare identifier NTTPs do not yet carry an authoritative
+							// value type here. Use Int as the same neutral placeholder category
+							// already used elsewhere for dependent NTTP identities; template
+							// instantiation later re-evaluates the stored expression and replaces
+							// this placeholder with the concrete value/category.
 							TypeCategory::Int,
 							0,
-							std::move(stored_expr));
-					}
+							ASTNode::emplace_node<ExpressionNode>(IdentifierNode(identifier_token))));
 
 					simple_arg.is_pack = is_pack_expansion;
 					template_args.push_back(simple_arg);
