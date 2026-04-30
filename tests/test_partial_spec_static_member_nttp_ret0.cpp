@@ -33,22 +33,3 @@ int main() {
 	// instantiation occurs.
 	return 0;
 }
-
-
-
-
-
-int main() {
-	// The probe() call materializes the dependent-NTTP partial-specialization
-	// template `ns::Sum<sizeof(int), required_alignment>` whose `value` is 8.
-	// The point of this test is that the call below parses successfully — the
-	// fast-path classifier used to reject `required_alignment` as a non-type
-	// template argument when the body was reparsed inside the partial
-	// specialization's member function context.
-	Probe<int> p;
-	(void)p;
-	return 0;
-}
-
-
-
