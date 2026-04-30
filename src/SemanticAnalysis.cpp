@@ -14,10 +14,6 @@
 #include "StringLiteralTokenUtils.h"
 #include "Parser_FunctionTypeHelpers.h"
 
-namespace {
-constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
-constexpr std::string_view kAnonymousNamespaceContext = "<anonymous namespace>";
-
 void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec) {
 	if (!decl.is_array() || type_spec.is_array()) {
 		return;
@@ -38,6 +34,10 @@ void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpec
 		type_spec.set_array_dimensions(resolved_dimensions);
 	}
 }
+
+namespace {
+constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
+constexpr std::string_view kAnonymousNamespaceContext = "<anonymous namespace>";
 
 // Placeholder return-type finalization requires every return statement in the
 // body to deduce to the same full type identity, including cv/reference and

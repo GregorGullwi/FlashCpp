@@ -3081,7 +3081,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// Comparison operations (typed)
 	// For pointer comparisons, override types to use 64-bit unsigned integers
 	// Helper lambda to apply pointer comparison type override
-	auto applyPointerComparisonOverride = [&](BinaryOp& bin_op, IrOpcode& opcode) {
+	auto applyPointerComparisonOverride = [&](BinaryOp& bin_op, IrOpcode& op_ref) {
 		if (lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
 			bin_op.lhs.setType(TypeCategory::UnsignedLongLong);
 			bin_op.lhs.ir_type = IrType::Integer;
@@ -3091,14 +3091,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			bin_op.rhs.size_in_bits = SizeInBits{64};
 
 			// For ordered comparisons, ensure we use unsigned comparison for pointers
-			if (opcode == IrOpcode::LessThan)
-				opcode = IrOpcode::UnsignedLessThan;
-			else if (opcode == IrOpcode::LessEqual)
-				opcode = IrOpcode::UnsignedLessEqual;
-			else if (opcode == IrOpcode::GreaterThan)
-				opcode = IrOpcode::UnsignedGreaterThan;
-			else if (opcode == IrOpcode::GreaterEqual)
-				opcode = IrOpcode::UnsignedGreaterEqual;
+			if (op_ref == IrOpcode::LessThan)
+				op_ref = IrOpcode::UnsignedLessThan;
+			else if (op_ref == IrOpcode::LessEqual)
+				op_ref = IrOpcode::UnsignedLessEqual;
+			else if (op_ref == IrOpcode::GreaterThan)
+				op_ref = IrOpcode::UnsignedGreaterThan;
+			else if (op_ref == IrOpcode::GreaterEqual)
+				op_ref = IrOpcode::UnsignedGreaterEqual;
 		}
 	};
 

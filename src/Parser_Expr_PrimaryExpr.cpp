@@ -9,28 +9,7 @@
 
 std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);
 
-namespace {
-void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec) {
-	if (!decl.is_array() || type_spec.is_array()) {
-		return;
-	}
-
-	std::vector<size_t> resolved_dimensions;
-	resolved_dimensions.reserve(decl.array_dimension_count());
-	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-	for (const auto& dim_expr : decl.array_dimensions()) {
-		auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
-		if (!eval_result.success() || eval_result.as_int() <= 0) {
-			return;
-		}
-		resolved_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
-	}
-
-	if (!resolved_dimensions.empty()) {
-		type_spec.set_array_dimensions(resolved_dimensions);
-	}
-}
-}
+void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec);
 
 // Helper function to check if a template name is a template-template parameter
 bool Parser::isTemplateTemplateParameter(StringHandle template_name_handle) const {
@@ -638,8 +617,9 @@ bool expressionHasDeferredTemplateDependency(
 			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
 				return optionalAstNodeHasDeferredTemplateDependency(inner.expression(), current_template_param_names);
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
-				if (inner.callee().declaration().type_node().template is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& callee_type = inner.callee().declaration().type_node().template as<TypeSpecifierNode>();
+				const ASTNode callee_type_node = inner.callee().declaration().type_node();
+				if (callee_type_node.template is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& callee_type = callee_type_node.template as<TypeSpecifierNode>();
 					if (typeRefersToCurrentTemplateParam(callee_type, current_template_param_names) ||
 						(callee_type.category() == TypeCategory::Template) ||
 						((callee_type.category() == TypeCategory::UserDefined ||

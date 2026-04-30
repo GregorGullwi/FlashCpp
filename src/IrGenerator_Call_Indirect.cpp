@@ -1533,9 +1533,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 											// For auto&& parameters inside lambdas (recursive lambda pattern),
 											// assume the parameter has the closure type of the current lambda.
 											// This handles: auto factorial = [](auto&& self, int n) { ... self(self, n-1); }
-											auto type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
-											if (type_it != getTypesByNameMap().end()) {
-												const TypeInfo* closure_type = type_it->second;
+											auto closure_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+											if (closure_type_it != getTypesByNameMap().end()) {
+												const TypeInfo* closure_type = closure_type_it->second;
 												int closure_size = closure_type->getStructInfo()
 																	   ? closure_type->getStructInfo()->sizeInBits().value
 																	   : 64;
