@@ -2280,7 +2280,8 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			}
 			// Annotate the initializer with any needed implicit conversion to the declared type.
 			if (decl_type_id) {
-				if (!tryAnnotateCopyInitConvertingConstructor(*init, decl_type_id,
+				if (!isSameTypeConstructorCallInitialization(*init, decl_type_id) &&
+					!tryAnnotateCopyInitConvertingConstructor(*init, decl_type_id,
 															  " in variable initialization")) {
 					tryAnnotateConversion(*init, decl_type_id);
 					diagnoseScopedEnumConversion(*init, decl_type_id, " in variable initialization");
@@ -4871,9 +4872,23 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 
 // --- Return conversion annotation ---
 
+bool SemanticAnalysis::isSameTypeConstructorCallInitialization(
+	const ASTNode& expr_node,
+	CanonicalTypeId target_type_id) {
+	if (!target_type_id || !expr_node.is<ConstructorCallNode>()) {
+		return false;
+	}
+	const CanonicalTypeId expr_type_id = inferExpressionType(expr_node);
+	return expr_type_id && expr_type_id == target_type_id;
+}
+
 void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx) {
-	if (!ctx.current_function_return_type_id)
+	if (!ctx.current_function_return_type_id) {
 		return;
+	}
+	if (isSameTypeConstructorCallInitialization(expr_node, *ctx.current_function_return_type_id)) {
+		return;
+	}
 	if (!tryAnnotateCopyInitConvertingConstructor(expr_node, *ctx.current_function_return_type_id,
 												  " in return statement")) {
 		tryAnnotateConversion(expr_node, *ctx.current_function_return_type_id);
