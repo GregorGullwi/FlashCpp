@@ -723,7 +723,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		Unknown,
 	};
 
-	auto classify_simple_template_arg_name = [&](StringHandle name_handle) {
+	auto classifySimpleTemplateArgName = [&](StringHandle name_handle) {
 		if (auto param_kind = currentTemplateParamKind(name_handle)) {
 			return *param_kind == TemplateParameterKind::NonType
 					   ? SimpleTemplateArgKind::ValueLike
@@ -759,12 +759,12 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		return SimpleTemplateArgKind::Unknown;
 	};
 
-	auto classify_simple_template_arg = [&](const ExpressionNode& expr) {
+	auto classifySimpleTemplateArg = [&](const ExpressionNode& expr) {
 		if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&expr)) {
-			return classify_simple_template_arg_name(tparam_ref->param_name());
+			return classifySimpleTemplateArgName(tparam_ref->param_name());
 		}
 		if (const auto* id = std::get_if<IdentifierNode>(&expr)) {
-			return classify_simple_template_arg_name(StringTable::getOrInternStringHandle(id->name()));
+			return classifySimpleTemplateArgName(StringTable::getOrInternStringHandle(id->name()));
 		}
 		return SimpleTemplateArgKind::NotSimple;
 	};
@@ -793,7 +793,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			}
 
 			if (peek() == ">"_tok || peek() == ","_tok) {
-				SimpleTemplateArgKind simple_identifier_kind = classify_simple_template_arg_name(identifier_handle);
+				SimpleTemplateArgKind simple_identifier_kind = classifySimpleTemplateArgName(identifier_handle);
 				if (simple_identifier_kind != SimpleTemplateArgKind::TypeLike) {
 					TemplateTypeArg simple_arg;
 					bool handled_simple_identifier = false;
@@ -811,6 +811,11 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 
 					if (!handled_simple_identifier) {
 						auto stored_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(identifier_token));
+						// Deferred bare identifier NTTPs do not yet carry an authoritative
+						// value type here. Use Int as the same neutral placeholder category
+						// already used elsewhere for dependent NTTP identities; template
+						// instantiation later re-evaluates the stored expression and replaces
+						// this placeholder with the concrete value/category.
 						simple_arg = TemplateTypeArg::makeDependentValue(
 							identifier_handle,
 							TypeCategory::Int,
@@ -1227,20 +1232,25 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// IMPORTANT: If followed by '...', this is pack expansion, NOT a type - accept as dependent expression
 					bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) ||
 												std::holds_alternative<TemplateParameterReferenceNode>(expr);
-					SimpleTemplateArgKind simple_identifier_kind = classify_simple_template_arg(expr);
+					SimpleTemplateArgKind simple_identifier_kind = classifySimpleTemplateArg(expr);
 					bool simple_identifier_is_value_like = simple_identifier_kind == SimpleTemplateArgKind::ValueLike;
+					// Keep Unknown identifiers potentially type-like here for compatibility
+					// with existing deduction-guide / type-reparse paths. Bare unknown
+					// identifier NTTPs that are immediately followed by a delimiter are
+					// handled earlier by the direct-identifier fast path above.
+					bool simple_identifier_can_be_type_like = is_simple_identifier && !simple_identifier_is_value_like;
 					[[maybe_unused]] bool is_function_call_expr = CallInfo::tryFrom(expr).has_value();
 					bool followed_by_template_args = peek() == "<"_tok;
 					bool followed_by_array_declarator = peek() == "["_tok;
 					bool followed_by_pack_expansion = peek() == "..."_tok;
 					bool followed_by_reference = !peek().is_eof() && (peek() == "&"_tok || peek() == "&&"_tok);
 					bool followed_by_pointer = peek() == "*"_tok;
-					bool should_try_type_parsing = (out_type_nodes != nullptr && is_simple_identifier &&
-													!followed_by_pack_expansion && !simple_identifier_is_value_like) ||
-												   (is_simple_identifier && followed_by_template_args && !simple_identifier_is_value_like) ||
-												   (is_simple_identifier && followed_by_array_declarator) ||
-												   (is_simple_identifier && followed_by_reference) ||
-												   (is_simple_identifier && followed_by_pointer);
+					bool should_try_type_parsing = (out_type_nodes != nullptr && simple_identifier_can_be_type_like &&
+													!followed_by_pack_expansion) ||
+												   (simple_identifier_can_be_type_like && followed_by_template_args) ||
+												   (simple_identifier_can_be_type_like && followed_by_array_declarator) ||
+												   (simple_identifier_can_be_type_like && followed_by_reference) ||
+												   (simple_identifier_can_be_type_like && followed_by_pointer);
 
 					if (!should_try_type_parsing && !peek().is_eof() &&
 						(peek() == ","_tok || peek() == ">"_tok || peek() == ">>"_tok || peek() == "..."_tok)) {
