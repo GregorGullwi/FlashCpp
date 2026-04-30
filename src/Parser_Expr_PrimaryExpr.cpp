@@ -7066,6 +7066,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			if (current_token_.value() != "}") {
 				return ParseResult::error("Expected '}' to close braced initializer", current_token_);
 			}
+			advance(); // consume '}'
 
 			// Create a placeholder literal node - the type will be inferred from context
 			// (e.g., function parameter type, variable declaration type, etc.)
