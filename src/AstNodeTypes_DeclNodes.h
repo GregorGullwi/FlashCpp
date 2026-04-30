@@ -2142,8 +2142,8 @@ public:
 	std::string_view op() const { return identifier_.value(); }
 	OverloadableOperator operator_kind() const { return operator_kind_; }
 	const Token& get_token() const { return identifier_; }
-	auto get_lhs() const { return lhs_node_; }
-	auto get_rhs() const { return rhs_node_; }
+	const ASTNode& get_lhs() const { return lhs_node_; }
+	const ASTNode& get_rhs() const { return rhs_node_; }
 	BinaryOperatorSemanticResolutionState semantic_operator_resolution_state() const { return semantic_operator_resolution_state_; }
 	bool has_recorded_operator_overload_resolution() const { return semantic_operator_resolution_state_ != BinaryOperatorSemanticResolutionState::Unresolved; }
 	bool has_resolved_member_operator_overload() const { return semantic_operator_resolution_state_ == BinaryOperatorSemanticResolutionState::MemberMatch; }
@@ -2692,7 +2692,7 @@ public:
 
 	// --- Receiver ---
 	bool has_receiver() const { return receiver_.has_value(); }
-	ASTNode receiver() const { return receiver_; }
+	const ASTNode& receiver() const { return receiver_; }
 
 	// --- Arguments ---
 	const ChunkedVector<ASTNode>& arguments() const { return arguments_; }

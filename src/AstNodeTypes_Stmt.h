@@ -9,11 +9,11 @@ public:
 
 class WhileLoopNode : public LoopStatementNode {
 public:
-	explicit WhileLoopNode(size_t start_pos, size_t end_pos, size_t condition,
+	explicit WhileLoopNode(size_t start, size_t end, size_t condition,
 						   size_t body)
 		: condition_(condition), body_(body) {
-		this->start_pos = start_pos;
-		this->end_pos = end_pos;
+		start_pos = start;
+		end_pos = end;
 	}
 
 	size_t condition() const { return condition_; }
@@ -26,11 +26,11 @@ private:
 
 class DoWhileLoopNode : public LoopStatementNode {
 public:
-	explicit DoWhileLoopNode(size_t start_pos, size_t end_pos, size_t body,
+	explicit DoWhileLoopNode(size_t start, size_t end, size_t body,
 							 size_t condition)
 		: condition_(condition), body_(body) {
-		this->start_pos = start_pos;
-		this->end_pos = end_pos;
+		start_pos = start;
+		end_pos = end;
 	}
 
 	size_t condition() const { return condition_; }

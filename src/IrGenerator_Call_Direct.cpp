@@ -1635,8 +1635,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				throw InternalError("Unexpected symbol type for function argument");
 			}
 
-			const auto& decl_node = *decl_ptr;
-			const auto& type_node = decl_node.type_specifier_node();
+			const auto& arg_decl_node = *decl_ptr;
+			const auto& type_node = arg_decl_node.type_specifier_node();
 
 				// Enumerator constants should be passed as immediate values, not variable references.
 			if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(
@@ -1666,7 +1666,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			// Fallback only for non-sema-normalized bodies (e.g. template-instantiation
 			// codegen); sema-normalized functions must carry the ArrayToPointer cast.
 			if (!needs_array_decay && !sema_normalized_current_function_) {
-				needs_array_decay = decl_node.is_array();
+				needs_array_decay = arg_decl_node.is_array();
 			}
 
 			if (needs_array_decay) {

@@ -30,9 +30,13 @@ else
     PATH_SEP := /
 endif
 
-# Compiler selection - default to clang++, but allow override
-# Usage: make CXX=g++ to use gcc instead
-CXX ?= clang++
+# Compiler selection - default to clang++, but allow override via command line.
+# Usage: make CXX=g++ to use gcc instead.
+# Use $(origin) so we only override the make built-in default (g++), not an
+# explicit command-line value or an already-exported environment variable.
+ifeq ($(origin CXX),default)
+    CXX := clang++
+endif
 
 # Compiler flags - enable strict warnings for clean code
 CXXFLAGS := -std=c++20 -Wall -Wextra -Wshadow -Werror

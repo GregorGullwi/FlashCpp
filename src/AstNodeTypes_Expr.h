@@ -145,7 +145,7 @@ public:
 	explicit MemberAccessNode(ASTNode object, Token member_name, bool is_arrow = false)
 		: object_(object), member_name_(member_name), is_arrow_(is_arrow) {}
 
-	ASTNode object() const { return object_; }
+	const ASTNode& object() const { return object_; }
 	std::string_view member_name() const { return member_name_.value(); }
 	const Token& member_token() const { return member_name_; }
 	bool is_arrow() const { return is_arrow_; }
