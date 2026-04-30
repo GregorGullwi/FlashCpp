@@ -2167,7 +2167,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			type_node.array_dimension_count() <= 1) {
 			const auto& string_literal = std::get<StringLiteralNode>(init_node.as<ExpressionNode>());
 			std::string literal_bytes = FlashCpp::decodeStringLiteralBytes(string_literal.value());
-			const size_t required_elements = literal_bytes.size();
+			const size_t required_elements = literal_bytes.size() + 1;
 			if (array_count < required_elements) {
 				throw CompileError("initializer-string for char array is too long");
 			}
