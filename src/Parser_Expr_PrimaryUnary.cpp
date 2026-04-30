@@ -599,17 +599,30 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 						// look up the struct member via QualifiedIdentifierNode.
 						if (type_spec.category() == TypeCategory::UserDefined && type_spec.size_in_bits() == 0 &&
 							type_spec.token().type() == Token::Type::Identifier) {
-							StringHandle tok_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
-							auto struct_it = getTypesByNameMap().find(tok_handle);
-							if (struct_it != getTypesByNameMap().end() && struct_it->second->isStruct()) {
-								is_complete_type = false;
-							} else {
-								// If the identifier is a known variable in the symbol table (not a type),
-								// fall through to expression parsing so sizeof yields the variable's type
-								// size (C++20 [basic.scope.pdecl] point-of-declaration semantics).
-								auto sym_opt = gSymbolTable.lookup(tok_handle);
-								if (sym_opt.has_value() && sym_opt->is<VariableDeclarationNode>()) {
+							bool trust_zero_sized_type_id = false;
+							if (type_spec.type_index().is_valid()) {
+								if (const TypeInfo* parsed_type_info = tryGetTypeInfo(type_spec.type_index())) {
+									std::string_view parsed_type_name = StringTable::getStringView(parsed_type_info->name());
+									trust_zero_sized_type_id =
+										parsed_type_info->isStruct() ||
+										parsed_type_info->isTemplateInstantiation() ||
+										parsed_type_name.find("::") != std::string_view::npos;
+								}
+							}
+
+							if (!trust_zero_sized_type_id) {
+								StringHandle tok_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
+								auto struct_it = getTypesByNameMap().find(tok_handle);
+								if (struct_it != getTypesByNameMap().end() && struct_it->second->isStruct()) {
 									is_complete_type = false;
+								} else {
+									// If the identifier is a known variable in the symbol table (not a type),
+									// fall through to expression parsing so sizeof yields the variable's type
+									// size (C++20 [basic.scope.pdecl] point-of-declaration semantics).
+									auto sym_opt = gSymbolTable.lookup(tok_handle);
+									if (sym_opt.has_value() && sym_opt->is<VariableDeclarationNode>()) {
+										is_complete_type = false;
+									}
 								}
 							}
 						}

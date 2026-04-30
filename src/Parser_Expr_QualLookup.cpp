@@ -2161,6 +2161,35 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						}
 						return member_type;
 					}
+
+					// In unevaluated operands such as sizeof(Struct::member), accept qualified
+					// non-static data members and report their declared type without requiring
+					// an object expression.
+					auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+						struct_type_it->second->type_index_,
+						member_name_handle);
+					if (member_result) {
+						TypeSpecifierNode member_type(
+							member_result.member->memberType(),
+							TypeQualifier::None,
+							member_result.member->size * 8,
+							Token{},
+							CVQualifier::None);
+						member_type.set_type_index(member_result.member->type_index);
+						if (member_result.member->is_array) {
+							member_type.set_array(true);
+							if (!member_result.member->array_dimensions.empty()) {
+								member_type.set_array_dimensions(member_result.member->array_dimensions);
+							}
+						}
+						if (member_result.member->pointer_depth > 0) {
+							member_type.add_pointer_levels(member_result.member->pointer_depth);
+						}
+						if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
+							member_type.set_reference_qualifier(member_result.member->reference_qualifier);
+						}
+						return member_type;
+					}
 				}
 			} else if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->getEnumInfo()) {
 				// C++20 [basic.lookup.argdep]/2: for enum-typed arguments (e.g. Ns::Color::Red),
