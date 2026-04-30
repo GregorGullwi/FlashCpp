@@ -73,6 +73,7 @@ public:
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
 	std::optional<SemanticSlot> getSlot(const void* key) const;
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
+	std::optional<TypeSpecifierNode> getTernaryResultType(const TernaryOperatorNode& ternary_node) const;
 	// Public bridge for codegen/helper paths that need the same canonical type
 	// identity as sema while keeping the primary canonicalizeType helper private.
 	CanonicalTypeId canonicalizeTypeForImplicitConversion(const TypeSpecifierNode& type);
@@ -456,6 +457,7 @@ private:
 	std::unordered_map<const QualifiedIdentifierNode*, ResolvedQualifiedIdentifierInfo> resolved_qualified_identifier_table_;
 	std::unordered_map<const void*, TypeSpecifierNode> overload_resolution_arg_types_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
+	std::unordered_map<const TernaryOperatorNode*, CanonicalTypeId> ternary_result_types_;
 
 	// Side table: ArraySubscriptNode pointer → resolved operator[] declaration.
 	// Populated by tryResolveSubscriptOperator when the subscript object is a struct type.
