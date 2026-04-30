@@ -1663,8 +1663,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						(ci.cast_kind == StandardConversionKind::ArrayToPointer);
 				}
 			}
-			// Fallback: trust is_array() only when sema did not annotate this function.
-			if (!needs_array_decay && !sema_normalized_current_function_) {
+			// Fallback: trust is_array() when sema did not annotate this function,
+			// or when sema missed the conversion (e.g. unsized arrays initialized
+			// from string literals, where sema cannot determine array dimensions).
+			if (!needs_array_decay) {
 				needs_array_decay = decl_node.is_array();
 			}
 

@@ -2641,8 +2641,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		IrOpcode ptr_opcode = (op == "+") ? IrOpcode::Add : IrOpcode::Subtract;
 		ir_.addInstruction(IrInstruction(ptr_opcode, std::move(ptr_arith_op), binaryOperatorNode.get_token()));
 
-		// Return pointer type with 64-bit size
-		return makeExprResult(nativeTypeIndex(lhsCat), SizeInBits{64}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+		// Return pointer type with 64-bit size, preserving pointer depth from LHS
+		return makeExprResult(nativeTypeIndex(lhsCat), SizeInBits{64}, IrOperand{result_var}, PointerDepth{lhs_pointer_depth}, ValueStorage::ContainsData);
 	}
 
 	// Check for logical operations BEFORE type promotions
