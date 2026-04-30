@@ -15,5 +15,8 @@ typename underlying_type_impl<T>::type toUnderlying(T value) {
 }
 
 int main() {
-	return toUnderlying(A) + toUnderlying(B) + toUnderlying(C);
+	int a = toUnderlying(A);
+	int b = toUnderlying(B);
+	int c = toUnderlying(C);
+	return a + b + c;
 }

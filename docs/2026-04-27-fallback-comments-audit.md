@@ -46,10 +46,10 @@ Removal direction:
 
 Representative sites:
 
-- `src\IrGenerator_Expr_Operators.cpp:738`, `src\IrGenerator_Expr_Operators.cpp:750`, `src\IrGenerator_Expr_Operators.cpp:758` - ternary lowering falls back from sema annotations to sema expression types and then parser expression typing; sema now normalizes ternary children before branch-conversion annotation so child slots/call targets exist before codegen consults them.
+- `src\IrGenerator_Expr_Operators.cpp:738`, `src\IrGenerator_Expr_Operators.cpp:750`, `src\IrGenerator_Expr_Operators.cpp:758` - ternary lowering falls back from sema annotations to sema expression types and then parser expression typing; sema now normalizes ternary children before branch-conversion annotation so child slots/call targets exist before codegen consults them, and deferred member codegen now re-enqueues late materialized member bodies into the pending sema-root queue before emission so sema-available delayed members do not fall through to the parser ternary fallback.
 - `src\IrGenerator_Expr_Operators.cpp:2840` through `src\IrGenerator_Expr_Operators.cpp:2875` - binary operators prefer sema conversions but still generate fallback standard arithmetic conversions. A 2026-04-30 probe that replaced the normalized-body arithmetic fallback warning with `InternalError` found one live gap: `tests\test_lazy_conv_op_multi_cv_types_ret0.cpp` (`Box<T>::operator T() { return val + 1; }` for `T=double`). Root fix: `SemanticAnalysis::inferExpressionType(...)` now bypasses the sema type-slot cache for `IdentifierNode` / `MemberAccessNode` expressions while an implicit-`this` member context is active, so shared AST nodes in multiple template member instantiations no longer reuse stale `this` / member-access type slots from an earlier instantiation. After the fix, the focused regression and the full 2254-test Linux suite passed with the hard-fail probe enabled.
 - `src\IrGenerator_Expr_Conversions.cpp:1484`, `src\IrGenerator_Expr_Conversions.cpp:1506` - conversion lowering falls back to promotion when sema is missing or unavailable. The contextual-`bool` struct → `bool` conversion-operator fallback (formerly line 2535/2538) was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant.
-- `src\IrGenerator_Visitors_Namespace.cpp` - the return-statement struct-with-conversion-operator branch (formerly the `if (conv_op)` arm) was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant. The two surrounding `generateTypeConversion` fallbacks (no conv-op found, no `TypeInfo`) are confirmed *active*: probing them broke alias-template, lambda returned-closure, and member-alias return cases including `tests\test_alias_template_global_scope_ret42.cpp`, `tests\test_constexpr_lambda_returned_closure_ret0.cpp`, `tests\test_lambda_advanced_features_ret47.cpp`, and `tests\test_underlying_type_ret42.cpp`.
+- `src\IrGenerator_Visitors_Namespace.cpp` - the return-statement struct-with-conversion-operator branch (formerly the `if (conv_op)` arm) was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant. The surrounding `generateTypeConversion` fallback class has been narrowed again: return lowering now resolves alias-backed `UserDefined` / `TypeAlias` sources to their canonical primitive before applying the residual fallback, so alias-template and `__underlying_type` returns in non-normalized template bodies no longer depend on the old "no conv-op found / no TypeInfo" recovery. Remaining live traffic is the broader lambda returned-closure / member-alias cluster until sema normalization fully covers those bodies.
 - `src\IrGenerator_Stmt_Decl.cpp:1975` - variable initialization searches conversion operators directly when sema annotation is absent. Confirmed *active* on 2026-04-29: replacing it with a hard error broke `tests\test_const_cast_conv_op_ret0.cpp`, `tests\test_static_cast_base_ref_conv_op_ret0.cpp`, and `tests\test_xvalue_all_casts_ret0.cpp`.
 
 Missing feature:
@@ -409,6 +409,18 @@ The audit is now backed by direct suite evidence for several representative temp
   the new sema path is not yet exercised by the current corpus. The fallbacks
   remain safe (all 2243 tests pass) but cannot be replaced with hard assertions
   until sema normalization extends to template-instantiated bodies;
+- a 2026-04-30 follow-up then root-fixed the alias-backed subset of those
+  return fallbacks in `IrGenerator_Visitors_Namespace.cpp`: when sema is absent
+  or the body is still non-normalized, return lowering now canonicalizes
+  `UserDefined` / `TypeAlias` operands before applying the primitive return
+  conversion. The new focused regressions
+  `tests/test_alias_template_return_identity_ret42.cpp` and
+  `tests/test_underlying_type_return_identity_ret42.cpp`, plus the existing
+  `tests/test_alias_template_global_scope_ret42.cpp` and
+  `tests/test_underlying_type_ret42.cpp`, all passed, and the full 2256-test
+  Linux suite stayed green. The residual return fallback traffic is now the
+  lambda returned-closure / member-alias cluster rather than alias-backed
+  primitive returns;
 - the `Parser_Templates_Class.cpp` "regular specialization without any
   template args" branch (audit §5, formerly line ~4454) was probed across the
   full 2243-test corpus with a hard-fail guard, never hit, and has been
@@ -449,7 +461,14 @@ The audit is now backed by direct suite evidence for several representative temp
   `tests/test_ternary_sema_consumption_ret0.cpp` passed after this root fix.
   A 2026-04-30 follow-up made normalized ternary lowering require sema's exact
   result `TypeSpecifierNode`; the remaining category/size fallback is now
-  limited to non-normalized bodies and tracked above as future cleanup;
+  limited to non-normalized bodies and tracked above as future cleanup. A
+  second 2026-04-30 follow-up then hard-failed the parser ternary fallback
+  whenever sema is available and root-fixed the only live hit
+  (`tests/test_template_delayed_static_member_cast_rebinding_ret0.cpp`) by
+  re-enqueuing deferred member functions/constructors/destructors into the
+  pending semantic-root queue before codegen emits them. After that change, the
+  focused ternary cluster plus the full 2256-test Linux suite passed with the
+  sema-present parser fallback disabled;
 - the normalized-body binary arithmetic fallback warning in
   `IrGenerator_Expr_Operators.cpp` was also hard-fail probed on 2026-04-30.
   The only hit was `tests/test_lazy_conv_op_multi_cv_types_ret0.cpp`, where
