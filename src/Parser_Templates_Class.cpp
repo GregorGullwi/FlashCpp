@@ -3762,7 +3762,7 @@ ParseResult Parser::parse_template_declaration() {
 							}
 						} else if (peek() == "{"_tok) {
 							// Brace-init default member initializer: _Tp _M_tp{};
-							auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							auto init_result = parse_brace_initializer(type_spec);
 							if (init_result.is_error()) {
 								return init_result;
 							}

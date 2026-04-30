@@ -1483,9 +1483,11 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						}
 						break;
 					case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::StaticMember:
-						// Keep the legacy static-member path for now: template/nested
-						// static members still rely on its owner-name recovery and
-						// emitted-symbol heuristics to reach the instantiated global.
+						if (resolved->storage_name.isValid() &&
+							!resolved->type.is_reference() &&
+							resolved->type.category() != TypeCategory::Struct) {
+							return emitQualifiedGlobalLoad(resolved->type, resolved->type.is_array(), resolved->storage_name);
+						}
 						break;
 				}
 			}

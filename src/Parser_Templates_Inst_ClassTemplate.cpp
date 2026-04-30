@@ -3251,6 +3251,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			const std::vector<TemplateTypeArg>& template_args_for_pattern =
 				template_args_for_pattern_storage.empty() ? template_args : template_args_for_pattern_storage;
+			const StructTypeInfo* instantiated_struct_info = struct_type_info.getStructInfo();
 
 			for (const auto& type_alias : pattern_struct.type_aliases()) {
 				// Build the qualified name: enable_if_true_int::type
@@ -3276,6 +3277,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Check if the alias type is a template parameter that needs substitution
 				if ((alias_type_spec.category() == TypeCategory::UserDefined || alias_type_spec.category() == TypeCategory::TypeAlias || alias_type_spec.category() == TypeCategory::Template) && !template_args.empty() && !pattern_args.empty()) {
+					bool alias_refers_to_template_parameter = false;
+					StringHandle alias_target_name{};
+					if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_type_spec.type_index())) {
+						alias_target_name = alias_target_info->name();
+					}
+					StringHandle alias_token_name = alias_type_spec.token().handle();
+					for (const ASTNode& template_param_node : template_params) {
+						if (!template_param_node.is<TemplateParameterNode>()) {
+							continue;
+						}
+						StringHandle param_name = template_param_node.as<TemplateParameterNode>().nameHandle();
+						if (param_name == alias_token_name || param_name == alias_target_name) {
+							alias_refers_to_template_parameter = true;
+							break;
+						}
+					}
+					if (!alias_refers_to_template_parameter) {
+						goto substitution_done;
+					}
+
 					// The alias_type_spec.type_index() identifies which template parameter this is
 					// We need to find which pattern_arg corresponds to this template parameter,
 					// then map to the corresponding template_arg
@@ -3345,6 +3366,59 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						concrete_member_info->registeredTypeIndex().withCategory(
 							concrete_member_info->typeEnum());
 					substituted_size = concrete_member_info->sizeInBits().value;
+				}
+
+				if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_type_spec.type_index());
+					alias_target_info != nullptr && alias_target_info->isTemplateInstantiation()) {
+					std::vector<TemplateTypeArg> concrete_alias_args;
+					concrete_alias_args.reserve(alias_target_info->templateArgs().size());
+					bool has_unresolved_alias_arg = false;
+					for (const auto& stored_arg : alias_target_info->templateArgs()) {
+						TemplateTypeArg concrete_arg = toTemplateTypeArg(stored_arg);
+						if (concrete_arg.is_value && concrete_arg.is_dependent && concrete_arg.dependent_name.isValid()) {
+							const StructStaticMember* referenced_static_member =
+								instantiated_struct_info ? instantiated_struct_info->findStaticMember(concrete_arg.dependent_name) : nullptr;
+							if (referenced_static_member && referenced_static_member->initializer.has_value()) {
+								ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+								eval_ctx.parser = this;
+								eval_ctx.sema = getActiveSemanticAnalysis();
+								eval_ctx.struct_info = instantiated_struct_info;
+								eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
+								auto eval_result = ConstExpr::Evaluator::evaluate(
+									*referenced_static_member->initializer,
+									eval_ctx);
+								if (eval_result.success()) {
+									concrete_arg.value = eval_result.as_int();
+									concrete_arg.is_dependent = false;
+									concrete_arg.dependent_name = StringHandle{};
+									concrete_arg.dependent_expr.reset();
+								}
+							}
+						}
+						if (concrete_arg.is_dependent) {
+							has_unresolved_alias_arg = true;
+						}
+						concrete_alias_args.push_back(std::move(concrete_arg));
+					}
+					if (!has_unresolved_alias_arg) {
+						std::string_view alias_template_name =
+							StringTable::getStringView(alias_target_info->baseTemplateName());
+						if (!alias_template_name.empty()) {
+							AliasTemplateMaterializationResult materialized_alias_target =
+								materializeTemplateInstantiationForLookup(
+									alias_template_name,
+									concrete_alias_args);
+							if (materialized_alias_target.resolved_type_info) {
+								const TypeInfo* concrete_alias_target =
+									materialized_alias_target.resolved_type_info;
+								substituted_type = concrete_alias_target->typeEnum();
+								substituted_type_index =
+									concrete_alias_target->registeredTypeIndex().withCategory(
+										concrete_alias_target->typeEnum());
+								substituted_size = concrete_alias_target->sizeInBits().value;
+							}
+						}
+					}
 				}
 
 				// Register the type alias globally with its qualified name
@@ -4724,6 +4798,33 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							unresolved_arg = true;
 							break;
 						}
+					}
+
+					// Handle IdentifierNode - NTTP params are stored as IdentifierNode by
+					// parse_explicit_template_arguments; treat the same as TemplateParameterReferenceNode.
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						const auto& id_node = std::get<IdentifierNode>(expr);
+						std::string_view id_name = id_node.name();
+						auto subst_it = name_substitution_map.find(id_name);
+						if (subst_it != name_substitution_map.end()) {
+							TemplateTypeArg subst_arg = subst_it->second;
+							subst_arg.is_pack = arg_info.is_pack;
+							resolved_args.push_back(subst_arg);
+							FLASH_LOG_FORMAT(Templates, Debug, "Substituted identifier '{}' in deferred base via name_substitution_map", id_name);
+							continue;
+						}
+						// Try as a concrete global type name
+						StringHandle h = StringTable::getOrInternStringHandle(id_name);
+						auto type_it = getTypesByNameMap().find(h);
+						if (type_it != getTypesByNameMap().end()) {
+							TemplateTypeArg a;
+							a.type_index = type_it->second->type_index_.withCategory(type_it->second->typeEnum());
+							a.is_pack = arg_info.is_pack;
+							resolved_args.push_back(a);
+							FLASH_LOG_FORMAT(Templates, Debug, "Resolved identifier '{}' as concrete type in deferred base", id_name);
+							continue;
+						}
+						FLASH_LOG_FORMAT(Templates, Debug, "Identifier '{}' unresolved in deferred base – falling through", id_name);
 					}
 
 					// Special handling for TypeTraitExprNode - need to substitute template parameters
