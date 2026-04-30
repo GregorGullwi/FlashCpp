@@ -4883,10 +4883,12 @@ bool SemanticAnalysis::isSameTypeConstructorCallInitialization(
 }
 
 void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx) {
-	if (!ctx.current_function_return_type_id)
+	if (!ctx.current_function_return_type_id) {
 		return;
-	if (isSameTypeConstructorCallInitialization(expr_node, *ctx.current_function_return_type_id))
+	}
+	if (isSameTypeConstructorCallInitialization(expr_node, *ctx.current_function_return_type_id)) {
 		return;
+	}
 	if (!tryAnnotateCopyInitConvertingConstructor(expr_node, *ctx.current_function_return_type_id,
 												  " in return statement")) {
 		tryAnnotateConversion(expr_node, *ctx.current_function_return_type_id);

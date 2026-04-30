@@ -180,7 +180,7 @@ errors that are still triaged separately:
 | `<wstring_view_find_ret0>` | ❌ Compile Error | 2504ms | `No matching member function for call to 'find'`. |
 
 The latest retest no longer reproduces the old `Missing TypeInfo while
-computing template argument size` crash in the headers rechecked in this pass;
+computing template argument size` error in the headers rechecked in this pass;
 those files now reach later semantic-analysis / template-substitution blockers
 instead. The most visible current next-stop blockers in this slice are:
 
