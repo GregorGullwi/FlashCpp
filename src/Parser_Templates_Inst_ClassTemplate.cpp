@@ -4800,6 +4800,33 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 
+					// Handle IdentifierNode - NTTP params are stored as IdentifierNode by
+					// parse_explicit_template_arguments; treat the same as TemplateParameterReferenceNode.
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						const auto& id_node = std::get<IdentifierNode>(expr);
+						std::string_view id_name = id_node.name();
+						auto subst_it = name_substitution_map.find(id_name);
+						if (subst_it != name_substitution_map.end()) {
+							TemplateTypeArg subst_arg = subst_it->second;
+							subst_arg.is_pack = arg_info.is_pack;
+							resolved_args.push_back(subst_arg);
+							FLASH_LOG_FORMAT(Templates, Debug, "Substituted identifier '{}' in deferred base via name_substitution_map", id_name);
+							continue;
+						}
+						// Try as a concrete global type name
+						StringHandle h = StringTable::getOrInternStringHandle(id_name);
+						auto type_it = getTypesByNameMap().find(h);
+						if (type_it != getTypesByNameMap().end()) {
+							TemplateTypeArg a;
+							a.type_index = type_it->second->type_index_.withCategory(type_it->second->typeEnum());
+							a.is_pack = arg_info.is_pack;
+							resolved_args.push_back(a);
+							FLASH_LOG_FORMAT(Templates, Debug, "Resolved identifier '{}' as concrete type in deferred base", id_name);
+							continue;
+						}
+						FLASH_LOG_FORMAT(Templates, Debug, "Identifier '{}' unresolved in deferred base – falling through", id_name);
+					}
+
 					// Special handling for TypeTraitExprNode - need to substitute template parameters
 					if (std::holds_alternative<TypeTraitExprNode>(expr)) {
 						const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
