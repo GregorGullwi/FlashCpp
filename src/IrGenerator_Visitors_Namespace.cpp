@@ -391,34 +391,53 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			// context, so the operand now represents the address-producing glvalue.
 			// Do not run ordinary value conversion against the ABI-sized return slot.
 			if (!sema_applied_conversion && (expr_type != return_type || expr_size != return_size)) {
-					// Check for user-defined conversion operator (fallback when sema did not run)
-					// If expr is a struct type with a conversion operator to return_type, call it
+				auto tryApplyResolvedAliasReturnConversion = [&](TypeIndex source_type_index) {
+					if (!source_type_index.is_valid()) {
+						return false;
+					}
+					const CanonicalTypeAlias resolved = canonicalize_type_alias(source_type_index);
+					const TypeCategory resolved_cat = resolved.typeEnum();
+					if (resolved_cat == TypeCategory::Invalid || is_struct_type(resolved_cat)) {
+						return false;
+					}
+					operands = generateTypeConversion(operands, resolved_cat, return_type, node.return_token());
+					sema_applied_conversion = true;
+					return true;
+				};
+				// Check for user-defined conversion operator (fallback when sema did not run)
+				// If expr is a struct type with a conversion operator to return_type, call it
 				if (is_struct_type(expr_category)) {
 					TypeIndex expr_type_index = operands.type_index;
 
-					if (const TypeInfo* source_type_info = tryGetTypeInfo(expr_type_index)) {
-						const StructTypeInfo* source_struct_info = source_type_info->getStructInfo();
-						const TypeIndex ret_type_idx = is_struct_type(return_category) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
+					if (!tryApplyResolvedAliasReturnConversion(expr_type_index)) {
+						if (const TypeInfo* source_type_info = tryGetTypeInfo(expr_type_index)) {
+							const StructTypeInfo* source_struct_info = source_type_info->getStructInfo();
+							if (!source_struct_info) {
+								operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+							} else {
+								const TypeIndex ret_type_idx = is_struct_type(return_category) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
 
-							// Look for a conversion operator to the return type
-						const StructMemberFunction* conv_op = findConversionOperator(
-							source_struct_info, ret_type_idx, isExprConstQualified(*expr_opt));
+								// Look for a conversion operator to the return type
+								const StructMemberFunction* conv_op = findConversionOperator(
+									source_struct_info, ret_type_idx, isExprConstQualified(*expr_opt));
 
-						if (conv_op) {
-							// Probed 2026-04-29 across the full 2243-test corpus with a hard-fail
-							// guard and never hit. Sema's return-conversion annotation already
-							// covers struct-with-conversion-operator returns; this codegen-side
-							// fallback is dead.
-							throw InternalError(
-								"Codegen-side return conversion-operator fallback should not run: "
-								"sema must annotate struct-to-non-struct return conversions");
+								if (conv_op) {
+									// Probed 2026-04-29 across the full 2243-test corpus with a hard-fail
+									// guard and never hit. Sema's return-conversion annotation already
+									// covers struct-with-conversion-operator returns; this codegen-side
+									// fallback is dead.
+									throw InternalError(
+										"Codegen-side return conversion-operator fallback should not run: "
+										"sema must annotate struct-to-non-struct return conversions");
+								} else {
+									// No conversion operator found - fall back to generateTypeConversion
+									operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+								}
+							}
 						} else {
-							// No conversion operator found - fall back to generateTypeConversion
+							// No valid type_index - fall back to generateTypeConversion
 							operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 						}
-					} else {
-						// No valid type_index - fall back to generateTypeConversion
-						operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 					}
 				} else {
 					if (return_requires_ctor_resolution && return_ctor_no_match) {

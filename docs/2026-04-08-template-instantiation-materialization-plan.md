@@ -256,6 +256,18 @@ Recent historical baselines recorded for this work:
   bypasses cached type slots for `IdentifierNode` / `MemberAccessNode`
   expressions while an implicit-`this` member context is active, forcing
   per-instantiation type recomputation for shared template member bodies.
+- 2026-04-30 Linux/clang delayed-member + return-fallback follow-up: full suite
+  passed, 2256 regular tests and 154 expected-fail tests after root-fixing
+  alias-backed primitive returns in non-normalized template bodies
+  (`IrGenerator_Visitors_Namespace.cpp`) and re-enqueuing deferred member
+  functions/constructors/destructors into the pending semantic-root queue
+  before codegen so sema-available delayed members no longer use the ternary
+  parser fallback (`IrGenerator_Visitors_TypeInit.cpp`,
+  `IrGenerator_Expr_Operators.cpp`). Added focused regressions:
+  `tests/test_alias_template_return_identity_ret42.cpp`,
+  `tests/test_underlying_type_return_identity_ret42.cpp`, and the existing
+  `tests/test_template_delayed_static_member_cast_rebinding_ret0.cpp` stayed
+  green under the stricter ternary invariant.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.

@@ -475,6 +475,9 @@ public:
 		pending_semantic_roots_.clear();
 		pending_semantic_root_keys_.clear();
 	}
+	bool enqueuePendingSemanticRootIfNeeded(const ASTNode& node) {
+		return enqueuePendingSemanticRoot(node);
+	}
 	void setActiveSemanticAnalysis(SemanticAnalysis* sema);
 	SemanticAnalysis* getActiveSemanticAnalysis() const;
 	void normalizePendingSemanticRootsIfAvailable();

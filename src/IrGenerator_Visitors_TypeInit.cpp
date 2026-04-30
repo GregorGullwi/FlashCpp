@@ -297,6 +297,7 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 				if (!func.is_materialized()) {
 					throw InternalError("Deferred function queue received an unmaterialized function");
 				}
+				parser_->enqueuePendingSemanticRootIfNeeded(info.function_node);
 				normalizePendingSemanticRoots();
 				visitFunctionDeclarationNode(func);
 			} else if (info.function_node.is<ConstructorDeclarationNode>()) {
@@ -304,14 +305,17 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 				if (!ctor.is_materialized()) {
 					throw InternalError("Deferred constructor queue received an unmaterialized constructor");
 				}
+				parser_->enqueuePendingSemanticRootIfNeeded(info.function_node);
 				normalizePendingSemanticRoots();
 				visitConstructorDeclarationNode(info.function_node.as<ConstructorDeclarationNode>());
 			} else if (info.function_node.is<DestructorDeclarationNode>()) {
+				parser_->enqueuePendingSemanticRootIfNeeded(info.function_node);
 				normalizePendingSemanticRoots();
 				visitDestructorDeclarationNode(info.function_node.as<DestructorDeclarationNode>());
 			} else if (info.function_node.is<TemplateFunctionDeclarationNode>()) {
 				const auto& tmpl = info.function_node.as<TemplateFunctionDeclarationNode>();
 				if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
+					parser_->enqueuePendingSemanticRootIfNeeded(tmpl.function_declaration());
 					normalizePendingSemanticRoots();
 					visitFunctionDeclarationNode(tmpl.function_declaration().as<FunctionDeclarationNode>());
 				}
