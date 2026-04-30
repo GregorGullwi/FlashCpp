@@ -1928,9 +1928,9 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::expandPacksInArguments(
 
 					auto it = param_map_.find(param_name);
 					if (it != param_map_.end()) {
-					expanded_args.push_back(it->second);
-					continue;
-				}
+						expanded_args.push_back(it->second);
+						continue;
+					}
 				} else if (const auto* identifier = std::get_if<IdentifierNode>(&expr_variant)) {
 					auto it = param_map_.find(identifier->name());
 					if (it != param_map_.end()) {
