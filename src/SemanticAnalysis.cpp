@@ -2630,6 +2630,9 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				}
 				tryResolveCallableOperator(e);
 				tryAnnotateCallArgConversions(e);
+				if (const CanonicalTypeId result_type_id = inferExpressionType(node)) {
+					annotateExpressionTypeSlot(node, result_type_id, inferExpressionValueCategory(node));
+				}
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				tryResolveSubscriptOperator(e);
 				if (!getResolvedOpSubscript(&e)) {
@@ -2823,8 +2826,10 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		}
 	}
 
-	// Function signature
-	if ((type.is_function_pointer() || type.is_member_function_pointer()) && type.has_function_signature()) {
+	// Function signature. Alias-backed function pointer/reference types can
+	// materialize as the underlying return category plus pointer/reference
+	// modifiers, so the signature itself is the authoritative callable marker.
+	if (type.has_function_signature()) {
 		desc.function_signature = type.function_signature();
 		desc.flags = desc.flags | CanonicalTypeFlags::IsFunctionType;
 	}

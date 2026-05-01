@@ -311,6 +311,15 @@ Recent historical baselines recorded for this work:
   conversion fallback logic, which removes the returned-closure false-positive
   from the normalized-body fallback probe. The known alias/self-alias and
   generic missing-type-info residuals remain active.
+- 2026-05-01 Linux/clang callable-type fallback follow-up: full suite passed,
+  2262 regular tests and 154 expected-fail tests after preserving
+  function-signature metadata in sema canonical types for alias-backed function
+  pointer/reference types, stamping
+  inferred call-expression result slots after call normalization, and
+  hard-failing the `IrGenerator_Call_Indirect.cpp` `operator()` parser callable
+  fallback in sema-normalized bodies. The covered cluster includes generic
+  lambda callable parameters, recursive `self`, and nested function-pointer
+  direct invocation.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.
