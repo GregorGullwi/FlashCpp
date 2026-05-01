@@ -1588,6 +1588,35 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		substituted_type_spec.set_array_dimensions(resolved_dims);
 		return substituted_type_spec;
 	};
+	auto trySubstituteIntrinsicTypeAlias = [&](
+		const TypeSpecifierNode& alias_type_spec,
+		const auto& params,
+		const auto& args,
+		TypeCategory& substituted_type,
+		TypeIndex& substituted_type_index,
+		int& substituted_size) {
+		std::string_view alias_token_name = alias_type_spec.token().value();
+		if (!alias_token_name.starts_with("__underlying_type("sv) ||
+			!alias_token_name.ends_with(")"sv)) {
+			return false;
+		}
+
+		TypeIndex subst_type_index = substitute_template_parameter(
+			alias_type_spec,
+			params,
+			args);
+		if (subst_type_index.category() == alias_type_spec.type() &&
+			subst_type_index == alias_type_spec.type_index()) {
+			return false;
+		}
+
+		substituted_type = subst_type_index.category();
+		substituted_type_index = subst_type_index;
+		substituted_size = is_primitive_type(substituted_type)
+			? get_type_size_bits(substituted_type)
+			: 0;
+		return true;
+	};
 
 	auto instantiateAndResolveBaseName = [&](
 		std::string_view base_template_name,
@@ -3274,6 +3303,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeCategory substituted_type = alias_type_spec.type();
 				TypeIndex substituted_type_index = alias_type_spec.type_index();
 				int substituted_size = alias_type_spec.size_in_bits();
+
+				trySubstituteIntrinsicTypeAlias(
+					alias_type_spec,
+					template_params,
+					template_args,
+					substituted_type,
+					substituted_type_index,
+					substituted_size);
 
 				// Check if the alias type is a template parameter that needs substitution
 				if ((alias_type_spec.category() == TypeCategory::UserDefined || alias_type_spec.category() == TypeCategory::TypeAlias || alias_type_spec.category() == TypeCategory::Template) && !template_args.empty() && !pattern_args.empty()) {
@@ -6298,6 +6335,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		TypeCategory substituted_type = alias_type_spec.type();
 		TypeIndex substituted_type_index = alias_type_spec.type_index();
 		int substituted_size = alias_type_spec.size_in_bits();
+
+		trySubstituteIntrinsicTypeAlias(
+			alias_type_spec,
+			template_params,
+			template_args_to_use,
+			substituted_type,
+			substituted_type_index,
+			substituted_size);
 
 		// Substitute template parameters in the alias type.
 		// Alias targets like `using type = T;` are typically registered as
