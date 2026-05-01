@@ -390,6 +390,17 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			// For reference returns we already evaluated the expression in LValueAddress
 			// context, so the operand now represents the address-producing glvalue.
 			// Do not run ordinary value conversion against the ABI-sized return slot.
+			if (!sema_applied_conversion &&
+				is_struct_type(expr_category) &&
+				is_struct_type(return_category) &&
+				operands.type_index.is_valid() &&
+				current_function_return_type_index_.is_valid() &&
+				operands.type_index.index() == current_function_return_type_index_.index()) {
+				operands.type_index = current_function_return_type_index_;
+				expr_type = return_type;
+				expr_category = return_category;
+				expr_size = return_size;
+			}
 			if (!sema_applied_conversion && (expr_type != return_type || expr_size != return_size)) {
 				auto tryApplyResolvedAliasReturnConversion = [&](TypeIndex source_type_index) {
 					if (!source_type_index.is_valid()) {
@@ -420,6 +431,10 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 										std::string("Alias return type should canonicalize before codegen return conversion fallback: ") +
 										std::string(StringTable::getStringView(source_type_info->name())));
 								}
+								if (sema_normalized_current_function_) {
+									throw InternalError(
+										"sema-normalized return lowering should not require struct-without-info conversion fallback");
+								}
 								operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 							} else {
 								const TypeIndex ret_type_idx = is_struct_type(return_category) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
@@ -437,12 +452,14 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 										"Codegen-side return conversion-operator fallback should not run: "
 										"sema must annotate struct-to-non-struct return conversions");
 								} else {
-									// No conversion operator found - fall back to generateTypeConversion
+									if (sema_normalized_current_function_) {
+										throw InternalError(
+											"sema-normalized return lowering should not require struct-without-conversion-operator fallback");
+									}
 									operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 								}
 							}
 						} else {
-							// No valid type_index - fall back to generateTypeConversion
 							operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 						}
 					}
