@@ -1432,7 +1432,6 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 		return;
 	}
 
-	const void* body_key = lambda_info.lambda_body.raw_pointer();
 	if (lambda_info.is_generic) {
 		if (lambda_info.normalized_deduced_auto_types_generation == lambda_info.deduced_auto_types_generation) {
 			return;
@@ -1442,10 +1441,11 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 			lambda_info.parameter_nodes,
 			lambda_info.deduced_auto_types);
 	} else {
-		if (normalized_ast_nodes_.count(body_key) > 0) {
+		const void* non_generic_body_key = lambda_info.lambda_body.raw_pointer();
+		if (normalized_ast_nodes_.count(non_generic_body_key) > 0) {
 			return;
 		}
-		normalized_ast_nodes_.insert(body_key);
+		normalized_ast_nodes_.insert(non_generic_body_key);
 	}
 
 	const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
@@ -1533,7 +1533,7 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 	}
 	normalizeStatement(lambda_info.lambda_body, lambda_ctx);
 	if (lambda_info.is_generic) {
-		normalized_ast_nodes_.insert(body_key);
+		normalized_ast_nodes_.insert(lambda_info.lambda_body.raw_pointer());
 	}
 	lambda_info.normalized_deduced_auto_types_generation = lambda_info.deduced_auto_types_generation;
 }

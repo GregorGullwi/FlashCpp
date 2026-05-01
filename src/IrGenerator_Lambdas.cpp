@@ -8,9 +8,9 @@ struct SemaNormalizedScopeGuard {
 	bool& flag;
 	bool saved;
 
-	SemaNormalizedScopeGuard(bool& flag_ref, bool has_normalized_body)
+	SemaNormalizedScopeGuard(bool& flag_ref, bool is_sema_normalized)
 		: flag(flag_ref), saved(flag_ref) {
-		flag = has_normalized_body;
+		flag = is_sema_normalized;
 	}
 
 	~SemaNormalizedScopeGuard() {
