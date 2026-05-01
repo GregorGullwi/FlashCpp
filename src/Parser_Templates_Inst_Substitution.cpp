@@ -354,6 +354,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		findTypeByName(StringTable::getOrInternStringHandle(result.instantiated_name));
 	if (alias_node != nullptr &&
 		alias_node->is_deferred() &&
+		alias_template_name.find("::") != std::string_view::npos &&
 		alias_node->target_template_name() != alias_template_name &&
 		gTemplateRegistry.lookup_alias_template(alias_node->target_template_name()).has_value()) {
 		if (auto substituted_args_opt =
@@ -434,23 +435,15 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 				alias_type_info->instantiation_context_.reset();
 				alias_type_info->clearAliasTypeSpecifier();
 				alias_type_info->setAliasTypeSpecifier(alias_registration_type_spec);
-			} else {
-				alias_type_info = &add_type_alias_copy(
-					alias_handle,
-					alias_target_index,
-					resolved_type_info.sizeInBits().value,
-					alias_registration_type_spec);
 			}
 			return alias_type_info;
 		};
 
-		TypeInfo* alias_type_info = register_or_update_alias_type(alias_instantiated_handle);
+		register_or_update_alias_type(alias_instantiated_handle);
 		if (alias_instantiated_handle.view() != unqualified_alias_instantiated_name) {
 			register_or_update_alias_type(
 				StringTable::getOrInternStringHandle(unqualified_alias_instantiated_name));
 		}
-		result.instantiated_name = StringTable::getStringView(alias_instantiated_handle);
-		result.resolved_type_info = alias_type_info;
 	}
 	return result;
 }
