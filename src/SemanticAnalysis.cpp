@@ -1442,8 +1442,11 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 		lambda_info.resolved_param_nodes = normalizeGenericLambdaParams(
 			lambda_info.parameter_nodes,
 			lambda_info.deduced_auto_types);
-	} else if (!normalized_ast_nodes_.insert(body_key).second) {
-		return;
+	} else {
+		if (normalized_ast_nodes_.count(body_key) > 0) {
+			return;
+		}
+		normalized_ast_nodes_.insert(body_key);
 	}
 
 	const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
