@@ -158,6 +158,12 @@ Active fallback evidence from the 2026-04-27 audit:
   instantiations without saved body positions are now split: declaration-only
   instantiations are accepted, but real definitions without saved body
   positions hard-fail instead of copying body pointers.
+- alias-template return materialization now updates existing instantiated
+  alias-template `TypeInfo` entries to `TypeAlias` entries pointing at the
+  resolved target, including qualified member-alias template names. Codegen now
+  hard-fails non-self alias entries that still reach the residual return
+  conversion fallback; self-alias `__underlying_type` placeholders remain a
+  separate active fallback class.
 
 Removal direction: make template bindings and instantiated `TypeInfo` metadata
 authoritative at creation time, then replace name-based and positional recovery
@@ -291,6 +297,13 @@ Recent historical baselines recorded for this work:
   cause for future cleanup. Verbose historical fallback comments in
   `IrGenerator_Call_Direct.cpp` and `IrGenerator_Call_Indirect.cpp` were also
   compacted to short invariant statements.
+- 2026-05-01 Linux/clang alias-template return materialization follow-up: full
+  suite passed, 2262 regular tests and 154 expected-fail tests after existing
+  instantiated alias-template `TypeInfo` entries were canonicalized to
+  `TypeAlias` entries pointing at resolved targets. The stricter
+  `IrGenerator_Visitors_Namespace.cpp` return fallback now hard-fails non-self
+  alias entries, while `__underlying_type` self-alias placeholders and lambda
+  returned-closure fallbacks remain active.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.

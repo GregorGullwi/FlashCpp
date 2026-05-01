@@ -352,9 +352,33 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 
 	result.resolved_type_info =
 		findTypeByName(StringTable::getOrInternStringHandle(result.instantiated_name));
+	const size_t alias_template_member_sep = alias_template_name.rfind("::");
+	const bool is_qualified_alias_template =
+		alias_template_member_sep != std::string_view::npos;
 	if (alias_node != nullptr &&
-		result.resolved_type_info != nullptr &&
-		alias_template_name.find("::") != std::string_view::npos) {
+		alias_node->is_deferred() &&
+		is_qualified_alias_template &&
+		// Qualified member aliases can target another alias template (e.g.
+		// `Checker::cond_t<T> = ::enable_if_t<...>`). Same-name aliases are
+		// deliberately left on the ordinary member-target path to avoid
+		// recursive self-materialization.
+		alias_node->target_template_name() != alias_template_name &&
+		gTemplateRegistry.lookup_alias_template(alias_node->target_template_name()).has_value()) {
+		if (auto substituted_args_opt =
+				materializeDeferredAliasTemplateArgs(*alias_node, template_args);
+			substituted_args_opt.has_value()) {
+			AliasTemplateMaterializationResult materialized_target_alias =
+				materializeAliasTemplateInstantiation(
+					alias_node->target_template_name(),
+					*substituted_args_opt);
+			if (materialized_target_alias.resolved_type_info != nullptr) {
+				result.instantiated_name = materialized_target_alias.instantiated_name;
+				result.resolved_type_info = materialized_target_alias.resolved_type_info;
+			}
+		}
+	}
+	if (alias_node != nullptr &&
+		result.resolved_type_info != nullptr) {
 		if (const TypeInfo* concrete_member_alias =
 				materializeInstantiatedMemberAliasTarget(
 					alias_node->target_type_node(),
@@ -371,6 +395,63 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			result.resolved_type_info = resolved_member_info;
 			result.instantiated_name =
 				StringTable::getStringView(resolved_member_info->name());
+		}
+	}
+	if (alias_node != nullptr &&
+		result.resolved_type_info != nullptr) {
+		std::string_view unqualified_alias_instantiated_name =
+			get_instantiated_class_name(alias_template_name, template_args);
+		StringHandle alias_instantiated_handle = StringTable::getOrInternStringHandle(
+			unqualified_alias_instantiated_name);
+		if (is_qualified_alias_template) {
+			alias_instantiated_handle = StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(alias_template_name.substr(0, alias_template_member_sep + 2))
+					.append(unqualified_alias_instantiated_name)
+					.commit());
+		}
+		const TypeInfo& resolved_type_info = *result.resolved_type_info;
+		TypeIndex alias_target_index =
+			resolved_type_info.registeredTypeIndex().withCategory(
+				resolved_type_info.typeEnum());
+		TypeSpecifierNode alias_registration_type_spec = alias_node->target_type_node();
+		if (const TypeSpecifierNode* resolved_alias_spec =
+				resolved_type_info.aliasTypeSpecifier()) {
+			alias_registration_type_spec = *resolved_alias_spec;
+		} else {
+			alias_registration_type_spec.set_type_index(alias_target_index);
+			alias_registration_type_spec.set_category(resolved_type_info.typeEnum());
+			alias_registration_type_spec.set_size_in_bits(resolved_type_info.sizeInBits());
+		}
+
+		auto registerOrUpdateAlias = [&](StringHandle alias_handle) {
+			TypeInfo* alias_type_info = nullptr;
+			auto existing_alias_it = getTypesByNameMap().find(alias_handle);
+			if (existing_alias_it != getTypesByNameMap().end() &&
+				existing_alias_it->second != nullptr) {
+				alias_type_info = existing_alias_it->second;
+				const uint32_t aliasIndex = alias_type_info->registeredTypeIndex().index();
+				alias_type_info->type_index_ = alias_target_index;
+				alias_type_info->registered_type_index_ =
+					TypeIndex{aliasIndex, TypeCategory::TypeAlias};
+				alias_type_info->fallback_size_bits_ = resolved_type_info.sizeInBits().value;
+				alias_type_info->is_type_alias_ = true;
+				alias_type_info->base_template_ = QualifiedIdentifier{};
+				alias_type_info->template_args_.clear();
+				alias_type_info->instantiation_context_.reset();
+				alias_type_info->clearAliasTypeSpecifier();
+				alias_type_info->setAliasTypeSpecifier(alias_registration_type_spec);
+			}
+			// Only normalize entries that were already created by earlier
+			// parsing/materialization. Creating fresh aliases here changes
+			// ordinary alias-chain lookup and can perturb sizeof/NTTP behavior.
+			return alias_type_info;
+		};
+
+		registerOrUpdateAlias(alias_instantiated_handle);
+		if (alias_instantiated_handle.view() != unqualified_alias_instantiated_name) {
+			registerOrUpdateAlias(
+				StringTable::getOrInternStringHandle(unqualified_alias_instantiated_name));
 		}
 	}
 	return result;
