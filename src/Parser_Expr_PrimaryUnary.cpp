@@ -19,6 +19,13 @@ namespace {
 // Returns true iff the qualified name resolves to a *data* member (static or non-static)
 // of a known struct/class. Returns false if it cannot be resolved (e.g. truly a nested
 // type, or a dependent name awaiting instantiation).
+//
+// NOTE: `Parser_Expr_QualLookup.cpp` (around the `QualifiedIdentifierNode` branch of
+// `get_expression_type`) performs a structurally similar lookup but builds a full
+// `TypeSpecifierNode` for the resolved member rather than a yes/no classification. The
+// two helpers are kept separate intentionally — they have different return shapes and
+// the parser-side classifier here is intentionally minimal so it can stay in this
+// translation unit and avoid pulling extra headers into the qualified-id resolution path.
 bool qualifiedNameNamesDataMember(std::string_view qualified_name) {
 	const size_t sep_pos = qualified_name.rfind("::");
 	if (sep_pos == std::string_view::npos) {

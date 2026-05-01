@@ -85,10 +85,13 @@ static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNo
 // the underlying array member in their `size_in_bits`, which is wrong for indexing.
 //
 // This helper is the single source of truth: given the element's `TypeCategory` (and
-// `TypeIndex` for struct elements), it returns the element stride in bits, falling
-// back to `aggregate_fallback_bits` only when the element type carries no usable
-// size. Subscript lowering should call this whenever the array base does not come
-// from a declaration whose type spec already encodes per-element layout.
+// `TypeIndex` for struct elements), it returns the element stride in bits with the
+// following precedence:
+//   1. If the element type provides a usable stride, prefer it — except when the
+//      carry-through size is a positive value no larger than one element. That case
+//      indicates the result has already been transformed (e.g. pointer-decayed array
+//      sized to POINTER_SIZE_BITS) and must not be overridden.
+//   2. If the element type yields no stride at all, fall back to the carry-through.
 static int deriveElementStrideBitsFromType(
 	TypeCategory element_type,
 	TypeIndex element_type_index,
@@ -101,15 +104,21 @@ static int deriveElementStrideBitsFromType(
 			}
 		}
 	}
+
+	// Element type provided no usable stride — trust the carry-through verbatim.
 	if (element_stride_bits <= 0) {
 		return aggregate_fallback_bits;
 	}
-	if (aggregate_fallback_bits > 0 && aggregate_fallback_bits < element_stride_bits) {
-		// The carry-through size is already smaller than (or equal to) one element —
-		// trust it as-is (e.g. pointer-decayed array). Only override when the
-		// carry-through is the larger aggregate.
+
+	// Carry-through is a positive value that already fits within one element stride
+	// (typical for pointer-decayed arrays). Treat it as authoritative and don't
+	// override with the raw element stride.
+	if (aggregate_fallback_bits > 0 && aggregate_fallback_bits <= element_stride_bits) {
 		return aggregate_fallback_bits;
 	}
+
+	// Otherwise the carry-through is the array aggregate (or zero/negative and thus
+	// unusable); the element stride is the right value for indexing.
 	return element_stride_bits;
 }
 
