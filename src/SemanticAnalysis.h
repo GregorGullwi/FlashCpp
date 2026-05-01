@@ -88,6 +88,10 @@ public:
 		return normalized_bodies_.count(body_ptr) > 0;
 	}
 
+	bool hasNormalizedAstNode(const ASTNode& node) const {
+		return node.has_value() && normalized_ast_nodes_.count(node.raw_pointer()) > 0;
+	}
+
 	// Returns true if sema attempted to annotate this call expression but could not
 	// resolve the callee (e.g. template specialization with separate DeclarationNode copies).
 	// Codegen uses this to suppress Phase 15 hard enforcement for known unresolvable cases.
@@ -470,6 +474,7 @@ private:
 	// Codegen uses this to skip Phase 15 warnings for functions sema never visited
 	// (e.g. template instantiation member functions generated during parsing).
 	std::unordered_set<const void*> normalized_bodies_;
+	std::unordered_set<const void*> normalized_ast_nodes_;
 
 	// Track call-expression pointers where sema attempted call-arg annotation
 	// but couldn't resolve the callee (e.g. template specialization static members

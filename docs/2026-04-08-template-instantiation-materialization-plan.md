@@ -304,6 +304,13 @@ Recent historical baselines recorded for this work:
   `IrGenerator_Visitors_Namespace.cpp` return fallback now hard-fails non-self
   alias entries, while `__underlying_type` self-alias placeholders and lambda
   returned-closure fallbacks remain active.
+- 2026-05-01 Linux/clang lambda return-sema follow-up: full suite passed, 2262
+  regular tests and 154 expected-fail tests after non-generic and instantiated
+  generic lambda bodies were tracked as sema-normalized AST roots. Return
+  lowering now preserves same-struct return identity before reaching residual
+  conversion fallback logic, which removes the returned-closure false-positive
+  from the normalized-body fallback probe. The known alias/self-alias and
+  generic missing-type-info residuals remain active.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.

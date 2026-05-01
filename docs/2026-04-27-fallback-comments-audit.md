@@ -424,6 +424,15 @@ The audit is now backed by direct suite evidence for several representative temp
   Linux suite stayed green. The residual return fallback traffic is now the
   lambda returned-closure / member-alias cluster rather than alias-backed
   primitive returns;
+- a 2026-05-01 follow-up moved lambda bodies into the sema-normalized root
+  tracking used by codegen and taught return lowering to preserve same-struct
+  return identity before consulting residual conversion fallbacks. This removes
+  the returned-closure false-positive from the normalized-body fallback probe;
+  `tests/test_constexpr_lambda_returned_member_closure_ret0.cpp` and
+  `tests/test_lambda_cpp20_comprehensive_ret135.cpp` passed under the stricter
+  guard, and the full Linux suite passed with 2262 regular tests and 154
+  expected-fail tests. Alias/self-alias and generic missing-type-info residuals
+  remain classified as active;
 - the `Parser_Templates_Class.cpp` "regular specialization without any
   template args" branch (audit §5, formerly line ~4454) was probed across the
   full 2243-test corpus with a hard-fail guard, never hit, and has been
