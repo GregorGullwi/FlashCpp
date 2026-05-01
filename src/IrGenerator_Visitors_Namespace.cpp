@@ -431,10 +431,6 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 										std::string("Alias return type should canonicalize before codegen return conversion fallback: ") +
 										std::string(StringTable::getStringView(source_type_info->name())));
 								}
-								if (sema_normalized_current_function_) {
-									throw InternalError(
-										"sema-normalized return lowering should not require struct-without-info conversion fallback");
-								}
 								operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 							} else {
 								const TypeIndex ret_type_idx = is_struct_type(return_category) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
