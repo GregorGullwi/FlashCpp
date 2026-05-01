@@ -79,6 +79,49 @@ static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNo
 	return calculate_alignment_from_size(size_in_bytes, aligned_category);
 }
 
+// Canonical way to derive the per-element stride (in bits) for an array subscript
+// when the array expression is a non-decl-backed value (e.g. a member access result
+// that produced a TempVar). Such results historically carry the *aggregate* size of
+// the underlying array member in their `size_in_bits`, which is wrong for indexing.
+//
+// This helper is the single source of truth: given the element's `TypeCategory` (and
+// `TypeIndex` for struct elements), it returns the element stride in bits with the
+// following precedence:
+//   1. If the element type provides a usable stride, prefer it — except when the
+//      carry-through size is a positive value no larger than one element. That case
+//      indicates the result has already been transformed (e.g. pointer-decayed array
+//      sized to POINTER_SIZE_BITS) and must not be overridden.
+//   2. If the element type yields no stride at all, fall back to the carry-through.
+static int deriveElementStrideBitsFromType(
+	TypeCategory element_type,
+	TypeIndex element_type_index,
+	int aggregate_fallback_bits) {
+	int element_stride_bits = get_type_size_bits(element_type);
+	if (element_stride_bits == 0 && element_type == TypeCategory::Struct && element_type_index.is_valid()) {
+		if (const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index)) {
+			if (const StructTypeInfo* element_struct_info = element_type_info->getStructInfo()) {
+				element_stride_bits = static_cast<int>(element_struct_info->sizeInBits().value);
+			}
+		}
+	}
+
+	// Element type provided no usable stride — trust the carry-through verbatim.
+	if (element_stride_bits <= 0) {
+		return aggregate_fallback_bits;
+	}
+
+	// Carry-through is a positive value that already fits within one element stride
+	// (typical for pointer-decayed arrays). Treat it as authoritative and don't
+	// override with the raw element stride.
+	if (aggregate_fallback_bits > 0 && aggregate_fallback_bits <= element_stride_bits) {
+		return aggregate_fallback_bits;
+	}
+
+	// Otherwise the carry-through is the array aggregate (or zero/negative and thus
+	// unusable); the element stride is the right value for indexing.
+	return element_stride_bits;
+}
+
 static size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& decl) {
 	{
 		const TypeSpecifierNode& type_node = decl.type_specifier_node();
@@ -868,19 +911,15 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		}
 	}
 
-	// Fix element size for array members accessed through TempVar (e.g., vls.values[i])
-	// When array comes from member_access, element_size_bits is the TOTAL array size (e.g., 640 bits for int[20])
-	// We need to derive the actual element size from the element type
-	if (std::holds_alternative<TempVar>(array_result.value) && !is_pointer_to_array) {
-		// Check if element_size_bits is much larger than expected for element_type
-		int base_element_size = get_type_size_bits(element_type);
-		if (base_element_size > 0 && element_size_bits > base_element_size) {
-			// This is likely an array where we got the total size instead of element size
-			FLASH_LOG_FORMAT(Codegen, Debug,
-							 "Array subscript on TempVar: fixing element_size from {} bits (total) to {} bits (element)",
-							 element_size_bits, base_element_size);
-			element_size_bits = base_element_size;
-		}
+	// Fix element size for array members accessed through TempVar (e.g., vls.values[i],
+	// holder.items[i]). When the base comes from member access we can accidentally carry the
+	// TOTAL array size instead of the single-element stride. Apply the canonical derivation
+	// only for non-pointer elements: for pointer results (e.g. built-in subscript on a
+	// conversion returning T**), the carry-through size is already the correct pointer width
+	// and re-deriving from the pointee category would incorrectly shrink the load width.
+	if (std::holds_alternative<TempVar>(array_result.value) && element_pointer_depth == 0) {
+		element_size_bits = deriveElementStrideBitsFromType(
+			element_type, element_type_index, element_size_bits);
 	}
 
 	// Create a temporary variable for the result

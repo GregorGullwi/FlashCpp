@@ -346,23 +346,23 @@ inline void emitStoreToMemory(std::vector<uint8_t>& textSectionData, X64Register
 	}
 
 	// Emit ModR/M byte and displacement
-	if (offset == 0) {
-		// [base_reg] with no displacement
-		textSectionData.push_back(0x00 | (value_reg_bits << 3) | base_reg_bits);
-	} else if (offset >= -128 && offset <= 127) {
-		// [base_reg + disp8]
-		uint8_t modrm = 0x40 | (value_reg_bits << 3) | base_reg_bits;
-		uint8_t disp = static_cast<uint8_t>(offset);
-		textSectionData.push_back(modrm);
-		textSectionData.push_back(disp);
-	} else {
-		// [base_reg + disp32]
-		textSectionData.push_back(0x80 | (value_reg_bits << 3) | base_reg_bits);
-		uint32_t offset_u32 = static_cast<uint32_t>(offset);
-		textSectionData.push_back(offset_u32 & 0xFF);
-		textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+	bool needs_sib = (base_reg_bits == 0x04);   // RSP/R12
+	bool needs_disp = (offset != 0) || (base_reg_bits == 0x05); // RBP/R13 always need displacement
+	uint8_t mod_field = calcRegisterBaseModField(base_reg_bits, offset);
+	textSectionData.push_back(static_cast<uint8_t>((mod_field << 6) | (value_reg_bits << 3) | (needs_sib ? 0x04 : base_reg_bits)));
+	if (needs_sib) {
+		textSectionData.push_back(0x24); // scale=1, index=none, base=RSP/R12
+	}
+	if (needs_disp) {
+		if (mod_field == 0x01) {
+			textSectionData.push_back(static_cast<uint8_t>(offset));
+		} else {
+			uint32_t offset_u32 = static_cast<uint32_t>(offset);
+			textSectionData.push_back(offset_u32 & 0xFF);
+			textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+			textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+			textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+		}
 	}
 }
 

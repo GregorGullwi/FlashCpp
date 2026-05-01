@@ -1,10 +1,72 @@
 #include "Parser.h"
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
+#include "LazyMemberResolver.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 #include <atomic>
+
+namespace {
+
+// Classify whether a qualified type-id placeholder (e.g. `Owner::name`) actually names a
+// data member rather than a nested type/alias. The `sizeof(...)` parser path needs to
+// distinguish this so it can route the operand to expression parsing instead of trusting
+// the placeholder as a type-id. This replaces the previous brittle "name contains ::"
+// heuristic and obviates the late-stage `tryGetConstexprQualifiedMemberSizeBytes`
+// recovery in the constexpr evaluator.
+//
+// Returns true iff the qualified name resolves to a *data* member (static or non-static)
+// of a known struct/class. Returns false if it cannot be resolved (e.g. truly a nested
+// type, or a dependent name awaiting instantiation).
+//
+// NOTE: `Parser_Expr_QualLookup.cpp` (around the `QualifiedIdentifierNode` branch of
+// `get_expression_type`) performs a structurally similar lookup but builds a full
+// `TypeSpecifierNode` for the resolved member rather than a yes/no classification. The
+// two helpers are kept separate intentionally — they have different return shapes and
+// the parser-side classifier here is intentionally minimal so it can stay in this
+// translation unit and avoid pulling extra headers into the qualified-id resolution path.
+bool qualifiedNameNamesDataMember(std::string_view qualified_name) {
+	const size_t sep_pos = qualified_name.rfind("::");
+	if (sep_pos == std::string_view::npos) {
+		return false;
+	}
+
+	const std::string_view struct_name = qualified_name.substr(0, sep_pos);
+	const std::string_view member_name = qualified_name.substr(sep_pos + 2);
+	if (struct_name.empty() || member_name.empty()) {
+		return false;
+	}
+
+	const StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
+	const auto& types_by_name = getTypesByNameMap();
+	auto struct_type_it = types_by_name.find(struct_name_handle);
+	if (struct_type_it == types_by_name.end() || !struct_type_it->second->isStruct()) {
+		return false;
+	}
+
+	const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+	if (struct_info == nullptr) {
+		return false;
+	}
+
+	const StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+
+	if (auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
+		static_member != nullptr && owner_struct != nullptr) {
+		return true;
+	}
+
+	if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+			struct_type_it->second->type_index_, member_name_handle);
+		member_result) {
+		return true;
+	}
+
+	return false;
+}
+
+} // namespace
 
 ParseResult Parser::parse_return_statement() {
 	auto current_token_opt = peek_info();
@@ -599,17 +661,42 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 						// look up the struct member via QualifiedIdentifierNode.
 						if (type_spec.category() == TypeCategory::UserDefined && type_spec.size_in_bits() == 0 &&
 							type_spec.token().type() == Token::Type::Identifier) {
-							StringHandle tok_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
-							auto struct_it = getTypesByNameMap().find(tok_handle);
-							if (struct_it != getTypesByNameMap().end() && struct_it->second->isStruct()) {
-								is_complete_type = false;
-							} else {
-								// If the identifier is a known variable in the symbol table (not a type),
-								// fall through to expression parsing so sizeof yields the variable's type
-								// size (C++20 [basic.scope.pdecl] point-of-declaration semantics).
-								auto sym_opt = gSymbolTable.lookup(tok_handle);
-								if (sym_opt.has_value() && sym_opt->is<VariableDeclarationNode>()) {
+							// Decide whether the placeholder is actually a type-id. We trust it as a
+							// type when the parsed TypeInfo represents a struct or template
+							// instantiation, OR when it is a qualified name whose RHS is *not* a known
+							// data member of the LHS struct (i.e. it likely names a nested type or a
+							// dependent type still awaiting instantiation).  Qualified names whose RHS
+							// resolves to a data member are routed to expression parsing instead, so
+							// `sizeof(Owner::member)` is handled as a normal expression-form sizeof
+							// without any late-stage recovery in the constexpr evaluator.
+							bool trust_zero_sized_type_id = false;
+							if (type_spec.type_index().is_valid()) {
+								if (const TypeInfo* parsed_type_info = tryGetTypeInfo(type_spec.type_index())) {
+									std::string_view parsed_type_name = StringTable::getStringView(parsed_type_info->name());
+									const bool is_qualified_name =
+										parsed_type_name.find("::") != std::string_view::npos;
+									const bool qualified_names_data_member =
+										is_qualified_name && qualifiedNameNamesDataMember(parsed_type_name);
+									trust_zero_sized_type_id =
+										parsed_type_info->isStruct() ||
+										parsed_type_info->isTemplateInstantiation() ||
+										(is_qualified_name && !qualified_names_data_member);
+								}
+							}
+
+							if (!trust_zero_sized_type_id) {
+								StringHandle tok_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
+								auto struct_it = getTypesByNameMap().find(tok_handle);
+								if (struct_it != getTypesByNameMap().end() && struct_it->second->isStruct()) {
 									is_complete_type = false;
+								} else {
+									// If the identifier is a known variable in the symbol table (not a type),
+									// fall through to expression parsing so sizeof yields the variable's type
+									// size (C++20 [basic.scope.pdecl] point-of-declaration semantics).
+									auto sym_opt = gSymbolTable.lookup(tok_handle);
+									if (sym_opt.has_value() && sym_opt->is<VariableDeclarationNode>()) {
+										is_complete_type = false;
+									}
 								}
 							}
 						}

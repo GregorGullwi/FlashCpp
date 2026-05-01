@@ -12667,6 +12667,43 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 
 		// Get the value to store into RDX or XMM0 (we use RCX for index, RAX for address)
 		bool is_float_store = is_floating_point_type(op.elementType());
+		bool is_struct_store = is_struct_type(op.elementType());
+		std::optional<int64_t> struct_source_offset;
+		if (is_struct_store) {
+			if (std::holds_alternative<TempVar>(op.value.value)) {
+				TempVar value_var = std::get<TempVar>(op.value.value);
+				struct_source_offset = getStackOffsetFromTempVar(value_var, op.value.size_in_bits.value);
+			} else if (std::holds_alternative<StringHandle>(op.value.value)) {
+				StringHandle value_name = std::get<StringHandle>(op.value.value);
+				const StackVariableScope& current_scope = variable_scopes.back();
+				auto value_it = current_scope.variables.find(value_name);
+				if (value_it != current_scope.variables.end()) {
+					struct_source_offset = value_it->second.offset;
+				}
+			}
+		}
+
+		auto emitStructCopyToRAX = [&](int64_t source_offset) {
+			// Array element stores need to handle small structs whose size is not encodable as a
+			// single scalar register move. Copy the source stack object in 8/4/2/1-byte chunks so
+			// the same path works for arbitrary small aggregates without relying on helper calls.
+			spillAndInvalidateRegisterForManualOverwrite(X64Register::RDX);
+			int bytes_copied = 0;
+			while (bytes_copied + 8 <= element_size_bytes) {
+				emitMovFromFrame(X64Register::RDX, source_offset + bytes_copied);
+				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, bytes_copied, 8);
+				bytes_copied += 8;
+			}
+			const int chunk_sizes[] = {4, 2, 1};
+			const int bit_sizes[] = {32, 16, 8};
+			for (size_t chunk_i = 0; chunk_i < sizeof(chunk_sizes) / sizeof(chunk_sizes[0]); ++chunk_i) {
+				if (bytes_copied + chunk_sizes[chunk_i] <= element_size_bytes) {
+					emitMovFromFrameBySize(X64Register::RDX, source_offset + bytes_copied, bit_sizes[chunk_i]);
+					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, bytes_copied, chunk_sizes[chunk_i]);
+					bytes_copied += chunk_sizes[chunk_i];
+				}
+			}
+		};
 
 		if (std::holds_alternative<unsigned long long>(op.value.value)) {
 			// Constant value
@@ -12684,7 +12721,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			} else {
 				emitMovImm64(X64Register::RDX, value);
 			}
-		} else if (std::holds_alternative<TempVar>(op.value.value)) {
+		} else if (!is_struct_store && std::holds_alternative<TempVar>(op.value.value)) {
 			// Value from temp var: check if already in register, otherwise load from stack
 			TempVar value_var = std::get<TempVar>(op.value.value);
 			int64_t value_offset = getStackOffsetFromTempVar(value_var, op.value.size_in_bits.value);
@@ -12725,7 +12762,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 					);
 				}
 			}
-		} else if (std::holds_alternative<StringHandle>(op.value.value)) {
+		} else if (!is_struct_store && std::holds_alternative<StringHandle>(op.value.value)) {
 			// Value from named variable (e.g., array_store arr, 0, %pa where pa is a pointer variable)
 			StringHandle value_name = std::get<StringHandle>(op.value.value);
 			const StackVariableScope& current_scope = variable_scopes.back();
@@ -12754,13 +12791,15 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 					}
 				}
 			}
-		} else if (const auto* d_val = std::get_if<double>(&op.value.value)) {
+		} else if (!is_struct_store) {
+			if (const auto* d_val = std::get_if<double>(&op.value.value)) {
 			// Floating-point literal stored as double in IrValue.
 			// This is the common case for initializers like: double arr[3] = { 1.0, 2.0, 3.0 }.
 			// Convert to the target bit-width and load into XMM0 via a GPR.
 			uint64_t bits = encodeFloatingImmediateBits(*d_val, element_size_bits);
 			emitMovImm64(X64Register::RAX, bits);
 			emitMovqGprToXmm(X64Register::RAX, X64Register::XMM0);
+			}
 		}
 
 		// Get array base offset (only needed if array is StringHandle, not TempVar)
@@ -12842,7 +12881,11 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				if (offset_bytes != 0) {
 					emitAddImmToReg(textSectionData, X64Register::RAX, offset_bytes);
 				}
-				emitStoreToRAX();
+				if (is_struct_store && struct_source_offset.has_value()) {
+					emitStructCopyToRAX(*struct_source_offset);
+				} else {
+					emitStoreToRAX();
+				}
 			} else if (is_pointer_to_array) {
 				// Load the pointer value first
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
@@ -12852,7 +12895,11 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				emitAddImmToReg(textSectionData, X64Register::RAX, offset_bytes);
 
 				// Store to [RAX] with appropriate size
-				emitStoreToRAX();
+				if (is_struct_store && struct_source_offset.has_value()) {
+					emitStructCopyToRAX(*struct_source_offset);
+				} else {
+					emitStoreToRAX();
+				}
 			} else if (is_object_pointer) {
 				// Member array of a pointer object (like this.values[i])
 				// Load the object pointer first
@@ -12868,12 +12915,19 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				emitAddImmToReg(textSectionData, X64Register::RAX, total_offset);
 
 				// Store to [RAX] with appropriate size
-				emitStoreToRAX();
+				if (is_struct_store && struct_source_offset.has_value()) {
+					emitStructCopyToRAX(*struct_source_offset);
+				} else {
+					emitStoreToRAX();
+				}
 			} else {
 				// Regular array - direct stack access
 				int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
 
-				if (is_float_store) {
+				if (is_struct_store && struct_source_offset.has_value()) {
+					emitLEAFromFrame(textSectionData, X64Register::RAX, element_offset);
+					emitStructCopyToRAX(*struct_source_offset);
+				} else if (is_float_store) {
 					// Value is in XMM0 — use float store instruction
 					bool is_double = (element_size_bits == 64);
 					emitFloatMovToFrame(X64Register::XMM0, static_cast<int32_t>(element_offset), !is_double);
@@ -12926,7 +12980,11 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			}
 
 			// Store to [RAX]
-			emitStoreToRAX();
+			if (is_struct_store && struct_source_offset.has_value()) {
+				emitStructCopyToRAX(*struct_source_offset);
+			} else {
+				emitStoreToRAX();
+			}
 		} else if (std::holds_alternative<StringHandle>(op.index.value)) {
 			// Index is a named variable - get its stack offset
 			StringHandle index_handle = std::get<StringHandle>(op.index.value);
@@ -12974,7 +13032,11 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			}
 
 			// Store to [RAX]
-			emitStoreToRAX();
+			if (is_struct_store && struct_source_offset.has_value()) {
+				emitStructCopyToRAX(*struct_source_offset);
+			} else {
+				emitStoreToRAX();
+			}
 		} else {
 			throw InternalError("ArrayStore index must be constant, TempVar, or StringHandle");
 		}
