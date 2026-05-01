@@ -1269,10 +1269,12 @@ TypeIndex Parser::substitute_template_parameter(
 		return current_type_index.withCategory(current_type);
 	}
 
-	if (type_name.starts_with("__underlying_type("sv) && type_name.ends_with(")"sv)) {
+	constexpr std::string_view underlying_type_prefix = "__underlying_type("sv;
+	constexpr std::string_view underlying_type_suffix = ")"sv;
+	if (type_name.starts_with(underlying_type_prefix) && type_name.ends_with(underlying_type_suffix)) {
 		std::string_view underlying_arg_name = type_name.substr(
-			"__underlying_type("sv.size(),
-			type_name.size() - "__underlying_type("sv.size() - 1);
+			underlying_type_prefix.size(),
+			type_name.size() - underlying_type_prefix.size() - underlying_type_suffix.size());
 		bool resolved_underlying_type = false;
 		forEachNonPackTemplateParamArgBinding(
 			template_params,

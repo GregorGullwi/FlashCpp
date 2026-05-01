@@ -1596,8 +1596,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		TypeIndex& substituted_type_index,
 		int& substituted_size) {
 		std::string_view alias_token_name = alias_type_spec.token().value();
-		if (!alias_token_name.starts_with("__underlying_type("sv) ||
-			!alias_token_name.ends_with(")"sv)) {
+		constexpr std::string_view underlying_type_prefix = "__underlying_type("sv;
+		constexpr std::string_view underlying_type_suffix = ")"sv;
+		if (!alias_token_name.starts_with(underlying_type_prefix) ||
+			!alias_token_name.ends_with(underlying_type_suffix)) {
 			return false;
 		}
 
