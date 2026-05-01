@@ -913,10 +913,11 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 	// Fix element size for array members accessed through TempVar (e.g., vls.values[i],
 	// holder.items[i]). When the base comes from member access we can accidentally carry the
-	// TOTAL array size instead of the single-element stride. The canonical derivation below
-	// takes the element type as the source of truth and only falls back to the carry-through
-	// size when the element type provides no usable stride.
-	if (std::holds_alternative<TempVar>(array_result.value)) {
+	// TOTAL array size instead of the single-element stride. Apply the canonical derivation
+	// only for non-pointer elements: for pointer results (e.g. built-in subscript on a
+	// conversion returning T**), the carry-through size is already the correct pointer width
+	// and re-deriving from the pointee category would incorrectly shrink the load width.
+	if (std::holds_alternative<TempVar>(array_result.value) && element_pointer_depth == 0) {
 		element_size_bits = deriveElementStrideBitsFromType(
 			element_type, element_type_index, element_size_bits);
 	}
