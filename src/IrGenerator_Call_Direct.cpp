@@ -627,11 +627,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 
-			// Handle auto-typed callables (e.g., recursive lambda pattern: self(self, n-1)).
-			// Once generic lambda params are normalized, the recursive `self` parameter is
-			// a concrete closure-type rvalue reference rather than plain `auto`, so accept
-			// that form here as well.
-		if (isPlaceholderAutoType(func_type.type()) || is_recursive_lambda_self) {
+			// Handle the normalized recursive lambda self parameter
+			// (e.g., self(self, n - 1)). Generic lambda callable parameters must have
+			// been semantically normalized before codegen; do not treat unresolved
+			// placeholder `auto` as the current closure or invent an `int` return type.
+		if (is_recursive_lambda_self) {
 				// This is likely a recursive lambda call pattern where 'self' is a lambda passed as auto&&
 				// We need to find the lambda's closure type and call its operator()
 
@@ -730,10 +730,13 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 				return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 			}
+		}
 
-				// Not inside a lambda context — this is an unresolved placeholder that
-				// should have been resolved by semantic analysis or parameter normalization.
-			throw InternalError("Unresolved placeholder type reached direct-call lowering outside lambda context");
+		if (isPlaceholderAutoType(func_type.type())) {
+				// Unresolved placeholders here used to be guessed as recursive lambda calls
+				// with an `int` result. That is unsafe for callable generic-lambda
+				// parameters; sema/parameter normalization owns this deduction.
+			throw InternalError("Unresolved placeholder callable reached direct-call lowering");
 		}
 	}
 
