@@ -79,6 +79,40 @@ static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNo
 	return calculate_alignment_from_size(size_in_bytes, aligned_category);
 }
 
+// Canonical way to derive the per-element stride (in bits) for an array subscript
+// when the array expression is a non-decl-backed value (e.g. a member access result
+// that produced a TempVar). Such results historically carry the *aggregate* size of
+// the underlying array member in their `size_in_bits`, which is wrong for indexing.
+//
+// This helper is the single source of truth: given the element's `TypeCategory` (and
+// `TypeIndex` for struct elements), it returns the element stride in bits, falling
+// back to `aggregate_fallback_bits` only when the element type carries no usable
+// size. Subscript lowering should call this whenever the array base does not come
+// from a declaration whose type spec already encodes per-element layout.
+static int deriveElementStrideBitsFromType(
+	TypeCategory element_type,
+	TypeIndex element_type_index,
+	int aggregate_fallback_bits) {
+	int element_stride_bits = get_type_size_bits(element_type);
+	if (element_stride_bits == 0 && element_type == TypeCategory::Struct && element_type_index.is_valid()) {
+		if (const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index)) {
+			if (const StructTypeInfo* element_struct_info = element_type_info->getStructInfo()) {
+				element_stride_bits = static_cast<int>(element_struct_info->sizeInBits().value);
+			}
+		}
+	}
+	if (element_stride_bits <= 0) {
+		return aggregate_fallback_bits;
+	}
+	if (aggregate_fallback_bits > 0 && aggregate_fallback_bits < element_stride_bits) {
+		// The carry-through size is already smaller than (or equal to) one element —
+		// trust it as-is (e.g. pointer-decayed array). Only override when the
+		// carry-through is the larger aggregate.
+		return aggregate_fallback_bits;
+	}
+	return element_stride_bits;
+}
+
 static size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& decl) {
 	{
 		const TypeSpecifierNode& type_node = decl.type_specifier_node();
@@ -870,22 +904,12 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 	// Fix element size for array members accessed through TempVar (e.g., vls.values[i],
 	// holder.items[i]). When the base comes from member access we can accidentally carry the
-	// TOTAL array size instead of the single-element stride.
+	// TOTAL array size instead of the single-element stride. The canonical derivation below
+	// takes the element type as the source of truth and only falls back to the carry-through
+	// size when the element type provides no usable stride.
 	if (std::holds_alternative<TempVar>(array_result.value)) {
-		int base_element_size = get_type_size_bits(element_type);
-		if (base_element_size == 0 && element_type == TypeCategory::Struct && element_type_index.is_valid()) {
-			if (const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index)) {
-				if (const StructTypeInfo* element_struct_info = element_type_info->getStructInfo()) {
-					base_element_size = static_cast<int>(element_struct_info->sizeInBits().value);
-				}
-			}
-		}
-		if (base_element_size > 0 && element_size_bits > base_element_size) {
-			FLASH_LOG_FORMAT(Codegen, Debug,
-							 "Array subscript on TempVar: fixing element_size from {} bits (total) to {} bits (element)",
-							 element_size_bits, base_element_size);
-			element_size_bits = base_element_size;
-		}
+		element_size_bits = deriveElementStrideBitsFromType(
+			element_type, element_type_index, element_size_bits);
 	}
 
 	// Create a temporary variable for the result
