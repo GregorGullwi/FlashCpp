@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "SemanticAnalysis.h"
 
 namespace {
 
@@ -7,9 +8,9 @@ struct SemaNormalizedScopeGuard {
 	bool& flag;
 	bool saved;
 
-	explicit SemaNormalizedScopeGuard(bool& flag_ref)
+	SemaNormalizedScopeGuard(bool& flag_ref, bool value)
 		: flag(flag_ref), saved(flag_ref) {
-		flag = false;
+		flag = value;
 	}
 
 	~SemaNormalizedScopeGuard() {
@@ -560,10 +561,9 @@ void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
 }
 
 void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
-	// Lambda bodies are normalized through normalizeInstantiatedLambdaBody(), but they are
-	// not yet tracked in normalized_bodies_. Keep direct-call enforcement on the existing
-	// function/ctor/dtor boundary until lambda bodies participate in the same tracking.
-	SemaNormalizedScopeGuard sema_normalized_scope_guard(sema_normalized_current_function_);
+	SemaNormalizedScopeGuard sema_normalized_scope_guard(
+		sema_normalized_current_function_,
+		sema_ && sema_->hasNormalizedAstNode(lambda_info.lambda_body));
 
 		// Generate function declaration for operator()
 	FunctionDeclOp func_decl_op;
@@ -723,7 +723,9 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 }
 
 void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
-	SemaNormalizedScopeGuard sema_normalized_scope_guard(sema_normalized_current_function_);
+	SemaNormalizedScopeGuard sema_normalized_scope_guard(
+		sema_normalized_current_function_,
+		sema_ && sema_->hasNormalizedAstNode(lambda_info.lambda_body));
 
 		// Generate function declaration for __invoke
 	FunctionDeclOp func_decl_op;

@@ -1424,17 +1424,27 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const DestructorDecl
 }
 
 void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) {
-	if (!lambda_info.is_generic || lambda_info.deduced_auto_types.empty()) {
+	if (!lambda_info.lambda_body.has_value()) {
 		return;
 	}
 
-	if (lambda_info.normalized_deduced_auto_types_generation == lambda_info.deduced_auto_types_generation) {
+	const void* body_key = lambda_info.lambda_body.raw_pointer();
+	if (lambda_info.is_generic && lambda_info.deduced_auto_types.empty()) {
 		return;
 	}
 
-	lambda_info.resolved_param_nodes = normalizeGenericLambdaParams(
-		lambda_info.parameter_nodes,
-		lambda_info.deduced_auto_types);
+	if (lambda_info.is_generic) {
+		if (lambda_info.normalized_deduced_auto_types_generation == lambda_info.deduced_auto_types_generation &&
+			normalized_ast_nodes_.count(body_key) > 0) {
+			return;
+		}
+
+		lambda_info.resolved_param_nodes = normalizeGenericLambdaParams(
+			lambda_info.parameter_nodes,
+			lambda_info.deduced_auto_types);
+	} else if (!normalized_ast_nodes_.insert(body_key).second) {
+		return;
+	}
 
 	const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
 								  ? lambda_info.parameter_nodes
@@ -1520,6 +1530,7 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 		lambda_ctx.current_function_return_type_id = canonicalizeType(lambda_return_type);
 	}
 	normalizeStatement(lambda_info.lambda_body, lambda_ctx);
+	normalized_ast_nodes_.insert(body_key);
 	lambda_info.normalized_deduced_auto_types_generation = lambda_info.deduced_auto_types_generation;
 }
 
