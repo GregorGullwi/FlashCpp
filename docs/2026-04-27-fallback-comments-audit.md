@@ -49,7 +49,7 @@ Representative sites:
 - `src\IrGenerator_Expr_Operators.cpp:738`, `src\IrGenerator_Expr_Operators.cpp:750`, `src\IrGenerator_Expr_Operators.cpp:758` - ternary lowering falls back from sema annotations to sema expression types and then parser expression typing; sema now normalizes ternary children before branch-conversion annotation so child slots/call targets exist before codegen consults them, and deferred member codegen now re-enqueues late materialized member bodies into the pending sema-root queue before emission so sema-available delayed members do not fall through to the parser ternary fallback.
 - `src\IrGenerator_Expr_Operators.cpp:2840` through `src\IrGenerator_Expr_Operators.cpp:2875` - binary operators prefer sema conversions but still generate fallback standard arithmetic conversions. A 2026-04-30 probe that replaced the normalized-body arithmetic fallback warning with `InternalError` found one live gap: `tests\test_lazy_conv_op_multi_cv_types_ret0.cpp` (`Box<T>::operator T() { return val + 1; }` for `T=double`). Root fix: `SemanticAnalysis::inferExpressionType(...)` now bypasses the sema type-slot cache for `IdentifierNode` / `MemberAccessNode` expressions while an implicit-`this` member context is active, so shared AST nodes in multiple template member instantiations no longer reuse stale `this` / member-access type slots from an earlier instantiation. After the fix, the focused regression and the full 2254-test Linux suite passed with the hard-fail probe enabled.
 - `src\IrGenerator_Expr_Conversions.cpp:1484`, `src\IrGenerator_Expr_Conversions.cpp:1506` - conversion lowering falls back to promotion when sema is missing or unavailable. The contextual-`bool` struct → `bool` conversion-operator fallback (formerly line 2535/2538) was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant.
-- `src\IrGenerator_Visitors_Namespace.cpp` - the return-statement struct-with-conversion-operator branch (formerly the `if (conv_op)` arm) was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant. The surrounding `generateTypeConversion` fallback class has been narrowed again: return lowering now resolves alias-backed `UserDefined` / `TypeAlias` sources to their canonical primitive before applying the residual fallback. A 2026-05-01 follow-up root-fixed the alias-template portion by updating existing instantiated alias-template `TypeInfo` entries to real `TypeAlias` entries that point at the resolved target, including qualified member-alias template names; non-self alias-template entries now hard-fail if they still reach the codegen fallback. Remaining live traffic is the self-alias `__underlying_type` placeholder case and lambda returned-closure cases. The `struct-no-conv-op` branch (line ~434) is still hit by `test_constexpr_lambda_returned_member_closure_ret0.cpp` and `test_lambda_cpp20_comprehensive_ret135.cpp`.
+- `src\IrGenerator_Visitors_Namespace.cpp` - the return-statement struct-with-conversion-operator branch (formerly the `if (conv_op)` arm) was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant. The surrounding `generateTypeConversion` fallback class has been narrowed again: return lowering now resolves alias-backed `UserDefined` / `TypeAlias` sources to their canonical primitive before applying the residual fallback. A 2026-05-01 follow-up root-fixed the alias-template portion by updating existing instantiated alias-template `TypeInfo` entries to real `TypeAlias` entries that point at the resolved target, including qualified member-alias template names; a later follow-up preserved `__underlying_type(T)` operands through template substitution so enum underlying-type aliases materialize as primitive targets before return lowering. Alias entries now hard-fail if they still reach the codegen fallback. Remaining live traffic is the generic missing-type-info residual. The lambda returned-closure false-positive was removed by sema-normalized lambda root tracking.
 - `src\IrGenerator_Stmt_Decl.cpp:1975` - variable initialization searches conversion operators directly when sema annotation is absent. Confirmed *active* on 2026-04-29: replacing it with a hard error broke `tests\test_const_cast_conv_op_ret0.cpp`, `tests\test_static_cast_base_ref_conv_op_ret0.cpp`, and `tests\test_xvalue_all_casts_ret0.cpp`.
 
 Missing feature:
@@ -379,12 +379,14 @@ The audit is now backed by direct suite evidence for several representative temp
   struct-with-conversion-operator branch (audit §2) was probed across the
   full 2243-test corpus with a hard-fail guard, never hit, and has been
   replaced with an `InternalError` invariant. The surrounding
-  `generateTypeConversion` fallbacks (no conv-op found, no `TypeInfo`) remain
-  active for the self-alias `__underlying_type` placeholder and lambda
-  returned-closure cases. Alias-template and qualified member-alias template
+  `generateTypeConversion` fallbacks (no conv-op found, no `TypeInfo`) were
+  narrowed again after the alias-template and qualified member-alias template
   return cases were root-fixed on 2026-05-01 by canonicalizing existing
   instantiated alias-template `TypeInfo` entries to `TypeAlias` entries
-  pointing at the resolved target;
+  pointing at the resolved target. `__underlying_type(T)` placeholders now
+  preserve the operand name through parsing and substitute directly to enum
+  underlying primitive types, so alias entries hard-fail if they still reach
+  this codegen fallback;
 - the contextual-`bool` struct → `bool` conversion-operator fallback in
   `IrGenerator_Expr_Conversions.cpp` (audit §2, formerly line ~2535) was also
   probed across the full 2243-test corpus with a hard-fail guard, never hit,
@@ -411,9 +413,10 @@ The audit is now backed by direct suite evidence for several representative temp
   `generateTypeConversion` fallbacks are in **non-normalized template bodies**
   where `tryAnnotateReturnConversion` is not called. The 2026-05-01 alias
   root-fix removed alias-template and member-alias template traffic from this
-  fallback class; `__underlying_type` self-alias placeholders and lambda return
-  cases remain safe but cannot yet be replaced with hard assertions
-  until sema normalization extends to template-instantiated bodies;
+  fallback class. `__underlying_type` self-alias placeholders were later
+  root-fixed by preserving the intrinsic operand through dependent type
+  substitution and resolving enum arguments to their primitive underlying type
+  before alias registration;
 - a 2026-04-30 follow-up then root-fixed the alias-backed subset of those
   return fallbacks in `IrGenerator_Visitors_Namespace.cpp`: when sema is absent
   or the body is still non-normalized, return lowering now canonicalizes
@@ -433,8 +436,9 @@ The audit is now backed by direct suite evidence for several representative temp
   `tests/test_constexpr_lambda_returned_member_closure_ret0.cpp` and
   `tests/test_lambda_cpp20_comprehensive_ret135.cpp` passed under the stricter
   guard, and the full Linux suite passed with 2262 regular tests and 154
-  expected-fail tests. Alias/self-alias and generic missing-type-info residuals
-  remain classified as active;
+  expected-fail tests. The `__underlying_type` self-alias residual was then
+  removed by operand-preserving substitution; generic missing-type-info
+  residuals remain classified as active;
 - the `Parser_Templates_Class.cpp` "regular specialization without any
   template args" branch (audit §5, formerly line ~4454) was probed across the
   full 2243-test corpus with a hard-fail guard, never hit, and has been

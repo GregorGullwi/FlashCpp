@@ -1269,6 +1269,39 @@ TypeIndex Parser::substitute_template_parameter(
 		return current_type_index.withCategory(current_type);
 	}
 
+	if (isEncodedUnderlyingTypeIntrinsic(type_name)) {
+		std::string_view underlying_arg_name = extractEncodedUnderlyingTypeArgument(type_name);
+		bool resolved_underlying_type = false;
+		forEachNonPackTemplateParamArgBinding(
+			template_params,
+			template_args,
+			[&](const TemplateParameterNode& template_param, const TemplateTypeArg& template_arg, size_t binding_index) {
+				(void)binding_index;
+				if (resolved_underlying_type ||
+					template_param.kind() != TemplateParameterKind::Type ||
+					template_param.name() != underlying_arg_name ||
+					!template_arg.isTypeArgument()) {
+					return;
+				}
+
+				const TypeInfo* arg_type_info = tryGetTypeInfo(template_arg.type_index);
+				const EnumTypeInfo* enum_info = arg_type_info ? arg_type_info->getEnumInfo() : nullptr;
+				if (!enum_info) {
+					return;
+				}
+
+				current_type = enum_info->underlying_type;
+				current_type_index = nativeTypeIndex(current_type);
+				if (!current_type_index.is_valid()) {
+					current_type_index = TypeIndex{0, current_type};
+				}
+				resolved_underlying_type = true;
+			});
+		if (resolved_underlying_type) {
+			return current_type_index.withCategory(current_type);
+		}
+	}
+
 	bool substitution_applied = false;
 	forEachNonPackTemplateParamArgBinding(
 		template_params,

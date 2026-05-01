@@ -161,9 +161,10 @@ Active fallback evidence from the 2026-04-27 audit:
 - alias-template return materialization now updates existing instantiated
   alias-template `TypeInfo` entries to `TypeAlias` entries pointing at the
   resolved target, including qualified member-alias template names. Codegen now
-  hard-fails non-self alias entries that still reach the residual return
-  conversion fallback; self-alias `__underlying_type` placeholders remain a
-  separate active fallback class.
+  hard-fails alias entries that still reach the residual return conversion
+  fallback; `__underlying_type(T)` aliases now preserve their operand through
+  substitution and materialize enum underlying primitive targets before return
+  lowering.
 
 Removal direction: make template bindings and instantiated `TypeInfo` metadata
 authoritative at creation time, then replace name-based and positional recovery
@@ -320,6 +321,13 @@ Recent historical baselines recorded for this work:
   fallback in sema-normalized bodies. The covered cluster includes generic
   lambda callable parameters, recursive `self`, and nested function-pointer
   direct invocation.
+- 2026-05-01 Linux/clang `__underlying_type` alias-return follow-up: full suite
+  passed, 2263 regular tests and 154 expected-fail tests after dependent
+  `__underlying_type(T)` type specifiers began preserving the operand name and
+  template substitution resolved enum arguments to their primitive underlying
+  type before alias registration. `IrGenerator_Visitors_Namespace.cpp` now
+  hard-fails all alias entries that still reach the residual return conversion
+  fallback. Added `tests/test_underlying_type_unsigned_return_identity_ret42.cpp`.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.

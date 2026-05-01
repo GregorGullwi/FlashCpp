@@ -327,12 +327,29 @@ ParseResult Parser::parse_type_specifier() {
 		// Get the argument type
 		const TypeSpecifierNode& arg_type = type_result.node()->as<TypeSpecifierNode>();
 
+		auto makeDependentUnderlyingType = [&](const TypeSpecifierNode& operand_type_spec) {
+			std::string_view arg_name = operand_type_spec.token().value();
+			if (arg_name.empty()) {
+				if (const TypeInfo* arg_type_info = tryGetTypeInfo(operand_type_spec.type_index())) {
+					arg_name = StringTable::getStringView(arg_type_info->name());
+				}
+			}
+			StringHandle encoded_handle = makeEncodedUnderlyingTypeIntrinsicName(arg_name);
+			Token encoded_token(
+				Token::Type::Identifier,
+				StringTable::getStringView(encoded_handle),
+				underlying_token.line(),
+				underlying_token.column(),
+				underlying_token.file_index());
+			return emplace_node<TypeSpecifierNode>(
+				TypeCategory::UserDefined, TypeQualifier::None, 0, encoded_token, CVQualifier::None);
+		};
+
 		// If the argument is a template parameter or dependent type, create a dependent type placeholder
 		if ((arg_type.category() == TypeCategory::UserDefined || arg_type.category() == TypeCategory::TypeAlias || arg_type.category() == TypeCategory::Template) && !arg_type.type_index().is_valid()) {
 			// Dependent type - return a placeholder that will be resolved during template instantiation
 			FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of dependent type, returning dependent placeholder");
-			return ParseResult::success(emplace_node<TypeSpecifierNode>(
-				TypeCategory::UserDefined, TypeQualifier::None, 0, underlying_token, CVQualifier::None));
+			return ParseResult::success(makeDependentUnderlyingType(arg_type));
 		}
 
 		// Check if the argument is marked as a template parameter in current context
@@ -342,8 +359,7 @@ ParseResult Parser::parse_type_specifier() {
 			for (const auto& param_name : currentTemplateParamNames()) {
 				if (arg_type_name == param_name) {
 					FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of template parameter '", arg_type_name, "', returning dependent placeholder");
-					return ParseResult::success(emplace_node<TypeSpecifierNode>(
-						TypeCategory::UserDefined, TypeQualifier::None, 0, underlying_token, CVQualifier::None));
+					return ParseResult::success(makeDependentUnderlyingType(arg_type));
 				}
 			}
 		}

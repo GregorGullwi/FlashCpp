@@ -37,6 +37,29 @@
 
 using namespace std::literals::string_view_literals;
 
+inline constexpr std::string_view kUnderlyingTypeIntrinsicPrefix = "__underlying_type("sv;
+inline constexpr std::string_view kUnderlyingTypeIntrinsicSuffix = ")"sv;
+
+inline bool isEncodedUnderlyingTypeIntrinsic(std::string_view type_name) {
+	return type_name.starts_with(kUnderlyingTypeIntrinsicPrefix) &&
+		   type_name.ends_with(kUnderlyingTypeIntrinsicSuffix);
+}
+
+inline std::string_view extractEncodedUnderlyingTypeArgument(std::string_view type_name) {
+	return type_name.substr(
+		kUnderlyingTypeIntrinsicPrefix.size(),
+		type_name.size() - kUnderlyingTypeIntrinsicPrefix.size() - kUnderlyingTypeIntrinsicSuffix.size());
+}
+
+inline StringHandle makeEncodedUnderlyingTypeIntrinsicName(std::string_view arg_name) {
+	return StringTable::getOrInternStringHandle(
+		StringBuilder()
+			.append(kUnderlyingTypeIntrinsicPrefix)
+			.append(arg_name)
+			.append(kUnderlyingTypeIntrinsicSuffix)
+			.commit());
+}
+
 // Resets the per-compilation template instantiation counters in
 // Parser_Templates_Inst_ClassTemplate.cpp.  Must be called once at the
 // start of every parse() invocation so that iteration counts and trip flags
