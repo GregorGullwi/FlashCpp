@@ -1275,7 +1275,8 @@ TypeIndex Parser::substitute_template_parameter(
 		forEachNonPackTemplateParamArgBinding(
 			template_params,
 			template_args,
-			[&](const TemplateParameterNode& template_param, const TemplateTypeArg& template_arg, size_t) {
+			[&](const TemplateParameterNode& template_param, const TemplateTypeArg& template_arg, size_t binding_index) {
+				(void)binding_index;
 				if (resolved_underlying_type ||
 					template_param.kind() != TemplateParameterKind::Type ||
 					template_param.name() != underlying_arg_name ||

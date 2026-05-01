@@ -327,10 +327,10 @@ ParseResult Parser::parse_type_specifier() {
 		// Get the argument type
 		const TypeSpecifierNode& arg_type = type_result.node()->as<TypeSpecifierNode>();
 
-		auto makeDependentUnderlyingType = [&](const TypeSpecifierNode& dependent_arg) {
-			std::string_view arg_name = dependent_arg.token().value();
+		auto makeDependentUnderlyingType = [&](const TypeSpecifierNode& operand_type_spec) {
+			std::string_view arg_name = operand_type_spec.token().value();
 			if (arg_name.empty()) {
-				if (const TypeInfo* arg_type_info = tryGetTypeInfo(dependent_arg.type_index())) {
+				if (const TypeInfo* arg_type_info = tryGetTypeInfo(operand_type_spec.type_index())) {
 					arg_name = StringTable::getStringView(arg_type_info->name());
 				}
 			}
