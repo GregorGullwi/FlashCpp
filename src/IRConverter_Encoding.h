@@ -716,7 +716,6 @@ inline OpCodeWithSize generateFloatMovFromMemory(X64Register destinationRegister
 
 	// Check if we need REX prefix
 	uint8_t xmm_reg = xmm_modrm_bits(destinationRegister);
-	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
 	bool need_rex = (xmm_reg >= 8) || (static_cast<uint8_t>(base_reg) >= 8);
 
 	if (need_rex) {
