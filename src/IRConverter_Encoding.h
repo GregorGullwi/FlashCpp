@@ -26,6 +26,37 @@ inline void encodeDisplacement(uint8_t*& ptr, size_t& size, int32_t offset, uint
 	}
 }
 
+inline uint8_t calcRegisterBaseModField(uint8_t base_bits, int32_t offset) {
+	if (offset == 0 && base_bits != 0x05) {
+		return 0x00;
+	}
+	return (offset >= -128 && offset <= 127) ? 0x01 : 0x02;
+}
+
+inline void encodeRegisterBaseMemoryOperand(
+	uint8_t*& ptr,
+	size_t& size,
+	uint8_t reg_field_lower_3_bits,
+	X64Register base_reg,
+	int32_t offset) {
+	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
+	uint8_t mod_field = calcRegisterBaseModField(base_bits, offset);
+	bool needs_sib = (base_bits == 0x04); // RSP/R12 use r/m=100 + mandatory SIB
+
+	*ptr++ = static_cast<uint8_t>((mod_field << 6) | (reg_field_lower_3_bits << 3) | (needs_sib ? 0x04 : base_bits));
+	size++;
+
+	if (needs_sib) {
+		// scale=1, index=none(100), base=RSP/R12(100)
+		*ptr++ = 0x24;
+		size++;
+	}
+
+	if (mod_field != 0x00 || base_bits == 0x05) {
+		encodeDisplacement(ptr, size, offset, mod_field);
+	}
+}
+
 /**
  * @brief Converts an XMM register enum value to its 0-based encoding for ModR/M bytes.
  * 
@@ -517,34 +548,7 @@ inline OpCodeWithSize generateMovFromMemory(X64Register dest_reg, X64Register ba
 
 	// ModR/M byte
 	uint8_t dest_bits = static_cast<uint8_t>(dest_reg) & 0x07;
-	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
-
-	uint8_t mod_field;
-	if (offset == 0 && base_bits != 0x05) { // RBP/R13 always need displacement
-		mod_field = 0x00; // No displacement
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01; // 8-bit displacement
-	} else {
-		mod_field = 0x02; // 32-bit displacement
-	}
-
-	uint8_t modrm = (mod_field << 6) | (dest_bits << 3) | base_bits;
-	*current_byte_ptr++ = modrm;
-	result.size_in_bytes++;
-
-	// Add displacement if needed
-	if (offset != 0 || base_bits == 0x05) { // RBP/R13 always need displacement
-		if (offset >= -128 && offset <= 127) {
-			*current_byte_ptr++ = static_cast<uint8_t>(offset);
-			result.size_in_bytes++;
-		} else {
-			*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-			result.size_in_bytes += 4;
-		}
-	}
+	encodeRegisterBaseMemoryOperand(current_byte_ptr, result.size_in_bytes, dest_bits, base_reg, offset);
 
 	return result;
 }
@@ -587,34 +591,7 @@ inline OpCodeWithSize generateMovFromMemory32(X64Register dest_reg, X64Register 
 
 	// ModR/M byte
 	uint8_t dest_bits = static_cast<uint8_t>(dest_reg) & 0x07;
-	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
-
-	uint8_t mod_field;
-	if (offset == 0 && base_bits != 0x05) {
-		mod_field = 0x00;
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01;
-	} else {
-		mod_field = 0x02;
-	}
-
-	uint8_t modrm = (mod_field << 6) | (dest_bits << 3) | base_bits;
-	*current_byte_ptr++ = modrm;
-	result.size_in_bytes++;
-
-	// Displacement
-	if (offset != 0 || base_bits == 0x05) {
-		if (offset >= -128 && offset <= 127) {
-			*current_byte_ptr++ = static_cast<uint8_t>(offset);
-			result.size_in_bytes++;
-		} else {
-			*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-			result.size_in_bytes += 4;
-		}
-	}
+	encodeRegisterBaseMemoryOperand(current_byte_ptr, result.size_in_bytes, dest_bits, base_reg, offset);
 
 	return result;
 }
@@ -657,34 +634,7 @@ inline OpCodeWithSize generateMovFromMemory16(X64Register dest_reg, X64Register 
 
 	// ModR/M byte
 	uint8_t dest_bits = static_cast<uint8_t>(dest_reg) & 0x07;
-	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
-
-	uint8_t mod_field;
-	if (offset == 0 && base_bits != 0x05) {
-		mod_field = 0x00;
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01;
-	} else {
-		mod_field = 0x02;
-	}
-
-	uint8_t modrm = (mod_field << 6) | (dest_bits << 3) | base_bits;
-	*current_byte_ptr++ = modrm;
-	result.size_in_bytes++;
-
-	// Add displacement if needed
-	if (offset != 0 || base_bits == 0x05) {
-		if (offset >= -128 && offset <= 127) {
-			*current_byte_ptr++ = static_cast<uint8_t>(offset);
-			result.size_in_bytes++;
-		} else {
-			*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-			result.size_in_bytes += 4;
-		}
-	}
+	encodeRegisterBaseMemoryOperand(current_byte_ptr, result.size_in_bytes, dest_bits, base_reg, offset);
 
 	return result;
 }
@@ -727,34 +677,7 @@ inline OpCodeWithSize generateMovFromMemory8(X64Register dest_reg, X64Register b
 
 	// ModR/M byte
 	uint8_t dest_bits = static_cast<uint8_t>(dest_reg) & 0x07;
-	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
-
-	uint8_t mod_field;
-	if (offset == 0 && base_bits != 0x05) {
-		mod_field = 0x00;
-	} else if (offset >= -128 && offset <= 127) {
-		mod_field = 0x01;
-	} else {
-		mod_field = 0x02;
-	}
-
-	uint8_t modrm = (mod_field << 6) | (dest_bits << 3) | base_bits;
-	*current_byte_ptr++ = modrm;
-	result.size_in_bytes++;
-
-	// Add displacement if needed
-	if (offset != 0 || base_bits == 0x05) {
-		if (offset >= -128 && offset <= 127) {
-			*current_byte_ptr++ = static_cast<uint8_t>(offset);
-			result.size_in_bytes++;
-		} else {
-			*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-			result.size_in_bytes += 4;
-		}
-	}
+	encodeRegisterBaseMemoryOperand(current_byte_ptr, result.size_in_bytes, dest_bits, base_reg, offset);
 
 	return result;
 }
@@ -811,30 +734,7 @@ inline OpCodeWithSize generateFloatMovFromMemory(X64Register destinationRegister
 	*current_byte_ptr++ = 0x10;
 	result.size_in_bytes += 2;
 
-	// ModR/M byte - encode [base_reg + offset]
-	if (offset == 0 && base_reg != X64Register::RBP && base_reg != X64Register::R13) {
-		// Mod=00, no displacement (except for RBP/R13 which need at least disp8)
-		uint8_t modrm = 0x00 | ((xmm_reg & 0x07) << 3) | base_bits;
-		*current_byte_ptr++ = modrm;
-		result.size_in_bytes++;
-	} else if (offset >= -128 && offset <= 127) {
-		// 8-bit displacement
-		uint8_t modrm = 0x40 | ((xmm_reg & 0x07) << 3) | base_bits;	// Mod=01
-		*current_byte_ptr++ = modrm;
-		*current_byte_ptr++ = static_cast<uint8_t>(offset);
-		result.size_in_bytes += 2;
-	} else {
-		// 32-bit displacement
-		uint8_t modrm = 0x80 | ((xmm_reg & 0x07) << 3) | base_bits;	// Mod=10
-		*current_byte_ptr++ = modrm;
-		result.size_in_bytes++;
-
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-		result.size_in_bytes += 4;
-	}
+	encodeRegisterBaseMemoryOperand(current_byte_ptr, result.size_in_bytes, xmm_reg & 0x07, base_reg, offset);
 
 	return result;
 }
