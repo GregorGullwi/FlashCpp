@@ -352,9 +352,12 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 
 	result.resolved_type_info =
 		findTypeByName(StringTable::getOrInternStringHandle(result.instantiated_name));
+	const size_t alias_template_member_sep = alias_template_name.rfind("::");
+	const bool is_qualified_alias_template =
+		alias_template_member_sep != std::string_view::npos;
 	if (alias_node != nullptr &&
 		alias_node->is_deferred() &&
-		alias_template_name.find("::") != std::string_view::npos &&
+		is_qualified_alias_template &&
 		alias_node->target_template_name() != alias_template_name &&
 		gTemplateRegistry.lookup_alias_template(alias_node->target_template_name()).has_value()) {
 		if (auto substituted_args_opt =
@@ -396,11 +399,10 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			get_instantiated_class_name(alias_template_name, template_args);
 		StringHandle alias_instantiated_handle = StringTable::getOrInternStringHandle(
 			unqualified_alias_instantiated_name);
-		if (size_t member_sep = alias_template_name.rfind("::");
-			member_sep != std::string_view::npos) {
+		if (is_qualified_alias_template) {
 			alias_instantiated_handle = StringTable::getOrInternStringHandle(
 				StringBuilder()
-					.append(alias_template_name.substr(0, member_sep + 2))
+					.append(alias_template_name.substr(0, alias_template_member_sep + 2))
 					.append(unqualified_alias_instantiated_name)
 					.commit());
 		}
@@ -418,16 +420,16 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			alias_registration_type_spec.set_size_in_bits(resolved_type_info.sizeInBits());
 		}
 
-		auto register_or_update_alias_type = [&](StringHandle alias_handle) {
+		auto registerOrUpdateAlias = [&](StringHandle alias_handle) {
 			TypeInfo* alias_type_info = nullptr;
 			auto existing_alias_it = getTypesByNameMap().find(alias_handle);
 			if (existing_alias_it != getTypesByNameMap().end() &&
 				existing_alias_it->second != nullptr) {
 				alias_type_info = existing_alias_it->second;
-				const uint32_t alias_slot = alias_type_info->registeredTypeIndex().index();
+				const uint32_t aliasIndex = alias_type_info->registeredTypeIndex().index();
 				alias_type_info->type_index_ = alias_target_index;
 				alias_type_info->registered_type_index_ =
-					TypeIndex{alias_slot, TypeCategory::TypeAlias};
+					TypeIndex{aliasIndex, TypeCategory::TypeAlias};
 				alias_type_info->fallback_size_bits_ = resolved_type_info.sizeInBits().value;
 				alias_type_info->is_type_alias_ = true;
 				alias_type_info->base_template_ = QualifiedIdentifier{};
@@ -439,9 +441,9 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			return alias_type_info;
 		};
 
-		register_or_update_alias_type(alias_instantiated_handle);
+		registerOrUpdateAlias(alias_instantiated_handle);
 		if (alias_instantiated_handle.view() != unqualified_alias_instantiated_name) {
-			register_or_update_alias_type(
+			registerOrUpdateAlias(
 				StringTable::getOrInternStringHandle(unqualified_alias_instantiated_name));
 		}
 	}
