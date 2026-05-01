@@ -431,7 +431,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							if (!source_struct_info) {
 								if (source_type_info->isTypeAlias()) {
 									throw InternalError(
-										std::string("Alias return type reached codegen return conversion fallback before parser/template substitution resolved it: ") +
+										std::string("Alias return type reached codegen fallback - should have been resolved during parsing/template substitution: ") +
 										std::string(StringTable::getStringView(source_type_info->name())));
 								}
 								operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());

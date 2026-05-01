@@ -327,7 +327,7 @@ ParseResult Parser::parse_type_specifier() {
 		// Get the argument type
 		const TypeSpecifierNode& arg_type = type_result.node()->as<TypeSpecifierNode>();
 
-		auto make_dependent_underlying_type = [&](const TypeSpecifierNode& dependent_arg) {
+		auto makeDependentUnderlyingType = [&](const TypeSpecifierNode& dependent_arg) {
 			std::string_view arg_name = dependent_arg.token().value();
 			if (arg_name.empty()) {
 				if (const TypeInfo* arg_type_info = tryGetTypeInfo(dependent_arg.type_index())) {
@@ -349,7 +349,7 @@ ParseResult Parser::parse_type_specifier() {
 		if ((arg_type.category() == TypeCategory::UserDefined || arg_type.category() == TypeCategory::TypeAlias || arg_type.category() == TypeCategory::Template) && !arg_type.type_index().is_valid()) {
 			// Dependent type - return a placeholder that will be resolved during template instantiation
 			FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of dependent type, returning dependent placeholder");
-			return ParseResult::success(make_dependent_underlying_type(arg_type));
+			return ParseResult::success(makeDependentUnderlyingType(arg_type));
 		}
 
 		// Check if the argument is marked as a template parameter in current context
@@ -359,7 +359,7 @@ ParseResult Parser::parse_type_specifier() {
 			for (const auto& param_name : currentTemplateParamNames()) {
 				if (arg_type_name == param_name) {
 					FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of template parameter '", arg_type_name, "', returning dependent placeholder");
-					return ParseResult::success(make_dependent_underlying_type(arg_type));
+					return ParseResult::success(makeDependentUnderlyingType(arg_type));
 				}
 			}
 		}
