@@ -27,6 +27,8 @@ inline void encodeDisplacement(uint8_t*& ptr, size_t& size, int32_t offset, uint
 }
 
 inline uint8_t calcRegisterBaseModField(uint8_t base_bits, int32_t offset) {
+	// r/m=101 names RBP/R13 when mod!=00, but means disp32-only when mod==00.
+	// So a zero-offset [RBP]/[R13] access must still use a displacement form.
 	if (offset == 0 && base_bits != 0x05) {
 		return 0x00;
 	}
@@ -41,7 +43,7 @@ inline void encodeRegisterBaseMemoryOperand(
 	int32_t offset) {
 	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
 	uint8_t mod_field = calcRegisterBaseModField(base_bits, offset);
-	bool needs_sib = (base_bits == 0x04); // RSP/R12 use r/m=100 + mandatory SIB
+	bool needs_sib = (base_bits == 0x04); // r/m=100 encodes RSP/R12 and therefore requires a SIB byte
 
 	*ptr++ = static_cast<uint8_t>((mod_field << 6) | (reg_field_lower_3_bits << 3) | (needs_sib ? 0x04 : base_bits));
 	size++;
