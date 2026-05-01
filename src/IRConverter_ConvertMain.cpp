@@ -12694,19 +12694,14 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, bytes_copied, 8);
 				bytes_copied += 8;
 			}
-			if (bytes_copied + 4 <= element_size_bytes) {
-				emitMovFromFrameBySize(X64Register::RDX, source_offset + bytes_copied, 32);
-				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, bytes_copied, 4);
-				bytes_copied += 4;
-			}
-			if (bytes_copied + 2 <= element_size_bytes) {
-				emitMovFromFrameBySize(X64Register::RDX, source_offset + bytes_copied, 16);
-				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, bytes_copied, 2);
-				bytes_copied += 2;
-			}
-			if (bytes_copied + 1 <= element_size_bytes) {
-				emitMovFromFrameBySize(X64Register::RDX, source_offset + bytes_copied, 8);
-				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, bytes_copied, 1);
+			const int chunk_sizes[] = {4, 2, 1};
+			const int bit_sizes[] = {32, 16, 8};
+			for (size_t chunk_i = 0; chunk_i < sizeof(chunk_sizes) / sizeof(chunk_sizes[0]); ++chunk_i) {
+				if (bytes_copied + chunk_sizes[chunk_i] <= element_size_bytes) {
+					emitMovFromFrameBySize(X64Register::RDX, source_offset + bytes_copied, bit_sizes[chunk_i]);
+					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, bytes_copied, chunk_sizes[chunk_i]);
+					bytes_copied += chunk_sizes[chunk_i];
+				}
 			}
 		};
 
