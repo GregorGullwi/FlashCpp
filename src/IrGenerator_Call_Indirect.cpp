@@ -570,26 +570,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				if (isPlaceholderAutoType(object_type.type())) {
 					if (auto deduced = deduceLambdaClosureType(*symbol, object_decl->identifier_token())) {
 						object_type = *deduced;
-					} else if (current_lambda_context_.isActive() && object_type.is_rvalue_reference()) {
-						// For auto&& parameters inside lambdas (recursive lambda pattern),
-						// assume the parameter has the closure type of the current lambda.
-						// This handles: auto factorial = [](auto&& self, int n) { ... self(self, n-1); }
-						// where self's type is deduced to __lambda_N&& when called
-						auto type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
-						if (type_it != getTypesByNameMap().end()) {
-							const TypeInfo* closure_type = type_it->second;
-							int closure_size = closure_type->getStructInfo()
-												   ? closure_type->getStructInfo()->sizeInBits().value
-												   : 64;
-							object_type = TypeSpecifierNode(
-								closure_type->type_index_.withCategory(TypeCategory::Struct),
-								closure_size,
-								object_decl->identifier_token(),
-								CVQualifier::None,
-								ReferenceQualifier::None);
-							// Preserve rvalue reference flag
-							object_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
-						}
 					}
 				}
 			}
@@ -1508,63 +1488,132 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				// the instantiated lambda body with concrete argument types.
 				const TypeSpecifierNode* mangling_return_type = &func_for_mangling->decl_node().type_specifier_node();
 
-				// Check if this is a generic lambda call (lambda with auto parameters)
-				bool is_generic_lambda = StringTable::getStringView(struct_name).substr(0, 9) == "__lambda_"sv;
+				// Check if this is a generic lambda call (lambda with auto parameters).
+				// Do not infer from the lambda name alone: non-generic closures also use
+				// the __lambda_N spelling and must keep their declared parameter types.
+				bool has_auto_parameter = false;
+				for (const auto& param_node : func_for_mangling->parameter_nodes()) {
+					if (!param_node.is<DeclarationNode>()) {
+						continue;
+					}
+					if (isPlaceholderAutoType(param_node.as<DeclarationNode>().type_specifier_node().type())) {
+						has_auto_parameter = true;
+						break;
+					}
+				}
+				bool is_generic_lambda =
+					StringTable::getStringView(struct_name).substr(0, 9) == "__lambda_"sv &&
+					has_auto_parameter;
 				if (is_generic_lambda) {
 					// For generic lambdas, we need to deduce auto parameter types from arguments
 					// Collect argument types first
 					std::vector<TypeSpecifierNode> arg_types;
-					callExprNode.arguments().visit([&](ASTNode argument) {
+					auto currentClosureType = [&](const Token& token) -> std::optional<TypeSpecifierNode> {
+						if (!current_lambda_context_.isActive()) {
+							return std::nullopt;
+						}
+						auto closure_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+						if (closure_type_it == getTypesByNameMap().end()) {
+							return std::nullopt;
+						}
+						const TypeInfo* closure_type = closure_type_it->second;
+						const int closure_size = closure_type->getStructInfo()
+												 ? closure_type->getStructInfo()->sizeInBits().value
+												 : 64;
+						TypeSpecifierNode type_node(
+							closure_type->type_index_.withCategory(TypeCategory::Struct),
+							closure_size,
+							token,
+							CVQualifier::None,
+							ReferenceQualifier::None);
+						type_node.set_reference_qualifier(ReferenceQualifier::RValueReference);
+						return type_node;
+					};
+					auto resolveGenericLambdaArgumentType = [&](ASTNode argument) -> std::optional<TypeSpecifierNode> {
+						if (!argument.is<ExpressionNode>()) {
+							return std::nullopt;
+						}
+						if (sema_) {
+							if (auto sema_type = sema_->getExpressionType(argument); sema_type.has_value() &&
+								!isPlaceholderAutoType(sema_type->type())) {
+								return sema_type;
+							}
+						}
+
 						const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
 						if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 							const auto& identifier = std::get<IdentifierNode>(arg_expr);
 							const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-							if (symbol.has_value()) {
-								const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-								if (decl) {
-									TypeSpecifierNode type_node = decl->type_specifier_node();
-									// Resolve auto type from lambda initializer if available
-									if (isPlaceholderAutoType(type_node.type())) {
-										if (auto deduced = deduceLambdaClosureType(*symbol, decl->identifier_token())) {
-											type_node = *deduced;
-										} else if (current_lambda_context_.isActive() && type_node.is_rvalue_reference()) {
-											// For auto&& parameters inside lambdas (recursive lambda pattern),
-											// assume the parameter has the closure type of the current lambda.
-											// This handles: auto factorial = [](auto&& self, int n) { ... self(self, n-1); }
-											auto closure_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
-											if (closure_type_it != getTypesByNameMap().end()) {
-												const TypeInfo* closure_type = closure_type_it->second;
-												int closure_size = closure_type->getStructInfo()
-																	   ? closure_type->getStructInfo()->sizeInBits().value
-																	   : 64;
-												type_node = TypeSpecifierNode(
-													closure_type->type_index_.withCategory(TypeCategory::Struct),
-													closure_size,
-													decl->identifier_token(),
-													CVQualifier::None,
-													ReferenceQualifier::None);
-												// Preserve rvalue reference flag
-												type_node.set_reference_qualifier(ReferenceQualifier::RValueReference);
-											}
-										}
-									}
-									arg_types.push_back(type_node);
-								} else {
-									arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
-								}
-							} else {
-								arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
+							if (!symbol.has_value()) {
+								return std::nullopt;
 							}
-						} else if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-							arg_types.push_back(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None));
-						} else if (const auto* literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
-							arg_types.push_back(TypeSpecifierNode(literal->type(), TypeQualifier::None,
-																  static_cast<unsigned char>(literal->sizeInBits()), Token{}, CVQualifier::None));
-						} else {
-							// Default to int for complex expressions
-							arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
+							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+							if (!decl) {
+								return std::nullopt;
+							}
+							TypeSpecifierNode type_node = decl->type_specifier_node();
+							if (isPlaceholderAutoType(type_node.type())) {
+								if (auto deduced = deduceLambdaClosureType(*symbol, decl->identifier_token())) {
+									type_node = *deduced;
+								} else if (type_node.is_rvalue_reference() && identifier.name() == object_name) {
+									// Narrow recursive-lambda self support: only the argument
+									// that re-passes `object_name`, the callable receiver currently
+									// being invoked, may use the current closure. Other unresolved
+									// generic callable parameters must be normalized by sema instead
+									// of guessed as int/current self.
+									if (auto self_type = currentClosureType(decl->identifier_token())) {
+										type_node = *self_type;
+									}
+								}
+							}
+							if (isPlaceholderAutoType(type_node.type())) {
+								return std::nullopt;
+							}
+							return type_node;
 						}
+						if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
+							return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+						}
+						if (const auto* literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
+							return TypeSpecifierNode(
+								literal->type(),
+								TypeQualifier::None,
+								static_cast<unsigned char>(literal->sizeInBits()),
+								Token{},
+								CVQualifier::None);
+						}
+						return std::nullopt;
+					};
+					size_t generic_lambda_arg_index = 0;
+					callExprNode.arguments().visit([&](ASTNode argument) {
+						if (auto arg_type = resolveGenericLambdaArgumentType(argument)) {
+							arg_types.push_back(*arg_type);
+							++generic_lambda_arg_index;
+							return;
+						}
+						throw InternalError(
+							std::string("Unable to deduce generic lambda argument type at index ") +
+							std::to_string(generic_lambda_arg_index) +
+							" during member-call lowering");
 					});
+					auto applyGenericLambdaPlaceholderDeduction =
+						[](const TypeSpecifierNode& placeholder_type, TypeSpecifierNode argument_type) {
+							if (!isPlaceholderAutoType(placeholder_type.type())) {
+								return argument_type;
+							}
+							if (placeholder_type.reference_qualifier() == ReferenceQualifier::None) {
+								return finalizePlaceholderTypeDeduction(placeholder_type.type(), argument_type);
+							}
+							if (placeholder_type.reference_qualifier() == ReferenceQualifier::LValueReference) {
+								argument_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+								return argument_type;
+							}
+							if (argument_type.reference_qualifier() == ReferenceQualifier::LValueReference) {
+								return argument_type;
+							}
+							argument_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+							return argument_type;
+						};
 
 					LambdaInfo* matched_lambda_info = nullptr;
 
@@ -1576,9 +1625,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 							const auto& param_type = param_decl.type_specifier_node();
 
 							if (isPlaceholderAutoType(param_type.type()) && arg_idx < arg_types.size()) {
-								// Deduce type from argument, preserving reference flags from auto&& parameter
-								TypeSpecifierNode deduced_type = arg_types[arg_idx];
-								deduced_type.set_reference_qualifier(param_type.reference_qualifier());
+								// Deduce the instantiated parameter type from the argument.
+								// Forwarding references keep lvalue arguments as lvalue
+								// references; plain auto strips top-level cv/ref.
+								TypeSpecifierNode deduced_type =
+									applyGenericLambdaPlaceholderDeduction(param_type, arg_types[arg_idx]);
 								param_types.push_back(deduced_type);
 
 								// Also store the deduced type in LambdaInfo for use by generateLambdaOperatorCallFunction
