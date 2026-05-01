@@ -1434,8 +1434,7 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 	}
 
 	if (lambda_info.is_generic) {
-		if (lambda_info.normalized_deduced_auto_types_generation == lambda_info.deduced_auto_types_generation &&
-			normalized_ast_nodes_.count(body_key) > 0) {
+		if (lambda_info.normalized_deduced_auto_types_generation == lambda_info.deduced_auto_types_generation) {
 			return;
 		}
 
