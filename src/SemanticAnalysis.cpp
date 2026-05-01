@@ -1532,7 +1532,9 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 		lambda_ctx.current_function_return_type_id = canonicalizeType(lambda_return_type);
 	}
 	normalizeStatement(lambda_info.lambda_body, lambda_ctx);
-	normalized_ast_nodes_.insert(body_key);
+	if (lambda_info.is_generic) {
+		normalized_ast_nodes_.insert(body_key);
+	}
 	lambda_info.normalized_deduced_auto_types_generation = lambda_info.deduced_auto_types_generation;
 }
 
