@@ -390,9 +390,11 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			// For reference returns we already evaluated the expression in LValueAddress
 			// context, so the operand now represents the address-producing glvalue.
 			// Do not run ordinary value conversion against the ABI-sized return slot.
-			// Same concrete struct type indices are identity returns even if an earlier
-			// category/size view is stale; this keeps returned closure objects from
-			// falling into the residual conversion fallback.
+			/*
+			Same concrete struct type indices are identity returns even if an earlier
+			category/size view is stale; this keeps returned closure objects from
+			falling into the residual conversion fallback.
+			*/
 			if (!sema_applied_conversion &&
 				is_struct_type(expr_category) &&
 				is_struct_type(return_category) &&
