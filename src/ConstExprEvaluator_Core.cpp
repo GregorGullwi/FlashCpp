@@ -154,78 +154,6 @@ std::optional<size_t> tryGetConstexprTypeAlignment(const TypeSpecifierNode& type
 	return calculate_alignment_from_size(size_in_bytes, aligned_type.category());
 }
 
-// Resolve sizeof bytes for placeholder type-ids that actually name a qualified member
-// such as "Struct::member". This is used by constexpr sizeof(type) recovery when the
-// parser kept the operand as a type-id placeholder instead of an expression AST.
-std::optional<size_t> tryGetConstexprQualifiedMemberSizeBytes(const TypeSpecifierNode& type_spec) {
-	if (!type_spec.type_index().is_valid()) {
-		return std::nullopt;
-	}
-
-	const TypeInfo* qualified_type_info = tryGetTypeInfo(type_spec.type_index());
-	if (!qualified_type_info) {
-		return std::nullopt;
-	}
-
-	std::string_view qualified_name = StringTable::getStringView(qualified_type_info->name());
-	size_t sep_pos = qualified_name.rfind("::");
-	if (sep_pos == std::string_view::npos) {
-		return std::nullopt;
-	}
-
-	std::string_view struct_name = qualified_name.substr(0, sep_pos);
-	std::string_view member_name = qualified_name.substr(sep_pos + 2);
-	StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
-	auto struct_type_it = getTypesByNameMap().find(struct_name_handle);
-	if (struct_type_it == getTypesByNameMap().end() || !struct_type_it->second->isStruct()) {
-		return std::nullopt;
-	}
-
-	const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
-	if (!struct_info) {
-		return std::nullopt;
-	}
-
-	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-
-	auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
-	if (static_member && owner_struct) {
-		if (static_member->is_reference()) {
-			size_t ref_size = get_type_size_bits(static_member->memberType()) / 8;
-			if (ref_size == 0 && static_member->memberType() == TypeCategory::Struct && static_member->type_index.is_valid()) {
-				if (const StructTypeInfo* si = tryGetStructTypeInfo(static_member->type_index)) {
-					ref_size = toSizeT(si->sizeInBytes());
-				}
-			}
-			if (ref_size > 0) {
-				return ref_size;
-			}
-		} else if (static_member->size > 0) {
-			return static_member->size;
-		}
-	}
-
-	auto member_result = FlashCpp::gLazyMemberResolver.resolve(
-		struct_type_it->second->type_index_,
-		member_name_handle);
-	if (!member_result) {
-		return std::nullopt;
-	}
-
-	if (member_result.member->is_reference()) {
-		size_t ref_size = member_result.member->referenced_size_bits / 8;
-		if (ref_size > 0) {
-			return ref_size;
-		}
-	}
-
-	if (member_result.member->size > 0) {
-		return member_result.member->size;
-	}
-
-	return std::nullopt;
-}
-
 std::optional<TypeSpecifierNode> tryGetConstexprSubscriptResultType(const TypeSpecifierNode& base_type) {
 	TypeSpecifierNode result_type = base_type;
 	result_type.set_reference_qualifier(ReferenceQualifier::None);
@@ -1270,12 +1198,6 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 		const auto& type_node = sizeof_expr.type_or_expr();
 		if (type_node.is<TypeSpecifierNode>()) {
 			const auto& type_spec = type_node.as<TypeSpecifierNode>();
-
-			if (type_spec.size_in_bits() == 0) {
-				if (auto qualified_member_size = tryGetConstexprQualifiedMemberSizeBytes(type_spec); qualified_member_size.has_value()) {
-					return EvalResult::from_int(static_cast<long long>(*qualified_member_size));
-				}
-			}
 
 			// Workaround for parser limitation: when sizeof(arr) is parsed where arr is an
 			// array variable, the parser may incorrectly parse it as a type.
