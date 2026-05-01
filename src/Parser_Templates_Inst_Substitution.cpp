@@ -358,6 +358,10 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	if (alias_node != nullptr &&
 		alias_node->is_deferred() &&
 		is_qualified_alias_template &&
+		// Qualified member aliases can target another alias template (e.g.
+		// `Checker::cond_t<T> = ::enable_if_t<...>`). Same-name aliases are
+		// deliberately left on the ordinary member-target path to avoid
+		// recursive self-materialization.
 		alias_node->target_template_name() != alias_template_name &&
 		gTemplateRegistry.lookup_alias_template(alias_node->target_template_name()).has_value()) {
 		if (auto substituted_args_opt =
@@ -438,6 +442,9 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 				alias_type_info->clearAliasTypeSpecifier();
 				alias_type_info->setAliasTypeSpecifier(alias_registration_type_spec);
 			}
+			// Only normalize entries that were already created by earlier
+			// parsing/materialization. Creating fresh aliases here changes
+			// ordinary alias-chain lookup and can perturb sizeof/NTTP behavior.
 			return alias_type_info;
 		};
 
