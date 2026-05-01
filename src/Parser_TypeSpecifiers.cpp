@@ -334,12 +334,7 @@ ParseResult Parser::parse_type_specifier() {
 					arg_name = StringTable::getStringView(arg_type_info->name());
 				}
 			}
-			StringHandle encoded_handle = StringTable::getOrInternStringHandle(
-				StringBuilder()
-					.append("__underlying_type(")
-					.append(arg_name)
-					.append(")")
-					.commit());
+			StringHandle encoded_handle = makeEncodedUnderlyingTypeIntrinsicName(arg_name);
 			Token encoded_token(
 				Token::Type::Identifier,
 				StringTable::getStringView(encoded_handle),
