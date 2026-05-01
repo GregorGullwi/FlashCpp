@@ -328,7 +328,9 @@ The initial audit above was architectural. Several template-instantiation fallba
     - Probe result: replacing the `parser_->get_expression_type(object_node)` step with a hard error whenever `sema_` was present but returned an inconclusive callable type broke `tests\test_generic_lambda_callable_param_ret0.cpp`, `tests\test_generic_lambda_callable_shadowed_name_ret0.cpp`, `tests\test_generic_lambda_recursive_self_ret0.cpp`, `tests\test_lambda_cpp20_comprehensive_ret135.cpp`, and `tests\test_nested_function_returning_funcptr_direct_invoke_ret0.cpp`.
     - Follow-up root fix (2026-04-29): sema now explicitly stamps the result type/value-category slot for every resolved call expression, instead of relying on a later codegen-side `getExpressionTypeOrInfer(...)` helper. Nested function-pointer-returning direct invocation receivers therefore arrive in codegen with ordinary slot-backed sema metadata, and the temporary codegen-side inference bridge was removed again.
     - Validation: `tests\test_nested_function_returning_funcptr_direct_invoke_ret0.cpp`, `tests\test_nested_funcptr_direct_invoke_ternary_ret0.cpp`, `tests\test_generic_lambda_callable_param_ret0.cpp`, and `tests\test_generic_lambda_recursive_self_ret0.cpp` all still passed after the sema-side change.
-    - Conclusion: the parser fallback is still active, but only for receivers that still lack both a sema-resolved `operator()` target and a slot-backed callable type from sema. The remaining live cases are the generic-lambda-introduced callable parameters / recursive `self` cluster rather than nested function-pointer-returning direct invokes.
+    - Follow-up root fix (2026-05-01): canonical semantic type interning now preserves `FunctionSignature` metadata whenever the source `TypeSpecifierNode` carries one, including alias-backed function pointer/reference types that materialize as the underlying return category plus pointer/reference modifiers. Call-expression normalization also stamps the inferred result slot after call-target/conversion annotation. Codegen now hard-fails this parser fallback in sema-normalized bodies, so `operator()` lowering must consume either a sema-resolved callable target or a slot-backed callable type.
+    - Validation: the focused callable cluster (`tests\test_callable_sema_resolved_ret0.cpp`, `tests\test_generic_lambda_callable_param_ret0.cpp`, `tests\test_generic_lambda_callable_shadowed_name_ret0.cpp`, `tests\test_generic_lambda_recursive_self_ret0.cpp`, `tests\test_lambda_cpp20_comprehensive_ret135.cpp`, `tests\test_nested_function_returning_funcptr_direct_invoke_ret0.cpp`, plus representative alias/function-pointer direct-invoke tests) passed under the stricter normalized-body guard; the full Linux/clang suite also passed with 2262 regular tests and 154 expected-fail tests.
+    - Conclusion: the normalized-body parser fallback is closed for the known callable cluster. The residual parser path is retained only for non-normalized bodies while broader legacy lowering coverage is retired.
 
 ### Confidence update
 
@@ -440,11 +442,13 @@ The audit is now backed by direct suite evidence for several representative temp
   specializations that reach this branch always carry either type or non-type
   template arguments;
 - the `IrGenerator_Call_Indirect.cpp` `operator()` callable-type sema/parser
-  fallback (audit §1, line ~275) was narrowed on 2026-04-29. Codegen now
-  skips the parser callable-type fallback when sema already resolved the
-  `operator()` target for that call node, so generic-lambda callable
-  parameters and recursive-`self` cases stay on the sema-owned member-call
-  path even if `sema_->getExpressionType(object)` is still inconclusive.
+  fallback (audit §1, line ~275) was narrowed on 2026-04-29 and hardened on
+  2026-05-01. Codegen now skips the parser callable-type fallback when sema
+  already resolved the `operator()` target for that call node, and sema
+  preserves/stamps callable result types for alias-backed function pointer
+  direct-invoke receivers, so generic-lambda callable parameters,
+  recursive-`self` cases, and nested function-pointer direct invocation stay on
+  the sema-owned path.
   The callable regression cluster
   (`tests/test_callable_sema_resolved_ret0.cpp`,
   `tests/test_generic_lambda_callable_param_ret0.cpp`,
@@ -460,9 +464,9 @@ The audit is now backed by direct suite evidence for several representative temp
   path with ordinary slot-backed typing
   (`tests/test_nested_function_returning_funcptr_direct_invoke_ret0.cpp` and
   `tests/test_nested_funcptr_direct_invoke_ternary_ret0.cpp` both pass). The
-  parser fallback remains required only for true indirect-call receivers that
-  still lack both a sema-resolved `operator()` target and a slot-backed
-  callable type, notably the generic-lambda / recursive-`self` cluster;
+  normalized-body parser fallback now hard-fails if a receiver lacks both a
+  sema-resolved `operator()` target and a slot-backed callable type; the
+  residual parser path is retained only for non-normalized bodies;
 - the ternary common-type fallback in `IrGenerator_Expr_Operators.cpp`
   (audit §2) was also narrowed on 2026-04-29: ternary normalization now walks
   the condition/branches before running branch-conversion annotation, so

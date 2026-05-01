@@ -278,6 +278,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			isInconclusiveCallableType(callee_type) &&
 			!resolved_op_call;
 		if (needs_parser_fallback && parser_) {
+			if (sema_normalized_current_function_) {
+				throw InternalError("Normalized callable operator() receiver is missing sema-resolved target/type");
+			}
 			callee_type = parser_->get_expression_type(object_node);
 		}
 		if (!callee_type.has_value()) {
