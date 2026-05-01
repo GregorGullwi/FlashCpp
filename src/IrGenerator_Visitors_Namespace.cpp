@@ -429,9 +429,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 						if (const TypeInfo* source_type_info = tryGetTypeInfo(expr_type_index)) {
 							const StructTypeInfo* source_struct_info = source_type_info->getStructInfo();
 							if (!source_struct_info) {
-								if (source_type_info->isTypeAlias() &&
-									source_type_info->type_index_.index() !=
-										source_type_info->registeredTypeIndex().index()) {
+								if (source_type_info->isTypeAlias()) {
 									throw InternalError(
 										std::string("Alias return type should canonicalize before codegen return conversion fallback: ") +
 										std::string(StringTable::getStringView(source_type_info->name())));

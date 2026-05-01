@@ -1269,6 +1269,40 @@ TypeIndex Parser::substitute_template_parameter(
 		return current_type_index.withCategory(current_type);
 	}
 
+	if (type_name.starts_with("__underlying_type("sv) && type_name.ends_with(")"sv)) {
+		std::string_view underlying_arg_name = type_name.substr(
+			"__underlying_type("sv.size(),
+			type_name.size() - "__underlying_type("sv.size() - 1);
+		bool resolved_underlying_type = false;
+		forEachNonPackTemplateParamArgBinding(
+			template_params,
+			template_args,
+			[&](const TemplateParameterNode& template_param, const TemplateTypeArg& template_arg, size_t) {
+				if (resolved_underlying_type ||
+					template_param.kind() != TemplateParameterKind::Type ||
+					template_param.name() != underlying_arg_name ||
+					!template_arg.isTypeArgument()) {
+					return;
+				}
+
+				const TypeInfo* arg_type_info = tryGetTypeInfo(template_arg.type_index);
+				const EnumTypeInfo* enum_info = arg_type_info ? arg_type_info->getEnumInfo() : nullptr;
+				if (!enum_info) {
+					return;
+				}
+
+				current_type = enum_info->underlying_type;
+				current_type_index = nativeTypeIndex(current_type);
+				if (!current_type_index.is_valid()) {
+					current_type_index = TypeIndex{0, current_type};
+				}
+				resolved_underlying_type = true;
+			});
+		if (resolved_underlying_type) {
+			return current_type_index.withCategory(current_type);
+		}
+	}
+
 	bool substitution_applied = false;
 	forEachNonPackTemplateParamArgBinding(
 		template_params,
