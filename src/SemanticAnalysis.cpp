@@ -1428,11 +1428,11 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 		return;
 	}
 
-	const void* body_key = lambda_info.lambda_body.raw_pointer();
 	if (lambda_info.is_generic && lambda_info.deduced_auto_types.empty()) {
 		return;
 	}
 
+	const void* body_key = lambda_info.lambda_body.raw_pointer();
 	if (lambda_info.is_generic) {
 		if (lambda_info.normalized_deduced_auto_types_generation == lambda_info.deduced_auto_types_generation) {
 			return;
