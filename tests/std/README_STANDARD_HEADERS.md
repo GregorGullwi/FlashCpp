@@ -4,7 +4,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
-> **Note (2026-05-04 same-template explicit-ctor fix sweep):** the rows below still include historical timings from earlier hosts and commits.  The authoritative current Linux/libstdc++-14 state for the retested `tests/std/test_std_*.cpp` files is the latest dated section below the table.
+> **Note (2026-05-04 injected-class-name copy-init follow-up):** the rows below still include historical timings from earlier hosts and commits.  The authoritative current Linux/libstdc++-14 state for the retested `tests/std/test_std_*.cpp` files is the latest dated section below the table.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
@@ -23,7 +23,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~2585ms (retested 2026-05-04, Linux/libstdc++-14). The explicit-ctor copy-init diagnostic for `std::ranges::__detail::__max_size_type` is fixed; current first hard error is `cannot initialize a variable of type 'struct' with an lvalue of type 'const char[N]'` deeper in the header. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~8484ms (retested 2026-05-04, Linux/libstdc++-14). Same explicit-ctor unblock as `<string_view>`; current first error is `cannot initialize a variable of type 'struct' with an lvalue of type 'const char[N]'`. |
-| `<array>` | `test_std_array.cpp` | ❌ Compile Error | ~1537ms (retested 2026-05-04, Linux/libstdc++-14). The `Cannot use copy initialization with explicit constructor` diagnostic for `std::reverse_iterator` is fixed; current first hard error is `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
+| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | Focused retest 2026-05-04 after injected-class-name fix. The `Cannot use copy initialization with explicit constructor` diagnostic for `std::reverse_iterator` is fixed; the header now progresses into existing IR/codegen gaps around unresolved `std::reverse_iterator` constructor/placeholder lowering. |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2758ms (retested 2026-05-04, Linux/libstdc++-14). Same explicit-ctor unblock as `<array>`; current first error is `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~2262ms (retested 2026-04-24, Linux/libstdc++). Previous `tuple:399` `_M_tail` blocker resolved by the member-function overload registration fix; now first-order error is `unsupported PackExpansionExprNode reached semantic analysis` deeper in tuple's pack expansion machinery. |
@@ -102,6 +102,25 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
 
+
+#### 2026-05-04 Injected-class-name copy-init follow-up for `<array>` / `std::reverse_iterator` (Linux/libstdc++-14)
+
+Fix landed:
+
+- **Injected-class-name type canonicalization in instantiated class-template member contexts.**  Inside members of a class template specialization, a local declaration such as `ReverseLike copy = *this;` now canonicalizes the injected-class-name type to the current specialization.  This prevents same-type copy-initialization from being misclassified as a converting construction through an explicit iterator constructor.
+
+Regression test:
+
+- `tests/test_template_injected_class_name_copy_init_ret0.cpp`
+
+Validation snapshot:
+
+- Full Linux regression suite (`bash tests/run_all_tests.sh`): 2272 pass / 0 fail / 154 `_fail` correct.
+- Focused std-header probes before this fix, using the same rebuilt sharded binary, confirmed these current timings and first-order stops: `<string_view>` 1910ms (`cannot initialize ... const char[14]`), `<optional>` 900ms (no grep-captured first-order diagnostic), `<stdexcept>` 5690ms (`Ambiguous constructor call`), `<numeric>` 1820ms (`Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`), and `<tuple>` 1370ms (`ExpressionSubstitutor missing binding for ordered template parameter '_Head'`).
+- `<array>` was 1050ms before the fix and stopped at the now-fixed `Cannot use copy initialization with explicit constructor` diagnostic.  The post-fix focused probe progresses past semantic analysis into existing IR/codegen gaps around missing resolved constructor metadata for `std::reverse_iterator` and unresolved placeholder return lowering.
+
+The broad next blockers are now less dominated by explicit-constructor copy-init false positives in iterator headers; the remaining failures in this slice point at constructor metadata handoff, placeholder/`auto` lowering, tuple substitution bindings, and unrelated overload ambiguity.
+
 #### 2026-05-04 Member type-alias modifier preservation for `<type_traits>` (Linux/libstdc++-14)
 
 This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested every
@@ -150,7 +169,7 @@ Linux/libstdc++-14 std-header sweep (`x64/Sharded/FlashCpp`, 60 s timeout):
 | `<version>` | ✅ Compiled | 34ms | |
 | `<algorithm>` | ❌ Compile Error | 2000ms | `Cannot use copy initialization with explicit constructor`. |
 | `<any>` | ❌ Compile Error | 477ms | No first-order diagnostic captured by the sweep grep. |
-| `<array>` | ❌ Compile Error | 1162ms | `Cannot use copy initialization with explicit constructor`. |
+| `<array>` | ❌ Codegen Error | see focused note | Injected-class-name fix unblocks the `std::reverse_iterator` explicit-ctor false positive; now progresses into existing IR/codegen gaps around unresolved constructor/placeholder lowering. |
 | `<atomic>` | ❌ Compile Error | 749ms | `Fatal error: Base class instantiation name should resolve after default filling`. |
 | `<chrono>` | ❌ Compile Error | 2942ms | `Fatal error: Unregistered dependent placeholder type reached template argument classification`. |
 | `<cmath>` | ❌ Compile Error | 4922ms | Non-dependent name `__poly_hermite_recursion` C++20 [temp.res]/9 violation. |

@@ -41,6 +41,13 @@ namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
 constexpr std::string_view kAnonymousNamespaceContext = "<anonymous namespace>";
 
+// Return the name after the last scope-resolution operator:
+// `std::ReverseLike` -> `ReverseLike`.
+std::string_view unqualifiedTypeName(std::string_view name) {
+	const size_t pos = name.rfind("::");
+	return pos == std::string_view::npos ? name : name.substr(pos + 2);
+}
+
 // Placeholder return-type finalization requires every return statement in the
 // body to deduce to the same full type identity, including cv/reference and
 // pointer qualifiers. This prevents plain `auto` and `decltype(auto)` from
@@ -2044,11 +2051,6 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 	}
 
 	SemanticContext ctx;
-	// Track return type for return-statement conversion annotation
-	ASTNode type_node = func.decl_node().type_node();
-	if (type_node.has_value() && type_node.is<TypeSpecifierNode>()) {
-		ctx.current_function_return_type_id = canonicalizeType(type_node.as<TypeSpecifierNode>());
-	}
 
 	std::optional<MemberContext> member_context;
 	if (func.is_member_function()) {
@@ -2069,6 +2071,15 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 			member_context_stack_.pop_back();
 		}
 	});
+
+	// Track return type for return-statement conversion annotation.  Do this
+	// after establishing the member context so injected-class-name return types
+	// in class template specializations canonicalize to the current
+	// specialization.
+	ASTNode type_node = func.decl_node().type_node();
+	if (type_node.has_value() && type_node.is<TypeSpecifierNode>()) {
+		ctx.current_function_return_type_id = canonicalizeType(type_node.as<TypeSpecifierNode>());
+	}
 
 	// Push a scope for this function's parameters
 	pushScope();
@@ -2870,6 +2881,49 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		if (!desc.function_signature.has_value() && alias_info.function_signature.has_value()) {
 			desc.function_signature = alias_info.function_signature;
 			desc.flags = desc.flags | CanonicalTypeFlags::IsFunctionType;
+		}
+	}
+
+	// C++20 [temp.local]: inside a class template (and members of its
+	// specializations), the injected-class-name denotes the current
+	// specialization.  Template instantiation can leave local declarations such
+	// as `SomeClass copy = *this;` carrying the primary template's
+	// TypeIndex while expression inference for `*this` correctly uses the
+	// instantiated TypeIndex.  Canonicalize that injected-class-name back to the
+	// current member context so same-type initialization is not misclassified as
+	// a converting construction through an explicit constructor.
+	if (desc.type_index.is_valid()) {
+		if (const MemberContext* member_context = getCurrentMemberContext();
+			member_context && member_context->type_index.is_valid()) {
+			const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index);
+			const TypeInfo* named_type_info = tryGetTypeInfo(desc.type_index);
+			if (current_type_info && named_type_info && current_type_info->isTemplateInstantiation()) {
+				const std::string_view named_name = StringTable::getStringView(named_type_info->name());
+				const std::string_view base_name = StringTable::getStringView(current_type_info->baseTemplateName());
+				const NamespaceHandle source_namespace = current_type_info->sourceNamespace();
+				// Cached/template-only instantiation paths may not preserve a
+				// source namespace; fall back to the name check in that case
+				// rather than disabling injected-class-name remapping.
+				const bool namespace_matches =
+					!source_namespace.isValid() ||
+					source_namespace == named_type_info->namespaceHandle();
+				bool names_match = false;
+				if (!base_name.empty()) {
+					// Prefer the fully-qualified match, then fall back to the
+					// unqualified spelling for metadata paths that disagree on
+					// whether the template name includes its namespace prefix.
+					names_match = named_name == base_name;
+					if (!names_match) {
+						names_match = unqualifiedTypeName(named_name) == unqualifiedTypeName(base_name);
+					}
+				}
+				if (namespace_matches && names_match) {
+					// Use the current specialization's TypeIndex so same-type
+					// copy-initialization is not treated as a converting
+					// constructor call.
+					desc.type_index = current_type_info->type_index_;
+				}
+			}
 		}
 	}
 
