@@ -1346,6 +1346,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	}
 
 	TempVar ret_var = var_counter.next();
+	// Member-call lowering needs the instantiated generic-lambda return type both
+	// while building the CallOp payload and later when shaping the final ExprResult.
+	std::optional<TypeSpecifierNode> resolved_generic_return_type;
 
 	if (is_virtual_call && vtable_index >= 0) {
 		// Generate virtual function call using VirtualCallOp
@@ -1422,7 +1425,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 		// Vector to hold deduced parameter types (populated for generic lambdas)
 		std::vector<TypeSpecifierNode> param_types;
-		std::optional<TypeSpecifierNode> resolved_generic_return_type;
 
 		// Check if this is an instantiated template function
 		std::string_view func_name = func_decl_node.identifier_token().value();
@@ -2096,11 +2098,15 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), callExprNode.called_from()));
 	}
 
-	// Build the final ExprResult from the return type — handles reference metadata,
-	// auto-dereference, size/type_index computation, and ValueStorage selection.
-	const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
-								  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_specifier_node()
-								  : func_decl_node.type_specifier_node();
+	// Build the final ExprResult from the effective return type — generic lambda
+	// instantiations may refine it after placeholder deduction even when the
+	// original member declaration still carries the placeholder type.
+	const auto& return_type =
+		resolved_generic_return_type.has_value()
+			? *resolved_generic_return_type
+			: (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
+				  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_specifier_node()
+				  : func_decl_node.type_specifier_node();
 	return buildCallReturnResult(return_type, ret_var, context, callExprNode.called_from());
 }
 
