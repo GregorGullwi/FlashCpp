@@ -662,6 +662,8 @@ EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const E
 	const unsigned long long raw_value = expr_result.as_uint_raw();
 	const bool is_unsigned_target = is_unsigned_integer_type(effective_category);
 	const auto truncate_to_width = [](unsigned long long value, int width_bits) {
+		// EvalResult already stores integer constants in a 64-bit carrier, so
+		// 64-bit targets keep the full bit-pattern unchanged.
 		if (width_bits <= 0 || width_bits >= 64) {
 			return value;
 		}
