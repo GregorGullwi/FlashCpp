@@ -33,6 +33,119 @@ using TemplateArgSubstitutionMap = std::unordered_map<std::string_view, Template
 using TemplateArgPackSubstitutionMap =
 	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>;
 
+struct DeferredBasePackExpansionBindingInfo {
+	std::vector<std::pair<StringHandle, const std::vector<TemplateTypeArg>*>> pack_bindings;
+	size_t expansion_count = 1;
+	bool invalid = false;
+};
+
+template <typename TemplateParamsContainer, typename TemplateArgsContainer, typename TransformScalarArgFn>
+static void buildTemplateArgSubstitutionMaps(
+	const TemplateParamsContainer& template_params,
+	const TemplateArgsContainer& template_args,
+	TransformScalarArgFn&& transform_scalar_arg,
+	TemplateArgSubstitutionMap& name_substitution_map,
+	TemplateArgPackSubstitutionMap& pack_substitution_map,
+	std::vector<std::string_view>* template_param_order = nullptr) {
+	size_t arg_index = 0;
+	for (size_t i = 0; i < template_params.size(); ++i) {
+		const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+		if (tparam == nullptr) {
+			continue;
+		}
+
+		std::string_view param_name = tparam->name();
+		if (template_param_order != nullptr) {
+			template_param_order->push_back(param_name);
+		}
+
+		if (tparam->is_variadic()) {
+			std::vector<TemplateTypeArg> pack_args;
+			for (size_t j = arg_index; j < template_args.size(); ++j) {
+				pack_args.push_back(template_args[j]);
+			}
+			pack_substitution_map[StringTable::getOrInternStringHandle(param_name)] = std::move(pack_args);
+			break;
+		}
+
+		if (arg_index < template_args.size()) {
+			name_substitution_map[param_name] =
+				transform_scalar_arg(*tparam, template_args[arg_index]);
+			++arg_index;
+		}
+	}
+}
+
+static DeferredBasePackExpansionBindingInfo collectDeferredBasePackExpansionBindings(
+	const DeferredTemplateBaseClassSpecifier& deferred_base,
+	const TemplateArgPackSubstitutionMap& pack_substitution_map) {
+	DeferredBasePackExpansionBindingInfo binding_info;
+	if (!deferred_base.is_pack_expansion) {
+		return binding_info;
+	}
+
+	auto register_pack = [&](StringHandle pack_name) {
+		auto pack_it = pack_substitution_map.find(pack_name);
+		if (pack_it == pack_substitution_map.end()) {
+			return;
+		}
+		for (const auto& [existing_name, existing_args] : binding_info.pack_bindings) {
+			if (existing_name == pack_name) {
+				if (existing_args->size() != pack_it->second.size()) {
+					binding_info.invalid = true;
+				}
+				return;
+			}
+		}
+		if (!binding_info.pack_bindings.empty() &&
+			binding_info.expansion_count != pack_it->second.size()) {
+			binding_info.invalid = true;
+			return;
+		}
+		binding_info.expansion_count = pack_it->second.size();
+		binding_info.pack_bindings.emplace_back(pack_name, &pack_it->second);
+	};
+
+	for (const auto& arg_info : deferred_base.template_arguments) {
+		if (arg_info.is_pack) {
+			continue;
+		}
+		if (arg_info.node.is<ExpressionNode>()) {
+			const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
+			if (const auto* template_parameter_reference =
+					std::get_if<TemplateParameterReferenceNode>(&expr)) {
+				register_pack(template_parameter_reference->param_name());
+			} else if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
+				register_pack(StringTable::getOrInternStringHandle(identifier->name()));
+			}
+		} else if (arg_info.node.is<TypeSpecifierNode>()) {
+			TypeIndex idx = arg_info.node.as<TypeSpecifierNode>().type_index();
+			if (!idx.is_valid()) {
+				continue;
+			}
+			if (const TypeInfo* idx_ti = tryGetTypeInfo(idx)) {
+				register_pack(idx_ti->name_);
+			}
+		}
+	}
+
+	return binding_info;
+}
+
+static TemplateArgSubstitutionMap makeDeferredBaseExpansionSubstitutionMap(
+	const TemplateArgSubstitutionMap& base_name_substitution_map,
+	const DeferredBasePackExpansionBindingInfo& binding_info,
+	size_t expansion_index) {
+	TemplateArgSubstitutionMap subst_map = base_name_substitution_map;
+	for (const auto& [pack_name, pack_args] : binding_info.pack_bindings) {
+		if (expansion_index >= pack_args->size()) {
+			throw InternalError("Deferred base pack expansion index out of range");
+		}
+		subst_map[StringTable::getStringView(pack_name)] = (*pack_args)[expansion_index];
+	}
+	return subst_map;
+}
+
 static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type) {
 	TemplateTypeArg arg;
 	arg.is_value = true;
@@ -2353,36 +2466,42 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								 StringTable::getStringView(pattern_struct.name()),
 								 pattern_struct.deferred_template_base_classes().size());
 
-				// Build simple name->arg substitution map from pattern template params/args
-				std::unordered_map<std::string_view, TemplateTypeArg> spec_name_subst_map;
-				std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> spec_pack_subst_map;
-				size_t non_variadic_count = 0;
-				for (size_t i = 0; i < template_params.size(); ++i) {
-					if (!template_params[i].is<TemplateParameterNode>())
-						continue;
-					const auto& tparam = template_params[i].as<TemplateParameterNode>();
-					if (tparam.is_variadic()) {
-						// Collect all remaining template_args into pack
-						std::vector<TemplateTypeArg> pack_args;
-						for (size_t j = non_variadic_count; j < template_args.size(); ++j)
-							pack_args.push_back(template_args[j]);
-						StringHandle ph = StringTable::getOrInternStringHandle(tparam.name());
-						spec_pack_subst_map[ph] = std::move(pack_args);
-					} else {
-						if (non_variadic_count < template_args.size())
-							spec_name_subst_map[tparam.name()] = template_args[non_variadic_count];
-						++non_variadic_count;
-					}
-				}
+				TemplateArgSubstitutionMap spec_name_subst_map;
+				TemplateArgPackSubstitutionMap spec_pack_subst_map;
+				buildTemplateArgSubstitutionMaps(
+					template_params,
+					template_args,
+					[](const TemplateParameterNode&, const TemplateTypeArg& arg) {
+						return arg;
+					},
+					spec_name_subst_map,
+					spec_pack_subst_map);
 
 				for (const auto& deferred_base : pattern_struct.deferred_template_base_classes()) {
 					std::string_view base_tpl_name = StringTable::getStringView(deferred_base.base_template_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Processing deferred template base '{}' ({} args)",
 									 base_tpl_name, deferred_base.template_arguments.size());
+					DeferredBasePackExpansionBindingInfo base_pack_bindings =
+						collectDeferredBasePackExpansionBindings(deferred_base, spec_pack_subst_map);
+					if (base_pack_bindings.invalid) {
+						FLASH_LOG(Templates, Warning, "Deferred base '", base_tpl_name,
+								  "' has mismatched pack sizes in pack expansion");
+						continue;
+					}
 
-					std::vector<TemplateTypeArg> resolved_args;
-					bool resolution_failed = false;
-					for (const auto& arg_info : deferred_base.template_arguments) {
+					size_t expansion_count = base_pack_bindings.pack_bindings.empty()
+						? 1
+						: base_pack_bindings.expansion_count;
+					for (size_t expansion_index = 0; expansion_index < expansion_count; ++expansion_index) {
+						TemplateArgSubstitutionMap spec_subst_map =
+							makeDeferredBaseExpansionSubstitutionMap(
+								spec_name_subst_map,
+								base_pack_bindings,
+								expansion_index);
+
+						std::vector<TemplateTypeArg> resolved_args;
+						bool resolution_failed = false;
+						for (const auto& arg_info : deferred_base.template_arguments) {
 						if (arg_info.is_pack) {
 							// Expand pack argument – empty packs are valid (base<>)
 							auto try_expand = [&](StringHandle pack_name) -> bool {
@@ -2427,8 +2546,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if ((is_struct_type(ts.category())) && ts.type_index().is_valid()) {
 								if (const TypeInfo* ts_ti = tryGetTypeInfo(ts.type_index())) {
 									std::string_view tname = StringTable::getStringView(ts_ti->name());
-									auto it = spec_name_subst_map.find(tname);
-									if (it != spec_name_subst_map.end()) {
+									auto it = spec_subst_map.find(tname);
+									if (it != spec_subst_map.end()) {
 										TemplateTypeArg a = it->second;
 										a.pointer_depth = ts.pointer_depth();
 										a.ref_qualifier = ts.reference_qualifier();
@@ -2445,16 +2564,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
 							if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 								std::string_view pname = std::get<TemplateParameterReferenceNode>(expr).param_name().view();
-								auto it = spec_name_subst_map.find(pname);
-								if (it != spec_name_subst_map.end()) {
+								auto it = spec_subst_map.find(pname);
+								if (it != spec_subst_map.end()) {
 									resolved_args.push_back(it->second);
 									resolved = true;
 								}
 							} else if (std::holds_alternative<IdentifierNode>(expr)) {
 								// Identifier that may refer to a type in the substitution map or in getTypesByNameMap()
 								std::string_view iname = std::get<IdentifierNode>(expr).name();
-								auto sit = spec_name_subst_map.find(iname);
-								if (sit != spec_name_subst_map.end()) {
+								auto sit = spec_subst_map.find(iname);
+								if (sit != spec_subst_map.end()) {
 									resolved_args.push_back(sit->second);
 									resolved = true;
 								} else {
@@ -2514,66 +2633,67 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 
-					if (resolution_failed) {
-						FLASH_LOG(Templates, Warning, "Could not resolve args for deferred base '", base_tpl_name, "' - skipping");
-						continue;
-					}
-
-					std::string_view base_inst_name = instantiateAndResolveBaseName(base_tpl_name, resolved_args, true);
-					std::string_view final_base_name = base_inst_name;
-					const TypeInfo* final_base_type = nullptr;
-					if (!deferred_base.member_type_chain.empty()) {
-						auto resolved_member_chain = resolveDeferredBaseMemberTypeChain(
-							deferred_base.member_type_chain,
-							spec_name_subst_map,
-							spec_pack_subst_map,
-							[&](const ASTNode& node) {
-								return substituteTemplateParameters(node, template_params, template_args);
-							},
-							[&](const ASTNode& node) {
-								return try_evaluate_constant_expression(node);
-							});
-						if (!resolved_member_chain.has_value()) {
-							FLASH_LOG(Templates, Warning, "Could not resolve member template args for deferred base '", base_tpl_name, "' - skipping");
+						if (resolution_failed) {
+							FLASH_LOG(Templates, Warning, "Could not resolve args for deferred base '", base_tpl_name, "' - skipping");
 							continue;
 						}
-						final_base_type =
-							resolveBaseClassMemberTypeChain(base_inst_name, *resolved_member_chain);
-						if (final_base_type == nullptr) {
-							StringBuilder unresolved_base_builder;
-							unresolved_base_builder.append(base_inst_name);
-							for (const QualifiedTypeMemberAccess& member_access : *resolved_member_chain) {
-								unresolved_base_builder.append("::");
-								unresolved_base_builder.append(StringTable::getStringView(member_access.member_name));
-								if (member_access.has_template_arguments) {
-									unresolved_base_builder.append("<...>");
-								}
+
+						std::string_view base_inst_name = instantiateAndResolveBaseName(base_tpl_name, resolved_args, true);
+						std::string_view final_base_name = base_inst_name;
+						const TypeInfo* final_base_type = nullptr;
+						if (!deferred_base.member_type_chain.empty()) {
+							auto resolved_member_chain = resolveDeferredBaseMemberTypeChain(
+								deferred_base.member_type_chain,
+								spec_subst_map,
+								spec_pack_subst_map,
+								[&](const ASTNode& node) {
+									return substituteTemplateParameters(node, template_params, template_args);
+								},
+								[&](const ASTNode& node) {
+									return try_evaluate_constant_expression(node);
+								});
+							if (!resolved_member_chain.has_value()) {
+								FLASH_LOG(Templates, Warning, "Could not resolve member template args for deferred base '", base_tpl_name, "' - skipping");
+								continue;
 							}
-							FLASH_LOG(Templates, Warning, "Deferred template base alias not found after instantiation: '",
-									  unresolved_base_builder.commit(), "'");
-							continue;
+							final_base_type =
+								resolveBaseClassMemberTypeChain(base_inst_name, *resolved_member_chain);
+							if (final_base_type == nullptr) {
+								StringBuilder unresolved_base_builder;
+								unresolved_base_builder.append(base_inst_name);
+								for (const QualifiedTypeMemberAccess& member_access : *resolved_member_chain) {
+									unresolved_base_builder.append("::");
+									unresolved_base_builder.append(StringTable::getStringView(member_access.member_name));
+									if (member_access.has_template_arguments) {
+										unresolved_base_builder.append("<...>");
+									}
+								}
+								FLASH_LOG(Templates, Warning, "Deferred template base alias not found after instantiation: '",
+										  unresolved_base_builder.commit(), "'");
+								continue;
+							}
+							final_base_type = materializeDeferredBasePlaceholderIfNeeded(
+								final_base_type,
+								template_params,
+								template_args,
+								[&instantiateAndResolveBaseName](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+									return instantiateAndResolveBaseName(concrete_base_template_name, concrete_base_args, true);
+								});
+							final_base_name = StringTable::getStringView(final_base_type->name());
+						} else {
+							StringHandle base_inst_handle = StringTable::getOrInternStringHandle(base_inst_name);
+							auto base_it = getTypesByNameMap().find(base_inst_handle);
+							if (base_it != getTypesByNameMap().end()) {
+								final_base_type = base_it->second;
+							}
 						}
-						final_base_type = materializeDeferredBasePlaceholderIfNeeded(
-							final_base_type,
-							template_params,
-							template_args,
-							[&instantiateAndResolveBaseName](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
-								return instantiateAndResolveBaseName(concrete_base_template_name, concrete_base_args, true);
-							});
-						final_base_name = StringTable::getStringView(final_base_type->name());
-					} else {
-						StringHandle base_inst_handle = StringTable::getOrInternStringHandle(base_inst_name);
-						auto base_it = getTypesByNameMap().find(base_inst_handle);
-						if (base_it != getTypesByNameMap().end()) {
-							final_base_type = base_it->second;
-						}
-					}
 
-					if (final_base_type != nullptr) {
-						struct_info->addBaseClass(final_base_name, final_base_type->type_index_, deferred_base.access, deferred_base.is_virtual);
-						FLASH_LOG_FORMAT(Templates, Debug, "Added deferred template base '{}' -> '{}'", base_tpl_name, final_base_name);
-					} else {
-						FLASH_LOG(Templates, Warning, "Deferred template base '", base_inst_name, "' not found after instantiation");
+						if (final_base_type != nullptr) {
+							struct_info->addBaseClass(final_base_name, final_base_type->type_index_, deferred_base.access, deferred_base.is_virtual);
+							FLASH_LOG_FORMAT(Templates, Debug, "Added deferred template base '{}' -> '{}'", base_tpl_name, final_base_name);
+						} else {
+							FLASH_LOG(Templates, Warning, "Deferred template base '", base_inst_name, "' not found after instantiation");
+						}
 					}
 				}
 			}
@@ -4338,8 +4458,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// Build substitution maps for dependent template entities (used by deferred bases and decltype bases)
-	std::unordered_map<std::string_view, TemplateTypeArg> name_substitution_map;
-	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_substitution_map;
+	TemplateArgSubstitutionMap name_substitution_map;
+	TemplateArgPackSubstitutionMap pack_substitution_map;
 	std::vector<std::string_view> template_param_order;
 	bool substitution_maps_initialized = false;
 	auto ensure_substitution_maps = [&]() {
@@ -4347,37 +4467,39 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return;
 		}
 
-		size_t arg_index = 0;
+		buildTemplateArgSubstitutionMaps(
+			template_params,
+			template_args_to_use,
+			[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg) {
+				return enrichTemplateArgForParameter(tparam, arg);
+			},
+			name_substitution_map,
+			pack_substitution_map,
+			&template_param_order);
+
 		for (size_t i = 0; i < template_params.size(); ++i) {
 			const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
-			if (tparam == nullptr)
+			if (tparam == nullptr) {
 				continue;
-
+			}
 			std::string_view param_name = tparam->name();
-			template_param_order.push_back(param_name);
-
-			// Check if this is a variadic pack parameter
 			if (tparam->is_variadic()) {
-				// Collect remaining arguments as a pack
-				std::vector<TemplateTypeArg> pack_args;
-				for (size_t j = arg_index; j < template_args_to_use.size(); ++j) {
-					pack_args.push_back(template_args_to_use[j]);
+				auto pack_it = pack_substitution_map.find(
+					StringTable::getOrInternStringHandle(param_name));
+				if (pack_it != pack_substitution_map.end()) {
+					FLASH_LOG(Templates, Debug, "Added pack substitution: ",
+							  param_name, " -> ", pack_it->second.size(), " arguments");
 				}
-				// Intern the pack name as StringHandle
-				StringHandle pack_handle = StringTable::getOrInternStringHandle(param_name);
-				pack_substitution_map[pack_handle] = pack_args;
-				FLASH_LOG(Templates, Debug, "Added pack substitution: ", param_name, " -> ", pack_args.size(), " arguments");
-				// All remaining args consumed
 				break;
-			} else {
-				// Regular scalar parameter (type or non-type)
-				if (arg_index < template_args_to_use.size()) {
-					TemplateTypeArg arg_to_insert =
-						enrichTemplateArgForParameter(*tparam, template_args_to_use[arg_index]);
-					name_substitution_map[param_name] = arg_to_insert;
-					FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", static_cast<int>(arg_to_insert.typeEnum()), " type_index=", arg_to_insert.type_index, " is_value=", arg_to_insert.is_value, " is_ttp=", arg_to_insert.is_template_template_arg);
-					arg_index++;
-				}
+			}
+			auto subst_it = name_substitution_map.find(param_name);
+			if (subst_it != name_substitution_map.end()) {
+				const TemplateTypeArg& arg_to_insert = subst_it->second;
+				FLASH_LOG(Templates, Debug, "Added substitution: ", param_name,
+						  " -> base_type=", static_cast<int>(arg_to_insert.typeEnum()),
+						  " type_index=", arg_to_insert.type_index,
+						  " is_value=", arg_to_insert.is_value,
+						  " is_ttp=", arg_to_insert.is_template_template_arg);
 			}
 		}
 
@@ -4647,65 +4769,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					 StringTable::getStringView(class_decl.name()), class_decl.deferred_template_base_classes().size());
 	if (!class_decl.deferred_template_base_classes().empty()) {
 		ensure_substitution_maps();
-		struct DeferredBasePackExpansionBindingInfo {
-			std::vector<std::pair<StringHandle, const std::vector<TemplateTypeArg>*>> pack_bindings;
-			size_t expansion_count = 1;
-			bool invalid = false;
-		};
-		auto collectDeferredBasePackExpansionBindings = [&](
-			const DeferredTemplateBaseClassSpecifier& deferred_base) {
-			DeferredBasePackExpansionBindingInfo binding_info;
-			if (!deferred_base.is_pack_expansion) {
-				return binding_info;
-			}
-
-			auto register_pack = [&](StringHandle pack_name) {
-				auto pack_it = pack_substitution_map.find(pack_name);
-				if (pack_it == pack_substitution_map.end()) {
-					return;
-				}
-				for (const auto& [existing_name, existing_args] : binding_info.pack_bindings) {
-					if (existing_name == pack_name) {
-						if (existing_args->size() != pack_it->second.size()) {
-							binding_info.invalid = true;
-						}
-						return;
-					}
-				}
-				if (!binding_info.pack_bindings.empty() &&
-					binding_info.expansion_count != pack_it->second.size()) {
-					binding_info.invalid = true;
-					return;
-				}
-				binding_info.expansion_count = pack_it->second.size();
-				binding_info.pack_bindings.emplace_back(pack_name, &pack_it->second);
-			};
-
-			for (const auto& arg_info : deferred_base.template_arguments) {
-				if (arg_info.is_pack) {
-					continue;
-				}
-				if (arg_info.node.is<ExpressionNode>()) {
-					const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
-					if (const auto* template_parameter_reference =
-							std::get_if<TemplateParameterReferenceNode>(&expr)) {
-						register_pack(template_parameter_reference->param_name());
-					} else if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
-						register_pack(StringTable::getOrInternStringHandle(identifier->name()));
-					}
-				} else if (arg_info.node.is<TypeSpecifierNode>()) {
-					TypeIndex idx = arg_info.node.as<TypeSpecifierNode>().type_index();
-					if (!idx.is_valid()) {
-						continue;
-					}
-					if (const TypeInfo* idx_ti = tryGetTypeInfo(idx)) {
-						register_pack(idx_ti->name_);
-					}
-				}
-			}
-
-			return binding_info;
-		};
 		auto identifier_matches = [](std::string_view haystack, std::string_view needle) {
 			size_t pos = haystack.find(needle);
 			auto is_ident_char = [](char ch) {
@@ -4726,7 +4789,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			FLASH_LOG_FORMAT(Templates, Debug, "Processing deferred template base '{}' with {} template args",
 							 StringTable::getStringView(deferred_base.base_template_name), deferred_base.template_arguments.size());
 			DeferredBasePackExpansionBindingInfo base_pack_bindings =
-				collectDeferredBasePackExpansionBindings(deferred_base);
+				collectDeferredBasePackExpansionBindings(deferred_base, pack_substitution_map);
 			if (base_pack_bindings.invalid) {
 				FLASH_LOG(Templates, Warning, "Deferred base '",
 						  StringTable::getStringView(deferred_base.base_template_name),
@@ -4738,14 +4801,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				? 1
 				: base_pack_bindings.expansion_count;
 			for (size_t expansion_index = 0; expansion_index < expansion_count; ++expansion_index) {
-				TemplateArgSubstitutionMap active_name_substitution_map = name_substitution_map;
-				for (const auto& [pack_name, pack_args] : base_pack_bindings.pack_bindings) {
-					if (expansion_index >= pack_args->size()) {
-						throw InternalError("Deferred base pack expansion index out of range");
-					}
-					active_name_substitution_map[StringTable::getStringView(pack_name)] =
-						(*pack_args)[expansion_index];
-				}
+				TemplateArgSubstitutionMap subst_map =
+					makeDeferredBaseExpansionSubstitutionMap(
+						name_substitution_map,
+						base_pack_bindings,
+						expansion_index);
 
 				std::vector<TemplateTypeArg> resolved_args;
 				bool unresolved_arg = false;
@@ -4806,8 +4866,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if ((is_struct_type(resolved_type)) && resolved_index.is_valid()) {
 							if (const TypeInfo* resolved_ti = tryGetTypeInfo(resolved_index)) {
 								std::string_view type_name = StringTable::getStringView(resolved_ti->name());
-								auto subst_it = active_name_substitution_map.find(type_name);
-								if (subst_it != active_name_substitution_map.end()) {
+								auto subst_it = subst_map.find(type_name);
+								if (subst_it != subst_map.end()) {
 									TemplateTypeArg subst = rebindDependentTemplateTypeArg(
 										subst_it->second,
 										TemplateTypeArg(type_spec));
@@ -4941,7 +5001,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									}
 
 									if (!resolved) {
-										for (const auto& subst_entry : active_name_substitution_map) {
+										for (const auto& subst_entry : subst_map) {
 											if (identifier_matches(type_name, subst_entry.first)) {
 												TemplateTypeArg subst = rebindDependentTemplateTypeArg(
 													subst_entry.second,
@@ -4972,8 +5032,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 							const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 							std::string_view param_name = tparam_ref.param_name().view();
-							auto subst_it = active_name_substitution_map.find(param_name);
-							if (subst_it != active_name_substitution_map.end()) {
+							auto subst_it = subst_map.find(param_name);
+							if (subst_it != subst_map.end()) {
 								TemplateTypeArg subst_arg = subst_it->second;
 								subst_arg.is_pack = arg_info.is_pack;
 								resolved_args.push_back(subst_arg);
@@ -4993,8 +5053,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (std::holds_alternative<IdentifierNode>(expr)) {
 							const auto& id_node = std::get<IdentifierNode>(expr);
 							std::string_view id_name = id_node.name();
-							auto subst_it = active_name_substitution_map.find(id_name);
-							if (subst_it != active_name_substitution_map.end()) {
+							auto subst_it = subst_map.find(id_name);
+							if (subst_it != subst_map.end()) {
 								TemplateTypeArg subst_arg = subst_it->second;
 								subst_arg.is_pack = arg_info.is_pack;
 								resolved_args.push_back(subst_arg);
@@ -5032,8 +5092,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								if ((is_struct_type(base_type)) && type_idx.is_valid()) {
 									if (const TypeInfo* type_idx_ti = tryGetTypeInfo(type_idx)) {
 										std::string_view type_name = StringTable::getStringView(type_idx_ti->name());
-										auto subst_it = active_name_substitution_map.find(type_name);
-										if (subst_it != active_name_substitution_map.end()) {
+										auto subst_it = subst_map.find(type_name);
+										if (subst_it != subst_map.end()) {
 											// Substitute the type
 											const TemplateTypeArg& subst = subst_it->second;
 											substituted_type_spec = TypeSpecifierNode(
@@ -5079,8 +5139,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										if (std::holds_alternative<TemplateParameterReferenceNode>(targ_expr)) {
 											const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(targ_expr);
 											std::string_view param_name = tparam_ref.param_name().view();
-											auto subst_it = active_name_substitution_map.find(param_name);
-											if (subst_it != active_name_substitution_map.end()) {
+											auto subst_it = subst_map.find(param_name);
+											if (subst_it != subst_map.end()) {
 												substituted_func_template_args.push_back(subst_it->second);
 												FLASH_LOG_FORMAT(Templates, Debug, "Substituted function template arg '{}' with type_index {}",
 																 param_name, subst_it->second.type_index);
@@ -5089,8 +5149,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											}
 										} else if (std::holds_alternative<IdentifierNode>(targ_expr)) {
 											const auto& id = std::get<IdentifierNode>(targ_expr);
-											auto subst_it = active_name_substitution_map.find(id.name());
-											if (subst_it != active_name_substitution_map.end()) {
+											auto subst_it = subst_map.find(id.name());
+											if (subst_it != subst_map.end()) {
 												substituted_func_template_args.push_back(subst_it->second);
 												FLASH_LOG_FORMAT(Templates, Debug, "Substituted function template arg identifier '{}' with type_index {}",
 																 id.name(), subst_it->second.type_index);
@@ -5106,8 +5166,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										if ((type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) && type_spec.type_index().is_valid()) {
 											if (const TypeInfo* targ_ti = tryGetTypeInfo(type_spec.type_index())) {
 												std::string_view type_name = StringTable::getStringView(targ_ti->name());
-												auto subst_it = active_name_substitution_map.find(type_name);
-												if (subst_it != active_name_substitution_map.end()) {
+												auto subst_it = subst_map.find(type_name);
+												if (subst_it != subst_map.end()) {
 													substituted_func_template_args.push_back(subst_it->second);
 												} else {
 													// Keep as-is
@@ -5215,7 +5275,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							FLASH_LOG(Templates, Debug, "Processing BinaryOperatorNode/TernaryOperatorNode in deferred base argument");
 
 							// Use ExpressionSubstitutor to substitute template parameters
-							ExpressionSubstitutor substitutor(active_name_substitution_map, *this, template_param_order);
+							ExpressionSubstitutor substitutor(subst_map, *this, template_param_order);
 							ASTNode substituted_node = substitutor.substitute(arg_info.node);
 
 							// Now try to evaluate the substituted expression
@@ -5234,7 +5294,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							FLASH_LOG(Templates, Debug, "Processing UnaryOperatorNode in deferred base argument");
 
 							// Use ExpressionSubstitutor to substitute template parameters
-							ExpressionSubstitutor substitutor(active_name_substitution_map, *this, template_param_order);
+							ExpressionSubstitutor substitutor(subst_map, *this, template_param_order);
 							ASTNode substituted_node = substitutor.substitute(arg_info.node);
 
 							// Now try to evaluate the substituted expression
@@ -5249,7 +5309,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 							FLASH_LOG(Templates, Debug, "Processing QualifiedIdentifierNode in deferred base argument");
-							ExpressionSubstitutor substitutor(active_name_substitution_map, *this, template_param_order);
+							ExpressionSubstitutor substitutor(subst_map, *this, template_param_order);
 							ASTNode substituted_node = substitutor.substitute(arg_info.node);
 							if (auto value = try_evaluate_constant_expression(substituted_node)) {
 								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted qualified identifier to value {}", value->value);
@@ -5298,13 +5358,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (!deferred_base.member_type_chain.empty()) {
 					ensure_substitution_maps();
 					ExpressionSubstitutor member_template_arg_substitutor(
-						active_name_substitution_map,
+						subst_map,
 						pack_substitution_map,
 						*this,
 						template_param_order);
 					auto resolved_member_chain = resolveDeferredBaseMemberTypeChain(
 						deferred_base.member_type_chain,
-						active_name_substitution_map,
+						subst_map,
 						pack_substitution_map,
 						[&](const ASTNode& node) {
 							return member_template_arg_substitutor.substitute(node);
