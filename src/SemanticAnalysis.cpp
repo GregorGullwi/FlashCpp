@@ -6107,8 +6107,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (call_info.has_receiver) {
 		if (call_info.function_declaration) {
 			const FunctionDeclarationNode* recovered_func_decl = nullptr;
-			const std::string_view declared_name =
-				call_info.function_declaration->decl_node().identifier_token().value();
+			const std::string_view declared_name = call_info.function_declaration->decl_node().identifier_token().value();
 			// Explicit member operator syntax initially carries a parser-created
 			// non-member placeholder; recover the actual receiver member here.
 			if (!call_info.function_declaration->is_member_function() &&
