@@ -2015,6 +2015,22 @@ void SemanticAnalysis::registerParametersInScope(const std::vector<ASTNode>& par
 	}
 }
 
+void SemanticAnalysis::normalizeParameterExpressionsInScope(
+	const std::vector<ASTNode>& parameter_nodes, const SemanticContext& ctx) {
+	for (const auto& param : parameter_nodes) {
+		if (!param.is<DeclarationNode>()) {
+			continue;
+		}
+		const auto& param_decl = param.as<DeclarationNode>();
+		for (const auto& dim : param_decl.array_dimensions()) {
+			normalizeExpression(dim, ctx);
+		}
+		if (param_decl.has_default_value()) {
+			normalizeExpression(param_decl.default_value(), ctx);
+		}
+	}
+}
+
 void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNode& func) {
 	const auto& def = func.get_definition();
 	if (!def.has_value())
@@ -2058,18 +2074,7 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 	pushScope();
 	registerOuterTemplateBindingsInScope(func);
 	registerParametersInScope(func.parameter_nodes());
-	for (const auto& param : func.parameter_nodes()) {
-		if (!param.is<DeclarationNode>()) {
-			continue;
-		}
-		const auto& param_decl = param.as<DeclarationNode>();
-		for (const auto& dim : param_decl.array_dimensions()) {
-			normalizeExpression(dim, ctx);
-		}
-		if (param_decl.has_default_value()) {
-			normalizeExpression(param_decl.default_value(), ctx);
-		}
-	}
+	normalizeParameterExpressionsInScope(func.parameter_nodes(), ctx);
 
 	normalizeStatement(*def, ctx);
 	popScope();
@@ -2104,18 +2109,7 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 	pushScope();
 	registerOuterTemplateBindingsInScope(ctor);
 	registerParametersInScope(ctor.parameter_nodes());
-	for (const auto& param : ctor.parameter_nodes()) {
-		if (!param.is<DeclarationNode>()) {
-			continue;
-		}
-		const auto& param_decl = param.as<DeclarationNode>();
-		for (const auto& dim : param_decl.array_dimensions()) {
-			normalizeExpression(dim, ctx);
-		}
-		if (param_decl.has_default_value()) {
-			normalizeExpression(param_decl.default_value(), ctx);
-		}
-	}
+	normalizeParameterExpressionsInScope(ctor.parameter_nodes(), ctx);
 
 	// C++20 [class.base.init]: normalize member initializer expressions so
 	// they receive sema annotations (e.g. integral promotions in `result(x + 1)`).

@@ -237,6 +237,7 @@ private:
 
 	// Helpers
 	void registerParametersInScope(const std::vector<ASTNode>& parameter_nodes);
+	void normalizeParameterExpressionsInScope(const std::vector<ASTNode>& parameter_nodes, const SemanticContext& ctx);
 	CanonicalTypeId canonicalizeType(const TypeSpecifierNode& type);
 	void resolveRemainingAutoReturns();
 	void resolveRemainingAutoReturnsInNode(ASTNode& node);
