@@ -3729,7 +3729,11 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						if (const FunctionDeclarationNode* func = getCallTargetFunctionCandidate(member_function->function_decl)) {
 							const ASTNode ret_type_node = func->decl_node().type_node();
 							if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
-								return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
+								TypeSpecifierNode return_type = ret_type_node.as<TypeSpecifierNode>();
+								if (object_info->object_desc.type_index.is_valid()) {
+									return_type = resolveTypeSpecifierForSelfReference(return_type, object_info->object_desc.type_index);
+								}
+								return canonicalizeType(return_type);
 							}
 						}
 					}
@@ -3919,6 +3923,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						};
 						resolve_free_operator_self_type(e.get_lhs());
 						resolve_free_operator_self_type(e.get_rhs());
+						if (const MemberContext* member_context = getCurrentMemberContext();
+							member_context && member_context->type_index.is_valid()) {
+							return_type = resolveTypeSpecifierForSelfReference(return_type, member_context->type_index);
+						}
 						return canonicalizeType(return_type);
 					}
 					return {};
@@ -4008,6 +4016,16 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 							}
 							return {};
 						}
+						return {};
+					}
+					// Built-in arithmetic/bitwise operators do not produce class or other
+					// user-defined result types. If parser overload resolution did not mark
+					// a viable operator overload above, the actual result type is unknown here.
+					// Returning {} avoids synthesizing nativeTypeIndex(Struct) placeholders
+					// that later fool same-type copy-init / overload checks.
+					if (l.category() == TypeCategory::Struct || r.category() == TypeCategory::Struct ||
+						l.category() == TypeCategory::UserDefined || r.category() == TypeCategory::UserDefined ||
+						l.category() == TypeCategory::Template || r.category() == TypeCategory::Template) {
 						return {};
 					}
 					const TypeCategory common_cat = get_common_type(l.category(), r.category());
@@ -4170,13 +4188,30 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
-				auto inferCallReturnType = [this](const FunctionDeclarationNode* resolved_callable) -> CanonicalTypeId {
+				auto inferCallReturnType = [this, &e](const FunctionDeclarationNode* resolved_callable) -> CanonicalTypeId {
 					if (!resolved_callable) {
 						return {};
 					}
 					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
 					if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
-						return canonicalizeType(resolved_return_type.as<TypeSpecifierNode>());
+						TypeSpecifierNode return_type = resolved_return_type.as<TypeSpecifierNode>();
+						auto try_resolve_self_return = [&](TypeIndex object_type_index) {
+							if (!object_type_index.is_valid()) {
+								return;
+							}
+							return_type = resolveTypeSpecifierForSelfReference(return_type, object_type_index);
+						};
+						if (e.has_receiver()) {
+							if (const CanonicalTypeId receiver_type_id = inferExpressionType(e.receiver())) {
+								const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
+								try_resolve_self_return(receiver_desc.type_index);
+							}
+						} else if (resolved_callable->is_member_function()) {
+							if (const MemberContext* member_context = getCurrentMemberContext()) {
+								try_resolve_self_return(member_context->type_index);
+							}
+						}
+						return canonicalizeType(return_type);
 					}
 					return {};
 				};
@@ -4205,7 +4240,21 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const DeclarationNode& decl = e.callee().declaration();
 				const ASTNode ret_type_node = decl.type_node();
 				if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& type_node = ret_type_node.as<TypeSpecifierNode>();
+					TypeSpecifierNode type_node = ret_type_node.as<TypeSpecifierNode>();
+					auto try_resolve_self_return = [&](TypeIndex object_type_index) {
+						if (!object_type_index.is_valid()) {
+							return;
+						}
+						type_node = resolveTypeSpecifierForSelfReference(type_node, object_type_index);
+					};
+					if (e.has_receiver()) {
+						if (const CanonicalTypeId receiver_type_id = inferExpressionType(e.receiver())) {
+							const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
+							try_resolve_self_return(receiver_desc.type_index);
+						}
+					} else if (const MemberContext* member_context = getCurrentMemberContext()) {
+						try_resolve_self_return(member_context->type_index);
+					}
 					if (!isPlaceholderAutoType(type_node.type())) {
 						return canonicalizeType(type_node);
 					}

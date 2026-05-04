@@ -1556,13 +1556,25 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeIndex type_index) {
 	return TypeSpecifierNode(effective_type, TypeQualifier::None, size_bits, Token{}, CVQualifier::None);
 }
 
-inline TypeSpecifierNode resolveBinaryOperatorTypeForSelfReference(const TypeSpecifierNode& type_spec, TypeIndex enclosing_type_index) {
+inline TypeSpecifierNode resolveTypeSpecifierForSelfReference(const TypeSpecifierNode& type_spec, TypeIndex enclosing_type_index) {
 	TypeSpecifierNode resolved = type_spec;
-	TypeCategory resolved_type = effectiveBinaryOperatorTypeFromSpec(resolved);
-	if (binaryOperatorUsesTypeIndexIdentity(resolved_type)) {
+	TypeCategory resolved_type = resolved.category();
+	if (resolved.type_index().is_valid()) {
+		if (const TypeInfo* ti = tryGetTypeInfo(resolved.type_index())) {
+			const TypeCategory actual_type = ti->category();
+			if (actual_type != TypeCategory::Invalid && actual_type != TypeCategory::Void) {
+				resolved_type = actual_type;
+			}
+		}
+	}
+	if (needs_type_index(resolved_type)) {
 		resolved.set_type_index(resolveSelfRefParamIndex(resolved.type_index(), enclosing_type_index));
 	}
 	return resolved;
+}
+
+inline TypeSpecifierNode resolveBinaryOperatorTypeForSelfReference(const TypeSpecifierNode& type_spec, TypeIndex enclosing_type_index) {
+	return resolveTypeSpecifierForSelfReference(type_spec, enclosing_type_index);
 }
 
 inline ConversionRank rankBinaryOperatorOperandMatch(const TypeSpecifierNode& arg_spec, const TypeSpecifierNode& param_spec, TypeIndex enclosing_type_index) {
