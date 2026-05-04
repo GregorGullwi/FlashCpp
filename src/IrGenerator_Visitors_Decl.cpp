@@ -3251,7 +3251,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		sema_normalized_current_function_ &&
 		struct_info &&
 		struct_info->hasUserDeclaredConstructor();
-	auto resolvedCtorMatchesTargetType = [&](const ConstructorDeclarationNode& ctor) {
+	auto ctorMatchesTargetType = [&](const ConstructorDeclarationNode& ctor) {
 		if (result_type_index.is_valid()) {
 			return resolvedConstructorMatchesTargetType(ctor, result_type_index);
 		}
@@ -3259,7 +3259,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	};
 
 	if (struct_info) {
-		if (matching_ctor && resolvedCtorMatchesTargetType(*matching_ctor)) {
+		if (matching_ctor && ctorMatchesTargetType(*matching_ctor)) {
 			FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(constructor_name));
 		} else if (matching_ctor) {
 			if (require_sema_resolved_ctor) {
