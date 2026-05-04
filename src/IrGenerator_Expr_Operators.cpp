@@ -738,11 +738,9 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// Sema owns the full ternary result type for normalized bodies. The fallbacks
 	// below are only for legacy non-normalized bodies that can still reach codegen.
 	TypeCategory common_cat = TypeCategory::Invalid;
-	if (sema_) {
-		exact_ternary_result_type = sema_->getTernaryResultType(ternaryNode);
-		if (context != ExpressionContext::LValueAddress && exact_ternary_result_type.has_value()) {
-			common_cat = exact_ternary_result_type->category();
-		}
+	exact_ternary_result_type = sema_->getTernaryResultType(ternaryNode);
+	if (context != ExpressionContext::LValueAddress && exact_ternary_result_type.has_value()) {
+		common_cat = exact_ternary_result_type->category();
 	}
 	if (sema_normalized_current_function_ &&
 		!exact_ternary_result_type.has_value()) {
@@ -750,7 +748,7 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	}
 	// Check sema annotations: if either branch has a conversion annotation, that
 	// tells us the target (common) type.
-	if (common_cat == TypeCategory::Invalid && sema_) {
+	if (common_cat == TypeCategory::Invalid) {
 		TypeCategory true_cat = getSemaAnnotatedTargetType(ternaryNode.true_expr());
 		TypeCategory false_cat = getSemaAnnotatedTargetType(ternaryNode.false_expr());
 		if (true_cat != TypeCategory::Invalid)
@@ -760,22 +758,16 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	}
 	// Fallback: use sema-backed expression types when no explicit conversion
 	// annotation was recorded for either branch.
-	if (common_cat == TypeCategory::Invalid && sema_) {
+	if (common_cat == TypeCategory::Invalid) {
 		auto true_ts = sema_->getExpressionType(ternaryNode.true_expr());
 		auto false_ts = sema_->getExpressionType(ternaryNode.false_expr());
 		if (true_ts.has_value() && false_ts.has_value())
 			common_cat = get_common_type(true_ts->category(), false_ts->category());
 	}
-	// Fallback: try parser type inference when sema did not populate expression types
-	// (e.g. non-normalized function bodies, template instantiations).
-	if (common_cat == TypeCategory::Invalid && parser_) {
-		if (sema_) {
-			throw InternalError("Codegen-side ternary parser fallback should not run when sema is available");
-		}
-		auto true_ts = parser_->get_expression_type(ternaryNode.true_expr());
-		auto false_ts = parser_->get_expression_type(ternaryNode.false_expr());
-		if (true_ts.has_value() && false_ts.has_value())
-			common_cat = get_common_type(true_ts->category(), false_ts->category());
+	// All sema-based paths (annotation, expression type lookup) have been exhausted.
+	// If common_cat is still Invalid, sema failed to record enough type information.
+	if (common_cat == TypeCategory::Invalid) {
+		throw InternalError("Ternary expression: sema did not provide a common result type (checked annotation, sema expression types)");
 	}
 
 	// Evaluate true expression
@@ -1296,7 +1288,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				ExprResult op_result = makeExprResult(nativeTypeIndex(commonType), SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 				if (commonType != gsi.type_index.category()) {
 					// Phase 17: verify sema annotated the back-conversion.
-					if (sema_ && sema_normalized_current_function_ &&
+					if (sema_normalized_current_function_ &&
 						is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(gsi.type_index.category())) {
 						auto back_conv = sema_->getCompoundAssignBackConv(static_cast<const void*>(&binaryOperatorNode));
 						if (!back_conv.has_value())
@@ -2988,7 +2980,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 			// 2. Convert result back to original LHS type
 			// Phase 17: verify sema annotated the back-conversion (ownership transfer).
-			if (sema_ && sema_normalized_current_function_ &&
+			if (sema_normalized_current_function_ &&
 				is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(lhsCat)) {
 				auto back_conv = sema_->getCompoundAssignBackConv(static_cast<const void*>(&binaryOperatorNode));
 				if (!back_conv.has_value())

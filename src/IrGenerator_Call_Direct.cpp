@@ -442,10 +442,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		auto arg_node = callExprNode.arguments()[0];
 		if (arg_node.is<ExpressionNode>()) {
 			auto getInlineAlwaysArgType = [&]() -> std::optional<TypeSpecifierNode> {
-				if (sema_) {
-					if (auto sema_type = sema_->getExpressionType(arg_node); sema_type.has_value()) {
-						return sema_type;
-					}
+				if (auto sema_type = sema_->getExpressionType(arg_node); sema_type.has_value()) {
+					return sema_type;
 				}
 				if (parser_) {
 					return parser_->get_expression_type(arg_node);
@@ -1051,9 +1049,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// hatches. Semantically normalized ordinary direct calls should now either
 	// provide a sema-owned target or mark the call as unresolved.
 	const bool sema_recorded_unresolved_call =
-		sema_ && sema_->hasUnresolvedCallArgs(sema_call_key);
+		sema_->hasUnresolvedCallArgs(sema_call_key);
 	const bool allow_lookup_recovery =
-		!sema_ || // no semantic data wired into codegen
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
 		sema_recorded_unresolved_call; // sema recorded a known resolution gap
 
@@ -1430,7 +1427,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 				// Check sema annotation first: if the semantic pass pre-computed a conversion, use it.
 			bool sema_applied_arg_conversion = false;
-			if (sema_ && argument.is<ExpressionNode>()) {
+			if (argument.is<ExpressionNode>()) {
 				const void* key = &argument.as<ExpressionNode>();
 				const auto slot = sema_->getSlot(key);
 				if (slot.has_value() && slot->has_cast()) {
@@ -1499,8 +1496,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					standard_conversion.rank != ConversionRank::UserDefined) {
 					if (sema_normalized_current_function_ &&
 						is_standard_arithmetic_type(arg_type) && is_standard_arithmetic_type(param_base_type) &&
-						!(sema_ &&
-						  sema_->hasUnresolvedCallArgs(sema_call_key))) {
+						!sema_->hasUnresolvedCallArgs(sema_call_key)) {
 						throw InternalError(std::string("Phase 15: sema missed function call argument conversion (") + std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 					}
 					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, callExprNode.called_from());
@@ -1640,7 +1636,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			// (e.g. template instantiation codegen) fall back to inspecting
 			// DeclarationNode::is_array() directly.
 			bool needs_array_decay = false;
-			if (sema_ && argument.is<ExpressionNode>()) {
+			if (argument.is<ExpressionNode>()) {
 				const void* arg_key = &argument.as<ExpressionNode>();
 				const auto arg_slot = sema_->getSlot(arg_key);
 				if (arg_slot.has_value() && arg_slot->has_cast()) {

@@ -58,7 +58,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 	// Phase 15: track whether sema normalized this function body.
 	sema_normalized_current_function_ = false;
-	if (sema_ && node.is_materialized()) {
+	if (node.is_materialized()) {
 		sema_normalized_current_function_ = sema_->hasNormalizedBody(
 			static_cast<const void*>(&(*node.get_definition())));
 	}
@@ -1581,7 +1581,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 
 	// Phase 16: track whether sema normalized this constructor body.
 	sema_normalized_current_function_ = false;
-	if (sema_ && node.is_materialized()) {
+	if (node.is_materialized()) {
 		sema_normalized_current_function_ = sema_->hasNormalizedBody(
 			static_cast<const void*>(&(*node.get_definition())));
 	}
@@ -2837,8 +2837,8 @@ void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& no
 		return;
 
 	// track whether sema normalized this destructor body.
-	sema_normalized_current_function_ = sema_ &&
-										sema_->hasNormalizedBody(static_cast<const void*>(&(*node.get_definition())));
+	sema_normalized_current_function_ =
+		sema_->hasNormalizedBody(static_cast<const void*>(&(*node.get_definition())));
 
 	// Reset the temporary variable counter for each new destructor
 	// Destructors are always member functions, so reserve TempVar(1) for 'this'
@@ -3290,11 +3290,6 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			}
 		}
 
-		if (!matching_ctor && !require_sema_resolved_ctor) {
-			FLASH_LOG_FORMAT(Codegen, Debug, "Falling back to arity-based constructor resolution for {}", StringTable::getStringView(constructor_name));
-			auto arity_resolution = resolve_constructor_overload_arity(*struct_info, num_args, true);
-			matching_ctor = arity_resolution.selected_overload;
-		}
 	}
 	ctor_op.resolved_constructor = matching_ctor;
 	// Get constructor parameter types for reference handling
@@ -3407,51 +3402,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		arg_index++;
 	});
 
-	// Fill in default arguments for parameters that weren't explicitly provided
-	// Find the matching constructor and add default values for missing parameters
-	if (struct_info) {
-		size_t num_explicit_args = ctor_op.arguments.size();
-
-		// Find a constructor that has MORE parameters than explicit arguments
-		// and has default values for those extra parameters
-		for (const auto& func : struct_info->member_functions) {
-			if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-				const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-				const auto& params = ctor_node.parameter_nodes();
-
-				// Only consider constructors that have MORE parameters than explicit args
-				// (constructors with exact match don't need default argument filling)
-				if (params.size() > num_explicit_args) {
-					// Check if the remaining parameters all have default values
-					bool all_remaining_have_defaults = true;
-					for (size_t i = num_explicit_args; i < params.size(); ++i) {
-						if (params[i].is<DeclarationNode>()) {
-							if (!params[i].as<DeclarationNode>().has_default_value()) {
-								all_remaining_have_defaults = false;
-								break;
-							}
-						} else {
-							all_remaining_have_defaults = false;
-							break;
-						}
-					}
-
-					if (all_remaining_have_defaults) {
-						// Generate IR for the default values of the remaining parameters
-						for (size_t i = num_explicit_args; i < params.size(); ++i) {
-							const auto& param_decl = params[i].as<DeclarationNode>();
-							const ASTNode& default_node = param_decl.default_value();
-							if (default_node.is<ExpressionNode>()) {
-								ExprResult default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
-								TypedValue default_arg = toTypedValue(default_operands);
-								ctor_op.arguments.push_back(std::move(default_arg));
-							}
-						}
-						break;  // Found a matching constructor
-					}
-				}
-			}
-		}
+	if (matching_ctor) {
+		fillInConstructorDefaultArguments(ctor_op, *matching_ctor, ctor_op.arguments.size());
 	}
 
 	// Check if we should use RVO (Return Value Optimization)

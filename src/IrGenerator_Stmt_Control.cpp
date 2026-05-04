@@ -781,11 +781,7 @@ void AstToIr::visitRangedForArray(const RangedForStatementNode& node, std::strin
 	}
 	const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
 	ASTNode loop_decl_node = original_var_decl.declaration_node();
-	if (sema_) {
-		loop_decl_node = sema_->normalizeRangedForLoopDecl(original_var_decl, array_type);
-	} else if (isPlaceholderAutoType(original_var_decl.declaration().type_specifier_node().type())) {
-		throw InternalError("Range-for placeholder loop variable reached array lowering without semantic normalization");
-	}
+	loop_decl_node = sema_->normalizeRangedForLoopDecl(original_var_decl, array_type);
 
 		// C++20 standard: range-for desugars to `decl = *__begin;` for BOTH
 		// value and reference loop variables. The iterator is always dereferenced.
@@ -997,15 +993,11 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		// gives the element type directly. For struct iterators, use the declared
 		// operator*() return type as the range element type.
 	ASTNode loop_decl_node = original_var_decl.declaration_node();
-	if (sema_) {
-		loop_decl_node = sema_->normalizeRangedForLoopDecl(
-			original_var_decl,
-			range_type,
-			begin_return_type,
-			node.resolved_dereference_function());
-	} else if (isPlaceholderAutoType(original_var_decl.declaration().type_specifier_node().type())) {
-		throw InternalError("Range-for placeholder loop variable reached iterator lowering without semantic normalization");
-	}
+	loop_decl_node = sema_->normalizeRangedForLoopDecl(
+		original_var_decl,
+		range_type,
+		begin_return_type,
+		node.resolved_dereference_function());
 	const DeclarationNode& loop_decl = loop_decl_node.as<DeclarationNode>();
 	const TypeSpecifierNode& loop_type = loop_decl.type_specifier_node();
 

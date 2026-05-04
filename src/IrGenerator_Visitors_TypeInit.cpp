@@ -180,9 +180,7 @@ void AstToIr::generateCollectedLambdas() {
 			// Process from the end (newly added lambdas) backwards
 			size_t current_size = collected_lambdas_.size();
 			for (size_t i = current_size; i > processed_count; --i) {
-				if (sema_) {
-					sema_->normalizeInstantiatedLambdaBody(collected_lambdas_[i - 1]);
-				}
+				sema_->normalizeInstantiatedLambdaBody(collected_lambdas_[i - 1]);
 
 				// Re-access via index after normalization to avoid any stale-
 				// reference risk (the vector could theoretically reallocate).
@@ -211,9 +209,7 @@ void AstToIr::generateCollectedLambdas() {
 
 		bool generated_deferred_lambda = false;
 		for (size_t di = deferred_scan_start; di < collected_lambdas_.size(); ++di) {
-			if (sema_) {
-				sema_->normalizeInstantiatedLambdaBody(collected_lambdas_[di]);
-			}
+			sema_->normalizeInstantiatedLambdaBody(collected_lambdas_[di]);
 			LambdaInfo& stored_lambda_info = collected_lambdas_[di];
 
 			if (!stored_lambda_info.is_generic || stored_lambda_info.deduced_auto_types.empty()) {

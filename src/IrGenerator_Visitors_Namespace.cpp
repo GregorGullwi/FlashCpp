@@ -313,7 +313,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 					}
 				}
 			}
-			if (sema_ && expr_opt->is<ExpressionNode>()) {
+			if (expr_opt->is<ExpressionNode>()) {
 				const void* key = static_cast<const void*>(&expr_opt->as<ExpressionNode>());
 				auto slot = sema_->getSlot(key);
 				if (!sema_applied_conversion && slot.has_value() && slot->has_cast()) {

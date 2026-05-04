@@ -289,17 +289,15 @@ AstToIr::MultiDimArrayAccess AstToIr::collectMultiDimArrayIndices(const ArraySub
 ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 											 ExpressionContext context) {
 	// If sema resolved this subscript to operator[], dispatch to member function call IR.
-	if (sema_) {
-		if (const FunctionDeclarationNode* op_subscript = sema_->getResolvedOpSubscript(&arraySubscriptNode)) {
-			ChunkedVector<ASTNode> args;
-			args.push_back(arraySubscriptNode.index_expr());
-			CallExprNode member_call = makeResolvedMemberCallExpr(
-				arraySubscriptNode.array_expr(),
-				*op_subscript,
-				std::move(args),
-				arraySubscriptNode.bracket_token());
-			return generateMemberFunctionCallIr(member_call, context);
-		}
+	if (const FunctionDeclarationNode* op_subscript = sema_->getResolvedOpSubscript(&arraySubscriptNode)) {
+		ChunkedVector<ASTNode> args;
+		args.push_back(arraySubscriptNode.index_expr());
+		CallExprNode member_call = makeResolvedMemberCallExpr(
+			arraySubscriptNode.array_expr(),
+			*op_subscript,
+			std::move(args),
+			arraySubscriptNode.bracket_token());
+		return generateMemberFunctionCallIr(member_call, context);
 	}
 
 	auto makeArrayResult = [](TypeCategory type, int size_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) -> ExprResult {
@@ -774,7 +772,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	TypeIndex element_type_index = TypeIndex{}; // Track type_index for struct elements
 	int element_pointer_depth = 0; // Track pointer depth for pointer array elements
 	bool applied_subscript_pointer_conversion = false;
-	if (sema_ && array_expr_node.is<ExpressionNode>()) {
+	if (array_expr_node.is<ExpressionNode>()) {
 		const void* array_key = static_cast<const void*>(&array_expr_node.as<ExpressionNode>());
 		const auto slot = sema_->getSlot(array_key);
 		if (slot.has_value() && slot->has_cast()) {
@@ -3737,10 +3735,10 @@ bool AstToIr::isVariableReference(std::string_view var_name) const {
 bool AstToIr::resolveMemberAccessType(const MemberAccessNode& member_access,
 									  const StructTypeInfo*& out_struct_info,
 									  const StructMember*& out_member) const {
-	if (sema_ && sema_->resolveOrGetMemberAccess(member_access, out_struct_info, out_member)) {
+	if (sema_->resolveOrGetMemberAccess(member_access, out_struct_info, out_member)) {
 		return true;
 	}
-	if (sema_ && sema_normalized_current_function_) {
+	if (sema_normalized_current_function_) {
 		throw InternalError(std::string(StringBuilder()
 			.append("Missing sema-owned member access resolution in sema-normalized body for member '")
 			.append(member_access.member_name())
