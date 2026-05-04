@@ -2531,9 +2531,9 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					lhs_type_id = inferExpressionType(e.get_lhs());
 					rhs_type_id = inferExpressionType(e.get_rhs());
 					// C++20: scoped enums do not participate in implicit
-					// arithmetic conversions. Diagnose after child normalization
-					// so nested expression result types are settled before this
-					// binary operator selects its conversions.
+					// arithmetic conversions. This intentionally runs after
+					// child normalization so nested expression result types are
+					// settled before this binary operator selects conversions.
 					diagnoseScopedEnumBinaryOperands(e, lhs_type_id, rhs_type_id);
 				}
 				if (is_shift && needs_binary_type_inference) {
@@ -3996,8 +3996,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						isPlaceholderAutoType(lhs_desc.category()) ||
 						isFloatingPointType(lhs_desc.category()))
 						return {};
-					const TypeCategory lhs_category = resolveEnumUnderlyingTypeCategory(lhs_desc.type_index);
-					const TypeCategory result_category = promote_integer_type(lhs_category);
+					const TypeCategory unpromoted_category = resolveEnumUnderlyingTypeCategory(lhs_desc.type_index);
+					const TypeCategory result_category = promote_integer_type(unpromoted_category);
 					CanonicalTypeDesc desc;
 					desc.type_index = nativeTypeIndex(result_category);
 					return type_context_.intern(desc);

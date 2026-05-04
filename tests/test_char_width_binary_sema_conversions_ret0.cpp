@@ -10,8 +10,8 @@ struct WideLimitsLike {
 
 	static char32_t max() {
 		int bits = sizeof(char32_t) * CHAR_BIT;
-		int digits = bits - ((char32_t)(-1) < 0);
-		char32_t high_bit = (char32_t)1 << (digits - 1);
+		int value_bits = bits - ((char32_t)(-1) < 0);
+		char32_t high_bit = (char32_t)1 << (value_bits - 1);
 		char32_t all_lower_bits = high_bit - 1;
 		return ((char32_t)(-1) < 0)
 				   ? char32_t(-2147483647 - 1)
