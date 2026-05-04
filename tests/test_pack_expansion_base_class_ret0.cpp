@@ -14,6 +14,7 @@ struct MyHash : BaseDedup<Indices, PoisonHash>... {
 
 int main() {
 	MyHash<0, 1, 2> h;
-	(void)h;
-	return 0;
+	auto& second_base = static_cast<BaseDedup<1, PoisonHash>&>(h);
+	second_base.value = 42;
+	return second_base.value - 42;
 }

@@ -4647,6 +4647,65 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					 StringTable::getStringView(class_decl.name()), class_decl.deferred_template_base_classes().size());
 	if (!class_decl.deferred_template_base_classes().empty()) {
 		ensure_substitution_maps();
+		struct DeferredBasePackExpansionBindingInfo {
+			std::vector<std::pair<StringHandle, const std::vector<TemplateTypeArg>*>> pack_bindings;
+			size_t expansion_count = 1;
+			bool invalid = false;
+		};
+		auto collectDeferredBasePackExpansionBindings = [&](
+			const DeferredTemplateBaseClassSpecifier& deferred_base) {
+			DeferredBasePackExpansionBindingInfo binding_info;
+			if (!deferred_base.is_pack_expansion) {
+				return binding_info;
+			}
+
+			auto register_pack = [&](StringHandle pack_name) {
+				auto pack_it = pack_substitution_map.find(pack_name);
+				if (pack_it == pack_substitution_map.end()) {
+					return;
+				}
+				for (const auto& [existing_name, existing_args] : binding_info.pack_bindings) {
+					if (existing_name == pack_name) {
+						if (existing_args->size() != pack_it->second.size()) {
+							binding_info.invalid = true;
+						}
+						return;
+					}
+				}
+				if (!binding_info.pack_bindings.empty() &&
+					binding_info.expansion_count != pack_it->second.size()) {
+					binding_info.invalid = true;
+					return;
+				}
+				binding_info.expansion_count = pack_it->second.size();
+				binding_info.pack_bindings.emplace_back(pack_name, &pack_it->second);
+			};
+
+			for (const auto& arg_info : deferred_base.template_arguments) {
+				if (arg_info.is_pack) {
+					continue;
+				}
+				if (arg_info.node.is<ExpressionNode>()) {
+					const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
+					if (const auto* template_parameter_reference =
+							std::get_if<TemplateParameterReferenceNode>(&expr)) {
+						register_pack(template_parameter_reference->param_name());
+					} else if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
+						register_pack(StringTable::getOrInternStringHandle(identifier->name()));
+					}
+				} else if (arg_info.node.is<TypeSpecifierNode>()) {
+					TypeIndex idx = arg_info.node.as<TypeSpecifierNode>().type_index();
+					if (!idx.is_valid()) {
+						continue;
+					}
+					if (const TypeInfo* idx_ti = tryGetTypeInfo(idx)) {
+						register_pack(idx_ti->name_);
+					}
+				}
+			}
+
+			return binding_info;
+		};
 		auto identifier_matches = [](std::string_view haystack, std::string_view needle) {
 			size_t pos = haystack.find(needle);
 			auto is_ident_char = [](char ch) {
@@ -4666,431 +4725,454 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		for (const auto& deferred_base : class_decl.deferred_template_base_classes()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Processing deferred template base '{}' with {} template args",
 							 StringTable::getStringView(deferred_base.base_template_name), deferred_base.template_arguments.size());
-			std::vector<TemplateTypeArg> resolved_args;
-			bool unresolved_arg = false;
-			for (const auto& arg_info : deferred_base.template_arguments) {
-				// Pack expansion handling
-				if (arg_info.is_pack) {
-					// If the argument node references a template parameter pack, expand it
-					if (arg_info.node.is<ExpressionNode>()) {
-						const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
-						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-							StringHandle pack_name = std::get<TemplateParameterReferenceNode>(expr).param_name();
-							auto pack_it = pack_substitution_map.find(pack_name);
-							if (pack_it != pack_substitution_map.end()) {
-								resolved_args.insert(resolved_args.end(), pack_it->second.begin(), pack_it->second.end());
-								continue;
-							} else if (!template_args_to_use.empty()) {
-								resolved_args.insert(resolved_args.end(), template_args_to_use.begin(), template_args_to_use.end());
-								continue;
+			DeferredBasePackExpansionBindingInfo base_pack_bindings =
+				collectDeferredBasePackExpansionBindings(deferred_base);
+			if (base_pack_bindings.invalid) {
+				FLASH_LOG(Templates, Warning, "Deferred base '",
+						  StringTable::getStringView(deferred_base.base_template_name),
+						  "' has mismatched pack sizes in pack expansion");
+				continue;
+			}
+
+			size_t expansion_count = base_pack_bindings.pack_bindings.empty()
+				? 1
+				: base_pack_bindings.expansion_count;
+			for (size_t expansion_index = 0; expansion_index < expansion_count; ++expansion_index) {
+				TemplateArgSubstitutionMap active_name_substitution_map = name_substitution_map;
+				for (const auto& [pack_name, pack_args] : base_pack_bindings.pack_bindings) {
+					if (expansion_index >= pack_args->size()) {
+						throw InternalError("Deferred base pack expansion index out of range");
+					}
+					active_name_substitution_map[StringTable::getStringView(pack_name)] =
+						(*pack_args)[expansion_index];
+				}
+
+				std::vector<TemplateTypeArg> resolved_args;
+				bool unresolved_arg = false;
+				for (const auto& arg_info : deferred_base.template_arguments) {
+					// Pack expansion handling
+					if (arg_info.is_pack) {
+						// If the argument node references a template parameter pack, expand it
+						if (arg_info.node.is<ExpressionNode>()) {
+							const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
+							if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+								StringHandle pack_name = std::get<TemplateParameterReferenceNode>(expr).param_name();
+								auto pack_it = pack_substitution_map.find(pack_name);
+								if (pack_it != pack_substitution_map.end()) {
+									resolved_args.insert(resolved_args.end(), pack_it->second.begin(), pack_it->second.end());
+									continue;
+								} else if (!template_args_to_use.empty()) {
+									resolved_args.insert(resolved_args.end(), template_args_to_use.begin(), template_args_to_use.end());
+									continue;
+								}
 							}
-						}
-						// Also handle IdentifierNode - it may represent a pack parameter that wasn't converted to TemplateParameterReferenceNode
-						else if (std::holds_alternative<IdentifierNode>(expr)) {
-							const IdentifierNode& id = std::get<IdentifierNode>(expr);
-							StringHandle pack_name = StringTable::getOrInternStringHandle(id.name());
-							auto pack_it = pack_substitution_map.find(pack_name);
-							if (pack_it != pack_substitution_map.end()) {
-								resolved_args.insert(resolved_args.end(), pack_it->second.begin(), pack_it->second.end());
-								continue;
-							} else if (!template_args_to_use.empty()) {
-								resolved_args.insert(resolved_args.end(), template_args_to_use.begin(), template_args_to_use.end());
-								continue;
+							// Also handle IdentifierNode - it may represent a pack parameter that wasn't converted to TemplateParameterReferenceNode
+							else if (std::holds_alternative<IdentifierNode>(expr)) {
+								const IdentifierNode& id = std::get<IdentifierNode>(expr);
+								StringHandle pack_name = StringTable::getOrInternStringHandle(id.name());
+								auto pack_it = pack_substitution_map.find(pack_name);
+								if (pack_it != pack_substitution_map.end()) {
+									resolved_args.insert(resolved_args.end(), pack_it->second.begin(), pack_it->second.end());
+									continue;
+								} else if (!template_args_to_use.empty()) {
+									resolved_args.insert(resolved_args.end(), template_args_to_use.begin(), template_args_to_use.end());
+									continue;
+								}
 							}
-						}
-					} else if (arg_info.node.is<TypeSpecifierNode>()) {
-						const TypeSpecifierNode& type_spec = arg_info.node.as<TypeSpecifierNode>();
-						TypeIndex idx = type_spec.type_index();
-						if (const TypeInfo* idx_ti = tryGetTypeInfo(idx)) {
-							StringHandle pack_name = idx_ti->name_;
-							auto pack_it = pack_substitution_map.find(pack_name);
-							if (pack_it != pack_substitution_map.end()) {
-								resolved_args.insert(resolved_args.end(), pack_it->second.begin(), pack_it->second.end());
-								continue;
-							} else if (!template_args_to_use.empty()) {
-								resolved_args.insert(resolved_args.end(), template_args_to_use.begin(), template_args_to_use.end());
-								continue;
+						} else if (arg_info.node.is<TypeSpecifierNode>()) {
+							const TypeSpecifierNode& type_spec = arg_info.node.as<TypeSpecifierNode>();
+							TypeIndex idx = type_spec.type_index();
+							if (const TypeInfo* idx_ti = tryGetTypeInfo(idx)) {
+								StringHandle pack_name = idx_ti->name_;
+								auto pack_it = pack_substitution_map.find(pack_name);
+								if (pack_it != pack_substitution_map.end()) {
+									resolved_args.insert(resolved_args.end(), pack_it->second.begin(), pack_it->second.end());
+									continue;
+								} else if (!template_args_to_use.empty()) {
+									resolved_args.insert(resolved_args.end(), template_args_to_use.begin(), template_args_to_use.end());
+									continue;
+								}
 							}
 						}
 					}
-				}
 
-				// Resolve dependent type arguments
-				if (arg_info.node.is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& type_spec = arg_info.node.as<TypeSpecifierNode>();
-					TypeCategory resolved_type = type_spec.type();
-					TypeIndex resolved_index = type_spec.type_index();
-					bool resolved = false;
+					// Resolve dependent type arguments
+					if (arg_info.node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& type_spec = arg_info.node.as<TypeSpecifierNode>();
+						TypeCategory resolved_type = type_spec.type();
+						TypeIndex resolved_index = type_spec.type_index();
+						bool resolved = false;
 
-					if ((is_struct_type(resolved_type)) && resolved_index.is_valid()) {
-						if (const TypeInfo* resolved_ti = tryGetTypeInfo(resolved_index)) {
-							std::string_view type_name = StringTable::getStringView(resolved_ti->name());
-							auto subst_it = name_substitution_map.find(type_name);
-							if (subst_it != name_substitution_map.end()) {
-								TemplateTypeArg subst = rebindDependentTemplateTypeArg(
-									subst_it->second,
-									TemplateTypeArg(type_spec));
-								subst.is_pack = arg_info.is_pack;
-								resolved_args.push_back(subst);
-								resolved = true;
-							} else if (type_name.find("::") != std::string_view::npos) {
-								// Dependent member alias of a template instantiation
-								// (e.g., `__remove_cv<_Tp>::type` reaching us as a placeholder
-								// `__remove_cv$<dep>::type`). Re-materialize the dependent base
-								// template with the current outer substitutions, then resolve the
-								// member alias against the concrete instantiation. This produces
-								// the terminal underlying type (e.g., `int`) so the deferred base
-								// receives a concrete-typed template argument and matches any
-								// exact specialization registered for that concrete type.
-								if (const TypeInfo* concrete_member_alias =
-										materializeInstantiatedMemberAliasTarget(
-											type_spec,
-											template_params,
-											template_args_to_use)) {
-									TemplateTypeArg member_arg = resolveTypeInfoToTemplateArg(*concrete_member_alias, type_spec);
-									member_arg.is_pack = arg_info.is_pack;
-									resolved_args.push_back(member_arg);
+						if ((is_struct_type(resolved_type)) && resolved_index.is_valid()) {
+							if (const TypeInfo* resolved_ti = tryGetTypeInfo(resolved_index)) {
+								std::string_view type_name = StringTable::getStringView(resolved_ti->name());
+								auto subst_it = active_name_substitution_map.find(type_name);
+								if (subst_it != active_name_substitution_map.end()) {
+									TemplateTypeArg subst = rebindDependentTemplateTypeArg(
+										subst_it->second,
+										TemplateTypeArg(type_spec));
+									subst.is_pack = arg_info.is_pack;
+									resolved_args.push_back(subst);
 									resolved = true;
-									FLASH_LOG_FORMAT(Templates, Debug,
-										"Resolved deferred base member alias '{}' to terminal type_index={}",
-										type_name, member_arg.type_index);
-								}
-							}
-							if (!resolved) {
-								const StructTypeInfo* resolved_struct_info = resolved_ti->getStructInfo();
-								if (resolved_ti->isTemplateInstantiation() &&
-									(!resolved_struct_info || !resolved_struct_info->sizeInBytes().is_set())) {
-									StringHandle qualified_base_template_name =
-										gNamespaceRegistry.buildQualifiedIdentifier(
-											resolved_ti->sourceNamespace(),
-											resolved_ti->baseTemplateName());
-									std::vector<TemplateTypeArg> instantiated_args = materializeTemplateArgs(*resolved_ti, template_params, template_args_to_use);
-									auto alias_template_entry =
-										gTemplateRegistry.lookup_alias_template(qualified_base_template_name);
-									if (!alias_template_entry.has_value()) {
-										alias_template_entry = gTemplateRegistry.lookup_alias_template(
-											resolved_ti->baseTemplateName());
+								} else if (type_name.find("::") != std::string_view::npos) {
+									// Dependent member alias of a template instantiation
+									// (e.g., `__remove_cv<_Tp>::type` reaching us as a placeholder
+									// `__remove_cv$<dep>::type`). Re-materialize the dependent base
+									// template with the current outer substitutions, then resolve the
+									// member alias against the concrete instantiation. This produces
+									// the terminal underlying type (e.g., `int`) so the deferred base
+									// receives a concrete-typed template argument and matches any
+									// exact specialization registered for that concrete type.
+									if (const TypeInfo* concrete_member_alias =
+											materializeInstantiatedMemberAliasTarget(
+												type_spec,
+												template_params,
+												template_args_to_use)) {
+										TemplateTypeArg member_arg = resolveTypeInfoToTemplateArg(*concrete_member_alias, type_spec);
+										member_arg.is_pack = arg_info.is_pack;
+										resolved_args.push_back(member_arg);
+										resolved = true;
+										FLASH_LOG_FORMAT(Templates, Debug,
+											"Resolved deferred base member alias '{}' to terminal type_index={}",
+											type_name, member_arg.type_index);
 									}
-									if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
-										const TemplateAliasNode& alias_node = alias_template_entry->as<TemplateAliasNode>();
-										if (const TypeInfo* concrete_member_alias =
-												materializeInstantiatedMemberAliasTarget(
-													alias_node.target_type_node(),
-													alias_node.template_parameters(),
-													instantiated_args)) {
-											TemplateTypeArg inst_arg = resolveTypeInfoToTemplateArg(*concrete_member_alias, type_spec);
-											inst_arg.is_pack = arg_info.is_pack;
-											resolved_args.push_back(inst_arg);
-											resolved = true;
-											FLASH_LOG_FORMAT(Templates, Debug,
-												"Resolved deferred base alias-template member argument '{}' via alias target",
-												type_name);
+								}
+								if (!resolved) {
+									const StructTypeInfo* resolved_struct_info = resolved_ti->getStructInfo();
+									if (resolved_ti->isTemplateInstantiation() &&
+										(!resolved_struct_info || !resolved_struct_info->sizeInBytes().is_set())) {
+										StringHandle qualified_base_template_name =
+											gNamespaceRegistry.buildQualifiedIdentifier(
+												resolved_ti->sourceNamespace(),
+												resolved_ti->baseTemplateName());
+										std::vector<TemplateTypeArg> instantiated_args = materializeTemplateArgs(*resolved_ti, template_params, template_args_to_use);
+										auto alias_template_entry =
+											gTemplateRegistry.lookup_alias_template(qualified_base_template_name);
+										if (!alias_template_entry.has_value()) {
+											alias_template_entry = gTemplateRegistry.lookup_alias_template(
+												resolved_ti->baseTemplateName());
+										}
+										if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
+											const TemplateAliasNode& alias_node = alias_template_entry->as<TemplateAliasNode>();
+											if (const TypeInfo* concrete_member_alias =
+													materializeInstantiatedMemberAliasTarget(
+														alias_node.target_type_node(),
+														alias_node.template_parameters(),
+														instantiated_args)) {
+												TemplateTypeArg inst_arg = resolveTypeInfoToTemplateArg(*concrete_member_alias, type_spec);
+												inst_arg.is_pack = arg_info.is_pack;
+												resolved_args.push_back(inst_arg);
+												resolved = true;
+												FLASH_LOG_FORMAT(Templates, Debug,
+													"Resolved deferred base alias-template member argument '{}' via alias target",
+													type_name);
+											}
+											if (resolved) {
+												continue;
+											}
+											if (std::optional<TemplateTypeArg> rebound_arg =
+													tryRebindAliasTargetTemplateArg(alias_node, instantiated_args);
+												rebound_arg.has_value()) {
+												TemplateTypeArg inst_arg = *rebound_arg;
+												inst_arg.is_pack = arg_info.is_pack;
+												resolved_args.push_back(inst_arg);
+												resolved = true;
+												FLASH_LOG_FORMAT(Templates, Debug,
+													"Resolved deferred base alias-template argument '{}' via alias target metadata",
+													type_name);
+											}
 										}
 										if (resolved) {
 											continue;
 										}
-										if (std::optional<TemplateTypeArg> rebound_arg =
-												tryRebindAliasTargetTemplateArg(alias_node, instantiated_args);
-											rebound_arg.has_value()) {
-											TemplateTypeArg inst_arg = *rebound_arg;
-											inst_arg.is_pack = arg_info.is_pack;
-											resolved_args.push_back(inst_arg);
-											resolved = true;
-											FLASH_LOG_FORMAT(Templates, Debug,
-												"Resolved deferred base alias-template argument '{}' via alias target metadata",
-												type_name);
-										}
-									}
-									if (resolved) {
-										continue;
-									}
-									std::string_view inst_name = instantiateAndResolveBaseName(
-										StringTable::getStringView(qualified_base_template_name),
-										instantiated_args,
-										false);
-									if (inst_name.empty() &&
-										qualified_base_template_name != resolved_ti->baseTemplateName()) {
-										inst_name = instantiateAndResolveBaseName(
-											StringTable::getStringView(resolved_ti->baseTemplateName()),
+										std::string_view inst_name = instantiateAndResolveBaseName(
+											StringTable::getStringView(qualified_base_template_name),
 											instantiated_args,
 											false);
-									}
-									auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
-									if (inst_it != getTypesByNameMap().end()) {
-										TemplateTypeArg inst_arg;
-										inst_arg.type_index = inst_it->second->registeredTypeIndex();
-										inst_arg.type_index.setCategory(inst_it->second->typeEnum());
-										inst_arg.pointer_depth = type_spec.pointer_depth();
-										inst_arg.ref_qualifier = type_spec.reference_qualifier();
-										inst_arg.cv_qualifier = type_spec.cv_qualifier();
-										resolved_args.push_back(inst_arg);
-										resolved = true;
-										FLASH_LOG_FORMAT(Templates, Debug, "Resolved deferred base placeholder '{}' to '{}'",
-														 type_name, inst_name);
-									}
-								}
-
-								// Check if this is a template class that needs to be instantiated with substituted args
-								// For example: is_integral<T> where T needs to be substituted with int
-								auto template_entry = gTemplateRegistry.lookupTemplate(type_name);
-								if (!resolved && template_entry.has_value()) {
-									// This is a template class - try to instantiate it with our template args
-									// The template args for the nested template should be our current template args
-									// (e.g., is_integral<T> with T=int should become is_integral_int)
-									FLASH_LOG(Templates, Debug, "Nested template lookup found '", type_name,
-											  "', attempting instantiation with ", template_args_to_use.size(), " args");
-									auto instantiated = try_instantiate_class_template(type_name, template_args_to_use);
-									if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
-										if (shouldCommitTemplateInstantiationArtifacts()) {
-											registerAndNormalizeLateMaterializedTopLevelNode(*instantiated);
+										if (inst_name.empty() &&
+											qualified_base_template_name != resolved_ti->baseTemplateName()) {
+											inst_name = instantiateAndResolveBaseName(
+												StringTable::getStringView(resolved_ti->baseTemplateName()),
+												instantiated_args,
+												false);
 										}
-									}
-									std::string_view inst_name = get_instantiated_class_name(type_name, template_args_to_use);
-									auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
-									if (inst_it != getTypesByNameMap().end()) {
-										TemplateTypeArg inst_arg;
-										inst_arg.type_index = inst_it->second->type_index_.withCategory(TypeCategory::Struct);
-										inst_arg.pointer_depth = type_spec.pointer_depth();
-										inst_arg.ref_qualifier = type_spec.reference_qualifier();
-										inst_arg.cv_qualifier = type_spec.cv_qualifier();
-										resolved_args.push_back(inst_arg);
-										resolved = true;
-										FLASH_LOG_FORMAT(Templates, Debug, "Resolved nested template '{}' to '{}'", type_name, inst_name);
-									}
-								}
-
-								if (!resolved) {
-									for (const auto& subst_entry : name_substitution_map) {
-										if (identifier_matches(type_name, subst_entry.first)) {
-											TemplateTypeArg subst = rebindDependentTemplateTypeArg(
-												subst_entry.second,
-												TemplateTypeArg(type_spec));
-											subst.is_pack = arg_info.is_pack;
-											resolved_args.push_back(subst);
+										auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+										if (inst_it != getTypesByNameMap().end()) {
+											TemplateTypeArg inst_arg;
+											inst_arg.type_index = inst_it->second->registeredTypeIndex();
+											inst_arg.type_index.setCategory(inst_it->second->typeEnum());
+											inst_arg.pointer_depth = type_spec.pointer_depth();
+											inst_arg.ref_qualifier = type_spec.reference_qualifier();
+											inst_arg.cv_qualifier = type_spec.cv_qualifier();
+											resolved_args.push_back(inst_arg);
 											resolved = true;
-											break;
+											FLASH_LOG_FORMAT(Templates, Debug, "Resolved deferred base placeholder '{}' to '{}'",
+															 type_name, inst_name);
+										}
+									}
+
+									// Check if this is a template class that needs to be instantiated with substituted args
+									// For example: is_integral<T> where T needs to be substituted with int
+									auto template_entry = gTemplateRegistry.lookupTemplate(type_name);
+									if (!resolved && template_entry.has_value()) {
+										// This is a template class - try to instantiate it with our template args
+										// The template args for the nested template should be our current template args
+										// (e.g., is_integral<T> with T=int should become is_integral_int)
+										FLASH_LOG(Templates, Debug, "Nested template lookup found '", type_name,
+												  "', attempting instantiation with ", template_args_to_use.size(), " args");
+										auto instantiated = try_instantiate_class_template(type_name, template_args_to_use);
+										if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
+											if (shouldCommitTemplateInstantiationArtifacts()) {
+												registerAndNormalizeLateMaterializedTopLevelNode(*instantiated);
+											}
+										}
+										std::string_view inst_name = get_instantiated_class_name(type_name, template_args_to_use);
+										auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+										if (inst_it != getTypesByNameMap().end()) {
+											TemplateTypeArg inst_arg;
+											inst_arg.type_index = inst_it->second->type_index_.withCategory(TypeCategory::Struct);
+											inst_arg.pointer_depth = type_spec.pointer_depth();
+											inst_arg.ref_qualifier = type_spec.reference_qualifier();
+											inst_arg.cv_qualifier = type_spec.cv_qualifier();
+											resolved_args.push_back(inst_arg);
+											resolved = true;
+											FLASH_LOG_FORMAT(Templates, Debug, "Resolved nested template '{}' to '{}'", type_name, inst_name);
+										}
+									}
+
+									if (!resolved) {
+										for (const auto& subst_entry : active_name_substitution_map) {
+											if (identifier_matches(type_name, subst_entry.first)) {
+												TemplateTypeArg subst = rebindDependentTemplateTypeArg(
+													subst_entry.second,
+													TemplateTypeArg(type_spec));
+												subst.is_pack = arg_info.is_pack;
+												resolved_args.push_back(subst);
+												resolved = true;
+												break;
+											}
 										}
 									}
 								}
 							}
 						}
-					}
 
-					// Fallback: use the type specifier as-is
-					if (!resolved) {
-						resolved_args.emplace_back(type_spec);
-						resolved_args.back().is_pack = arg_info.is_pack;
-					}
-					continue;
-				}
-
-				if (arg_info.node.is<ExpressionNode>()) {
-					const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
-
-					// Handle TemplateParameterReferenceNode - substitute template parameter with actual type
-					if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-						const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-						std::string_view param_name = tparam_ref.param_name().view();
-						auto subst_it = name_substitution_map.find(param_name);
-						if (subst_it != name_substitution_map.end()) {
-							TemplateTypeArg subst_arg = subst_it->second;
-							subst_arg.is_pack = arg_info.is_pack;
-							resolved_args.push_back(subst_arg);
-							FLASH_LOG_FORMAT(Templates, Debug, "Substituted template parameter '{}' with type_index {} in deferred base",
-											 param_name, subst_it->second.type_index);
-							continue;
-						} else {
-							FLASH_LOG_FORMAT(Templates, Debug, "Template parameter '{}' not found in substitution map", param_name);
-							// Template parameter not found in substitution - this is an unresolved dependency
-							unresolved_arg = true;
-							break;
+						// Fallback: use the type specifier as-is
+						if (!resolved) {
+							resolved_args.emplace_back(type_spec);
+							resolved_args.back().is_pack = arg_info.is_pack;
 						}
+						continue;
 					}
 
-					// Handle IdentifierNode - NTTP params are stored as IdentifierNode by
-					// parse_explicit_template_arguments; treat the same as TemplateParameterReferenceNode.
-					if (std::holds_alternative<IdentifierNode>(expr)) {
-						const auto& id_node = std::get<IdentifierNode>(expr);
-						std::string_view id_name = id_node.name();
-						auto subst_it = name_substitution_map.find(id_name);
-						if (subst_it != name_substitution_map.end()) {
-							TemplateTypeArg subst_arg = subst_it->second;
-							subst_arg.is_pack = arg_info.is_pack;
-							resolved_args.push_back(subst_arg);
-							FLASH_LOG_FORMAT(Templates, Debug, "Substituted identifier '{}' in deferred base via name_substitution_map", id_name);
-							continue;
-						}
-						// Try as a concrete global type name
-						StringHandle h = StringTable::getOrInternStringHandle(id_name);
-						auto type_it = getTypesByNameMap().find(h);
-						if (type_it != getTypesByNameMap().end()) {
-							TemplateTypeArg a;
-							a.type_index = type_it->second->type_index_.withCategory(type_it->second->typeEnum());
-							a.is_pack = arg_info.is_pack;
-							resolved_args.push_back(a);
-							FLASH_LOG_FORMAT(Templates, Debug, "Resolved identifier '{}' as concrete type in deferred base", id_name);
-							continue;
-						}
-						FLASH_LOG_FORMAT(Templates, Debug, "Identifier '{}' unresolved in deferred base – falling through", id_name);
-					}
+					if (arg_info.node.is<ExpressionNode>()) {
+						const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
 
-					// Special handling for TypeTraitExprNode - need to substitute template parameters
-					if (std::holds_alternative<TypeTraitExprNode>(expr)) {
-						const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
-
-						// Create a substituted version of the type trait
-						if (trait_expr.has_type()) {
-							const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
-
-							// Check if the type needs substitution
-							TypeCategory base_type = type_spec.type();
-							TypeIndex type_idx = type_spec.type_index();
-							[[maybe_unused]] bool substituted = false;
-							TypeSpecifierNode substituted_type_spec = type_spec;
-
-							if ((is_struct_type(base_type)) && type_idx.is_valid()) {
-								if (const TypeInfo* type_idx_ti = tryGetTypeInfo(type_idx)) {
-									std::string_view type_name = StringTable::getStringView(type_idx_ti->name());
-									auto subst_it = name_substitution_map.find(type_name);
-									if (subst_it != name_substitution_map.end()) {
-										// Substitute the type
-										const TemplateTypeArg& subst = subst_it->second;
-										substituted_type_spec = TypeSpecifierNode(
-											subst.type_index.withCategory(subst.typeEnum()),
-											0, // size will be looked up
-											Token(),
-											type_spec.cv_qualifier(),
-											ReferenceQualifier::None);
-										substituted = true;
-										FLASH_LOG_FORMAT(Templates, Debug, "Substituted type '{}' with type_index {} for type trait evaluation",
-														 type_name, subst.type_index);
-									}
-								}
+						// Handle TemplateParameterReferenceNode - substitute template parameter with actual type
+						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+							const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+							std::string_view param_name = tparam_ref.param_name().view();
+							auto subst_it = active_name_substitution_map.find(param_name);
+							if (subst_it != active_name_substitution_map.end()) {
+								TemplateTypeArg subst_arg = subst_it->second;
+								subst_arg.is_pack = arg_info.is_pack;
+								resolved_args.push_back(subst_arg);
+								FLASH_LOG_FORMAT(Templates, Debug, "Substituted template parameter '{}' with type_index {} in deferred base",
+												 param_name, subst_it->second.type_index);
+								continue;
+							} else {
+								FLASH_LOG_FORMAT(Templates, Debug, "Template parameter '{}' not found in substitution map", param_name);
+								// Template parameter not found in substitution - this is an unresolved dependency
+								unresolved_arg = true;
+								break;
 							}
+						}
 
-							// Create substituted type trait node and evaluate
-							ASTNode subst_type_node = emplace_node<TypeSpecifierNode>(substituted_type_spec);
-							ASTNode subst_trait_node = emplace_node<ExpressionNode>(
-								TypeTraitExprNode(trait_expr.kind(), subst_type_node, trait_expr.trait_token()));
-
-							if (auto value = try_evaluate_constant_expression(subst_trait_node)) {
-								TemplateTypeArg val_arg(value->value, value->type);
-								val_arg.is_pack = arg_info.is_pack;
-								resolved_args.push_back(val_arg);
+						// Handle IdentifierNode - NTTP params are stored as IdentifierNode by
+						// parse_explicit_template_arguments; treat the same as TemplateParameterReferenceNode.
+						if (std::holds_alternative<IdentifierNode>(expr)) {
+							const auto& id_node = std::get<IdentifierNode>(expr);
+							std::string_view id_name = id_node.name();
+							auto subst_it = active_name_substitution_map.find(id_name);
+							if (subst_it != active_name_substitution_map.end()) {
+								TemplateTypeArg subst_arg = subst_it->second;
+								subst_arg.is_pack = arg_info.is_pack;
+								resolved_args.push_back(subst_arg);
+								FLASH_LOG_FORMAT(Templates, Debug, "Substituted identifier '{}' in deferred base via name_substitution_map", id_name);
 								continue;
 							}
+							// Try as a concrete global type name
+							StringHandle h = StringTable::getOrInternStringHandle(id_name);
+							auto type_it = getTypesByNameMap().find(h);
+							if (type_it != getTypesByNameMap().end()) {
+								TemplateTypeArg a;
+								a.type_index = type_it->second->type_index_.withCategory(type_it->second->typeEnum());
+								a.is_pack = arg_info.is_pack;
+								resolved_args.push_back(a);
+								FLASH_LOG_FORMAT(Templates, Debug, "Resolved identifier '{}' as concrete type in deferred base", id_name);
+								continue;
+							}
+							FLASH_LOG_FORMAT(Templates, Debug, "Identifier '{}' unresolved in deferred base – falling through", id_name);
 						}
-					} else if (std::holds_alternative<CallExprNode>(expr) && !std::get<CallExprNode>(expr).has_receiver()) {
-						// Handle constexpr function calls like: call_is_nt<Result>(typename Result::__invoke_type{})
-						// These need template parameter substitution before evaluation
-						const CallExprNode& func_call = std::get<CallExprNode>(expr);
 
-						FLASH_LOG(Templates, Debug, "Processing CallExprNode in deferred base argument");
+						// Special handling for TypeTraitExprNode - need to substitute template parameters
+						if (std::holds_alternative<TypeTraitExprNode>(expr)) {
+							const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
 
-						// Check if the function has template arguments that need substitution
-						bool has_dependent_template_args = false;
-						std::vector<TemplateTypeArg> substituted_func_template_args;
+							// Create a substituted version of the type trait
+							if (trait_expr.has_type()) {
+								const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
 
-						if (func_call.has_template_arguments()) {
-							for (const ASTNode& targ_node : func_call.template_arguments()) {
-								if (targ_node.is<ExpressionNode>()) {
-									const ExpressionNode& targ_expr = targ_node.as<ExpressionNode>();
-									if (std::holds_alternative<TemplateParameterReferenceNode>(targ_expr)) {
-										const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(targ_expr);
-										std::string_view param_name = tparam_ref.param_name().view();
-										auto subst_it = name_substitution_map.find(param_name);
-										if (subst_it != name_substitution_map.end()) {
-											substituted_func_template_args.push_back(subst_it->second);
-											FLASH_LOG_FORMAT(Templates, Debug, "Substituted function template arg '{}' with type_index {}",
-															 param_name, subst_it->second.type_index);
-										} else {
-											has_dependent_template_args = true;
+								// Check if the type needs substitution
+								TypeCategory base_type = type_spec.type();
+								TypeIndex type_idx = type_spec.type_index();
+								[[maybe_unused]] bool substituted = false;
+								TypeSpecifierNode substituted_type_spec = type_spec;
+
+								if ((is_struct_type(base_type)) && type_idx.is_valid()) {
+									if (const TypeInfo* type_idx_ti = tryGetTypeInfo(type_idx)) {
+										std::string_view type_name = StringTable::getStringView(type_idx_ti->name());
+										auto subst_it = active_name_substitution_map.find(type_name);
+										if (subst_it != active_name_substitution_map.end()) {
+											// Substitute the type
+											const TemplateTypeArg& subst = subst_it->second;
+											substituted_type_spec = TypeSpecifierNode(
+												subst.type_index.withCategory(subst.typeEnum()),
+												0, // size will be looked up
+												Token(),
+												type_spec.cv_qualifier(),
+												ReferenceQualifier::None);
+											substituted = true;
+											FLASH_LOG_FORMAT(Templates, Debug, "Substituted type '{}' with type_index {} for type trait evaluation",
+															 type_name, subst.type_index);
 										}
-									} else if (std::holds_alternative<IdentifierNode>(targ_expr)) {
-										const auto& id = std::get<IdentifierNode>(targ_expr);
-										auto subst_it = name_substitution_map.find(id.name());
-										if (subst_it != name_substitution_map.end()) {
-											substituted_func_template_args.push_back(subst_it->second);
-											FLASH_LOG_FORMAT(Templates, Debug, "Substituted function template arg identifier '{}' with type_index {}",
-															 id.name(), subst_it->second.type_index);
-										} else {
-											has_dependent_template_args = true;
-										}
-									} else {
-										// Keep the argument as-is for other expression types
-										has_dependent_template_args = true;
 									}
-								} else if (targ_node.is<TypeSpecifierNode>()) {
-									const TypeSpecifierNode& type_spec = targ_node.as<TypeSpecifierNode>();
-									if ((type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) && type_spec.type_index().is_valid()) {
-										if (const TypeInfo* targ_ti = tryGetTypeInfo(type_spec.type_index())) {
-											std::string_view type_name = StringTable::getStringView(targ_ti->name());
-											auto subst_it = name_substitution_map.find(type_name);
-											if (subst_it != name_substitution_map.end()) {
+								}
+
+								// Create substituted type trait node and evaluate
+								ASTNode subst_type_node = emplace_node<TypeSpecifierNode>(substituted_type_spec);
+								ASTNode subst_trait_node = emplace_node<ExpressionNode>(
+									TypeTraitExprNode(trait_expr.kind(), subst_type_node, trait_expr.trait_token()));
+
+								if (auto value = try_evaluate_constant_expression(subst_trait_node)) {
+									TemplateTypeArg val_arg(value->value, value->type);
+									val_arg.is_pack = arg_info.is_pack;
+									resolved_args.push_back(val_arg);
+									continue;
+								}
+							}
+						} else if (std::holds_alternative<CallExprNode>(expr) && !std::get<CallExprNode>(expr).has_receiver()) {
+							// Handle constexpr function calls like: call_is_nt<Result>(typename Result::__invoke_type{})
+							// These need template parameter substitution before evaluation
+							const CallExprNode& func_call = std::get<CallExprNode>(expr);
+
+							FLASH_LOG(Templates, Debug, "Processing CallExprNode in deferred base argument");
+
+							// Check if the function has template arguments that need substitution
+							bool has_dependent_template_args = false;
+							std::vector<TemplateTypeArg> substituted_func_template_args;
+
+							if (func_call.has_template_arguments()) {
+								for (const ASTNode& targ_node : func_call.template_arguments()) {
+									if (targ_node.is<ExpressionNode>()) {
+										const ExpressionNode& targ_expr = targ_node.as<ExpressionNode>();
+										if (std::holds_alternative<TemplateParameterReferenceNode>(targ_expr)) {
+											const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(targ_expr);
+											std::string_view param_name = tparam_ref.param_name().view();
+											auto subst_it = active_name_substitution_map.find(param_name);
+											if (subst_it != active_name_substitution_map.end()) {
 												substituted_func_template_args.push_back(subst_it->second);
+												FLASH_LOG_FORMAT(Templates, Debug, "Substituted function template arg '{}' with type_index {}",
+																 param_name, subst_it->second.type_index);
 											} else {
-												// Keep as-is
+												has_dependent_template_args = true;
+											}
+										} else if (std::holds_alternative<IdentifierNode>(targ_expr)) {
+											const auto& id = std::get<IdentifierNode>(targ_expr);
+											auto subst_it = active_name_substitution_map.find(id.name());
+											if (subst_it != active_name_substitution_map.end()) {
+												substituted_func_template_args.push_back(subst_it->second);
+												FLASH_LOG_FORMAT(Templates, Debug, "Substituted function template arg identifier '{}' with type_index {}",
+																 id.name(), subst_it->second.type_index);
+											} else {
+												has_dependent_template_args = true;
+											}
+										} else {
+											// Keep the argument as-is for other expression types
+											has_dependent_template_args = true;
+										}
+									} else if (targ_node.is<TypeSpecifierNode>()) {
+										const TypeSpecifierNode& type_spec = targ_node.as<TypeSpecifierNode>();
+										if ((type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) && type_spec.type_index().is_valid()) {
+											if (const TypeInfo* targ_ti = tryGetTypeInfo(type_spec.type_index())) {
+												std::string_view type_name = StringTable::getStringView(targ_ti->name());
+												auto subst_it = active_name_substitution_map.find(type_name);
+												if (subst_it != active_name_substitution_map.end()) {
+													substituted_func_template_args.push_back(subst_it->second);
+												} else {
+													// Keep as-is
+													substituted_func_template_args.emplace_back(type_spec);
+												}
+											} else {
 												substituted_func_template_args.emplace_back(type_spec);
 											}
 										} else {
 											substituted_func_template_args.emplace_back(type_spec);
 										}
-									} else {
-										substituted_func_template_args.emplace_back(type_spec);
 									}
 								}
 							}
-						}
 
-						// If we successfully substituted all template arguments, try to instantiate and call the function
-						if (!has_dependent_template_args && !substituted_func_template_args.empty()) {
-							std::string_view func_name = func_call.called_from().value();
-							FLASH_LOG_FORMAT(Templates, Debug, "Trying to instantiate constexpr function '{}' with {} template args",
-											 func_name, substituted_func_template_args.size());
+							// If we successfully substituted all template arguments, try to instantiate and call the function
+							if (!has_dependent_template_args && !substituted_func_template_args.empty()) {
+								std::string_view func_name = func_call.called_from().value();
+								FLASH_LOG_FORMAT(Templates, Debug, "Trying to instantiate constexpr function '{}' with {} template args",
+												 func_name, substituted_func_template_args.size());
 
-							// Try to instantiate the template function
-							auto instantiated_func = try_instantiate_template_explicit(func_name, substituted_func_template_args);
+								// Try to instantiate the template function
+								auto instantiated_func = try_instantiate_template_explicit(func_name, substituted_func_template_args);
 
-							if (instantiated_func.has_value()) {
-								FLASH_LOG_FORMAT(Templates, Debug, "try_instantiate_template_explicit returned node, is FunctionDeclarationNode: {}",
-												 instantiated_func->is<FunctionDeclarationNode>());
-							} else {
-								FLASH_LOG(Templates, Debug, "try_instantiate_template_explicit returned nullopt");
-							}
+								if (instantiated_func.has_value()) {
+									FLASH_LOG_FORMAT(Templates, Debug, "try_instantiate_template_explicit returned node, is FunctionDeclarationNode: {}",
+													 instantiated_func->is<FunctionDeclarationNode>());
+								} else {
+									FLASH_LOG(Templates, Debug, "try_instantiate_template_explicit returned nullopt");
+								}
 
-							if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-								const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
+								if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+									const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
 
-								FLASH_LOG_FORMAT(Templates, Debug, "Instantiated function: is_constexpr={}, has_definition={}",
-												 func_decl.is_constexpr(), func_decl.is_materialized());
+									FLASH_LOG_FORMAT(Templates, Debug, "Instantiated function: is_constexpr={}, has_definition={}",
+													 func_decl.is_constexpr(), func_decl.is_materialized());
 
-								// Check if the function is constexpr
-								if (func_decl.is_constexpr()) {
-									// For constexpr functions that return a constant value, we can evaluate them
-									// Look for a simple return statement with a constant value
-									// This is a simplified constexpr evaluation - full constexpr requires an interpreter
+									// Check if the function is constexpr
+									if (func_decl.is_constexpr()) {
+										// For constexpr functions that return a constant value, we can evaluate them
+										// Look for a simple return statement with a constant value
+										// This is a simplified constexpr evaluation - full constexpr requires an interpreter
 
-									// For now, if the function body is just "return true;" or "return false;", we can evaluate it
-									// This handles the common type_traits pattern
-									if (func_decl.is_materialized()) {
-										const ASTNode& body_node = *func_decl.get_definition();
-										FLASH_LOG_FORMAT(Templates, Debug, "Function body is BlockNode: {}", body_node.is<BlockNode>());
-										if (body_node.is<BlockNode>()) {
-											const BlockNode& block = body_node.as<BlockNode>();
-											FLASH_LOG_FORMAT(Templates, Debug, "Block has {} statements", block.get_statements().size());
-											if (block.get_statements().size() == 1) {
-												const ASTNode& stmt = block.get_statements()[0];
-												FLASH_LOG_FORMAT(Templates, Debug, "First statement is ReturnStatementNode: {}", stmt.is<ReturnStatementNode>());
-												if (stmt.is<ReturnStatementNode>()) {
-													const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
-													if (ret_stmt.expression().has_value()) {
-														// Try to evaluate the return expression as a constant
-														if (auto ret_value = try_evaluate_constant_expression(*ret_stmt.expression())) {
-															FLASH_LOG_FORMAT(Templates, Debug, "Evaluated constexpr function call to value {}", ret_value->value);
-															TemplateTypeArg val_arg(ret_value->value, ret_value->type);
-															val_arg.is_pack = arg_info.is_pack;
-															resolved_args.push_back(val_arg);
-															continue;
+										// For now, if the function body is just "return true;" or "return false;", we can evaluate it
+										// This handles the common type_traits pattern
+										if (func_decl.is_materialized()) {
+											const ASTNode& body_node = *func_decl.get_definition();
+											FLASH_LOG_FORMAT(Templates, Debug, "Function body is BlockNode: {}", body_node.is<BlockNode>());
+											if (body_node.is<BlockNode>()) {
+												const BlockNode& block = body_node.as<BlockNode>();
+												FLASH_LOG_FORMAT(Templates, Debug, "Block has {} statements", block.get_statements().size());
+												if (block.get_statements().size() == 1) {
+													const ASTNode& stmt = block.get_statements()[0];
+													FLASH_LOG_FORMAT(Templates, Debug, "First statement is ReturnStatementNode: {}", stmt.is<ReturnStatementNode>());
+													if (stmt.is<ReturnStatementNode>()) {
+														const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
+														if (ret_stmt.expression().has_value()) {
+															// Try to evaluate the return expression as a constant
+															if (auto ret_value = try_evaluate_constant_expression(*ret_stmt.expression())) {
+																FLASH_LOG_FORMAT(Templates, Debug, "Evaluated constexpr function call to value {}", ret_value->value);
+																TemplateTypeArg val_arg(ret_value->value, ret_value->type);
+																val_arg.is_pack = arg_info.is_pack;
+																resolved_args.push_back(val_arg);
+																continue;
+															}
 														}
 													}
 												}
@@ -5099,185 +5181,185 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									}
 								}
 							}
-						}
 
-						// Fallback: try as variable template before giving up on constexpr evaluation.
-						// For references like `is_integral_v<T>` where is_integral_v is a variable template,
-						// try_instantiate_template_explicit (function-template path) returns nullopt, and the
-						// generic try_evaluate_constant_expression fallback below would re-evaluate the
-						// ORIGINAL node whose template args still reference the unsubstituted template
-						// parameter (e.g., Ty), leading to inconsistent concrete_args during partial-spec
-						// lookup. Instantiate the variable template directly with the already-substituted
-						// function template args so the initializer is evaluated in a fully concrete context.
-						if (!has_dependent_template_args && !substituted_func_template_args.empty()) {
-							std::string_view func_name = func_call.called_from().value();
-							auto var_template_node = try_instantiate_variable_template(func_name, substituted_func_template_args);
-							if (var_template_node.has_value() && var_template_node->is<VariableDeclarationNode>()) {
-								const VariableDeclarationNode& var_decl = var_template_node->as<VariableDeclarationNode>();
-								if (var_decl.initializer().has_value()) {
-									if (auto value = try_evaluate_constant_expression(*var_decl.initializer())) {
-										FLASH_LOG_FORMAT(Templates, Debug, "Evaluated variable template '{}' to value {}",
-														 func_name, value->value);
-										TemplateTypeArg val_arg(value->value, value->type);
-										val_arg.is_pack = arg_info.is_pack;
-										resolved_args.push_back(val_arg);
-										continue;
+							// Fallback: try as variable template before giving up on constexpr evaluation.
+							// For references like `is_integral_v<T>` where is_integral_v is a variable template,
+							// try_instantiate_template_explicit (function-template path) returns nullopt, and the
+							// generic try_evaluate_constant_expression fallback below would re-evaluate the
+							// ORIGINAL node whose template args still reference the unsubstituted template
+							// parameter (e.g., Ty), leading to inconsistent concrete_args during partial-spec
+							// lookup. Instantiate the variable template directly with the already-substituted
+							// function template args so the initializer is evaluated in a fully concrete context.
+							if (!has_dependent_template_args && !substituted_func_template_args.empty()) {
+								std::string_view func_name = func_call.called_from().value();
+								auto var_template_node = try_instantiate_variable_template(func_name, substituted_func_template_args);
+								if (var_template_node.has_value() && var_template_node->is<VariableDeclarationNode>()) {
+									const VariableDeclarationNode& var_decl = var_template_node->as<VariableDeclarationNode>();
+									if (var_decl.initializer().has_value()) {
+										if (auto value = try_evaluate_constant_expression(*var_decl.initializer())) {
+											FLASH_LOG_FORMAT(Templates, Debug, "Evaluated variable template '{}' to value {}",
+															 func_name, value->value);
+											TemplateTypeArg val_arg(value->value, value->type);
+											val_arg.is_pack = arg_info.is_pack;
+											resolved_args.push_back(val_arg);
+											continue;
+										}
 									}
 								}
 							}
-						}
 
-						throw InternalError("Deferred base arguments should be resolved by specialized handlers");
-					} else if (std::holds_alternative<BinaryOperatorNode>(expr) || std::holds_alternative<TernaryOperatorNode>(expr)) {
-						// Handle binary/ternary operator expressions like: R1<T>::num < R2<T>::num
-						// These need template parameter substitution before evaluation
-						FLASH_LOG(Templates, Debug, "Processing BinaryOperatorNode/TernaryOperatorNode in deferred base argument");
+							throw InternalError("Deferred base arguments should be resolved by specialized handlers");
+						} else if (std::holds_alternative<BinaryOperatorNode>(expr) || std::holds_alternative<TernaryOperatorNode>(expr)) {
+							// Handle binary/ternary operator expressions like: R1<T>::num < R2<T>::num
+							// These need template parameter substitution before evaluation
+							FLASH_LOG(Templates, Debug, "Processing BinaryOperatorNode/TernaryOperatorNode in deferred base argument");
 
-						// Use ExpressionSubstitutor to substitute template parameters
-						ExpressionSubstitutor substitutor(name_substitution_map, *this, template_param_order);
-						ASTNode substituted_node = substitutor.substitute(arg_info.node);
+							// Use ExpressionSubstitutor to substitute template parameters
+							ExpressionSubstitutor substitutor(active_name_substitution_map, *this, template_param_order);
+							ASTNode substituted_node = substitutor.substitute(arg_info.node);
 
-						// Now try to evaluate the substituted expression
-						if (auto value = try_evaluate_constant_expression(substituted_node)) {
-							FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted binary/ternary operator to value {}", value->value);
-							TemplateTypeArg val_arg(value->value, value->type);
-							val_arg.is_pack = arg_info.is_pack;
-							resolved_args.push_back(val_arg);
-							continue;
+							// Now try to evaluate the substituted expression
+							if (auto value = try_evaluate_constant_expression(substituted_node)) {
+								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted binary/ternary operator to value {}", value->value);
+								TemplateTypeArg val_arg(value->value, value->type);
+								val_arg.is_pack = arg_info.is_pack;
+								resolved_args.push_back(val_arg);
+								continue;
+							} else {
+								FLASH_LOG(Templates, Debug, "Failed to evaluate substituted binary/ternary operator");
+							}
+						} else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+							// Handle unary operator expressions like: -Num<T>::num
+							// These need template parameter substitution before evaluation
+							FLASH_LOG(Templates, Debug, "Processing UnaryOperatorNode in deferred base argument");
+
+							// Use ExpressionSubstitutor to substitute template parameters
+							ExpressionSubstitutor substitutor(active_name_substitution_map, *this, template_param_order);
+							ASTNode substituted_node = substitutor.substitute(arg_info.node);
+
+							// Now try to evaluate the substituted expression
+							if (auto value = try_evaluate_constant_expression(substituted_node)) {
+								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted unary operator to value {}", value->value);
+								TemplateTypeArg val_arg(value->value, value->type);
+								val_arg.is_pack = arg_info.is_pack;
+								resolved_args.push_back(val_arg);
+								continue;
+							} else {
+								FLASH_LOG(Templates, Debug, "Failed to evaluate substituted unary operator");
+							}
+						} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+							FLASH_LOG(Templates, Debug, "Processing QualifiedIdentifierNode in deferred base argument");
+							ExpressionSubstitutor substitutor(active_name_substitution_map, *this, template_param_order);
+							ASTNode substituted_node = substitutor.substitute(arg_info.node);
+							if (auto value = try_evaluate_constant_expression(substituted_node)) {
+								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted qualified identifier to value {}", value->value);
+								TemplateTypeArg val_arg(value->value, value->type);
+								val_arg.is_pack = arg_info.is_pack;
+								resolved_args.push_back(val_arg);
+								continue;
+							} else {
+								FLASH_LOG(Templates, Debug, "Failed to evaluate substituted qualified identifier");
+							}
 						} else {
-							FLASH_LOG(Templates, Debug, "Failed to evaluate substituted binary/ternary operator");
-						}
-					} else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-						// Handle unary operator expressions like: -Num<T>::num
-						// These need template parameter substitution before evaluation
-						FLASH_LOG(Templates, Debug, "Processing UnaryOperatorNode in deferred base argument");
-
-						// Use ExpressionSubstitutor to substitute template parameters
-						ExpressionSubstitutor substitutor(name_substitution_map, *this, template_param_order);
-						ASTNode substituted_node = substitutor.substitute(arg_info.node);
-
-						// Now try to evaluate the substituted expression
-						if (auto value = try_evaluate_constant_expression(substituted_node)) {
-							FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted unary operator to value {}", value->value);
-							TemplateTypeArg val_arg(value->value, value->type);
-							val_arg.is_pack = arg_info.is_pack;
-							resolved_args.push_back(val_arg);
-							continue;
-						} else {
-							FLASH_LOG(Templates, Debug, "Failed to evaluate substituted unary operator");
-						}
-					} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
-						FLASH_LOG(Templates, Debug, "Processing QualifiedIdentifierNode in deferred base argument");
-						ExpressionSubstitutor substitutor(name_substitution_map, *this, template_param_order);
-						ASTNode substituted_node = substitutor.substitute(arg_info.node);
-						if (auto value = try_evaluate_constant_expression(substituted_node)) {
-							FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted qualified identifier to value {}", value->value);
-							TemplateTypeArg val_arg(value->value, value->type);
-							val_arg.is_pack = arg_info.is_pack;
-							resolved_args.push_back(val_arg);
-							continue;
-						} else {
-							FLASH_LOG(Templates, Debug, "Failed to evaluate substituted qualified identifier");
-						}
-					} else {
-						// Try to evaluate non-type template argument after substitution
-						if (auto value = try_evaluate_constant_expression(arg_info.node)) {
-							TemplateTypeArg val_arg(value->value, value->type);
-							val_arg.is_pack = arg_info.is_pack;
-							resolved_args.push_back(val_arg);
-							continue;
+							// Try to evaluate non-type template argument after substitution
+							if (auto value = try_evaluate_constant_expression(arg_info.node)) {
+								TemplateTypeArg val_arg(value->value, value->type);
+								val_arg.is_pack = arg_info.is_pack;
+								resolved_args.push_back(val_arg);
+								continue;
+							}
 						}
 					}
+
+					// This is expected for dependent types in template metaprogramming.
+					// Leave the base unresolved instead of instantiating it with wrong arguments.
+					FLASH_LOG(Templates, Debug, "Could not resolve deferred template base argument for '",
+							  StringTable::getStringView(deferred_base.base_template_name), "'; skipping base instantiation");
+					unresolved_arg = true;
+					break;
 				}
 
-				// This is expected for dependent types in template metaprogramming.
-				// Leave the base unresolved instead of instantiating it with wrong arguments.
-				FLASH_LOG(Templates, Debug, "Could not resolve deferred template base argument for '",
-						  StringTable::getStringView(deferred_base.base_template_name), "'; skipping base instantiation");
-				unresolved_arg = true;
-				break;
-			}
-
-			if (unresolved_arg) {
-				// Cannot resolve all template arguments for the base class - skip it
-				// Don't try to instantiate with wrong arguments as it will cause errors/crashes
-				FLASH_LOG(Templates, Debug, "Skipping deferred base '",
-						  StringTable::getStringView(deferred_base.base_template_name),
-						  "' due to unresolved template arguments");
-				continue;
-			}
-
-			std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
-			std::string_view outer_instantiated_name = instantiate_and_register_base_template(base_template_name, resolved_args);
-			if (!outer_instantiated_name.empty()) {
-				base_template_name = outer_instantiated_name;
-			}
-
-			std::string_view final_base_name = base_template_name;
-			if (!deferred_base.member_type_chain.empty()) {
-				ensure_substitution_maps();
-				ExpressionSubstitutor member_template_arg_substitutor(
-					name_substitution_map,
-					pack_substitution_map,
-					*this,
-					template_param_order);
-				auto resolved_member_chain = resolveDeferredBaseMemberTypeChain(
-					deferred_base.member_type_chain,
-					name_substitution_map,
-					pack_substitution_map,
-					[&](const ASTNode& node) {
-						return member_template_arg_substitutor.substitute(node);
-					},
-					[&](const ASTNode& node) {
-						return try_evaluate_constant_expression(node);
-					});
-				if (!resolved_member_chain.has_value()) {
-					FLASH_LOG(Templates, Debug, "Deferred template base member args not fully resolved for '",
-							  StringTable::getStringView(deferred_base.base_template_name), "'");
-					continue;
-				}
-				const TypeInfo* resolved_type =
-					resolveBaseClassMemberTypeChain(base_template_name, *resolved_member_chain);
-				if (resolved_type == nullptr) {
-					StringBuilder unresolved_base_builder;
-					unresolved_base_builder.append(base_template_name);
-					for (const QualifiedTypeMemberAccess& member_access : *resolved_member_chain) {
-						unresolved_base_builder.append("::");
-						unresolved_base_builder.append(StringTable::getStringView(member_access.member_name));
-						if (member_access.has_template_arguments) {
-							unresolved_base_builder.append("<...>");
-						}
-					}
-					std::string_view unresolved_base_name = unresolved_base_builder.commit();
-					FLASH_LOG(Templates, Debug, "Deferred template base alias not found: ",
-							  unresolved_base_name,
-							  " (this may be expected for SFINAE/dependent template arguments)");
+				if (unresolved_arg) {
+					// Cannot resolve all template arguments for the base class - skip it
+					// Don't try to instantiate with wrong arguments as it will cause errors/crashes
+					FLASH_LOG(Templates, Debug, "Skipping deferred base '",
+							  StringTable::getStringView(deferred_base.base_template_name),
+							  "' due to unresolved template arguments");
 					continue;
 				}
 
-				resolved_type = materializeDeferredBasePlaceholderIfNeeded(
-					resolved_type,
-					template_params,
-					template_args_to_use,
-					[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
-						std::string_view mutable_template_name = concrete_base_template_name;
-						return instantiate_and_register_base_template(mutable_template_name, concrete_base_args);
-					});
+				std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
+				std::string_view outer_instantiated_name = instantiate_and_register_base_template(base_template_name, resolved_args);
+				if (!outer_instantiated_name.empty()) {
+					base_template_name = outer_instantiated_name;
+				}
 
-				final_base_name = StringTable::getStringView(resolved_type->name());
-				struct_info->addBaseClass(
-					final_base_name,
-					resolved_type->type_index_,
-					deferred_base.access,
-					deferred_base.is_virtual);
-				continue;
-			}
+				std::string_view final_base_name = base_template_name;
+				if (!deferred_base.member_type_chain.empty()) {
+					ensure_substitution_maps();
+					ExpressionSubstitutor member_template_arg_substitutor(
+						active_name_substitution_map,
+						pack_substitution_map,
+						*this,
+						template_param_order);
+					auto resolved_member_chain = resolveDeferredBaseMemberTypeChain(
+						deferred_base.member_type_chain,
+						active_name_substitution_map,
+						pack_substitution_map,
+						[&](const ASTNode& node) {
+							return member_template_arg_substitutor.substitute(node);
+						},
+						[&](const ASTNode& node) {
+							return try_evaluate_constant_expression(node);
+						});
+					if (!resolved_member_chain.has_value()) {
+						FLASH_LOG(Templates, Debug, "Deferred template base member args not fully resolved for '",
+								  StringTable::getStringView(deferred_base.base_template_name), "'");
+						continue;
+					}
+					const TypeInfo* resolved_type =
+						resolveBaseClassMemberTypeChain(base_template_name, *resolved_member_chain);
+					if (resolved_type == nullptr) {
+						StringBuilder unresolved_base_builder;
+						unresolved_base_builder.append(base_template_name);
+						for (const QualifiedTypeMemberAccess& member_access : *resolved_member_chain) {
+							unresolved_base_builder.append("::");
+							unresolved_base_builder.append(StringTable::getStringView(member_access.member_name));
+							if (member_access.has_template_arguments) {
+								unresolved_base_builder.append("<...>");
+							}
+						}
+						std::string_view unresolved_base_name = unresolved_base_builder.commit();
+						FLASH_LOG(Templates, Debug, "Deferred template base alias not found: ",
+								  unresolved_base_name,
+								  " (this may be expected for SFINAE/dependent template arguments)");
+						continue;
+					}
 
-			auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(final_base_name));
-			if (base_type_it != getTypesByNameMap().end()) {
-				struct_info->addBaseClass(final_base_name, base_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
-			} else {
-				FLASH_LOG(Templates, Warning, "Deferred template base type not found: ", final_base_name);
+					resolved_type = materializeDeferredBasePlaceholderIfNeeded(
+						resolved_type,
+						template_params,
+						template_args_to_use,
+						[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+							std::string_view mutable_template_name = concrete_base_template_name;
+							return instantiate_and_register_base_template(mutable_template_name, concrete_base_args);
+						});
+
+					final_base_name = StringTable::getStringView(resolved_type->name());
+					struct_info->addBaseClass(
+						final_base_name,
+						resolved_type->type_index_,
+						deferred_base.access,
+						deferred_base.is_virtual);
+					continue;
+				}
+
+				auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(final_base_name));
+				if (base_type_it != getTypesByNameMap().end()) {
+					struct_info->addBaseClass(final_base_name, base_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
+				} else {
+					FLASH_LOG(Templates, Warning, "Deferred template base type not found: ", final_base_name);
+				}
 			}
 		}
 	}

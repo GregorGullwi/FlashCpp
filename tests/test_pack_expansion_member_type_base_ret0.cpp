@@ -6,12 +6,16 @@ struct identity {
 	using type = T;
 };
 
-struct A {
-	int a;
-};
-struct B {
-	int b;
-};
+struct A {};
+struct B {};
+
+int readTag(const A&) {
+	return 19;
+}
+
+int readTag(const B&) {
+	return 23;
+}
 
 template <typename... Args>
 struct Multi : identity<Args>::type... {
@@ -19,6 +23,5 @@ struct Multi : identity<Args>::type... {
 
 int main() {
 	Multi<A, B> m;
-	(void)m;
-	return 0;
+	return readTag(static_cast<A&>(m)) + readTag(static_cast<B&>(m)) - 42;
 }
