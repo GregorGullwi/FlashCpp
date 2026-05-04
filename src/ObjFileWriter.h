@@ -23,7 +23,10 @@
 #include <vector>
 #include <algorithm>
 #include <numeric>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow"
 #include "coffi/coffi.hpp"
+#pragma GCC diagnostic pop
 
 extern bool g_enable_debug_output;
 

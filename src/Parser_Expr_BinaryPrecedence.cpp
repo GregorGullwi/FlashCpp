@@ -56,10 +56,10 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 	constexpr int MAX_RECURSION_DEPTH = 2048;
 
 	// RAII guard to ensure recursion_depth is decremented on all exit paths
-	struct RecursionGuard {
+	struct ExprRecursionGuard {
 		int& depth;
-		RecursionGuard(int& d) : depth(d) { ++depth; }
-		~RecursionGuard() { --depth; }
+		ExprRecursionGuard(int& d) : depth(d) { ++depth; }
+		~ExprRecursionGuard() { --depth; }
 	} guard(recursion_depth);
 
 	auto tryInstantiateOperatorTemplate = [&](std::string_view op_symbol, const TypeSpecifierNode& left_type_spec, const TypeSpecifierNode& right_type_spec)
@@ -216,7 +216,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 					// Note: eligible_ns always contains the global namespace, so global-namespace templates
 					// pass the count check without needing an explicit isGlobal() guard.
 					if (tmpl_ns.isValid() && !eligible_ns.count(tmpl_ns)) continue;
-					ScopedParserInstantiationContext guard(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
+					ScopedParserInstantiationContext inst_guard(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
 					int depth = initial_template_instantiation_depth;
 					if (auto instantiated = try_instantiate_single_template(tmpl, op_name, arg_types, depth)) {
 						if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {

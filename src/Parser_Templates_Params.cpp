@@ -659,10 +659,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 	static thread_local int template_arg_recursion_depth = 0;
 	constexpr int MAX_TEMPLATE_ARG_RECURSION_DEPTH = 20;
 
-	struct RecursionGuard {
+	struct TemplateArgRecursionGuard {
 		int& depth;
-		RecursionGuard(int& d) : depth(d) { ++depth; }
-		~RecursionGuard() { --depth; }
+		TemplateArgRecursionGuard(int& d) : depth(d) { ++depth; }
+		~TemplateArgRecursionGuard() { --depth; }
 	} guard(template_arg_recursion_depth);
 
 	if (template_arg_recursion_depth > MAX_TEMPLATE_ARG_RECURSION_DEPTH) {

@@ -3992,9 +3992,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									if (const FunctionDeclarationNode* func_decl = FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(*id_type)) {
 										arg_type_node_opt = FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
 								} else if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
-									if (decl->type_node().template is<TypeSpecifierNode>()) {
+									{
 										// Preserve the full TypeSpecifierNode to retain type_index for structs
-										const auto& type_spec = decl->type_node().template as<TypeSpecifierNode>();
+										const auto& type_spec = decl->type_specifier_node();
 										arg_type_node_opt = type_spec;
 										applyDeclarationArrayBoundsToTypeSpec(*decl, *arg_type_node_opt);
 										arg_type = type_spec.type();

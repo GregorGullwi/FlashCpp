@@ -36,8 +36,8 @@ struct SymbolScopeHandle {
 struct Scope {
 	Scope() = default;
 	Scope(ScopeType scopeType, size_t scope_level) : scope_type(scopeType), scope_handle{.scope_level = scope_level} {}
-	Scope(ScopeType scopeType, size_t scope_level, StringHandle namespace_name)
-		: scope_type(scopeType), scope_handle{.scope_level = scope_level}, namespace_name(namespace_name) {}
+	Scope(ScopeType scopeType, size_t scope_level, StringHandle ns_name)
+		: scope_type(scopeType), scope_handle{.scope_level = scope_level}, namespace_name(ns_name) {}
 
 	ScopeType scope_type = ScopeType::Block;
 	// Changed to support function overloading: each name can map to multiple symbols (for overloaded functions)

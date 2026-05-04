@@ -543,35 +543,35 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// This includes both explicit dependent flags AND types whose names contain template parameters
 				bool has_dependent_args = post_info.is_pack_expansion;
 				auto contains_template_param = [this](StringHandle type_name_handle) -> bool {
-					std::string_view type_name = StringTable::getStringView(type_name_handle);
+					std::string_view type_name_sv = StringTable::getStringView(type_name_handle);
 					// Check if this looks like a mangled template name (contains underscores as separators)
 					// Mangled names like "is_integral__Tp" use underscore as separator
-					bool is_mangled_name = type_name.find('_') != std::string_view::npos;
+					bool is_mangled_name = type_name_sv.find('_') != std::string_view::npos;
 
 					for (const auto& param_name : currentTemplateParamNames()) {
 						std::string_view param_sv = StringTable::getStringView(param_name);
-						// Check if type_name contains param_name as an identifier
+						// Check if type_name_sv contains param_name as an identifier
 						// (not just substring, to avoid false positives like "T" in "Template")
-						size_t pos = type_name.find(param_sv);
+						size_t pos = type_name_sv.find(param_sv);
 						while (pos != std::string_view::npos) {
-							bool start_ok = (pos == 0) || (!std::isalnum(static_cast<unsigned char>(type_name[pos - 1])) && type_name[pos - 1] != '_');
-							bool end_ok = (pos + param_sv.size() >= type_name.size()) || (!std::isalnum(static_cast<unsigned char>(type_name[pos + param_sv.size()])) && type_name[pos + param_sv.size()] != '_');
+							bool start_ok = (pos == 0) || (!std::isalnum(static_cast<unsigned char>(type_name_sv[pos - 1])) && type_name_sv[pos - 1] != '_');
+							bool end_ok = (pos + param_sv.size() >= type_name_sv.size()) || (!std::isalnum(static_cast<unsigned char>(type_name_sv[pos + param_sv.size()])) && type_name_sv[pos + param_sv.size()] != '_');
 							if (start_ok && end_ok) {
 								return true;
 							}
 							// For mangled template names (like "is_integral__Tp"), underscore is a valid separator
 							// Allow matching when the param starts with _ and is preceded by another _
 							// e.g., "__Tp" in "is_integral__Tp" where param is "_Tp"
-							if (is_mangled_name && pos > 0 && type_name[pos - 1] == '_' && param_sv[0] == '_') {
+							if (is_mangled_name && pos > 0 && type_name_sv[pos - 1] == '_' && param_sv[0] == '_') {
 								// Check end boundary (must be end of string or followed by underscore/non-alnum)
-								bool relaxed_end_ok = (pos + param_sv.size() >= type_name.size()) ||
-													  (type_name[pos + param_sv.size()] == '_') ||
-													  (!std::isalnum(static_cast<unsigned char>(type_name[pos + param_sv.size()])));
+								bool relaxed_end_ok = (pos + param_sv.size() >= type_name_sv.size()) ||
+													  (type_name_sv[pos + param_sv.size()] == '_') ||
+													  (!std::isalnum(static_cast<unsigned char>(type_name_sv[pos + param_sv.size()])));
 								if (relaxed_end_ok) {
 									return true;
 								}
 							}
-							pos = type_name.find(param_sv, pos + 1);
+							pos = type_name_sv.find(param_sv, pos + 1);
 						}
 					}
 					return false;

@@ -3619,16 +3619,16 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 				if (e.name() == "this"sv) {
-					const MemberContext* member_context = getCurrentMemberContext();
-					if (!member_context ||
-						!member_context->has_implicit_this ||
-						!member_context->type_index.is_valid()) {
+					const MemberContext* this_member_ctx = getCurrentMemberContext();
+					if (!this_member_ctx ||
+						!this_member_ctx->has_implicit_this ||
+						!this_member_ctx->type_index.is_valid()) {
 						return {};
 					}
 
 					CanonicalTypeDesc desc;
-					desc.type_index = member_context->type_index;
-					desc.base_cv = member_context->this_base_cv;
+					desc.type_index = this_member_ctx->type_index;
+					desc.base_cv = this_member_ctx->this_base_cv;
 					desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
 					return type_context_.intern(desc);
 				}
@@ -3924,9 +3924,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						};
 						resolve_free_operator_self_type(e.get_lhs());
 						resolve_free_operator_self_type(e.get_rhs());
-						if (const MemberContext* member_context = getCurrentMemberContext();
-							member_context && member_context->type_index.is_valid()) {
-							return_type = resolveTypeSpecifierForSelfReference(return_type, member_context->type_index);
+						if (const MemberContext* op_member_ctx = getCurrentMemberContext();
+							op_member_ctx && op_member_ctx->type_index.is_valid()) {
+							return_type = resolveTypeSpecifierForSelfReference(return_type, op_member_ctx->type_index);
 						}
 						return canonicalizeType(return_type);
 					}
@@ -4229,8 +4229,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 								try_resolve_self_return(receiver_desc.type_index);
 							}
 						} else if (resolved_callable->is_member_function()) {
-							if (const MemberContext* member_context = getCurrentMemberContext()) {
-								try_resolve_self_return(member_context->type_index);
+							if (const MemberContext* call_member_ctx = getCurrentMemberContext()) {
+								try_resolve_self_return(call_member_ctx->type_index);
 							}
 						}
 						return canonicalizeType(return_type);
@@ -4274,8 +4274,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 							const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
 							try_resolve_self_return(receiver_desc.type_index);
 						}
-					} else if (const MemberContext* member_context = getCurrentMemberContext()) {
-						try_resolve_self_return(member_context->type_index);
+					} else if (const MemberContext* call_member_ctx2 = getCurrentMemberContext()) {
+						try_resolve_self_return(call_member_ctx2->type_index);
 					}
 					if (!isPlaceholderAutoType(type_node.type())) {
 						return canonicalizeType(type_node);

@@ -2224,7 +2224,7 @@ public:
 
 	std::string_view op() const { return identifier_.value(); }
 	const Token& get_token() const { return identifier_; }
-	auto get_operand() const { return operand_node_; }
+	const ASTNode& get_operand() const { return operand_node_; }
 	bool is_prefix() const { return is_prefix_; }
 	bool is_builtin_addressof() const { return is_builtin_addressof_; }
 

@@ -88,8 +88,8 @@ bool isDirectObjectPrvalueBase(const ASTNode& node) {
 		return true;
 	}
 
-	return std::visit([](const auto& expr) -> bool {
-		using T = std::decay_t<decltype(expr)>;
+	return std::visit([](const auto& inner_expr) -> bool {
+		using T = std::decay_t<decltype(inner_expr)>;
 		return std::is_same_v<T, ConstructorCallNode> ||
 			   std::is_same_v<T, InitializerListConstructionNode> ||
 			   std::is_same_v<T, StaticCastNode> ||
@@ -392,12 +392,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		deferred_info.function_node = ASTNode(ctor);
 		deferred_member_functions_.push_back(std::move(deferred_info));
 	};
-	auto register_destructor_if_needed = [this](const DeclarationNode& decl, const TypeInfo* type_info) {
+	auto register_destructor_if_needed = [this](const DeclarationNode& inner_decl, const TypeInfo* type_info) {
 		if (!type_info || !type_info->struct_info_ || !type_info->struct_info_->hasDestructor()) {
 			return;
 		}
 		registerVariableWithDestructor(
-			std::string(decl.identifier_token().value()),
+			std::string(inner_decl.identifier_token().value()),
 			std::string(StringTable::getStringView(type_info->name())));
 	};
 
@@ -656,9 +656,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				packLevel(packLevel, array_result);
 			};
 		auto resolveGlobalRelocTarget = [&](std::string_view name) -> StringHandle {
-			StringHandle simple_name_handle = StringTable::getOrInternStringHandle(name);
-			auto it = global_variable_names_.find(simple_name_handle);
-			return (it != global_variable_names_.end()) ? it->second : simple_name_handle;
+			StringHandle reloc_simple_name_handle = StringTable::getOrInternStringHandle(name);
+			auto it = global_variable_names_.find(reloc_simple_name_handle);
+			return (it != global_variable_names_.end()) ? it->second : reloc_simple_name_handle;
 		};
 		auto makeStaticStorageEvalContext = [&]() {
 			ConstExpr::EvaluationContext ctx(is_static_local ? symbol_table : gSymbolTable);

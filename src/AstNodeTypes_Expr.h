@@ -191,7 +191,7 @@ public:
 	explicit PseudoDestructorCallNode(ASTNode object, std::string_view qualified_type_name, Token type_name_token, bool is_arrow)
 		: object_(object), qualified_type_name_(StringTable::getOrInternStringHandle(qualified_type_name)), type_name_token_(type_name_token), is_arrow_access_(is_arrow) {}
 
-	ASTNode object() const { return object_; }
+	const ASTNode& object() const { return object_; }
 	std::string_view type_name() const { return type_name_token_.value(); }
 	// Returns the qualified type name handle if present (empty handle if simple name)
 	StringHandle qualified_type_name() const { return qualified_type_name_; }
@@ -211,8 +211,8 @@ public:
 	explicit ArraySubscriptNode(ASTNode array_expr, ASTNode index_expr, Token bracket_token)
 		: array_expr_(array_expr), index_expr_(index_expr), bracket_token_(bracket_token) {}
 
-	ASTNode array_expr() const { return array_expr_; }
-	ASTNode index_expr() const { return index_expr_; }
+	const ASTNode& array_expr() const { return array_expr_; }
+	const ASTNode& index_expr() const { return index_expr_; }
 	const Token& bracket_token() const { return bracket_token_; }
 
 private:
@@ -235,7 +235,7 @@ public:
 		return node;
 	}
 
-	ASTNode type_or_expr() const { return type_or_expr_; }
+	const ASTNode& type_or_expr() const { return type_or_expr_; }
 	const Token& sizeof_token() const { return sizeof_token_; }
 	bool is_type() const { return is_type_; }
 
@@ -406,7 +406,7 @@ public:
 		: kind_(kind), type_node_(), second_type_node_(std::nullopt), additional_type_nodes_(), trait_token_(trait_token) {}
 
 	TypeTraitKind kind() const { return kind_; }
-	ASTNode type_node() const { return type_node_; }
+	const ASTNode& type_node() const { return type_node_; }
 	bool has_type() const { return type_node_.is<TypeSpecifierNode>(); }
 	bool has_second_type() const { return second_type_node_.has_value(); }
 	ASTNode second_type_node() const { return second_type_node_.value_or(ASTNode()); }
