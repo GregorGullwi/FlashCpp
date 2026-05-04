@@ -1831,7 +1831,6 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 		// For same-type operands, return the LHS type
 		if (lhs_type_opt.has_value()) {
-			auto rhs_type_opt = get_expression_type(binary.get_rhs());
 			if (rhs_type_opt.has_value() && lhs_type_opt->type() == rhs_type_opt->type()) {
 				return *lhs_type_opt;
 			}
