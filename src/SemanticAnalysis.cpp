@@ -3797,6 +3797,17 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					if (!operand_id)
 						return {};
 					const CanonicalTypeDesc& operand_desc = type_context_.get(operand_id);
+					// Pointers, arrays, references, etc. don't support unary +/-/~ as
+					// builtin operators. If the operand isn't a scalar arithmetic type
+					// (or a small-int category that promotes to int), the result type
+					// depends on a user-defined overload that this fast path does not
+					// resolve. Returning {} keeps copy-init / overload-resolution
+					// fallbacks correct (instead of synthesizing a placeholder
+					// nativeTypeIndex(Struct) that doesn't match any real struct's
+					// canonical id and therefore fools same-type comparisons).
+					if (!operand_desc.pointer_levels.empty() || !operand_desc.array_dimensions.empty()) {
+						return {};
+					}
 					// Resolve enum to underlying type
 					const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(operand_desc.type_index);
 					const bool is_small_int =
@@ -3805,6 +3816,11 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						CanonicalTypeDesc promoted;
 						promoted.type_index = nativeTypeIndex(TypeCategory::Int);
 						return type_context_.intern(promoted);
+					}
+					if (!is_standard_arithmetic_type(operand_cat)) {
+						// Struct, enum, user-defined: actual result type is determined
+						// by an overloaded operator that we don't try to resolve here.
+						return {};
 					}
 					CanonicalTypeDesc result_desc;
 					result_desc.type_index = nativeTypeIndex(operand_cat);
@@ -4749,6 +4765,53 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 		return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty())
 		return false;
+	// If the source is a struct but its specific TypeInfo could not be resolved
+	// (type_index=0 placeholder reached the canonical desc), we cannot decide
+	// whether a converting constructor would actually be needed. Bail out
+	// rather than guessing — emitting an explicit-ctor diagnostic against an
+	// unresolved struct source produces false positives in deferred template
+	// bodies (e.g. <string_view>'s `__max_size_type` return statements).
+	if (from_desc.category() == TypeCategory::Struct && !from_desc.type_index.is_valid()) {
+		return false;
+	}
+	// Same-type copy/move initialization (modulo CV/ref qualifiers) is handled by
+	// the implicit copy/move constructor and never requires picking a converting
+	// constructor — even if all user-written converting ctors are explicit.
+	// Without this short-circuit, sources whose canonical id only differs by a
+	// const qualifier (e.g. accessing a member through a const this) reach the
+	// converting-ctor scan below and incorrectly trip the explicit-ctor error.
+	if (from_desc.type_index == to_desc.type_index &&
+		from_desc.category() == TypeCategory::Struct) {
+		return false;
+	}
+	// Also short-circuit when the source is an instantiation of the same class
+	// template as the target (or vice versa). Inside the deferred body of a
+	// class template member, an unqualified reference to the class name often
+	// resolves to the *pattern* type_index while `*this` (or other expressions)
+	// produces an *instantiated* type_index. They are the same logical type and
+	// must not trigger converting-ctor lookup.
+	if (from_desc.category() == TypeCategory::Struct) {
+		const TypeInfo* from_ti = tryGetTypeInfo(from_desc.type_index);
+		const TypeInfo* to_ti = tryGetTypeInfo(to_desc.type_index);
+		if (from_ti && to_ti) {
+			// Compare the simple base name (after the last "::" and before any
+			// "$" suffix used for partial-spec patterns / instantiation hashes).
+			auto base_template_name = [](std::string_view name) -> std::string_view {
+				if (auto pos = name.rfind("::"); pos != std::string_view::npos) {
+					name.remove_prefix(pos + 2);
+				}
+				if (auto pos = name.find('$'); pos != std::string_view::npos) {
+					name = name.substr(0, pos);
+				}
+				return name;
+			};
+			const std::string_view from_base = base_template_name(StringTable::getStringView(from_ti->name()));
+			const std::string_view to_base = base_template_name(StringTable::getStringView(to_ti->name()));
+			if (!from_base.empty() && from_base == to_base) {
+				return false;
+			}
+		}
+	}
 	if (from_desc.ref_qualifier != ReferenceQualifier::None || to_desc.ref_qualifier != ReferenceQualifier::None)
 		return false;
 	if (from_desc.category() == TypeCategory::UserDefined ||
