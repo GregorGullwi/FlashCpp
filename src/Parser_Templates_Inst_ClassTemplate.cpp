@@ -1584,7 +1584,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		TypeSpecifierNode substituted_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
 		substituted_type_spec.set_type_index(substituted_type_index.withCategory(substituted_type));
 		substituted_type_spec.set_category(substituted_type);
-		std::optional<TemplateTypeArg> rebinding_result;
+		std::optional<TemplateTypeArg> rebound_arg;
 		// Function-pointer aliases carry their dependent parameter use inside the
 		// signature; the existing alias-resolution path below preserves that full
 		// signature, while direct rebinding here is only for aliases shaped like T,
@@ -1614,9 +1614,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			return std::nullopt;
 		};
-		rebinding_result = findMatchingTemplateArgForRebinding();
-		if (rebinding_result.has_value()) {
-			substituted_type_spec = makeTypeSpecifierFromTemplateTypeArg(*rebinding_result, substituted_type_spec.token());
+		rebound_arg = findMatchingTemplateArgForRebinding();
+		if (rebound_arg.has_value()) {
+			substituted_type_spec = makeTypeSpecifierFromTemplateTypeArg(*rebound_arg, substituted_type_spec.token());
 			substituted_type_index = substituted_type_spec.type_index();
 			substituted_type = substituted_type_spec.type();
 		}
