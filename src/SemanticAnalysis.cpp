@@ -4767,6 +4767,13 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 		return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty())
 		return false;
+	// Some deferred template-body expressions still reach this point with a
+	// struct-category canonical type whose concrete TypeInfo never resolved.
+	// We cannot soundly decide converting-constructor viability from that
+	// placeholder, so avoid emitting a false-positive diagnostic.
+	if (from_desc.category() == TypeCategory::Struct && !from_desc.type_index.is_valid()) {
+		return false;
+	}
 	// Same-type copy/move initialization (modulo CV/ref qualifiers) is handled by
 	// the implicit copy/move constructor and never requires picking a converting
 	// constructor — even if all user-written converting ctors are explicit.
