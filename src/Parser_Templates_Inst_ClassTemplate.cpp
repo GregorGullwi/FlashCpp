@@ -33,8 +33,13 @@ using TemplateArgSubstitutionMap = std::unordered_map<std::string_view, Template
 using TemplateArgPackSubstitutionMap =
 	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>;
 
+struct DeferredBasePackBinding {
+	StringHandle name;
+	std::span<const TemplateTypeArg> args;
+};
+
 struct DeferredBasePackExpansionBindingInfo {
-	std::vector<std::pair<StringHandle, const std::vector<TemplateTypeArg>*>> pack_bindings;
+	std::vector<DeferredBasePackBinding> pack_bindings;
 	size_t expansion_count = 1;
 	bool invalid = false;
 };
@@ -89,9 +94,9 @@ static DeferredBasePackExpansionBindingInfo collectDeferredBasePackExpansionBind
 		if (pack_it == pack_substitution_map.end()) {
 			return;
 		}
-		for (const auto& [existing_name, existing_args] : binding_info.pack_bindings) {
-			if (existing_name == pack_name) {
-				if (existing_args->size() != pack_it->second.size()) {
+		for (const DeferredBasePackBinding& existing_binding : binding_info.pack_bindings) {
+			if (existing_binding.name == pack_name) {
+				if (existing_binding.args.size() != pack_it->second.size()) {
 					binding_info.invalid = true;
 				}
 				return;
@@ -103,7 +108,8 @@ static DeferredBasePackExpansionBindingInfo collectDeferredBasePackExpansionBind
 			return;
 		}
 		binding_info.expansion_count = pack_it->second.size();
-		binding_info.pack_bindings.emplace_back(pack_name, &pack_it->second);
+		binding_info.pack_bindings.push_back(
+			DeferredBasePackBinding{pack_name, std::span<const TemplateTypeArg>(pack_it->second)});
 	};
 
 	for (const auto& arg_info : deferred_base.template_arguments) {
@@ -137,11 +143,12 @@ static TemplateArgSubstitutionMap makeDeferredBaseExpansionSubstitutionMap(
 	const DeferredBasePackExpansionBindingInfo& binding_info,
 	size_t expansion_index) {
 	TemplateArgSubstitutionMap subst_map = base_name_substitution_map;
-	for (const auto& [pack_name, pack_args] : binding_info.pack_bindings) {
-		if (expansion_index >= pack_args->size()) {
+	for (const DeferredBasePackBinding& pack_binding : binding_info.pack_bindings) {
+		if (expansion_index >= pack_binding.args.size()) {
 			throw InternalError("Deferred base pack expansion index out of range");
 		}
-		subst_map[StringTable::getStringView(pack_name)] = (*pack_args)[expansion_index];
+		subst_map[StringTable::getStringView(pack_binding.name)] =
+			pack_binding.args[expansion_index];
 	}
 	return subst_map;
 }
