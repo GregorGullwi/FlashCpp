@@ -355,12 +355,12 @@ void AstToIr::visitSwitchStatementNode(const SwitchStatementNode& node) {
 	ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 	ActiveSwitchContext switch_context;
-	switch_context.default_label_name = default_label;
+	switch_context.default_label = default_label;
 	std::vector<std::pair<StringHandle, ASTNode>> case_labels;
 	bool has_default = false;
 	size_t case_index = 0;
 
-	std::function<void(const ASTNode&)> collect_switch_labels = [&](const ASTNode& current) {
+	auto scan_case_labels_impl = [&](const ASTNode& current, auto& self) -> void {
 		if (!current.has_value()) {
 			return;
 		}
@@ -373,74 +373,78 @@ void AstToIr::visitSwitchStatementNode(const SwitchStatementNode& node) {
 			case_labels.push_back({case_label_name, case_node.get_case_value()});
 			case_index++;
 			if (case_node.has_statement()) {
-				collect_switch_labels(*case_node.get_statement());
+				self(*case_node.get_statement(), self);
 			}
 			return;
 		}
 
 		if (current.is<DefaultLabelNode>()) {
 			has_default = true;
-			switch_context.default_label_names[current.raw_pointer()] = default_label;
 			const DefaultLabelNode& default_node = current.as<DefaultLabelNode>();
 			if (default_node.has_statement()) {
-				collect_switch_labels(*default_node.get_statement());
+				self(*default_node.get_statement(), self);
 			}
 			return;
 		}
 
 		if (current.is<BlockNode>()) {
 			current.as<BlockNode>().get_statements().visit([&](const ASTNode& statement) {
-				collect_switch_labels(statement);
+				self(statement, self);
 			});
 			return;
 		}
 
 		if (current.is<IfStatementNode>()) {
 			const IfStatementNode& if_node = current.as<IfStatementNode>();
-			collect_switch_labels(if_node.get_then_statement());
+			self(if_node.get_then_statement(), self);
 			if (if_node.has_else()) {
-				collect_switch_labels(*if_node.get_else_statement());
+				self(*if_node.get_else_statement(), self);
 			}
 			return;
 		}
 
 		if (current.is<ForStatementNode>()) {
-			collect_switch_labels(current.as<ForStatementNode>().get_body_statement());
+			self(current.as<ForStatementNode>().get_body_statement(), self);
 			return;
 		}
 
 		if (current.is<WhileStatementNode>()) {
-			collect_switch_labels(current.as<WhileStatementNode>().get_body_statement());
+			self(current.as<WhileStatementNode>().get_body_statement(), self);
 			return;
 		}
 
 		if (current.is<DoWhileStatementNode>()) {
-			collect_switch_labels(current.as<DoWhileStatementNode>().get_body_statement());
+			self(current.as<DoWhileStatementNode>().get_body_statement(), self);
 			return;
 		}
 
 		if (current.is<RangedForStatementNode>()) {
-			collect_switch_labels(current.as<RangedForStatementNode>().get_body_statement());
+			self(current.as<RangedForStatementNode>().get_body_statement(), self);
 			return;
 		}
 
 		if (current.is<TryStatementNode>()) {
 			const TryStatementNode& try_node = current.as<TryStatementNode>();
-			collect_switch_labels(try_node.try_block());
+			self(try_node.try_block(), self);
 			for (const ASTNode& catch_clause : try_node.catch_clauses()) {
 				if (catch_clause.is<CatchClauseNode>()) {
-					collect_switch_labels(catch_clause.as<CatchClauseNode>().body());
+					self(catch_clause.as<CatchClauseNode>().body(), self);
 				}
 			}
 			return;
 		}
 
 		if (current.is<SwitchStatementNode>()) {
+			// Do not recurse into nested switch statements — their case/default labels
+			// belong to that inner switch's own comparison chain, not ours.
 			return;
 		}
 	};
+	auto scan_case_labels = [&](const ASTNode& current) {
+		scan_case_labels_impl(current, scan_case_labels_impl);
+	};
 
-	collect_switch_labels(node.get_body());
+	scan_case_labels(node.get_body());
 
 	size_t check_index = 0;
 	for (const auto& [case_label, case_value_node] : case_labels) {
@@ -505,6 +509,8 @@ void AstToIr::visitSwitchStatementNode(const SwitchStatementNode& node) {
 void AstToIr::visitCaseLabelNode(const CaseLabelNode& node) {
 	if (!active_switch_context_stack_.empty()) {
 		const auto& switch_context = active_switch_context_stack_.back();
+		// The map key is the raw pointer to the CaseLabelNode's storage, which is
+		// stable (nodes live in gChunkedAnyStorage) and unique per AST node instance.
 		auto label_it = switch_context.case_label_names.find(static_cast<const void*>(&node));
 		if (label_it != switch_context.case_label_names.end()) {
 			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = label_it->second}, Token()));
@@ -529,10 +535,7 @@ void AstToIr::visitCaseLabelNode(const CaseLabelNode& node) {
 void AstToIr::visitDefaultLabelNode(const DefaultLabelNode& node) {
 	if (!active_switch_context_stack_.empty()) {
 		const auto& switch_context = active_switch_context_stack_.back();
-		auto label_it = switch_context.default_label_names.find(static_cast<const void*>(&node));
-		if (label_it != switch_context.default_label_names.end()) {
-			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = label_it->second}, Token()));
-		}
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = switch_context.default_label}, Token()));
 	}
 
 	if (!node.has_statement()) {

@@ -90,9 +90,8 @@ private:
 	};
 
 	struct ActiveSwitchContext {
-		StringHandle default_label_name;
+		StringHandle default_label;
 		std::unordered_map<const void*, StringHandle> case_label_names;
-		std::unordered_map<const void*, StringHandle> default_label_names;
 	};
 
 	struct GlobalStaticBindingInfo {

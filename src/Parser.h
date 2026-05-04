@@ -2278,6 +2278,7 @@ private:	 // Resume private methods
 	ParseResult parse_do_while_loop();
 	ParseResult parse_if_statement();
 	ParseResult parse_switch_statement();
+	ParseResult parse_label_body_statement();
 	ParseResult parse_case_label_statement();
 	ParseResult parse_default_label_statement();
 	ParseResult parse_return_statement();

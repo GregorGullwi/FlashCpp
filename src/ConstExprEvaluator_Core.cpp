@@ -5392,8 +5392,8 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				}
 				block_to_exec = *default_node.get_statement();
 			} else {
-				// Unexpected non-label node in switch body
-				continue;
+				// Standalone statement in switch body (e.g. between case labels in a flat-body switch)
+				block_to_exec = s;
 			}
 
 			// Execute the block of statements for this case/default.
