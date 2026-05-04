@@ -26,6 +26,26 @@ namespace {
 			.commit()));
 }
 
+[[noreturn]] void reportMissingSemaResolvedConstructorInExpr(StringHandle struct_name, std::string_view init_kind) {
+	throw InternalError(std::string(StringBuilder()
+		.append("Sema-normalized ")
+		.append(init_kind)
+		.append(" is missing a resolved constructor for '")
+		.append(StringTable::getStringView(struct_name))
+		.append("'")
+		.commit()));
+}
+
+[[noreturn]] void reportMismatchedSemaResolvedConstructorInExpr(StringHandle struct_name, std::string_view init_kind) {
+	throw InternalError(std::string(StringBuilder()
+		.append("Sema-normalized ")
+		.append(init_kind)
+		.append(" resolved the wrong constructor target for '")
+		.append(StringTable::getStringView(struct_name))
+		.append("'")
+		.commit()));
+}
+
 } // namespace
 
 void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
@@ -38,7 +58,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 	// Phase 15: track whether sema normalized this function body.
 	sema_normalized_current_function_ = false;
-	if (sema_ && node.is_materialized()) {
+	if (node.is_materialized()) {
 		sema_normalized_current_function_ = sema_->hasNormalizedBody(
 			static_cast<const void*>(&(*node.get_definition())));
 	}
@@ -1561,7 +1581,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 
 	// Phase 16: track whether sema normalized this constructor body.
 	sema_normalized_current_function_ = false;
-	if (sema_ && node.is_materialized()) {
+	if (node.is_materialized()) {
 		sema_normalized_current_function_ = sema_->hasNormalizedBody(
 			static_cast<const void*>(&(*node.get_definition())));
 	}
@@ -2817,8 +2837,8 @@ void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& no
 		return;
 
 	// track whether sema normalized this destructor body.
-	sema_normalized_current_function_ = sema_ &&
-										sema_->hasNormalizedBody(static_cast<const void*>(&(*node.get_definition())));
+	sema_normalized_current_function_ =
+		sema_->hasNormalizedBody(static_cast<const void*>(&(*node.get_definition())));
 
 	// Reset the temporary variable counter for each new destructor
 	// Destructors are always member functions, so reserve TempVar(1) for 'this'
@@ -3227,12 +3247,29 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 	// Find the matching constructor to get parameter types for reference handling
 	const ConstructorDeclarationNode* matching_ctor = constructorCallNode.resolved_constructor();
+	const bool require_sema_resolved_ctor =
+		sema_normalized_current_function_ &&
+		struct_info &&
+		struct_info->hasUserDeclaredConstructor();
+	auto ctorMatchesTargetType = [&](const ConstructorDeclarationNode& ctor) {
+		if (result_type_index.is_valid()) {
+			return resolvedConstructorMatchesTargetType(ctor, result_type_index);
+		}
+		return struct_info && ctor.struct_name() == struct_info->name;
+	};
 
 	if (struct_info) {
-		if (matching_ctor) {
+		if (matching_ctor && ctorMatchesTargetType(*matching_ctor)) {
 			FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(constructor_name));
+		} else if (matching_ctor) {
+			if (require_sema_resolved_ctor) {
+				reportMismatchedSemaResolvedConstructorInExpr(struct_info->name, "constructor call");
+			}
+			matching_ctor = nullptr;
+		} else if (require_sema_resolved_ctor) {
+			reportMissingSemaResolvedConstructorInExpr(struct_info->name, "constructor call");
 		}
-		if (!matching_ctor) {
+		if (!matching_ctor && !require_sema_resolved_ctor) {
 			std::vector<TypeSpecifierNode> arg_types;
 			arg_types.reserve(num_args);
 			constructorCallNode.arguments().visit([&](ASTNode arg) {
@@ -3253,11 +3290,6 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			}
 		}
 
-		if (!matching_ctor) {
-			FLASH_LOG_FORMAT(Codegen, Debug, "Falling back to arity-based constructor resolution for {}", StringTable::getStringView(constructor_name));
-			auto arity_resolution = resolve_constructor_overload_arity(*struct_info, num_args, true);
-			matching_ctor = arity_resolution.selected_overload;
-		}
 	}
 	ctor_op.resolved_constructor = matching_ctor;
 	// Get constructor parameter types for reference handling
@@ -3370,51 +3402,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		arg_index++;
 	});
 
-	// Fill in default arguments for parameters that weren't explicitly provided
-	// Find the matching constructor and add default values for missing parameters
-	if (struct_info) {
-		size_t num_explicit_args = ctor_op.arguments.size();
-
-		// Find a constructor that has MORE parameters than explicit arguments
-		// and has default values for those extra parameters
-		for (const auto& func : struct_info->member_functions) {
-			if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-				const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-				const auto& params = ctor_node.parameter_nodes();
-
-				// Only consider constructors that have MORE parameters than explicit args
-				// (constructors with exact match don't need default argument filling)
-				if (params.size() > num_explicit_args) {
-					// Check if the remaining parameters all have default values
-					bool all_remaining_have_defaults = true;
-					for (size_t i = num_explicit_args; i < params.size(); ++i) {
-						if (params[i].is<DeclarationNode>()) {
-							if (!params[i].as<DeclarationNode>().has_default_value()) {
-								all_remaining_have_defaults = false;
-								break;
-							}
-						} else {
-							all_remaining_have_defaults = false;
-							break;
-						}
-					}
-
-					if (all_remaining_have_defaults) {
-						// Generate IR for the default values of the remaining parameters
-						for (size_t i = num_explicit_args; i < params.size(); ++i) {
-							const auto& param_decl = params[i].as<DeclarationNode>();
-							const ASTNode& default_node = param_decl.default_value();
-							if (default_node.is<ExpressionNode>()) {
-								ExprResult default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
-								TypedValue default_arg = toTypedValue(default_operands);
-								ctor_op.arguments.push_back(std::move(default_arg));
-							}
-						}
-						break;  // Found a matching constructor
-					}
-				}
-			}
-		}
+	if (matching_ctor) {
+		fillInConstructorDefaultArguments(ctor_op, *matching_ctor, ctor_op.arguments.size());
 	}
 
 	// Check if we should use RVO (Return Value Optimization)

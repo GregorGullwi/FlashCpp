@@ -563,7 +563,7 @@ void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
 void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	SemaNormalizedScopeGuard sema_normalized_scope_guard(
 		sema_normalized_current_function_,
-		sema_ && sema_->hasNormalizedAstNode(lambda_info.lambda_body));
+		sema_->hasNormalizedAstNode(lambda_info.lambda_body));
 
 		// Generate function declaration for operator()
 	FunctionDeclOp func_decl_op;
@@ -725,7 +725,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	SemaNormalizedScopeGuard sema_normalized_scope_guard(
 		sema_normalized_current_function_,
-		sema_ && sema_->hasNormalizedAstNode(lambda_info.lambda_body));
+		sema_->hasNormalizedAstNode(lambda_info.lambda_body));
 
 		// Generate function declaration for __invoke
 	FunctionDeclOp func_decl_op;

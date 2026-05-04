@@ -1493,7 +1493,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 	if (unaryOperatorNode.op() == "~" || unaryOperatorNode.op() == "-" || unaryOperatorNode.op() == "+") {
 			// Try sema-annotated promotion first
 		bool promoted = false;
-		if (sema_ && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+		if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const void* key = &unaryOperatorNode.get_operand().as<ExpressionNode>();
 			const auto slot = sema_->getSlot(key);
 			if (slot.has_value() && slot->has_cast()) {
@@ -2087,9 +2087,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 		if (operand_pointer_depth == 0) {
 			std::optional<TypeSpecifierNode> operand_type_opt;
-			if (sema_) {
-				operand_type_opt = sema_->getExpressionType(unaryOperatorNode.get_operand());
-			}
+			operand_type_opt = sema_->getExpressionType(unaryOperatorNode.get_operand());
 			if (!operand_type_opt.has_value() && parser_) {
 				operand_type_opt = parser_->get_expression_type(unaryOperatorNode.get_operand());
 			}
@@ -2490,7 +2488,7 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 
 	// 1. Try sema annotation
 	bool sema_applied_bool_conv = false;
-	if (sema_ && cond_node.is<ExpressionNode>()) {
+	if (cond_node.is<ExpressionNode>()) {
 		const void* key = &cond_node.as<ExpressionNode>();
 		const auto slot = sema_->getSlot(key);
 		if (slot.has_value() && slot->has_cast()) {
@@ -2569,7 +2567,7 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 	bool sema_applied = false;
 
 	// 1. Try sema annotation (most accurate path).
-	if (sema_ && arg_expr.is<ExpressionNode>()) {
+	if (arg_expr.is<ExpressionNode>()) {
 		const void* key = &arg_expr.as<ExpressionNode>();
 		const auto slot = sema_->getSlot(key);
 		if (slot.has_value() && slot->has_cast()) {

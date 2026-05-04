@@ -237,6 +237,16 @@ private:
 
 	// Helpers
 	void registerParametersInScope(const std::vector<ASTNode>& parameter_nodes);
+	void normalizeParameterExpressionsInScope(const std::vector<ASTNode>& parameter_nodes, const SemanticContext& ctx);
+	// Registers outer template bindings, parameters, and normalizes parameter
+	// expressions for any callable node that has parameter_nodes(). Used by
+	// normalizeFunctionDeclaration and normalizeConstructorDeclaration.
+	template <typename NodeType>
+	void setupNormalizedParameterScope(const NodeType& node, const SemanticContext& ctx) {
+		registerOuterTemplateBindingsInScope(node);
+		registerParametersInScope(node.parameter_nodes());
+		normalizeParameterExpressionsInScope(node.parameter_nodes(), ctx);
+	}
 	CanonicalTypeId canonicalizeType(const TypeSpecifierNode& type);
 	void resolveRemainingAutoReturns();
 	void resolveRemainingAutoReturnsInNode(ASTNode& node);

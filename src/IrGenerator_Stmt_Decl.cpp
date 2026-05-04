@@ -1907,7 +1907,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					bool conv_op_applied = false;
 					if (need_conversion && init_cat == TypeCategory::Struct) {
 							// First check for a sema-annotated user-defined conversion
-						if (sema_ && init_node.is<ExpressionNode>()) {
+						if (init_node.is<ExpressionNode>()) {
 							const void* key = &init_node.as<ExpressionNode>();
 							const auto slot = sema_->getSlot(key);
 							if (slot.has_value() && slot->has_cast()) {
@@ -1996,7 +1996,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					}
 					if (init_type != decl_type && init_cat != TypeCategory::Struct && decl_cat != TypeCategory::Struct && init_cat != TypeCategory::Enum && decl_cat != TypeCategory::Enum && init_cat != TypeCategory::Invalid && decl_cat != TypeCategory::Invalid && !isPlaceholderAutoType(init_cat) && !isPlaceholderAutoType(decl_cat) && type_node.pointer_depth() == 0) {
 						bool sema_applied = false;
-						if (sema_ && init_node.is<ExpressionNode>()) {
+						if (init_node.is<ExpressionNode>()) {
 							const void* key = &init_node.as<ExpressionNode>();
 							const auto slot = sema_->getSlot(key);
 							if (slot.has_value() && slot->has_cast()) {
@@ -2580,7 +2580,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								// Check if types differ
 							is_converting_ctor = (init_cat != TypeCategory::Struct) || (init_type_index != type_node.type_index());
 
-							if (is_converting_ctor && sema_ && init_node.is<ExpressionNode>()) {
+							if (is_converting_ctor && init_node.is<ExpressionNode>()) {
 								const void* key = &init_node.as<ExpressionNode>();
 								const auto slot = sema_->getSlot(key);
 								if (slot.has_value() && slot->has_cast()) {
