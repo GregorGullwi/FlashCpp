@@ -1596,13 +1596,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			forEachNonPackTemplateParamArgBinding(
 				params,
 				args,
-				[&](const TemplateParameterNode& param, const TemplateTypeArg& concrete_arg, size_t /*arg_index*/) {
-					if (rebound_arg.has_value() || concrete_arg.is_value || param.nameHandle() != alias_target_name) {
-						return;
+				[&](const TemplateParameterNode& param, const TemplateTypeArg& concrete_arg, size_t) {
+					if (!rebound_arg.has_value() &&
+						!concrete_arg.is_value &&
+						param.nameHandle() == alias_target_name) {
+						rebound_arg = rebindDependentTemplateTypeArg(
+							concrete_arg,
+							TemplateTypeArg(substituted_type_spec));
 					}
-					rebound_arg = rebindDependentTemplateTypeArg(
-						concrete_arg,
-						TemplateTypeArg(substituted_type_spec));
 				});
 		}
 		if (rebound_arg.has_value()) {
