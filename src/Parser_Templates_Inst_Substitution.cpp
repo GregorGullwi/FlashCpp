@@ -290,6 +290,7 @@ std::optional<TemplateTypeArg> Parser::tryRebindAliasTargetTemplateArg(
 		TemplateTypeArg(alias_node.target_type_node()));
 }
 
+
 void Parser::normalizeDependentNonTypeTemplateArgs(
 	const InlineVector<ASTNode, 4>& template_parameters,
 	std::vector<TemplateTypeArg>& template_args) {
