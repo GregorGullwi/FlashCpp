@@ -8,7 +8,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1369ms |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1434ms (retested 2026-05-04, Linux/libstdc++-14); wchar_t/char32_t Phase 15 blocker fixed. See latest dated section. |
 | `<type_traits>` | `test_std_type_traits.cpp` | ❌ Compile Error | ~282ms (retested 2026-04-28, Linux/libstdc++-14). `std::is_integral<int>::value` still passes, but the current first failure is `static_assert(std::is_pointer<int*>::value)`. |
 | `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | ~609ms (retested 2026-04-11). Targeted test still compiles, but bare `#include <compare>` now fails with "Ambiguous constructor call" during codegen of a namespace-level node. |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
@@ -196,6 +196,36 @@ instead. The most visible current next-stop blockers in this slice are:
    `Itanium name mangling: unknown type — cannot generate valid symbol`.
 
 
+#### 2026-05-04 Shift-result sema type fix for `<limits>` (Linux/libstdc++-14)
+
+This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and rechecked the
+current `<limits>` blocker plus focused binary-conversion regressions.
+
+Fix landed:
+
+- **`inferExpressionType` now models C++20 [expr.shift] result typing instead
+  of falling through to the usual arithmetic conversions.**  Shift operands
+  undergo independent integral promotions, and the result has the promoted
+  left-operand type.  The old common-type fallback made expressions shaped like
+  libstdc++'s `__glibcxx_max_b(char32_t, ...)` infer an intermediate
+  `unsigned long long` result for `((char32_t)1 << n)`, so sema annotated the
+  following `- 1` as `int -> unsigned long long` while codegen correctly
+  expected `int -> char32_t`.
+- Binary operand conversion annotation now runs after child expression
+  normalization, so parent binary operators consume the sema-owned types of
+  casts and nested shifts before selecting the usual arithmetic conversions.
+
+Regression test:
+
+- `tests/test_char_width_binary_sema_conversions_ret0.cpp`
+
+Validation snapshot:
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `tests/test_char_width_binary_sema_conversions_ret0.cpp` | ✅ PASS | run-all focused slice | Covers `wchar_t < int`, `char32_t - int`, and ordinary mixed builtin arithmetic. |
+| `<limits>` / `test_std_limits.cpp` | ✅ Compiled | ~1434ms | No longer fails with `Phase 15: sema missed binary LHS conversion (wchar_t -> int)` or `RHS conversion (int -> char32_t)`. Still logs two recoverable codegen skips: `Return value exceeds 32-bit limit`. |
+
 #### 2026-05-04 Same-template / unknown-struct copy-init explicit-ctor fix (Linux/libstdc++-14)
 
 This pass rebuilt `x64/Sharded/FlashCpp` with clang++ on Linux and ran the full
@@ -247,7 +277,7 @@ Linux/libstdc++-14 std-header sweep (`x64/Sharded/FlashCpp`, 60 s timeout):
 | `<compare_ret42>` | ✅ Compiled | 34ms | |
 | `<concepts>` | ✅ Compiled | 517ms | |
 | `<exception>` | ✅ Compiled | 553ms | |
-| `<limits>` | ✅ Compiled | 1475ms | (Now reports rc=1 on a deferred trait but the focused test path still passes.) |
+| `<limits>` | ✅ Compiled | 1434ms | **Unblocked from Phase 15 missed binary conversions.**  Still logs two recoverable `Return value exceeds 32-bit limit` skips in codegen, but the targeted header compile returns success. |
 | `<new>` | ✅ Compiled | 63ms | |
 | `<pair_swap_deleted_member>` | ✅ Compiled | 27ms | |
 | `<rel_ops_no_false_instantiation_ret0>` | ✅ Compiled | 826ms | |

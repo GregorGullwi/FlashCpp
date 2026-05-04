@@ -2496,12 +2496,43 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					e.get_rhs().template is<ExpressionNode>();
 				CanonicalTypeId lhs_type_id{};
 				CanonicalTypeId rhs_type_id{};
+				// C++20 [expr.log.and], [expr.log.or]: each operand is
+				// contextually converted to bool.
+				if (is_logical) {
+					tryAnnotateContextualBool(e.get_lhs());
+					tryAnnotateContextualBool(e.get_rhs());
+				}
+				// For simple assignment, annotate the RHS with the LHS type.
+				if (op == "=" &&
+					e.get_lhs().template is<ExpressionNode>() &&
+					e.get_rhs().template is<ExpressionNode>()) {
+					const CanonicalTypeId lhs_id = inferExpressionType(e.get_lhs());
+					if (lhs_id) {
+						const CanonicalTypeId rhs_id = inferExpressionType(e.get_rhs());
+						tryAnnotateConversion(e.get_rhs(), lhs_id, rhs_id);
+						diagnoseScopedEnumConversion(e.get_rhs(), lhs_id,
+													 " in assignment", rhs_id);
+					}
+				}
+				// Phase 5 Slice G item #4: mark resolved operator overloads
+				// as ODR-used so instantiated-struct member operator bodies
+				// are materialized by the end-of-sema drain's ODR-use pass.
+				// Free-function operator overloads are top-level (not lazy
+				// members of an instantiation) so they need no marking here.
+				if (e.has_resolved_member_operator_overload()) {
+					if (const StructMemberFunction* member_overload =
+							e.resolved_member_operator_overload()) {
+						markResolvedOperatorOverloadOdrUsed(*member_overload);
+					}
+				}
+				normalizeExpression(e.get_lhs(), ctx);
+				normalizeExpression(e.get_rhs(), ctx);
 				if (needs_binary_type_inference) {
 					lhs_type_id = inferExpressionType(e.get_lhs());
 					rhs_type_id = inferExpressionType(e.get_rhs());
-					// C++20: scoped enums do not participate in implicit arithmetic
-					// conversions. Diagnose before annotation so the error fires
-					// early with a clear message.
+					// C++20: scoped enums do not participate in implicit
+					// arithmetic conversions. Diagnose before annotation so the
+					// error fires with a clear message after child types settle.
 					diagnoseScopedEnumBinaryOperands(e, lhs_type_id, rhs_type_id);
 				}
 				if (is_shift && needs_binary_type_inference) {
@@ -2537,37 +2568,6 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 						tryAnnotateCompoundAssignBackConversion(e, lhs_type_id, rhs_type_id);
 					}
 				}
-				// C++20 [expr.log.and], [expr.log.or]: each operand is
-				// contextually converted to bool.
-				if (is_logical) {
-					tryAnnotateContextualBool(e.get_lhs());
-					tryAnnotateContextualBool(e.get_rhs());
-				}
-				// For simple assignment, annotate the RHS with the LHS type.
-				if (op == "=" &&
-					e.get_lhs().template is<ExpressionNode>() &&
-					e.get_rhs().template is<ExpressionNode>()) {
-					const CanonicalTypeId lhs_id = inferExpressionType(e.get_lhs());
-					if (lhs_id) {
-						const CanonicalTypeId rhs_id = inferExpressionType(e.get_rhs());
-						tryAnnotateConversion(e.get_rhs(), lhs_id, rhs_id);
-						diagnoseScopedEnumConversion(e.get_rhs(), lhs_id,
-													 " in assignment", rhs_id);
-					}
-				}
-				// Phase 5 Slice G item #4: mark resolved operator overloads
-				// as ODR-used so instantiated-struct member operator bodies
-				// are materialized by the end-of-sema drain's ODR-use pass.
-				// Free-function operator overloads are top-level (not lazy
-				// members of an instantiation) so they need no marking here.
-				if (e.has_resolved_member_operator_overload()) {
-					if (const StructMemberFunction* member_overload =
-							e.resolved_member_operator_overload()) {
-						markResolvedOperatorOverloadOdrUsed(*member_overload);
-					}
-				}
-				normalizeExpression(e.get_lhs(), ctx);
-				normalizeExpression(e.get_rhs(), ctx);
 			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 				// Resolve unary * on struct operands to operator*() before
 				// normalizing children, matching the ArraySubscriptNode pattern.
@@ -3980,6 +3980,26 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					op == "/=" || op == "%=" || op == "&=" || op == "|=" ||
 					op == "^=" || op == "<<=" || op == ">>=")
 					return inferExpressionType(e.get_lhs());
+				// C++20 [expr.shift]: integral promotions are performed on both
+				// operands, and the result type is the promoted left operand. Shift
+				// expressions do not use the usual arithmetic conversions.
+				if (op == "<<" || op == ">>") {
+					const CanonicalTypeId lhs_id = inferExpressionType(e.get_lhs());
+					if (!lhs_id)
+						return {};
+					const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_id);
+					if (!lhs_desc.pointer_levels.empty() || !lhs_desc.array_dimensions.empty())
+						return {};
+					if (lhs_desc.category() == TypeCategory::Struct ||
+						lhs_desc.category() == TypeCategory::Invalid ||
+						isPlaceholderAutoType(lhs_desc.category()) ||
+						isFloatingPointType(lhs_desc.category()))
+						return {};
+					CanonicalTypeDesc desc;
+					desc.type_index = nativeTypeIndex(
+						promote_integer_type(resolveEnumUnderlyingTypeCategory(lhs_desc.type_index)));
+					return type_context_.intern(desc);
+				}
 				// Arithmetic/bitwise: usual arithmetic conversions
 				{
 					const CanonicalTypeId lhs_id = inferExpressionType(e.get_lhs());
