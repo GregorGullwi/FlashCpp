@@ -8543,8 +8543,8 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 
 			if (std::holds_alternative<unsigned long long>(ret_val)) {
 				unsigned long long returnValue = std::get<unsigned long long>(ret_val);
-				returnValue = normalizeIntegralImmediateValue(returnValue, ret_op.return_type_index.category(), ret_op.return_size);
-
+				// Value is already normalized by emitReturn at IR generation time.
+				// Here we only dispatch based on return_size to emit the correct instruction.
 				spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 
 				if (ret_op.return_size > 32) {
