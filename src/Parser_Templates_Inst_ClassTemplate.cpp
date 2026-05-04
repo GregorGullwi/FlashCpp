@@ -1592,14 +1592,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		StringHandle alias_target_name = substituted_type_spec.has_function_signature()
 											 ? StringHandle{}
 											 : getAliasTargetNameHandle(substituted_type_spec);
-		if (alias_target_name.isValid()) {
-			forEachNonPackTemplateParamArgBinding(params, args, [&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t /*arg_index*/) {
-				if (rebinding_result.has_value() || arg.is_value || param.nameHandle() != alias_target_name) {
-					return;
+		auto findMatchingTemplateArgForRebinding = [&]() -> std::optional<TemplateTypeArg> {
+			if (!alias_target_name.isValid()) {
+				return std::nullopt;
+			}
+			size_t arg_index = 0;
+			for (size_t param_index = 0; param_index < params.size(); ++param_index) {
+				const TemplateParameterNode* param = tryGetTemplateParameterNode(params[param_index]);
+				if (param == nullptr) {
+					continue;
 				}
-				rebinding_result = rebindDependentTemplateTypeArg(arg, TemplateTypeArg(substituted_type_spec));
-			});
-		}
+				if (arg_index >= args.size()) {
+					break;
+				}
+				const TemplateTypeArg& arg = args[arg_index];
+				++arg_index;
+				if (arg.is_value || param->nameHandle() != alias_target_name) {
+					continue;
+				}
+				return rebindDependentTemplateTypeArg(arg, TemplateTypeArg(substituted_type_spec));
+			}
+			return std::nullopt;
+		};
+		rebinding_result = findMatchingTemplateArgForRebinding();
 		if (rebinding_result.has_value()) {
 			substituted_type_spec = makeTypeSpecifierFromTemplateTypeArg(*rebinding_result, substituted_type_spec.token());
 			substituted_type_index = substituted_type_spec.type_index();
