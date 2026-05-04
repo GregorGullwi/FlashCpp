@@ -101,7 +101,7 @@ public:
 	}
 
 	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
-	ASTNode function_declaration() const { return function_declaration_; }
+	const ASTNode& function_declaration() const { return function_declaration_; }
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }
 
@@ -1304,7 +1304,7 @@ public:
 	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
 	InlineVector<TemplateParameterNode, 4>& template_parameters() { return template_parameters_; }
 	const InlineVector<std::string_view, 4>& template_param_names() const { return template_param_names_; }
-	ASTNode class_declaration() const { return class_declaration_; }
+	const ASTNode& class_declaration() const { return class_declaration_; }
 
 	// Get the underlying StructDeclarationNode
 	StructDeclarationNode& class_decl_node() {

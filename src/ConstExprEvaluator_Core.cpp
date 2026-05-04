@@ -4967,7 +4967,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 		if (is_struct_type(type_spec.category())) {
 			const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
-			if (const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
+			if (type_info && type_info->getStructInfo()) {
 				EvalResult default_result = make_local_default_init(type_spec, context);
 				if (!default_result.success()) {
 					return default_result;

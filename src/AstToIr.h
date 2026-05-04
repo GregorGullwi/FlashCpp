@@ -174,8 +174,8 @@ private:
 		Token token;
 		bool active = false;
 
-		explicit IrScopeGuard(AstToIr& ir, Token token = Token())
-			: ir(ir), token(token) {}
+		explicit IrScopeGuard(AstToIr& ir_ref, Token token_arg = Token())
+			: ir(ir_ref), token(token_arg) {}
 
 		void enter() {
 			if (active) {

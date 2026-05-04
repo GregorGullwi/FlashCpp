@@ -278,8 +278,8 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 
 							// Per C++ standard 6.10.3.1: Determine which parameters are operands of # or ##
 							// Arguments for such parameters must NOT be pre-expanded
-							auto is_separator = [](char c) {
-								return !std::isalnum(static_cast<unsigned char>(c)) && c != '_';
+							auto is_separator = [](char ch) {
+								return !std::isalnum(static_cast<unsigned char>(ch)) && ch != '_';
 							};
 							auto paramAdjacentToHashHash = [&](const std::string& param_name, const std::string& body) -> bool {
 								size_t search_pos = 0;

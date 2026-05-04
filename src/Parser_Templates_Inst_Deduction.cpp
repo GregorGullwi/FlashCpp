@@ -4035,7 +4035,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 		// Check if this is a pure expression function
 		const bool is_pure_expr = std::invoke([&statements]() -> bool {
-			bool is_pure_expr = true; // assume true
+			bool inner_is_pure_expr = true; // assume true
 			// Might be more than one statement: using declaration + return for example
 			// This is still a pure expression if the return is a cast
 			bool has_pure_return = false;
@@ -4063,11 +4063,11 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 								   expr);
 					}
 				} else {
-					is_pure_expr = false;
+					inner_is_pure_expr = false;
 				}
 			});
-			is_pure_expr &= static_cast<int>(has_pure_return);
-			return is_pure_expr;
+			inner_is_pure_expr &= static_cast<int>(has_pure_return);
+			return inner_is_pure_expr;
 		});
 
 		new_func_ref.set_inline_always(is_pure_expr);

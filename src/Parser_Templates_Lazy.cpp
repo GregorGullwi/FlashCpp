@@ -933,9 +933,9 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		}
 
 		TypeIndex struct_type_index{};
-		if (auto type_it = getTypesByNameMap().find(instantiated_class_name);
-			type_it != getTypesByNameMap().end()) {
-			struct_type_index = type_it->second->type_index_;
+		if (auto inner_type_it = getTypesByNameMap().find(instantiated_class_name);
+			inner_type_it != getTypesByNameMap().end()) {
+			struct_type_index = inner_type_it->second->type_index_;
 		}
 		member_function_context_stack_.push_back({instantiated_class_name, struct_type_index, nullptr, struct_info});
 		struct MemberContextGuard {

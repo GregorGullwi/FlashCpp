@@ -635,14 +635,14 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
 	}
 
 	// Generate the line header for this specific function
-	struct LineInfoHeader {
+	struct LocalLineInfoHeader {
 		uint32_t code_offset;		  // Offset of function in code section
 		uint16_t segment;			  // Segment of function
 		uint16_t flags;				// Line flags
 		uint32_t code_length;		  // Length of function
 	};
 
-	LineInfoHeader line_header;
+	LocalLineInfoHeader line_header;
 	line_header.code_offset = func.code_offset; // Use actual function offset in text section
 	line_header.segment = 0; // Use section 0 to match MSVC/clang reference
 	line_header.flags = 0;   // No special flags
@@ -665,16 +665,16 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
 	// For now, we'll add them when the line data is written to the main debug_s_data
 
 	// Generate file block header for this function
-	struct FileBlockHeader {
+	struct LocalFileBlockHeader {
 		uint32_t file_id;			  // Index into file checksum table
 		uint32_t num_lines;			// Number of line entries
 		uint32_t block_size;		 // Size of this block
 	};
 
-	FileBlockHeader file_block;
+	LocalFileBlockHeader file_block;
 	file_block.file_id = func.file_id;
 	file_block.num_lines = static_cast<uint32_t>(func.line_offsets.size());
-	file_block.block_size = sizeof(FileBlockHeader) + (func.line_offsets.size() * sizeof(LineNumberEntry));
+	file_block.block_size = sizeof(LocalFileBlockHeader) + (func.line_offsets.size() * sizeof(LineNumberEntry));
 
 	if (g_enable_debug_output)
 		std::cerr << "DEBUG: Function line info for function " << func.name

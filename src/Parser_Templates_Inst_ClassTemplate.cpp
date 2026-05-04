@@ -2890,8 +2890,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 								// Helper to extract pack size from various expression forms
 								auto try_extract_pack_size = [&](const ExpressionNode& e) -> std::optional<size_t> {
-									if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&e)) {
-										const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
+									if (const auto* inner_sizeof_pack_ptr = std::get_if<SizeofPackNode>(&e)) {
+										const SizeofPackNode& sizeof_pack = *inner_sizeof_pack_ptr;
 										return calculate_pack_size(sizeof_pack.pack_name());
 									}
 									// Handle static_cast<T>(sizeof...(Ts))
@@ -2899,8 +2899,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										const StaticCastNode& cast_node = std::get<StaticCastNode>(e);
 										if (cast_node.expr().is<ExpressionNode>()) {
 											const ExpressionNode& cast_inner = cast_node.expr().as<ExpressionNode>();
-											if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&cast_inner)) {
-												const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
+											if (const auto* inner_sizeof_pack_ptr2 = std::get_if<SizeofPackNode>(&cast_inner)) {
+												const SizeofPackNode& sizeof_pack = *inner_sizeof_pack_ptr2;
 												return calculate_pack_size(sizeof_pack.pack_name());
 											}
 										}
@@ -4394,7 +4394,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return nullptr;
 		}
 
-		auto materialize_template_placeholder = [&](bool force_eager) {
+		auto materialize_template_placeholder = [&](bool inner_force_eager) {
 			if (!concrete_type->isTemplateInstantiation() ||
 				(concrete_type->getStructInfo() && concrete_type->getStructInfo()->sizeInBytes().is_set())) {
 				return false;
@@ -4408,7 +4408,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::vector<TemplateTypeArg> concrete_base_args =
 				materializeTemplateArgs(*concrete_type, template_params, template_args_to_use);
 			std::string_view instantiated_base_name =
-				instantiateAndResolveBaseName(base_template_name, concrete_base_args, force_eager);
+				instantiateAndResolveBaseName(base_template_name, concrete_base_args, inner_force_eager);
 			auto instantiated_base_it =
 				getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_base_name));
 			if (instantiated_base_it == getTypesByNameMap().end()) {
@@ -8274,8 +8274,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 						// Helper to extract pack size from various expression forms (including static_cast)
 						auto try_extract_pack_size = [&](const ExpressionNode& e) -> std::optional<size_t> {
-							if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&e)) {
-								const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
+							if (const auto* inner_sizeof_pack_ptr = std::get_if<SizeofPackNode>(&e)) {
+								const SizeofPackNode& sizeof_pack = *inner_sizeof_pack_ptr;
 								return calculate_pack_size(sizeof_pack.pack_name());
 							}
 							// Handle static_cast<T>(sizeof...(Ts))
@@ -8283,8 +8283,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								const StaticCastNode& cast_node = std::get<StaticCastNode>(e);
 								if (cast_node.expr().is<ExpressionNode>()) {
 									const ExpressionNode& cast_inner = cast_node.expr().as<ExpressionNode>();
-									if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&cast_inner)) {
-										const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
+									if (const auto* inner_sizeof_pack_ptr2 = std::get_if<SizeofPackNode>(&cast_inner)) {
+										const SizeofPackNode& sizeof_pack = *inner_sizeof_pack_ptr2;
 										return calculate_pack_size(sizeof_pack.pack_name());
 									}
 								}
