@@ -26,6 +26,26 @@ namespace {
 			.commit()));
 }
 
+[[noreturn]] void reportMissingSemaResolvedConstructorInExpr(StringHandle struct_name, std::string_view init_kind) {
+	throw InternalError(std::string(StringBuilder()
+		.append("Sema-normalized ")
+		.append(init_kind)
+		.append(" is missing a resolved constructor for '")
+		.append(StringTable::getStringView(struct_name))
+		.append("'")
+		.commit()));
+}
+
+[[noreturn]] void reportMismatchedSemaResolvedConstructorInExpr(StringHandle struct_name, std::string_view init_kind) {
+	throw InternalError(std::string(StringBuilder()
+		.append("Sema-normalized ")
+		.append(init_kind)
+		.append(" resolved the wrong constructor target for '")
+		.append(StringTable::getStringView(struct_name))
+		.append("'")
+		.commit()));
+}
+
 } // namespace
 
 void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
@@ -3227,12 +3247,29 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 	// Find the matching constructor to get parameter types for reference handling
 	const ConstructorDeclarationNode* matching_ctor = constructorCallNode.resolved_constructor();
+	const bool require_sema_resolved_ctor =
+		sema_normalized_current_function_ &&
+		struct_info &&
+		struct_info->hasUserDeclaredConstructor();
+	auto resolvedCtorMatchesTargetType = [&](const ConstructorDeclarationNode& ctor) {
+		if (result_type_index.is_valid()) {
+			return resolvedConstructorMatchesTargetType(ctor, result_type_index);
+		}
+		return struct_info && ctor.struct_name() == struct_info->name;
+	};
 
 	if (struct_info) {
-		if (matching_ctor) {
+		if (matching_ctor && resolvedCtorMatchesTargetType(*matching_ctor)) {
 			FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(constructor_name));
+		} else if (matching_ctor) {
+			if (require_sema_resolved_ctor) {
+				reportMismatchedSemaResolvedConstructorInExpr(struct_info->name, "constructor call");
+			}
+			matching_ctor = nullptr;
+		} else if (require_sema_resolved_ctor) {
+			reportMissingSemaResolvedConstructorInExpr(struct_info->name, "constructor call");
 		}
-		if (!matching_ctor) {
+		if (!matching_ctor && !require_sema_resolved_ctor) {
 			std::vector<TypeSpecifierNode> arg_types;
 			arg_types.reserve(num_args);
 			constructorCallNode.arguments().visit([&](ASTNode arg) {
@@ -3253,7 +3290,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			}
 		}
 
-		if (!matching_ctor) {
+		if (!matching_ctor && !require_sema_resolved_ctor) {
 			FLASH_LOG_FORMAT(Codegen, Debug, "Falling back to arity-based constructor resolution for {}", StringTable::getStringView(constructor_name));
 			auto arity_resolution = resolve_constructor_overload_arity(*struct_info, num_args, true);
 			matching_ctor = arity_resolution.selected_overload;

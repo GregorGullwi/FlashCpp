@@ -2058,6 +2058,18 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 	pushScope();
 	registerOuterTemplateBindingsInScope(func);
 	registerParametersInScope(func.parameter_nodes());
+	for (const auto& param : func.parameter_nodes()) {
+		if (!param.is<DeclarationNode>()) {
+			continue;
+		}
+		const auto& param_decl = param.as<DeclarationNode>();
+		for (const auto& dim : param_decl.array_dimensions()) {
+			normalizeExpression(dim, ctx);
+		}
+		if (param_decl.has_default_value()) {
+			normalizeExpression(param_decl.default_value(), ctx);
+		}
+	}
 
 	normalizeStatement(*def, ctx);
 	popScope();
@@ -2092,6 +2104,18 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 	pushScope();
 	registerOuterTemplateBindingsInScope(ctor);
 	registerParametersInScope(ctor.parameter_nodes());
+	for (const auto& param : ctor.parameter_nodes()) {
+		if (!param.is<DeclarationNode>()) {
+			continue;
+		}
+		const auto& param_decl = param.as<DeclarationNode>();
+		for (const auto& dim : param_decl.array_dimensions()) {
+			normalizeExpression(dim, ctx);
+		}
+		if (param_decl.has_default_value()) {
+			normalizeExpression(param_decl.default_value(), ctx);
+		}
+	}
 
 	// C++20 [class.base.init]: normalize member initializer expressions so
 	// they receive sema annotations (e.g. integral promotions in `result(x + 1)`).
@@ -6377,6 +6401,22 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	if (type_spec.category() != TypeCategory::Struct)
 		return;
 	const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+	if (const MemberContext* member_context = getCurrentMemberContext();
+		member_context &&
+		member_context->type_index.is_valid()) {
+		if (const TypeInfo* member_type_info = tryGetTypeInfo(member_context->type_index);
+			member_type_info &&
+			member_type_info->isTemplateInstantiation()) {
+			StringHandle constructed_name = type_info ? type_info->name() : type_spec.token().handle();
+			const std::string_view current_base_template_name =
+				StringTable::getStringView(member_type_info->baseTemplateName());
+			if (constructed_name.isValid() &&
+				!current_base_template_name.empty() &&
+				current_base_template_name == StringTable::getStringView(constructed_name)) {
+				type_info = member_type_info;
+			}
+		}
+	}
 	if (!type_info)
 		return;
 

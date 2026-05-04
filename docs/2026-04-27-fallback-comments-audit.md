@@ -332,6 +332,13 @@ The initial audit above was architectural. Several template-instantiation fallba
     - Validation: the focused callable cluster (`tests\test_callable_sema_resolved_ret0.cpp`, `tests\test_generic_lambda_callable_param_ret0.cpp`, `tests\test_generic_lambda_callable_shadowed_name_ret0.cpp`, `tests\test_generic_lambda_recursive_self_ret0.cpp`, `tests\test_lambda_cpp20_comprehensive_ret135.cpp`, `tests\test_nested_function_returning_funcptr_direct_invoke_ret0.cpp`, plus representative alias/function-pointer direct-invoke tests) passed under the stricter normalized-body guard; the full Linux/clang suite also passed with 2262 regular tests and 154 expected-fail tests.
     - Conclusion: the normalized-body parser fallback is closed for the known callable cluster. The residual parser path is retained only for non-normalized bodies while broader legacy lowering coverage is retired.
 
+19. `src\IrGenerator_Visitors_Decl.cpp` — shared constructor-call type/arity fallback
+    - Probe result: making sema-resolved constructors mandatory in sema-normalized `generateConstructorCallIr(...)` bodies immediately broke `tests\test_struct_default_arg_constructor_ret42.cpp` and `tests\test_template_current_instantiation_functional_cast_ret0.cpp`.
+    - Follow-up root fix (2026-05-04): semantic normalization now also visits function/constructor parameter default arguments before body traversal, so default-argument constructor calls such as `A()` are annotated before codegen materializes them.
+    - Follow-up root fix (2026-05-04): constructor-call annotation now recognizes current-instantiation functional-cast spellings inside template members by rebinding `Box<T>()`-style constructor calls to the active instantiated owner type before overload selection.
+    - Validation: `tests\test_struct_default_arg_constructor_ret42.cpp`, `tests\test_template_current_instantiation_functional_cast_ret0.cpp`, and the new regression `tests\test_constructor_overload_return_same_arity_ret0.cpp` passed with the stricter constructor-call invariant enabled; the full Linux/clang suite also passed with 2271 regular tests and 154 expected-fail tests.
+    - Conclusion: the normalized-body constructor-call fallback is now closed for shared expression lowering. Legacy constructor recovery remains only in other non-normalized or specialized lowering paths.
+
 ### Confidence update
 
 The audit is now backed by direct suite evidence for several representative template fallbacks:
@@ -489,6 +496,17 @@ The audit is now backed by direct suite evidence for several representative temp
   pending semantic-root queue before codegen emits them. After that change, the
   focused ternary cluster plus the full 2256-test Linux suite passed with the
   sema-present parser fallback disabled and the stricter invariant enabled;
+- the shared constructor-call fallback in
+  `IrGenerator_Visitors_Decl.cpp::generateConstructorCallIr(...)` was hardened
+  on 2026-05-04: sema-normalized constructor expressions now require a
+  sema-resolved constructor target, parameter default arguments are normalized
+  before function/constructor bodies, and current-instantiation functional casts
+  rebind `Box<T>()`-style constructor calls to the active instantiated owner
+  type before constructor annotation. The focused regressions
+  `tests/test_struct_default_arg_constructor_ret42.cpp`,
+  `tests/test_template_current_instantiation_functional_cast_ret0.cpp`, and
+  `tests/test_constructor_overload_return_same_arity_ret0.cpp` passed, and the
+  full Linux suite passed with 2271 regular tests and 154 expected-fail tests;
 - several stale historical fallback comments in `FlashCppMain.cpp`,
   `IrGenerator_Visitors_Decl.cpp`, `IrGenerator_Visitors_TypeInit.cpp`, and
   `Parser_Templates_Class.cpp` were then compacted to describe the current

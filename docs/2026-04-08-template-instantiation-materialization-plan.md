@@ -328,6 +328,15 @@ Recent historical baselines recorded for this work:
   type before alias registration. `IrGenerator_Visitors_Namespace.cpp` now
   hard-fails all alias entries that still reach the residual return conversion
   fallback. Added `tests/test_underlying_type_unsigned_return_identity_ret42.cpp`.
+- 2026-05-04 Linux/clang constructor-call sema-contract follow-up: full suite
+  passed, 2271 regular tests and 154 expected-fail tests after
+  `IrGenerator_Visitors_Decl.cpp::generateConstructorCallIr(...)` began
+  hard-failing sema-normalized constructor expressions that lack a sema-resolved
+  constructor. Root fixes normalized parameter default arguments before
+  function/constructor body traversal and rebound current-instantiation
+  functional-cast constructor calls to the active instantiated owner type during
+  constructor annotation. Added
+  `tests/test_constructor_overload_return_same_arity_ret0.cpp`.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.
