@@ -1790,15 +1790,7 @@ void AstToIr::resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex encl
 				// Extract the base name of the enclosing struct (strip template hash and nested class prefix)
 				// Template hash: "Name$hash" -> "Name"
 				// Nested class: "Outer::Inner" -> "Inner"
-				auto base_name = enclosing_name;
-				auto last_scope = base_name.rfind("::");
-				if (last_scope != std::string_view::npos) {
-					base_name = base_name.substr(last_scope + 2);
-				}
-				auto dollar_pos = base_name.find('$');
-				if (dollar_pos != std::string_view::npos) {
-					base_name = base_name.substr(0, dollar_pos);
-				}
+				auto base_name = simpleBaseName(enclosing_name);
 
 				if (unfinalized_name == base_name) {
 					type.set_type_index(enclosing_type_index);

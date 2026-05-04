@@ -917,6 +917,16 @@ struct QualifiedIdentifier {
 	}
 };
 
+inline std::string_view simpleBaseName(std::string_view name) {
+	if (size_t pos = name.rfind("::"); pos != std::string_view::npos) {
+		name.remove_prefix(pos + 2);
+	}
+	if (size_t pos = name.find('$'); pos != std::string_view::npos) {
+		name = name.substr(0, pos);
+	}
+	return name;
+}
+
 // Phase 4: Explicit placeholder kind replaces string-level heuristics (e.g., name.find("::"))
 // for detecting dependent placeholder categories.  Every TypeInfo created as a
 // dependent placeholder stamps one of these values so that SFINAE viability checks,

@@ -4767,15 +4767,6 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 		return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty())
 		return false;
-	// If the source is a struct but its specific TypeInfo could not be resolved
-	// (type_index=0 placeholder reached the canonical desc), we cannot decide
-	// whether a converting constructor would actually be needed. Bail out
-	// rather than guessing — emitting an explicit-ctor diagnostic against an
-	// unresolved struct source produces false positives in deferred template
-	// bodies (e.g. <string_view>'s `__max_size_type` return statements).
-	if (from_desc.category() == TypeCategory::Struct && !from_desc.type_index.is_valid()) {
-		return false;
-	}
 	// Same-type copy/move initialization (modulo CV/ref qualifiers) is handled by
 	// the implicit copy/move constructor and never requires picking a converting
 	// constructor — even if all user-written converting ctors are explicit.
@@ -4785,43 +4776,6 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	if (from_desc.type_index == to_desc.type_index &&
 		from_desc.category() == TypeCategory::Struct) {
 		return false;
-	}
-	// Also short-circuit when the source is an instantiation of the same class
-	// template as the target (or vice versa). Inside the deferred body of a
-	// class template member, an unqualified reference to the class name often
-	// resolves to the *pattern* type_index while `*this` (or other expressions)
-	// produces an *instantiated* type_index. They are the same logical type and
-	// must not trigger converting-ctor lookup.
-	if (from_desc.category() == TypeCategory::Struct) {
-		const TypeInfo* from_ti = tryGetTypeInfo(from_desc.type_index);
-		const TypeInfo* to_ti = tryGetTypeInfo(to_desc.type_index);
-		if (from_ti && to_ti) {
-			// Fast StringHandle compare when both sides expose a base
-			// template name (typical when both are instantiations of the
-			// same class template, even with different argument lists).
-			if (from_ti->isTemplateInstantiation() && to_ti->isTemplateInstantiation() &&
-				from_ti->baseTemplateName() == to_ti->baseTemplateName()) {
-				return false;
-			}
-			// Pattern vs. instantiation, or any mix where TypeInfo::baseTemplateName
-			// is unset on one side: fall back to comparing the simple base name
-			// (after the last "::" and before any "$" suffix used for partial-spec
-			// patterns / instantiation hashes).
-			auto simple_base_name = [](std::string_view name) -> std::string_view {
-				if (auto pos = name.rfind("::"); pos != std::string_view::npos) {
-					name.remove_prefix(pos + 2);
-				}
-				if (auto pos = name.find('$'); pos != std::string_view::npos) {
-					name = name.substr(0, pos);
-				}
-				return name;
-			};
-			const std::string_view from_base = simple_base_name(StringTable::getStringView(from_ti->name()));
-			const std::string_view to_base = simple_base_name(StringTable::getStringView(to_ti->name()));
-			if (!from_base.empty() && from_base == to_base) {
-				return false;
-			}
-		}
 	}
 	if (from_desc.ref_qualifier != ReferenceQualifier::None || to_desc.ref_qualifier != ReferenceQualifier::None)
 		return false;
