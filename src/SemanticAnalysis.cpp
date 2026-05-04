@@ -3818,8 +3818,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return type_context_.intern(promoted);
 					}
 					if (!is_standard_arithmetic_type(operand_cat)) {
-						// Struct, enum, user-defined: actual result type is determined
-						// by an overloaded operator that we don't try to resolve here.
+						// Struct or other user-defined operand: actual result type
+						// is determined by an overloaded operator that we don't
+						// try to resolve here (enums were already collapsed to
+						// their underlying integer type above).
 						return {};
 					}
 					CanonicalTypeDesc result_desc;
@@ -4794,9 +4796,18 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 		const TypeInfo* from_ti = tryGetTypeInfo(from_desc.type_index);
 		const TypeInfo* to_ti = tryGetTypeInfo(to_desc.type_index);
 		if (from_ti && to_ti) {
-			// Compare the simple base name (after the last "::" and before any
-			// "$" suffix used for partial-spec patterns / instantiation hashes).
-			auto base_template_name = [](std::string_view name) -> std::string_view {
+			// Fast StringHandle compare when both sides expose a base
+			// template name (typical when both are instantiations of the
+			// same class template, even with different argument lists).
+			if (from_ti->isTemplateInstantiation() && to_ti->isTemplateInstantiation() &&
+				from_ti->baseTemplateName() == to_ti->baseTemplateName()) {
+				return false;
+			}
+			// Pattern vs. instantiation, or any mix where TypeInfo::baseTemplateName
+			// is unset on one side: fall back to comparing the simple base name
+			// (after the last "::" and before any "$" suffix used for partial-spec
+			// patterns / instantiation hashes).
+			auto simple_base_name = [](std::string_view name) -> std::string_view {
 				if (auto pos = name.rfind("::"); pos != std::string_view::npos) {
 					name.remove_prefix(pos + 2);
 				}
@@ -4805,8 +4816,8 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 				}
 				return name;
 			};
-			const std::string_view from_base = base_template_name(StringTable::getStringView(from_ti->name()));
-			const std::string_view to_base = base_template_name(StringTable::getStringView(to_ti->name()));
+			const std::string_view from_base = simple_base_name(StringTable::getStringView(from_ti->name()));
+			const std::string_view to_base = simple_base_name(StringTable::getStringView(to_ti->name()));
 			if (!from_base.empty() && from_base == to_base) {
 				return false;
 			}
