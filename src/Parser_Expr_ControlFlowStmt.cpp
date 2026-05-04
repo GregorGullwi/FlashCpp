@@ -1669,105 +1669,31 @@ ParseResult Parser::parse_switch_statement() {
 		return ParseResult::error("Expected '{' for switch body", current_token_);
 	}
 
-	// Create a block to hold case/default labels and their statements
+	++switch_statement_depth_;
+	ScopeGuard switch_depth_guard([&]() {
+		--switch_statement_depth_;
+	});
+
+	// Create a block to hold the switch body statements
 	auto [block_node, block_ref] = create_node_ref(BlockNode());
 
-	// Parse case and default labels
+	// Parse the switch body: case/default labels are recognised by parse_statement_or_declaration()
+	// because switch_statement_depth_ > 0, so the body can be parsed uniformly.
+	// This naturally supports Duff's-device style code where case labels appear
+	// inside nested loop bodies, since the statement parser recurses into them.
 	while (!peek().is_eof() && peek() != "}"_tok) {
-		auto current = peek_info();
+		// Skip stray semicolons (empty statements)
+		if (peek().is_punctuator() && peek() == ";"_tok) {
+			advance();
+			continue;
+		}
 
-		if (current.type() == Token::Type::Keyword && current.value() == "case") {
-			// Parse case label
-			advance(); // consume 'case'
-
-			// Parse case value (must be a constant expression)
-			auto case_value = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-			if (case_value.is_error()) {
-				return case_value;
-			}
-
-			if (!consume(":"_tok)) {
-				return ParseResult::error("Expected ':' after case value", current_token_);
-			}
-
-			// Skip C++20 [[likely]]/[[unlikely]] attributes after case label
-			skip_cpp_attributes();
-
-			// Parse statements until next case/default/closing brace
-			// We collect all statements for this case into a sub-block
-			auto [case_block_node, case_block_ref] = create_node_ref(BlockNode());
-
-			while (!peek().is_eof() &&
-				   peek() != "}"_tok &&
-				   !(peek().is_keyword() &&
-					 (peek() == "case"_tok || peek() == "default"_tok))) {
-				// Skip stray semicolons (empty statements)
-				if (peek().is_punctuator() && peek() == ";"_tok) {
-					advance();
-					continue;
-				}
-
-				auto stmt = parse_statement_or_declaration();
-				if (stmt.is_error()) {
-					return stmt;
-				}
-				if (auto stmt_node = stmt.node()) {
-					case_block_ref.add_statement_node(*stmt_node);
-				}
-			}
-
-			// Create case label node with the block of statements
-			auto case_label = emplace_node<CaseLabelNode>(*case_value.node(), case_block_node);
-			block_ref.add_statement_node(case_label);
-
-		} else if (current.type() == Token::Type::Keyword && current.value() == "default") {
-			// Parse default label
-			advance(); // consume 'default'
-
-			if (!consume(":"_tok)) {
-				return ParseResult::error("Expected ':' after 'default'", current_token_);
-			}
-
-			// Skip C++20 [[likely]]/[[unlikely]] attributes after default label
-			skip_cpp_attributes();
-
-			// Parse statements until next case/default/closing brace
-			auto [default_block_node, default_block_ref] = create_node_ref(BlockNode());
-
-			while (!peek().is_eof() &&
-				   peek() != "}"_tok &&
-				   !(peek().is_keyword() &&
-					 (peek() == "case"_tok || peek() == "default"_tok))) {
-				// Skip stray semicolons (empty statements)
-				if (peek().is_punctuator() && peek() == ";"_tok) {
-					advance();
-					continue;
-				}
-
-				auto stmt = parse_statement_or_declaration();
-				if (stmt.is_error()) {
-					return stmt;
-				}
-				if (auto stmt_node = stmt.node()) {
-					default_block_ref.add_statement_node(*stmt_node);
-				}
-			}
-
-			// Create default label node with the block of statements
-			auto default_label = emplace_node<DefaultLabelNode>(default_block_node);
-			block_ref.add_statement_node(default_label);
-
-		} else {
-			// If we're here, we have an unexpected token at the switch body level
-			std::string error_msg = "Expected 'case' or 'default' in switch body, but found: ";
-			if (current.type() == Token::Type::Keyword) {
-				error_msg += "keyword '" + std::string(current.value()) + "'";
-			} else if (current.type() == Token::Type::Identifier) {
-				error_msg += "identifier '" + std::string(current.value()) + "'";
-			} else {
-				error_msg += "'" + std::string(current.value()) + "'";
-			}
-			return ParseResult::error(error_msg, current_token_);
+		auto stmt = parse_statement_or_declaration();
+		if (stmt.is_error()) {
+			return stmt;
+		}
+		if (auto stmt_node = stmt.node()) {
+			block_ref.add_statement_node(*stmt_node);
 		}
 	}
 
@@ -1781,4 +1707,78 @@ ParseResult Parser::parse_switch_statement() {
 	}
 
 	return ParseResult::error("Invalid switch statement construction", current_token_);
+}
+
+// Helper: parse the single optional body statement that follows a case/default colon.
+// Returns null (no node) when the label has no body (next token is case/default/}).
+// Returns success with a single-statement BlockNode when a body is present.
+// Returns an error if parsing the body statement fails.
+ParseResult Parser::parse_label_body_statement() {
+	if (peek().is_eof() ||
+		peek() == "}"_tok ||
+		(peek().is_keyword() && (peek() == "case"_tok || peek() == "default"_tok))) {
+		// Return null (not success({})) so body.node() yields std::nullopt.
+		// success({}) stores an empty ASTNode in the variant, making node() return
+		// a set-but-empty optional that CaseLabelNode/DefaultLabelNode would store as
+		// a valid-but-null statement, breaking has_statement() checks downstream.
+		return ParseResult::null();
+	}
+
+	auto statement = parse_statement_or_declaration();
+	if (statement.is_error()) {
+		return statement;
+	}
+	if (auto statement_node = statement.node()) {
+		auto [block_node, block_ref] = create_node_ref(BlockNode());
+		block_ref.add_statement_node(*statement_node);
+		return ParseResult::success(block_node);
+	}
+	return ParseResult::null(); // parse_statement_or_declaration produced no node
+}
+
+ParseResult Parser::parse_case_label_statement() {
+	if (!consume("case"_tok)) {
+		return ParseResult::error("Expected 'case' keyword", current_token_);
+	}
+
+	auto case_value = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+	if (case_value.is_error()) {
+		return case_value;
+	}
+
+	if (!consume(":"_tok)) {
+		return ParseResult::error("Expected ':' after case value", current_token_);
+	}
+
+	skip_cpp_attributes();
+
+	auto body = parse_label_body_statement();
+	if (body.is_error()) {
+		return body;
+	}
+
+	if (!case_value.node().has_value()) {
+		return ParseResult::error("Invalid case label construction", current_token_);
+	}
+
+	return ParseResult::success(emplace_node<CaseLabelNode>(*case_value.node(), body.node()));
+}
+
+ParseResult Parser::parse_default_label_statement() {
+	if (!consume("default"_tok)) {
+		return ParseResult::error("Expected 'default' keyword", current_token_);
+	}
+
+	if (!consume(":"_tok)) {
+		return ParseResult::error("Expected ':' after 'default'", current_token_);
+	}
+
+	skip_cpp_attributes();
+
+	auto body = parse_label_body_statement();
+	if (body.is_error()) {
+		return body;
+	}
+
+	return ParseResult::success(emplace_node<DefaultLabelNode>(body.node()));
 }

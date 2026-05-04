@@ -741,6 +741,7 @@ private:
 
 	// Track if we're instantiating a lazy member function (to prevent infinite recursion)
 	bool instantiating_lazy_member_ = false;
+	size_t switch_statement_depth_ = 0;
 
 	enum class TemplateInstantiationMode {
 		// Ordinary instantiation request: commit cache, symbol-table, and AST/lazy-member side effects.
@@ -2277,6 +2278,9 @@ private:	 // Resume private methods
 	ParseResult parse_do_while_loop();
 	ParseResult parse_if_statement();
 	ParseResult parse_switch_statement();
+	ParseResult parse_label_body_statement();
+	ParseResult parse_case_label_statement();
+	ParseResult parse_default_label_statement();
 	ParseResult parse_return_statement();
 	ParseResult parse_break_statement();
 	ParseResult parse_continue_statement();
