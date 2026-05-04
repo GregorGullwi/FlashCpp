@@ -1256,6 +1256,7 @@ Potential areas for enhancement (in order of complexity):
   - straightforward returned closure-object state transfer
   - straightforward returned `[*this]` member closures from local aggregate objects
   - straightforward nested lambdas over enclosing state
+- ❌ `throw` expressions in constexpr evaluation
 - ❌ Complex member initialization chains
 
 ## Recommendations
