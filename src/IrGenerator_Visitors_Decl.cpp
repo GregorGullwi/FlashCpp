@@ -324,7 +324,14 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			// Non-member functions, or struct not found: fall back to current stack.
 			// Do NOT fall back when the struct was found at global scope — an empty
 			// namespace_for_mangling is correct and must match the call-site mangling.
-			namespace_for_mangling = current_namespace_stack_;
+			if (node.namespace_handle().isValid()) {
+				auto ns_views = buildNamespacePathFromHandle(node.namespace_handle());
+				namespace_for_mangling.reserve(ns_views.size());
+				for (auto sv : ns_views)
+					namespace_for_mangling.emplace_back(sv);
+			} else {
+				namespace_for_mangling = current_namespace_stack_;
+			}
 		}
 	}
 	// else: struct_name already contains namespace prefix, don't add it again

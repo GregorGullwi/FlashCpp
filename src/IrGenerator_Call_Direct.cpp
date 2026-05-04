@@ -782,6 +782,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						for (auto sv : ns_views)
 							ns_path.emplace_back(sv);
 					}
+					if (ns_path.empty() && func_decl->namespace_handle().isValid()) {
+						auto ns_views = buildNamespacePathFromHandle(func_decl->namespace_handle());
+						ns_path.reserve(ns_views.size());
+						for (auto sv : ns_views)
+							ns_path.emplace_back(sv);
+					}
 				}
 				function_name = generateMangledNameForCall(*func_decl, struct_name, ns_path);
 			}

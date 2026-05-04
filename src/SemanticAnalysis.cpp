@@ -5516,6 +5516,21 @@ void SemanticAnalysis::tryResolveUnaryDereferenceOperator(const UnaryOperatorNod
 		return;
 	}
 
+	if (const TypeInfo* receiver_type_info = tryGetTypeInfo(object_desc.type_index);
+		receiver_type_info && receiver_type_info->isStruct()) {
+		StringHandle receiver_name = receiver_type_info->name();
+		StringHandle member_handle = best_match->decl_node().identifier_token().handle();
+		auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+		for (bool const_variant : {best_match->is_const_member_function(), !best_match->is_const_member_function()}) {
+			if (lazy_registry.needsInstantiation(
+					LazyMemberKey::exact(receiver_name, member_handle, const_variant))) {
+				lazy_registry.markOdrUsed(
+					LazyMemberKey::exact(receiver_name, member_handle, const_variant));
+				break;
+			}
+		}
+	}
+
 	op_unary_deref_table_[&unary_node] = best_match;
 	stats_.op_calls_resolved++;
 }
@@ -6089,6 +6104,14 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
 	if (call_info.has_receiver) {
 		if (call_info.function_declaration) {
+			const FunctionDeclarationNode* recovered_func_decl = nullptr;
+			const TypeSpecifierNode& declared_return_type =
+				call_info.function_declaration->decl_node().type_specifier_node();
+			if ((!call_info.function_declaration->is_member_function() ||
+				 isPlaceholderAutoType(declared_return_type.type())) &&
+				tryRecoverCallDeclFromStructMembers(call_info, call_info.function_declaration->decl_node(), arguments, recovered_func_decl)) {
+				return recovered_func_decl;
+			}
 			return call_info.function_declaration;
 		}
 

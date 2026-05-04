@@ -1423,6 +1423,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 			}
 			substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+			if (const auto* arg = findTemplateArgByName(
+					param_type_spec.token().value(),
+					tmpl_params,
+					tmpl_args)) {
+				TemplateTypeArg rebound_arg = rebindDependentTemplateTypeArg(
+					*arg,
+					TemplateTypeArg(param_type_spec));
+				substituted_param_type = makeTypeSpecifierFromTemplateTypeArg(
+					rebound_arg,
+					param_type_spec.token());
+				param_type_index = substituted_param_type.type_index();
+			}
 			if (param_type_spec.has_function_signature()) {
 				substituted_param_type.set_function_signature(param_type_spec.function_signature());
 			} else if (param_type_index.category() == TypeCategory::FunctionPointer ||
@@ -5720,6 +5732,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Preserve reference qualifiers from the original type
 		substituted_type_spec.set_reference_qualifier(type_spec.reference_qualifier());
+		if (const TemplateTypeArg* concrete_arg = findTemplateArgByName(
+				type_spec.token().value(),
+				template_params,
+				template_args_to_use)) {
+			TemplateTypeArg rebound_arg = rebindDependentTemplateTypeArg(
+				*concrete_arg,
+				TemplateTypeArg(type_spec));
+			substituted_type_spec = makeTypeSpecifierFromTemplateTypeArg(
+				rebound_arg,
+				type_spec.token());
+			member_type_index = substituted_type_spec.type_index();
+		}
+		normalizeSubstitutedTypeSpec(substituted_type_spec);
 
 		// Add to the instantiated struct
 		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
@@ -5744,8 +5769,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			throw InternalError("Array dimensions should be resolved before layout substitution");
 		} else {
 			// Check if the ORIGINAL type is a pointer or reference (use original type_spec, not substituted member_type)
-			member_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_size_type_index).size;
-			if (!type_spec.is_pointer() && !type_spec.is_reference() && !type_spec.is_rvalue_reference() && member_type_index.category() == TypeCategory::Struct) {
+			member_size = calculateResolvedMemberSizeAndAlignment(substituted_type_spec, member_size_type_index).size;
+			if (!substituted_type_spec.is_pointer() && !substituted_type_spec.is_reference() && !substituted_type_spec.is_rvalue_reference() && member_type_index.category() == TypeCategory::Struct) {
 				if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index);
 					member_type_info && member_type_info->getStructInfo()) {
 					FLASH_LOG_FORMAT(Templates, Debug, "Primary template: Found struct member '{}' with type_index={}, total_size={} bytes, struct name={}",
@@ -5760,12 +5785,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Calculate member alignment
 		// For pointers and references, use 8-byte alignment (pointer alignment on x64)
 		size_t member_alignment = get_type_alignment(member_size_type_index.category(), member_size);
-		if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+		if (substituted_type_spec.is_pointer() || substituted_type_spec.is_reference() || substituted_type_spec.is_rvalue_reference()) {
 			member_alignment = 8; // Pointer/reference alignment on x64
 		} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_size_type_index)) {
 			member_alignment = member_struct_info->alignment;
 		}
-		ReferenceQualifier ref_qual = type_spec.reference_qualifier();
+		ReferenceQualifier ref_qual = substituted_type_spec.reference_qualifier();
 
 		// For reference members, we need to pass the size of the referenced type, not the pointer size
 		size_t referenced_size_bits = 0;
@@ -5793,9 +5818,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			referenced_size_bits,
 			is_array_member,
 			std::move(resolved_array_dimensions),
-			static_cast<int>(type_spec.pointer_depth()),
+			static_cast<int>(substituted_type_spec.pointer_depth()),
 			resolve_bitfield_width(member_decl, template_params, template_args_to_use),
-			resolveTemplateFunctionPointerSignature(type_spec, member_type_index, template_params, template_args_to_use),
+			resolveTemplateFunctionPointerSignature(substituted_type_spec, member_type_index, template_params, template_args_to_use),
 			member_decl.is_no_unique_address);
 	}
 

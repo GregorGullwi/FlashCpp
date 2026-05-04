@@ -1682,6 +1682,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					namespace_for_mangling.reserve(ns_views.size());
 					for (auto sv : ns_views)
 						namespace_for_mangling.emplace_back(sv);
+					if (namespace_for_mangling.empty() && func_for_mangling->namespace_handle().isValid()) {
+						ns_views = buildNamespacePathFromHandle(func_for_mangling->namespace_handle());
+						namespace_for_mangling.reserve(ns_views.size());
+						for (auto sv : ns_views)
+							namespace_for_mangling.emplace_back(sv);
+					}
 				}
 
 				// Generate proper mangled name including parameter types

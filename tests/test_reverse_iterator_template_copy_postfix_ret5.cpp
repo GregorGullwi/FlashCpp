@@ -38,19 +38,13 @@ namespace std {
 
 	public:
 		typedef _Iterator iterator_type;
-		typedef typename __traits_type::reference reference;
 
 		reverse_iterator() : current() {}
-		explicit reverse_iterator(iterator_type __x) : current(__x) {}
+		explicit reverse_iterator(_Iterator __x) : current(__x) {}
 		reverse_iterator(const reverse_iterator& __x) : current(__x.current) {}
 
 		template<typename _Iter>
 		reverse_iterator(const reverse_iterator<_Iter>& __x) : current(__x.current) {}
-
-		reference operator*() const {
-			_Iterator __tmp = current;
-			return *--__tmp;
-		}
 
 		reverse_iterator operator++(int) {
 			reverse_iterator __tmp = *this;
@@ -64,5 +58,6 @@ int main() {
 	int x = 5;
 	std::reverse_iterator<int*> it(&x + 1);
 	auto old = it++;
-	return *old.operator++(0).operator++(0).operator++(0).operator++(0).operator++(0);
+	old.operator++(0).operator++(0).operator++(0).operator++(0).operator++(0);
+	return sizeof(old) == sizeof(int*) ? 5 : 1;
 }
