@@ -1585,6 +1585,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		substituted_type_spec.set_type_index(substituted_type_index.withCategory(substituted_type));
 		substituted_type_spec.set_category(substituted_type);
 		std::optional<TemplateTypeArg> rebound_template_arg;
+		// Function-pointer aliases carry their dependent parameter use inside the
+		// signature; the existing alias-resolution path below preserves that full
+		// signature, while direct rebinding here is only for aliases shaped like T,
+		// T*, T&, and cv-qualified variants.
 		StringHandle alias_target_name = substituted_type_spec.has_function_signature()
 											 ? StringHandle{}
 											 : getAliasTargetNameHandle(substituted_type_spec);
