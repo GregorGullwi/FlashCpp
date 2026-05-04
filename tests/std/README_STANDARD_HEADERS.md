@@ -8,7 +8,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1434ms (retested 2026-05-04, Linux/libstdc++-14); wchar_t/char32_t Phase 15 blocker fixed. See latest dated section. |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1418ms (retested 2026-05-04, Linux/libstdc++-14); wchar_t/char32_t Phase 15 blocker fixed. See latest dated section. |
 | `<type_traits>` | `test_std_type_traits.cpp` | ❌ Compile Error | ~282ms (retested 2026-04-28, Linux/libstdc++-14). `std::is_integral<int>::value` still passes, but the current first failure is `static_assert(std::is_pointer<int*>::value)`. |
 | `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | ~609ms (retested 2026-04-11). Targeted test still compiles, but bare `#include <compare>` now fails with "Ambiguous constructor call" during codegen of a namespace-level node. |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
@@ -224,7 +224,7 @@ Validation snapshot:
 | Header/Test | Status | Time | First-order stop / note |
 |-------------|--------|------|-------------------------|
 | `tests/test_char_width_binary_sema_conversions_ret0.cpp` | ✅ PASS | run-all focused slice | Covers `wchar_t < int`, `char32_t - int`, and ordinary mixed builtin arithmetic. |
-| `<limits>` / `test_std_limits.cpp` | ✅ Compiled | ~1434ms | No longer fails with `Phase 15: sema missed binary LHS conversion (wchar_t -> int)` or `RHS conversion (int -> char32_t)`. Still logs two recoverable codegen skips: `Return value exceeds 32-bit limit`. |
+| `<limits>` / `test_std_limits.cpp` | ✅ Compiled | ~1418ms | No longer fails with `Phase 15: sema missed binary LHS conversion (wchar_t -> int)` or `RHS conversion (int -> char32_t)`. Still logs two recoverable codegen skips: `Return value exceeds 32-bit limit`. |
 
 #### 2026-05-04 Same-template / unknown-struct copy-init explicit-ctor fix (Linux/libstdc++-14)
 
@@ -277,7 +277,7 @@ Linux/libstdc++-14 std-header sweep (`x64/Sharded/FlashCpp`, 60 s timeout):
 | `<compare_ret42>` | ✅ Compiled | 34ms | |
 | `<concepts>` | ✅ Compiled | 517ms | |
 | `<exception>` | ✅ Compiled | 553ms | |
-| `<limits>` | ✅ Compiled | 1434ms | **Unblocked from Phase 15 missed binary conversions.**  Still logs two recoverable `Return value exceeds 32-bit limit` skips in codegen, but the targeted header compile returns success. |
+| `<limits>` | ✅ Compiled | 1418ms | **Unblocked from Phase 15 missed binary conversions.**  Still logs two recoverable `Return value exceeds 32-bit limit` skips in codegen, but the targeted header compile returns success. |
 | `<new>` | ✅ Compiled | 63ms | |
 | `<pair_swap_deleted_member>` | ✅ Compiled | 27ms | |
 | `<rel_ops_no_false_instantiation_ret0>` | ✅ Compiled | 826ms | |
