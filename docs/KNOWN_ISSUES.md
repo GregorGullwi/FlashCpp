@@ -1,14 +1,5 @@
 # Known Issues
 
-## `<limits>` char32_t extrema still log recoverable oversized return skips
-
-After the shift-result semantic fix, `tests/std/test_std_limits.cpp` compiles
-successfully on Linux/libstdc++-14, but codegen still logs two recoverable
-`Return value exceeds 32-bit limit` errors while skipping generated helper
-functions for the widest character extrema. This is no longer the Phase 15
-missed-conversion blocker; it is a remaining codegen/constant materialization
-limit for large unsigned character values.
-
 ## Unity Debug Build Broken (g++ single-unity target only)
 
 The `x64/Debug/FlashCpp` unity build does not compile when using g++:

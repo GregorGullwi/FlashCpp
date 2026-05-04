@@ -515,6 +515,13 @@ TempVar AstToIr::emitDereference(TypeCategory pointee_type, int pointer_size_bit
 // Return IR helper
 // ============================================================================
 void AstToIr::emitReturn(IrValue return_value, TypeCategory return_type, int return_size, const Token& token) {
+	// Normalize ULL immediates to the declared return type width and signedness.
+	// This ensures the ReturnOp carries a consistently-typed value rather than an
+	// overwide carrier (e.g. int(-1) sign-extended to 0xFFFFFFFFFFFFFFFF for a char32_t return).
+	// Doing this at IR generation time keeps the codegen backend free of semantic concerns.
+	if (auto* ull_val = std::get_if<unsigned long long>(&return_value)) {
+		*ull_val = normalizeIntegralImmediateValue(*ull_val, return_type, return_size);
+	}
 	ReturnOp ret_op;
 	ret_op.return_value = return_value;
 	ret_op.return_type_index = TypeIndex{0, return_type};

@@ -8543,24 +8543,25 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 
 			if (std::holds_alternative<unsigned long long>(ret_val)) {
 				unsigned long long returnValue = std::get<unsigned long long>(ret_val);
-
-					// Check if this is actually a negative number stored as unsigned long long
-				if (returnValue > std::numeric_limits<uint32_t>::max()) {
-					uint32_t lower32 = static_cast<uint32_t>(returnValue);
-					if ((returnValue >> 32) == 0xFFFFFFFF) {
-						returnValue = lower32;
-					} else {
-						throw InternalError("Return value exceeds 32-bit limit");
-					}
-				}
-
-					// mov eax, immediate instruction has a fixed size of 5 bytes
+				// Value is already normalized by emitReturn at IR generation time.
+				// Here we only dispatch based on return_size to emit the correct instruction.
 				spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-				std::array<uint8_t, 5> movEaxImmedInst = {0xB8, 0, 0, 0, 0};
-				for (size_t i = 0; i < 4; ++i) {
-					movEaxImmedInst[i + 1] = (returnValue >> (8 * i)) & 0xFF;
+
+				if (ret_op.return_size > 32) {
+					std::array<uint8_t, 10> movRaxImmedInst = {0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0};
+					for (size_t i = 0; i < 8; ++i) {
+						movRaxImmedInst[i + 2] = (returnValue >> (8 * i)) & 0xFF;
+					}
+					textSectionData.insert(textSectionData.end(), movRaxImmedInst.begin(), movRaxImmedInst.end());
+				} else {
+						// mov eax, immediate instruction has a fixed size of 5 bytes
+					std::array<uint8_t, 5> movEaxImmedInst = {0xB8, 0, 0, 0, 0};
+					const uint32_t lower32 = static_cast<uint32_t>(returnValue);
+					for (size_t i = 0; i < 4; ++i) {
+						movEaxImmedInst[i + 1] = (lower32 >> (8 * i)) & 0xFF;
+					}
+					textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
 				}
-				textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
 			} else if (std::holds_alternative<TempVar>(ret_val)) {
 					// Handle temporary variable (stored on stack)
 				auto return_var = std::get<TempVar>(ret_val);

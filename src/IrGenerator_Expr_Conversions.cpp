@@ -84,10 +84,16 @@ ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCateg
 						// C++20 [conv.fpint].  In practice parser double literals are
 						// always non-negative (unary minus produces a TempVar), but
 						// the two-step cast is defensive against future changes.
-					const auto int_val = static_cast<unsigned long long>(static_cast<long long>(src_val));
+					const auto int_val = normalizeIntegralImmediateValue(
+						static_cast<unsigned long long>(static_cast<long long>(src_val)),
+						toType,
+						toSize);
 					return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{int_val}, PointerDepth{}, ValueStorage::ContainsData);
 				}
-				const auto int_val = static_cast<unsigned long long>(static_cast<long long>(src_val));
+				const auto int_val = normalizeIntegralImmediateValue(
+					static_cast<unsigned long long>(static_cast<long long>(src_val)),
+					toType,
+					toSize);
 				return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{int_val}, PointerDepth{}, ValueStorage::ContainsData);
 			} else {
 					// int literal → float/double: emit IntToFloat IR instruction.
@@ -106,11 +112,11 @@ ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCateg
 
 			// For same-domain literal conversions, keep the value immediate.
 		if (const auto* ull_val = std::get_if<unsigned long long>(&operands.value)) {
-			unsigned long long value = *ull_val;
+			unsigned long long value = normalizeIntegralImmediateValue(*ull_val, toType, toSize);
 			return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
 		} else if (const auto* int_val = std::get_if<int>(&operands.value)) {
-			int value = *int_val;
-			return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{static_cast<unsigned long long>(value)}, PointerDepth{}, ValueStorage::ContainsData);
+			unsigned long long value = normalizeIntegralImmediateValue(static_cast<unsigned long long>(*int_val), toType, toSize);
+			return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
 		} else if (const auto* d_val = std::get_if<double>(&operands.value)) {
 			double value = *d_val;
 			return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);

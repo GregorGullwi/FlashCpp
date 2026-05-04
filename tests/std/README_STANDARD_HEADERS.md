@@ -224,7 +224,7 @@ Validation snapshot:
 | Header/Test | Status | Time | First-order stop / note |
 |-------------|--------|------|-------------------------|
 | `tests/test_char_width_binary_sema_conversions_ret0.cpp` | ✅ PASS | run-all focused slice | Covers `wchar_t < int`, `char32_t - int`, and ordinary mixed builtin arithmetic. |
-| `<limits>` / `test_std_limits.cpp` | ✅ Compiled | ~1418ms | Phase 15 wchar_t/char32_t blocker fixed; still logs two recoverable `Return value exceeds 32-bit limit` codegen skips. |
+| `<limits>` / `test_std_limits.cpp` | ✅ Compiled | ~1418ms | Wide-character extrema codegen now compiles without the old oversized immediate-return skips. |
 
 #### 2026-05-04 Same-template / unknown-struct copy-init explicit-ctor fix (Linux/libstdc++-14)
 
@@ -277,7 +277,7 @@ Linux/libstdc++-14 std-header sweep (`x64/Sharded/FlashCpp`, 60 s timeout):
 | `<compare_ret42>` | ✅ Compiled | 34ms | |
 | `<concepts>` | ✅ Compiled | 517ms | |
 | `<exception>` | ✅ Compiled | 553ms | |
-| `<limits>` | ✅ Compiled | 1418ms | **Unblocked from Phase 15 missed binary conversions.**  Still logs two recoverable `Return value exceeds 32-bit limit` skips in codegen, but the targeted header compile returns success. |
+| `<limits>` | ✅ Compiled | 1418ms | **Unblocked from Phase 15 missed binary conversions.** Wide-character extrema now compile without the old oversized immediate-return skips. |
 | `<new>` | ✅ Compiled | 63ms | |
 | `<pair_swap_deleted_member>` | ✅ Compiled | 27ms | |
 | `<rel_ops_no_false_instantiation_ret0>` | ✅ Compiled | 826ms | |
