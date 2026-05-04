@@ -1,3 +1,11 @@
+// Regression test for member type aliases that forward template parameters.
+//
+// Bug: instantiating a member alias such as identity<T>::type preserved only
+// the substituted TypeIndex category and dropped TemplateTypeArg modifiers, so
+// identity<int*>::type became plain int.  libstdc++ <type_traits> then made
+// std::is_pointer<int*>::value select the primary false_type helper instead of
+// the T* partial specialization.
+
 template<typename T, T v>
 struct integral_constant {
 	static constexpr T value = v;
