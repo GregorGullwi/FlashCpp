@@ -26,7 +26,6 @@ struct Big {
 
 int main() {
 	Big a(5);
-	Big b = -a;	   // same-type copy-init from unary operator-
+	Big b = -a; // same-type copy-init from unary operator-
 	return static_cast<int>(b._M_val) == -5 ? 0 : 1;
 }
-

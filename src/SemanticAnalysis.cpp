@@ -4835,7 +4835,7 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	// the implicit copy/move constructor and never requires picking a converting
 	// constructor — even if all user-written converting ctors are explicit.
 	// Without this short-circuit, sources whose canonical id only differs by a
-	// const qualifier (e.g. accessing a member through a const this) reach the
+	// const qualifier (e.g. accessing a member through a const `this`) reach the
 	// converting-ctor scan below and incorrectly trip the explicit-ctor error.
 	if (from_desc.type_index == to_desc.type_index &&
 		from_desc.category() == TypeCategory::Struct) {
