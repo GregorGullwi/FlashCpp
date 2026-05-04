@@ -1671,9 +1671,7 @@ ParseResult Parser::parse_switch_statement() {
 
 	++switch_statement_depth_;
 	ScopeGuard switch_depth_guard([&]() {
-		if (switch_statement_depth_ > 0) {
-			--switch_statement_depth_;
-		}
+		--switch_statement_depth_;
 	});
 
 	// Create a block to hold case/default labels and their statements

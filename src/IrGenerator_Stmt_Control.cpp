@@ -485,9 +485,7 @@ void AstToIr::visitSwitchStatementNode(const SwitchStatementNode& node) {
 
 	active_switch_context_stack_.push_back(std::move(switch_context));
 	ScopeGuard switch_context_guard([&]() {
-		if (!active_switch_context_stack_.empty()) {
-			active_switch_context_stack_.pop_back();
-		}
+		active_switch_context_stack_.pop_back();
 	});
 
 	auto body = node.get_body();
