@@ -19,10 +19,14 @@
 #include <algorithm>
 
 // ELFIO headers - header-only ELF library
+#if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wshadow"
+#endif
 #include "elfio/elfio.hpp"
+#if defined(__GNUC__)
 #pragma GCC diagnostic pop
+#endif
 
 extern bool g_enable_debug_output;
 
