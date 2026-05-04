@@ -1593,7 +1593,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											 ? StringHandle{}
 											 : getAliasTargetNameHandle(substituted_type_spec);
 		if (alias_target_name.isValid()) {
-			forEachNonPackTemplateParamArgBinding(params, args, [&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t) {
+			forEachNonPackTemplateParamArgBinding(params, args, [&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t /*arg_index*/) {
 				if (rebound_template_arg.has_value() || arg.is_value || param.nameHandle() != alias_target_name) {
 					return;
 				}
