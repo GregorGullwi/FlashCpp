@@ -864,6 +864,28 @@ inline bool isSignedType(TypeCategory cat) {
 	}
 }
 
+inline unsigned long long normalizeIntegralImmediateValue(unsigned long long value, TypeCategory cat, int bits) {
+	if (cat == TypeCategory::Bool) {
+		return value != 0 ? 1ULL : 0ULL;
+	}
+
+	if (!is_integer_type(cat) || bits <= 0 || bits >= 64) {
+		return value;
+	}
+
+	const unsigned long long mask = (1ULL << bits) - 1ULL;
+	value &= mask;
+
+	if (isSignedType(cat)) {
+		const unsigned long long sign_bit = 1ULL << (bits - 1);
+		if ((value & sign_bit) != 0) {
+			value |= ~mask;
+		}
+	}
+
+	return value;
+}
+
 enum class Linkage : uint8_t {
 	None,		   // Default C++ linkage (with name mangling)
 	C,			  // C linkage (no name mangling)
