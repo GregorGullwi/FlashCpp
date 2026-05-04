@@ -655,9 +655,31 @@ EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const E
 			}
 		}
 	}
-	EvalResult result = is_unsigned_integer_type(effective_category)
-							? EvalResult::from_uint(expr_result.as_uint_raw())
-							: EvalResult::from_int(expr_result.as_int());
+	int target_width_bits = getTypeSpecSizeBits(target_type);
+	if (target_width_bits <= 0) {
+		target_width_bits = get_type_size_bits(effective_category);
+	}
+	const unsigned long long raw_value = expr_result.as_uint_raw();
+	const bool is_unsigned_target = is_unsigned_integer_type(effective_category);
+	const auto truncate_to_width = [](unsigned long long value, int width_bits) {
+		if (width_bits <= 0 || width_bits >= 64) {
+			return value;
+		}
+		return value & ((1ULL << width_bits) - 1ULL);
+	};
+	EvalResult result;
+	if (is_unsigned_target) {
+		result = EvalResult::from_uint(truncate_to_width(raw_value, target_width_bits));
+	} else {
+		unsigned long long truncated = truncate_to_width(raw_value, target_width_bits);
+		if (target_width_bits > 0 && target_width_bits < 64) {
+			const unsigned long long sign_bit = 1ULL << (target_width_bits - 1);
+			if ((truncated & sign_bit) != 0) {
+				truncated |= ~((1ULL << target_width_bits) - 1ULL);
+			}
+		}
+		result = EvalResult::from_int(static_cast<long long>(truncated));
+	}
 	result.set_exact_type(target_type);
 	return result;
 }
