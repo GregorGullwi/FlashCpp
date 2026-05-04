@@ -2901,20 +2901,26 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 				const std::string_view named_name = StringTable::getStringView(named_type_info->name());
 				const std::string_view base_name = StringTable::getStringView(current_type_info->baseTemplateName());
 				const NamespaceHandle source_namespace = current_type_info->sourceNamespace();
-				// Older instantiation metadata may not carry a source namespace;
-				// fall back to the name check in that case rather than disabling
-				// injected-class-name remapping for those cached/type-only paths.
+				// Cached/template-only instantiation paths may not preserve a
+				// source namespace; fall back to the name check in that case
+				// rather than disabling injected-class-name remapping.
 				const bool namespace_matches =
 					!source_namespace.isValid() ||
 					source_namespace == named_type_info->namespaceHandle();
 				bool names_match = false;
 				if (!base_name.empty()) {
+					// Prefer the fully-qualified match, then fall back to the
+					// unqualified spelling for metadata paths that disagree on
+					// whether the template name includes its namespace prefix.
 					names_match = named_name == base_name;
 					if (!names_match) {
 						names_match = unqualifiedTypeName(named_name) == unqualifiedTypeName(base_name);
 					}
 				}
 				if (namespace_matches && names_match) {
+					// Use the current specialization's TypeIndex so same-type
+					// copy-initialization is not treated as a converting
+					// constructor call.
 					desc.type_index = current_type_info->type_index_;
 				}
 			}
