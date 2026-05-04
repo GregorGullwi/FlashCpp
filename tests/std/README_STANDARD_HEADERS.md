@@ -9,7 +9,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1418ms (retested 2026-05-04, Linux/libstdc++-14); wchar_t/char32_t Phase 15 blocker fixed. See latest dated section. |
-| `<type_traits>` | `test_std_type_traits.cpp` | ❌ Compile Error | ~282ms (retested 2026-04-28, Linux/libstdc++-14). `std::is_integral<int>::value` still passes, but the current first failure is `static_assert(std::is_pointer<int*>::value)`. |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~351ms (retested 2026-05-04, Linux/libstdc++-14). Member type aliases now preserve substituted template-argument pointer/reference/cv modifiers, so `std::is_pointer<int*>::value` succeeds. Regression: `tests/test_template_member_alias_preserves_pointer_ret0.cpp`. See latest dated section. |
 | `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | ~609ms (retested 2026-04-11). Targeted test still compiles, but bare `#include <compare>` now fails with "Ambiguous constructor call" during codegen of a namespace-level node. |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
@@ -100,6 +100,93 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+
+#### 2026-05-04 Member type-alias modifier preservation for `<type_traits>` (Linux/libstdc++-14)
+
+This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested every
+`tests/std/test_std_*.cpp` file against libstdc++-14.
+
+Fix landed:
+
+- **Instantiated member type aliases whose target is a template parameter now
+  preserve the concrete argument's pointer/reference/cv modifiers.**  In
+  libstdc++ `<type_traits>`, `std::remove_cv<int*>::type` previously registered
+  as plain `int` because alias registration kept only the substituted
+  `TypeIndex` category and dropped the `TemplateTypeArg` modifiers.  That made
+  `__is_pointer_helper<__remove_cv_t<int*>>` select the primary `false_type`
+  template instead of the `T*` partial specialization.  Alias registration now
+  rebinds direct template-parameter member aliases through `TemplateTypeArg`,
+  while leaving function-pointer aliases on the existing signature-preserving
+  path.
+
+Regression tests:
+
+- `tests/test_template_member_alias_preserves_pointer_ret0.cpp`
+- Existing guard rechecked: `tests/test_template_alias_funcptr_ret0.cpp`
+
+Full Linux regression suite (`bash tests/run_all_tests.sh`): 2270 pass / 0 fail
+/ 154 `_fail` correct.
+
+Linux/libstdc++-14 std-header sweep (`x64/Sharded/FlashCpp`, 60 s timeout):
+
+| Header | Status | Time | First-order stop / note |
+|--------|--------|------|-------------------------|
+| `<aggregate_brace_elision_follow>` | ✅ Compiled | 38ms | |
+| `<bit>` | ✅ Compiled | 487ms | |
+| `<compare_ret42>` | ✅ Compiled | 26ms | |
+| `<concepts>` | ✅ Compiled | 409ms | |
+| `<exception>` | ✅ Compiled | 432ms | |
+| `<limits>` | ✅ Compiled | 1269ms | |
+| `<new>` | ✅ Compiled | 47ms | |
+| `<pair_swap_deleted_member>` | ✅ Compiled | 23ms | |
+| `<rel_ops_no_false_instantiation_ret0>` | ✅ Compiled | 660ms | |
+| `<source_location>` | ✅ Compiled | 33ms | |
+| `<span>` | ✅ Compiled | 35ms | |
+| `<type_traits>` | ✅ Compiled | 351ms | **Unblocked from `std::is_pointer<int*>::value` static assert failure.** |
+| `<type_traits_is_integral_any_of_fail>` | ✅ Compiled | 16ms | |
+| `<typeinfo_ret0>` | ✅ Compiled | 47ms | |
+| `<utility>` | ✅ Compiled | 657ms | |
+| `<version>` | ✅ Compiled | 34ms | |
+| `<algorithm>` | ❌ Compile Error | 2000ms | `Cannot use copy initialization with explicit constructor`. |
+| `<any>` | ❌ Compile Error | 477ms | No first-order diagnostic captured by the sweep grep. |
+| `<array>` | ❌ Compile Error | 1162ms | `Cannot use copy initialization with explicit constructor`. |
+| `<atomic>` | ❌ Compile Error | 749ms | `Fatal error: Base class instantiation name should resolve after default filling`. |
+| `<chrono>` | ❌ Compile Error | 2942ms | `Fatal error: Unregistered dependent placeholder type reached template argument classification`. |
+| `<cmath>` | ❌ Compile Error | 4922ms | Non-dependent name `__poly_hermite_recursion` C++20 [temp.res]/9 violation. |
+| `<deque>` | ❌ Compile Error | 1912ms | Non-dependent name `_M_deallocate_node` C++20 [temp.res]/9 violation. |
+| `<fstream>` | ❌ Compile Error | 6583ms | Non-dependent name `__cerb` C++20 [temp.res]/9 violation. |
+| `<functional>` | ❌ Compile Error | 1901ms | `ExpressionSubstitutor missing binding for ordered template parameter '_Head'`. |
+| `<iostream>` | ❌ Compile Error | 6550ms | Non-dependent name `__cerb` C++20 [temp.res]/9 violation. |
+| `<iterator>` | ❌ Compile Error | 2272ms | Call to deleted function `swap`. |
+| `<latch>` | ❌ Compile Error | 820ms | `Fatal error: Base class instantiation name should resolve after default filling`. |
+| `<list>` | ❌ Compile Error | 2136ms | `ExpressionSubstitutor missing binding for ordered template parameter '_Head'`. |
+| `<map>` | ❌ Compile Error | 1993ms | `Fatal error: Unregistered dependent placeholder type reached template argument classification`. |
+| `<memory>` | ❌ Compile Error | 2417ms | `ExpressionSubstitutor missing binding for ordered template parameter '_Head'`. |
+| `<numeric>` | ❌ Compile Error | 2023ms | `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
+| `<optional>` | ❌ Compile Error | 997ms | Member `_M_engaged` not found in `_Optional_payload`. |
+| `<optional_codegen_recovery>` | ❌ Compile Error | 999ms | Member `_M_engaged` not found in `_Optional_payload`. |
+| `<queue>` | ❌ Compile Error | 1974ms | Non-dependent name `_M_deallocate_node` C++20 [temp.res]/9 violation. |
+| `<ranges>` | ❌ Compile Error | 2414ms | Call to deleted function `swap`. |
+| `<ratio>` | ❌ Compile Error | 486ms | `std::ratio_less` static assert is still not a constant expression. |
+| `<set>` | ❌ Compile Error | 1966ms | `Fatal error: Unregistered dependent placeholder type reached template argument classification`. |
+| `<shared_mutex>` | ❌ Compile Error | 1989ms | `Fatal error: Unregistered dependent placeholder type reached template argument classification`. |
+| `<sstream>` | ❌ Compile Error | 6579ms | Non-dependent name `__cerb` C++20 [temp.res]/9 violation. |
+| `<stack>` | ❌ Compile Error | 1933ms | Non-dependent name `_M_deallocate_node` C++20 [temp.res]/9 violation. |
+| `<stdexcept>` | ❌ Compile Error | 6501ms | `Ambiguous constructor call`. |
+| `<string>` | ❌ Compile Error | 6448ms | `Ambiguous constructor call`. |
+| `<string_view>` | ❌ Compile Error | 2092ms | `cannot initialize a variable of type 'struct' with an lvalue of type 'const char[14]'`. |
+| `<tuple>` | ❌ Compile Error | 1502ms | `ExpressionSubstitutor missing binding for ordered template parameter '_Head'`. |
+| `<variant>` | ❌ Compile Error | 2259ms | Static assert failed during template instantiation after a segmentation-fault diagnostic line. |
+| `<vector>` | ❌ Compile Error | 1620ms | `Itanium name mangling: unknown type — cannot generate valid symbol`. |
+| `<wstring_view_find_ret0>` | ❌ Compile Error | 2025ms | No matching member function for call to `find`. |
+
+Summary: 16 std-header tests compile cleanly in this sweep.  `<type_traits>` is
+newly clean because `std::is_pointer<int*>::value` now selects the pointer
+partial specialization through `__remove_cv_t<int*>`.  The next broad blockers
+remain explicit-constructor copy-initialization, non-dependent-name false
+positives, tuple `_Head` substitution, unresolved dependent placeholders, and
+`__begin`/unknown-type mangling.
 
 
 #### 2026-04-30 Static-member NTTP fast-path fix in partial specializations (Linux/libstdc++-14)

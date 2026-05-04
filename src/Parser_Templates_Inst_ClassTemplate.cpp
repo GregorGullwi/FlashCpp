@@ -1584,6 +1584,33 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		TypeSpecifierNode substituted_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
 		substituted_type_spec.set_type_index(substituted_type_index.withCategory(substituted_type));
 		substituted_type_spec.set_category(substituted_type);
+		std::optional<TemplateTypeArg> rebound_arg;
+		// Function-pointer aliases carry their dependent parameter use inside the
+		// signature; the existing alias-resolution path below preserves that full
+		// signature, while direct rebinding here is only for aliases shaped like T,
+		// T*, T&, and cv-qualified variants.
+		StringHandle alias_target_name = substituted_type_spec.has_function_signature()
+											 ? StringHandle{}
+											 : getAliasTargetNameHandle(substituted_type_spec);
+		if (alias_target_name.isValid()) {
+			forEachNonPackTemplateParamArgBinding(
+				params,
+				args,
+				[&](const TemplateParameterNode& param, const TemplateTypeArg& concrete_arg, size_t) {
+					if (!rebound_arg.has_value() &&
+						!concrete_arg.is_value &&
+						param.nameHandle() == alias_target_name) {
+						rebound_arg = rebindDependentTemplateTypeArg(
+							concrete_arg,
+							TemplateTypeArg(substituted_type_spec));
+					}
+				});
+		}
+		if (rebound_arg.has_value()) {
+			substituted_type_spec = makeTypeSpecifierFromTemplateTypeArg(*rebound_arg, substituted_type_spec.token());
+			substituted_type_index = substituted_type_spec.type_index();
+			substituted_type = substituted_type_spec.type();
+		}
 
 		FLASH_LOG(Templates, Debug, "buildSubstitutedTypeAliasSpecifier: alias_name=", StringTable::getStringView(type_alias.alias_name),
 				  ", array_dimensions.size()=", type_alias.array_dimensions.size(),
