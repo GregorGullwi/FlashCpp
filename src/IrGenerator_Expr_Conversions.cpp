@@ -116,7 +116,7 @@ ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCateg
 			return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
 		} else if (const auto* int_val = std::get_if<int>(&operands.value)) {
 			unsigned long long value = normalizeIntegralImmediateValue(static_cast<unsigned long long>(*int_val), toType, toSize);
-			return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{static_cast<unsigned long long>(value)}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
 		} else if (const auto* d_val = std::get_if<double>(&operands.value)) {
 			double value = *d_val;
 			return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
