@@ -44,6 +44,10 @@ struct DeferredBasePackExpansionBindingInfo {
 	bool invalid = false;
 };
 
+// Build the ordinary template-parameter substitution maps used by deferred base
+// instantiation. `transform_scalar_arg` can enrich scalar arguments before they
+// are stored in the name map, while variadic packs remain grouped in the pack
+// map so callers can expand them later.
 template <typename TemplateParamsContainer, typename TemplateArgsContainer, typename TransformScalarArgFn>
 static void buildTemplateArgSubstitutionMaps(
 	const TemplateParamsContainer& template_params,
@@ -81,6 +85,8 @@ static void buildTemplateArgSubstitutionMaps(
 	}
 }
 
+// Collect pack bindings referenced by a deferred base specifier and verify that
+// every participating pack expands to the same number of elements.
 static DeferredBasePackExpansionBindingInfo collectDeferredBasePackExpansionBindings(
 	const DeferredTemplateBaseClassSpecifier& deferred_base,
 	const TemplateArgPackSubstitutionMap& pack_substitution_map) {
@@ -138,6 +144,9 @@ static DeferredBasePackExpansionBindingInfo collectDeferredBasePackExpansionBind
 	return binding_info;
 }
 
+// Create the per-expansion substitution map for one deferred-base expansion by
+// overlaying the concrete pack element for `expansion_index` onto the ordinary
+// name substitutions.
 static TemplateArgSubstitutionMap makeDeferredBaseExpansionSubstitutionMap(
 	const TemplateArgSubstitutionMap& base_name_substitution_map,
 	const DeferredBasePackExpansionBindingInfo& binding_info,
