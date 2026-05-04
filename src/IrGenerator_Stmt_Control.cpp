@@ -336,23 +336,17 @@ void AstToIr::visitDoWhileStatementNode(const DoWhileStatementNode& node) {
 }
 
 void AstToIr::visitSwitchStatementNode(const SwitchStatementNode& node) {
-		// Generate unique labels for this switch statement
 	static size_t switch_counter = 0;
-	StringHandle default_label = StringTable::getOrInternStringHandle(StringBuilder().append("switch_default_").append(switch_counter));
-	StringHandle switch_end_label = StringTable::getOrInternStringHandle(StringBuilder().append("switch_end_").append(switch_counter));
-	switch_counter++;
+	const size_t current_switch = switch_counter++;
+	StringHandle default_label = StringTable::getOrInternStringHandle(StringBuilder().append("switch_default_").append(current_switch));
+	StringHandle switch_end_label = StringTable::getOrInternStringHandle(StringBuilder().append("switch_end_").append(current_switch));
 
-		// Evaluate the switch condition
 	ExprResult condition_result = visitExpressionNode(node.get_condition().as<ExpressionNode>());
-		// C++20 [class.temporary]/4: flush temporaries bound in the condition full-expression.
 	emitAndClearFullExpressionTempDestructors();
 
-		// Get the condition type and value
 	TypeCategory condition_type = condition_result.typeEnum();
 	int condition_size = condition_result.size_in_bits.value;
 
-		// Mark switch begin for break support (switch acts like a loop for break)
-		// Continue is not allowed in switch, but break is
 	pushLoopSehDepth();
 	LoopBeginOp loop_begin;
 	loop_begin.loop_start_label = switch_end_label;
@@ -360,39 +354,99 @@ void AstToIr::visitSwitchStatementNode(const SwitchStatementNode& node) {
 	loop_begin.loop_increment_label = switch_end_label;
 	ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
-		// Process the switch body to collect case labels
-	auto body = node.get_body();
-	if (!body.is<BlockNode>()) {
-		throw InternalError("Switch body must be a BlockNode");
-		return;
-	}
-
-	const BlockNode& block = body.as<BlockNode>();
-	std::vector<std::pair<std::string_view, ASTNode>> case_labels;  // label name, case value
-	bool has_default = false;  // First pass: generate labels and collect case values
+	ActiveSwitchContext switch_context;
+	switch_context.default_label_name = default_label;
+	std::vector<std::pair<StringHandle, ASTNode>> case_labels;
+	bool has_default = false;
 	size_t case_index = 0;
-	block.get_statements().visit([&](const ASTNode& stmt) {
-		if (stmt.is<CaseLabelNode>()) {
-			StringBuilder case_sb;
-			case_sb.append("switch_case_").append(switch_counter - 1).append("_").append(case_index);
-			std::string_view case_label = case_sb.commit();
-			case_labels.push_back({case_label, stmt.as<CaseLabelNode>().get_case_value()});
-			case_index++;
-		} else if (stmt.is<DefaultLabelNode>()) {
-			has_default = true;
-		}
-	});
 
-		// Generate comparison chain for each case
+	std::function<void(const ASTNode&)> collect_switch_labels = [&](const ASTNode& current) {
+		if (!current.has_value()) {
+			return;
+		}
+
+		if (current.is<CaseLabelNode>()) {
+			const CaseLabelNode& case_node = current.as<CaseLabelNode>();
+			StringHandle case_label_name = StringTable::getOrInternStringHandle(
+				StringBuilder().append("switch_case_").append(current_switch).append("_").append(case_index));
+			switch_context.case_label_names[current.raw_pointer()] = case_label_name;
+			case_labels.push_back({case_label_name, case_node.get_case_value()});
+			case_index++;
+			if (case_node.has_statement()) {
+				collect_switch_labels(*case_node.get_statement());
+			}
+			return;
+		}
+
+		if (current.is<DefaultLabelNode>()) {
+			has_default = true;
+			switch_context.default_label_names[current.raw_pointer()] = default_label;
+			const DefaultLabelNode& default_node = current.as<DefaultLabelNode>();
+			if (default_node.has_statement()) {
+				collect_switch_labels(*default_node.get_statement());
+			}
+			return;
+		}
+
+		if (current.is<BlockNode>()) {
+			current.as<BlockNode>().get_statements().visit([&](const ASTNode& statement) {
+				collect_switch_labels(statement);
+			});
+			return;
+		}
+
+		if (current.is<IfStatementNode>()) {
+			const IfStatementNode& if_node = current.as<IfStatementNode>();
+			collect_switch_labels(if_node.get_then_statement());
+			if (if_node.has_else()) {
+				collect_switch_labels(*if_node.get_else_statement());
+			}
+			return;
+		}
+
+		if (current.is<ForStatementNode>()) {
+			collect_switch_labels(current.as<ForStatementNode>().get_body_statement());
+			return;
+		}
+
+		if (current.is<WhileStatementNode>()) {
+			collect_switch_labels(current.as<WhileStatementNode>().get_body_statement());
+			return;
+		}
+
+		if (current.is<DoWhileStatementNode>()) {
+			collect_switch_labels(current.as<DoWhileStatementNode>().get_body_statement());
+			return;
+		}
+
+		if (current.is<RangedForStatementNode>()) {
+			collect_switch_labels(current.as<RangedForStatementNode>().get_body_statement());
+			return;
+		}
+
+		if (current.is<TryStatementNode>()) {
+			const TryStatementNode& try_node = current.as<TryStatementNode>();
+			collect_switch_labels(try_node.try_block());
+			for (const ASTNode& catch_clause : try_node.catch_clauses()) {
+				if (catch_clause.is<CatchClauseNode>()) {
+					collect_switch_labels(catch_clause.as<CatchClauseNode>().body());
+				}
+			}
+			return;
+		}
+
+		if (current.is<SwitchStatementNode>()) {
+			return;
+		}
+	};
+
+	collect_switch_labels(node.get_body());
+
 	size_t check_index = 0;
 	for (const auto& [case_label, case_value_node] : case_labels) {
-			// Evaluate case value (must be constant)
 		ExprResult case_value_result = visitExpressionNode(case_value_node.as<ExpressionNode>());
-
-			// Compare condition with case value using Equal opcode
 		TempVar cmp_result = var_counter.next();
 
-			// Create typed BinaryOp for the Equal comparison
 		BinaryOp bin_op{
 			.lhs = makeTypedValue(condition_type, SizeInBits{static_cast<int>(condition_size)}, toIrValue(condition_result.value)),
 			.rhs = makeTypedValue(case_value_result.typeEnum(), case_value_result.size_in_bits, toIrValue(case_value_result.value)),
@@ -400,33 +454,25 @@ void AstToIr::visitSwitchStatementNode(const SwitchStatementNode& node) {
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(bin_op), Token()));
 
-			// Branch to case label if equal, otherwise check next case
-		StringBuilder next_check_sb;
-		next_check_sb.append("switch_check_").append(switch_counter - 1).append("_").append(check_index + 1);
-		std::string_view next_check_label = next_check_sb.commit();
+		StringHandle next_check_label = StringTable::getOrInternStringHandle(
+			StringBuilder().append("switch_check_").append(current_switch).append("_").append(check_index + 1));
 
-			// For switch statements, we need to jump to case label when condition is true
-			// and fall through to next check when false. Since both labels are forward references,
-			// we emit: test condition; jz next_check; jmp case_label
 		CondBranchOp cond_branch;
-		cond_branch.label_true = StringTable::getOrInternStringHandle(case_label);	   // Fall through to unconditional branch when TRUE
-		cond_branch.label_false = StringTable::getOrInternStringHandle(next_check_label); // Jump to next check when FALSE
+		cond_branch.label_true = case_label;
+		cond_branch.label_false = next_check_label;
 		cond_branch.condition = makeTypedValue(TypeCategory::Bool, SizeInBits{1}, cmp_result);
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
-			// Unconditional branch to case label (when condition is true, we fall through here)
 		BranchOp branch_to_case;
-		branch_to_case.target_label = StringTable::getOrInternStringHandle(case_label);
+		branch_to_case.target_label = case_label;
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, std::move(branch_to_case), Token()));
 
-			// Next check label
 		LabelOp next_lbl;
-		next_lbl.label_name = StringTable::getOrInternStringHandle(next_check_label);
+		next_lbl.label_name = next_check_label;
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, std::move(next_lbl), Token()));
 		check_index++;
 	}
 
-		// If no case matched, jump to default or end
 	if (has_default) {
 		BranchOp branch_to_default;
 		branch_to_default.target_label = default_label;
@@ -437,54 +483,73 @@ void AstToIr::visitSwitchStatementNode(const SwitchStatementNode& node) {
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, std::move(branch_to_end), Token()));
 	}
 
-		// Second pass: generate code for each case/default
-	case_index = 0;
-	block.get_statements().visit([&](const ASTNode& stmt) {
-		if (stmt.is<CaseLabelNode>()) {
-			const CaseLabelNode& case_node = stmt.as<CaseLabelNode>();
-			StringBuilder case_sb;
-			case_sb.append("switch_case_").append(switch_counter - 1).append("_").append(case_index);
-			std::string_view case_label = case_sb.commit();
-
-			// Case label
-			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(case_label)}, Token()));	  // Execute case statements
-			if (case_node.has_statement()) {
-				auto case_stmt = case_node.get_statement();
-				if (case_stmt->is<BlockNode>()) {
-					case_stmt->as<BlockNode>().get_statements().visit([&](ASTNode statement) {
-						visit(statement);
-					});
-				} else {
-					visit(*case_stmt);
-				}
-			}
-				// Note: Fall-through is automatic - no break means execution continues to next case
-
-			case_index++;
-		} else if (stmt.is<DefaultLabelNode>()) {
-			const DefaultLabelNode& default_node = stmt.as<DefaultLabelNode>();
-
-			// Default label
-			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = default_label}, Token()));	   // Execute default statements
-			if (default_node.has_statement()) {
-				auto default_stmt = default_node.get_statement();
-				if (default_stmt->is<BlockNode>()) {
-					default_stmt->as<BlockNode>().get_statements().visit([&](ASTNode statement) {
-						visit(statement);
-					});
-				} else {
-					visit(*default_stmt);
-				}
-			}
+	active_switch_context_stack_.push_back(std::move(switch_context));
+	ScopeGuard switch_context_guard([&]() {
+		if (!active_switch_context_stack_.empty()) {
+			active_switch_context_stack_.pop_back();
 		}
 	});
 
-		// Switch end label
-	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = switch_end_label}, Token()));
+	auto body = node.get_body();
+	if (body.is<BlockNode>()) {
+		body.as<BlockNode>().get_statements().visit([&](const ASTNode& statement) {
+			visit(statement);
+		});
+	} else {
+		visit(body);
+	}
 
-		// Mark switch end
+	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = switch_end_label}, Token()));
 	ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
 	popLoopSehDepth();
+}
+
+void AstToIr::visitCaseLabelNode(const CaseLabelNode& node) {
+	if (!active_switch_context_stack_.empty()) {
+		const auto& switch_context = active_switch_context_stack_.back();
+		auto label_it = switch_context.case_label_names.find(static_cast<const void*>(&node));
+		if (label_it != switch_context.case_label_names.end()) {
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = label_it->second}, Token()));
+		}
+	}
+
+	if (!node.has_statement()) {
+		return;
+	}
+
+	ASTNode case_stmt = *node.get_statement();
+	if (case_stmt.is<BlockNode>()) {
+		case_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
+			visit(statement);
+		});
+		return;
+	}
+
+	visit(case_stmt);
+}
+
+void AstToIr::visitDefaultLabelNode(const DefaultLabelNode& node) {
+	if (!active_switch_context_stack_.empty()) {
+		const auto& switch_context = active_switch_context_stack_.back();
+		auto label_it = switch_context.default_label_names.find(static_cast<const void*>(&node));
+		if (label_it != switch_context.default_label_names.end()) {
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = label_it->second}, Token()));
+		}
+	}
+
+	if (!node.has_statement()) {
+		return;
+	}
+
+	ASTNode default_stmt = *node.get_statement();
+	if (default_stmt.is<BlockNode>()) {
+		default_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
+			visit(statement);
+		});
+		return;
+	}
+
+	visit(default_stmt);
 }
 
 void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {

@@ -1,4 +1,5 @@
-﻿#pragma once
+#pragma once
+#include <unordered_map>
 #include "IrGenerator.h"
 #include "InlineVector.h"
 
@@ -88,6 +89,12 @@ private:
 		bool object_is_pointer = false;
 	};
 
+	struct ActiveSwitchContext {
+		StringHandle default_label_name;
+		std::unordered_map<const void*, StringHandle> case_label_names;
+		std::unordered_map<const void*, StringHandle> default_label_names;
+	};
+
 	struct GlobalStaticBindingInfo {
 		bool is_global_or_static = false;
 		StringHandle store_name;
@@ -159,6 +166,7 @@ private:
 
 	std::vector<std::vector<ScopeVariableInfo>> scope_stack_;
 	InlineVector<StructCodegenFrame, 8> struct_codegen_frame_stack_;
+	InlineVector<ActiveSwitchContext, 4> active_switch_context_stack_;
 
 	void enterScope() {
 		scope_stack_.push_back({});
@@ -267,6 +275,8 @@ private:
 	void visitContinueStatementNode(const ContinueStatementNode& node);
 	void visitGotoStatementNode(const GotoStatementNode& node);
 	void visitLabelStatementNode(const LabelStatementNode& node);
+	void visitCaseLabelNode(const CaseLabelNode& node);
+	void visitDefaultLabelNode(const DefaultLabelNode& node);
 	void visitTryStatementNode(const TryStatementNode& node);
 	void visitThrowStatementNode(const ThrowStatementNode& node);
 	void visitSehTryExceptStatementNode(const SehTryExceptStatementNode& node);

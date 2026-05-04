@@ -1669,6 +1669,13 @@ ParseResult Parser::parse_switch_statement() {
 		return ParseResult::error("Expected '{' for switch body", current_token_);
 	}
 
+	++switch_statement_depth_;
+	ScopeGuard switch_depth_guard([&]() {
+		if (switch_statement_depth_ > 0) {
+			--switch_statement_depth_;
+		}
+	});
+
 	// Create a block to hold case/default labels and their statements
 	auto [block_node, block_ref] = create_node_ref(BlockNode());
 
@@ -1781,4 +1788,71 @@ ParseResult Parser::parse_switch_statement() {
 	}
 
 	return ParseResult::error("Invalid switch statement construction", current_token_);
+}
+
+ParseResult Parser::parse_case_label_statement() {
+	if (!consume("case"_tok)) {
+		return ParseResult::error("Expected 'case' keyword", current_token_);
+	}
+
+	auto case_value = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+	if (case_value.is_error()) {
+		return case_value;
+	}
+
+	if (!consume(":"_tok)) {
+		return ParseResult::error("Expected ':' after case value", current_token_);
+	}
+
+	skip_cpp_attributes();
+
+	std::optional<ASTNode> case_statement;
+	if (!peek().is_eof() &&
+		peek() != "}"_tok &&
+		!(peek().is_keyword() && (peek() == "case"_tok || peek() == "default"_tok))) {
+		auto statement = parse_statement_or_declaration();
+		if (statement.is_error()) {
+			return statement;
+		}
+		if (auto statement_node = statement.node()) {
+			auto [case_block_node, case_block_ref] = create_node_ref(BlockNode());
+			case_block_ref.add_statement_node(*statement_node);
+			case_statement = case_block_node;
+		}
+	}
+
+	if (!case_value.node().has_value()) {
+		return ParseResult::error("Invalid case label construction", current_token_);
+	}
+
+	return ParseResult::success(emplace_node<CaseLabelNode>(*case_value.node(), case_statement));
+}
+
+ParseResult Parser::parse_default_label_statement() {
+	if (!consume("default"_tok)) {
+		return ParseResult::error("Expected 'default' keyword", current_token_);
+	}
+
+	if (!consume(":"_tok)) {
+		return ParseResult::error("Expected ':' after 'default'", current_token_);
+	}
+
+	skip_cpp_attributes();
+
+	std::optional<ASTNode> default_statement;
+	if (!peek().is_eof() &&
+		peek() != "}"_tok &&
+		!(peek().is_keyword() && (peek() == "case"_tok || peek() == "default"_tok))) {
+		auto statement = parse_statement_or_declaration();
+		if (statement.is_error()) {
+			return statement;
+		}
+		if (auto statement_node = statement.node()) {
+			auto [default_block_node, default_block_ref] = create_node_ref(BlockNode());
+			default_block_ref.add_statement_node(*statement_node);
+			default_statement = default_block_node;
+		}
+	}
+
+	return ParseResult::success(emplace_node<DefaultLabelNode>(default_statement));
 }

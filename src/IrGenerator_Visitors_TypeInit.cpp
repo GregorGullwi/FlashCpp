@@ -81,6 +81,10 @@ void AstToIr::visitNonStructOrNamespaceNode(const ASTNode& node) {
 		visitGotoStatementNode(node.as<GotoStatementNode>());
 	} else if (node.is<LabelStatementNode>()) {
 		visitLabelStatementNode(node.as<LabelStatementNode>());
+	} else if (node.is<CaseLabelNode>()) {
+		visitCaseLabelNode(node.as<CaseLabelNode>());
+	} else if (node.is<DefaultLabelNode>()) {
+		visitDefaultLabelNode(node.as<DefaultLabelNode>());
 	} else if (node.is<TryStatementNode>()) {
 		visitTryStatementNode(node.as<TryStatementNode>());
 	} else if (node.is<ThrowStatementNode>()) {

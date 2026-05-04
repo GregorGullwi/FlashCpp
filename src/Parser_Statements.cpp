@@ -202,6 +202,22 @@ ParseResult Parser::parse_statement_or_declaration() {
 	}
 
 	if (current_token.type() == Token::Type::Keyword) {
+		if (current_token.value() == "case") {
+			if (switch_statement_depth_ == 0) {
+				advance();
+				return ParseResult::error("case label not within a switch statement", current_token);
+			}
+			return parse_case_label_statement();
+		}
+
+		if (current_token.value() == "default") {
+			if (switch_statement_depth_ == 0) {
+				advance();
+				return ParseResult::error("default label not within a switch statement", current_token);
+			}
+			return parse_default_label_statement();
+		}
+
 		// Disambiguate elaborated type specifiers used as variable declarations
 		// from struct/class/union definitions/forward declarations.
 		// Examples of elaborated type specifier variable declarations:
