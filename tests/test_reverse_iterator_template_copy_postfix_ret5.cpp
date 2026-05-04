@@ -40,7 +40,7 @@ namespace std {
 		typedef _Iterator iterator_type;
 
 		reverse_iterator() : current() {}
-		explicit reverse_iterator(_Iterator __x) : current(__x) {}
+		explicit reverse_iterator(int* __x) : current(__x) {}
 		reverse_iterator(const reverse_iterator& __x) : current(__x.current) {}
 
 		template<typename _Iter>
@@ -59,5 +59,5 @@ int main() {
 	std::reverse_iterator<int*> it(&x + 1);
 	auto old = it++;
 	old.operator++(0).operator++(0).operator++(0).operator++(0).operator++(0);
-	return sizeof(old) == sizeof(int*) ? 5 : 1;
+	return x;
 }

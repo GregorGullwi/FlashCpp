@@ -6105,10 +6105,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (call_info.has_receiver) {
 		if (call_info.function_declaration) {
 			const FunctionDeclarationNode* recovered_func_decl = nullptr;
-			const TypeSpecifierNode& declared_return_type =
-				call_info.function_declaration->decl_node().type_specifier_node();
-			if ((!call_info.function_declaration->is_member_function() ||
-				 isPlaceholderAutoType(declared_return_type.type())) &&
+			const std::string_view declared_name =
+				call_info.function_declaration->decl_node().identifier_token().value();
+			if (!call_info.function_declaration->is_member_function() &&
+				declared_name.starts_with("operator") &&
 				tryRecoverCallDeclFromStructMembers(call_info, call_info.function_declaration->decl_node(), arguments, recovered_func_decl)) {
 				return recovered_func_decl;
 			}
