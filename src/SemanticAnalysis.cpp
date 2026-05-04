@@ -2072,9 +2072,7 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 
 	// Push a scope for this function's parameters
 	pushScope();
-	registerOuterTemplateBindingsInScope(func);
-	registerParametersInScope(func.parameter_nodes());
-	normalizeParameterExpressionsInScope(func.parameter_nodes(), ctx);
+	setupNormalizedParameterScope(func, ctx);
 
 	normalizeStatement(*def, ctx);
 	popScope();
@@ -2107,9 +2105,7 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 
 	// Push a scope for this constructor's parameters.
 	pushScope();
-	registerOuterTemplateBindingsInScope(ctor);
-	registerParametersInScope(ctor.parameter_nodes());
-	normalizeParameterExpressionsInScope(ctor.parameter_nodes(), ctx);
+	setupNormalizedParameterScope(ctor, ctx);
 
 	// C++20 [class.base.init]: normalize member initializer expressions so
 	// they receive sema annotations (e.g. integral promotions in `result(x + 1)`).
