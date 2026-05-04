@@ -1441,21 +1441,10 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 	const auto& param_ti = getTypeInfo(param_idx);
 	if (!param_ti.struct_info_)
 		return param_idx;
-	auto strip_to_base_name = [](std::string_view name) {
-		auto last_scope = name.rfind("::");
-		if (last_scope != std::string_view::npos) {
-			name = name.substr(last_scope + 2);
-		}
-		auto dollar_pos = name.find('$');
-		if (dollar_pos != std::string_view::npos) {
-			name = name.substr(0, dollar_pos);
-		}
-		return name;
-	};
 	auto param_name = StringTable::getStringView(param_ti.name());
-	auto param_base_name = strip_to_base_name(param_name);
+	auto param_base_name = simpleBaseName(param_name);
 	auto instantiated_name = StringTable::getStringView(getTypeInfo(left_type_index).name());
-	auto instantiated_base_name = strip_to_base_name(instantiated_name);
+	auto instantiated_base_name = simpleBaseName(instantiated_name);
 	const StructTypeInfo* param_struct_info = param_ti.getStructInfo();
 	if (param_struct_info && !param_struct_info->sizeInBytes().is_set()) {
 		if (param_base_name == instantiated_base_name)
@@ -1567,13 +1556,25 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeIndex type_index) {
 	return TypeSpecifierNode(effective_type, TypeQualifier::None, size_bits, Token{}, CVQualifier::None);
 }
 
-inline TypeSpecifierNode resolveBinaryOperatorTypeForSelfReference(const TypeSpecifierNode& type_spec, TypeIndex enclosing_type_index) {
+inline TypeSpecifierNode resolveTypeSpecifierForSelfReference(const TypeSpecifierNode& type_spec, TypeIndex enclosing_type_index) {
 	TypeSpecifierNode resolved = type_spec;
-	TypeCategory resolved_type = effectiveBinaryOperatorTypeFromSpec(resolved);
-	if (binaryOperatorUsesTypeIndexIdentity(resolved_type)) {
+	TypeCategory resolved_type = resolved.category();
+	if (resolved.type_index().is_valid()) {
+		if (const TypeInfo* ti = tryGetTypeInfo(resolved.type_index())) {
+			const TypeCategory actual_type = ti->category();
+			if (actual_type != TypeCategory::Invalid && actual_type != TypeCategory::Void) {
+				resolved_type = actual_type;
+			}
+		}
+	}
+	if (needs_type_index(resolved_type)) {
 		resolved.set_type_index(resolveSelfRefParamIndex(resolved.type_index(), enclosing_type_index));
 	}
 	return resolved;
+}
+
+inline TypeSpecifierNode resolveBinaryOperatorTypeForSelfReference(const TypeSpecifierNode& type_spec, TypeIndex enclosing_type_index) {
+	return resolveTypeSpecifierForSelfReference(type_spec, enclosing_type_index);
 }
 
 inline ConversionRank rankBinaryOperatorOperandMatch(const TypeSpecifierNode& arg_spec, const TypeSpecifierNode& param_spec, TypeIndex enclosing_type_index) {

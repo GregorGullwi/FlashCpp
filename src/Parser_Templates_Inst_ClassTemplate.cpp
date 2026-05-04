@@ -1177,11 +1177,33 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Helper: substitute template parameter types in a function/constructor parameter list
 	// and add the substituted parameters to a target node.
 	// Consolidates the ~25-line pattern repeated across all instantiation paths.
+	struct SelfTypeRewriteInfo {
+		TypeIndex from_type_index;
+		TypeIndex to_type_index;
+	};
+	auto makeImplicitCtorSelfTypeRewrite = [&](StringHandle pattern_struct_name, TypeIndex instantiated_struct_type_index)
+		-> std::optional<SelfTypeRewriteInfo> {
+		if (!instantiated_struct_type_index.is_valid()) {
+			return std::nullopt;
+		}
+		auto it = getTypesByNameMap().find(pattern_struct_name);
+		if (it == getTypesByNameMap().end() || it->second == nullptr) {
+			return std::nullopt;
+		}
+		TypeIndex pattern_struct_type_index = it->second->registeredTypeIndex();
+		if (!pattern_struct_type_index.is_valid()) {
+			return std::nullopt;
+		}
+		pattern_struct_type_index.setCategory(TypeCategory::Struct);
+		instantiated_struct_type_index.setCategory(TypeCategory::Struct);
+		return SelfTypeRewriteInfo{pattern_struct_type_index, instantiated_struct_type_index};
+	};
 	auto substituteAndCopyParams = [&](
 									   const std::vector<ASTNode>& orig_params,
 									   auto& target_node,
 									   const auto& tmpl_params,
-									   const auto& tmpl_args) {
+									   const auto& tmpl_args,
+									   std::optional<SelfTypeRewriteInfo> self_type_rewrite = std::nullopt) {
 		for (const auto& param : orig_params) {
 			if (!param.is<DeclarationNode>()) {
 				target_node.add_parameter_node(param);
@@ -1257,6 +1279,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				continue;
 			TypeIndex param_type_index = substitute_template_parameter(
 				param_type_spec, tmpl_params, tmpl_args);
+			if (self_type_rewrite.has_value() &&
+				param_type_index == self_type_rewrite->from_type_index) {
+				param_type_index = self_type_rewrite->to_type_index;
+			}
 			TypeSpecifierNode substituted_param_type(
 				param_type_index.category(),
 				param_type_spec.qualifier(),
@@ -2606,7 +2632,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 						instantiated_name, orig_ctor.name());
 					size_t saved_pack_info = pack_param_info_.size();
-					substituteAndCopyParams(orig_ctor.parameter_nodes(), new_ctor_ref, template_params, template_args);
+					substituteAndCopyParams(
+						orig_ctor.parameter_nodes(),
+						new_ctor_ref,
+						template_params,
+						template_args,
+						orig_ctor.is_implicit()
+							? makeImplicitCtorSelfTypeRewrite(
+								pattern_struct.name(),
+								struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct))
+							: std::nullopt);
 					substituteAndCopyInitializers(orig_ctor, new_ctor_ref, template_params, template_args);
 					if (orig_ctor.is_materialized()) {
 						new_ctor_ref.set_definition(substituteTemplateParameters(*orig_ctor.get_definition(), template_params, template_args));
@@ -3569,7 +3604,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					// Copy parameters with template parameter substitution
 					size_t saved_pack_info = pack_param_info_.size();
-					substituteAndCopyParams(orig_ctor.parameter_nodes(), new_ctor_ref, template_params, template_args_for_pattern);
+					substituteAndCopyParams(
+						orig_ctor.parameter_nodes(),
+						new_ctor_ref,
+						template_params,
+						template_args_for_pattern,
+						orig_ctor.is_implicit()
+							? makeImplicitCtorSelfTypeRewrite(
+								pattern_struct.name(),
+								struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct))
+							: std::nullopt);
 
 					// Copy initializers (member, base, delegating)
 					substituteAndCopyInitializers(orig_ctor, new_ctor_ref, template_params, template_args_for_pattern);

@@ -4,7 +4,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
-> **Note (2026-04-30 dependent-identifier NTTP fix sweep):** the rows below still include historical timings from earlier hosts and commits.  The authoritative current Linux/libstdc++-14 state for the retested `tests/std/test_std_*.cpp` files is the latest dated section below the table.
+> **Note (2026-05-04 same-template explicit-ctor fix sweep):** the rows below still include historical timings from earlier hosts and commits.  The authoritative current Linux/libstdc++-14 state for the retested `tests/std/test_std_*.cpp` files is the latest dated section below the table.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
@@ -16,15 +16,15 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~639ms. The header still compiles, but `std::ratio_less` remains blocked because non-type default template arguments that depend on qualified constexpr members (for example `__ratio_less_impl`'s bool defaults) are still not fully instantiated/evaluated. |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | ~2861ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". **2026-04-23 (Linux/libstdc++):** the long-standing `Expected identifier token` parse stops at `_Optional_payload_base::_Storage`'s templated constructor (`<optional>:209`) and partial-specialization destructor (`<optional>:259`) are now fixed. On Linux, `<optional>` parses completely and fails later in codegen on deferred `_Optional_base` / `_Optional_payload` placeholder resolution. Regression: `tests/test_nested_member_template_ctor_dtor_ret0.cpp`. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Compile Error | ~1248ms (retested 2026-05-04, Linux/libstdc++-14). The earlier MSVC `<utility>:82` parse stop and `Cannot use copy initialization with explicit constructor` diagnostic are both fixed; current first hard error is `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~587ms (retested 2026-04-28, Linux/libstdc++-14). The dependent `decltype` alias target in `__do_common_type_impl::__cond_t` is no longer collapsed to concrete `auto`, so the full targeted header compiles. Regression: `tests/test_dependent_decltype_alias_template_ret0.cpp`. |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~2583ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; the current first hard error is `Cannot use copy initialization with explicit constructor` for `std::ranges::__detail::__max_size_type` in a return statement. |
-| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~2192ms (retested 2026-04-11). Call to deleted function 'swap' — same `stl_pair.h:308` blocker as `<string_view>`. |
-| `<array>` | `test_std_array.cpp` | ❌ Parse Error | ~2554ms (retested 2026-04-20). Earlier MSVC `<type_traits>` parser stops are fixed; current first hard error is MSVC `<utility>:82` at a parenthesized function-template declaration with "Expected '(' for parameter list". |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2450ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; the current first hard error is `Cannot use copy initialization with explicit constructor` for `std::reverse_iterator` in variable initialization. |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~2585ms (retested 2026-05-04, Linux/libstdc++-14). The explicit-ctor copy-init diagnostic for `std::ranges::__detail::__max_size_type` is fixed; current first hard error is `cannot initialize a variable of type 'struct' with an lvalue of type 'const char[N]'` deeper in the header. |
+| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~8484ms (retested 2026-05-04, Linux/libstdc++-14). Same explicit-ctor unblock as `<string_view>`; current first error is `cannot initialize a variable of type 'struct' with an lvalue of type 'const char[N]'`. |
+| `<array>` | `test_std_array.cpp` | ❌ Compile Error | ~1537ms (retested 2026-05-04, Linux/libstdc++-14). The `Cannot use copy initialization with explicit constructor` diagnostic for `std::reverse_iterator` is fixed; current first hard error is `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2758ms (retested 2026-05-04, Linux/libstdc++-14). Same explicit-ctor unblock as `<array>`; current first error is `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~2262ms (retested 2026-04-24, Linux/libstdc++). Previous `tuple:399` `_M_tail` blocker resolved by the member-function overload registration fix; now first-order error is `unsupported PackExpansionExprNode reached semantic analysis` deeper in tuple's pack expansion machinery. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2062ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Itanium name mangling: unknown type — cannot generate valid symbol` after several deferred/incomplete `reverse_iterator` instantiations. |
@@ -44,10 +44,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<atomic>` | `test_std_atomic.cpp` | ✅ Compiled | ~838ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** Previous deferred member function codegen errors are resolved. |
 | `<new>` | `test_std_new.cpp` | ✅ Compiled | ~56ms |
 | `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~368ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `exception_ptr` copy-vs-move-constructor ambiguity is resolved by the rvalue overload-rank fix. Regression: `tests/test_rvalue_ref_overload_preference_ret0.cpp`. |
-| `<stdexcept>` | `test_std_stdexcept.cpp` | 💥 Crash | ~4390ms (retested 2026-04-11). |
+| `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | ~9408ms (retested 2026-05-04, Linux/libstdc++-14). No longer crashes; the `Cannot use copy initialization with explicit constructor` diagnostic is also fixed; current first hard error is `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
 | `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ✅ Compiled | ~46ms (retested 2026-04-30, Linux/libstdc++-14). Sema now models pointer arithmetic (`T* + integral`, `T* - integral`, `T* - T*`) so the ternary in `type_info::name()` (`__name[0] == '*' ? __name + 1 : __name`) gets a sema-owned exact result type and codegen no longer throws. Regression: `tests/test_ternary_pointer_arithmetic_branches_ret0.cpp`. |
 | `<typeindex>` | N/A | ❌ Codegen Error | ~640ms (retested 2026-04-11). "Cannot use copy initialization with explicit constructor". |
-| `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | ~2299ms (retested 2026-04-11). Targeted test now fails with codegen errors. |
+| `<numeric>` | `test_std_numeric.cpp` | ❌ Compile Error | ~2411ms (retested 2026-05-04, Linux/libstdc++-14). The `Cannot use copy initialization with explicit constructor` diagnostic is fixed; current first error is `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
 | `<iterator>` | `test_std_iterator.cpp` | ❌ Compile Error | ~2481ms (retested 2026-04-11). Call to deleted function 'swap'. |
 | `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~736ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `_Variadic_union` arithmetic non-type template argument (`_Np-1`) inside a member initializer is now resolved. |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
@@ -196,7 +196,128 @@ instead. The most visible current next-stop blockers in this slice are:
    `Itanium name mangling: unknown type — cannot generate valid symbol`.
 
 
-#### 2026-04-30 Template type-arg size deferral + direct-init regression fix (Linux/libstdc++-14)
+#### 2026-05-04 Same-template / unknown-struct copy-init explicit-ctor fix (Linux/libstdc++-14)
+
+This pass rebuilt `x64/Sharded/FlashCpp` with clang++ on Linux and ran the full
+`tests/std/test_std_*.cpp` set against libstdc++-14.
+
+Fix landed:
+
+- **`tryAnnotateCopyInitConvertingConstructor` no longer flags two false-positive
+  shapes that caused `Cannot use copy initialization with explicit constructor`
+  to fire across `<array>`, `<algorithm>`, `<numeric>`, `<optional>`,
+  `<optional_codegen_recovery>`, `<stdexcept>`, `<string>`, and `<string_view>`:**
+    1. Inside a deferred class-template member body, an unqualified reference
+       to the class name resolves to the *pattern* `type_index`, while
+       expressions of the same template (for example `*this` or another local
+       of the same kind) carry an *instantiated* `type_index`.  The exact-match
+       early return therefore missed and the converting-ctor scan picked an
+       `explicit` ctor (e.g. `reverse_iterator(iterator_type)`) as the only
+       viable candidate.  The function now treats `from`/`to` pairs whose
+       struct base names match (after stripping the trailing namespace
+       component and any `$pattern_…`/`$hash` suffix) as same-type copy/move
+       initialization and bails out before scanning converting ctors.
+    2. When the source canonical desc reports `category() == Struct` but its
+       `type_index` is the unresolved `0` placeholder, the function used to
+       still find an explicit converting ctor on the target and emit the
+       diagnostic against an unknown source.  It now bails out instead of
+       guessing.
+- **`inferExpressionType` for unary `+` / `-` / `~` no longer synthesises a
+  generic `nativeTypeIndex(Struct)` for non-arithmetic operands.** Pointers,
+  arrays, structs, and other non-arithmetic categories now return `{}` from the
+  fast path so callers fall back to other inference routes (or skip
+  conversion-driven diagnostics) instead of comparing against a placeholder
+  type id that no real struct produces.  Same fix also restores `pointer` /
+  `array` short-circuits that previously fell through.
+
+Regression tests:
+
+- `tests/test_explicit_ctor_same_template_copy_init_ret0.cpp`
+- `tests/test_unary_struct_operator_copy_init_ret0.cpp`
+
+Full Linux regression suite (`bash tests/run_all_tests.sh`): 2265 pass / 0 fail
+/ 154 `_fail` correct.
+
+Linux/libstdc++-14 std-header sweep (`x64/Sharded/FlashCpp`, 60 s timeout):
+
+| Header | Status | Time | First-order stop / note |
+|--------|--------|------|-------------------------|
+| `<aggregate_brace_elision_follow>` | ✅ Compiled | 44ms | |
+| `<bit>` | ✅ Compiled | 615ms | |
+| `<compare_ret42>` | ✅ Compiled | 34ms | |
+| `<concepts>` | ✅ Compiled | 517ms | |
+| `<exception>` | ✅ Compiled | 553ms | |
+| `<limits>` | ✅ Compiled | 1475ms | (Now reports rc=1 on a deferred trait but the focused test path still passes.) |
+| `<new>` | ✅ Compiled | 63ms | |
+| `<pair_swap_deleted_member>` | ✅ Compiled | 27ms | |
+| `<rel_ops_no_false_instantiation_ret0>` | ✅ Compiled | 826ms | |
+| `<source_location>` | ✅ Compiled | 44ms | |
+| `<span>` | ✅ Compiled | 47ms | |
+| `<type_traits_is_integral_any_of_fail>` | ✅ Compiled | 19ms | |
+| `<typeinfo_ret0>` | ✅ Compiled | 62ms | |
+| `<utility>` | ✅ Compiled | 814ms | |
+| `<version>` | ✅ Compiled | 44ms | |
+| `<algorithm>` | ❌ Compile Error | 2758ms | **Unblocked from explicit-ctor copy-init.** Now reaches `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
+| `<any>` | ❌ Compile Error | 602ms | `Ambiguous constructor call`. |
+| `<array>` | ❌ Compile Error | 1537ms | **Unblocked from explicit-ctor copy-init.** Now reaches `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
+| `<atomic>` | ❌ Compile Error | 954ms | `Fatal error: Base class instantiation name should resolve after default filling`. |
+| `<chrono>` | ❌ Compile Error | 3747ms | `Fatal error: Unregistered dependent placeholder type reached template argument classification`. |
+| `<cmath>` | ❌ Compile Error | 5823ms | Non-dependent name `__poly_hermite_recursion` C++20 [temp.res]/9 violation. |
+| `<deque>` | ❌ Compile Error | 2433ms | Non-dependent name `_M_deallocate_node` C++20 [temp.res]/9 violation. |
+| `<fstream>` | ❌ Compile Error | 8368ms | Non-dependent name `__cerb` C++20 [temp.res]/9 violation. |
+| `<functional>` | ❌ Compile Error | 2412ms | `ExpressionSubstitutor missing binding for ordered template parameter '_Head'`. |
+| `<iostream>` | ❌ Compile Error | 8121ms | Non-dependent name `__cerb` C++20 [temp.res]/9 violation. |
+| `<iterator>` | ❌ Compile Error | 2896ms | (No first-order parser/sema diagnostic captured by the sweep grep — drops out of codegen with rc=1.) |
+| `<latch>` | ❌ Compile Error | 959ms | `Fatal error: Base class instantiation name should resolve after default filling`. |
+| `<list>` | ❌ Compile Error | 2660ms | `ExpressionSubstitutor missing binding for ordered template parameter '_Head'`. |
+| `<map>` | ❌ Compile Error | 2451ms | `Fatal error: Unregistered dependent placeholder type reached template argument classification`. |
+| `<memory>` | ❌ Compile Error | 3136ms | `ExpressionSubstitutor missing binding for ordered template parameter '_Head'`. |
+| `<numeric>` | ❌ Compile Error | 2411ms | **Unblocked from explicit-ctor copy-init.** Now reaches `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
+| `<optional>` | ❌ Compile Error | 1248ms | **Unblocked from explicit-ctor copy-init.** Now reaches `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
+| `<optional_codegen_recovery>` | ❌ Compile Error | 1258ms | **Unblocked from explicit-ctor copy-init.** Now reaches `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
+| `<queue>` | ❌ Compile Error | 2528ms | Non-dependent name `_M_deallocate_node` C++20 [temp.res]/9 violation. |
+| `<ranges>` | ❌ Compile Error | 3064ms | (No first-order diagnostic captured by sweep grep.) |
+| `<ratio>` | ❌ Compile Error | 605ms | `static_assert` involving `std::ratio_less` still evaluates as `Undefined qualified identifier in constant expression`. |
+| `<set>` | ❌ Compile Error | 2443ms | `Fatal error: Unregistered dependent placeholder type reached template argument classification`. |
+| `<shared_mutex>` | ❌ Compile Error | 2353ms | `Fatal error: Unregistered dependent placeholder type reached template argument classification`. |
+| `<sstream>` | ❌ Compile Error | 7955ms | Non-dependent name `__cerb` C++20 [temp.res]/9 violation. |
+| `<stack>` | ❌ Compile Error | 2423ms | Non-dependent name `_M_deallocate_node` C++20 [temp.res]/9 violation. |
+| `<stdexcept>` | ❌ Compile Error | 9408ms | **Unblocked from explicit-ctor copy-init.** Now reaches `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
+| `<string>` | ❌ Compile Error | 8484ms | **Unblocked from explicit-ctor copy-init.** Now reaches `cannot initialize a variable of type 'struct' with an lvalue of type 'const char[…]'`. |
+| `<string_view>` | ❌ Compile Error | 2585ms | **Unblocked from explicit-ctor copy-init.** Now reaches `cannot initialize a variable of type 'struct' with an lvalue of type 'const char[…]'`. |
+| `<tuple>` | ❌ Compile Error | 1870ms | `ExpressionSubstitutor missing binding for ordered template parameter '_Head'`. |
+| `<type_traits>` | ❌ Compile Error | 412ms | `static_assert(std::is_integral<int>::value)` still fails. |
+| `<variant>` | 💥 Crash | 2734ms | Segmentation fault deeper in visitation/`std::__invoke` instantiation. |
+| `<vector>` | ❌ Compile Error | 2013ms | `Itanium name mangling: unknown type — cannot generate valid symbol`. |
+| `<wstring_view_find_ret0>` | ❌ Compile Error | 2506ms | (No first-order diagnostic captured by sweep grep.) |
+
+Summary: 15 compile cleanly (up from 14 before this fix; `<utility>` and the
+focused `<rel_ops>`/`<typeinfo>`/`<aggregate_brace_elision_follow>` regressions
+were already passing).  The eight std-header tests that previously failed on
+the explicit-ctor copy-init diagnostic now reach the next layer of compiler
+issues (mostly `__begin` `auto`-mangling and `const char[N]` aggregate
+initialization), which are tracked separately as new high-value blockers.
+
+Newly observed top blockers, ordered by header impact:
+
+1. **Itanium name mangling: unresolved `auto` type reached mangling** for
+   `__begin` (libstdc++ ranges CPO).  Affects: `<algorithm>`, `<array>`,
+   `<numeric>`, `<optional>`, `<optional_codegen_recovery>`, `<stdexcept>`.
+2. **Non-dependent name C++20 [temp.res]/9 violation** for symbols like
+   `_M_deallocate_node`, `__cerb`, `__poly_hermite_recursion` — this is the
+   same false-positive class flagged earlier in `<functional>`'s
+   `__node_gen` and is likely the depth-guard or instantiation-context fallout
+   referenced under "Recent Fixes (2026-04-24)".  Affects: `<deque>`,
+   `<queue>`, `<stack>`, `<iostream>`, `<sstream>`, `<fstream>`, `<cmath>`.
+3. **`ExpressionSubstitutor missing binding for ordered template parameter
+   '_Head'`** — shared by all `<tuple>`-derived containers.  Affects:
+   `<tuple>`, `<list>`, `<memory>`, `<functional>`.
+4. **`Unregistered dependent placeholder type reached template argument
+   classification`** — affects `<chrono>`, `<map>`, `<set>`, `<shared_mutex>`.
+5. **`Base class instantiation name should resolve after default filling`** —
+   affects `<atomic>`, `<latch>`.
+
+
 
 This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested
 `<string_view>`, `<algorithm>`, `<vector>`, `<memory>`, and `<map>`.
