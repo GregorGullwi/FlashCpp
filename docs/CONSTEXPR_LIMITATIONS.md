@@ -177,6 +177,26 @@ constexpr Rectangle r(10, 20);
 static_assert(r.area == 200);  // ✅ Works - complex expression in initializer
 ```
 
+### ✅ C++20 Designated Initializers
+
+C++20 designated aggregate initializers work in constexpr contexts and now enforce
+the C++ ordering/mixing rules for designator clauses:
+
+```cpp
+struct Vec {
+    int x = 0;
+    int y = 0;
+    int z = 0;
+};
+
+constexpr Vec v = {.y = 42};      // ✅ skipped members use their default/zero initialization
+static_assert(v.x == 0);
+static_assert(v.y == 42);
+```
+
+Invalid C++20 forms such as `{1, .y = 2}` (mixing positional and designated
+clauses) and `{.y = 2, .x = 1}` (designators out of declaration order) are rejected.
+
 ### ✅ Default Member Initializers
 ```cpp
 struct Config {
@@ -1156,6 +1176,7 @@ Potential areas for enhancement (in order of complexity):
   All now correctly try constructor-based materialization first, then fall back to aggregate initialization for aggregates without user-defined constructors.
 - ✅ **Trailing default arguments now work for constexpr member calls and callable objects** *(Implemented)* — The constexpr member-lookup and functor `operator()` lookup paths now accept any explicit argument count in the callable range `[countMinRequiredArgs, parameter_count]` instead of requiring exact arity. Missing trailing arguments continue to be materialized by `bind_evaluated_arguments`, so calls like `counter.add(40)` and `adder(40)` now evaluate correctly when the omitted parameters have defaults. Covered by `tests/test_constexpr_member_default_arg_ret0.cpp` and `tests/test_constexpr_functor_default_arg_ret0.cpp`.
 - ✅ **Constexpr callable objects now honor sema-resolved same-arity `operator()` overloads** *(Implemented)* — The callable-object constexpr path now reuses the resolved `CallExprNode` target when available instead of falling back to arity-only `operator()` lookup. This fixes false ambiguity for cases like `f(40)` when a functor has both `operator()(int)` and `operator()(long)` and normal overload resolution already selected the `int` overload. Covered by `tests/test_constexpr_functor_same_arity_overload_ret0.cpp`.
+- ✅ **C++20 designated aggregate initializer diagnostics** *(Implemented)* — Constexpr aggregate initialization now rejects mixed positional/designated clauses and out-of-order designators instead of accepting C/GNU extension forms. Covered by `tests/test_constexpr_designated_init_mixed_fail.cpp` and `tests/test_constexpr_designated_init_order_fail.cpp`.
 
 ### Medium
 - ✅ **Constexpr free-function calls now honor sema-resolved same-arity overloads** *(Implemented)* — The constexpr free-function call path now reuses the parser/sema-resolved `CallExprNode` target when available instead of falling back to raw symbol-table name lookup. This fixes wrong-overload evaluation for cases like `pick(2.5)` when both `pick(int)` and `pick(double)` exist and normal overload resolution already selected the `double` overload. Covered by `tests/test_constexpr_free_function_overload_ret0.cpp`.
@@ -1463,6 +1484,8 @@ struct CaptureExample {
 - `tests/test_constexpr_new_leak_fail.cpp` - Constexpr heap leak detection (expected failure)
 - `tests/test_constexpr_new_array_toolarge_fail.cpp` - Constexpr array size limit (expected failure)
 - `tests/test_constexpr_short_circuit_ret0.cpp` - Short-circuit `&&`/`||` in constexpr
+- `tests/test_constexpr_designated_init_member_ret42.cpp` - C++20 designated initializer support
+- `tests/test_constexpr_designated_init_mixed_fail.cpp` / `tests/test_constexpr_designated_init_order_fail.cpp` - C++20 designated initializer diagnostics
 - `tests/test_constexpr_bitwise_compound_assign_ret0.cpp` - Bitwise compound assignments in constexpr
 - `tests/test_constexpr_struct_ctor_in_body_ret0.cpp` - Struct constructor calls inside constexpr function bodies (return struct, local struct usage)
 - `tests/test_constexpr_local_member_assign_ret0.cpp` - Local struct member dot-assignment (`p.a = value`) in constexpr functions

@@ -2023,6 +2023,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// Parse comma-separated initializer expressions (positional or designated)
 	size_t member_index = 0;
 	bool has_designated = false; // Track if we've seen any designated initializers
+	bool has_positional_initializer = false;
+	size_t next_designated_member_index = 0;
 	bool has_seen_pack_expansion = false; // True once a positional pack expansion is seen
 	std::unordered_set<std::string_view> used_members; // Track which members have been initialized
 
@@ -2079,6 +2081,9 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 		// Check for designated initializer syntax: .member = value
 		if (peek() == "."_tok) {
+			if (has_positional_initializer || has_seen_pack_expansion) {
+				return ParseResult::error("Designated initializers cannot follow positional initializers", current_token_);
+			}
 			has_designated = true;
 			advance(); // consume '.'
 
@@ -2094,10 +2099,13 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			// Validate member name exists in struct
 			bool member_found = false;
 			const StructMember* target_member = nullptr;
-			for (const auto& member : struct_info.members) {
+			size_t target_member_index = 0;
+			for (size_t i = 0; i < struct_info.members.size(); ++i) {
+				const auto& member = struct_info.members[i];
 				if (member.getName() == StringTable::getOrInternStringHandle(member_name)) {
 					member_found = true;
 					target_member = &member;
+					target_member_index = i;
 					break;
 				}
 			}
@@ -2109,7 +2117,11 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (used_members.count(member_name)) {
 				return ParseResult::error("Member '" + std::string(member_name) + "' already initialized", current_token_);
 			}
+			if (target_member_index < next_designated_member_index) {
+				return ParseResult::error("Designated initializers must appear in declaration order", current_token_);
+			}
 			used_members.insert(member_name);
+			next_designated_member_index = target_member_index + 1;
 
 			// Expect '='
 			if (peek() != "="_tok) {
@@ -2143,6 +2155,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (has_designated) {
 				return ParseResult::error("Positional initializers cannot follow designated initializers", current_token_);
 			}
+			has_positional_initializer = true;
 
 			// Check if we have too many initializers.
 			// Skip the check when a pack expansion was already seen — we can't know

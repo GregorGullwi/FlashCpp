@@ -16,7 +16,7 @@ int test_designated_init_partial() {
 }
 
 int test_designated_init_order() {
-	Point p = {.y = 20, .x = 10};
+	Point p = {.x = 10, .y = 20};
 	return p.x + p.y;  // Should return 30
 }
 
@@ -51,7 +51,7 @@ int test_designated_init_mixed_values() {
 }
 
 int test_designated_init_swap() {
-	Point p = {.y = 100, .x = 50};
+	Point p = {.x = 50, .y = 100};
 	return p.x - p.y;  // Should return -50
 }
 
