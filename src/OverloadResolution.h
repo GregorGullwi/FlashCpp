@@ -998,7 +998,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 	int num_best_matches = 0;
 	std::vector<const ConstructorDeclarationNode*> tied_candidates;
 	auto compare_constructor_template_preference = [](const ConstructorDeclarationNode& lhs,
-													 const ConstructorDeclarationNode& rhs) {
+													  const ConstructorDeclarationNode& rhs) {
 		const bool lhs_is_template = lhs.has_template_parameters();
 		const bool rhs_is_template = rhs.has_template_parameters();
 		if (lhs_is_template == rhs_is_template) {

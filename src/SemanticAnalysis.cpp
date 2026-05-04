@@ -5521,6 +5521,8 @@ void SemanticAnalysis::tryResolveUnaryDereferenceOperator(const UnaryOperatorNod
 		StringHandle receiver_name = receiver_type_info->name();
 		StringHandle member_handle = best_match->decl_node().identifier_token().handle();
 		auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+		// Resolver constness can be lost on pattern-owned operator* declarations;
+		// mark whichever concrete lazy entry exists for the receiver instantiation.
 		for (bool const_variant : {best_match->is_const_member_function(), !best_match->is_const_member_function()}) {
 			if (lazy_registry.needsInstantiation(
 					LazyMemberKey::exact(receiver_name, member_handle, const_variant))) {
@@ -6107,6 +6109,8 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			const FunctionDeclarationNode* recovered_func_decl = nullptr;
 			const std::string_view declared_name =
 				call_info.function_declaration->decl_node().identifier_token().value();
+			// Explicit member operator syntax initially carries a parser-created
+			// non-member placeholder; recover the actual receiver member here.
 			if (!call_info.function_declaration->is_member_function() &&
 				declared_name.starts_with("operator") &&
 				tryRecoverCallDeclFromStructMembers(call_info, call_info.function_declaration->decl_node(), arguments, recovered_func_decl)) {
