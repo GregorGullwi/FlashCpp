@@ -224,7 +224,7 @@ Validation snapshot:
 | Header/Test | Status | Time | First-order stop / note |
 |-------------|--------|------|-------------------------|
 | `tests/test_char_width_binary_sema_conversions_ret0.cpp` | ✅ PASS | run-all focused slice | Covers `wchar_t < int`, `char32_t - int`, and ordinary mixed builtin arithmetic. |
-| `<limits>` / `test_std_limits.cpp` | ✅ Compiled | ~1418ms | No longer fails with `Phase 15: sema missed binary LHS conversion (wchar_t -> int)` or `RHS conversion (int -> char32_t)`. Still logs two recoverable codegen skips: `Return value exceeds 32-bit limit`. |
+| `<limits>` / `test_std_limits.cpp` | ✅ Compiled | ~1418ms | Phase 15 wchar_t/char32_t blocker fixed; still logs two recoverable `Return value exceeds 32-bit limit` codegen skips. |
 
 #### 2026-05-04 Same-template / unknown-struct copy-init explicit-ctor fix (Linux/libstdc++-14)
 
