@@ -3904,7 +3904,22 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 					const ASTNode return_type_node = free_overload->decl_node().type_node();
 					if (return_type_node.has_value() && return_type_node.is<TypeSpecifierNode>()) {
-						return canonicalizeType(return_type_node.as<TypeSpecifierNode>());
+						TypeSpecifierNode return_type = return_type_node.as<TypeSpecifierNode>();
+						auto resolve_free_operator_self_type = [&](const ASTNode& operand) {
+							const CanonicalTypeId operand_id = inferExpressionType(operand);
+							if (!operand_id) {
+								return;
+							}
+							const CanonicalTypeDesc& operand_desc = type_context_.get(operand_id);
+							if (!operand_desc.type_index.is_valid() ||
+								!is_struct_type(operand_desc.category())) {
+								return;
+							}
+							return_type = resolveBinaryOperatorTypeForSelfReference(return_type, operand_desc.type_index);
+						};
+						resolve_free_operator_self_type(e.get_lhs());
+						resolve_free_operator_self_type(e.get_rhs());
+						return canonicalizeType(return_type);
 					}
 					return {};
 				}
@@ -4767,13 +4782,6 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 		return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty())
 		return false;
-	// Some deferred template-body expressions still reach this point with a
-	// struct-category canonical type whose concrete TypeInfo never resolved.
-	// We cannot soundly decide converting-constructor viability from that
-	// placeholder, so avoid emitting a false-positive diagnostic.
-	if (from_desc.category() == TypeCategory::Struct && !from_desc.type_index.is_valid()) {
-		return false;
-	}
 	// Same-type copy/move initialization (modulo CV/ref qualifiers) is handled by
 	// the implicit copy/move constructor and never requires picking a converting
 	// constructor — even if all user-written converting ctors are explicit.
