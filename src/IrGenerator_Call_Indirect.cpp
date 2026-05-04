@@ -1346,6 +1346,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	}
 
 	TempVar ret_var = var_counter.next();
+	// Member-call lowering needs the instantiated generic-lambda return type both
+	// while building the CallOp payload and later when shaping the final ExprResult.
 	std::optional<TypeSpecifierNode> resolved_generic_return_type;
 
 	if (is_virtual_call && vtable_index >= 0) {
