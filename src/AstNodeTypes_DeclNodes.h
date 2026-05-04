@@ -917,6 +917,9 @@ struct QualifiedIdentifier {
 	}
 };
 
+// Extract the simple class/template base name used for same-type matching.
+// Strips any leading namespace qualification and any trailing '$...' suffix
+// that encodes pattern / instantiation metadata in registered type names.
 inline std::string_view simpleBaseName(std::string_view name) {
 	if (size_t pos = name.rfind("::"); pos != std::string_view::npos) {
 		name.remove_prefix(pos + 2);
