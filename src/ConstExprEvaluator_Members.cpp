@@ -1156,6 +1156,12 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 			if (member_it != target_obj->object_member_bindings.end()) {
 				return validateConstexprRead(member_it->second);
 			}
+			// The heap entry exists but the requested member name is absent.  Return an
+			// explicit diagnostic here rather than falling through to std::nullopt which
+			// would let the non-heap path run and produce the confusing
+			// "could not resolve pointed-to object '@new_N'" error message.
+			return EvalResult::error("Member '" + std::string(member_access.member_name()) +
+									 "' not found on heap-allocated object in constant expression");
 		}
 		return std::nullopt;
 	}
@@ -1993,7 +1999,27 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						StringHandle heap_key = ptr_result.pointer_to_var;
 						auto heap_it = context.constexpr_heap.find(heap_key);
 						if (heap_it == context.constexpr_heap.end()) {
-							return EvalResult::error("Dereference assignment: pointer does not refer to a constexpr heap object");
+							// Not a heap allocation — check if the pointer targets a local
+							// binding in the current frame (e.g., `int x; int* p = &x; *p = 5`).
+							std::string_view local_name = heap_key.view();
+							auto local_it = bindings.find(local_name);
+							if (local_it != bindings.end()) {
+								if (ptr_result.pointer_offset != 0) {
+									return EvalResult::error(
+										"Non-zero pointer offset on non-array local variable '"
+										+ std::string(local_name) + "' in constexpr dereference assignment");
+								}
+								// Evaluate the RHS before mutating.
+								auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+								if (!rhs_result.success())
+									return rhs_result;
+								auto assign_result = apply_op_to(local_it->second, rhs_result);
+								// Keep any other same-frame pointer snapshots in sync.
+								if (assign_result.success())
+									refreshPointerSnapshotsForBinding(local_name, local_it->second, bindings, context);
+								return assign_result;
+							}
+							return EvalResult::error("Dereference assignment: pointer target is neither a heap allocation nor a local binding in constant expression");
 						}
 						if (heap_it->second.freed) {
 							return EvalResult::error("Dereference assignment: use after free in constant expression");
@@ -4207,7 +4233,12 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 			const std::unordered_map<std::string_view, EvalResult>& eval_bindings =
 				enclosing_bindings ? *enclosing_bindings : empty_bindings;
 			EvalResult gen_result = evaluate_expression_with_bindings_const(initializer, eval_bindings, context);
-			if (gen_result.success() && !gen_result.object_member_bindings.empty()) {
+			// Propagate evaluation failures rather than swallowing them with the generic
+			// "requires a struct initializer" message below (e.g. a failed function call
+			// inside a ternary initializer should surface its own diagnostic).
+			if (!gen_result.success())
+				return gen_result;
+			if (!gen_result.object_member_bindings.empty()) {
 				auto it = gen_result.object_member_bindings.find(member_name);
 				if (it != gen_result.object_member_bindings.end()) {
 					resolved_member.value = it->second;
