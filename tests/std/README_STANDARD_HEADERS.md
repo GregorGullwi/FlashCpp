@@ -132,12 +132,27 @@ Focused Linux/libstdc++-14 std-header retest (`x64/Sharded/FlashCpp`):
 
 | Header | Status | Time | First-order stop / note |
 |--------|--------|------|-------------------------|
-| `<atomic>` | ❌ Compile Error | 900ms | Progressed past the default-filled base-class instantiation fatal; current first hard error is `No matching member function for call to 'load'` in `/usr/include/c++/14/atomic:92`. |
-| `<latch>` | ❌ Codegen Error | 930ms | Progressed past the same `<atomic>` template-lookup fatal; current first hard stops are existing Phase 15 conversion gaps in platform wait/notify code and constructor metadata around `std::__mutex_base`. |
+| `<atomic>` | ❌ Compile Error | 900ms | Progressed past the default-filled base-class instantiation fatal; now stops at member `load` lookup. |
+| `<latch>` | ❌ Codegen Error | 930ms | Progressed past the same `<atomic>` template-lookup fatal; now stops in existing Phase 15/codegen gaps. |
 | `<ratio>` | ❌ Compile Error | 480ms | Still stops because `std::ratio_less<third, half>::value` is not a constant expression. |
-| `<string_view>` | ❌ Codegen Error | 2170ms | Still reaches the existing `std::reverse_iterator`/`__max_size_type` path: repeated `Operator- not defined for operand types`, then `Phase 15: sema missed binary RHS conversion (int -> unsigned long)`, with final `Fatal error: Operator- not defined for operand types`. |
+| `<string_view>` | ❌ Codegen Error | 2170ms | Still reaches the existing `std::reverse_iterator`/`__max_size_type` operator/conversion path. |
 | `<optional>` | ❌ Codegen Error | 990ms | Still stops in `_Optional_base` / `_Optional_payload` lowering with `struct type info not found` and missing `_M_engaged`. |
-| `<algorithm>` | ❌ Codegen Error | 2010ms | Still reaches the `std::reverse_iterator`/`__max_size_type` path and stops at `Phase 15: sema missed binary RHS conversion (int -> unsigned long)`. |
+| `<algorithm>` | ❌ Codegen Error | 2010ms | Still reaches the `std::reverse_iterator`/`__max_size_type` Phase 15 conversion path. |
+
+Detailed first stops from this sweep:
+
+- `<atomic>`: `/usr/include/c++/14/atomic:92` reports
+  `No matching member function for call to 'load'`.
+- `<latch>`: `__platform_notify` / `__platform_wait` report
+  `Phase 15: sema missed function call argument conversion (int -> long)`;
+  namespace lowering also reports `Phase 15: sema missed variable init conversion
+  (int -> unsigned long)` and constructor metadata recovery around
+  `std::__mutex_base`.
+- `<string_view>`: repeated `Operator- not defined for operand types`, then
+  `Phase 15: sema missed binary RHS conversion (int -> unsigned long)`, with
+  final `Fatal error: Operator- not defined for operand types`.
+- `<algorithm>`: `Phase 15: sema missed binary RHS conversion
+  (int -> unsigned long)`.
 
 The next visible blockers after this parser/sema-layer unblock are member
 lookup for `atomic::load`, Phase 15 primitive conversion ownership in already
