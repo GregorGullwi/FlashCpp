@@ -1106,8 +1106,16 @@ Evaluator::ResolvedBoundEvalResult Evaluator::resolve_bound_eval_result(
 		}
 
 		resolved.value = &resolved.owned_value.value();
+		return resolved;
 	}
 
+	resolved.owned_value = evaluate_with_optional_bindings(bound_expr, context, &bindings, nullptr);
+	if (!resolved.owned_value->success()) {
+		resolved.error = resolved.owned_value;
+		return resolved;
+	}
+
+	resolved.value = &resolved.owned_value.value();
 	return resolved;
 }
 
@@ -1271,16 +1279,38 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		}
 	} else {
 		const EvalResult* object_value = nullptr;
-		ResolvedBoundEvalResult resolved_object;
+		std::optional<EvalResult> resolved_complex_object;
+		auto resolve_bound_receiver_object = [&](const ASTNode& receiver_expr, auto&& self) -> EvalResult {
+			if (const IdentifierNode* receiver_id = tryGetIdentifier(receiver_expr)) {
+				if (const EvalResult* bound_value = findBindingValue(receiver_id->name(), bindings, context)) {
+					return *bound_value;
+				}
+				return EvalResult::error(
+					"Template parameter or undefined variable in constant expression: " +
+					std::string(receiver_id->name()));
+			}
+			if (receiver_expr.is<ExpressionNode>()) {
+				const ExpressionNode& receiver_node = receiver_expr.as<ExpressionNode>();
+				if (const auto* ternary = std::get_if<TernaryOperatorNode>(&receiver_node)) {
+					EvalResult cond_result = evaluate_expression_with_bindings_const(ternary->condition(), bindings, context);
+					if (!cond_result.success()) {
+						return cond_result;
+					}
+					return cond_result.pointer_to_var.isValid() ? self(ternary->true_expr(), self)
+															 : self(cond_result.as_bool() ? ternary->true_expr() : ternary->false_expr(), self);
+				}
+			}
+			return evaluate_expression_with_bindings_const(receiver_expr, bindings, context);
+		};
 		if (object_identifier) {
 			object_name = object_identifier->name();
 			object_value = findBindingValue(object_name, bindings, context);
 		} else {
-			resolved_object = resolve_bound_eval_result(call_info->receiver, bindings, context, true);
-			if (resolved_object.error.has_value()) {
-				return resolved_object.error.value();
+			resolved_complex_object = resolve_bound_receiver_object(call_info->receiver, resolve_bound_receiver_object);
+			if (!resolved_complex_object->success()) {
+				return *resolved_complex_object;
 			}
-			object_value = resolved_object.value;
+			object_value = &resolved_complex_object.value();
 		}
 		if (!object_value) {
 			return std::nullopt;
@@ -1377,6 +1407,11 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		return bind_result;
 	}
 
+	EvalResult this_binding = EvalResult::from_int(0LL);
+	this_binding.object_type_index = bound_type_index;
+	this_binding.object_member_bindings = member_bindings;
+	member_bindings["this"] = std::move(this_binding);
+
 	auto saved_template_param_names = context.template_param_names;
 	auto saved_template_args = context.template_args;
 	auto restore_template_bindings = [&]() {
@@ -1443,6 +1478,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		}
 	}
 	if (result.success() && mutable_bindings) {
+		member_bindings.erase("this");
 		if (write_back_to_object_binding) {
 			auto object_it = mutable_bindings->find(object_name);
 			if (object_it != mutable_bindings->end()) {
@@ -1467,7 +1503,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			if (!write_back_result.success()) {
 				result = write_back_result;
 			}
-		} else {
+		} else if (saved_struct_info) {
 			for (const auto& member : saved_struct_info->members) {
 				std::string_view member_name = StringTable::getStringView(member.getName());
 				auto member_it = member_bindings.find(member_name);
@@ -5349,9 +5385,26 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 
 	auto extracted = extract_identifier_from_expression(object_expr);
 	if (!extracted) {
-		complex_object_result = evaluate(object_expr, context);
-		if (!complex_object_result.success()) {
-			return complex_object_result;
+		bool resolved_from_local_bindings = false;
+		if (context.local_bindings) {
+			ResolvedBoundEvalResult resolved_object = resolve_bound_eval_result(
+				object_expr,
+				*context.local_bindings,
+				context,
+				true);
+			if (resolved_object.error.has_value()) {
+				return resolved_object.error.value();
+			}
+			if (resolved_object.value) {
+				complex_object_result = *resolved_object.value;
+				resolved_from_local_bindings = true;
+			}
+		}
+		if (!resolved_from_local_bindings) {
+			complex_object_result = evaluate(object_expr, context);
+			if (!complex_object_result.success()) {
+				return complex_object_result;
+			}
 		}
 		has_complex_object_result = true;
 	} else {
@@ -5566,6 +5619,11 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 	if (!bind_result.success()) {
 		return bind_result;
 	}
+
+	EvalResult this_binding = EvalResult::from_int(0LL);
+	this_binding.object_type_index = type_index;
+	this_binding.object_member_bindings = member_bindings;
+	member_bindings["this"] = std::move(this_binding);
 
 	auto saved_template_param_names = context.template_param_names;
 	auto saved_template_args = context.template_args;
