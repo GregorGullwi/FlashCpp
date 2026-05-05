@@ -1244,14 +1244,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		return std::nullopt;
 	}
 
-	auto extract_object_identifier = [&]() -> const IdentifierNode* {
-		return tryGetIdentifier(call_info->receiver);
-	};
-
-	const IdentifierNode* object_identifier = extract_object_identifier();
-	if (!object_identifier) {
-		return std::nullopt;
-	}
+	const IdentifierNode* object_identifier = tryGetIdentifier(call_info->receiver);
+	const bool receiver_is_this = object_identifier && object_identifier->name() == "this";
 
 	const StructTypeInfo* bound_struct_info = nullptr;
 	TypeIndex bound_type_index{};
@@ -1259,10 +1253,10 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	std::unordered_map<std::string_view, EvalResult> member_bindings;
 	bool write_back_to_object_binding = false;
 	bool write_back_through_pointer = false;
-	std::string_view object_name = object_identifier->name();
+	std::string_view object_name;
 	EvalResult pointed_object_result;
 
-	if (object_name == "this") {
+	if (receiver_is_this) {
 		if (!context.struct_info) {
 			return std::nullopt;
 		}
@@ -1276,7 +1270,18 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			}
 		}
 	} else {
-		const EvalResult* object_value = findBindingValue(object_name, bindings, context);
+		const EvalResult* object_value = nullptr;
+		ResolvedBoundEvalResult resolved_object;
+		if (object_identifier) {
+			object_name = object_identifier->name();
+			object_value = findBindingValue(object_name, bindings, context);
+		} else {
+			resolved_object = resolve_bound_eval_result(call_info->receiver, bindings, context, true);
+			if (resolved_object.error.has_value()) {
+				return resolved_object.error.value();
+			}
+			object_value = resolved_object.value;
+		}
 		if (!object_value) {
 			return std::nullopt;
 		}
@@ -1291,14 +1296,14 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			}
 			bound_type_index = pointed_object_result.object_type_index;
 			member_bindings = pointed_object_result.object_member_bindings;
-			write_back_through_pointer = true;
+			write_back_through_pointer = object_identifier != nullptr;
 		} else {
 			if (!object_value->object_type_index.is_valid()) {
 				return std::nullopt;
 			}
 			bound_type_index = object_value->object_type_index;
 			member_bindings = object_value->object_member_bindings;
-			write_back_to_object_binding = true;
+			write_back_to_object_binding = object_identifier != nullptr;
 		}
 
 		bound_type_info = tryGetTypeInfo(bound_type_index);
@@ -1325,7 +1330,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	}();
 	if (!actual_func) {
 		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-		auto member_function_match = object_name == "this"
+		auto member_function_match = receiver_is_this
 										 ? find_current_struct_member_function_candidate(
 											   func_name_handle,
 											   call_info->arguments->size(),
@@ -1390,7 +1395,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		for (const auto& arg : actual_func->outer_template_args()) {
 			context.template_args.push_back(toTemplateTypeArg(arg));
 		}
-	} else if (object_name == "this") {
+	} else if (receiver_is_this) {
 		try_load_current_struct_template_bindings(context);
 	} else {
 		load_template_bindings_from_type(bound_type_info, context);

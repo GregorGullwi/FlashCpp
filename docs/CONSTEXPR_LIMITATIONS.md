@@ -441,6 +441,31 @@ struct Counter {
 };
 ```
 
+### ✅ Member Function Calls on Bound Conditional/Temporary Receivers (NEW)
+
+Constexpr member-function calls now also work when the receiver is a bound
+non-identifier expression that still resolves to a constexpr object in the
+current evaluation state, such as a conditional expression choosing between a
+local object and a temporary:
+
+```cpp
+struct Box {
+    int a;
+    int b;
+    constexpr int sum() const { return a + b; }
+};
+
+constexpr int f() {
+    Box x{7, 8};
+    return (true ? x : Box{1, 2}).sum();
+}
+
+static_assert(f() == 15);  // ✅ Works
+```
+
+This also covers straightforward temporary-producing branches such as
+`(cond ? makeBox() : Box{1, 2}).sum()`.
+
 ### ✅ Default Constructor Invocation for Local Struct Variables (NEW)
 
 Declaring a local struct variable without an initializer inside a constexpr function now invokes the default constructor:
