@@ -103,6 +103,92 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 
 
+#### 2026-05-05 Copy-init array-to-pointer constructor conversion for `<string_view>` (Linux/libstdc++-14)
+
+This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested every
+`tests/std/test_std_*.cpp` file against libstdc++-14.
+
+Fix landed:
+
+- **Copy-initialized converting constructors now consider C++20 [conv.array]
+  array-to-pointer decay for one-dimensional array prvalues/lvalues that are not
+  already represented as pointer arguments.**  This keeps the fix in overload
+  conversion planning and sema's selected-constructor annotation path, allowing
+  `View v = "abc";` and the `std::basic_string_view(const CharT*)` path to select
+  the non-explicit constructor instead of falling through to the invalid
+  array-to-struct diagnostic.
+
+Regression test:
+
+- `tests/test_copy_init_ctor_array_to_pointer_ret0.cpp`
+
+Validation snapshot:
+
+- Full Linux regression suite (`bash tests/run_all_tests.sh`): 2276 pass / 0 fail
+  / 156 `_fail` correct.
+- Existing array-decay guards rechecked:
+  `test_array_decay_pointer_metadata_ret0.cpp`, `test_array_pass_simple_ret42.cpp`,
+  `test_puts_stack_ret0.cpp`, and `test_toplevel_const_ptr_arg_ret0.cpp`.
+
+Linux/libstdc++-14 std-header sweep (`x64/Sharded/FlashCpp`, 60 s timeout):
+
+| Header | Status | Time | First-order stop / note |
+|--------|--------|------|-------------------------|
+| `<aggregate_brace_elision_follow>` | ✅ Compiled | 48ms | |
+| `<bit>` | ✅ Compiled | 626ms | |
+| `<compare_ret42>` | ✅ Compiled | 35ms | |
+| `<concepts>` | ✅ Compiled | 539ms | |
+| `<exception>` | ✅ Compiled | 563ms | |
+| `<limits>` | ✅ Compiled | 1645ms | |
+| `<new>` | ✅ Compiled | 62ms | |
+| `<pair_swap_deleted_member>` | ✅ Compiled | 29ms | |
+| `<rel_ops_no_false_instantiation_ret0>` | ✅ Compiled | 864ms | |
+| `<source_location>` | ✅ Compiled | 43ms | |
+| `<span>` | ✅ Compiled | 45ms | |
+| `<type_traits>` | ✅ Compiled | 458ms | |
+| `<type_traits_is_integral_any_of_fail>` | ✅ Compiled | 20ms | |
+| `<typeinfo_ret0>` | ✅ Compiled | 60ms | |
+| `<utility>` | ✅ Compiled | 863ms | |
+| `<version>` | ✅ Compiled | 43ms | |
+| `<algorithm>` | ❌ Compile Error | 2568ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<any>` | ❌ Compile Error | 622ms | `Ambiguous constructor call` in `main`. |
+| `<array>` | ❌ Compile Error | 1564ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<atomic>` | ❌ Compile Error | 972ms | `Fatal error: Base class instantiation name should resolve after default filling`. |
+| `<chrono>` | ❌ Compile Error | 3816ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<cmath>` | ❌ Compile Error | 6307ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<deque>` | ❌ Compile Error | 2518ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<fstream>` | ❌ Compile Error | 8578ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<functional>` | ❌ Compile Error | 2463ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<iostream>` | ❌ Compile Error | 8596ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<iterator>` | ❌ Compile Error | 2968ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<latch>` | ❌ Compile Error | 966ms | `Fatal error: Base class instantiation name should resolve after default filling`. |
+| `<list>` | ❌ Compile Error | 2839ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<map>` | ❌ Compile Error | 2587ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<memory>` | ❌ Compile Error | 3174ms | `sizeof evaluated to 0 for type '' (incomplete or dependent type) - cannot allocate incomplete types`. |
+| `<numeric>` | ❌ Compile Error | 2621ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<optional>` | ❌ Compile Error | 1315ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<optional_codegen_recovery>` | ❌ Compile Error | 1313ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<queue>` | ❌ Compile Error | 2656ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<ranges>` | ❌ Compile Error | 3152ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<ratio>` | ❌ Compile Error | 637ms | `ratio_less::value` is still not a constant expression. |
+| `<set>` | ❌ Compile Error | 2611ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<shared_mutex>` | ❌ Compile Error | 2585ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<sstream>` | ❌ Compile Error | 8645ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<stack>` | ❌ Compile Error | 2583ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<stdexcept>` | ❌ Compile Error | 8587ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<string>` | ❌ Compile Error | 8559ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<string_view>` | ❌ Compile Error | 2935ms | The previous `const char[N]` copy-init blocker is fixed; current first-order stop is `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<tuple>` | ❌ Compile Error | 1970ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<variant>` | ❌ Compile Error | 2900ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<vector>` | ❌ Compile Error | 2122ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<wstring_view_find_ret0>` | ❌ Compile Error | 2650ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+
+The broad next blocker is now the fold-expression completeness check reported
+from template instantiation across many range/iterator-heavy headers.  Two
+independent blockers remain visible in this sweep: default-filled base-class
+instantiation for `<atomic>`/`<latch>`, and the existing `ratio_less::value`
+constant-expression gap in `<ratio>`.
+
 #### 2026-05-04 Injected-class-name copy-init follow-up for `<array>` / `std::reverse_iterator` (Linux/libstdc++-14)
 
 Fix landed:

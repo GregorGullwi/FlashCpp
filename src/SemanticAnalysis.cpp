@@ -5013,7 +5013,7 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 		return false;
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty())
 		return false;
-	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty())
+	if (!to_desc.array_dimensions.empty())
 		return false;
 	// Same-type copy/move initialization (modulo CV/ref qualifiers) is handled by
 	// the implicit copy/move constructor and never requires picking a converting
