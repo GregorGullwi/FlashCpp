@@ -85,6 +85,34 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	return match;
 }
 
+std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
+	std::string_view struct_name,
+	std::string_view member_name,
+	const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args,
+	const std::vector<TypeSpecifierNode>& call_arg_types,
+	bool has_call_args,
+	bool has_dependent_call_args) {
+	if (explicit_template_args.has_value()) {
+		return try_instantiate_member_function_template_explicit(
+			struct_name,
+			member_name,
+			*explicit_template_args);
+	}
+	if (!has_call_args) {
+		return try_instantiate_member_function_template_explicit(
+			struct_name,
+			member_name,
+			{});
+	}
+	if (has_dependent_call_args || call_arg_types.empty()) {
+		return std::nullopt;
+	}
+	return try_instantiate_member_function_template(
+		struct_name,
+		member_name,
+		call_arg_types);
+}
+
 ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const Token& operator_start_token) {
 	// Expect an identifier (member name) OR ~ for pseudo-destructor call
 	// Pseudo-destructor pattern: obj.~Type() or ptr->~Type()
@@ -277,21 +305,18 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 		}
 
 		std::optional<ASTNode> instantiated_func;
-		if (object_struct_name.has_value() && explicit_template_args) {
-			instantiated_func = try_instantiate_member_function_template_explicit(
+		if (object_struct_name.has_value()) {
+			std::optional<std::vector<TemplateTypeArg>> member_template_args;
+			if (explicit_template_args) {
+				member_template_args = explicit_template_args.read_template_type_args();
+			}
+			instantiated_func = tryInstantiateMemberFunctionTemplateCall(
 				*object_struct_name,
 				member_name_token.value(),
-				explicit_template_args.read_template_type_args());
-		} else if (object_struct_name.has_value() && arg_types.empty()) {
-			instantiated_func = try_instantiate_member_function_template_explicit(
-				*object_struct_name,
-				member_name_token.value(),
-				{});
-		} else if (object_struct_name.has_value() && !arg_types.empty()) {
-			instantiated_func = try_instantiate_member_function_template(
-				*object_struct_name,
-				member_name_token.value(),
-				arg_types);
+				member_template_args,
+				arg_types,
+				!args.empty(),
+				false);
 		}
 
 		if (object_struct_name.has_value() && !instantiating_lazy_member_ &&

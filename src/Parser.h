@@ -2403,6 +2403,13 @@ private:	 // Resume private methods
 	const FunctionDeclarationNode* tryResolveConcreteMemberFunction(const std::optional<ASTNode>& object_expr, std::string_view member_name);
 	std::optional<ASTNode> tryResolveMemberFunctionTemplate(const std::optional<ASTNode>& object_expr, std::string_view member_name,
 															const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args, const std::vector<TypeSpecifierNode>& arg_types);
+	std::optional<ASTNode> tryInstantiateMemberFunctionTemplateCall(
+		std::string_view struct_name,
+		std::string_view member_name,
+		const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args,
+		const std::vector<TypeSpecifierNode>& call_arg_types,
+		bool has_call_args,
+		bool has_dependent_call_args);
 	ParseResult parse_member_postfix(std::optional<ASTNode>& result, const Token& operator_start_token);
 	ParseResult parse_unary_expression(ExpressionContext context);
 	ParseResult parse_qualified_operator_call(const Token& context_token, const std::vector<StringType<32>>& namespaces);  // Parse operator symbol + call after 'operator' keyword consumed
