@@ -5,6 +5,14 @@ int add(int a, int b) {
 	return a + b;
 }
 
+template <typename T>
+struct Calculator;
+
+template <typename T>
+struct Calculator<T*> {
+	int (*operation)(int, int) = nullptr;
+};
+
 int main() {
 	int (*fp)(int, int) = nullptr;
 
@@ -16,6 +24,10 @@ int main() {
 
 	// Now fp should point to add
 	int result = fp(3, 4);  // Should be 7
+
+	Calculator<int*> calc;
+	if (calc.operation != nullptr)
+		return 1;
 
 	return result - 7;  // Should return 0
 }

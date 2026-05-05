@@ -3,6 +3,17 @@
 int main() {
 	int arr[5] = {10, 20, 30, 40, 50};
 
+	int& direct = arr[1];
+	direct = 100;
+	if (arr[1] != 100)
+		return 1;
+	arr[1] = 20;
+
+	arr[0] += 5;
+	if (arr[0] != 15)
+		return 2;
+	arr[0] = 10;
+
 	int& ref0 = arr[0];
 	ref0 += 5;  // 10 + 5 = 15
 

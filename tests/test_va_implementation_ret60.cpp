@@ -14,6 +14,21 @@ typedef char* va_list;
 // va_end macro - cleans up va_list
 #define va_end(ap) ((void)(ap = 0))
 
+int fixed_before_ellipsis(int a, int b, ...) {
+	return a + b;
+}
+
+int sum2(int count, ...) {
+	va_list args;
+	va_start(args, count);
+
+	int a = va_arg(args, int);
+	int b = va_arg(args, int);
+
+	va_end(args);
+	return a + b;
+}
+
 // Simple variadic function that sums integers
 // First parameter is the count of variadic arguments
 int sum_ints(int count, ...) {
@@ -31,6 +46,11 @@ int sum_ints(int count, ...) {
 }
 
 int main() {
+	if (fixed_before_ellipsis(10, 20, 30, 40) != 30)
+		return 1;
+	if (sum2(2, 30, 12) != 42)
+		return 2;
+
 	// Test: sum_ints(3, 10, 20, 30) should return 60
 	int result = sum_ints(3, 10, 20, 30);
 	return result;  // Should return 60
