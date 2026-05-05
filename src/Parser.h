@@ -1770,6 +1770,12 @@ private:
 
 		return base_type;
 	}
+	// Try the primary deferred-base type-argument materialization path: first
+	// substitute template parameters into the type specifier, then materialize any
+	// incomplete template-instantiation placeholder through the provided concrete
+	// instantiator callback. Returns the resolved TemplateTypeArg when the type
+	// became more concrete, or std::nullopt when no authoritative improvement was
+	// available and callers should keep their existing fallback behavior.
 	template <typename TemplateParamsContainer, typename TemplateArgsContainer, typename ConcreteBaseInstantiator>
 	std::optional<TemplateTypeArg> tryMaterializeDeferredBaseTypeArg(
 		const TypeSpecifierNode& type_spec,

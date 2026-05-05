@@ -170,6 +170,10 @@ static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type
 	return arg;
 }
 
+// Resolve a deferred-base type argument through the ordinary substitution map,
+// then apply the use-site cv/ref/pointer modifiers carried by the original type
+// specifier. This keeps the pattern/member-chain paths on their historical
+// qualifier-replacement semantics while sharing the lookup boilerplate.
 static std::optional<TemplateTypeArg> tryResolveDeferredBaseTypeArgFromMap(
 	const TypeSpecifierNode& type_spec,
 	const TemplateArgSubstitutionMap& name_substitution_map) {
