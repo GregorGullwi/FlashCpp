@@ -1106,8 +1106,16 @@ Evaluator::ResolvedBoundEvalResult Evaluator::resolve_bound_eval_result(
 		}
 
 		resolved.value = &resolved.owned_value.value();
+		return resolved;
 	}
 
+	resolved.owned_value = evaluate_with_optional_bindings(bound_expr, context, &bindings, nullptr);
+	if (!resolved.owned_value->success()) {
+		resolved.error = resolved.owned_value;
+		return resolved;
+	}
+
+	resolved.value = &resolved.owned_value.value();
 	return resolved;
 }
 
@@ -1156,6 +1164,12 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 			if (member_it != target_obj->object_member_bindings.end()) {
 				return validateConstexprRead(member_it->second);
 			}
+			// The heap entry exists but the requested member name is absent.  Return an
+			// explicit diagnostic here rather than falling through to std::nullopt which
+			// would let the non-heap path run and produce the confusing
+			// "could not resolve pointed-to object '@new_N'" error message.
+			return EvalResult::error("Member '" + std::string(member_access.member_name()) +
+									 "' not found on heap-allocated object in constant expression");
 		}
 		return std::nullopt;
 	}
@@ -1238,14 +1252,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		return std::nullopt;
 	}
 
-	auto extract_object_identifier = [&]() -> const IdentifierNode* {
-		return tryGetIdentifier(call_info->receiver);
-	};
-
-	const IdentifierNode* object_identifier = extract_object_identifier();
-	if (!object_identifier) {
-		return std::nullopt;
-	}
+	const IdentifierNode* object_identifier = tryGetIdentifier(call_info->receiver);
+	const bool receiver_is_this = object_identifier && object_identifier->name() == "this";
 
 	const StructTypeInfo* bound_struct_info = nullptr;
 	TypeIndex bound_type_index{};
@@ -1253,10 +1261,10 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	std::unordered_map<std::string_view, EvalResult> member_bindings;
 	bool write_back_to_object_binding = false;
 	bool write_back_through_pointer = false;
-	std::string_view object_name = object_identifier->name();
+	std::string_view object_name;
 	EvalResult pointed_object_result;
 
-	if (object_name == "this") {
+	if (receiver_is_this) {
 		if (!context.struct_info) {
 			return std::nullopt;
 		}
@@ -1270,7 +1278,55 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			}
 		}
 	} else {
-		const EvalResult* object_value = findBindingValue(object_name, bindings, context);
+		const EvalResult* object_value = nullptr;
+		std::optional<EvalResult> resolved_complex_object;
+		// Tracks the name of the binding that the complex receiver resolved to (e.g. the
+		// variable selected by a ternary condition).  When set it lets us write back
+		// mutations from a non-`this`, non-simple-identifier receiver (such as
+		// `(cond ? x : y).mutate()`) to the correct named local or member binding.
+		std::string_view resolved_binding_name;
+		// Recursively evaluate a non-identifier receiver expression to find the struct
+		// object being called on.  Handles ternary conditions by evaluating the condition
+		// and recursing into the chosen branch.  Also records resolved_binding_name so
+		// that mutating calls can write the modified member state back to the right local.
+		auto resolve_bound_receiver_object = [&](const ASTNode& receiver_expr, auto&& self) -> EvalResult {
+			if (const IdentifierNode* receiver_id = tryGetIdentifier(receiver_expr)) {
+				if (const EvalResult* bound_value = findBindingValue(receiver_id->name(), bindings, context)) {
+					resolved_binding_name = receiver_id->name();
+					return *bound_value;
+				}
+				return EvalResult::error(
+					"Template parameter or undefined variable in constant expression: " +
+					std::string(receiver_id->name()));
+			}
+			if (receiver_expr.is<ExpressionNode>()) {
+				const ExpressionNode& receiver_node = receiver_expr.as<ExpressionNode>();
+				if (const auto* ternary = std::get_if<TernaryOperatorNode>(&receiver_node)) {
+					EvalResult cond_result = evaluate_expression_with_bindings_const(ternary->condition(), bindings, context);
+					if (!cond_result.success()) {
+						return cond_result;
+					}
+					return cond_result.pointer_to_var.isValid() ? self(ternary->true_expr(), self)
+															 : self(cond_result.as_bool() ? ternary->true_expr() : ternary->false_expr(), self);
+				}
+			}
+			return evaluate_expression_with_bindings_const(receiver_expr, bindings, context);
+		};
+		if (object_identifier) {
+			object_name = object_identifier->name();
+			object_value = findBindingValue(object_name, bindings, context);
+		} else {
+			resolved_complex_object = resolve_bound_receiver_object(call_info->receiver, resolve_bound_receiver_object);
+			if (!resolved_complex_object->success()) {
+				return *resolved_complex_object;
+			}
+			object_value = &resolved_complex_object.value();
+			// If the receiver expression resolved to a named binding, record the name
+			// so that the write-back path below can update the correct local/member.
+			if (!resolved_binding_name.empty()) {
+				object_name = resolved_binding_name;
+			}
+		}
 		if (!object_value) {
 			return std::nullopt;
 		}
@@ -1285,14 +1341,18 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			}
 			bound_type_index = pointed_object_result.object_type_index;
 			member_bindings = pointed_object_result.object_member_bindings;
-			write_back_through_pointer = true;
+			// Enable write-back when the receiver is a named identifier OR when the
+			// complex receiver resolved to a named binding (e.g. ternary -> identifier).
+			write_back_through_pointer = object_identifier != nullptr || !resolved_binding_name.empty();
 		} else {
 			if (!object_value->object_type_index.is_valid()) {
 				return std::nullopt;
 			}
 			bound_type_index = object_value->object_type_index;
 			member_bindings = object_value->object_member_bindings;
-			write_back_to_object_binding = true;
+			// Enable write-back when the receiver is a named identifier OR when the
+			// complex receiver resolved to a named binding (e.g. ternary -> identifier).
+			write_back_to_object_binding = object_identifier != nullptr || !resolved_binding_name.empty();
 		}
 
 		bound_type_info = tryGetTypeInfo(bound_type_index);
@@ -1319,7 +1379,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	}();
 	if (!actual_func) {
 		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-		auto member_function_match = object_name == "this"
+		auto member_function_match = receiver_is_this
 										 ? find_current_struct_member_function_candidate(
 											   func_name_handle,
 											   call_info->arguments->size(),
@@ -1366,6 +1426,15 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		return bind_result;
 	}
 
+	// Inject a synthetic "this" binding so that member function bodies can access
+	// members by unqualified name (e.g. `return a + b;`).  EvalResult requires a
+	// concrete value variant; from_int(0LL) is used as an inert placeholder — the
+	// actual data lives in object_type_index and object_member_bindings.
+	EvalResult this_binding = EvalResult::from_int(0LL);
+	this_binding.object_type_index = bound_type_index;
+	this_binding.object_member_bindings = member_bindings;
+	member_bindings["this"] = std::move(this_binding);
+
 	auto saved_template_param_names = context.template_param_names;
 	auto saved_template_args = context.template_args;
 	auto restore_template_bindings = [&]() {
@@ -1384,7 +1453,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		for (const auto& arg : actual_func->outer_template_args()) {
 			context.template_args.push_back(toTemplateTypeArg(arg));
 		}
-	} else if (object_name == "this") {
+	} else if (receiver_is_this) {
 		try_load_current_struct_template_bindings(context);
 	} else {
 		load_template_bindings_from_type(bound_type_info, context);
@@ -1432,6 +1501,9 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		}
 	}
 	if (result.success() && mutable_bindings) {
+		// Remove the synthetic "this" injected above before writing member state
+		// back to the outer map, so "this" is not accidentally stored as a member.
+		member_bindings.erase("this");
 		if (write_back_to_object_binding) {
 			auto object_it = mutable_bindings->find(object_name);
 			if (object_it != mutable_bindings->end()) {
@@ -1456,7 +1528,11 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			if (!write_back_result.success()) {
 				result = write_back_result;
 			}
-		} else {
+		} else if (receiver_is_this) {
+			// When the receiver is `this`, write each mutated struct member back into
+			// the outer mutable_bindings map (which holds this's members as direct
+			// keys).  Only applies to this-receiver calls — non-this complex receivers
+			// use write_back_to_object_binding or write_back_through_pointer instead.
 			for (const auto& member : saved_struct_info->members) {
 				std::string_view member_name = StringTable::getStringView(member.getName());
 				auto member_it = member_bindings.find(member_name);
@@ -1993,7 +2069,27 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						StringHandle heap_key = ptr_result.pointer_to_var;
 						auto heap_it = context.constexpr_heap.find(heap_key);
 						if (heap_it == context.constexpr_heap.end()) {
-							return EvalResult::error("Dereference assignment: pointer does not refer to a constexpr heap object");
+							// Not a heap allocation — check if the pointer targets a local
+							// binding in the current frame (e.g., `int x; int* p = &x; *p = 5`).
+							std::string_view local_name = heap_key.view();
+							auto local_it = bindings.find(local_name);
+							if (local_it != bindings.end()) {
+								if (ptr_result.pointer_offset != 0) {
+									return EvalResult::error(
+										"Non-zero pointer offset on non-array local variable '"
+										+ std::string(local_name) + "' in constexpr dereference assignment");
+								}
+								// Evaluate the RHS before mutating.
+								auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+								if (!rhs_result.success())
+									return rhs_result;
+								auto assign_result = apply_op_to(local_it->second, rhs_result);
+								// Keep any other same-frame pointer snapshots in sync.
+								if (assign_result.success())
+									refreshPointerSnapshotsForBinding(local_name, local_it->second, bindings, context);
+								return assign_result;
+							}
+							return EvalResult::error("Dereference assignment: pointer target is neither a heap allocation nor a local binding in constant expression");
 						}
 						if (heap_it->second.freed) {
 							return EvalResult::error("Dereference assignment: use after free in constant expression");
@@ -4207,7 +4303,12 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 			const std::unordered_map<std::string_view, EvalResult>& eval_bindings =
 				enclosing_bindings ? *enclosing_bindings : empty_bindings;
 			EvalResult gen_result = evaluate_expression_with_bindings_const(initializer, eval_bindings, context);
-			if (gen_result.success() && !gen_result.object_member_bindings.empty()) {
+			// Propagate evaluation failures rather than swallowing them with the generic
+			// "requires a struct initializer" message below (e.g. a failed function call
+			// inside a ternary initializer should surface its own diagnostic).
+			if (!gen_result.success())
+				return gen_result;
+			if (!gen_result.object_member_bindings.empty()) {
 				auto it = gen_result.object_member_bindings.find(member_name);
 				if (it != gen_result.object_member_bindings.end()) {
 					resolved_member.value = it->second;
@@ -5313,9 +5414,26 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 
 	auto extracted = extract_identifier_from_expression(object_expr);
 	if (!extracted) {
-		complex_object_result = evaluate(object_expr, context);
-		if (!complex_object_result.success()) {
-			return complex_object_result;
+		bool resolved_from_local_bindings = false;
+		if (context.local_bindings) {
+			ResolvedBoundEvalResult resolved_object = resolve_bound_eval_result(
+				object_expr,
+				*context.local_bindings,
+				context,
+				true);
+			if (resolved_object.error.has_value()) {
+				return resolved_object.error.value();
+			}
+			if (resolved_object.value) {
+				complex_object_result = *resolved_object.value;
+				resolved_from_local_bindings = true;
+			}
+		}
+		if (!resolved_from_local_bindings) {
+			complex_object_result = evaluate(object_expr, context);
+			if (!complex_object_result.success()) {
+				return complex_object_result;
+			}
 		}
 		has_complex_object_result = true;
 	} else {
@@ -5530,6 +5648,11 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 	if (!bind_result.success()) {
 		return bind_result;
 	}
+
+	EvalResult this_binding = EvalResult::from_int(0LL);
+	this_binding.object_type_index = type_index;
+	this_binding.object_member_bindings = member_bindings;
+	member_bindings["this"] = std::move(this_binding);
 
 	auto saved_template_param_names = context.template_param_names;
 	auto saved_template_args = context.template_args;

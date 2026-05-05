@@ -441,6 +441,31 @@ struct Counter {
 };
 ```
 
+### ✅ Member Function Calls on Bound Conditional/Temporary Receivers (NEW)
+
+Constexpr member-function calls now also work when the receiver is a bound
+non-identifier expression that still resolves to a constexpr object in the
+current evaluation state, such as a conditional expression choosing between a
+local object and a temporary:
+
+```cpp
+struct Box {
+    int a;
+    int b;
+    constexpr int sum() const { return a + b; }
+};
+
+constexpr int f() {
+    Box x{7, 8};
+    return (true ? x : Box{1, 2}).sum();
+}
+
+static_assert(f() == 15);  // ✅ Works
+```
+
+This also covers straightforward temporary-producing branches such as
+`(cond ? makeBox() : Box{1, 2}).sum()`.
+
 ### ✅ Default Constructor Invocation for Local Struct Variables (NEW)
 
 Declaring a local struct variable without an initializer inside a constexpr function now invokes the default constructor:
@@ -639,7 +664,7 @@ constexpr int h() {
 static_assert(h() == 10); // ✅ Works
 ```
 
-When a ternary expression used as a struct initializer fails for a specific reason (e.g., undefined variable in a branch), the evaluator may produce a generic "requires a struct initializer" error instead of the actual evaluation failure message. This is because the fallback evaluation path in `resolve_constexpr_member_source_from_initializer` (`src/ConstExprEvaluator_Members.cpp:3341-3357`) silently discards the specific error when the result has empty `object_member_bindings`.
+✅ **Ternary/generic fallback now propagates evaluation failures** — Previously, when a ternary expression used as a struct initializer failed for a specific reason (e.g., an unevaluable call inside a branch), the fallback evaluation path in `resolve_constexpr_member_source_from_initializer` would silently discard the specific error and fall through to the generic "requires a struct initializer" message. The fix adds `if (!gen_result.success()) return gen_result;` immediately after evaluation so the real error is surfaced. Covered by `tests/test_constexpr_ternary_init_error_propagate_fail.cpp`.
 
 ### ✅ Nested Member Access on Local Constructor-Initialized Objects (FIXED)
 
@@ -896,7 +921,40 @@ constexpr int sum_via_ptr(const int* p, int n) {
 static_assert(sum_via_ptr(&arr[0], 5) == 150);  // ✅ Works
 ```
 
-### ✅ `const char*` and String Literals in Constexpr (NEW)
+### ✅ Dereference Assignment Through Local-Variable Pointer in Constexpr (NEW)
+
+`*ptr = value` and compound-assignment forms (`*ptr += n`, etc.) now work when `ptr`
+points to a local variable in the same constexpr function frame.  Previously the
+dereference-assignment path only handled heap-allocated objects (those created with
+`constexpr new`); any write through a pointer to a non-heap local produced a spurious
+"pointer does not refer to a constexpr heap object" error.
+
+```cpp
+constexpr int f() {
+    int x = 0;
+    int* p = &x;
+    *p = 5;         // ✅ Works (previously: "does not refer to a constexpr heap object")
+    return x;       // returns 5
+}
+static_assert(f() == 5);  // ✅ Works
+
+constexpr int g() {
+    int x = 3;
+    int* p = &x;
+    *p += 7;        // compound-assignment through local pointer
+    return x;       // returns 10
+}
+static_assert(g() == 10);  // ✅ Works
+```
+
+**Limitation:** Write-through-pointer in a *different* call frame (i.e., passing `&local`
+to a separate constexpr function that writes via the pointer parameter) is not yet
+supported.  This requires inter-frame binding mutation, which needs architectural changes
+to the evaluator.  Same-frame writes work fully.
+
+Covered by `tests/test_constexpr_deref_assign_local_ret5.cpp`.
+
+
 
 `const char*` pointers to string literals are supported in constexpr evaluation.
 This includes compile-time array subscript, compile-time string-length computation
@@ -988,7 +1046,7 @@ The following patterns are supported:
 - Scalar `new T(args)` / `new T()` / `new T` and `delete p`
 - Array `new T[n]` and `delete[] p`
 - Struct/class allocation with constructor or straightforward aggregate arguments: `new MyStruct(args)`, `new Pair{1, 2}`, `new Pair(1, 2)`, and `delete p`
-- Dereference assignment through pointer: `*p = value`
+- Dereference assignment through pointer: `*p = value` (both heap-allocated and local-variable targets; same-frame writes through `int* p = &x; *p = 5;` update `x` correctly)
 - Subscript assignment on heap array: `arr[i] = value`
 - Arrow member access on heap struct: `p->member`
 - Multiple allocations, loops with new/delete
@@ -1003,7 +1061,7 @@ The following patterns are supported:
 4. ✅ **`new`/`delete` now work in the const-dispatch path** — `evaluate_expression_with_bindings_dispatch` now forwards `NewExpressionNode` / `DeleteExpressionNode` through the bindings-aware dynamic-allocation helpers instead of falling back to `evaluate()` without bindings. This means bound local expressions such as `take(new int(x))` now resolve correctly during constexpr evaluation. Covered by `tests/test_constexpr_new_bound_expr_ret0.cpp`.
 5. ✅ **Constructor arguments can now use mutable bindings** — `evaluate_new_expression` now evaluates constructor arguments through the mutable bindings path when available, so side-effecting arguments like `new int(++x)` and `new Box(++x)` update the local constexpr state correctly. Covered by `tests/test_constexpr_new_bound_expr_ret0.cpp`.
 6. **Heap keys permanently interned in `StringTable`** — Each `alloc_heap_slot()` call interns a synthetic key (e.g., `@new_0`) into the global `StringTable`. These persist for the lifetime of the compiler process even after the constexpr evaluation completes.
-7. **Arrow member access on heap structs bypasses type validation** — The heap arrow-access path looks up member names directly in `object_member_bindings` without checking `object_type_index.is_valid()`, unlike the non-heap path.
+7. ✅ **Arrow member-not-found on heap objects now produces a clear diagnostic** — Previously, when `p->nonexistent` was evaluated and the member name was absent from the heap object's `object_member_bindings`, the path returned `std::nullopt` which caused a fall-through to the non-heap path and the confusing "could not resolve pointed-to object '@new_N'" error. The heap arrow-access path now returns an explicit "Member 'X' not found on heap-allocated object in constant expression" error. Covered by `tests/test_constexpr_heap_arrow_member_not_found_fail.cpp`.
 8. ✅ **Bare `new T` / `new T[n]` now reject indeterminate reads for scalars, arrays, and aggregate members** — FlashCpp now distinguishes bare default-initialization from value-initializing forms such as `new T()`, `new T{}`, and `new T[n]{}` for supported shapes. Reading a scalar fundamental object allocated with bare `new T`, an element of a bare `new T[n]` array, or a member of a bare `new Aggregate` object is rejected during constexpr evaluation as an indeterminate read. This closes the false-accept cases for patterns like `int* p = new int; return *p;`, `int* p = new int[3]; return p[0];`, and `Pair* p = new Pair; return p->x;`. Value-initializing forms still zero-initialize members without default member initializers, while bare aggregate `new T` still applies any default member initializers before leaving the remaining members indeterminate. Covered by `tests/test_constexpr_new_default_init_scalar_fail.cpp`, `tests/test_constexpr_new_default_init_array_fail.cpp`, `tests/test_constexpr_new_default_init_aggregate_fail.cpp`, and `tests/test_constexpr_new_value_init_aggregate_ret0.cpp`.
    **Follow-up items for indeterminate-value tracking:**
    - ✅ **Local default-initialized constexpr bindings now preserve indeterminate state** — Function-scope default-initialized scalars, arrays, and implicit-default-initialized aggregate/class objects no longer collapse to zero in constexpr evaluation. Reads such as `int x; return x;`, `int x; x += 1;`, and `Pair p; return p.first;` are now rejected, while default member initializers continue to materialize and later writes still operate on the bound object/array state. Covered by `tests/test_constexpr_local_default_init_scalar_fail.cpp`, `tests/test_constexpr_local_default_init_compound_fail.cpp`, and `tests/test_constexpr_local_default_init_aggregate_fail.cpp`.
