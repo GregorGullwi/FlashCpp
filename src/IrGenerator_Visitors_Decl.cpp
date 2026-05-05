@@ -310,7 +310,9 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		// classes in different namespaces do not collide during mangling.
 		const OwnerManglingInfo owner_info =
 			resolveOwnerManglingInfoForMangling(struct_name_for_function, node.namespace_handle());
-		mangling_struct_name = owner_info.owner_name_for_mangling;
+		mangling_struct_name = owner_info.owner_name_for_mangling.isValid()
+			? StringTable::getStringView(owner_info.owner_name_for_mangling)
+			: std::string_view{};
 		namespace_for_mangling = owner_info.owner_namespace_handle;
 	} else if (node.namespace_handle().isValid()) {
 		namespace_for_mangling = node.namespace_handle();

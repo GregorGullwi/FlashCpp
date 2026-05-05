@@ -205,6 +205,8 @@ inline bool needsHiddenReturnParam(TypeCategory type, int pointer_depth, bool is
 		   (size_in_bits > getStructReturnThreshold(is_llp64));
 }
 
+// Resolve a runtime namespace component stack back into a declaration NamespaceHandle.
+// Returns INVALID when any component cannot be resolved through the namespace registry.
 inline NamespaceHandle buildNamespaceHandleFromStrings(const std::vector<std::string>& namespace_stack) {
 	if (namespace_stack.empty()) {
 		return NamespaceRegistry::GLOBAL_NAMESPACE;
@@ -226,11 +228,17 @@ inline NamespaceHandle buildNamespaceHandleFromStrings(const std::vector<std::st
 // `ns::Outer::Inner`, the correct split is namespace=`ns` and owner=`Outer::Inner`; passing
 // `ns::Outer::Inner` together with namespace=`ns` would double-encode the namespace.
 struct OwnerManglingInfo {
-	std::string_view owner_name_for_mangling;
+	StringHandle owner_name_for_mangling;
 	NamespaceHandle owner_namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
 	bool owner_type_resolved = false;
 };
 
+// Drop the declaration namespace prefix from a resolved owner spelling because the manglers
+// receive that namespace separately. Example: namespace=`ns`, owner=`ns::Outer::Inner`
+// becomes owner=`Outer::Inner`.
+// If the owner spelling does not begin with exactly that namespace prefix plus `::`, the input
+// is returned unchanged. Callers can therefore pass unresolved or malformed spellings safely: the
+// helper only strips when it can prove the prefix matches the resolved declaration namespace.
 inline std::string_view stripResolvedNamespacePrefixForMangling(std::string_view owner_name, NamespaceHandle namespace_handle) {
 	if (!namespace_handle.isValid() || namespace_handle.isGlobal()) {
 		return owner_name;
@@ -247,10 +255,20 @@ inline std::string_view stripResolvedNamespacePrefixForMangling(std::string_view
 	return owner_name.substr(qualified_namespace.size() + 2);
 }
 
+// Resolve the owner name used for member mangling.
+// - First try the enclosing declaration namespace for unqualified owners so `Box` inside `ns`
+//   resolves as `ns::Box`.
+// - Then try the raw spelling directly for already-qualified or global names.
+// - If resolution still fails, preserve the original owner spelling and keep the namespace
+//   handle global so mangling does not add a second namespace prefix.
 inline OwnerManglingInfo resolveOwnerManglingInfoForMangling(
 	std::string_view owner_name,
 	NamespaceHandle enclosing_namespace_handle) {
-	OwnerManglingInfo result{owner_name, NamespaceRegistry::GLOBAL_NAMESPACE, false};
+	auto toStringHandle = [](std::string_view name) {
+		return name.empty() ? StringHandle() : StringTable::getOrInternStringHandle(name);
+	};
+
+	OwnerManglingInfo result{toStringHandle(owner_name), NamespaceRegistry::GLOBAL_NAMESPACE, false};
 	if (owner_name.empty()) {
 		return result;
 	}
@@ -261,7 +279,8 @@ inline OwnerManglingInfo resolveOwnerManglingInfoForMangling(
 			return false;
 		}
 		result.owner_namespace_handle = type_it->second->namespaceHandle();
-		result.owner_name_for_mangling = stripResolvedNamespacePrefixForMangling(candidate_name, result.owner_namespace_handle);
+		result.owner_name_for_mangling = toStringHandle(
+			stripResolvedNamespacePrefixForMangling(candidate_name, result.owner_namespace_handle));
 		result.owner_type_resolved = true;
 		return true;
 	};

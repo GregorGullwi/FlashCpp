@@ -772,7 +772,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					resolveOwnerManglingInfoForMangling(struct_name, func_decl->namespace_handle());
 				function_name = generateMangledNameForCall(
 					*func_decl,
-					owner_info.owner_name_for_mangling,
+					owner_info.owner_name_for_mangling.isValid()
+						? StringTable::getStringView(owner_info.owner_name_for_mangling)
+						: std::string_view{},
 					owner_info.owner_namespace_handle);
 			}
 		}
