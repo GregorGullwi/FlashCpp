@@ -224,6 +224,9 @@ inline NamespaceHandle buildNamespaceHandleFromStrings(const std::vector<std::st
 	return current;
 }
 
+// Build a namespace handle from the namespace-qualified prefix of an identifier like
+// `ns1::ns2::ClassName`, stopping before the final identifier. Returns INVALID when
+// any namespace component cannot be resolved through the namespace registry.
 inline NamespaceHandle buildNamespaceHandleFromQualifiedIdentifier(std::string_view qualified_name) {
 	size_t namespace_end = qualified_name.rfind("::");
 	if (namespace_end == std::string_view::npos) {
@@ -252,6 +255,9 @@ inline NamespaceHandle buildNamespaceHandleFromQualifiedIdentifier(std::string_v
 	return current;
 }
 
+// Prefer the owning type's recorded namespace metadata when the struct is known.
+// If the type hasn't been registered yet, fall back to parsing the struct spelling
+// as a qualified identifier so deferred-generation callers can still recover a namespace.
 inline NamespaceHandle buildNamespaceHandleForStructName(StringHandle struct_name) {
 	if (!struct_name.isValid()) {
 		return NamespaceRegistry::GLOBAL_NAMESPACE;
@@ -265,6 +271,9 @@ inline NamespaceHandle buildNamespaceHandleForStructName(StringHandle struct_nam
 	return buildNamespaceHandleFromQualifiedIdentifier(StringTable::getStringView(struct_name));
 }
 
+// Convert a NamespaceHandle back into the legacy vector<string> namespace stack.
+// Deferred member generation still restores `current_namespace_stack_`, so that path
+// needs this bridge until the remaining namespace-stack state is fully handle-based.
 inline std::vector<std::string> buildNamespaceStackFromHandle(NamespaceHandle namespace_handle) {
 	std::vector<std::string> namespace_stack;
 	for (std::string_view component : buildNamespacePathFromHandle(namespace_handle)) {
