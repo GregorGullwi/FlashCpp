@@ -105,6 +105,9 @@ std::optional<TypeIndex> resolvePseudoDestructorExpressionTypeIndex(const Expres
 	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
 		return resolvePseudoDestructorObjectTypeIndex(subscript->array_expr(), symbols);
 	}
+	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		return call_expr->callee().declaration().type_specifier_node().type_index();
+	}
 	return std::nullopt;
 }
 

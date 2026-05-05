@@ -9,6 +9,14 @@ struct Holder {
 	DtorFlag<NoThrow> member;
 };
 
+DtorFlag<false> make_false() {
+	return DtorFlag<false>{};
+}
+
+DtorFlag<true> make_true() {
+	return DtorFlag<true>{};
+}
+
 int main() {
 	int result = 0;
 
@@ -37,6 +45,12 @@ int main() {
 	DtorFlag<true> arr_true[1]{};
 	if (!noexcept(arr_true[0].~DtorFlag<true>()))
 		result |= 64;
+
+	if (noexcept(make_false().~DtorFlag<false>()))
+		result |= 128;
+
+	if (!noexcept(make_true().~DtorFlag<true>()))
+		result |= 256;
 
 	return result;
 }

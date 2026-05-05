@@ -380,7 +380,6 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 		auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
 			lazy_info.identity.instantiated_owner_name, dtor_name_handle);
-		new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
 		new_dtor_ref.set_has_noexcept_specifier(dtor_decl.has_noexcept_specifier());
 
 		std::vector<TemplateTypeArg> converted_template_args;
@@ -399,15 +398,25 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			ConstExpr::EvaluationContext ctx(gSymbolTable);
 			ctx.parser = this;
 			ctx.sema = getActiveSemanticAnalysis();
+			ctx.template_args = converted_template_args;
+			for (const ASTNode& template_param : lazy_info.template_params) {
+				if (const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_param);
+					tparam != nullptr) {
+					ctx.template_param_names.push_back(tparam->name());
+				}
+			}
 			auto owner_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
 			if (owner_it != getTypesByNameMap().end() && owner_it->second) {
 				ctx.struct_info = owner_it->second->getStructInfo();
 				ctx.struct_type_index = owner_it->second->registeredTypeIndex().withCategory(TypeCategory::Struct);
 			}
 			auto eval = ConstExpr::Evaluator::evaluate(substituted_noexcept, ctx);
-			if (eval.success()) {
-				new_dtor_ref.set_noexcept(eval.as_bool());
+			if (!eval.success()) {
+				throw CompileError("Failed to evaluate lazy instantiated destructor noexcept-expression");
 			}
+			new_dtor_ref.set_noexcept(eval.as_bool());
+		} else {
+			new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
 		}
 
 		ASTNode substituted_body = substituteTemplateParameters(
