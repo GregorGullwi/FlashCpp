@@ -4800,7 +4800,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			return false;
 		};
-		auto try_materialize_deferred_base_type_arg =
+		auto tryMaterializeDeferredBaseTypeArg =
 			[&](const TypeSpecifierNode& type_spec) -> std::optional<TemplateTypeArg> {
 			TypeIndex substituted_type_index =
 				substitute_template_parameter(type_spec, template_params, template_args_to_use);
@@ -5068,7 +5068,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Fallback: use the type specifier as-is
 						if (!resolved) {
 							if (std::optional<TemplateTypeArg> substituted_arg =
-									try_materialize_deferred_base_type_arg(type_spec);
+									tryMaterializeDeferredBaseTypeArg(type_spec);
 								substituted_arg.has_value()) {
 								substituted_arg->is_pack = arg_info.is_pack;
 								resolved_args.push_back(*substituted_arg);
