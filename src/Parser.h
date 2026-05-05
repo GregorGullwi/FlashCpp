@@ -1777,9 +1777,9 @@ private:
 	// became more concrete, or std::nullopt when no authoritative improvement was
 	// available and callers should keep their existing fallback behavior. Use this
 	// in current-instantiation/deferred-base flows that need full materialization;
-	// simpler pattern/member-chain substitution-map lookups should stay on
-	// tryResolveDeferredBaseTypeArgFromMap(...) in
-	// Parser_Templates_Inst_ClassTemplate.cpp.
+	// choose this over tryResolveDeferredBaseTypeArgFromMap(...) when placeholder
+	// instantiations may need concrete materialization, and keep the lighter
+	// helper for plain substitution-map lookups in pattern/member-chain code.
 	template <typename TemplateParamsContainer, typename TemplateArgsContainer, typename ConcreteBaseInstantiator>
 	std::optional<TemplateTypeArg> tryMaterializeDeferredBaseTypeArg(
 		const TypeSpecifierNode& type_spec,
@@ -1803,6 +1803,9 @@ private:
 					// TypeSpecifierNode carried and should use the resolved argument.
 					if (!resolved_type_info->is_incomplete_instantiation_ ||
 						resolved_type_index != type_spec.type_index()) {
+						// resolveTypeInfoToTemplateArg preserves the use-site modifiers
+						// from type_spec while keeping any newly materialized concrete
+						// type identity discovered above.
 						return resolveTypeInfoToTemplateArg(*resolved_type_info, type_spec);
 					}
 				}

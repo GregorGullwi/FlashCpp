@@ -177,7 +177,8 @@ static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type
 // primary deferred-base current-instantiation path uses
 // Parser::tryMaterializeDeferredBaseTypeArg(...) instead because that path may
 // need full placeholder materialization and must preserve resolved-type
-// qualifiers when the rebinding becomes more concrete.
+// qualifiers when the rebinding becomes more concrete. Returns std::nullopt when
+// the map has no matching type entry for this argument.
 static std::optional<TemplateTypeArg> tryResolveDeferredBaseTypeArgFromMap(
 	const TypeSpecifierNode& type_spec,
 	const TemplateArgSubstitutionMap& name_substitution_map) {
