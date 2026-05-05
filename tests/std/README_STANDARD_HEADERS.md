@@ -101,6 +101,64 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+### 2026-05-05 Non-class template lookup materialization for `<atomic>` / `<latch>`
+
+This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested focused
+Linux/libstdc++-14 std-header probes.
+
+Fix landed:
+
+- **Template lookup materialization no longer routes non-class templates into
+  base-class instantiation's internal-error path.**  `lookupTemplate()` also
+  finds function templates, and libstdc++ `<bits/atomic_base.h>` uses calls such
+  as `std::__atomic_impl::__compare_exchange<_AtomicRef>(...)` where an explicit
+  non-type template argument is followed by deduced function-template arguments.
+  Failed class-instantiation lookup for that function template now reports "not
+  a class instantiation" instead of throwing
+  `Base class instantiation name should resolve after default filling`.
+
+Regression test:
+
+- `tests/test_function_template_explicit_nttp_lookup_ret0.cpp`
+
+Validation snapshot:
+
+- Full Linux regression suite (`bash tests/run_all_tests.sh`): 2282 pass / 0 fail
+  / 156 `_fail` correct.
+- Focused regression (`test_function_template_explicit_nttp_lookup_ret0.cpp`) links
+  and returns 0.
+
+Focused Linux/libstdc++-14 std-header retest (`x64/Sharded/FlashCpp`):
+
+| Header | Status | Time | First-order stop / note |
+|--------|--------|------|-------------------------|
+| `<atomic>` | ❌ Compile Error | 900ms | Progressed past the default-filled base-class instantiation fatal; now stops at member `load` lookup. |
+| `<latch>` | ❌ Codegen Error | 930ms | Progressed past the same `<atomic>` template-lookup fatal; now stops in existing Phase 15/codegen gaps. |
+| `<ratio>` | ❌ Compile Error | 480ms | Still stops because `std::ratio_less<third, half>::value` is not a constant expression. |
+| `<string_view>` | ❌ Codegen Error | 2170ms | Still reaches the existing `std::reverse_iterator`/`__max_size_type` operator/conversion path. |
+| `<optional>` | ❌ Codegen Error | 990ms | Still stops in `_Optional_base` / `_Optional_payload` lowering with `struct type info not found` and missing `_M_engaged`. |
+| `<algorithm>` | ❌ Codegen Error | 2010ms | Still reaches the `std::reverse_iterator`/`__max_size_type` Phase 15 conversion path. |
+
+Detailed first stops from this sweep:
+
+- `<atomic>`: `/usr/include/c++/14/atomic:92` reports
+  `No matching member function for call to 'load'`.
+- `<latch>`: `__platform_notify` / `__platform_wait` report
+  `Phase 15: sema missed function call argument conversion (int -> long)`;
+  namespace lowering also reports `Phase 15: sema missed variable init conversion
+  (int -> unsigned long)` and constructor metadata recovery around
+  `std::__mutex_base`.
+- `<string_view>`: repeated `Operator- not defined for operand types`, then
+  `Phase 15: sema missed binary RHS conversion (int -> unsigned long)`, with
+  final `Fatal error: Operator- not defined for operand types`.
+- `<algorithm>`: `Phase 15: sema missed binary RHS conversion
+  (int -> unsigned long)`.
+
+The next visible blockers after this parser/sema-layer unblock are member
+lookup for `atomic::load`, Phase 15 primitive conversion ownership in already
+sema-normalized bodies, and the pre-existing `ratio_less::value` constant
+expression gap.
+
 ### 2026-05-05 Function pointer type aliases with calling conventions
 
 This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested focused

@@ -124,8 +124,12 @@ inline bool isSameTypeIgnoringTopLevelCvAndRef(
 			lhs_sig.parameter_type_indices.size() != rhs_sig.parameter_type_indices.size() ||
 			lhs_sig.linkage != rhs_sig.linkage ||
 			lhs_sig.class_name != rhs_sig.class_name ||
+			lhs_sig.calling_convention != rhs_sig.calling_convention ||
+			lhs_sig.is_variadic != rhs_sig.is_variadic ||
 			lhs_sig.is_const != rhs_sig.is_const ||
-			lhs_sig.is_volatile != rhs_sig.is_volatile) {
+			lhs_sig.is_volatile != rhs_sig.is_volatile ||
+			lhs_sig.function_reference_qualifier != rhs_sig.function_reference_qualifier ||
+			lhs_sig.is_noexcept != rhs_sig.is_noexcept) {
 			return false;
 		}
 		for (size_t i = 0; i < lhs_sig.parameter_type_indices.size(); ++i) {
