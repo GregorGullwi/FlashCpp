@@ -104,7 +104,7 @@ Representative sites:
 
 Missing feature:
 
-The architecture is partway through moving lazy member materialization to semantic analysis, but comments and remaining recovery paths show the invariant is not fully encoded: all ODR-used and reachable instantiated members must exist before codegen.
+The architecture is partway through moving lazy member materialization to semantic analysis, but comments and remaining recovery paths show the invariant is not fully encoded for every legacy lowering path: all ODR-used instantiated members must exist before codegen.
 
 Why the fallback is non-compliant:
 
@@ -509,6 +509,17 @@ The audit is now backed by direct suite evidence for several representative temp
   `tests/test_template_current_instantiation_functional_cast_ret0.cpp`, and
   `tests/test_constructor_overload_return_same_arity_ret0.cpp` passed, and the
   full Linux suite passed with 2271 regular tests and 154 expected-fail tests;
+- a 2026-05-05 follow-up then removed the temporary end-of-sema sweep over
+  every reachable instantiated root in `SemanticAnalysis::drainLazyMemberRegistry()`.
+  The sema-owned `markOdrUsed(...)` fixpoint now covers the previously
+  documented using-declaration pack-expansion and late out-of-line member-body
+  cases, so lazy-member materialization is driven only by explicit ODR-use
+  instead of eager reachable-root traversal. The focused regressions
+  `tests/test_using_decl_pack_expansion_ret1.cpp`,
+  `tests/test_late_member_body_class_template_paths_ret42.cpp`,
+  `tests/test_late_member_body_class_template_functional_style_ret42.cpp`, and
+  `tests/test_late_member_signature_qualified_dependent_type_ret42.cpp`, plus
+  the full 2281-test Linux suite, all passed after removing the sweep;
 - several stale historical fallback comments in `FlashCppMain.cpp`,
   `IrGenerator_Visitors_Decl.cpp`, `IrGenerator_Visitors_TypeInit.cpp`, and
   `Parser_Templates_Class.cpp` were then compacted to describe the current

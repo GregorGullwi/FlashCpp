@@ -6713,128 +6713,29 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 }
 
 size_t SemanticAnalysis::drainLazyMemberRegistry() {
-	// Phase 5 Slice F: Materialize every lazy-member registry entry whose
-	// owning struct has the corresponding member listed in its AST
-	// `member_functions()` vector. This matches the scope of codegen's
-	// struct-visitor in `IrGenerator_Visitors_Decl.cpp`, which iterates each
-	// struct's AST member list and materializes the remaining lazy stubs
-	// found there. Doing the same work at end-of-sema makes sema the owner
-	// of lazy-member materialization decisions: by the time codegen begins,
-	// every lazy stub that the struct-visitor would have materialized has
-	// already been materialized through `ensureMemberFunctionMaterialized`,
-	// so the codegen bridge is no longer the first materializer.
+	// Phase 5 Slice F: sema owns the pre-codegen lazy-member fixpoint by
+	// draining only the members that semantic analysis explicitly marked as
+	// ODR-used. That keeps SFINAE/decltype-only registry entries dormant while
+	// guaranteeing that any body codegen can reach has already been
+	// materialized and sema-normalized through `ensureMemberFunctionMaterialized`
+	// plus `normalizeTopLevelNode`.
 	//
 	// We deliberately do NOT drain the entire lazy registry: some registered
-	// entries correspond to template instantiations that were touched only
-	// in SFINAE / decltype contexts. Those entries never appear in any
-	// struct's AST member list (they are instantiation-time artifacts that
-	// would have failed substitution under strict ODR-use), so the
-	// struct-visitor wouldn't touch them either. Eagerly materializing them
-	// here would synthesize bodies that reference uncallable overloads and
-	// break linking. Matching the struct-visitor's filter preserves behavior.
+	// entries correspond to template instantiations that were touched only in
+	// SFINAE / decltype contexts. Eagerly materializing them here would
+	// synthesize bodies that reference uncallable overloads and break linking,
+	// so the drain remains ODR-use driven rather than "materialize everything".
 	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
 	size_t total_materialized = 0;
 
-	// Helper: materialize every lazy member listed in the given struct's AST
-	// member_functions() vector. Mirrors the struct-visitor's per-member
-	// check (needsInstantiation + ensureMemberFunctionMaterialized) but
-	// without any codegen-side bookkeeping.
-	auto drainOneStruct = [&](const StructDeclarationNode& struct_decl) {
-		StringHandle struct_name = struct_decl.name();
-		if (!struct_name.isValid()) {
-			return;
-		}
-		for (const auto& member_func : struct_decl.member_functions()) {
-			StringHandle member_handle = member_func.getName();
-			if (!member_handle.isValid()) {
-				continue;
-			}
-			// Const-ness is only meaningful for FunctionDeclarationNode stubs.
-			// For ctor/dtor the lazy key is keyed on the canonical name only,
-			// so `ensureMemberFunctionMaterialized` with `nullopt` picks the
-			// right entry through the "any-const" lookup path.
-			std::optional<bool> is_const_query = std::nullopt;
-			if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
-				const auto& fn = member_func.function_declaration.as<FunctionDeclarationNode>();
-				is_const_query = fn.is_const_member_function();
-			}
-			LazyMemberKey member_key = is_const_query.has_value()
-				? LazyMemberKey::exact(struct_name, member_handle, *is_const_query)
-				: LazyMemberKey::anyConst(struct_name, member_handle);
-			if (lazy_registry.needsInstantiation(member_key)) {
-				auto result = ensureMemberFunctionMaterialized(struct_name, member_handle, is_const_query);
-				if (result.has_value()) {
-					++total_materialized;
-					// Phase 5 Slice G: annotate the freshly-substituted body so
-					// its internal call expressions run through the sema sites
-					// that call `markOdrUsed` on their resolved targets. Without
-					// this, inner calls would never reach the drain's ODR-use
-					// second pass and the corresponding instantiation members
-					// would stay unmaterialized. (Slices I+J deleted the
-					// codegen-side `materializeLazyMemberIfNeeded` forwarder
-					// that used to pick up these stragglers at lowering time.)
-					// The normalize helpers are idempotent via
-					// `normalized_bodies_` dedup, so re-normalizing an
-					// already-processed node is a safe no-op.
-					normalizeTopLevelNode(*result);
-				}
-			}
-		}
-	};
-
-	// Phase 5 Slice G item #4: intended to be a data-model split where pass 1
-	// only walks user-written top-level nodes and instantiated roots are
-	// handled entirely by the ODR-use fixpoint pass below.
-	//
-	// Audit (2026-04-21): the split is architecturally correct but blocked on
-	// residual ODR-use coverage. The following code paths do not currently
-	// reach a `markOdrUsed(...)` site for members of instantiated roots:
-	//
-	//   * using-decl pack expansion that imports static members from a
-	//     concrete base instantiation (`tests/test_using_decl_pack_expansion_ret1.cpp`).
-	//     The receiver-based call resolves to the *pattern's* `Fun::call`
-	//     (with empty `parent_struct_name()`), so `tryMaterializeLazyCallTarget`
-	//     never identifies the instantiated owner.
-	//   * Late-bound out-of-line member bodies that reference sibling lazy
-	//     stubs only once cross-instantiation substitution has run
-	//     (see the `test_late_member_body_class_template_*_ret42.cpp` group
-	//     and `test_late_member_signature_qualified_dependent_type_ret42.cpp`).
-	//
-	// Until those resolution sites carry a proper ODR-use signal, pass 1 must
-	// drain every instantiated root that's reachable from `get_nodes()`.
-	// Reverting the split here preserves the documented 2204 / 149 baseline.
-	// See `docs/2026-04-21-phase5-slice-g-analysis.md` for the audit trail.
-	//
-	// We intentionally only walk structs reachable from `parser_.get_nodes()`
-	// in this first pass: they are exactly the structs whose members the
-	// codegen struct-visitor iterates. Non-reachable instantiations whose
-	// members are ODR-used are caught by the second pass below
-	// (`snapshotOdrUsedLazyEntries`).
-	while (true) {
-		size_t before = total_materialized;
-		const auto& top_nodes = parser_.get_nodes();
-		for (size_t i = 0; i < top_nodes.size(); ++i) {
-			if (parser_.isInstantiatedNode(i)) {
-				continue;
-			}
-			FlashCpp::forEachReachableStructDecl(top_nodes[i], drainOneStruct);
-		}
-		if (total_materialized == before) {
-			break;
-		}
-	}
-
-	// Phase 5 Slice G: second pass — materialize any still-lazy members
+	// Phase 5 Slice G: materialize any still-lazy members
 	// whose key is explicitly marked as ODR-used by sema annotation sites
-	// (see `LazyMemberInstantiationRegistry::markOdrUsed`). This catches
-	// instantiations that live only via `StructTypeInfo` / lazy-registry
-	// references and are not reachable from `parser_.get_nodes()`, which
-	// the first pass cannot see. Because SFINAE-probed instantiations never
-	// pass through the sema sites that call `markOdrUsed`, their ODR-use
-	// bit stays false and they are safely skipped here, preserving the
-	// invariant that Slice F documented.
+	// (see `LazyMemberInstantiationRegistry::markOdrUsed`). Because
+	// SFINAE-probed instantiations never pass through the sema sites that call
+	// `markOdrUsed`, their ODR-use bit stays false and they are safely skipped
+	// here, preserving the invariant that Slice F documented.
 	//
-	// Like the first pass, wrap in a fixpoint loop: materializing a body
+	// Wrap in a fixpoint loop: materializing a body
 	// may register new lazy entries and may mark additional members as
 	// ODR-used (e.g., a newly-substituted body selects a call target via
 	// sema annotation before codegen runs).
