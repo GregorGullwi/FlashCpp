@@ -101,6 +101,37 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+### 2026-05-05 Windows/MSVC std-header parser/sema follow-up
+
+This pass rebuilt `x64/Sharded/FlashCppMSVC.exe` with MSBuild and retested
+selected `tests/std/test_std_*.cpp` files against MSVC 14.44.35207 headers.
+
+Fixes landed:
+
+- **Single-declaration linkage specifications now accept template declarations.**
+  MSVC writes forward declarations such as
+  `extern "C++" template <class _Elem, class _Traits = char_traits<_Elem>> class basic_ios;`
+  in `iosfwd`; the top-level and namespace parsers now route `extern "C++" template ...`
+  through the existing template declaration path instead of ordinary type parsing.
+- **Qualified static member function template calls no longer hard-error when a
+  call argument type is unavailable in an active template context.**  The parser
+  skips immediate deduction for those dependent calls and lets the existing lazy
+  member/fallback call path preserve the expression for later instantiation.
+
+Regression tests:
+
+- `tests/test_extern_cxx_template_forward_ret0.cpp`
+- `tests/test_qualified_static_member_template_dependent_arg_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCppMSVC.exe`, Windows/MSVC 14.44.35207):
+
+| Header | Status | Time | First-order stop / note |
+|--------|--------|------|-------------------------|
+| `<string_view>` | ❌ Compile Error | parse stopped after ~3032ms | The previous `iosfwd:166` `extern "C++" template` parser stop and the qualified static member template deduction fatal are fixed. Current first hard error is MSVC `<utility>:458` `Call to deleted function 'swap'`; recoverable deferred static_assert / `std::invoke` failures still precede the final diagnostic. |
+| `<optional>` | ❌ Compile Error | parse stopped after ~1304ms | The qualified static member template deduction fatal is fixed. Current first hard error is MSVC `<utility>:458` `Call to deleted function 'swap'`. |
+| `<atomic>` | ❌ Parse Error | parse stopped after ~933ms | The qualified static member template deduction fatal is fixed. Current first hard error is MSVC `xatomic_wait.h:50` `Expected ';' after type alias` for `using _Atomic_wait_indirect_equal_callback_t = bool(__stdcall*)(...) noexcept;`. |
+| `<latch>` | ❌ Parse Error | parse stopped after ~911ms | Same `xatomic_wait.h:50` function-pointer type-alias parser blocker as `<atomic>`. |
+
 
 
 #### 2026-05-05 Copy-init array-to-pointer constructor conversion for `<string_view>` (Linux/libstdc++-14)
