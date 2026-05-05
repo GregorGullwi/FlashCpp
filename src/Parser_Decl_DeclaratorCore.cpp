@@ -1146,6 +1146,11 @@ ParseResult Parser::parse_function_pointer_parameter_types(std::vector<TypeIndex
 	}
 
 	while (true) {
+		if (peek() == "..."_tok) {
+			advance();
+			break;
+		}
+
 		auto param_type_result = parse_type_specifier();
 		if (param_type_result.is_error()) {
 			return param_type_result;
