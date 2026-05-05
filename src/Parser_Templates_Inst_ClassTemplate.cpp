@@ -170,6 +170,39 @@ static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type
 	return arg;
 }
 
+// Resolve a deferred-base type argument through the ordinary substitution map,
+// then apply the use-site cv/ref/pointer modifiers carried by the original type
+// specifier. This keeps the pattern/member-chain paths on their historical
+// qualifier-replacement semantics while sharing the lookup boilerplate. The
+// primary deferred-base current-instantiation path uses
+// Parser::tryMaterializeDeferredBaseTypeArg(...) instead because that path may
+// need full placeholder materialization and must preserve resolved-type
+// qualifiers when the rebinding becomes more concrete. Returns std::nullopt when
+// the map has no matching type entry for this argument.
+static std::optional<TemplateTypeArg> tryResolveDeferredBaseTypeArgFromMap(
+	const TypeSpecifierNode& type_spec,
+	const TemplateArgSubstitutionMap& name_substitution_map) {
+	if (!is_struct_type(type_spec.category()) || !type_spec.type_index().is_valid()) {
+		return std::nullopt;
+	}
+
+	const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+	if (type_info == nullptr) {
+		return std::nullopt;
+	}
+
+	auto subst_it = name_substitution_map.find(StringTable::getStringView(type_info->name()));
+	if (subst_it == name_substitution_map.end()) {
+		return std::nullopt;
+	}
+
+	TemplateTypeArg resolved_type_arg = subst_it->second;
+	resolved_type_arg.pointer_depth = type_spec.pointer_depth();
+	resolved_type_arg.ref_qualifier = type_spec.reference_qualifier();
+	resolved_type_arg.cv_qualifier = type_spec.cv_qualifier();
+	return resolved_type_arg;
+}
+
 static const TypeSpecifierNode* getDeclarationParamTypeNode(const ASTNode& param) {
 	if (!param.is<DeclarationNode>()) {
 		return nullptr;
@@ -270,18 +303,11 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 				bool member_arg_resolved = false;
 				if (member_arg_info.node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& ts = member_arg_info.node.as<TypeSpecifierNode>();
-					if (is_struct_type(ts.category()) && ts.type_index().is_valid()) {
-						if (const TypeInfo* ts_ti = tryGetTypeInfo(ts.type_index())) {
-							auto type_subst_it = name_substitution_map.find(StringTable::getStringView(ts_ti->name()));
-							if (type_subst_it != name_substitution_map.end()) {
-								TemplateTypeArg resolved_type_arg = type_subst_it->second;
-								resolved_type_arg.pointer_depth = ts.pointer_depth();
-								resolved_type_arg.ref_qualifier = ts.reference_qualifier();
-								resolved_type_arg.cv_qualifier = ts.cv_qualifier();
-								resolved_member.template_arguments->push_back(resolved_type_arg);
-								member_arg_resolved = true;
-							}
-						}
+					if (std::optional<TemplateTypeArg> resolved_type_arg =
+							tryResolveDeferredBaseTypeArgFromMap(ts, name_substitution_map);
+						resolved_type_arg.has_value()) {
+						resolved_member.template_arguments->push_back(*resolved_type_arg);
+						member_arg_resolved = true;
 					}
 					if (!member_arg_resolved) {
 						resolved_member.template_arguments->emplace_back(ts);
@@ -2559,19 +2585,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						bool resolved = false;
 						if (arg_info.node.is<TypeSpecifierNode>()) {
 							const TypeSpecifierNode& ts = arg_info.node.as<TypeSpecifierNode>();
-							if ((is_struct_type(ts.category())) && ts.type_index().is_valid()) {
-								if (const TypeInfo* ts_ti = tryGetTypeInfo(ts.type_index())) {
-									std::string_view tname = StringTable::getStringView(ts_ti->name());
-									auto it = spec_subst_map.find(tname);
-									if (it != spec_subst_map.end()) {
-										TemplateTypeArg a = it->second;
-										a.pointer_depth = ts.pointer_depth();
-										a.ref_qualifier = ts.reference_qualifier();
-										a.cv_qualifier = ts.cv_qualifier();
-										resolved_args.push_back(a);
-										resolved = true;
-									}
-								}
+							if (std::optional<TemplateTypeArg> substituted_arg =
+									tryResolveDeferredBaseTypeArgFromMap(ts, spec_subst_map);
+								substituted_arg.has_value()) {
+								resolved_args.push_back(*substituted_arg);
+								resolved = true;
 							}
 							if (!resolved) {
 								resolved_args.emplace_back(ts);
@@ -5034,6 +5052,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 
 						// Fallback: use the type specifier as-is
+						if (!resolved) {
+							if (std::optional<TemplateTypeArg> substituted_arg =
+									tryMaterializeDeferredBaseTypeArg(
+										type_spec,
+										template_params,
+										template_args_to_use,
+										[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+											return instantiate_and_register_base_template(concrete_base_template_name, concrete_base_args);
+										});
+								substituted_arg.has_value()) {
+								substituted_arg->is_pack = arg_info.is_pack;
+								resolved_args.push_back(*substituted_arg);
+								resolved = true;
+							}
+						}
 						if (!resolved) {
 							resolved_args.emplace_back(type_spec);
 							resolved_args.back().is_pack = arg_info.is_pack;

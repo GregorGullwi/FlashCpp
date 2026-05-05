@@ -1,7 +1,7 @@
 # Template Instantiation / Materialization Status
 
 **Date:** 2026-04-08  
-**Last Updated:** 2026-04-30
+**Last Updated:** 2026-05-05
 
 This document tracks the current state of template instantiation, lazy
 materialization, and the sema/codegen boundary. It is intentionally compact:
@@ -111,8 +111,12 @@ substitution loses them. The target is one substitution context that carries:
 
 Active fallback evidence from the 2026-04-27 audit:
 
-- unresolved class-template type arguments still pass through as original
-  `TypeSpecifierNode`s for deferred-base and dependent-member cases;
+- unresolved class-template type arguments still have a residual passthrough
+  path, but the primary deferred-template-base argument flow now runs
+  `substitute_template_parameter(...)` plus
+  `materializeDeferredBasePlaceholderIfNeeded(...)` before preserving the
+  original `TypeSpecifierNode`, which removes ordinary member-alias/deferred-base
+  traffic from that fallback class;
 - deferred `decltype(...)` base evaluation now materializes placeholder
   template-instantiation `TypeInfo` through
   `materializeDeferredBasePlaceholderIfNeeded(...)` before registering the
@@ -337,6 +341,13 @@ Recent historical baselines recorded for this work:
   functional-cast constructor calls to the active instantiated owner type during
   constructor annotation. Added
   `tests/test_constructor_overload_return_same_arity_ret0.cpp`.
+- 2026-05-05 Linux/clang deferred-base type-argument follow-up: full suite
+  passed, 2277 regular tests and 156 expected-fail tests after the primary
+  deferred-template-base type-argument path started reusing
+  `substitute_template_parameter(...)` plus
+  `materializeDeferredBasePlaceholderIfNeeded(...)` before the residual
+  `TypeSpecifierNode` passthrough. Added
+  `tests/test_deferred_base_member_alias_type_arg_ret0.cpp`.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.

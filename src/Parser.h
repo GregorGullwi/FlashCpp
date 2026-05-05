@@ -1770,6 +1770,57 @@ private:
 
 		return base_type;
 	}
+	// Try the primary deferred-base type-argument materialization path: first
+	// substitute template parameters into the type specifier, then materialize any
+	// incomplete template-instantiation placeholder through the provided concrete
+	// instantiator callback. Returns the resolved TemplateTypeArg when the type
+	// became more concrete, or std::nullopt when no authoritative improvement was
+	// available and callers should keep their existing fallback behavior. Use this
+	// in current-instantiation/deferred-base flows that need full materialization;
+	// choose this over tryResolveDeferredBaseTypeArgFromMap(...) when placeholder
+	// instantiations may need concrete materialization, and keep the lighter
+	// helper for plain substitution-map lookups in pattern/member-chain code.
+	template <typename TemplateParamsContainer, typename TemplateArgsContainer, typename ConcreteBaseInstantiator>
+	std::optional<TemplateTypeArg> tryMaterializeDeferredBaseTypeArg(
+		const TypeSpecifierNode& type_spec,
+		const TemplateParamsContainer& template_params,
+		const TemplateArgsContainer& template_args,
+		ConcreteBaseInstantiator&& instantiate_concrete_base) {
+		TypeIndex substituted_type_index =
+			substitute_template_parameter(type_spec, template_params, template_args);
+		if (substituted_type_index.is_valid()) {
+			if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index)) {
+				if (const TypeInfo* resolved_type_info = materializeDeferredBasePlaceholderIfNeeded(
+						substituted_type_info,
+						template_params,
+						template_args,
+						instantiate_concrete_base)) {
+					TypeIndex resolved_type_index =
+						resolved_type_info->registeredTypeIndex().withCategory(resolved_type_info->typeEnum());
+					// Success means either the placeholder fully materialized, or the
+					// rebound type identity changed even if the result is still marked
+					// incomplete. In both cases callers learned more than the original
+					// TypeSpecifierNode carried and should use the resolved argument.
+					if (!resolved_type_info->is_incomplete_instantiation_ ||
+						resolved_type_index != type_spec.type_index()) {
+						// resolveTypeInfoToTemplateArg preserves the use-site modifiers
+						// from type_spec while keeping any newly materialized concrete
+						// type identity discovered above.
+						return resolveTypeInfoToTemplateArg(*resolved_type_info, type_spec);
+					}
+				}
+			}
+		}
+
+		if (!substituted_type_index.is_valid() ||
+			substituted_type_index == type_spec.type_index()) {
+			return std::nullopt;
+		}
+
+		TemplateTypeArg substituted_arg(type_spec);
+		substituted_arg.type_index = substituted_type_index;
+		return substituted_arg;
+	}
 	bool isReachableVirtualBaseInitializer(const StructTypeInfo* struct_info, std::string_view candidate_name) const;
 	std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);	// NEW: Instantiate class template
 	std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
