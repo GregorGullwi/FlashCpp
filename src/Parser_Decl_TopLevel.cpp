@@ -245,15 +245,17 @@ ParseResult Parser::parse_top_level_node() {
 				return saved_position.propagate(std::move(result));
 			}
 
-			// Single declaration form: extern "C" int func();
-			// Set the current linkage and parse the declaration/function
-			Linkage saved_linkage = current_linkage_;
-			current_linkage_ = linkage;
-
-			ParseResult decl_result = parse_declaration_or_function_definition();
-
-			// Restore the previous linkage
-			current_linkage_ = saved_linkage;
+			ParseResult decl_result;
+			if (peek() == "template"_tok) {
+				decl_result = parse_template_declaration();
+			} else {
+				// Single declaration form: extern "C" int func();
+				// Set the current linkage and parse the declaration/function
+				Linkage saved_linkage = current_linkage_;
+				current_linkage_ = linkage;
+				decl_result = parse_declaration_or_function_definition();
+				current_linkage_ = saved_linkage;
+			}
 
 			if (decl_result.is_error()) {
 				return decl_result;
@@ -714,6 +716,8 @@ ParseResult Parser::parse_namespace() {
 				// Check for block form: extern "C" { ... }
 				if (peek() == "{"_tok) {
 					decl_result = parse_extern_block(linkage);
+				} else if (peek() == "template"_tok) {
+					decl_result = parse_template_declaration();
 				} else {
 					// Single declaration form: extern "C++" int func();
 					Linkage saved_linkage = current_linkage_;
