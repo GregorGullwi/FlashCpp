@@ -235,43 +235,30 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	// 2. No call args and no explicit args — try zero-arg explicit instantiation.
 	// 3. Call args but no explicit args (e.g. Type::member(args)) — deduce from args.
 	//    This covers static member function templates like `S<T1,T2>::f(a, b)` where
-	//    `try_parse_member_template_function_call` is the only path and the lazy
-	//    fallback below only handles non-template members.
-	std::optional<ASTNode> instantiated_func;
-	if (member_template_args.has_value()) {
-		instantiated_func = try_instantiate_member_function_template_explicit(
-			instantiated_class_name,
-			member_name,
-			*member_template_args);
-	} else if (args.empty()) {
-		instantiated_func = try_instantiate_member_function_template_explicit(
-			instantiated_class_name,
-			member_name,
-			{});
-	} else {
-		// Collect argument types from the already-parsed call args, then attempt
-		// deduction-based member function template instantiation.  This is the
-		// same mechanism used for regular (non-static) member template calls in
-		// Parser_Expr_PostfixCalls.cpp.
-		std::vector<TypeSpecifierNode> deduced_arg_types;
-		deduced_arg_types.reserve(args.size());
-		bool has_dependent_call_arg = false;
-		for (const auto& arg : args) {
-			auto type_opt = get_expression_type(arg);
-			if (!type_opt.has_value()) {
-				if (!currentTemplateParamNames().empty()) {
-					has_dependent_call_arg = true;
-					continue;
-				}
-				throw InternalError("Could not determine type of call argument during qualified static member template deduction");
+	//    `try_parse_member_template_function_call` is the only path that reaches
+	//    these qualified static member template calls, so this path still has to
+	//    collect call-arg types before delegating to the shared helper below.
+	std::vector<TypeSpecifierNode> deduced_arg_types;
+	deduced_arg_types.reserve(args.size());
+	bool has_dependent_call_arg = false;
+	for (const auto& arg : args) {
+		auto type_opt = get_expression_type(arg);
+		if (!type_opt.has_value()) {
+			if (!currentTemplateParamNames().empty()) {
+				has_dependent_call_arg = true;
+				continue;
 			}
-			deduced_arg_types.push_back(*type_opt);
+			throw InternalError("Could not determine type of call argument during qualified static member template deduction");
 		}
-		if (!has_dependent_call_arg && !deduced_arg_types.empty()) {
-			instantiated_func = try_instantiate_member_function_template(
-				instantiated_class_name, member_name, deduced_arg_types);
-		}
+		deduced_arg_types.push_back(*type_opt);
 	}
+	std::optional<ASTNode> instantiated_func = tryInstantiateMemberFunctionTemplateCall(
+		instantiated_class_name,
+		member_name,
+		member_template_args,
+		deduced_arg_types,
+		!args.empty(),
+		has_dependent_call_arg);
 
 	// Trigger lazy member function instantiation if needed
 	if (!instantiated_func.has_value() &&
