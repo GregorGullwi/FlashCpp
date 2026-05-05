@@ -895,7 +895,8 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 				advance(); // consume '('
 
 				std::vector<TypeIndex> return_param_types;
-				auto return_params_result = parse_function_pointer_parameter_types(return_param_types);
+				bool is_return_variadic = false;
+				auto return_params_result = parse_function_pointer_parameter_types(return_param_types, is_return_variadic);
 				if (return_params_result.is_error()) {
 					return return_params_result;
 				}
@@ -914,6 +915,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 				signature.parameter_type_indices = return_param_types;
 				signature.linkage = linkage;
 				signature.calling_convention = calling_conv;
+				signature.is_variadic = is_return_variadic;
 				function_ptr_type.set_function_signature(signature);
 				base_type = function_ptr_type;
 
@@ -1048,7 +1050,8 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 
 		// Parse parameter list
 		std::vector<TypeIndex> param_types;
-		auto param_result = parse_function_pointer_parameter_types(param_types);
+		bool is_variadic = false;
+		auto param_result = parse_function_pointer_parameter_types(param_types, is_variadic);
 		if (param_result.is_error()) {
 			return param_result;
 		}
@@ -1079,6 +1082,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 		sig.return_reference_qualifier = base_type.reference_qualifier();
 		sig.parameter_type_indices = param_types;
 		sig.linkage = linkage;
+		sig.is_variadic = is_variadic;
 		fp_type.set_function_signature(sig);
 
 		// Replace base_type with the function pointer type
@@ -1140,7 +1144,8 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 // Parse the parameter-type-list that appears inside a function pointer declarator.
 // This shared helper covers both standalone function pointers and function
 // declarations whose return type is itself a function pointer.
-ParseResult Parser::parse_function_pointer_parameter_types(std::vector<TypeIndex>& out_param_types) {
+ParseResult Parser::parse_function_pointer_parameter_types(std::vector<TypeIndex>& out_param_types, bool& out_is_variadic) {
+	out_is_variadic = false;
 	if (peek() == ")"_tok) {
 		return ParseResult::success();
 	}
@@ -1149,6 +1154,7 @@ ParseResult Parser::parse_function_pointer_parameter_types(std::vector<TypeIndex
 		// Accept standalone or terminal variadic ellipses, including MSVC header aliases like bool(__stdcall*)(...) noexcept.
 		if (peek() == "..."_tok) {
 			advance();
+			out_is_variadic = true;
 			break;
 		}
 

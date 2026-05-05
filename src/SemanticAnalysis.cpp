@@ -652,9 +652,17 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 		}
 		if (a.linkage != b.linkage)
 			return false;
+		if (a.calling_convention != b.calling_convention)
+			return false;
+		if (a.is_variadic != b.is_variadic)
+			return false;
 		if (a.is_const != b.is_const)
 			return false;
 		if (a.is_volatile != b.is_volatile)
+			return false;
+		if (a.function_reference_qualifier != b.function_reference_qualifier)
+			return false;
+		if (a.is_noexcept != b.is_noexcept)
 			return false;
 		if (a.class_name != b.class_name)
 			return false;

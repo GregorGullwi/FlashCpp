@@ -506,6 +506,7 @@ struct CallOp {
 	TypeCategory returnType() const { return return_type_index.category(); }
 	bool is_member_function = false;		 // 1 byte
 	bool is_variadic = false;			  // 1 byte
+	size_t fixed_argument_count = 0;
 	bool is_indirect_call = false;		   // 1 byte - True if calling through function pointer/reference
 	bool returns_reference = false;		// 1 byte - True if function returns T& or T&&
 	bool returns_rvalue_reference = false; // 1 byte - True if function returns T&&
@@ -994,6 +995,8 @@ struct IndirectCallOp {
 	SizeInBits referenced_value_size_in_bits{};
 	TypeIndex return_type_index{};
 	PointerDepth return_pointer_depth = PointerDepth{};
+	bool is_variadic = false;
+	size_t fixed_argument_count = 0;
 	bool use_return_slot = false;
 	bool returns_reference = false;
 	bool returns_rvalue_reference = false;

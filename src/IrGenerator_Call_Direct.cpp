@@ -96,6 +96,8 @@ void AstToIr::populateIndirectCallReturnInfo(IndirectCallOp& call_op, const Func
 	call_op.return_type_index = getFunctionSignatureReturnTypeIndex(signature);
 	call_op.return_size_in_bits = SizeInBits{getFunctionSignatureReturnSizeBits(signature)};
 	call_op.return_pointer_depth = PointerDepth{signature.return_pointer_depth};
+	call_op.is_variadic = signature.is_variadic;
+	call_op.fixed_argument_count = signature.parameter_type_indices.size();
 	call_op.returns_reference = signature.returns_reference() && !return_type.has_function_signature();
 	call_op.returns_rvalue_reference = signature.returns_rvalue_reference();
 	call_op.referenced_value_size_in_bits = call_op.returns_reference
@@ -1829,6 +1831,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	if (matched_func_decl) {
 		call_op.is_variadic = matched_func_decl->is_variadic();
 	}
+	call_op.fixed_argument_count = param_nodes.size() + (call_op.is_member_function ? 1u : 0u);
 
 		// Convert operands to TypedValue arguments (skip first 2: result and function_name)
 		// Operands come in fixed groups of 3: [type, size, value].

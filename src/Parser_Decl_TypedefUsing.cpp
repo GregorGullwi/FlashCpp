@@ -53,7 +53,8 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 		advance();
 
 		std::vector<TypeIndex> param_types;
-		auto param_result = parse_function_pointer_parameter_types(param_types);
+		bool is_variadic = false;
+		auto param_result = parse_function_pointer_parameter_types(param_types, is_variadic);
 		if (param_result.is_error()) {
 			restore_token_position(func_type_saved_pos);
 			return false;
@@ -74,6 +75,7 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 		func_sig.return_reference_qualifier = type_spec.reference_qualifier();
 		func_sig.parameter_type_indices = std::move(param_types);
 		func_sig.calling_convention = calling_conv;
+		func_sig.is_variadic = is_variadic;
 		func_sig.is_noexcept = is_noexcept;
 
 		if (is_function_ptr) {
@@ -100,7 +102,8 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 	}
 
 	std::vector<TypeIndex> param_types;
-	auto param_result = parse_function_pointer_parameter_types(param_types);
+	bool is_variadic = false;
+	auto param_result = parse_function_pointer_parameter_types(param_types, is_variadic);
 	if (param_result.is_error()) {
 		restore_token_position(func_type_saved_pos);
 		return false;
@@ -121,6 +124,7 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 	func_sig.return_reference_qualifier = type_spec.reference_qualifier();
 	func_sig.parameter_type_indices = std::move(param_types);
 	func_sig.calling_convention = calling_conv;
+	func_sig.is_variadic = is_variadic;
 	func_sig.is_noexcept = is_noexcept;
 	type_spec.set_function_signature(func_sig);
 

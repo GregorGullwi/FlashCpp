@@ -4187,6 +4187,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				// Reference arguments (including rvalue references) are passed as pointers,
 				// so they should use integer registers, not floating-point registers
 			bool is_float_arg = is_floating_point_type(arg.category()) && !arg.is_reference();
+			bool promote_vararg_float = call_op.is_variadic &&
+										i >= call_op.fixed_argument_count &&
+										arg.effectiveIrType() == IrType::Float;
 			bool is_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
 				// Determine if this argument goes on stack (overflows register file)
@@ -4247,7 +4250,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 							// Handle floating-point literal
 						double float_value = std::get<double>(arg.value);
 						uint64_t bits;
-						if (arg.effectiveIrType() == IrType::Float) {
+						if (arg.effectiveIrType() == IrType::Float && !promote_vararg_float) {
 							float float_val = static_cast<float>(float_value);
 							uint32_t float_bits;
 							std::memcpy(&float_bits, &float_val, sizeof(float_bits));
@@ -4268,15 +4271,21 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 						int var_offset = getStackOffsetFromTempVar(*temp_var);
 						bool is_float = (arg.effectiveIrType() == IrType::Float);
 						emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
+						if (promote_vararg_float) {
+							emitCvtss2sd(temp_xmm, temp_xmm);
+						}
 					} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
 						StringHandle var_name_handle = *string;
 						int var_offset = getVariableOffsetOrThrow(var_name_handle, "handleFunctionCall stack float arg");
 						bool is_float = (arg.effectiveIrType() == IrType::Float);
 						emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
+						if (promote_vararg_float) {
+							emitCvtss2sd(temp_xmm, temp_xmm);
+						}
 					}
 
 						// Store XMM register to stack using float store instruction
-					bool is_float = (arg.effectiveIrType() == IrType::Float);
+					bool is_float = (arg.effectiveIrType() == IrType::Float) && !promote_vararg_float;
 					emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, is_float);
 
 					regAlloc.release(temp_xmm);
@@ -4313,6 +4322,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				// Reference arguments (including rvalue references) are passed as pointers (addresses),
 				// so they should use integer registers regardless of the underlying type
 			bool is_float_arg = is_floating_point_type(arg.category()) && !arg.is_reference();
+			bool promote_vararg_float = call_op.is_variadic &&
+										i >= call_op.fixed_argument_count &&
+										arg.effectiveIrType() == IrType::Float;
 			bool is_potential_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
 				// Check if this argument fits in a register (accounting for param_shift)
@@ -4444,7 +4456,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 
 					// For float (32-bit), we need to convert the double to float first
 				uint64_t bits;
-				if (arg.effectiveIrType() == IrType::Float) {
+				if (arg.effectiveIrType() == IrType::Float && !promote_vararg_float) {
 					float float_val = static_cast<float>(float_value);
 					uint32_t float_bits;
 					std::memcpy(&float_bits, &float_val, sizeof(float_bits));
@@ -4510,8 +4522,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					bool is_float = (arg.effectiveIrType() == IrType::Float);
 					emitFloatMovFromFrame(target_reg, var_offset, is_float);
 
-						// For varargs: floats must be promoted to double (C standard)
-					if (call_op.is_variadic && is_float) {
+					// For varargs: floats must be promoted to double (C standard)
+					if (promote_vararg_float) {
 						emitCvtss2sd(target_reg, target_reg);
 					}
 
@@ -4538,8 +4550,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					bool is_float = (arg.effectiveIrType() == IrType::Float);
 					emitFloatMovFromFrame(target_reg, var_offset, is_float);
 
-						// For varargs: floats must be promoted to double (C standard)
-					if (call_op.is_variadic && is_float) {
+					// For varargs: floats must be promoted to double (C standard)
+					if (promote_vararg_float) {
 						emitCvtss2sd(target_reg, target_reg);
 					}
 
@@ -14623,10 +14635,8 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 	size_t float_reg_index = 0;
 	size_t win_position_idx = op.usesReturnSlot() ? 1 : 0;
 	size_t stack_arg_count = 0;
-	auto advanceSysVStackArgCount = [&](size_t slots) {
-		if (!is_coff_format) {
-			stack_arg_count += slots;
-		}
+	auto advanceStackArgCount = [&](size_t slots) {
+		stack_arg_count += slots;
 	};
 	auto intRegSlotsNeeded = [&](const TypedValue& arg) -> size_t {
 		return isTwoRegisterStruct(arg, false) ? 2 : 1;
@@ -14635,16 +14645,35 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		const auto& arg = op.arguments[i];
 		const bool is_reference_arg = arg.is_reference();
 		const bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) && !is_reference_arg;
+		const bool promote_vararg_float = op.is_variadic &&
+										 i >= op.fixed_argument_count &&
+										 arg.effectiveIrType() == IrType::Float;
 		const bool is_two_reg_sysv = isTwoRegisterStruct(arg, false);
 
 		bool goes_on_stack = false;
 		int stack_offset = 0;
-		if (is_coff_format) {
-				// Win64 uses unified argument positions across GPR/XMM registers.
+		if (is_coff_format && op.is_variadic) {
+				// Windows x64 variadic calls use unified argument positions across GPR/XMM registers.
 			size_t position = win_position_idx++;
 			goes_on_stack = position >= max_int_regs;
 			if (goes_on_stack) {
 				stack_offset = static_cast<int>(shadow_space + (position - max_int_regs) * 8);
+			}
+		} else if (is_coff_format) {
+				// Non-variadic Win64 calls use separate integer and floating-point register banks.
+			if (is_float_arg) {
+				goes_on_stack = float_reg_index >= max_float_regs;
+				float_reg_index++;
+				if (goes_on_stack) {
+					stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
+				}
+			} else {
+				size_t regs_needed = intRegSlotsNeeded(arg);
+				goes_on_stack = int_reg_index + regs_needed > max_int_regs;
+				int_reg_index += regs_needed;
+				if (goes_on_stack) {
+					stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
+				}
 			}
 		} else if (is_float_arg) {
 			goes_on_stack = float_reg_index >= max_float_regs;
@@ -14670,7 +14699,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 			if (std::holds_alternative<double>(arg.value)) {
 				double float_value = std::get<double>(arg.value);
 				uint64_t bits;
-				if (arg.effectiveIrType() == IrType::Float) {
+				if (arg.effectiveIrType() == IrType::Float && !promote_vararg_float) {
 					float float_val = static_cast<float>(float_value);
 					uint32_t float_bits;
 					std::memcpy(&float_bits, &float_val, sizeof(float_bits));
@@ -14681,17 +14710,32 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 				X64Register temp_gpr = allocateRegisterWithSpilling();
 				emitMovImm64(temp_gpr, bits);
 				emitMovqGprToXmm(temp_gpr, temp_xmm);
+				if (op.is_variadic && is_coff_format) {
+					emitStoreToRSP(textSectionData, temp_gpr, stack_offset);
+					regAlloc.release(temp_gpr);
+					regAlloc.release(temp_xmm);
+					advanceStackArgCount(1);
+					continue;
+				}
 				regAlloc.release(temp_gpr);
 			} else if (const auto* temp_var = std::get_if<TempVar>(&arg.value)) {
 				int arg_offset = getStackOffsetFromTempVar(*temp_var, arg.size_in_bits.value);
-				emitFloatMovFromFrame(temp_xmm, arg_offset, arg.effectiveIrType() == IrType::Float);
+				bool is_float = (arg.effectiveIrType() == IrType::Float);
+				emitFloatMovFromFrame(temp_xmm, arg_offset, is_float);
+				if (promote_vararg_float) {
+					emitCvtss2sd(temp_xmm, temp_xmm);
+				}
 			} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
 				int arg_offset = getVariableOffsetOrThrow(*string, "handleIndirectCall stack float arg");
-				emitFloatMovFromFrame(temp_xmm, arg_offset, arg.effectiveIrType() == IrType::Float);
+				bool is_float = (arg.effectiveIrType() == IrType::Float);
+				emitFloatMovFromFrame(temp_xmm, arg_offset, is_float);
+				if (promote_vararg_float) {
+					emitCvtss2sd(temp_xmm, temp_xmm);
+				}
 			}
-			emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, arg.effectiveIrType() == IrType::Float);
+			emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, !promote_vararg_float && arg.effectiveIrType() == IrType::Float);
 			regAlloc.release(temp_xmm);
-			advanceSysVStackArgCount(1);
+			advanceStackArgCount(1);
 		} else if (is_reference_arg || shouldPassStructByAddress(arg, is_two_reg_sysv)) {
 			X64Register temp_reg = allocateRegisterWithSpilling();
 			if (!emitLoadAddressLikeArgument(temp_reg, arg)) {
@@ -14699,15 +14743,15 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 			}
 			emitStoreToRSP(textSectionData, temp_reg, stack_offset);
 			regAlloc.release(temp_reg);
-			advanceSysVStackArgCount(1);
+			advanceStackArgCount(1);
 		} else if (is_two_reg_sysv) {
 			emitTwoRegStructToStack(arg, stack_offset);
-			advanceSysVStackArgCount(2);
+			advanceStackArgCount(2);
 		} else {
 			X64Register temp_reg = loadTypedValueIntoRegister(arg);
 			emitStoreToRSP(textSectionData, temp_reg, stack_offset);
 			regAlloc.release(temp_reg);
-			advanceSysVStackArgCount(1);
+			advanceStackArgCount(1);
 		}
 	}
 
@@ -14720,15 +14764,32 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		const TypeCategory arg_type = arg.typeEnum();
 		const bool is_reference_arg = arg.is_reference();
 		const bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) && !is_reference_arg;
+		const bool promote_vararg_float = op.is_variadic &&
+										 i >= op.fixed_argument_count &&
+										 arg.effectiveIrType() == IrType::Float;
 		const bool is_two_reg_sysv = isTwoRegisterStruct(arg, false);
 
 		bool use_register = false;
 		X64Register target_reg = X64Register::RAX;
-		if (is_coff_format) {
+		if (is_coff_format && op.is_variadic) {
 			size_t position = win_position_idx++;
 			use_register = position < max_int_regs;
 			if (use_register) {
 				target_reg = is_float_arg ? getFloatParamReg<TWriterClass>(position) : getIntParamReg<TWriterClass>(position);
+			}
+		} else if (is_coff_format) {
+			if (is_float_arg) {
+				if (float_reg_index < max_float_regs) {
+					use_register = true;
+					target_reg = getFloatParamReg<TWriterClass>(float_reg_index++);
+				}
+			} else {
+				size_t regs_needed = intRegSlotsNeeded(arg);
+				if (int_reg_index + regs_needed <= max_int_regs) {
+					use_register = true;
+					target_reg = getIntParamReg<TWriterClass>(int_reg_index);
+					int_reg_index++;
+				}
 			}
 		} else if (is_float_arg) {
 			if (float_reg_index < max_float_regs) {
@@ -14772,7 +14833,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		if (is_float_arg && std::holds_alternative<double>(arg.value)) {
 			double float_value = std::get<double>(arg.value);
 			uint64_t bits;
-			if (arg.effectiveIrType() == IrType::Float) {
+			if (arg.effectiveIrType() == IrType::Float && !promote_vararg_float) {
 				float float_val = static_cast<float>(float_value);
 				uint32_t float_bits;
 				std::memcpy(&float_bits, &float_val, sizeof(float_bits));
@@ -14783,6 +14844,9 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 			X64Register temp_gpr = allocateRegisterWithSpilling();
 			emitMovImm64(temp_gpr, bits);
 			emitMovqGprToXmm(temp_gpr, target_reg);
+			if (op.is_variadic && is_coff_format) {
+				emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(win_position_idx - 1));
+			}
 			regAlloc.release(temp_gpr);
 			continue;
 		}
@@ -14798,7 +14862,14 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 			const TempVar temp_var = std::get<TempVar>(arg.value);
 			int arg_offset = getStackOffsetFromTempVar(temp_var, arg.size_in_bits.value);
 			if (is_float_arg) {
-				emitFloatMovFromFrame(target_reg, arg_offset, arg.effectiveIrType() == IrType::Float);
+				bool is_float = (arg.effectiveIrType() == IrType::Float);
+				emitFloatMovFromFrame(target_reg, arg_offset, is_float);
+				if (promote_vararg_float) {
+					emitCvtss2sd(target_reg, target_reg);
+				}
+				if (op.is_variadic && is_coff_format) {
+					emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(win_position_idx - 1));
+				}
 			} else {
 				emitMovFromFrameSized(
 					SizedRegister{target_reg, 64, false},
@@ -14808,12 +14879,37 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 			StringHandle arg_var_name_handle = std::get<StringHandle>(arg.value);
 			int arg_offset = getVariableOffsetOrThrow(arg_var_name_handle, "handleIndirectCall register arg");
 			if (is_float_arg) {
-				emitFloatMovFromFrame(target_reg, arg_offset, arg.effectiveIrType() == IrType::Float);
+				bool is_float = (arg.effectiveIrType() == IrType::Float);
+				emitFloatMovFromFrame(target_reg, arg_offset, is_float);
+				if (promote_vararg_float) {
+					emitCvtss2sd(target_reg, target_reg);
+				}
+				if (op.is_variadic && is_coff_format) {
+					emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(win_position_idx - 1));
+				}
 			} else {
 				emitMovFromFrameSized(
 					SizedRegister{target_reg, 64, false},
 					SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(arg_type)});
 			}
+		}
+	}
+
+	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+		if (op.is_variadic) {
+			size_t xmm_count = 0;
+			size_t va_temp_float_idx = 0;
+			for (size_t i = 0; i < op.arguments.size(); ++i) {
+				const auto& arg = op.arguments[i];
+				if (isIrFloatingPointType(arg.effectiveIrType()) && !arg.is_reference()) {
+					if (va_temp_float_idx < max_float_regs) {
+						xmm_count++;
+						va_temp_float_idx++;
+					}
+				}
+			}
+			textSectionData.push_back(0xB0);
+			textSectionData.push_back(static_cast<uint8_t>(xmm_count));
 		}
 	}
 
