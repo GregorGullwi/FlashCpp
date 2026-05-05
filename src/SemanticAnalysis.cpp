@@ -107,6 +107,16 @@ bool markLazyReceiverMemberOdrUsed(
 	StringHandle resolved_parent_handle = resolved_parent_name.empty()
 		? StringHandle()
 		: StringTable::getOrInternStringHandle(resolved_parent_name);
+	auto owner_matches_resolved_parent = [&](StringHandle candidate_name) -> bool {
+		if (!resolved_parent_handle.isValid()) {
+			return true;
+		}
+		if (candidate_name == resolved_parent_handle) {
+			return true;
+		}
+		auto pattern_opt = gTemplateRegistry.get_instantiation_pattern(candidate_name);
+		return pattern_opt.has_value() && pattern_opt.value() == resolved_parent_handle;
+	};
 
 	auto try_mark = [&](const TypeInfo* type_info) -> bool {
 		if (!type_info || !type_info->isStruct()) {
@@ -117,11 +127,8 @@ bool markLazyReceiverMemberOdrUsed(
 			return false;
 		}
 		if (resolved_parent_handle.isValid()) {
-			if (candidate_name != resolved_parent_handle) {
-				auto pattern_opt = gTemplateRegistry.get_instantiation_pattern(candidate_name);
-				if (!pattern_opt.has_value() || pattern_opt.value() != resolved_parent_handle) {
-					return false;
-				}
+			if (!owner_matches_resolved_parent(candidate_name)) {
+				return false;
 			}
 		} else if (!type_info->isTemplateInstantiation()) {
 			return false;
