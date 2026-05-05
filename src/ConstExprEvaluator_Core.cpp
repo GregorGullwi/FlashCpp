@@ -49,6 +49,8 @@ struct SimpleConstexprTypeHelperPattern {
 	TypeTraitKind trait_kind;
 };
 
+// Drop namespace qualifiers so helper-pattern matching can key off the helper's
+// actual function name regardless of where it is declared.
 std::string_view getUnqualifiedFunctionName(std::string_view qualified_name) {
 	size_t qualifier_pos = qualified_name.rfind("::");
 	return qualifier_pos == std::string_view::npos
@@ -56,6 +58,9 @@ std::string_view getUnqualifiedFunctionName(std::string_view qualified_name) {
 		: qualified_name.substr(qualifier_pos + 2);
 }
 
+// Evaluate simple constexpr helper-template patterns such as
+// __is_complete_or_unbounded(__type_identity<T>{}) by matching the helper name,
+// unwrapping the wrapper type, and delegating to the shared type-trait evaluator.
 std::optional<EvalResult> tryEvaluateSimpleConstexprTypeHelperCall(
 	const CallExprNode& call_expr,
 	std::string_view func_name,

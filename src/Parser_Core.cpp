@@ -338,6 +338,8 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 // Deduce and append a best-effort argument type for function-call overload
 // resolution. When arg_types_out is null, this becomes a no-op so the same
 // argument-collection path can be reused for calls that do not need type data.
+// Collect a concrete type for each function-call argument. Returns false when
+// any argument cannot be typed well enough for normal template instantiation.
 bool Parser::tryCollectFunctionCallArgTypes(
 	const ChunkedVector<ASTNode>& arguments,
 	std::vector<TypeSpecifierNode>& arg_types_out) {
@@ -354,6 +356,9 @@ bool Parser::tryCollectFunctionCallArgTypes(
 	return true;
 }
 
+// Try template instantiation from call arguments by first using collected
+// argument types (qualified name first, then simple name) and then falling back
+// to constructor-wrapper deduction such as __type_identity<T>{}.
 std::optional<ASTNode> Parser::tryInstantiateTemplateFromCallArguments(
 	std::string_view qualified_name,
 	std::string_view simple_name,

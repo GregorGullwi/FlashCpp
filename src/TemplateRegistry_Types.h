@@ -844,6 +844,9 @@ inline TypeSpecifierNode makeTypeSpecifierFromTemplateTypeArg(
 	return substituted_spec;
 }
 
+// Rebuild a concrete TypeSpecifierNode from stored TemplateArgInfo metadata.
+// Returns std::nullopt when the template argument is a value argument rather
+// than a type argument.
 inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	const TypeInfo::TemplateArgInfo& arg_info,
 	const Token& token) {
@@ -877,6 +880,9 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	return substituted_spec;
 }
 
+// Extract the first type template argument from a concrete wrapper instantiation
+// such as __type_identity<T>. Returns std::nullopt for invalid/non-struct types,
+// non-template instantiations, empty template-argument lists, or name mismatch.
 inline std::optional<TypeSpecifierNode> tryExtractFirstTemplateTypeArgument(
 	const TypeSpecifierNode& wrapper_type,
 	const Token& token,
