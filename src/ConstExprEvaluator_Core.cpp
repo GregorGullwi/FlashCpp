@@ -43,11 +43,16 @@ bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
 	return !isPlaceholderAutoType(type_spec.category());
 }
 
-// Reconstruct a TypeSpecifierNode from TypeInfo-owned template argument
-// metadata. arg_info supplies the concrete template type argument, and token
-// preserves source location for diagnostics on the synthesized type. Returns
-// nullopt for non-type template arguments, because the constexpr type-trait
-// path only needs concrete type arguments.
+// Builds a TypeSpecifierNode from TypeInfo-owned template argument metadata.
+//
+// arg_info is expected to describe a concrete type template argument, including
+// cv/ref, pointer, array, and function-signature qualifiers. token is copied
+// into the synthesized TypeSpecifierNode so later diagnostics still point at
+// the source expression that carried the template argument.
+//
+// Returns nullopt when arg_info is a non-type template argument; callers should
+// then leave the original expression type unchanged or report that no type
+// argument was available.
 std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	const TypeInfo::TemplateArgInfo& arg_info,
 	const Token& token) {
@@ -77,9 +82,12 @@ std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	return extracted_type;
 }
 
-// Extract T from a std::__type_identity<T> constructor type. Returns nullopt
-// when the provided type is not a __type_identity template instantiation or its
-// first template argument is not a type.
+// Extracts T from a std::__type_identity<T> constructor type.
+//
+// type_spec should name the concrete __type_identity<T> wrapper object used by
+// libstdc++'s __is_complete_or_unbounded helper. Returns nullopt when type_spec
+// is not a class-template instantiation of __type_identity, when it has no first
+// template argument, or when that first argument is non-type.
 std::optional<TypeSpecifierNode> tryExtractTypeIdentityArgumentType(const TypeSpecifierNode& type_spec) {
 	if (!type_spec.type_index().is_valid() || !is_struct_type(type_spec.type())) {
 		return std::nullopt;
@@ -95,6 +103,14 @@ std::optional<TypeSpecifierNode> tryExtractTypeIdentityArgumentType(const TypeSp
 	return makeTypeSpecifierFromTemplateArgInfo(identity_type_info.templateArgs().front(), type_spec.token());
 }
 
+// Evaluates libstdc++'s std::__is_complete_or_unbounded helper without
+// instantiating the library overload body.
+//
+// func_name and qualified_name identify the call target; nullopt means the call
+// is not the std helper and ordinary constexpr function-call evaluation should
+// continue. EvalResult::error means the call had the helper name but did not
+// expose the expected __type_identity<T> argument shape. A successful EvalResult
+// contains the shared type-trait evaluator's answer for the unwrapped T.
 std::optional<EvalResult> tryEvaluateStdIsCompleteOrUnboundedCall(
 	const CallExprNode& call_expr,
 	std::string_view func_name,
