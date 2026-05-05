@@ -4802,6 +4802,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		};
 		auto tryMaterializeDeferredBaseTypeArg =
 			[&](const TypeSpecifierNode& type_spec) -> std::optional<TemplateTypeArg> {
+			// Try the shared substitution/materialization path first so primary
+			// deferred-base instantiation can reuse authoritative type metadata
+			// instead of preserving the original TypeSpecifierNode unchanged.
 			TypeIndex substituted_type_index =
 				substitute_template_parameter(type_spec, template_params, template_args_to_use);
 			if (substituted_type_index.is_valid()) {
@@ -4815,6 +4818,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							})) {
 						TypeIndex resolved_type_index =
 							resolved_type_info->registeredTypeIndex().withCategory(resolved_type_info->typeEnum());
+						// Accept either a fully materialized type or a rebinding that
+						// changed the placeholder identity; otherwise keep the original
+						// TypeSpecifierNode for still-dependent placeholder flows.
 						if (!resolved_type_info->is_incomplete_instantiation_ ||
 							resolved_type_index != type_spec.type_index()) {
 							return resolveTypeInfoToTemplateArg(*resolved_type_info, type_spec);
