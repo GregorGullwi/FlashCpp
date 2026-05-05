@@ -360,6 +360,12 @@ Recent historical baselines recorded for this work:
   cannot be extracted as a type-shaped expression instead of returning true as a
   missing-metadata fallback. Added
   `tests/test_is_complete_or_unbounded_invalid_arg_fail.cpp`.
+- 2026-05-05 Windows pseudo-destructor noexcept follow-up: template destructor
+  instantiation now substitutes and re-evaluates explicit `noexcept(expr)` in
+  the concrete template context, and pseudo-destructor `noexcept` checks resolve
+  constructor/list-init temporary object types before falling back to the
+  destructor-name token. Added
+  `tests/test_pseudo_dtor_noexcept_template_temp_ret0.cpp`.
 
 Refresh this section only after a new full validation run. Do not treat the
 older pass counts as today's baseline without rerunning the suite.
