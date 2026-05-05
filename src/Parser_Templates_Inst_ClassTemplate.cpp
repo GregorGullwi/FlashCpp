@@ -2492,6 +2492,33 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					},
 					spec_name_subst_map,
 					spec_pack_subst_map);
+				auto try_materialize_deferred_base_type_arg =
+					[&](const TypeSpecifierNode& type_spec) -> std::optional<TemplateTypeArg> {
+					TypeIndex substituted_type_index =
+						substitute_template_parameter(type_spec, template_params, template_args);
+					if (substituted_type_index.is_valid()) {
+						if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index)) {
+							if (const TypeInfo* resolved_type_info = materializeDeferredBasePlaceholderIfNeeded(
+									substituted_type_info,
+									template_params,
+									template_args,
+									[&instantiateAndResolveBaseName](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+										return instantiateAndResolveBaseName(concrete_base_template_name, concrete_base_args, true);
+									})) {
+								return resolveTypeInfoToTemplateArg(*resolved_type_info, type_spec);
+							}
+						}
+					}
+
+					if (!substituted_type_index.is_valid() ||
+						substituted_type_index == type_spec.type_index()) {
+						return std::nullopt;
+					}
+
+					TemplateTypeArg substituted_arg(type_spec);
+					substituted_arg.type_index = substituted_type_index;
+					return substituted_arg;
+				};
 
 				for (const auto& deferred_base : pattern_struct.deferred_template_base_classes()) {
 					std::string_view base_tpl_name = StringTable::getStringView(deferred_base.base_template_name);
@@ -2571,6 +2598,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										resolved_args.push_back(a);
 										resolved = true;
 									}
+								}
+							}
+							if (!resolved) {
+								if (std::optional<TemplateTypeArg> substituted_arg =
+										try_materialize_deferred_base_type_arg(ts);
+									substituted_arg.has_value()) {
+									resolved_args.push_back(*substituted_arg);
+									resolved = true;
 								}
 							}
 							if (!resolved) {
@@ -4800,6 +4835,34 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			return false;
 		};
+		auto try_materialize_deferred_base_type_arg =
+			[&](const TypeSpecifierNode& type_spec) -> std::optional<TemplateTypeArg> {
+			TypeIndex substituted_type_index =
+				substitute_template_parameter(type_spec, template_params, template_args_to_use);
+			if (substituted_type_index.is_valid()) {
+				if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index)) {
+					if (const TypeInfo* resolved_type_info = materializeDeferredBasePlaceholderIfNeeded(
+							substituted_type_info,
+							template_params,
+							template_args_to_use,
+							[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+								std::string_view mutable_template_name = concrete_base_template_name;
+								return instantiate_and_register_base_template(mutable_template_name, concrete_base_args);
+							})) {
+						return resolveTypeInfoToTemplateArg(*resolved_type_info, type_spec);
+					}
+				}
+			}
+
+			if (!substituted_type_index.is_valid() ||
+				substituted_type_index == type_spec.type_index()) {
+				return std::nullopt;
+			}
+
+			TemplateTypeArg substituted_arg(type_spec);
+			substituted_arg.type_index = substituted_type_index;
+			return substituted_arg;
+		};
 
 		for (const auto& deferred_base : class_decl.deferred_template_base_classes()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Processing deferred template base '{}' with {} template args",
@@ -5034,6 +5097,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 
 						// Fallback: use the type specifier as-is
+						if (!resolved) {
+							if (std::optional<TemplateTypeArg> substituted_arg =
+									try_materialize_deferred_base_type_arg(type_spec);
+								substituted_arg.has_value()) {
+								substituted_arg->is_pack = arg_info.is_pack;
+								resolved_args.push_back(*substituted_arg);
+								resolved = true;
+							}
+						}
 						if (!resolved) {
 							resolved_args.emplace_back(type_spec);
 							resolved_args.back().is_pack = arg_info.is_pack;
