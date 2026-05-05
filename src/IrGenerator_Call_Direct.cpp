@@ -718,7 +718,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					return_type_node,
 					arg_types,
 					false,
-					closure_type_name,
+					StringTable::getOrInternStringHandle(closure_type_name),
 					{},		// namespace_path
 					!current_lambda_context_.is_mutable	// const unless mutable lambda
 				);
@@ -835,25 +835,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			: qualified_name.substr(0, scope_pos);
 	};
 
-	auto buildNamespaceStack = [&](std::string_view qualified_name, std::vector<std::string>& out) {
-		const std::string_view ns_part = extractQualifiedOwner(qualified_name);
-		if (ns_part.empty())
-			return;
-		size_t start = 0;
-		while (start < ns_part.size()) {
-			size_t pos = ns_part.find("::", start);
-			if (pos == std::string_view::npos) {
-				out.emplace_back(ns_part.substr(start));
-				break;
-			}
-			out.emplace_back(ns_part.substr(start, pos - start));
-			start = pos + 2;
-		}
-	};
-
 	auto queueDeferredMemberFunctions = [&](StringHandle struct_name,
-											 const StructTypeInfo* struct_info,
-											 std::string_view preferred_qualified_name) {
+											const StructTypeInfo* struct_info,
+											std::string_view preferred_qualified_name) {
 		if (!struct_name.isValid() || !struct_info) {
 			return;
 		}
@@ -945,7 +929,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				if (const FunctionDeclarationNode* instantiated_member = findCurrentStructMemberInHierarchy()) {
 					matched_func_decl = instantiated_member;
 					has_precomputed_mangled = false;
-					resolveMangledName(matched_func_decl, current_struct_name_view);
+					resolveMangledName(matched_func_decl, current_struct_name_);
 					FLASH_LOG_FORMAT(Codegen, Debug, "Remapped {} direct call target to current struct for: {}", source_label, func_name_view);
 					return;
 				}
@@ -956,7 +940,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (is_current_struct_or_unowned) {
 			matched_func_decl = resolved_target;
 			has_precomputed_mangled = false;
-			resolveMangledName(matched_func_decl, parent);
+			resolveMangledName(matched_func_decl, StringTable::getOrInternStringHandle(parent));
 			FLASH_LOG_FORMAT(Codegen, Debug, "Using {} direct call target for: {}", source_label, func_name_view);
 			return;
 		}
@@ -990,7 +974,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (gTemplateRegistry.isPatternStructName(StringTable::getOrInternStringHandle(owner_for_mangling))) {
 			owner_for_mangling = resolved_owner_name;
 		}
-		resolveMangledName(matched_func_decl, owner_for_mangling);
+		resolveMangledName(matched_func_decl, StringTable::getOrInternStringHandle(owner_for_mangling));
 		if (owner_struct_info && !owner_struct_info->member_functions.empty()) {
 			queueDeferredMemberFunctions(owner_handle, owner_struct_info, owner_for_mangling);
 		}
@@ -1105,7 +1089,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (const FunctionDeclarationNode* instantiated_member = findCurrentStructMemberInHierarchy()) {
 			matched_func_decl = instantiated_member;
 			has_precomputed_mangled = false;
-			resolveMangledName(matched_func_decl, StringTable::getStringView(current_struct_name_));
+			resolveMangledName(matched_func_decl, current_struct_name_);
 			FLASH_LOG_FORMAT(Codegen, Debug, "Remapped stale precomputed member call {} to {}", func_name_view, function_name);
 		}
 	}
@@ -1151,7 +1135,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 							const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
 							if (fd.decl_node().identifier_token().value() == member_name_direct && fd.parameter_nodes().size() == direct_expected_param_count) {
 								matched_func_decl = &fd;
-								resolveMangledName(matched_func_decl, resolved_struct_part);
+								resolveMangledName(matched_func_decl, StringTable::getOrInternStringHandle(resolved_struct_part));
 									// Queue all member functions of this struct for deferred generation
 								queueDeferredMemberFunctions(direct_type_info->name(), si, resolved_struct_part);
 								break;
@@ -1188,7 +1172,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 												std::string_view func_id = func_decl.decl_node().identifier_token().value();
 												if (func_id == member_name) {
 													matched_func_decl = &func_decl;
-													resolveMangledName(matched_func_decl, StringTable::getStringView(base_struct_info->getName()));
+													resolveMangledName(matched_func_decl, base_struct_info->getName());
 													break;
 												}
 											}
