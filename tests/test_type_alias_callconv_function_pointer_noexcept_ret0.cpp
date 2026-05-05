@@ -5,6 +5,11 @@ struct Holder {
 	member_callback_t callback;
 };
 
-int main() {
+int accept_callback(callback_t callback) {
+	(void)callback;
 	return 0;
+}
+
+int main() {
+	return accept_callback(0);
 }
