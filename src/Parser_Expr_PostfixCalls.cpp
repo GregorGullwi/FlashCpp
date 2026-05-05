@@ -92,6 +92,11 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 	const std::vector<TypeSpecifierNode>& call_arg_types,
 	bool has_call_args,
 	bool has_dependent_call_args) {
+	// `has_call_args` tracks whether the parser saw any call arguments syntactically,
+	// while `call_arg_types` tracks only the arguments whose types are already known
+	// at this parse point and may therefore be only a partial subset.  If a
+	// syntactically non-empty call still has no collected types here, preserving the
+	// old behavior by deferring deduction is safer than forcing a hard failure.
 	if (explicit_template_args.has_value()) {
 		return try_instantiate_member_function_template_explicit(
 			struct_name,
@@ -104,6 +109,8 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 			member_name,
 			{});
 	}
+	// Reaching this point means the call was syntactically non-empty, so an empty
+	// collected-type list means deduction still has to wait for instantiation-time typing.
 	if (has_dependent_call_args || call_arg_types.empty()) {
 		return std::nullopt;
 	}
@@ -316,6 +323,8 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 				member_template_args,
 				arg_types,
 				!args.empty(),
+				// parse_function_arguments already produced the concrete arg-type list used
+				// by this postfix path; keep the existing "no extra dependent deferral" behavior.
 				false);
 		}
 

@@ -2403,6 +2403,8 @@ private:	 // Resume private methods
 	const FunctionDeclarationNode* tryResolveConcreteMemberFunction(const std::optional<ASTNode>& object_expr, std::string_view member_name);
 	std::optional<ASTNode> tryResolveMemberFunctionTemplate(const std::optional<ASTNode>& object_expr, std::string_view member_name,
 															const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args, const std::vector<TypeSpecifierNode>& arg_types);
+	// Shared member-template call dispatch once the caller knows whether arguments were
+	// syntactically present and whether any of them stayed dependent while collecting types.
 	std::optional<ASTNode> tryInstantiateMemberFunctionTemplateCall(
 		std::string_view struct_name,
 		std::string_view member_name,
