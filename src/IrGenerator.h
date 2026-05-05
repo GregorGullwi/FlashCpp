@@ -205,5 +205,109 @@ inline bool needsHiddenReturnParam(TypeCategory type, int pointer_depth, bool is
 		   (size_in_bits > getStructReturnThreshold(is_llp64));
 }
 
+// Resolve a runtime namespace component stack back into a declaration NamespaceHandle.
+// Returns INVALID when any component cannot be resolved through the namespace registry.
+inline NamespaceHandle buildNamespaceHandleFromStrings(const std::vector<std::string>& namespace_stack) {
+	if (namespace_stack.empty()) {
+		return NamespaceRegistry::GLOBAL_NAMESPACE;
+	}
+
+	NamespaceHandle current = NamespaceRegistry::GLOBAL_NAMESPACE;
+	for (const auto& namespace_name : namespace_stack) {
+		current = gNamespaceRegistry.lookupNamespace(
+			current,
+			StringTable::getOrInternStringHandle(namespace_name));
+		if (!current.isValid()) {
+			return NamespaceHandle();
+		}
+	}
+	return current;
+}
+
+// Manglers encode the declaration namespace separately from the owner name. For a member of
+// `ns::Outer::Inner`, the correct split is namespace=`ns` and owner=`Outer::Inner`; passing
+// `ns::Outer::Inner` together with namespace=`ns` would double-encode the namespace.
+struct OwnerManglingInfo {
+	StringHandle owner_name_for_mangling;
+	NamespaceHandle owner_namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
+	bool owner_type_resolved = false;
+};
+
+// Drop the declaration namespace prefix from a resolved owner spelling because the manglers
+// receive that namespace separately. Example: namespace=`ns`, owner=`ns::Outer::Inner`
+// becomes owner=`Outer::Inner`.
+// If the owner spelling does not begin with exactly that namespace prefix plus `::`, the input
+// is returned unchanged. Callers can therefore pass unresolved or malformed spellings safely: the
+// helper only strips when it can prove the prefix matches the resolved declaration namespace.
+inline std::string_view stripResolvedNamespacePrefixForMangling(std::string_view owner_name, NamespaceHandle namespace_handle) {
+	if (!namespace_handle.isValid() || namespace_handle.isGlobal()) {
+		return owner_name;
+	}
+
+	const std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(namespace_handle);
+	if (qualified_namespace.empty() ||
+		!owner_name.starts_with(qualified_namespace) ||
+		owner_name.size() <= qualified_namespace.size() + 2 ||
+		owner_name.substr(qualified_namespace.size(), 2) != "::") {
+		return owner_name;
+	}
+
+	return owner_name.substr(qualified_namespace.size() + 2);
+}
+
+// Resolve the owner name used for member mangling.
+// - First try the enclosing declaration namespace for unqualified owners so `Box` inside `ns`
+//   resolves as `ns::Box`.
+// - Then try the raw spelling directly for already-qualified or global names.
+// - If resolution still fails, preserve the original owner spelling and keep the namespace
+//   handle global so mangling does not add a second namespace prefix.
+inline OwnerManglingInfo resolveOwnerManglingInfoForMangling(
+	std::string_view owner_name,
+	NamespaceHandle enclosing_namespace_handle) {
+	auto toStringHandle = [](std::string_view name) {
+		return name.empty() ? StringHandle() : StringTable::getOrInternStringHandle(name);
+	};
+
+	OwnerManglingInfo result{toStringHandle(owner_name), NamespaceRegistry::GLOBAL_NAMESPACE, false};
+	if (owner_name.empty()) {
+		return result;
+	}
+
+	auto try_resolve_type = [&](StringHandle type_name_handle, std::string_view candidate_name) -> bool {
+		auto type_it = getTypesByNameMap().find(type_name_handle);
+		if (type_it == getTypesByNameMap().end()) {
+			return false;
+		}
+		result.owner_namespace_handle = type_it->second->namespaceHandle();
+		result.owner_name_for_mangling = toStringHandle(
+			stripResolvedNamespacePrefixForMangling(candidate_name, result.owner_namespace_handle));
+		result.owner_type_resolved = true;
+		return true;
+	};
+
+	if (owner_name.find("::") == std::string_view::npos && enclosing_namespace_handle.isValid()) {
+		StringHandle qualified_name_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+			enclosing_namespace_handle,
+			StringTable::getOrInternStringHandle(owner_name));
+		if (qualified_name_handle.isValid() &&
+			try_resolve_type(qualified_name_handle, StringTable::getStringView(qualified_name_handle))) {
+			return result;
+		}
+	}
+
+	if (try_resolve_type(StringTable::getOrInternStringHandle(owner_name), owner_name)) {
+		return result;
+	}
+
+	// If lookup fails but the owner spelling is already qualified, keep that raw spelling and
+	// suppress separate namespace emission. This preserves existing behavior for unresolved owners
+	// while still avoiding obvious double-encoding.
+	if (owner_name.find("::") != std::string_view::npos) {
+		return result;
+	}
+
+	return result;
+}
+
 // AstToIr class declaration (methods split across cpp files).
 #include "AstToIr.h"

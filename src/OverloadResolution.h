@@ -997,6 +997,15 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 	std::vector<ArgumentConversionInfo> best_infos;
 	int num_best_matches = 0;
 	std::vector<const ConstructorDeclarationNode*> tied_candidates;
+	auto compare_constructor_template_preference = [](const ConstructorDeclarationNode& lhs,
+													  const ConstructorDeclarationNode& rhs) {
+		const bool lhs_is_template = lhs.has_template_parameters();
+		const bool rhs_is_template = rhs.has_template_parameters();
+		if (lhs_is_template == rhs_is_template) {
+			return 0;
+		}
+		return lhs_is_template ? 1 : -1;
+	};
 
 	for (const auto& member_func : struct_info.member_functions) {
 		if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
@@ -1058,8 +1067,17 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 
 		const ConversionInfoComparison this_vs_best =
 			compareConversionInfoLists(argument_types, conversion_infos, best_infos);
-		const bool this_is_better = this_vs_best.lhs_is_better;
-		const bool this_is_worse = this_vs_best.lhs_is_worse;
+		bool this_is_better = this_vs_best.lhs_is_better;
+		bool this_is_worse = this_vs_best.lhs_is_worse;
+		if (!this_is_better && !this_is_worse) {
+			const int template_preference =
+				compare_constructor_template_preference(ctor_decl, *best_match);
+			if (template_preference < 0) {
+				this_is_better = true;
+			} else if (template_preference > 0) {
+				this_is_worse = true;
+			}
+		}
 
 		if (this_is_better && !this_is_worse) {
 			// This constructor is strictly better than the current best.
@@ -1095,8 +1113,17 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 					continue;
 				const ConversionInfoComparison prev_vs_best =
 					compareConversionInfoLists(argument_types, prev_infos, best_infos);
-				const bool prev_better = prev_vs_best.lhs_is_better;
-				const bool prev_worse = prev_vs_best.lhs_is_worse;
+				bool prev_better = prev_vs_best.lhs_is_better;
+				bool prev_worse = prev_vs_best.lhs_is_worse;
+				if (!prev_better && !prev_worse) {
+					const int template_preference =
+						compare_constructor_template_preference(*prev, *best_match);
+					if (template_preference < 0) {
+						prev_better = true;
+					} else if (template_preference > 0) {
+						prev_worse = true;
+					}
+				}
 				if (!prev_better && prev_worse) {
 					// Strictly worse than new best — discard.
 				} else {

@@ -3344,15 +3344,15 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	}
 }
 
-std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method) {
-	return NameMangling::generateMangledName(name, return_type, param_types, is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method).view();
+std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, NamespaceHandle namespace_handle, bool is_const_method) {
+	return NameMangling::generateMangledName(name, return_type, param_types, is_variadic, struct_name, namespace_handle, Linkage::CPlusPlus, is_const_method).view();
 }
 
-std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method) {
-	return NameMangling::generateMangledName(name, return_type, param_nodes, is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method).view();
+std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, NamespaceHandle namespace_handle, bool is_const_method) {
+	return NameMangling::generateMangledName(name, return_type, param_nodes, is_variadic, struct_name, namespace_handle, Linkage::CPlusPlus, is_const_method).view();
 }
 
-std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override, const std::vector<std::string>& namespace_path) {
+std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override, NamespaceHandle namespace_handle) {
 	const DeclarationNode& decl_node = func_node.decl_node();
 	const TypeSpecifierNode& return_type = decl_node.type_specifier_node();
 	std::string_view func_name = decl_node.identifier_token().value();
@@ -3403,7 +3403,7 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 				TypeSpecifierNode resolved_return_type_copy = return_type;
 				resolveSelfReferentialType(resolved_return_type_copy, struct_type_index);
 				return NameMangling::generateMangledName(func_name, resolved_return_type_copy, resolved_params,
-														 func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
+														 func_node.is_variadic(), struct_name, namespace_handle, func_node.linkage(),
 														 func_node.is_const_member_function(), func_node.is_static())
 					.view();
 			}
@@ -3412,7 +3412,7 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 
 	// Pass linkage from the function node to ensure extern "C" functions aren't mangled
 	return NameMangling::generateMangledName(func_name, return_type, func_node.parameter_nodes(),
-											 func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
+											 func_node.is_variadic(), struct_name, namespace_handle, func_node.linkage(),
 											 func_node.is_const_member_function(), func_node.is_static())
 		.view();
 }

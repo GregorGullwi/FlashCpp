@@ -1673,16 +1673,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					}
 				}
 
-				// Build namespace path from the struct's declaration-site namespace
-				// so member function calls get the correct mangled name.
-				std::vector<std::string> namespace_for_mangling;
+				// Resolve the concrete owner metadata instead of blindly reusing the
+				// declaration namespace; this avoids double-encoding qualified owners.
 				auto struct_name_view = StringTable::getStringView(struct_name);
-				if (struct_name_view.find("::") == std::string_view::npos) {
-					auto ns_views = buildNamespacePathFromHandle(struct_info->getNamespaceHandle());
-					namespace_for_mangling.reserve(ns_views.size());
-					for (auto sv : ns_views)
-						namespace_for_mangling.emplace_back(sv);
-				}
+				const OwnerManglingInfo owner_info =
+					resolveOwnerManglingInfoForMangling(
+						struct_name_view,
+						func_for_mangling->namespace_handle());
 
 				// Generate proper mangled name including parameter types
 				std::string_view mangled = generateMangledNameForCall(
@@ -1690,8 +1687,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					*mangling_return_type,
 					param_types,
 					func_for_mangling->is_variadic(),
-					struct_name_view,
-					namespace_for_mangling,
+					owner_info.owner_name_for_mangling.isValid()
+						? StringTable::getStringView(owner_info.owner_name_for_mangling)
+						: std::string_view{},
+					owner_info.owner_namespace_handle,
 					func_for_mangling->is_const_member_function());
 				function_name = StringTable::getOrInternStringHandle(mangled);
 			}

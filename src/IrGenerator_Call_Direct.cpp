@@ -766,24 +766,16 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			function_name = func_decl->mangled_name();
 		} else if (func_decl->linkage() != Linkage::C) {
 			if (struct_name.empty()) {
-				function_name = generateMangledNameForCall(*func_decl, "", current_namespace_stack_);
+				function_name = generateMangledNameForCall(*func_decl, "", func_decl->namespace_handle());
 			} else {
-					// Build namespace path from the struct's NamespaceHandle
-					// so calls to member functions include the correct namespace.
-					// Always recover from NamespaceHandle (not current_namespace_stack_)
-					// to handle template instantiations from a different namespace context.
-				std::vector<std::string> ns_path;
-				if (struct_name.find("::") == std::string_view::npos) {
-					auto name_handle = StringTable::getOrInternStringHandle(struct_name);
-					auto type_it = getTypesByNameMap().find(name_handle);
-					if (type_it != getTypesByNameMap().end()) {
-						auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
-						ns_path.reserve(ns_views.size());
-						for (auto sv : ns_views)
-							ns_path.emplace_back(sv);
-					}
-				}
-				function_name = generateMangledNameForCall(*func_decl, struct_name, ns_path);
+				const OwnerManglingInfo owner_info =
+					resolveOwnerManglingInfoForMangling(struct_name, func_decl->namespace_handle());
+				function_name = generateMangledNameForCall(
+					*func_decl,
+					owner_info.owner_name_for_mangling.isValid()
+						? StringTable::getStringView(owner_info.owner_name_for_mangling)
+						: std::string_view{},
+					owner_info.owner_namespace_handle);
 			}
 		}
 	};

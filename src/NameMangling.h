@@ -878,7 +878,9 @@ inline void generateItaniumMangledName(
 			}
 		}
 
-		// Add struct/class name if present
+		// Add struct/class name if present. The owner name is expected to be relative to the
+		// separately supplied namespace path, so `namespace_path=["ns"]` pairs with
+		// `struct_name="Outer::Inner"` rather than `struct_name="ns::Outer::Inner"`.
 		if (!struct_name.empty()) {
 			// For nested classes, struct_name may contain "::" separators
 			// We need to encode each component separately
@@ -1725,7 +1727,8 @@ inline MangledName generateMangledNameWithTemplateArgs(
 							   false, ConstructorVariant::Complete);
 }
 
-// Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
+// Overload accepting NamespaceHandle so callers can pass declaration-site namespace metadata
+// directly without rebuilding a namespace component vector.
 inline MangledName generateMangledNameWithTemplateArgs(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
@@ -1733,15 +1736,11 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	const std::vector<int64_t>& non_type_template_args,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string>& namespace_path,
+	NamespaceHandle namespace_handle,
 	bool is_const_method) {
-	std::vector<std::string_view> ns_views;
-	ns_views.reserve(namespace_path.size());
-	for (const auto& ns : namespace_path) {
-		ns_views.push_back(ns);
-	}
 	return generateMangledNameWithTemplateArgs(func_name, return_type, param_types,
-											   non_type_template_args, is_variadic, struct_name, ns_views, is_const_method);
+											   non_type_template_args, is_variadic, struct_name,
+											   buildNamespacePathFromHandle(namespace_handle), is_const_method);
 }
 
 // Generate mangled name with TYPE template arguments (e.g., sum<int>, sum<int, int>)
@@ -1800,28 +1799,42 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 							   false, ConstructorVariant::Complete);
 }
 
-// Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
+inline MangledName generateMangledNameWithTypeTemplateArgs(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<TypeSpecifierNode>& param_types,
+	const std::vector<TemplateTypeArg>& type_template_args,
+	bool is_variadic,
+	std::string_view struct_name,
+	NamespaceHandle namespace_handle,
+	bool is_const_method) {
+	return generateMangledNameWithTypeTemplateArgs(
+		func_name,
+		return_type,
+		param_types,
+		type_template_args,
+		is_variadic,
+		struct_name,
+		buildNamespacePathFromHandle(namespace_handle),
+		is_const_method);
+}
+
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string>& namespace_path,
+	NamespaceHandle namespace_handle,
 	Linkage linkage,
 	bool is_const_method) {
-	std::vector<std::string_view> ns_views;
-	ns_views.reserve(namespace_path.size());
-	for (const auto& ns : namespace_path) {
-		ns_views.push_back(ns);
-	}
 	return generateMangledName(
 		func_name,
 		return_type,
 		param_types,
 		is_variadic,
 		struct_name,
-		ns_views,
+		buildNamespacePathFromHandle(namespace_handle),
 		linkage,
 		is_const_method,
 		false,
@@ -1834,50 +1847,39 @@ inline MangledName generateMangledName(
 	const std::vector<TypeSpecifierNode>& param_types,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string>& namespace_path,
+	NamespaceHandle namespace_handle,
 	Linkage linkage,
 	bool is_const_method,
 	bool is_static_member) {
-	std::vector<std::string_view> ns_views;
-	ns_views.reserve(namespace_path.size());
-	for (const auto& ns : namespace_path) {
-		ns_views.push_back(ns);
-	}
 	return generateMangledName(
 		func_name,
 		return_type,
 		param_types,
 		is_variadic,
 		struct_name,
-		ns_views,
+		buildNamespacePathFromHandle(namespace_handle),
 		linkage,
 		is_const_method,
 		is_static_member,
 		ConstructorVariant::Complete);
 }
 
-// Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
 	const std::vector<ASTNode>& param_nodes,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string>& namespace_path,
+	NamespaceHandle namespace_handle,
 	Linkage linkage,
 	bool is_const_method) {
-	std::vector<std::string_view> ns_views;
-	ns_views.reserve(namespace_path.size());
-	for (const auto& ns : namespace_path) {
-		ns_views.push_back(ns);
-	}
 	return generateMangledName(
 		func_name,
 		return_type,
 		param_nodes,
 		is_variadic,
 		struct_name,
-		ns_views,
+		buildNamespacePathFromHandle(namespace_handle),
 		linkage,
 		is_const_method,
 		false,
@@ -1890,22 +1892,17 @@ inline MangledName generateMangledName(
 	const std::vector<ASTNode>& param_nodes,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string>& namespace_path,
+	NamespaceHandle namespace_handle,
 	Linkage linkage,
 	bool is_const_method,
 	bool is_static_member) {
-	std::vector<std::string_view> ns_views;
-	ns_views.reserve(namespace_path.size());
-	for (const auto& ns : namespace_path) {
-		ns_views.push_back(ns);
-	}
 	return generateMangledName(
 		func_name,
 		return_type,
 		param_nodes,
 		is_variadic,
 		struct_name,
-		ns_views,
+		buildNamespacePathFromHandle(namespace_handle),
 		linkage,
 		is_const_method,
 		is_static_member,
@@ -1932,17 +1929,10 @@ inline MangledName generateMangledNameFromNode(
 							   ConstructorVariant::Complete);
 }
 
-// Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
 inline MangledName generateMangledNameFromNode(
 	const FunctionDeclarationNode& func_node,
-	const std::vector<std::string>& namespace_path) {
-	// Convert to string_view vector and delegate
-	std::vector<std::string_view> ns_views;
-	ns_views.reserve(namespace_path.size());
-	for (const auto& ns : namespace_path) {
-		ns_views.push_back(ns);
-	}
-	return generateMangledNameFromNode(func_node, ns_views);
+	NamespaceHandle namespace_handle) {
+	return generateMangledNameFromNode(func_node, buildNamespacePathFromHandle(namespace_handle));
 }
 
 // =============================================================================

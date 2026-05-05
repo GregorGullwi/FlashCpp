@@ -303,31 +303,22 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	// Don't pass namespace_stack when struct_name already includes the namespace
 	// (e.g., "std::simple" already has the namespace embedded, so we shouldn't also pass ["std"])
 	// This avoids double-encoding the namespace in the mangled name
-	std::vector<std::string> namespace_for_mangling;
-	if (struct_name_for_function.find("::") == std::string_view::npos) {
-		bool struct_found = false;
-		if (node.is_member_function() && !struct_name_for_function.empty()) {
-			// Always derive namespace from the struct's declaration-site NamespaceHandle
-			// rather than current_namespace_stack_, which may be the instantiation-site
-			// namespace when a template is instantiated from a different namespace.
-			auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_for_function);
-			auto type_it = getTypesByNameMap().find(struct_name_handle);
-			if (type_it != getTypesByNameMap().end()) {
-				struct_found = true;
-				auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
-				namespace_for_mangling.reserve(ns_views.size());
-				for (auto sv : ns_views)
-					namespace_for_mangling.emplace_back(sv);
-			}
-		}
-		if (!struct_found && namespace_for_mangling.empty()) {
-			// Non-member functions, or struct not found: fall back to current stack.
-			// Do NOT fall back when the struct was found at global scope — an empty
-			// namespace_for_mangling is correct and must match the call-site mangling.
-			namespace_for_mangling = current_namespace_stack_;
-		}
+	NamespaceHandle namespace_for_mangling = NamespaceRegistry::GLOBAL_NAMESPACE;
+	std::string_view mangling_struct_name = struct_name_for_function;
+	if (node.is_member_function() && !struct_name_for_function.empty()) {
+		// Resolve the owner type from the declaration namespace first so same-named
+		// classes in different namespaces do not collide during mangling.
+		const OwnerManglingInfo owner_info =
+			resolveOwnerManglingInfoForMangling(struct_name_for_function, node.namespace_handle());
+		mangling_struct_name = owner_info.owner_name_for_mangling.isValid()
+			? StringTable::getStringView(owner_info.owner_name_for_mangling)
+			: std::string_view{};
+		namespace_for_mangling = owner_info.owner_namespace_handle;
+	} else if (node.namespace_handle().isValid()) {
+		namespace_for_mangling = node.namespace_handle();
+	} else {
+		namespace_for_mangling = buildNamespaceHandleFromStrings(current_namespace_stack_);
 	}
-	// else: struct_name already contains namespace prefix, don't add it again
 
 	if (node.has_mangled_name()) {
 		mangled_name = node.mangled_name();
@@ -341,12 +332,12 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
 			func_decl.identifier_token().value(), return_type, param_types,
 			node.non_type_template_args(), node.is_variadic(),
-			struct_name_for_function, namespace_for_mangling,
+			mangling_struct_name, namespace_for_mangling,
 			node.is_const_member_function());
 		mangled_name = mangled.view();
 	} else {
 		// Generate mangled name using the FunctionDeclarationNode overload
-		mangled_name = generateMangledNameForCall(node, struct_name_for_function, namespace_for_mangling);
+		mangled_name = generateMangledNameForCall(node, mangling_struct_name, namespace_for_mangling);
 	}
 	func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled_name);
 	current_function_mangled_name_ = func_decl_op.mangled_name;

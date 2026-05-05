@@ -869,8 +869,11 @@ struct EnumTypeInfo {
 	}
 };
 
-// Bundles a namespace and identifier so they always travel together.
+// Bundles a namespace and an unqualified identifier so they always travel together.
 // Used by TypeInfo to track the source namespace of template instantiations.
+// This models namespace qualification only; it is not suitable for nested class/member-owner
+// names like "ns::Outer::Inner" where part of the qualification may be class scope rather than
+// namespace scope.
 struct QualifiedIdentifier {
 	NamespaceHandle namespace_handle;  // hierarchical namespace, GLOBAL_NAMESPACE for global
 	StringHandle identifier_handle;	// unqualified name, e.g. "vector"

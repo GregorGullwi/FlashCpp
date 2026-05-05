@@ -664,10 +664,10 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bo
 		return;
 	}
 
-	// Build namespace path from current symbol table state as string_view vector
+	// Resolve the declaration-site namespace handle for mangling.
 	// For member functions, only build namespace path if parent_struct_name doesn't already contain namespace
 	// (to avoid double-encoding the namespace in the mangled name)
-	std::vector<std::string_view> ns_path;
+	NamespaceHandle namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
 	bool should_get_namespace = true;
 
 	if (func_node.is_member_function()) {
@@ -691,10 +691,10 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bo
 			auto type_it = getTypesByNameMap().find(struct_name_handle);
 			if (type_it != getTypesByNameMap().end()) {
 				struct_found = true;
-				ns_path = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
+				namespace_handle = type_it->second->namespaceHandle();
 			}
 		}
-		if (!struct_found && ns_path.empty()) {
+		if (!struct_found) {
 			// For free functions, prefer the function's own namespace_handle (set at
 			// declaration time) over the current symbol table state. This ensures correct
 			// mangling when called during SFINAE reparse or template body reparse where
@@ -702,17 +702,15 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bo
 			// Fall back to the current scope only when no namespace_handle was recorded.
 			NamespaceHandle func_ns = func_node.namespace_handle();
 			if (func_ns.isValid()) {
-				ns_path = buildNamespacePathFromHandle(func_ns);
+				namespace_handle = func_ns;
 			} else {
-				NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-				std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(current_handle);
-				ns_path = splitQualifiedNamespace(qualified_namespace);
+				namespace_handle = gSymbolTable.get_current_namespace_handle();
 			}
 		}
 	}
 
 	// Generate the mangled name using the NameMangling helper
-	NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(func_node, ns_path);
+	NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(func_node, namespace_handle);
 
 	// Set the mangled name on the node
 	func_node.set_mangled_name(mangled.view());

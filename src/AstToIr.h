@@ -349,9 +349,9 @@ private:
 	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode,
 										ExpressionContext context);
 	ExprResult generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method);
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method);
-	std::string_view generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override, const std::vector<std::string>& namespace_path);
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, NamespaceHandle namespace_handle, bool is_const_method);
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, NamespaceHandle namespace_handle, bool is_const_method);
+	std::string_view generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override, NamespaceHandle namespace_handle);
 	std::optional<ExprResult> tryGenerateIntrinsicIr(std::string_view func_name, const CallExprNode& callExprNode);
 	ExprResult generateBuiltinAbsIntIntrinsic(const CallExprNode& callExprNode);
 	ExprResult generateBuiltinAbsFloatIntrinsic(const CallExprNode& callExprNode, std::string_view func_name);

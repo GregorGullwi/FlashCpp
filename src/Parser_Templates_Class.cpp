@@ -4390,9 +4390,7 @@ ParseResult Parser::parse_template_declaration() {
 			ASTNode func_node_copy = *func_result.node();
 
 			// Compute and set the proper mangled name for the specialization
-			// Extract namespace path as string_view vector
-			std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(current_handle);
-			std::vector<std::string_view> ns_path = splitQualifiedNamespace(qualified_namespace);
+			const NamespaceHandle namespace_handle = current_handle;
 
 			// Generate proper C++ ABI mangled name
 			FunctionDeclarationNode& func_for_mangling = func_node_copy.as<FunctionDeclarationNode>();
@@ -4416,7 +4414,7 @@ ParseResult Parser::parse_template_declaration() {
 
 				specialization_mangled_name = NameMangling::generateMangledNameWithTemplateArgs(
 					func_base_name, return_type, param_types, spec_non_type_args,
-					func_for_mangling.is_variadic(), "", ns_path, false);
+					func_for_mangling.is_variadic(), "", namespace_handle, false);
 			} else if (!spec_template_args.empty()) {
 				// Use the version that includes TYPE template arguments in the mangled name
 				// This handles specializations like sum<int>, sum<int, int>
@@ -4434,7 +4432,7 @@ ParseResult Parser::parse_template_declaration() {
 
 				specialization_mangled_name = NameMangling::generateMangledNameWithTypeTemplateArgs(
 					func_base_name, return_type, param_types, spec_template_args,
-					func_for_mangling.is_variadic(), "", ns_path, false);
+					func_for_mangling.is_variadic(), "", namespace_handle, false);
 			} else {
 				// Regular specialization without any template args.
 				// Probed 2026-04-29 across the full 2243-test corpus with a hard-fail guard
