@@ -656,7 +656,7 @@ std::optional<ExprResult> AstToIr::decayLambdaStructToFunctionPointer(const Stru
 		sig.return_type,
 		sig.param_types,
 		false,
-		"",	// not a member function
+		StringHandle{},	// not a member function
 		{},	// namespace_path
 		false // free function, never const
 	);
@@ -705,7 +705,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 						const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 
 							// Get struct name for mangling
-						std::string_view struct_name = StringTable::getStringView(getTypeInfo(type_node->type_index()).name());
+						StringHandle struct_name = getTypeInfo(type_node->type_index()).name();
 
 							// Get the return type from the function declaration
 						const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
@@ -1893,9 +1893,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	auto op_func_name = StringBuilder().append("operator").append(overloadableOperatorToString(op_kind)).commit();
 	auto mangled_name = NameMangling::generateMangledName(
 		op_func_name, return_type, param_types, false,
-		owner_info.owner_name_for_mangling.isValid()
-			? StringTable::getStringView(owner_info.owner_name_for_mangling)
-			: std::string_view{},
+		owner_info.owner_name_for_mangling,
 		owner_info.owner_namespace_handle, Linkage::CPlusPlus,
 		member_func.is_const());
 

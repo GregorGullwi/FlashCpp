@@ -224,6 +224,64 @@ inline NamespaceHandle buildNamespaceHandleFromStrings(const std::vector<std::st
 	return current;
 }
 
+// Build a namespace handle from the namespace-qualified prefix of an identifier like
+// `ns1::ns2::ClassName`, stopping before the final identifier. Returns INVALID when
+// any namespace component cannot be resolved through the namespace registry.
+inline NamespaceHandle buildNamespaceHandleFromQualifiedIdentifier(std::string_view qualified_name) {
+	size_t namespace_end = qualified_name.rfind("::");
+	if (namespace_end == std::string_view::npos) {
+		return NamespaceRegistry::GLOBAL_NAMESPACE;
+	}
+
+	NamespaceHandle current = NamespaceRegistry::GLOBAL_NAMESPACE;
+	size_t start = 0;
+	while (start < namespace_end) {
+		size_t separator = qualified_name.find("::", start);
+		if (separator == std::string_view::npos || separator > namespace_end) {
+			separator = namespace_end;
+		}
+
+		current = gNamespaceRegistry.lookupNamespace(
+			current,
+			StringTable::getOrInternStringHandle(qualified_name.substr(start, separator - start)));
+		if (!current.isValid()) {
+			return NamespaceHandle();
+		}
+		if (separator == namespace_end) {
+			break;
+		}
+		start = separator + 2;
+	}
+	return current;
+}
+
+// Prefer the owning type's recorded namespace metadata when the struct is known.
+// If the type hasn't been registered yet, fall back to parsing the struct spelling
+// as a qualified identifier so deferred-generation callers can still recover a namespace.
+inline NamespaceHandle buildNamespaceHandleForStructName(StringHandle struct_name) {
+	if (!struct_name.isValid()) {
+		return NamespaceRegistry::GLOBAL_NAMESPACE;
+	}
+
+	auto type_it = getTypesByNameMap().find(struct_name);
+	if (type_it != getTypesByNameMap().end()) {
+		return type_it->second->namespaceHandle();
+	}
+
+	return buildNamespaceHandleFromQualifiedIdentifier(StringTable::getStringView(struct_name));
+}
+
+// Convert a NamespaceHandle back into the legacy vector<string> namespace stack.
+// Deferred member generation still restores `current_namespace_stack_`, so that path
+// needs this bridge until the remaining namespace-stack state is fully handle-based.
+inline std::vector<std::string> buildNamespaceStackFromHandle(NamespaceHandle namespace_handle) {
+	std::vector<std::string> namespace_stack;
+	for (std::string_view component : buildNamespacePathFromHandle(namespace_handle)) {
+		namespace_stack.emplace_back(component);
+	}
+	return namespace_stack;
+}
+
 // Manglers encode the declaration namespace separately from the owner name. For a member of
 // `ns::Outer::Inner`, the correct split is namespace=`ns` and owner=`Outer::Inner`; passing
 // `ns::Outer::Inner` together with namespace=`ns` would double-encode the namespace.

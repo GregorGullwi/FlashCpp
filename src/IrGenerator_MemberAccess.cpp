@@ -1266,7 +1266,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	auto getOperatorArrowMangledName = [&](const FunctionDeclarationNode& func_decl,
 										   TypeIndex object_type_index) {
 		const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
-		std::string_view struct_name = StringTable::getStringView(getTypeInfo(object_type_index).name());
+		StringHandle struct_name = getTypeInfo(object_type_index).name();
 		std::string_view operator_func_name = "operator->";
 		std::vector<TypeSpecifierNode> empty_params;
 		std::vector<std::string_view> empty_namespace;
@@ -3934,9 +3934,10 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		mangled_name = func_decl.mangled_name();
 	} else {
 		// Use the function's parent struct name (handles inherited conversion operators)
-		std::string_view operator_struct_name = func_decl.parent_struct_name();
-		if (operator_struct_name.empty())
-			operator_struct_name = struct_name;
+		StringHandle operator_struct_name = StringTable::getOrInternStringHandle(func_decl.parent_struct_name());
+		if (!operator_struct_name.isValid()) {
+			operator_struct_name = StringTable::getOrInternStringHandle(struct_name);
+		}
 		mangled_name = generateMangledNameForCall(func_decl, operator_struct_name, {});
 	}
 

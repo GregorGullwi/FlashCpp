@@ -286,7 +286,7 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 		auto saved_namespace = current_namespace_stack_;
 		current_struct_name_ = info.struct_name;
 		current_function_name_ = StringHandle();
-		current_namespace_stack_ = info.namespace_stack;
+		current_namespace_stack_ = buildNamespaceStackFromHandle(info.namespace_handle);
 
 		try {
 			if (info.function_node.is<FunctionDeclarationNode>()) {
@@ -1629,7 +1629,7 @@ void AstToIr::generateTrivialDefaultConstructors() {
 					void_return,
 					empty_params,
 					false, // not variadic
-					class_name, // struct_name
+					type_info->name(), // struct_name
 					empty_namespace_path,
 					Linkage::CPlusPlus,
 					false, // constructors are never const

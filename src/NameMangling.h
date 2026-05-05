@@ -598,9 +598,10 @@ private:
 //   namespace_path=[],      struct_name="Foo"       -> adds "3Foo" as S_
 inline void populateSubstitutionsFromClassContext(
 	ItaniumManglingCtx& ctx,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path) {
 	std::string accumulated;
+	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 
 	for (const auto& ns : namespace_path) {
 		if (ns == "std") {
@@ -618,11 +619,11 @@ inline void populateSubstitutionsFromClassContext(
 
 	// Process struct name components (may contain "::" for nested classes)
 	size_t start = 0;
-	while (start < struct_name.size()) {
-		size_t end = struct_name.find("::", start);
+	while (start < struct_name_sv.size()) {
+		size_t end = struct_name_sv.find("::", start);
 		if (end == std::string_view::npos)
-			end = struct_name.size();
-		std::string_view component = struct_name.substr(start, end - start);
+			end = struct_name_sv.size();
+		std::string_view component = struct_name_sv.substr(start, end - start);
 		if (!component.empty()) {
 			if (component == "std") {
 				// "St" is predefined — do not add to user table
@@ -634,7 +635,7 @@ inline void populateSubstitutionsFromClassContext(
 				ctx.addSubstitution(accumulated);
 			}
 		}
-		start = (end == struct_name.size()) ? end : end + 2;
+		start = (end == struct_name_sv.size()) ? end : end + 2;
 	}
 }
 
@@ -844,18 +845,19 @@ inline void generateItaniumMangledName(
 	[[maybe_unused]] const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	bool is_const_method,
 	ConstructorVariant constructor_variant) {
+	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 	// Start with _Z prefix
 	output += "_Z";
 
 	// Check if we have namespaces or struct (needs nested-name encoding)
-	bool has_nested_name = !struct_name.empty() || !namespace_path.empty();
+	bool has_nested_name = struct_name.isValid() || !namespace_path.empty();
 
 	// Special case: std namespace alone uses "St" directly without nested-name encoding
-	bool is_std_only = namespace_path.size() == 1 && namespace_path[0] == "std" && struct_name.empty();
+	bool is_std_only = namespace_path.size() == 1 && namespace_path[0] == "std" && !struct_name.isValid();
 
 	if (has_nested_name && !is_std_only) {
 		// Use nested-name encoding: _ZN...E
@@ -881,18 +883,18 @@ inline void generateItaniumMangledName(
 		// Add struct/class name if present. The owner name is expected to be relative to the
 		// separately supplied namespace path, so `namespace_path=["ns"]` pairs with
 		// `struct_name="Outer::Inner"` rather than `struct_name="ns::Outer::Inner"`.
-		if (!struct_name.empty()) {
+		if (struct_name.isValid()) {
 			// For nested classes, struct_name may contain "::" separators
 			// We need to encode each component separately
 			// e.g., "Outer::Inner" -> "5Outer5Inner", "std::simple" -> "St6simple"
 			size_t start = 0;
-			while (start < struct_name.size()) {
-				size_t end = struct_name.find("::", start);
+			while (start < struct_name_sv.size()) {
+				size_t end = struct_name_sv.find("::", start);
 				if (end == std::string_view::npos) {
-					end = struct_name.size();
+					end = struct_name_sv.size();
 				}
 
-				std::string_view component = struct_name.substr(start, end - start);
+				std::string_view component = struct_name_sv.substr(start, end - start);
 				if (!component.empty()) {
 					// Use "St" substitution for std namespace per Itanium C++ ABI
 					if (component == "std") {
@@ -903,7 +905,7 @@ inline void generateItaniumMangledName(
 					}
 				}
 
-				start = (end == struct_name.size()) ? end : end + 2;	 // Skip "::"
+				start = (end == struct_name_sv.size()) ? end : end + 2;	 // Skip "::"
 			}
 		}
 
@@ -913,13 +915,13 @@ inline void generateItaniumMangledName(
 			// Destructor: use D1 for complete destructor per Itanium C++ ABI
 			// D0 = deleting, D1 = complete, D2 = base
 			output += "D1";
-		} else if (!struct_name.empty()) {
+		} else if (struct_name.isValid()) {
 			// For nested classes, struct_name might be "Outer::Inner"
 			// Extract the last component to compare with func_name
-			std::string_view class_name = struct_name;
-			auto last_colon = struct_name.rfind("::");
+			std::string_view class_name = struct_name_sv;
+			auto last_colon = struct_name_sv.rfind("::");
 			if (last_colon != std::string_view::npos) {
-				class_name = struct_name.substr(last_colon + 2);
+				class_name = struct_name_sv.substr(last_colon + 2);
 			}
 
 			// Check if this is a constructor (function name matches class name)
@@ -1184,15 +1186,16 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 	const std::vector<TypeSpecifierNode>& param_types,
 	const std::vector<TemplateTypeArg>& type_template_args,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	bool is_const_method) {
+	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 	// Start with _Z prefix
 	output += "_Z";
 
 	// Check if we have namespaces or struct (needs nested-name encoding)
-	bool has_nested_name = !struct_name.empty() || !namespace_path.empty();
-	bool is_std_only = namespace_path.size() == 1 && namespace_path[0] == "std" && struct_name.empty();
+	bool has_nested_name = struct_name.isValid() || !namespace_path.empty();
+	bool is_std_only = namespace_path.size() == 1 && namespace_path[0] == "std" && !struct_name.isValid();
 
 	if (has_nested_name && !is_std_only) {
 		// Use nested-name encoding: _ZN...E
@@ -1213,13 +1216,13 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 		}
 
 		// Add struct name if present
-		if (!struct_name.empty()) {
+		if (struct_name.isValid()) {
 			size_t start = 0;
-			while (start < struct_name.size()) {
-				size_t end = struct_name.find("::", start);
+			while (start < struct_name_sv.size()) {
+				size_t end = struct_name_sv.find("::", start);
 				if (end == std::string_view::npos)
-					end = struct_name.size();
-				std::string_view component = struct_name.substr(start, end - start);
+					end = struct_name_sv.size();
+				std::string_view component = struct_name_sv.substr(start, end - start);
 				if (!component.empty()) {
 					// Use "St" substitution for std namespace per Itanium C++ ABI
 					if (component == "std") {
@@ -1229,7 +1232,7 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 						output += component;
 					}
 				}
-				start = (end == struct_name.size()) ? end : end + 2;
+				start = (end == struct_name_sv.size()) ? end : end + 2;
 			}
 		}
 
@@ -1277,15 +1280,16 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 	const std::vector<TypeSpecifierNode>& param_types,
 	const std::vector<int64_t>& non_type_template_args,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	bool is_const_method) {
+	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 	// Start with _Z prefix
 	output += "_Z";
 
 	// Check if we have namespaces or struct (needs nested-name encoding)
-	bool has_nested_name = !struct_name.empty() || !namespace_path.empty();
-	bool is_std_only = namespace_path.size() == 1 && namespace_path[0] == "std" && struct_name.empty();
+	bool has_nested_name = struct_name.isValid() || !namespace_path.empty();
+	bool is_std_only = namespace_path.size() == 1 && namespace_path[0] == "std" && !struct_name.isValid();
 
 	if (has_nested_name && !is_std_only) {
 		// Use nested-name encoding: _ZN...E
@@ -1306,13 +1310,13 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 		}
 
 		// Add struct name if present
-		if (!struct_name.empty()) {
+		if (struct_name.isValid()) {
 			size_t start = 0;
-			while (start < struct_name.size()) {
-				size_t end = struct_name.find("::", start);
+			while (start < struct_name_sv.size()) {
+				size_t end = struct_name_sv.find("::", start);
 				if (end == std::string_view::npos)
-					end = struct_name.size();
-				std::string_view component = struct_name.substr(start, end - start);
+					end = struct_name_sv.size();
+				std::string_view component = struct_name_sv.substr(start, end - start);
 				if (!component.empty()) {
 					// Use "St" substitution for std namespace per Itanium C++ ABI
 					if (component == "std") {
@@ -1322,7 +1326,7 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 						output += component;
 					}
 				}
-				start = (end == struct_name.size()) ? end : end + 2;
+				start = (end == struct_name_sv.size()) ? end : end + 2;
 			}
 		}
 
@@ -1368,7 +1372,7 @@ inline void generateItaniumMangledName(
 	const TypeSpecifierNode& return_type,
 	const std::vector<ASTNode>& param_nodes,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	bool is_const_method,
 	ConstructorVariant constructor_variant) {
@@ -1400,7 +1404,7 @@ inline MangledName generateMangledName(
 	const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	Linkage linkage,
 	bool is_const_method,
@@ -1412,7 +1416,7 @@ inline MangledName generateMangledName(
 	const TypeSpecifierNode& return_type,
 	const std::vector<ASTNode>& param_nodes,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	Linkage linkage,
 	bool is_const_method,
@@ -1424,7 +1428,7 @@ inline MangledName generateMangledName(
 	const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	Linkage linkage,
 	bool is_const_method) {
@@ -1446,13 +1450,14 @@ inline MangledName generateMangledName(
 	const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	Linkage linkage,
 	bool is_const_method,
 	bool is_static_member,
 	ConstructorVariant constructor_variant) {
 	StringBuilder builder;
+	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 
 	// Special case: main function is never mangled
 	if (func_name == "main") {
@@ -1472,7 +1477,7 @@ inline MangledName generateMangledName(
 		// Pre-populate the substitution table with the class-context prefixes so that
 		// parameter types matching the enclosing class use S_/S0_/... back-references.
 		ItaniumManglingCtx ctx(builder);
-		if (!struct_name.empty() || !namespace_path.empty()) {
+		if (struct_name.isValid() || !namespace_path.empty()) {
 			populateSubstitutionsFromClassContext(ctx, struct_name, namespace_path);
 		}
 		generateItaniumMangledName(ctx, func_name, return_type, param_types,
@@ -1484,7 +1489,7 @@ inline MangledName generateMangledName(
 	builder.append('?');
 
 	// Handle member functions vs free functions
-	if (!struct_name.empty()) {
+	if (struct_name.isValid()) {
 		// Member function: ?name@ClassName@@QA...
 		// Extract just the function name (after ::)
 		std::string_view func_only_name = func_name;
@@ -1497,7 +1502,7 @@ inline MangledName generateMangledName(
 
 		// For nested classes, reverse the order: "Outer::Inner" -> "Inner@Outer"
 		// Use rfind to iterate backwards without any allocation
-		std::string_view remaining = struct_name;
+		std::string_view remaining = struct_name_sv;
 		size_t sep_pos;
 		while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
 			builder.append(remaining.substr(sep_pos + 2));
@@ -1561,7 +1566,7 @@ inline MangledName generateMangledName(
 	const TypeSpecifierNode& return_type,
 	const std::vector<ASTNode>& param_nodes,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	Linkage linkage,
 	bool is_const_method) {
@@ -1583,13 +1588,14 @@ inline MangledName generateMangledName(
 	const TypeSpecifierNode& return_type,
 	const std::vector<ASTNode>& param_nodes,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	Linkage linkage,
 	bool is_const_method,
 	bool is_static_member,
 	ConstructorVariant constructor_variant) {
 	StringBuilder builder;
+	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 
 	// Special case: main function is never mangled
 	if (func_name == "main") {
@@ -1607,7 +1613,7 @@ inline MangledName generateMangledName(
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		// Use Itanium C++ ABI name mangling with substitution tracking.
 		ItaniumManglingCtx ctx(builder);
-		if (!struct_name.empty() || !namespace_path.empty()) {
+		if (struct_name.isValid() || !namespace_path.empty()) {
 			populateSubstitutionsFromClassContext(ctx, struct_name, namespace_path);
 		}
 		generateItaniumMangledName(ctx, func_name, return_type, param_nodes,
@@ -1619,7 +1625,7 @@ inline MangledName generateMangledName(
 	builder.append('?');
 
 	// Handle member functions vs free functions
-	if (!struct_name.empty()) {
+	if (struct_name.isValid()) {
 		std::string_view func_only_name = func_name;
 		size_t pos = func_name.rfind("::");
 		if (pos != std::string_view::npos) {
@@ -1629,7 +1635,7 @@ inline MangledName generateMangledName(
 		builder.append('@');
 
 		// For nested classes, reverse the order using rfind
-		std::string_view remaining = struct_name;
+		std::string_view remaining = struct_name_sv;
 		size_t sep_pos;
 		while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
 			builder.append(remaining.substr(sep_pos + 2));
@@ -1690,7 +1696,7 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	const std::vector<TypeSpecifierNode>& param_types,
 	const std::vector<int64_t>& non_type_template_args,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	bool is_const_method) {
 	if (func_name == "main") {
@@ -1735,7 +1741,7 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	const std::vector<TypeSpecifierNode>& param_types,
 	const std::vector<int64_t>& non_type_template_args,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	NamespaceHandle namespace_handle,
 	bool is_const_method) {
 	return generateMangledNameWithTemplateArgs(func_name, return_type, param_types,
@@ -1751,7 +1757,7 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 	const std::vector<TypeSpecifierNode>& param_types,
 	const std::vector<TemplateTypeArg>& type_template_args,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	bool is_const_method) {
 	if (func_name == "main") {
@@ -1805,7 +1811,7 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 	const std::vector<TypeSpecifierNode>& param_types,
 	const std::vector<TemplateTypeArg>& type_template_args,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	NamespaceHandle namespace_handle,
 	bool is_const_method) {
 	return generateMangledNameWithTypeTemplateArgs(
@@ -1824,7 +1830,7 @@ inline MangledName generateMangledName(
 	const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	NamespaceHandle namespace_handle,
 	Linkage linkage,
 	bool is_const_method) {
@@ -1846,7 +1852,7 @@ inline MangledName generateMangledName(
 	const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	NamespaceHandle namespace_handle,
 	Linkage linkage,
 	bool is_const_method,
@@ -1869,7 +1875,7 @@ inline MangledName generateMangledName(
 	const TypeSpecifierNode& return_type,
 	const std::vector<ASTNode>& param_nodes,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	NamespaceHandle namespace_handle,
 	Linkage linkage,
 	bool is_const_method) {
@@ -1891,7 +1897,7 @@ inline MangledName generateMangledName(
 	const TypeSpecifierNode& return_type,
 	const std::vector<ASTNode>& param_nodes,
 	bool is_variadic,
-	std::string_view struct_name,
+	StringHandle struct_name,
 	NamespaceHandle namespace_handle,
 	Linkage linkage,
 	bool is_const_method,
@@ -1919,7 +1925,9 @@ inline MangledName generateMangledNameFromNode(
 	std::string_view func_name = decl_node.identifier_token().value();
 
 	// Get struct name for member functions
-	std::string_view struct_name = func_node.is_member_function() ? func_node.parent_struct_name() : "";
+	StringHandle struct_name = func_node.is_member_function()
+		? StringTable::getOrInternStringHandle(func_node.parent_struct_name())
+		: StringHandle{};
 
 	// Use the overload that accepts parameter nodes directly
 	// Pass linkage from the function node
@@ -2088,7 +2096,7 @@ inline MangledName generateMangledNameFromNode(
 
 		// Call the regular mangling function with the class name as the function name
 		return generateMangledName(class_name, return_type, ctor_node.parameter_nodes(),
-								   false, struct_name_sv, namespace_path, Linkage::CPlusPlus, false, false, constructor_variant);
+								   false, ctor_node.struct_name(), namespace_path, Linkage::CPlusPlus, false, false, constructor_variant);
 	} else {
 		// Use MSVC-style constructor mangling
 		return generateMangledNameForConstructor(StringTable::getStringView(ctor_node.struct_name()), ctor_node.parameter_nodes(), namespace_path, constructor_variant);
@@ -2121,7 +2129,7 @@ inline MangledName generateMangledNameFromNode(
 
 		// Call the regular mangling function with "~ClassName" as the function name
 		return generateMangledName(dtor_name, return_type, std::vector<ASTNode>{},
-								   false, struct_name_sv, namespace_path, Linkage::CPlusPlus, false);
+								   false, dtor_node.struct_name(), namespace_path, Linkage::CPlusPlus, false);
 	} else {
 		// Use MSVC-style destructor mangling
 		return generateMangledNameForDestructor(dtor_node.struct_name(), namespace_path);

@@ -7541,7 +7541,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 							func_node.decl_node().type_specifier_node(),
 							func_node.parameter_nodes(),
 							false,
-							func_node.parent_struct_name(),
+							StringTable::getOrInternStringHandle(func_node.parent_struct_name()),
 							empty_ns_path,
 							Linkage::CPlusPlus,
 							func_node.is_const_member_function()).view());
