@@ -846,8 +846,9 @@ inline TypeSpecifierNode makeTypeSpecifierFromTemplateTypeArg(
 
 inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	const TypeInfo::TemplateArgInfo& arg_info,
-	const Token& token = Token()) {
+	const Token& token) {
 	if (arg_info.is_value) {
+		// Only type template arguments can be reconstructed as a TypeSpecifierNode.
 		return std::nullopt;
 	}
 
@@ -878,8 +879,8 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 
 inline std::optional<TypeSpecifierNode> tryExtractFirstTemplateTypeArgument(
 	const TypeSpecifierNode& wrapper_type,
-	const Token& token = Token(),
-	std::string_view expected_base_template_name = {}) {
+	const Token& token,
+	std::string_view expected_base_template_name) {
 	if (!wrapper_type.type_index().is_valid() || !is_struct_type(wrapper_type.type())) {
 		return std::nullopt;
 	}

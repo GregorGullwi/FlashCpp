@@ -14,6 +14,10 @@ struct Incomplete;
 
 static_assert(demo::__is_complete_or_unbounded(demo::__type_identity<int>{}));
 static_assert(!demo::__is_complete_or_unbounded(demo::__type_identity<Incomplete>{}));
+static_assert(!demo::__is_complete_or_unbounded(demo::__type_identity<void>{}));
+static_assert(demo::__is_complete_or_unbounded(demo::__type_identity<int[]>{}));
+static_assert(demo::__is_complete_or_unbounded(demo::__type_identity<int*>{}));
+static_assert(demo::__is_complete_or_unbounded(demo::__type_identity<int&>{}));
 
 int main() {
 	return 0;

@@ -1048,7 +1048,7 @@ std::optional<TemplateTypeArg> extractNestedTemplateArgFromTemplateArgRecursive(
 		if (concrete_arg.is_value) {
 			return TemplateTypeArg::makeValue(concrete_arg.intValue(), concrete_arg.typeEnum());
 		}
-		return TemplateTypeArg::makeTypeSpecifier(*makeTypeSpecifierFromTemplateArgInfo(concrete_arg));
+		return TemplateTypeArg::makeTypeSpecifier(*makeTypeSpecifierFromTemplateArgInfo(concrete_arg, Token()));
 	}
 
 	const TypeInfo* nested_pattern_info = tryGetTypeInfo(pattern_arg.type_index);
@@ -1089,7 +1089,7 @@ std::optional<bool> preDeduceTemplateArgsFromTemplateArgRecursive(
 		if (param_it != tparam_nodes_by_name.end()) {
 			TemplateTypeArg new_arg = concrete_arg.is_value
 				? TemplateTypeArg::makeValue(concrete_arg.intValue(), concrete_arg.typeEnum())
-				: TemplateTypeArg::makeTypeSpecifier(*makeTypeSpecifierFromTemplateArgInfo(concrete_arg));
+				: TemplateTypeArg::makeTypeSpecifier(*makeTypeSpecifierFromTemplateArgInfo(concrete_arg, Token()));
 			auto [existing_it, inserted] = param_name_to_arg.emplace(pattern_arg.dependent_name, new_arg);
 			if (!inserted && !(existing_it->second == new_arg)) {
 				FLASH_LOG_FORMAT(Templates, Error,

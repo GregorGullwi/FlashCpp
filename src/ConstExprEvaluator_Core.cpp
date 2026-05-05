@@ -76,18 +76,21 @@ std::optional<EvalResult> tryEvaluateSimpleConstexprTypeHelperCall(
 	if (matched_pattern == nullptr) {
 		return std::nullopt;
 	}
-	if (call_expr.arguments().empty()) {
+	auto makeMissingTypeArgError = [&]() {
 		return EvalResult::error(std::string(matched_pattern->helper_name) + " requires a type argument");
+	};
+	if (call_expr.arguments().empty()) {
+		return makeMissingTypeArgError();
 	}
 
 	const ASTNode& arg = call_expr.arguments()[0];
 	if (!arg.is<ExpressionNode>()) {
-		return EvalResult::error(std::string(matched_pattern->helper_name) + " requires a type argument");
+		return makeMissingTypeArgError();
 	}
 
 	const ExpressionNode& expr = arg.as<ExpressionNode>();
 	if (!std::holds_alternative<ConstructorCallNode>(expr)) {
-		return EvalResult::error(std::string(matched_pattern->helper_name) + " requires a type argument");
+		return makeMissingTypeArgError();
 	}
 
 	const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
@@ -96,7 +99,7 @@ std::optional<EvalResult> tryEvaluateSimpleConstexprTypeHelperCall(
 		ctor.type_node().token(),
 		matched_pattern->wrapper_template_name);
 	if (!checked_type.has_value()) {
-		return EvalResult::error(std::string(matched_pattern->helper_name) + " requires a type argument");
+		return makeMissingTypeArgError();
 	}
 
 	const StructTypeInfo* struct_info = nullptr;
@@ -4383,10 +4386,11 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		// No pre-instantiated version found - try to instantiate on-demand if parser is available
 		if (context.parser) {
 			std::optional<ASTNode> instantiated_opt;
+			const bool names_differ = qualified_name != func_name;
 			std::vector<TypeSpecifierNode> arg_types;
 			if (tryCollectFunctionCallArgTypes(arg_types)) {
 				instantiated_opt = context.parser->try_instantiate_template(qualified_name, arg_types);
-				if (!instantiated_opt.has_value() && qualified_name != func_name) {
+				if (!instantiated_opt.has_value() && names_differ) {
 					instantiated_opt = context.parser->try_instantiate_template(func_name, arg_types);
 				}
 				if (instantiated_opt.has_value()) {
