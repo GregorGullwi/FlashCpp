@@ -51,6 +51,24 @@ constexpr int multiple_deref_assigns() {
 }
 static_assert(multiple_deref_assigns() == 3);
 
+// Unsigned-narrow type: deref-assign on an unsigned char local
+constexpr unsigned char simple_deref_assign_unsigned() {
+	unsigned char x = 0;
+	unsigned char* p = &x;
+	*p = 42;
+	return x;
+}
+static_assert(simple_deref_assign_unsigned() == 42);
+
+// Compound assignment through an unsigned char pointer
+constexpr unsigned char compound_deref_assign_unsigned() {
+	unsigned char x = 10;
+	unsigned char* p = &x;
+	*p += 5;
+	return x;
+}
+static_assert(compound_deref_assign_unsigned() == 15);
+
 int main() {
 	return simple_deref_assign();   // returns 5
 }

@@ -1280,9 +1280,19 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	} else {
 		const EvalResult* object_value = nullptr;
 		std::optional<EvalResult> resolved_complex_object;
+		// Tracks the name of the binding that the complex receiver resolved to (e.g. the
+		// variable selected by a ternary condition).  When set it lets us write back
+		// mutations from a non-`this`, non-simple-identifier receiver (such as
+		// `(cond ? x : y).mutate()`) to the correct named local or member binding.
+		std::string_view resolved_binding_name;
+		// Recursively evaluate a non-identifier receiver expression to find the struct
+		// object being called on.  Handles ternary conditions by evaluating the condition
+		// and recursing into the chosen branch.  Also records resolved_binding_name so
+		// that mutating calls can write the modified member state back to the right local.
 		auto resolve_bound_receiver_object = [&](const ASTNode& receiver_expr, auto&& self) -> EvalResult {
 			if (const IdentifierNode* receiver_id = tryGetIdentifier(receiver_expr)) {
 				if (const EvalResult* bound_value = findBindingValue(receiver_id->name(), bindings, context)) {
+					resolved_binding_name = receiver_id->name();
 					return *bound_value;
 				}
 				return EvalResult::error(
@@ -1311,6 +1321,11 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 				return *resolved_complex_object;
 			}
 			object_value = &resolved_complex_object.value();
+			// If the receiver expression resolved to a named binding, record the name
+			// so that the write-back path below can update the correct local/member.
+			if (!resolved_binding_name.empty()) {
+				object_name = resolved_binding_name;
+			}
 		}
 		if (!object_value) {
 			return std::nullopt;
@@ -1326,14 +1341,18 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			}
 			bound_type_index = pointed_object_result.object_type_index;
 			member_bindings = pointed_object_result.object_member_bindings;
-			write_back_through_pointer = object_identifier != nullptr;
+			// Enable write-back when the receiver is a named identifier OR when the
+			// complex receiver resolved to a named binding (e.g. ternary -> identifier).
+			write_back_through_pointer = object_identifier != nullptr || !resolved_binding_name.empty();
 		} else {
 			if (!object_value->object_type_index.is_valid()) {
 				return std::nullopt;
 			}
 			bound_type_index = object_value->object_type_index;
 			member_bindings = object_value->object_member_bindings;
-			write_back_to_object_binding = object_identifier != nullptr;
+			// Enable write-back when the receiver is a named identifier OR when the
+			// complex receiver resolved to a named binding (e.g. ternary -> identifier).
+			write_back_to_object_binding = object_identifier != nullptr || !resolved_binding_name.empty();
 		}
 
 		bound_type_info = tryGetTypeInfo(bound_type_index);
@@ -1407,6 +1426,10 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		return bind_result;
 	}
 
+	// Inject a synthetic "this" binding so that member function bodies can access
+	// members by unqualified name (e.g. `return a + b;`).  EvalResult requires a
+	// concrete value variant; from_int(0LL) is used as an inert placeholder — the
+	// actual data lives in object_type_index and object_member_bindings.
 	EvalResult this_binding = EvalResult::from_int(0LL);
 	this_binding.object_type_index = bound_type_index;
 	this_binding.object_member_bindings = member_bindings;
@@ -1478,6 +1501,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		}
 	}
 	if (result.success() && mutable_bindings) {
+		// Remove the synthetic "this" injected above before writing member state
+		// back to the outer map, so "this" is not accidentally stored as a member.
 		member_bindings.erase("this");
 		if (write_back_to_object_binding) {
 			auto object_it = mutable_bindings->find(object_name);
@@ -1503,7 +1528,11 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			if (!write_back_result.success()) {
 				result = write_back_result;
 			}
-		} else if (saved_struct_info) {
+		} else if (receiver_is_this) {
+			// When the receiver is `this`, write each mutated struct member back into
+			// the outer mutable_bindings map (which holds this's members as direct
+			// keys).  Only applies to this-receiver calls — non-this complex receivers
+			// use write_back_to_object_binding or write_back_through_pointer instead.
 			for (const auto& member : saved_struct_info->members) {
 				std::string_view member_name = StringTable::getStringView(member.getName());
 				auto member_it = member_bindings.find(member_name);
