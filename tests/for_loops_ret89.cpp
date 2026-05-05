@@ -83,5 +83,13 @@ int main() {
 	int result2 = test_for_loop_with_break();
 	int result3 = test_for_loop_with_continue();
 	int result4 = test_nested_for_loops();
+	if (test_for_loop_no_init() != 10)
+		return 1;
+	if (test_for_loop_no_condition() != 3)
+		return 2;
+	if (test_for_loop_no_update() != 10)
+		return 3;
+	if (test_empty_for_loop() != 3)
+		return 4;
 	return result1 + result2 + result3 + result4;
 }

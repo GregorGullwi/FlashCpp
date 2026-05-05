@@ -1,5 +1,12 @@
 // Comprehensive test for variadic function templates
 
+template <typename... Args>
+struct Tuple {
+};
+
+extern "C" int declared_sum_ints(int count, ...);
+extern "C" void declared_log_message(const char* format, int level, ...);
+
 // Test 1: Empty parameter pack
 template <typename... Args>
 void empty_func(Args... args) {}
@@ -23,6 +30,13 @@ T first_arg(T first, Args... rest) {
 }
 
 int main() {
+	Tuple<> empty_tuple;
+	Tuple<int> single_tuple;
+	Tuple<int, float, bool> triple_tuple;
+	(void)empty_tuple;
+	(void)single_tuple;
+	(void)triple_tuple;
+
 	// Test empty pack
 	empty_func();
 

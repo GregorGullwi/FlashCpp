@@ -6,8 +6,10 @@
 // Combined:        5 + 25     = 30  ✓
 
 struct Adder {
+	int value;
+
 	int operator()(int x) {
-		return x;						// int path: 5 → 5
+		return value + x;				// int path: value + x
 	}
 
 	int operator()(double x) {
@@ -17,6 +19,10 @@ struct Adder {
 
 int test_functor() {
 	Adder adder;
+	adder.value = 10;
+	if (adder(5) != 15)
+		return 1;
+	adder.value = 0;
 	return adder(5) + adder(5.0);  // Should return 5 + 25 = 30
 }
 

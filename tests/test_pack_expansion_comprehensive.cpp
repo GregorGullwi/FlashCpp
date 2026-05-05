@@ -34,9 +34,24 @@ struct tuple {
 template <typename... Args>
 using tuple_of_refs = tuple<Args&...>;
 
+int consumed_value = 0;
+
+void consume(int a, double b, char c) {
+	consumed_value = a + static_cast<int>(b) + c;
+}
+
+template <typename... Args>
+void forward_all(Args&&... args) {
+	consume(args...);
+}
+
 // ===== Main Function =====
 
 int main() {
+	forward_all(42, 3.14, 'x');
+	if (consumed_value != 165)
+		return 1;
+
 	// Basic compilation test
 	return 0;
 }
