@@ -255,6 +255,53 @@ inline std::string_view stripResolvedNamespacePrefixForMangling(std::string_view
 	return owner_name.substr(qualified_namespace.size() + 2);
 }
 
+inline OwnerManglingInfo buildOwnerManglingInfoForResolvedType(
+	StringHandle owner_name,
+	NamespaceHandle owner_namespace_handle) {
+	auto toStringHandle = [](std::string_view name) {
+		return name.empty() ? StringHandle() : StringTable::getOrInternStringHandle(name);
+	};
+
+	if (!owner_name.isValid()) {
+		return {};
+	}
+
+	OwnerManglingInfo result;
+	if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::MSVC) {
+		// MSVC member-function mangling encodes namespace scopes as part of the owner
+		// component itself (?func@Class@ns@@...), so we must preserve the fully qualified
+		// owner spelling and suppress separate namespace emission.
+		result.owner_name_for_mangling = owner_name;
+		result.owner_namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
+		result.owner_type_resolved = true;
+		return result;
+	}
+
+	result.owner_namespace_handle =
+		owner_namespace_handle.isValid() ? owner_namespace_handle : NamespaceRegistry::GLOBAL_NAMESPACE;
+	result.owner_name_for_mangling = toStringHandle(
+		stripResolvedNamespacePrefixForMangling(
+			StringTable::getStringView(owner_name),
+			result.owner_namespace_handle));
+	result.owner_type_resolved = true;
+	return result;
+}
+
+inline const TypeInfo* tryGetOwnerTypeInfoForMangling(const StructTypeInfo* owner_struct_info) {
+	if (owner_struct_info == nullptr) {
+		return nullptr;
+	}
+
+	if (owner_struct_info->own_type_index_.has_value()) {
+		if (const TypeInfo* owner_type_info = tryGetTypeInfo(*owner_struct_info->own_type_index_)) {
+			return owner_type_info;
+		}
+	}
+
+	auto owner_it = getTypesByNameMap().find(owner_struct_info->getName());
+	return owner_it != getTypesByNameMap().end() ? owner_it->second : nullptr;
+}
+
 // Resolve the owner name used for member mangling.
 // - First try the enclosing declaration namespace for unqualified owners so `Box` inside `ns`
 //   resolves as `ns::Box`.
@@ -273,15 +320,14 @@ inline OwnerManglingInfo resolveOwnerManglingInfoForMangling(
 		return result;
 	}
 
-	auto try_resolve_type = [&](StringHandle type_name_handle, std::string_view candidate_name) -> bool {
+	auto try_resolve_type = [&](StringHandle type_name_handle, std::string_view) -> bool {
 		auto type_it = getTypesByNameMap().find(type_name_handle);
 		if (type_it == getTypesByNameMap().end()) {
 			return false;
 		}
-		result.owner_namespace_handle = type_it->second->namespaceHandle();
-		result.owner_name_for_mangling = toStringHandle(
-			stripResolvedNamespacePrefixForMangling(candidate_name, result.owner_namespace_handle));
-		result.owner_type_resolved = true;
+		result = buildOwnerManglingInfoForResolvedType(
+			type_it->second->name(),
+			type_it->second->namespaceHandle());
 		return true;
 	};
 
@@ -307,6 +353,21 @@ inline OwnerManglingInfo resolveOwnerManglingInfoForMangling(
 	}
 
 	return result;
+}
+
+inline OwnerManglingInfo resolveOwnerManglingInfoForMangling(
+	const StructTypeInfo* owner_struct_info,
+	std::string_view fallback_owner_name,
+	NamespaceHandle enclosing_namespace_handle) {
+	if (const TypeInfo* owner_type_info = tryGetOwnerTypeInfoForMangling(owner_struct_info)) {
+		return buildOwnerManglingInfoForResolvedType(
+			owner_type_info->name(),
+			owner_type_info->namespaceHandle());
+	}
+
+	return resolveOwnerManglingInfoForMangling(
+		fallback_owner_name,
+		enclosing_namespace_handle);
 }
 
 // AstToIr class declaration (methods split across cpp files).

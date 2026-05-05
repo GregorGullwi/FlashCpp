@@ -1673,11 +1673,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					}
 				}
 
-				// Resolve the concrete owner metadata instead of blindly reusing the
-				// declaration namespace; this avoids double-encoding qualified owners.
+				// Resolve the owner from the declaring struct when available. Member-function
+				// declaration nodes can lose their original namespace_handle during cloning or
+				// materialization, but the resolved owner type remains authoritative.
 				auto struct_name_view = StringTable::getStringView(struct_name);
 				const OwnerManglingInfo owner_info =
 					resolveOwnerManglingInfoForMangling(
+						struct_info,
 						struct_name_view,
 						func_for_mangling->namespace_handle());
 
