@@ -81,30 +81,30 @@ std::optional<EvalResult> tryEvaluateSimpleConstexprTypeHelperCall(
 	if (matched_pattern == nullptr) {
 		return std::nullopt;
 	}
-	auto makeMissingTypeArgError = [&]() {
-		return EvalResult::error(std::string(matched_pattern->helper_name) + " requires a type argument");
-	};
-	if (call_expr.arguments().empty()) {
-		return makeMissingTypeArgError();
+	if (call_expr.arguments().size() != 1) {
+		return std::nullopt;
 	}
 
 	const ASTNode& arg = call_expr.arguments()[0];
 	if (!arg.is<ExpressionNode>()) {
-		return makeMissingTypeArgError();
+		return std::nullopt;
 	}
 
 	const ExpressionNode& expr = arg.as<ExpressionNode>();
 	if (!std::holds_alternative<ConstructorCallNode>(expr)) {
-		return makeMissingTypeArgError();
+		return std::nullopt;
 	}
 
 	const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
+	if (!ctor.arguments().empty()) {
+		return std::nullopt;
+	}
 	std::optional<TypeSpecifierNode> checked_type = tryExtractFirstTemplateTypeArgument(
 		ctor.type_node(),
 		ctor.type_node().token(),
 		matched_pattern->wrapper_template_name);
 	if (!checked_type.has_value()) {
-		return makeMissingTypeArgError();
+		return std::nullopt;
 	}
 
 	const StructTypeInfo* struct_info = nullptr;
@@ -4381,10 +4381,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 
 			if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
-				if (instantiated_func.is_constexpr() || instantiated_func.is_consteval()) {
-					std::unordered_map<std::string_view, EvalResult> empty_bindings;
-					return evaluate_function_call_with_bindings(instantiated_func, arguments, empty_bindings, context);
-				}
+				return evaluate_resolved_function_call(instantiated_func, arguments, context, nullptr);
 			} else if (instantiated_opt.has_value()) {
 				FLASH_LOG(Templates, Debug, "Instantiation succeeded but result is not a FunctionDeclarationNode");
 			}

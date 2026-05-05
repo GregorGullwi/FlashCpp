@@ -4,6 +4,20 @@ namespace demo {
 		using type = T;
 	};
 
+	// Unbounded arrays are always considered complete-or-unbounded.
+	template <typename T>
+	constexpr bool __is_complete_or_unbounded(__type_identity<T[]>) {
+		return true;
+	}
+
+	// Complete types (sizeof succeeds) are considered complete.
+	template <typename T>
+	constexpr bool __is_complete_or_unbounded(__type_identity<T>)
+		requires requires { sizeof(T); } {
+		return true;
+	}
+
+	// Fallback: incomplete types (sizeof ill-formed) are not complete.
 	template <typename T>
 	constexpr bool __is_complete_or_unbounded(__type_identity<T>) {
 		return false;

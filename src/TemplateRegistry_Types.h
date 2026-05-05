@@ -855,9 +855,23 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 		return std::nullopt;
 	}
 
+	// Use the same completeness-aware size calculation as makeTypeSpecifierFromTemplateTypeArg
+	// to avoid misclassifying forward-declared structs as having a non-zero size.
+	TemplateTypeArg materialized;
+	materialized.type_index = arg_info.type_index;
+	materialized.ref_qualifier = arg_info.ref_qualifier;
+	materialized.pointer_depth = checkedPointerDepthToUint8(arg_info.pointer_depth);
+	materialized.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
+	materialized.cv_qualifier = arg_info.cv_qualifier;
+	materialized.is_array = arg_info.is_array;
+	materialized.array_dimensions = arg_info.array_size
+		? std::vector<size_t>{*arg_info.array_size}
+		: std::vector<size_t>{};
+	materialized.function_signature = arg_info.function_signature;
+
 	TypeSpecifierNode substituted_spec(
 		arg_info.type_index.withCategory(arg_info.typeEnum()),
-		get_type_size_bits(arg_info.typeEnum()),
+		computeTemplateTypeArgSizeBits(materialized),
 		token,
 		arg_info.cv_qualifier,
 		arg_info.ref_qualifier);
