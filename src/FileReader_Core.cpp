@@ -25,35 +25,63 @@ enum class PreprocessTimingCategory {
 
 #if WITH_PREPROCESSOR_TIMINGS
 struct PreprocessTimer {
-    std::chrono::high_resolution_clock::time_point start;
-    PreprocessTimingCategory category;
+	std::chrono::high_resolution_clock::time_point start;
+	PreprocessTimingCategory category;
 
-    PreprocessTimer(PreprocessTimingCategory cat, bool = false) : category(cat) {
-        start = std::chrono::high_resolution_clock::now();
-    }
+	PreprocessTimer(PreprocessTimingCategory cat, bool = false) : category(cat) {
+		start = std::chrono::high_resolution_clock::now();
+	}
 
-    ~PreprocessTimer() {
-        auto end = std::chrono::high_resolution_clock::now();
-        auto dur = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-        timings[static_cast<size_t>(category)] += dur;
-        ++line_count;
-    }
+	~PreprocessTimer() {
+		auto end = std::chrono::high_resolution_clock::now();
+		auto dur = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+		timings[static_cast<size_t>(category)] += dur;
+	}
 
-    static std::chrono::microseconds timings[static_cast<size_t>(PreprocessTimingCategory::COUNT)];
-    static size_t line_count;
-    static size_t files_processed;
+	static inline std::chrono::microseconds timings[static_cast<size_t>(PreprocessTimingCategory::COUNT)] = {};
+	static inline size_t line_count{0};
+	static inline size_t files_processed{0};
+	static inline size_t active_preprocess_calls{0};
 };
 
-std::chrono::microseconds PreprocessTimer::timings[static_cast<size_t>(PreprocessTimingCategory::COUNT)] = {};
-size_t PreprocessTimer::line_count{0};
-size_t PreprocessTimer::files_processed{0};
+static double preprocessTimingToMs(std::chrono::microseconds duration) {
+	return duration.count() / 1000.0;
+}
+
+static void printPreprocessTimingSummary() {
+	auto& t = PreprocessTimer::timings;
+	printf("    Preprocess timing (%zu lines, %zu files):\n", PreprocessTimer::line_count, PreprocessTimer::files_processed);
+	printf("      I/O (open+read)          : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::include_exists)]));
+	printf("        line read              : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::line_read)]));
+	printf("        line trim              : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::line_trim)]));
+	printf("        strip // comment       : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::line_comment)]));
+	printf("        append line            : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::line_append)]));
+	printf("        block /* */ comment    : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::comment)]));
+	printf("        #define                : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::define)]));
+	printf("        #if/#ifdef/#else/#endif: %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::conditional)]));
+	printf("        macro expansion        : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::macro)]));
+}
+
+struct ScopedPreprocessTimingSummary {
+	bool isOutermost;
+
+	ScopedPreprocessTimingSummary() : isOutermost(PreprocessTimer::active_preprocess_calls++ == 0) {}
+
+	~ScopedPreprocessTimingSummary() {
+		size_t remaining_calls = --PreprocessTimer::active_preprocess_calls;
+		if (isOutermost && remaining_calls == 0) {
+			printPreprocessTimingSummary();
+		}
+	}
+};
 #else
 // Dummy struct when timings are disabled - no-op
 struct PreprocessTimer {
-    PreprocessTimer(PreprocessTimingCategory, bool = false) {}
-    static std::chrono::microseconds timings[1];
-    static size_t line_count;
-    static size_t files_processed;
+	PreprocessTimer(PreprocessTimingCategory, bool = false) {}
+	static inline std::chrono::microseconds timings[1] = {};
+	static inline size_t line_count{0};
+	static inline size_t files_processed{0};
+	static inline size_t active_preprocess_calls{0};
 };
 #endif // WITH_PREPROCESSOR_TIMINGS
 
@@ -187,17 +215,9 @@ bool FileReader::readFile(std::string_view file, long included_at_line) {
 	auto io_end = std::chrono::high_resolution_clock::now();
 	auto io_dur = std::chrono::duration_cast<std::chrono::microseconds>(io_end - io_start);
 	PreprocessTimer::timings[static_cast<size_t>(PreprocessTimingCategory::include_exists)] += io_dur;  // I/O time
-	
-	auto prep_start = std::chrono::high_resolution_clock::now();
 #endif
 
 	bool result = preprocessFileContent(file_content);
-
-#if WITH_PREPROCESSOR_TIMINGS
-	auto prep_end = std::chrono::high_resolution_clock::now();
-	auto prep_dur = std::chrono::duration_cast<std::chrono::microseconds>(prep_end - prep_start);
-	PreprocessTimer::timings[static_cast<size_t>(PreprocessTimingCategory::include_read)] += prep_dur;  // recursive preprocess time
-#endif
 
 	// Restore the previous file index and parent line when returning
 	current_file_index_ = saved_file_index;
@@ -209,6 +229,7 @@ bool FileReader::readFile(std::string_view file, long included_at_line) {
 bool FileReader::preprocessFileContent(const std::string& file_content) {
 #if WITH_PREPROCESSOR_TIMINGS
 	++PreprocessTimer::files_processed;
+	ScopedPreprocessTimingSummary scopedTimingSummary;
 #endif
 	std::string_view content_view(file_content);
 	std::string line;
@@ -257,6 +278,9 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 	std::string result;  // Reused for block comment stripping
 
 	while (getNextLine()) {
+#if WITH_PREPROCESSOR_TIMINGS
+		++PreprocessTimer::line_count;
+#endif
 		line_counter++;
 		if (settings_.isVerboseMode() && line_counter % 100 == 0) {
 			std::cout << "Processing line " << line_counter << " in " << filestack_.top().file_name << std::endl;
@@ -756,25 +780,6 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 		}
 	}
-
-#if WITH_PREPROCESSOR_TIMINGS
-	// Print timing summary - I/O + CPU breakdown
-	auto& t = PreprocessTimer::timings;
-	double total_ms = (t[static_cast<size_t>(PreprocessTimingCategory::include_exists)].count() + 
-					   t[static_cast<size_t>(PreprocessTimingCategory::include_read)].count()) / 1000.0;
-	printf("    Preprocess timing (%zu lines, %zu files):\n", PreprocessTimer::line_count, PreprocessTimer::files_processed);
-	printf("      I/O (open+read)          : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::include_exists)].count() / 1000.0);
-	printf("      CPU (all preprocessing) : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::include_read)].count() / 1000.0);
-	printf("        line read             : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::line_read)].count() / 1000.0);
-	printf("        line trim              : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::line_trim)].count() / 1000.0);
-	printf("        strip // comment       : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::line_comment)].count() / 1000.0);
-	printf("        append line            : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::line_append)].count() / 1000.0);
-	printf("        block /* */ comment   : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::comment)].count() / 1000.0);
-	printf("        #define                : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::define)].count() / 1000.0);
-	printf("        #if/#ifdef/#else/#endif: %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::conditional)].count() / 1000.0);
-	printf("        macro expansion        : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::macro)].count() / 1000.0);
-	printf("      TOTAL                    : %8.3f ms\n", total_ms);
-#endif
 
 	return true;
 }
