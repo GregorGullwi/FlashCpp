@@ -4809,44 +4809,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			return false;
 		};
-		auto tryMaterializeDeferredBaseTypeArg =
-			[&](const TypeSpecifierNode& type_spec) -> std::optional<TemplateTypeArg> {
-			// Try the shared substitution/materialization path first so primary
-			// deferred-base instantiation can reuse authoritative type metadata
-			// instead of preserving the original TypeSpecifierNode unchanged.
-			TypeIndex substituted_type_index =
-				substitute_template_parameter(type_spec, template_params, template_args_to_use);
-			if (substituted_type_index.is_valid()) {
-				if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index)) {
-					if (const TypeInfo* resolved_type_info = materializeDeferredBasePlaceholderIfNeeded(
-							substituted_type_info,
-							template_params,
-							template_args_to_use,
-							[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
-								return instantiate_and_register_base_template(concrete_base_template_name, concrete_base_args);
-							})) {
-						TypeIndex resolved_type_index =
-							resolved_type_info->registeredTypeIndex().withCategory(resolved_type_info->typeEnum());
-						// Accept either a fully materialized type or a rebinding that
-						// changed the placeholder identity; otherwise keep the original
-						// TypeSpecifierNode for still-dependent placeholder flows.
-						if (!resolved_type_info->is_incomplete_instantiation_ ||
-							resolved_type_index != type_spec.type_index()) {
-							return resolveTypeInfoToTemplateArg(*resolved_type_info, type_spec);
-						}
-					}
-				}
-			}
-
-			if (!substituted_type_index.is_valid() ||
-				substituted_type_index == type_spec.type_index()) {
-				return std::nullopt;
-			}
-
-			TemplateTypeArg substituted_arg(type_spec);
-			substituted_arg.type_index = substituted_type_index;
-			return substituted_arg;
-		};
 
 		for (const auto& deferred_base : class_decl.deferred_template_base_classes()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Processing deferred template base '{}' with {} template args",
@@ -5083,7 +5045,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Fallback: use the type specifier as-is
 						if (!resolved) {
 							if (std::optional<TemplateTypeArg> substituted_arg =
-									tryMaterializeDeferredBaseTypeArg(type_spec);
+									tryMaterializeDeferredBaseTypeArg(
+										type_spec,
+										template_params,
+										template_args_to_use,
+										[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+											return instantiate_and_register_base_template(concrete_base_template_name, concrete_base_args);
+										});
 								substituted_arg.has_value()) {
 								substituted_arg->is_pack = arg_info.is_pack;
 								resolved_args.push_back(*substituted_arg);

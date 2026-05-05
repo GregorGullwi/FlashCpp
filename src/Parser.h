@@ -1770,6 +1770,40 @@ private:
 
 		return base_type;
 	}
+	template <typename TemplateParamsContainer, typename TemplateArgsContainer, typename ConcreteBaseInstantiator>
+	std::optional<TemplateTypeArg> tryMaterializeDeferredBaseTypeArg(
+		const TypeSpecifierNode& type_spec,
+		const TemplateParamsContainer& template_params,
+		const TemplateArgsContainer& template_args,
+		ConcreteBaseInstantiator&& instantiate_concrete_base) {
+		TypeIndex substituted_type_index =
+			substitute_template_parameter(type_spec, template_params, template_args);
+		if (substituted_type_index.is_valid()) {
+			if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index)) {
+				if (const TypeInfo* resolved_type_info = materializeDeferredBasePlaceholderIfNeeded(
+						substituted_type_info,
+						template_params,
+						template_args,
+						instantiate_concrete_base)) {
+					TypeIndex resolved_type_index =
+						resolved_type_info->registeredTypeIndex().withCategory(resolved_type_info->typeEnum());
+					if (!resolved_type_info->is_incomplete_instantiation_ ||
+						resolved_type_index != type_spec.type_index()) {
+						return resolveTypeInfoToTemplateArg(*resolved_type_info, type_spec);
+					}
+				}
+			}
+		}
+
+		if (!substituted_type_index.is_valid() ||
+			substituted_type_index == type_spec.type_index()) {
+			return std::nullopt;
+		}
+
+		TemplateTypeArg substituted_arg(type_spec);
+		substituted_arg.type_index = substituted_type_index;
+		return substituted_arg;
+	}
 	bool isReachableVirtualBaseInitializer(const StructTypeInfo* struct_info, std::string_view candidate_name) const;
 	std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);	// NEW: Instantiate class template
 	std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
