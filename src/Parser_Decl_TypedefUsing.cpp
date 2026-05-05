@@ -26,12 +26,12 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 			is_rvalue_function_ref = true;
 			advance();
 		} else if (peek() == "&"_tok) {
-			is_function_ref = true;
 			advance();
 			if (peek() == "&"_tok) {
 				is_rvalue_function_ref = true;
-				is_function_ref = false;
 				advance();
+			} else {
+				is_function_ref = true;
 			}
 		} else if (peek() == "*"_tok) {
 			is_function_ptr = true;
@@ -87,9 +87,14 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 			type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);
 		}
 
+		std::string_view function_type_kind = "lvalue ref";
+		if (is_function_ptr) {
+			function_type_kind = "pointer";
+		} else if (is_rvalue_function_ref) {
+			function_type_kind = "rvalue ref";
+		}
 		FLASH_LOG_FORMAT(Parser, Debug, "Parsed function reference/pointer type: {} to function{}",
-						 is_function_ptr ? "pointer" : (is_rvalue_function_ref ? "rvalue ref" : "lvalue ref"),
-						 log_context);
+						 function_type_kind, log_context);
 		discard_saved_token(func_type_saved_pos);
 		return true;
 	}
