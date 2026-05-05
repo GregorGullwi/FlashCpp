@@ -101,7 +101,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
-#### 2026-05-05 Windows/MSVC std-header parser/sema follow-up
+### 2026-05-05 Windows/MSVC std-header parser/sema follow-up
 
 This pass rebuilt `x64/Sharded/FlashCppMSVC.exe` with MSBuild and retested
 selected `tests/std/test_std_*.cpp` files against MSVC 14.44.35207 headers.
