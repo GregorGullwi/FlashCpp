@@ -55,13 +55,6 @@ inline bool isUnsigned(TypeCategory cat) {
 
 namespace {
 
-const StructTypeInfo* structInfoFromTypeSpecifier(const TypeSpecifierNode& type_spec) {
-	if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
-		return type_info->getStructInfo();
-	}
-	return nullptr;
-}
-
 const StructTypeInfo* structInfoFromTypeIndex(TypeIndex type_index) {
 	if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 		return type_info->getStructInfo();
