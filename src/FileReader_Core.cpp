@@ -5,69 +5,55 @@
 #define WITH_PREPROCESSOR_TIMINGS 0
 #endif
 
+// Timing categories - always available, used with PreprocessTimer
+enum class PreprocessTimingCategory {
+    line_read,
+    line_trim,
+    line_comment,
+    line_append,
+    comment,
+    include,
+    include_exists,
+    include_read,
+    define,
+    conditional,  // #if/#elif/#ifdef/#ifndef/#else/#endif combined
+    pragma,
+    other,
+    macro,
+    COUNT
+};
+
 #if WITH_PREPROCESSOR_TIMINGS
-// Timing helper for preprocessing
 struct PreprocessTimer {
     std::chrono::high_resolution_clock::time_point start;
-    const char* name;
-    bool print_at_end;
-    static std::chrono::microseconds total_getline;
-    static std::chrono::microseconds total_parse;
-    static std::chrono::microseconds total_comment;
-    static std::chrono::microseconds total_include;
-    static std::chrono::microseconds total_define;
-    static std::chrono::microseconds total_ifdef;
-    static std::chrono::microseconds total_if;
-    static std::chrono::microseconds total_else;
-    static std::chrono::microseconds total_endif;
-    static std::chrono::microseconds total_pragma;
-    static std::chrono::microseconds total_other;
-    static std::chrono::microseconds total_macro;
-    static size_t line_count;
+    PreprocessTimingCategory category;
 
-    PreprocessTimer(const char* n, bool print = false) : name(n), print_at_end(print) {
+    PreprocessTimer(PreprocessTimingCategory cat, bool = false) : category(cat) {
         start = std::chrono::high_resolution_clock::now();
     }
 
     ~PreprocessTimer() {
         auto end = std::chrono::high_resolution_clock::now();
         auto dur = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-        if (print_at_end) {
-            std::printf("    Preprocess %-20s: %8.3f ms\n", name, dur.count() / 1000.0);
-        }
-        if (strcmp(name, "getline") == 0) total_getline += dur;
-        else if (strcmp(name, "parse_line") == 0) total_parse += dur;
-        else if (strcmp(name, "comment") == 0) total_comment += dur;
-        else if (strcmp(name, "include") == 0) total_include += dur;
-        else if (strcmp(name, "define") == 0) total_define += dur;
-        else if (strcmp(name, "ifdef") == 0) total_ifdef += dur;
-        else if (strcmp(name, "if") == 0) total_if += dur;
-        else if (strcmp(name, "else") == 0) total_else += dur;
-        else if (strcmp(name, "endif") == 0) total_endif += dur;
-        else if (strcmp(name, "pragma") == 0) total_pragma += dur;
-        else if (strcmp(name, "other") == 0) total_other += dur;
-        else if (strcmp(name, "macro") == 0) total_macro += dur;
+        timings[static_cast<size_t>(category)] += dur;
         ++line_count;
     }
+
+    static std::chrono::microseconds timings[static_cast<size_t>(PreprocessTimingCategory::COUNT)];
+    static size_t line_count;
+    static size_t files_processed;
 };
 
-std::chrono::microseconds PreprocessTimer::total_getline{0};
-std::chrono::microseconds PreprocessTimer::total_parse{0};
-std::chrono::microseconds PreprocessTimer::total_comment{0};
-std::chrono::microseconds PreprocessTimer::total_include{0};
-std::chrono::microseconds PreprocessTimer::total_define{0};
-std::chrono::microseconds PreprocessTimer::total_ifdef{0};
-std::chrono::microseconds PreprocessTimer::total_if{0};
-std::chrono::microseconds PreprocessTimer::total_else{0};
-std::chrono::microseconds PreprocessTimer::total_endif{0};
-std::chrono::microseconds PreprocessTimer::total_pragma{0};
-std::chrono::microseconds PreprocessTimer::total_other{0};
-std::chrono::microseconds PreprocessTimer::total_macro{0};
+std::chrono::microseconds PreprocessTimer::timings[static_cast<size_t>(PreprocessTimingCategory::COUNT)] = {};
 size_t PreprocessTimer::line_count{0};
+size_t PreprocessTimer::files_processed{0};
 #else
 // Dummy struct when timings are disabled - no-op
 struct PreprocessTimer {
-    PreprocessTimer(const char*, bool = false) {}
+    PreprocessTimer(PreprocessTimingCategory, bool = false) {}
+    static std::chrono::microseconds timings[1];
+    static size_t line_count;
+    static size_t files_processed;
 };
 #endif // WITH_PREPROCESSOR_TIMINGS
 
@@ -180,6 +166,9 @@ bool FileReader::readFile(std::string_view file, long included_at_line) {
 	// std::ifstream(const char*) expects a null-terminated path; string_view::data() is not guaranteed
 	// to be null-terminated.
 	std::string file_str(file);
+#if WITH_PREPROCESSOR_TIMINGS
+	auto io_start = std::chrono::high_resolution_clock::now();
+#endif
 	std::ifstream stream(file_str);
 	if (!stream.is_open()) {
 		current_file_index_ = saved_file_index;	// Restore on error
@@ -194,8 +183,21 @@ bool FileReader::readFile(std::string_view file, long included_at_line) {
 	stream.seekg(0, std::ios::beg);
 	std::string file_content(file_size, '\0');
 	stream.read(file_content.data(), file_size);
+#if WITH_PREPROCESSOR_TIMINGS
+	auto io_end = std::chrono::high_resolution_clock::now();
+	auto io_dur = std::chrono::duration_cast<std::chrono::microseconds>(io_end - io_start);
+	PreprocessTimer::timings[static_cast<size_t>(PreprocessTimingCategory::include_exists)] += io_dur;  // I/O time
+	
+	auto prep_start = std::chrono::high_resolution_clock::now();
+#endif
 
 	bool result = preprocessFileContent(file_content);
+
+#if WITH_PREPROCESSOR_TIMINGS
+	auto prep_end = std::chrono::high_resolution_clock::now();
+	auto prep_dur = std::chrono::duration_cast<std::chrono::microseconds>(prep_end - prep_start);
+	PreprocessTimer::timings[static_cast<size_t>(PreprocessTimingCategory::include_read)] += prep_dur;  // recursive preprocess time
+#endif
 
 	// Restore the previous file index and parent line when returning
 	current_file_index_ = saved_file_index;
@@ -205,6 +207,9 @@ bool FileReader::readFile(std::string_view file, long included_at_line) {
 }
 
 bool FileReader::preprocessFileContent(const std::string& file_content) {
+#if WITH_PREPROCESSOR_TIMINGS
+	++PreprocessTimer::files_processed;
+#endif
 	std::string_view content_view(file_content);
 	std::string line;
 	std::string pending_line;  // Line that was read but needs to be processed on next iteration
@@ -225,6 +230,9 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 
 	// Modified loop to handle pending lines - using string_view instead of istringstream
 	auto getNextLine = [&]() -> bool {
+#if WITH_PREPROCESSOR_TIMINGS
+		PreprocessTimer timer(PreprocessTimingCategory::line_read, false);
+#endif
 		if (has_pending_line) {
 			line = std::move(pending_line);
 			has_pending_line = false;
@@ -255,7 +263,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 		}
 
 		{
-			PreprocessTimer timer("getline", false);
+			PreprocessTimer timer(PreprocessTimingCategory::line_trim, false);
 			size_t first_none_tab = line.find_first_not_of('\t');
 			if (first_none_tab != std::string::npos && first_none_tab != 0)
 				line.erase(line.begin(), line.begin() + first_none_tab);
@@ -281,7 +289,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 		}
 
 		{
-			PreprocessTimer timer("comment", false);
+			PreprocessTimer timer(PreprocessTimingCategory::comment, false);
 			// Strip /* ... */ block comments in a single left-to-right pass,
 			// respecting string and char literals.  Handles multiple block
 			// comments on one line and unterminated block comments that span
@@ -400,7 +408,10 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 
 		// Strip // single-line comments (C++ standard §5.2: comments are replaced
 		// by a single space in translation phase 3, after line splicing in phase 2).
-		stripLineComment(line);
+		{
+			PreprocessTimer timer(PreprocessTimingCategory::line_comment, false);
+			stripLineComment(line);
+		}
 
 		if (skipping) {
 			if (line.find("#endif", 0) == 0) {
@@ -474,7 +485,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			// Used by C++ standard library headers to include underlying C headers.
 			// Must be checked before #include since #include_next starts with #include.
 			append_line_with_tracking("// " + line);
-			PreprocessTimer timer("include", false);
+			PreprocessTimer timer(PreprocessTimingCategory::include, false);
 
 			if (!processIncludeNextDirective(line, filestack_.top().file_name, line_number)) {
 				return false;
@@ -484,7 +495,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			// Record the #include line in line_map BEFORE processing it
 			// so that the included file can find its parent
 			append_line_with_tracking("// " + line);	 // Comment it out in output
-			PreprocessTimer timer("include", false);
+			PreprocessTimer timer(PreprocessTimingCategory::include, false);
 
 			if (!processIncludeDirective(line, filestack_.top().file_name, line_number)) {
 				return false;
@@ -492,13 +503,13 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			// Reset prev_line_number so we print the next row
 			prev_line_number = 0;
 		} else if (line.find("#define", 0) == 0) {
-			PreprocessTimer timer("define", false);
+			PreprocessTimer timer(PreprocessTimingCategory::define, false);
 			std::istringstream iss(line);
 			iss.seekg("#define"sv.length());
 			handleDefine(iss);
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#ifdef", 0) == 0) {
-			PreprocessTimer timer("ifdef", false);
+			PreprocessTimer timer(PreprocessTimingCategory::conditional, false);
 			std::string_view sv(line);
 			sv.remove_prefix("#ifdef"sv.length());
 			std::string symbol(std::string(extractNextToken(sv)));  // Convert to string for defines_ lookup
@@ -511,7 +522,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			condition_was_true_stack.push(is_defined);
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#ifndef", 0) == 0) {
-			PreprocessTimer timer("ifdef", false);
+			PreprocessTimer timer(PreprocessTimingCategory::conditional, false);
 			std::string_view sv(line);
 			sv.remove_prefix("#ifndef"sv.length());
 			std::string symbol(std::string(extractNextToken(sv)));
@@ -521,7 +532,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			condition_was_true_stack.push(!is_defined);
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#if", 0) == 0) {
-			PreprocessTimer timer("if", false);
+			PreprocessTimer timer(PreprocessTimingCategory::conditional, false);
 			// Extract and expand macros in the condition before evaluation
 			std::string condition = line.substr(3);	// Skip "#if"
 			condition = expandMacrosForConditional(condition);
@@ -533,7 +544,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			condition_was_true_stack.push(condition_true);
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#elif", 0) == 0) {
-			PreprocessTimer timer("if", false);
+			PreprocessTimer timer(PreprocessTimingCategory::conditional, false);
 			if (skipping_stack.empty() || condition_was_true_stack.empty()) {
 				FLASH_LOG(Lexer, Error, "Unmatched #elif directive");
 				return false;
@@ -554,7 +565,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#else", 0) == 0) {
-			PreprocessTimer timer("else", false);
+			PreprocessTimer timer(PreprocessTimingCategory::conditional, false);
 			if (skipping_stack.empty() || condition_was_true_stack.empty()) {
 				FLASH_LOG(Lexer, Error, "Unmatched #else directive");
 				return false;
@@ -568,7 +579,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#endif", 0) == 0) {
-			PreprocessTimer timer("endif", false);
+			PreprocessTimer timer(PreprocessTimingCategory::conditional, false);
 			if (!skipping_stack.empty()) {
 				FLASH_LOG(Lexer, Debug, "Preprocessor: #endif (not skipping), stack size before pop: ", skipping_stack.size(), " at ", filestack_.top().file_name, ":", line_number);
 				skipping_stack.pop();
@@ -580,7 +591,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#error", 0) == 0) {
-			PreprocessTimer timer("other", false);
+			PreprocessTimer timer(PreprocessTimingCategory::other, false);
 			std::string message = line.substr(6);
 			// Trim leading whitespace
 			size_t first_non_space = message.find_first_not_of(" \t");
@@ -731,7 +742,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			// Expand macros in non-directive lines (regular source code).
 			// Only expand if the line is non-empty to avoid unnecessary processing.
 			if (line.size() > 0) {
-				PreprocessTimer timer("macro", false);
+				PreprocessTimer timer(PreprocessTimingCategory::macro, false);
 				line = expandMacros(line);
 			}
 
@@ -739,31 +750,30 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 				std::cout << line << "\n";
 			}
 
-			append_line_with_tracking(line);
+			{
+				PreprocessTimer timer(PreprocessTimingCategory::line_append, false);
+				append_line_with_tracking(line);
+			}
 		}
 	}
 
 #if WITH_PREPROCESSOR_TIMINGS
-	// Print timing summary
-	double total_ms = (PreprocessTimer::total_getline.count() + PreprocessTimer::total_parse.count() +
-					   PreprocessTimer::total_comment.count() + PreprocessTimer::total_include.count() +
-					   PreprocessTimer::total_define.count() + PreprocessTimer::total_ifdef.count() +
-					   PreprocessTimer::total_if.count() + PreprocessTimer::total_else.count() +
-					   PreprocessTimer::total_endif.count() + PreprocessTimer::total_pragma.count() +
-					   PreprocessTimer::total_other.count() + PreprocessTimer::total_macro.count()) / 1000.0;
-	printf("    Preprocess timing (%zu lines):\n", PreprocessTimer::line_count);
-	printf("      getline      : %8.3f ms\n", PreprocessTimer::total_getline.count() / 1000.0);
-	printf("      comment      : %8.3f ms\n", PreprocessTimer::total_comment.count() / 1000.0);
-	printf("      include      : %8.3f ms\n", PreprocessTimer::total_include.count() / 1000.0);
-	printf("      define       : %8.3f ms\n", PreprocessTimer::total_define.count() / 1000.0);
-	printf("      ifdef        : %8.3f ms\n", PreprocessTimer::total_ifdef.count() / 1000.0);
-	printf("      if           : %8.3f ms\n", PreprocessTimer::total_if.count() / 1000.0);
-	printf("      else         : %8.3f ms\n", PreprocessTimer::total_else.count() / 1000.0);
-	printf("      endif        : %8.3f ms\n", PreprocessTimer::total_endif.count() / 1000.0);
-	printf("      pragma       : %8.3f ms\n", PreprocessTimer::total_pragma.count() / 1000.0);
-	printf("      other        : %8.3f ms\n", PreprocessTimer::total_other.count() / 1000.0);
-	printf("      macro        : %8.3f ms\n", PreprocessTimer::total_macro.count() / 1000.0);
-	printf("      total        : %8.3f ms\n", total_ms);
+	// Print timing summary - I/O + CPU breakdown
+	auto& t = PreprocessTimer::timings;
+	double total_ms = (t[static_cast<size_t>(PreprocessTimingCategory::include_exists)].count() + 
+					   t[static_cast<size_t>(PreprocessTimingCategory::include_read)].count()) / 1000.0;
+	printf("    Preprocess timing (%zu lines, %zu files):\n", PreprocessTimer::line_count, PreprocessTimer::files_processed);
+	printf("      I/O (open+read)          : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::include_exists)].count() / 1000.0);
+	printf("      CPU (all preprocessing) : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::include_read)].count() / 1000.0);
+	printf("        line read             : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::line_read)].count() / 1000.0);
+	printf("        line trim              : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::line_trim)].count() / 1000.0);
+	printf("        strip // comment       : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::line_comment)].count() / 1000.0);
+	printf("        append line            : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::line_append)].count() / 1000.0);
+	printf("        block /* */ comment   : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::comment)].count() / 1000.0);
+	printf("        #define                : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::define)].count() / 1000.0);
+	printf("        #if/#ifdef/#else/#endif: %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::conditional)].count() / 1000.0);
+	printf("        macro expansion        : %8.3f ms\n", t[static_cast<size_t>(PreprocessTimingCategory::macro)].count() / 1000.0);
+	printf("      TOTAL                    : %8.3f ms\n", total_ms);
 #endif
 
 	return true;
