@@ -1888,13 +1888,8 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 		TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 		param_types.push_back(int_type);
 	}
-	std::vector<std::string_view> namespace_for_mangling;
-	if (struct_name.find("::") == std::string_view::npos) {
-		namespace_for_mangling = buildNamespacePathFromHandle(operand_type_info->namespaceHandle());
-		if (namespace_for_mangling.empty() && func_decl.namespace_handle().isValid()) {
-			namespace_for_mangling = buildNamespacePathFromHandle(func_decl.namespace_handle());
-		}
-	}
+	std::vector<std::string> namespace_for_mangling =
+		resolveMemberNamespacePathForMangling(struct_name, func_decl.namespace_handle());
 	auto op_func_name = StringBuilder().append("operator").append(overloadableOperatorToString(op_kind)).commit();
 	auto mangled_name = NameMangling::generateMangledName(
 		op_func_name, return_type, param_types, false,

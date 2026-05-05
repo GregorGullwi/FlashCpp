@@ -205,5 +205,42 @@ inline bool needsHiddenReturnParam(TypeCategory type, int pointer_depth, bool is
 		   (size_in_bits > getStructReturnThreshold(is_llp64));
 }
 
+inline std::vector<std::string> buildNamespacePathStrings(NamespaceHandle namespace_handle) {
+	std::vector<std::string> namespace_path;
+	if (!namespace_handle.isValid()) {
+		return namespace_path;
+	}
+	auto namespace_views = buildNamespacePathFromHandle(namespace_handle);
+	namespace_path.reserve(namespace_views.size());
+	for (auto namespace_view : namespace_views) {
+		namespace_path.emplace_back(namespace_view);
+	}
+	return namespace_path;
+}
+
+inline bool tryGetStructNamespacePathStrings(std::string_view struct_name, std::vector<std::string>& namespace_path) {
+	namespace_path.clear();
+	if (struct_name.empty() || struct_name.find("::") != std::string_view::npos) {
+		return false;
+	}
+	auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
+	if (type_it == getTypesByNameMap().end()) {
+		return false;
+	}
+	namespace_path = buildNamespacePathStrings(type_it->second->namespaceHandle());
+	return true;
+}
+
+inline std::vector<std::string> resolveMemberNamespacePathForMangling(
+	std::string_view struct_name,
+	NamespaceHandle fallback_namespace_handle) {
+	std::vector<std::string> namespace_path;
+	tryGetStructNamespacePathStrings(struct_name, namespace_path);
+	if (namespace_path.empty() && fallback_namespace_handle.isValid()) {
+		namespace_path = buildNamespacePathStrings(fallback_namespace_handle);
+	}
+	return namespace_path;
+}
+
 // AstToIr class declaration (methods split across cpp files).
 #include "AstToIr.h"

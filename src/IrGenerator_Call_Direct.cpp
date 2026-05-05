@@ -773,22 +773,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					// Always recover from NamespaceHandle (not current_namespace_stack_)
 					// to handle template instantiations from a different namespace context.
 				std::vector<std::string> ns_path;
-				if (struct_name.find("::") == std::string_view::npos) {
-					auto name_handle = StringTable::getOrInternStringHandle(struct_name);
-					auto type_it = getTypesByNameMap().find(name_handle);
-					if (type_it != getTypesByNameMap().end()) {
-						auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
-						ns_path.reserve(ns_views.size());
-						for (auto sv : ns_views)
-							ns_path.emplace_back(sv);
-					}
-					if (ns_path.empty() && func_decl->namespace_handle().isValid()) {
-						auto ns_views = buildNamespacePathFromHandle(func_decl->namespace_handle());
-						ns_path.reserve(ns_views.size());
-						for (auto sv : ns_views)
-							ns_path.emplace_back(sv);
-					}
-				}
+				ns_path = resolveMemberNamespacePathForMangling(struct_name, func_decl->namespace_handle());
 				function_name = generateMangledNameForCall(*func_decl, struct_name, ns_path);
 			}
 		}

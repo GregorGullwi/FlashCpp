@@ -310,25 +310,14 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			// Always derive namespace from the struct's declaration-site NamespaceHandle
 			// rather than current_namespace_stack_, which may be the instantiation-site
 			// namespace when a template is instantiated from a different namespace.
-			auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_for_function);
-			auto type_it = getTypesByNameMap().find(struct_name_handle);
-			if (type_it != getTypesByNameMap().end()) {
-				struct_found = true;
-				auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
-				namespace_for_mangling.reserve(ns_views.size());
-				for (auto sv : ns_views)
-					namespace_for_mangling.emplace_back(sv);
-			}
+			struct_found = tryGetStructNamespacePathStrings(struct_name_for_function, namespace_for_mangling);
 		}
 		if (!struct_found && namespace_for_mangling.empty()) {
 			// Non-member functions, or struct not found: fall back to current stack.
 			// Do NOT fall back when the struct was found at global scope — an empty
 			// namespace_for_mangling is correct and must match the call-site mangling.
 			if (node.namespace_handle().isValid()) {
-				auto ns_views = buildNamespacePathFromHandle(node.namespace_handle());
-				namespace_for_mangling.reserve(ns_views.size());
-				for (auto sv : ns_views)
-					namespace_for_mangling.emplace_back(sv);
+				namespace_for_mangling = buildNamespacePathStrings(node.namespace_handle());
 			} else {
 				namespace_for_mangling = current_namespace_stack_;
 			}

@@ -71,6 +71,22 @@ bool placeholderReturnTypesMatch(const TypeSpecifierNode& lhs, const TypeSpecifi
 	return true;
 }
 
+bool markLazyMemberOdrUsedForMatchingConstness(
+	LazyMemberInstantiationRegistry& lazy_registry,
+	StringHandle owner_name,
+	StringHandle member_handle,
+	bool preferred_constness) {
+	for (bool const_variant : {preferred_constness, !preferred_constness}) {
+		LazyMemberKey member_key = LazyMemberKey::exact(owner_name, member_handle, const_variant);
+		if (!lazy_registry.needsInstantiation(member_key)) {
+			continue;
+		}
+		lazy_registry.markOdrUsed(member_key);
+		return true;
+	}
+	return false;
+}
+
 bool callableOperatorAcceptsArgumentCount(const FunctionDeclarationNode& candidate, size_t argument_count) {
 	const size_t min_required = countMinRequiredArgs(candidate);
 	if (argument_count < min_required) {
@@ -1692,16 +1708,16 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 		StringHandle owner_name = range_type_info->name();
 		StringHandle begin_handle = begin_func_decl.decl_node().identifier_token().handle();
 		StringHandle end_handle = end_func_decl.decl_node().identifier_token().handle();
-		for (StringHandle member : {begin_handle, end_handle}) {
-			for (bool is_const : {begin_func->is_const(), !begin_func->is_const()}) {
-				if (lazy_registry.needsInstantiation(
-						LazyMemberKey::exact(owner_name, member, is_const))) {
-					lazy_registry.markOdrUsed(
-						LazyMemberKey::exact(owner_name, member, is_const));
-					break;
-				}
-			}
-		}
+		markLazyMemberOdrUsedForMatchingConstness(
+			lazy_registry,
+			owner_name,
+			begin_handle,
+			begin_func->is_const());
+		markLazyMemberOdrUsedForMatchingConstness(
+			lazy_registry,
+			owner_name,
+			end_handle,
+			end_func->is_const());
 	}
 
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_specifier_node();
@@ -5523,14 +5539,11 @@ void SemanticAnalysis::tryResolveUnaryDereferenceOperator(const UnaryOperatorNod
 		auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
 		// Resolver constness can be lost on pattern-owned operator* declarations;
 		// mark whichever concrete lazy entry exists for the receiver instantiation.
-		for (bool const_variant : {best_match->is_const_member_function(), !best_match->is_const_member_function()}) {
-			if (lazy_registry.needsInstantiation(
-					LazyMemberKey::exact(receiver_name, member_handle, const_variant))) {
-				lazy_registry.markOdrUsed(
-					LazyMemberKey::exact(receiver_name, member_handle, const_variant));
-				break;
-			}
-		}
+		markLazyMemberOdrUsedForMatchingConstness(
+			lazy_registry,
+			receiver_name,
+			member_handle,
+			best_match->is_const_member_function());
 	}
 
 	op_unary_deref_table_[&unary_node] = best_match;
@@ -6386,17 +6399,11 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 		// Resolver may have lost const-qualification info when it resolves a
 		// member call through a pack/using-decl/instantiated path; try both
 		// const variants and mark whichever the lazy registry actually knows.
-		bool marked = false;
-		for (bool const_variant : {is_const, !is_const}) {
-			if (lazy_registry.needsInstantiation(
-					LazyMemberKey::exact(candidate_name, member_handle, const_variant))) {
-				lazy_registry.markOdrUsed(
-					LazyMemberKey::exact(candidate_name, member_handle, const_variant));
-				marked = true;
-				break;
-			}
-		}
-		return marked;
+		return markLazyMemberOdrUsedForMatchingConstness(
+			lazy_registry,
+			candidate_name,
+			member_handle,
+			is_const);
 	};
 
 	if (try_mark(receiver_type_info)) {
