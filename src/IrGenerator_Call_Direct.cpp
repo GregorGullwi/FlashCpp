@@ -755,7 +755,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	const FunctionDeclarationNode* matched_func_decl = nullptr;
 
 		// Helper: resolve mangled name from a matched function declaration
-	auto resolveMangledName = [&](const FunctionDeclarationNode* func_decl, std::string_view struct_name = "") {
+	auto resolveMangledName = [&](const FunctionDeclarationNode* func_decl, StringHandle struct_name = StringHandle{}) {
 		// Template-instantiation call nodes can carry the exact symbol name even when
 		// the resolved declaration still points at pattern-owned metadata.
 		if (has_precomputed_mangled) {
@@ -765,16 +765,14 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (func_decl->has_mangled_name()) {
 			function_name = func_decl->mangled_name();
 		} else if (func_decl->linkage() != Linkage::C) {
-			if (struct_name.empty()) {
-				function_name = generateMangledNameForCall(*func_decl, "", func_decl->namespace_handle());
+			if (!struct_name.isValid()) {
+				function_name = generateMangledNameForCall(*func_decl, StringHandle{}, func_decl->namespace_handle());
 			} else {
 				const OwnerManglingInfo owner_info =
-					resolveOwnerManglingInfoForMangling(struct_name, func_decl->namespace_handle());
+					resolveOwnerManglingInfoForMangling(StringTable::getStringView(struct_name), func_decl->namespace_handle());
 				function_name = generateMangledNameForCall(
 					*func_decl,
-					owner_info.owner_name_for_mangling.isValid()
-						? StringTable::getStringView(owner_info.owner_name_for_mangling)
-						: std::string_view{},
+					owner_info.owner_name_for_mangling,
 					owner_info.owner_namespace_handle);
 			}
 		}
@@ -859,10 +857,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (!struct_name.isValid() || !struct_info) {
 			return;
 		}
-		std::vector<std::string> ns_stack;
-		buildNamespaceStack(preferred_qualified_name, ns_stack);
-		if (ns_stack.empty()) {
-			buildNamespaceStack(StringTable::getStringView(struct_name), ns_stack);
+		NamespaceHandle namespace_handle = buildNamespaceHandleFromQualifiedIdentifier(preferred_qualified_name);
+		if (!namespace_handle.isValid() || namespace_handle.isGlobal()) {
+			namespace_handle = buildNamespaceHandleForStructName(struct_name);
 		}
 		for (const auto& member_func : struct_info->member_functions) {
 			// Phase 5 Slice K: sema's end-of-normalization drain materializes
@@ -875,7 +872,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			DeferredMemberFunctionInfo deferred_info;
 			deferred_info.struct_name = struct_name;
 			deferred_info.function_node = member_func.function_decl;
-			deferred_info.namespace_stack = ns_stack;
+			deferred_info.namespace_handle = namespace_handle;
 			deferred_member_functions_.push_back(std::move(deferred_info));
 		}
 	};

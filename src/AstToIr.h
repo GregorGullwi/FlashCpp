@@ -34,12 +34,12 @@ public:
 	void normalizePendingSemanticRoots();
 
 	// Queue a freshly-materialized member function/constructor body for
-	// deferred codegen. Builds the namespace stack from `qualified_name_for_ns`
-	// (falling back to the owning struct's qualified name when empty).
+	// deferred codegen. Uses declaration-site namespace metadata and falls back
+	// to the owning struct's namespace when needed.
 	void queueDeferredMemberFunctionFromNode(
 		StringHandle struct_name,
 		ASTNode function_node,
-		std::string_view qualified_name_for_ns);
+		NamespaceHandle namespace_handle);
 
 	void reserveInstructions(size_t capacity) {
 		ir_.reserve(capacity);
@@ -349,9 +349,9 @@ private:
 	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode,
 										ExpressionContext context);
 	ExprResult generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, NamespaceHandle namespace_handle, bool is_const_method);
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, NamespaceHandle namespace_handle, bool is_const_method);
-	std::string_view generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override, NamespaceHandle namespace_handle);
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method);
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method);
+	std::string_view generateMangledNameForCall(const FunctionDeclarationNode& func_node, StringHandle struct_name_override, NamespaceHandle namespace_handle);
 	std::optional<ExprResult> tryGenerateIntrinsicIr(std::string_view func_name, const CallExprNode& callExprNode);
 	ExprResult generateBuiltinAbsIntIntrinsic(const CallExprNode& callExprNode);
 	ExprResult generateBuiltinAbsFloatIntrinsic(const CallExprNode& callExprNode, std::string_view func_name);
@@ -1195,7 +1195,7 @@ private:
 	struct DeferredMemberFunctionInfo {
 		StringHandle struct_name;
 		ASTNode function_node;
-		std::vector<std::string> namespace_stack;
+		NamespaceHandle namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
 	};
 	std::vector<DeferredMemberFunctionInfo> deferred_member_functions_;
 

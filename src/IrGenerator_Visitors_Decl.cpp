@@ -304,15 +304,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	// (e.g., "std::simple" already has the namespace embedded, so we shouldn't also pass ["std"])
 	// This avoids double-encoding the namespace in the mangled name
 	NamespaceHandle namespace_for_mangling = NamespaceRegistry::GLOBAL_NAMESPACE;
-	std::string_view mangling_struct_name = struct_name_for_function;
+	StringHandle mangling_struct_name = StringTable::getOrInternStringHandle(struct_name_for_function);
 	if (node.is_member_function() && !struct_name_for_function.empty()) {
 		// Resolve the owner type from the declaration namespace first so same-named
 		// classes in different namespaces do not collide during mangling.
 		const OwnerManglingInfo owner_info =
 			resolveOwnerManglingInfoForMangling(struct_name_for_function, node.namespace_handle());
-		mangling_struct_name = owner_info.owner_name_for_mangling.isValid()
-			? StringTable::getStringView(owner_info.owner_name_for_mangling)
-			: std::string_view{};
+		mangling_struct_name = owner_info.owner_name_for_mangling;
 		namespace_for_mangling = owner_info.owner_namespace_handle;
 	} else if (node.namespace_handle().isValid()) {
 		namespace_for_mangling = node.namespace_handle();
@@ -529,7 +527,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 									if (mf.function_decl.is<FunctionDeclarationNode>()) {
 										const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
 											// Use generateMangledNameForCall for consistent mangling across platforms
-										std::string_view member_struct_name = StringTable::getStringView(member_type_info->name());
+										StringHandle member_struct_name = member_type_info->name();
 										member_spaceship_mangled = StringTable::getOrInternStringHandle(
 											generateMangledNameForCall(spaceship_func, member_struct_name, {}));
 									}
@@ -789,7 +787,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
 							// Use generateMangledNameForCall for consistent mangling across platforms
 							spaceship_mangled = StringTable::getOrInternStringHandle(
-								generateMangledNameForCall(spaceship_func, node.parent_struct_name(), {}));
+								generateMangledNameForCall(spaceship_func, StringTable::getOrInternStringHandle(node.parent_struct_name()), {}));
 						}
 						break;
 					}
@@ -865,7 +863,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 						for (const auto& mf : member_struct_info->member_functions) {
 							if (mf.operator_kind == OverloadableOperator::Equal && mf.function_decl.is<FunctionDeclarationNode>()) {
 								const auto& equal_func = mf.function_decl.as<FunctionDeclarationNode>();
-								std::string_view member_struct_name = StringTable::getStringView(member_type_info->name());
+								StringHandle member_struct_name = member_type_info->name();
 								member_equal_mangled = StringTable::getOrInternStringHandle(
 									generateMangledNameForCall(equal_func, member_struct_name, {}));
 								break;
@@ -1654,7 +1652,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 			TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 			ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
 				ctor_function_name, return_type, node.parameter_nodes(),
-				false, struct_name_for_ctor, empty_namespace_path, Linkage::CPlusPlus, false, false,
+				false, StringTable::getOrInternStringHandle(struct_name_for_ctor), empty_namespace_path, Linkage::CPlusPlus, false, false,
 				emit_split_ctor_variants ? NameMangling::ConstructorVariant::BaseObject : NameMangling::ConstructorVariant::Complete));
 		} else {
 			assert(false && "Unhandled name mangling type");

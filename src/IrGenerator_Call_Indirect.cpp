@@ -178,7 +178,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				return_type_node,
 				param_types,
 				false, // not variadic
-				"", // not a member function
+				StringHandle{}, // not a member function
 				{}, // namespace_path
 				false // free function, never const
 			);
@@ -1668,9 +1668,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					*mangling_return_type,
 					param_types,
 					func_for_mangling->is_variadic(),
-					owner_info.owner_name_for_mangling.isValid()
-						? StringTable::getStringView(owner_info.owner_name_for_mangling)
-						: std::string_view{},
+					owner_info.owner_name_for_mangling,
 					owner_info.owner_namespace_handle,
 					func_for_mangling->is_const_member_function());
 				function_name = StringTable::getOrInternStringHandle(mangled);

@@ -1571,7 +1571,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 							return_type,
 							param_types,
 							false, // not variadic
-							struct_name,
+							StringTable::getOrInternStringHandle(struct_name),
 							empty_namespace,
 							Linkage::CPlusPlus,
 							member_func.is_const());
@@ -1935,7 +1935,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					return_type,
 					param_types,
 					false, // not variadic
-					"", // no struct (free function)
+					StringHandle{}, // no struct (free function)
 					namespace_path,
 					Linkage::CPlusPlus,
 					false // free function, never const
@@ -2036,7 +2036,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				return_type,
 				param_types,
 				false, // not variadic
-				struct_name,
+				StringTable::getOrInternStringHandle(struct_name),
 				empty_namespace,
 				Linkage::CPlusPlus,
 				member_func.is_const());
@@ -2265,7 +2265,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						resolved_return_type_node,
 						param_types,
 						false, // not variadic
-						StringTable::getStringView(spaceship_struct->name),
+						spaceship_struct->name,
 						{}, // namespace_path
 						func_decl.is_const_member_function());
 
@@ -3344,28 +3344,28 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	}
 }
 
-std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, NamespaceHandle namespace_handle, bool is_const_method) {
+std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method) {
 	return NameMangling::generateMangledName(name, return_type, param_types, is_variadic, struct_name, namespace_handle, Linkage::CPlusPlus, is_const_method).view();
 }
 
-std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, NamespaceHandle namespace_handle, bool is_const_method) {
+std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method) {
 	return NameMangling::generateMangledName(name, return_type, param_nodes, is_variadic, struct_name, namespace_handle, Linkage::CPlusPlus, is_const_method).view();
 }
 
-std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override, NamespaceHandle namespace_handle) {
+std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNode& func_node, StringHandle struct_name_override, NamespaceHandle namespace_handle) {
 	const DeclarationNode& decl_node = func_node.decl_node();
 	const TypeSpecifierNode& return_type = decl_node.type_specifier_node();
 	std::string_view func_name = decl_node.identifier_token().value();
 
-	std::string_view struct_name = !struct_name_override.empty() ? struct_name_override
-																 : (func_node.is_member_function() ? func_node.parent_struct_name() : std::string_view{});
+	StringHandle struct_name = struct_name_override.isValid() ? struct_name_override
+															  : (func_node.is_member_function() ? StringTable::getOrInternStringHandle(func_node.parent_struct_name()) : StringHandle{});
 
 	// For member functions, resolve self-referential parameter types in template-instantiated
 	// structs. When a template class has `operator+=(const W& other)`, the stored param type
 	// still references the template base `W` (with total_size=0) instead of the instantiation
 	// `W<int>`. Resolve by looking up the enclosing struct's type_index.
-	if (!struct_name.empty()) {
-		auto struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
+	if (struct_name.isValid()) {
+		auto struct_it = getTypesByNameMap().find(struct_name);
 		if (struct_it != getTypesByNameMap().end()) {
 			TypeIndex struct_type_index = struct_it->second->type_index_;
 			bool needs_resolution = false;

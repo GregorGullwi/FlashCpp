@@ -13,32 +13,13 @@ void AstToIr::normalizePendingSemanticRoots() {
 void AstToIr::queueDeferredMemberFunctionFromNode(
 	StringHandle struct_name,
 	ASTNode function_node,
-	std::string_view qualified_name_for_ns) {
+	NamespaceHandle namespace_handle) {
 	DeferredMemberFunctionInfo deferred_info;
 	deferred_info.struct_name = struct_name;
 	deferred_info.function_node = function_node;
-
-	auto buildNamespaceStack = [](std::string_view qualified_name, std::vector<std::string>& out) {
-		const size_t ns_end = qualified_name.rfind("::");
-		if (ns_end == std::string_view::npos) {
-			return;
-		}
-		std::string_view ns_part = qualified_name.substr(0, ns_end);
-		size_t start = 0;
-		while (start < ns_part.size()) {
-			size_t pos = ns_part.find("::", start);
-			if (pos == std::string_view::npos) {
-				out.emplace_back(ns_part.substr(start));
-				break;
-			}
-			out.emplace_back(ns_part.substr(start, pos - start));
-			start = pos + 2;
-		}
-	};
-
-	buildNamespaceStack(qualified_name_for_ns, deferred_info.namespace_stack);
-	if (deferred_info.namespace_stack.empty() && struct_name.isValid()) {
-		buildNamespaceStack(StringTable::getStringView(struct_name), deferred_info.namespace_stack);
+	deferred_info.namespace_handle = namespace_handle;
+	if (!deferred_info.namespace_handle.isValid()) {
+		deferred_info.namespace_handle = buildNamespaceHandleForStructName(struct_name);
 	}
 	deferred_member_functions_.push_back(std::move(deferred_info));
 }

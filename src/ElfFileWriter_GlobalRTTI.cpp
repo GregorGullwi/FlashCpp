@@ -823,7 +823,7 @@ std::string_view ElfFileWriter::generateMangledName(std::string_view name, const
 		sig.return_type,
 		sig.parameter_types,
 		sig.is_variadic,
-		sig.class_name,
+		StringTable::getOrInternStringHandle(sig.class_name),
 		namespace_path,
 		sig.linkage,
 		sig.is_const,

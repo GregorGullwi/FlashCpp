@@ -4414,7 +4414,7 @@ ParseResult Parser::parse_template_declaration() {
 
 				specialization_mangled_name = NameMangling::generateMangledNameWithTemplateArgs(
 					func_base_name, return_type, param_types, spec_non_type_args,
-					func_for_mangling.is_variadic(), "", namespace_handle, false);
+					func_for_mangling.is_variadic(), StringHandle{}, namespace_handle, false);
 			} else if (!spec_template_args.empty()) {
 				// Use the version that includes TYPE template arguments in the mangled name
 				// This handles specializations like sum<int>, sum<int, int>
@@ -4432,7 +4432,7 @@ ParseResult Parser::parse_template_declaration() {
 
 				specialization_mangled_name = NameMangling::generateMangledNameWithTypeTemplateArgs(
 					func_base_name, return_type, param_types, spec_template_args,
-					func_for_mangling.is_variadic(), "", namespace_handle, false);
+					func_for_mangling.is_variadic(), StringHandle{}, namespace_handle, false);
 			} else {
 				// Regular specialization without any template args.
 				// Probed 2026-04-29 across the full 2243-test corpus with a hard-fail guard
