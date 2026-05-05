@@ -660,9 +660,12 @@ std::string_view Parser::instantiate_and_register_base_template(
 		}
 	}
 
-	// Check if the base class is a template class
+	// Check if the base class is a template class.  Lookup materialization also
+	// routes explicit function-template names through this helper, so non-class
+	// templates must report "not a class instantiation" instead of falling into
+	// the base-class-only internal error below.
 	auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
-	if (template_entry) {
+	if (template_entry && template_entry->is<TemplateClassDeclarationNode>()) {
 		// Try to instantiate the base template
 		auto instantiated_base = try_instantiate_class_template(base_class_name, template_args);
 
