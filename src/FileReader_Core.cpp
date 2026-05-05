@@ -28,7 +28,7 @@ struct PreprocessTimer {
 	std::chrono::high_resolution_clock::time_point start;
 	PreprocessTimingCategory category;
 
-	PreprocessTimer(PreprocessTimingCategory cat, bool = false) : category(cat) {
+	PreprocessTimer(PreprocessTimingCategory cat) : category(cat) {
 		start = std::chrono::high_resolution_clock::now();
 	}
 
@@ -77,7 +77,7 @@ struct ScopedPreprocessTimingSummary {
 #else
 // Dummy struct when timings are disabled - no-op
 struct PreprocessTimer {
-	PreprocessTimer(PreprocessTimingCategory, bool = false) {}
+	PreprocessTimer(PreprocessTimingCategory) {}
 	static inline std::chrono::microseconds timings[1] = {};
 	static inline size_t line_count{0};
 	static inline size_t files_processed{0};
@@ -252,7 +252,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 	// Modified loop to handle pending lines - using string_view instead of istringstream
 	auto getNextLine = [&]() -> bool {
 #if WITH_PREPROCESSOR_TIMINGS
-		PreprocessTimer timer(PreprocessTimingCategory::line_read, false);
+		PreprocessTimer timer(PreprocessTimingCategory::line_read);
 #endif
 		if (has_pending_line) {
 			line = std::move(pending_line);
@@ -264,12 +264,12 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 		size_t newline_pos = content_view.find('\n');
 		if (newline_pos == std::string_view::npos) {
 			if (content_view.empty()) return false;
-			line = std::string(content_view);
+			line = content_view;
 			content_view = {};
 			stripTrailingCarriageReturn(line);
 			return true;
 		}
-		line = std::string(content_view.substr(0, newline_pos));
+		line = content_view.substr(0, newline_pos);
 		content_view = content_view.substr(newline_pos + 1);
 		stripTrailingCarriageReturn(line);
 		return true;
@@ -287,7 +287,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 		}
 
 		{
-			PreprocessTimer timer(PreprocessTimingCategory::line_trim, false);
+			PreprocessTimer timer(PreprocessTimingCategory::line_trim);
 			size_t first_none_tab = line.find_first_not_of('\t');
 			if (first_none_tab != std::string::npos && first_none_tab != 0)
 				line.erase(line.begin(), line.begin() + first_none_tab);
@@ -313,7 +313,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 		}
 
 		{
-			PreprocessTimer timer(PreprocessTimingCategory::comment, false);
+			PreprocessTimer timer(PreprocessTimingCategory::comment);
 			// Strip /* ... */ block comments in a single left-to-right pass,
 			// respecting string and char literals.  Handles multiple block
 			// comments on one line and unterminated block comments that span
@@ -382,7 +382,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 						++i;
 					}
 				}
-				line = result;
+				line.swap(result);
 				result.clear();  // Reuse buffer for next iteration
 				if (in_comment)
 					continue;
@@ -433,7 +433,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 		// Strip // single-line comments (C++ standard §5.2: comments are replaced
 		// by a single space in translation phase 3, after line splicing in phase 2).
 		{
-			PreprocessTimer timer(PreprocessTimingCategory::line_comment, false);
+			PreprocessTimer timer(PreprocessTimingCategory::line_comment);
 			stripLineComment(line);
 		}
 
@@ -509,7 +509,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			// Used by C++ standard library headers to include underlying C headers.
 			// Must be checked before #include since #include_next starts with #include.
 			append_line_with_tracking("// " + line);
-			PreprocessTimer timer(PreprocessTimingCategory::include, false);
+			PreprocessTimer timer(PreprocessTimingCategory::include);
 
 			if (!processIncludeNextDirective(line, filestack_.top().file_name, line_number)) {
 				return false;
@@ -519,7 +519,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			// Record the #include line in line_map BEFORE processing it
 			// so that the included file can find its parent
 			append_line_with_tracking("// " + line);	 // Comment it out in output
-			PreprocessTimer timer(PreprocessTimingCategory::include, false);
+			PreprocessTimer timer(PreprocessTimingCategory::include);
 
 			if (!processIncludeDirective(line, filestack_.top().file_name, line_number)) {
 				return false;
@@ -527,16 +527,16 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			// Reset prev_line_number so we print the next row
 			prev_line_number = 0;
 		} else if (line.find("#define", 0) == 0) {
-			PreprocessTimer timer(PreprocessTimingCategory::define, false);
+			PreprocessTimer timer(PreprocessTimingCategory::define);
 			std::istringstream iss(line);
 			iss.seekg("#define"sv.length());
 			handleDefine(iss);
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#ifdef", 0) == 0) {
-			PreprocessTimer timer(PreprocessTimingCategory::conditional, false);
+			PreprocessTimer timer(PreprocessTimingCategory::conditional);
 			std::string_view sv(line);
 			sv.remove_prefix("#ifdef"sv.length());
-			std::string symbol(std::string(extractNextToken(sv)));  // Convert to string for defines_ lookup
+			std::string symbol(extractNextToken(sv));  // Convert to string for defines_ lookup
 			// __has_builtin is a compiler intrinsic - standard library uses "#ifdef __has_builtin"
 			// to check if the feature is available, then uses __has_builtin(x) with arguments.
 			// We return true for "#ifdef __has_builtin" so the library defines _GLIBCXX_HAS_BUILTIN.
@@ -546,17 +546,17 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			condition_was_true_stack.push(is_defined);
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#ifndef", 0) == 0) {
-			PreprocessTimer timer(PreprocessTimingCategory::conditional, false);
+			PreprocessTimer timer(PreprocessTimingCategory::conditional);
 			std::string_view sv(line);
 			sv.remove_prefix("#ifndef"sv.length());
-			std::string symbol(std::string(extractNextToken(sv)));
+			std::string symbol(extractNextToken(sv));
 			bool is_defined = defines_.count(symbol) > 0;
 			FLASH_LOG(Lexer, Debug, "Preprocessor: #ifndef ", symbol, " (defined=", is_defined, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size() + 1, " at ", filestack_.top().file_name, ":", line_number);
 			skipping_stack.push(is_defined);
 			condition_was_true_stack.push(!is_defined);
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#if", 0) == 0) {
-			PreprocessTimer timer(PreprocessTimingCategory::conditional, false);
+			PreprocessTimer timer(PreprocessTimingCategory::conditional);
 			// Extract and expand macros in the condition before evaluation
 			std::string condition = line.substr(3);	// Skip "#if"
 			condition = expandMacrosForConditional(condition);
@@ -568,7 +568,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			condition_was_true_stack.push(condition_true);
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#elif", 0) == 0) {
-			PreprocessTimer timer(PreprocessTimingCategory::conditional, false);
+			PreprocessTimer timer(PreprocessTimingCategory::conditional);
 			if (skipping_stack.empty() || condition_was_true_stack.empty()) {
 				FLASH_LOG(Lexer, Error, "Unmatched #elif directive");
 				return false;
@@ -589,7 +589,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#else", 0) == 0) {
-			PreprocessTimer timer(PreprocessTimingCategory::conditional, false);
+			PreprocessTimer timer(PreprocessTimingCategory::conditional);
 			if (skipping_stack.empty() || condition_was_true_stack.empty()) {
 				FLASH_LOG(Lexer, Error, "Unmatched #else directive");
 				return false;
@@ -603,7 +603,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#endif", 0) == 0) {
-			PreprocessTimer timer(PreprocessTimingCategory::conditional, false);
+			PreprocessTimer timer(PreprocessTimingCategory::conditional);
 			if (!skipping_stack.empty()) {
 				FLASH_LOG(Lexer, Debug, "Preprocessor: #endif (not skipping), stack size before pop: ", skipping_stack.size(), " at ", filestack_.top().file_name, ":", line_number);
 				skipping_stack.pop();
@@ -615,7 +615,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#error", 0) == 0) {
-			PreprocessTimer timer(PreprocessTimingCategory::other, false);
+			PreprocessTimer timer(PreprocessTimingCategory::other);
 			std::string message = line.substr(6);
 			// Trim leading whitespace
 			size_t first_non_space = message.find_first_not_of(" \t");
@@ -665,10 +665,10 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 				size_t newline_pos = content_view.find('\n');
 				if (newline_pos == std::string_view::npos) {
 					if (content_view.empty()) return false;
-					next_line = std::string(content_view);
+					next_line = content_view;
 					content_view = {};
 				} else {
-					next_line = std::string(content_view.substr(0, newline_pos));
+					next_line = content_view.substr(0, newline_pos);
 					content_view = content_view.substr(newline_pos + 1);
 				}
 				stripTrailingCarriageReturn(next_line);
@@ -723,12 +723,12 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 								if (newline_pos == std::string_view::npos) {
 									if (content_view.empty()) got_peek = false;
 									else {
-										peek_line = std::string(content_view);
+										peek_line = content_view;
 										content_view = {};
 										got_peek = true;
 									}
 								} else {
-									peek_line = std::string(content_view.substr(0, newline_pos));
+									peek_line = content_view.substr(0, newline_pos);
 									content_view = content_view.substr(newline_pos + 1);
 									got_peek = true;
 								}
@@ -766,7 +766,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			// Expand macros in non-directive lines (regular source code).
 			// Only expand if the line is non-empty to avoid unnecessary processing.
 			if (line.size() > 0) {
-				PreprocessTimer timer(PreprocessTimingCategory::macro, false);
+				PreprocessTimer timer(PreprocessTimingCategory::macro);
 				line = expandMacros(line);
 			}
 
@@ -775,7 +775,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 
 			{
-				PreprocessTimer timer(PreprocessTimingCategory::line_append, false);
+				PreprocessTimer timer(PreprocessTimingCategory::line_append);
 				append_line_with_tracking(line);
 			}
 		}
