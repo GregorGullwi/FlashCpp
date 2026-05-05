@@ -4811,8 +4811,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							template_params,
 							template_args_to_use,
 							[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
-								std::string_view mutable_template_name = concrete_base_template_name;
-								return instantiate_and_register_base_template(mutable_template_name, concrete_base_args);
+								return instantiate_and_register_base_template(concrete_base_template_name, concrete_base_args);
 							})) {
 						TypeIndex resolved_type_index =
 							resolved_type_info->registeredTypeIndex().withCategory(resolved_type_info->typeEnum());
