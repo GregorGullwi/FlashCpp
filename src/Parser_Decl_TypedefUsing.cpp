@@ -4,6 +4,131 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+// Parse the function type suffix used in aliases such as ReturnType (*)(Args...),
+// including vendor calling conventions, variadic ellipses, and trailing noexcept.
+// Returns false after restoring the token position when the next tokens are not
+// a supported alias function type.
+bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::string_view log_context) {
+	if (peek() != "("_tok) {
+		return false;
+	}
+
+	SaveHandle func_type_saved_pos = save_token_position();
+	advance(); // consume '('
+
+	CallingConvention calling_conv = parse_calling_convention(CallingConvention::Default);
+	bool is_function_ref = false;
+	bool is_rvalue_function_ref = false;
+	bool is_function_ptr = false;
+
+	if (!peek().is_eof()) {
+		if (peek() == "&&"_tok) {
+			is_rvalue_function_ref = true;
+			advance();
+		} else if (peek() == "&"_tok) {
+			advance();
+			if (peek() == "&"_tok) {
+				is_rvalue_function_ref = true;
+				advance();
+			} else {
+				is_function_ref = true;
+			}
+		} else if (peek() == "*"_tok) {
+			is_function_ptr = true;
+			advance();
+		}
+	}
+
+	if (is_function_ref || is_rvalue_function_ref || is_function_ptr) {
+		if (peek() != ")"_tok) {
+			restore_token_position(func_type_saved_pos);
+			return false;
+		}
+		advance();
+
+		if (peek() != "("_tok) {
+			restore_token_position(func_type_saved_pos);
+			return false;
+		}
+		advance();
+
+		std::vector<TypeIndex> param_types;
+		auto param_result = parse_function_pointer_parameter_types(param_types);
+		if (param_result.is_error()) {
+			restore_token_position(func_type_saved_pos);
+			return false;
+		}
+
+		if (peek() != ")"_tok) {
+			restore_token_position(func_type_saved_pos);
+			return false;
+		}
+		advance();
+
+		bool is_noexcept = peek() == "noexcept"_tok;
+		skip_noexcept_specifier();
+
+		FunctionSignature func_sig;
+		func_sig.return_type_index = type_spec.type_index();
+		func_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
+		func_sig.return_reference_qualifier = type_spec.reference_qualifier();
+		func_sig.parameter_type_indices = std::move(param_types);
+		func_sig.calling_convention = calling_conv;
+		func_sig.is_noexcept = is_noexcept;
+
+		if (is_function_ptr) {
+			type_spec.add_pointer_level(CVQualifier::None);
+		}
+		type_spec.set_function_signature(func_sig);
+
+		if (is_function_ref) {
+			type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);
+		} else if (is_rvalue_function_ref) {
+			type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);
+		}
+
+		std::string_view function_type_kind = "lvalue ref";
+		if (is_function_ptr) {
+			function_type_kind = "pointer";
+		} else if (is_rvalue_function_ref) {
+			function_type_kind = "rvalue ref";
+		}
+		FLASH_LOG_FORMAT(Parser, Debug, "Parsed function reference/pointer type: {} to function{}",
+						 function_type_kind, log_context);
+		discard_saved_token(func_type_saved_pos);
+		return true;
+	}
+
+	std::vector<TypeIndex> param_types;
+	auto param_result = parse_function_pointer_parameter_types(param_types);
+	if (param_result.is_error()) {
+		restore_token_position(func_type_saved_pos);
+		return false;
+	}
+
+	if (peek() != ")"_tok) {
+		restore_token_position(func_type_saved_pos);
+		return false;
+	}
+	advance();
+
+	bool is_noexcept = peek() == "noexcept"_tok;
+	skip_noexcept_specifier();
+
+	FunctionSignature func_sig;
+	func_sig.return_type_index = type_spec.type_index();
+	func_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
+	func_sig.return_reference_qualifier = type_spec.reference_qualifier();
+	func_sig.parameter_type_indices = std::move(param_types);
+	func_sig.calling_convention = calling_conv;
+	func_sig.is_noexcept = is_noexcept;
+	type_spec.set_function_signature(func_sig);
+
+	FLASH_LOG_FORMAT(Parser, Debug, "Parsed bare function type in type alias{}", log_context);
+	discard_saved_token(func_type_saved_pos);
+	return true;
+}
+
 ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access) {
 	advance(); // consume 'typedef' or 'using'
 
@@ -198,171 +323,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			type_spec.add_pointer_level(ptr_cv);
 		}
 
-		// Check for function pointer/reference type syntax: ReturnType (&)(...) or ReturnType (*)(...)
-		// Pattern: Type (&)() = lvalue reference to function returning Type
-		// Pattern: Type (&&)() = rvalue reference to function returning Type
-		// Pattern: Type (*)() = pointer to function returning Type
-		// This handles types like: int (&)(), _Xp (&)(), etc.
-		if (peek() == "("_tok) {
-			auto func_type_saved_pos = save_token_position();
-			advance(); // consume '('
-
-			// Check what's inside the parentheses: &, &&, or *
-			bool is_function_ref = false;
-			bool is_rvalue_function_ref = false;
-			bool is_function_ptr = false;
-
-			if (!peek().is_eof()) {
-				if (peek() == "&&"_tok) {
-					is_rvalue_function_ref = true;
-					advance(); // consume '&&'
-				} else if (peek() == "&"_tok) {
-					is_function_ref = true;
-					advance(); // consume '&'
-					// Check for second & (in case lexer didn't combine them)
-					if (peek() == "&"_tok) {
-						is_rvalue_function_ref = true;
-						is_function_ref = false;
-						advance(); // consume second '&'
-					}
-				} else if (peek() == "*"_tok) {
-					is_function_ptr = true;
-					advance(); // consume '*'
-				}
-			}
-
-			// After &, &&, or *, expect ')'
-			if ((is_function_ref || is_rvalue_function_ref || is_function_ptr) &&
-				peek() == ")"_tok) {
-				advance(); // consume ')'
-
-				// Now expect '(' for the parameter list
-				if (peek() == "("_tok) {
-					advance(); // consume '('
-
-					// Parse parameter list (can be empty or have parameters)
-					// For now, we'll skip the parameter list - we just need to recognize the syntax
-					// and accept it for type traits purposes
-					std::vector<TypeIndex> param_types;
-					while (!peek().is_eof() && peek() != ")"_tok) {
-						// Skip parameter - can be complex types
-						auto param_type_result = parse_type_specifier();
-						if (!param_type_result.is_error() && param_type_result.node().has_value()) {
-							const TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
-							param_types.push_back(param_type.type_index());
-						}
-
-						// Handle pointer/reference/cv-qualifier modifiers after type
-						while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok ||
-							   peek() == "const"_tok || peek() == "volatile"_tok) {
-							advance();
-						}
-
-						// Handle pack expansion '...' (e.g., _Args...)
-						if (peek() == "..."_tok) {
-							advance(); // consume '...'
-						}
-
-						// Check for comma
-						if (peek() == ","_tok) {
-							advance(); // consume ','
-						} else {
-							break;
-						}
-					}
-
-					if (peek() == ")"_tok) {
-						advance(); // consume ')'
-
-						// Successfully parsed function reference/pointer type!
-						// Mark the type accordingly
-						FunctionSignature func_sig;
-						func_sig.return_type_index = type_spec.type_index();
-						func_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
-						func_sig.return_reference_qualifier = type_spec.reference_qualifier();
-						func_sig.parameter_type_indices = std::move(param_types);
-
-						if (is_function_ptr) {
-							type_spec.add_pointer_level(CVQualifier::None);
-						}
-						type_spec.set_function_signature(func_sig);
-
-						if (is_function_ref) {
-							type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference); // lvalue reference
-						} else if (is_rvalue_function_ref) {
-							type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference); // rvalue reference
-						}
-
-						FLASH_LOG(Parser, Debug, "Parsed function reference/pointer type: ",
-								  is_function_ptr ? "pointer" : (is_rvalue_function_ref ? "rvalue ref" : "lvalue ref"),
-								  " to function");
-
-						// Discard saved position - we successfully parsed
-						discard_saved_token(func_type_saved_pos);
-					} else {
-						// Parsing failed - restore position
-						restore_token_position(func_type_saved_pos);
-					}
-				} else {
-					// No parameter list follows - restore position
-					restore_token_position(func_type_saved_pos);
-				}
-			} else if (!is_function_ref && !is_rvalue_function_ref && !is_function_ptr) {
-				// Could be a bare function type: ReturnType(Args...)
-				// e.g., using type = _Res(_Args...);
-				// The '(' was already consumed, we're looking at the first parameter type or ')'
-				std::vector<TypeIndex> param_types;
-				bool parsed_bare_function_type = false;
-
-				while (!peek().is_eof() && peek() != ")"_tok) {
-					auto param_type_result = parse_type_specifier();
-					if (param_type_result.is_error() || !param_type_result.node().has_value()) {
-						break;
-					}
-					TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
-
-					// Handle pointer/reference/cv-qualifier modifiers after type
-					consume_pointer_ref_modifiers(param_type);
-
-					// Handle pack expansion '...' (e.g., _Args...)
-					if (peek() == "..."_tok) {
-						advance(); // consume '...'
-						param_type.set_pack_expansion(true);
-					}
-
-					param_types.push_back(param_type.type_index());
-
-					if (peek() == ","_tok) {
-						advance(); // consume ','
-					} else {
-						break;
-					}
-				}
-
-				if (peek() == ")"_tok) {
-					advance(); // consume ')'
-					parsed_bare_function_type = true;
-
-					FunctionSignature func_sig;
-					func_sig.return_type_index = type_spec.type_index();
-					func_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
-					func_sig.return_reference_qualifier = type_spec.reference_qualifier();
-					func_sig.parameter_type_indices = std::move(param_types);
-					type_spec.set_function_signature(func_sig);
-
-					FLASH_LOG(Parser, Debug, "Parsed bare function type in type alias");
-
-					discard_saved_token(func_type_saved_pos);
-				}
-
-				if (!parsed_bare_function_type) {
-					restore_token_position(func_type_saved_pos);
-				}
-			} else {
-				// Not a function type syntax - restore position
-				restore_token_position(func_type_saved_pos);
-			}
-		}
+		parse_type_alias_function_type(type_spec, "");
 
 		// Parse reference modifiers: & or &&
 		ReferenceQualifier ref_qual = parse_reference_qualifier();

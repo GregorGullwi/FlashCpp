@@ -101,6 +101,44 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+### 2026-05-05 Function pointer type aliases with calling conventions
+
+This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested focused
+Linux/libstdc++-14 std-header probes.  The Windows/MSVC headers were not
+available in this Linux run, so the MSVC `<atomic>`/`<latch>` note below is
+validated by a synthetic parser regression for the exact `xatomic_wait.h`
+type-alias shape rather than a full MSVC header retest.
+
+Fix landed:
+
+- **Global and member `using` type aliases now share function type parsing and
+  accept a calling convention in parenthesized function pointer syntax, a
+  variadic ellipsis, and trailing `noexcept`.**  This accepts the MSVC C++20
+  `<atomic>` callback alias shape
+  `using _Atomic_wait_indirect_equal_callback_t = bool(__stdcall*)(...) noexcept;`
+  instead of stopping at `Expected ';' after type alias`.
+
+Regression test:
+
+- `tests/test_type_alias_callconv_function_pointer_noexcept_ret0.cpp`
+
+Validation snapshot:
+
+- Full Linux regression suite (`bash tests/run_all_tests.sh`): 2281 pass / 0 fail
+  / 156 `_fail` correct.
+- Focused parser probe for `using cb = bool(__stdcall*)(int, ...) noexcept;`
+  now compiles successfully.
+
+Focused Linux/libstdc++-14 std-header retest (`x64/Sharded/FlashCpp`):
+
+| Header | Status | Time | First-order stop / note |
+|--------|--------|------|-------------------------|
+| `<atomic>` | ❌ Compile Error | 1190ms | Still stops at `Fatal error: Base class instantiation name should resolve after default filling`; the earlier MSVC function-pointer alias parse blocker is fixed by the synthetic probe. |
+| `<latch>` | ❌ Compile Error | 1250ms | Same default-filled base-class instantiation blocker as `<atomic>`. |
+| `<optional>` | ❌ Codegen Error | 1850ms | Progressed past the broad fold-expression diagnostic in this run; current first hard stop is IR/codegen missing struct type info while lowering `_Optional_base`, followed by missing `_M_engaged`. |
+| `<ratio>` | ❌ Compile Error | 970ms | Still stops because `std::ratio_less<third, half>::value` is not a constant expression. |
+| `<string_view>` | ❌ Codegen Error | 3660ms | Progressed past the broad fold-expression diagnostic in this run; current first hard stop is `Operator- not defined for operand types` after existing `std::reverse_iterator` codegen recovery diagnostics. |
+
 ### 2026-05-05 Windows/MSVC std-header parser/sema follow-up
 
 This pass rebuilt `x64/Sharded/FlashCppMSVC.exe` with MSBuild and retested
@@ -129,8 +167,8 @@ Validation snapshot (`x64/Sharded/FlashCppMSVC.exe`, Windows/MSVC 14.44.35207):
 |--------|--------|------|-------------------------|
 | `<string_view>` | ❌ Compile Error | parse stopped after ~3032ms | The previous `iosfwd:166` `extern "C++" template` parser stop and the qualified static member template deduction fatal are fixed. Current first hard error is MSVC `<utility>:458` `Call to deleted function 'swap'`; recoverable deferred static_assert / `std::invoke` failures still precede the final diagnostic. |
 | `<optional>` | ❌ Compile Error | parse stopped after ~1304ms | The qualified static member template deduction fatal is fixed. Current first hard error is MSVC `<utility>:458` `Call to deleted function 'swap'`. |
-| `<atomic>` | ❌ Parse Error | parse stopped after ~933ms | The qualified static member template deduction fatal is fixed. Current first hard error is MSVC `xatomic_wait.h:50` `Expected ';' after type alias` for `using _Atomic_wait_indirect_equal_callback_t = bool(__stdcall*)(...) noexcept;`. |
-| `<latch>` | ❌ Parse Error | parse stopped after ~911ms | Same `xatomic_wait.h:50` function-pointer type-alias parser blocker as `<atomic>`. |
+| `<atomic>` | ❌ Parse Error | parse stopped after ~933ms | The qualified static member template deduction fatal is fixed. Current first hard error is MSVC `xatomic_wait.h:50` `Expected ';' after type alias` for `using _Atomic_wait_indirect_equal_callback_t = bool(__stdcall*)(...) noexcept;`. Fixed by the later 2026-05-05 function-pointer type-alias parser pass above; needs full MSVC header retest for the next blocker. |
+| `<latch>` | ❌ Parse Error | parse stopped after ~911ms | Same `xatomic_wait.h:50` function-pointer type-alias parser blocker as `<atomic>`. Fixed by the later 2026-05-05 function-pointer type-alias parser pass above; needs full MSVC header retest for the next blocker. |
 
 
 

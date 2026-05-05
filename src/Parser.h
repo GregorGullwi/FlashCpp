@@ -1059,6 +1059,7 @@ private:
 	// Used for both standalone function pointer declarators and function declarations
 	// whose return type is itself a function pointer.
 	ParseResult parse_function_pointer_parameter_types(std::vector<TypeIndex>& out_param_types);
+	bool parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::string_view log_context);
 	ParseResult parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl);
 	ParseResult parse_namespace();
 	ParseResult parse_using_directive_or_declaration();	// Parse using directive/declaration/alias
