@@ -511,7 +511,7 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 //   • Set is_lvalue_reference(true) on 'from' for lvalue expressions (named variables, etc.)
 //   • Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
-	if (from.is_array() && !to.is_array() && to.is_pointer()) {
+	if (from.is_array() && !from.is_pointer() && !to.is_array() && to.is_pointer()) {
 		TypeSpecifierNode decayed_from = from;
 		decayed_from.set_array(false, std::nullopt);
 		decayed_from.add_pointer_level(CVQualifier::None);
