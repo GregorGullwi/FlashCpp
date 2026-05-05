@@ -13,6 +13,17 @@ Point makePoint(int x, int y) {
 	return p;
 }
 
+int testAutoExpression() {
+	auto x = 10 + 20;
+	return x;
+}
+
+int testAutoFromVariable() {
+	int y = 100;
+	auto x = y;
+	return x;
+}
+
 int main() {
 	// Test 1: auto with literals - SHOULD WORK
 	auto a = 42;
@@ -34,6 +45,11 @@ int main() {
 	int y = 35;
 	int* ptr = &y;
 	auto* auto_ptr = ptr;
+
+	if (testAutoExpression() != 30)
+		return 1;
+	if (testAutoFromVariable() != 100)
+		return 2;
 
 	// Return sum to verify all worked
 	return a + cref + c + *auto_ptr + p.x + p.y;

@@ -11,8 +11,13 @@ struct result_false {
 	static constexpr bool value = false;
 };
 
+struct base_a {
+	static constexpr int value = 42;
+};
+
 	// Non-template function returning a type
 result_true get_result() { return {}; }
+base_a select_base(int) { return {}; }
 } // namespace detail
 
 // ======== WORKING: Non-template struct with decltype base ========
@@ -20,6 +25,10 @@ result_true get_result() { return {}; }
 struct test_simple
 	: decltype(detail::get_result()) {
 	int dummy;  // Add a member so struct isn't empty
+};
+
+struct test_selected_base
+	: decltype(detail::select_base(0)) {
 };
 
 // ======== LIMITATION: Template-dependent decltype base ========
@@ -42,6 +51,9 @@ int main() {
 	// Test the working case
 	test_simple t1;
 	bool success = t1.value;	 // Should be true from result_true
+	test_selected_base t2;
+	if (t2.value != 42)
+		return 0;
 
 	return success ? 42 : 0;
 }
