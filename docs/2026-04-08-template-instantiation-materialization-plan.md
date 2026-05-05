@@ -23,6 +23,11 @@ The original template materialization plan is mostly closed.
   and struct-visitor slices were moved away from codegen-first materialization.
   Codegen's remaining lazy-member bridge delegates back to sema and is treated as
   a migration/diagnostic surface, not the desired first materializer.
+- **The lazy-member drain now runs as an ODR-use-only fixpoint.** The temporary
+  end-of-sema sweep over every reachable instantiated root was removed after
+  using-declaration pack expansion and late out-of-line member-body cases proved
+  to carry sufficient sema-side `markOdrUsed(...)` coverage for the full test
+  corpus.
 - **Phase 6's concrete pack-deduction and pack-expansion reproducers are fixed.**
   Explicit and implicit function-template pack deduction now handles pack-before
   tail signatures, mixed explicit+deduced slices, multiple packs, packs not
@@ -199,7 +204,9 @@ Remaining work:
 ### 3. Late Materialization Fixpoint
 
 The pending semantic-root queue exists and several late materialization paths
-already drain it. The next step is to make the invariant explicit and complete:
+already drain it. The lazy-member portion now runs as an explicit ODR-use
+fixpoint at end-of-sema instead of an eager reachable-root sweep. Remaining
+work is to keep extending that model to the rest of late materialization:
 
 - newly materialized lazy member/static-member/class-template roots must be
   sema-normalized before codegen or constexpr consumers reuse them;
