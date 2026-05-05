@@ -1673,11 +1673,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					}
 				}
 
-				// Build namespace path from the struct's declaration-site namespace
-				// so member function calls get the correct mangled name.
+				// Resolve the concrete owner metadata instead of blindly reusing the
+				// declaration namespace; this avoids double-encoding qualified owners.
 				auto struct_name_view = StringTable::getStringView(struct_name);
-				NamespaceHandle namespace_for_mangling =
-					resolveMemberNamespaceHandleForMangling(
+				const StructManglingInfo owner_info =
+					resolveStructManglingInfoForMangling(
 						struct_name_view,
 						func_for_mangling->namespace_handle());
 
@@ -1687,8 +1687,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					*mangling_return_type,
 					param_types,
 					func_for_mangling->is_variadic(),
-					struct_name_view,
-					namespace_for_mangling,
+					owner_info.struct_name,
+					owner_info.namespace_handle,
 					func_for_mangling->is_const_member_function());
 				function_name = StringTable::getOrInternStringHandle(mangled);
 			}

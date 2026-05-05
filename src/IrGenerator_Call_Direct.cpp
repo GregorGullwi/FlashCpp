@@ -768,12 +768,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			if (struct_name.empty()) {
 				function_name = generateMangledNameForCall(*func_decl, "", func_decl->namespace_handle());
 			} else {
-				// Build the namespace handle from the struct's declaration-site metadata
-				// so member function calls include the correct namespace.
+				const StructManglingInfo owner_info =
+					resolveStructManglingInfoForMangling(struct_name, func_decl->namespace_handle());
 				function_name = generateMangledNameForCall(
 					*func_decl,
-					struct_name,
-					resolveMemberNamespaceHandleForMangling(struct_name, func_decl->namespace_handle()));
+					owner_info.struct_name,
+					owner_info.namespace_handle);
 			}
 		}
 	};

@@ -222,38 +222,68 @@ inline NamespaceHandle buildNamespaceHandleFromStrings(const std::vector<std::st
 	return current;
 }
 
-// Resolve an unqualified struct name through the type registry and return its declaration namespace.
-// Returns true when the struct was found, even if that namespace is global.
-inline bool tryGetStructNamespaceHandle(std::string_view struct_name, NamespaceHandle& namespace_handle) {
-	namespace_handle = NamespaceHandle();
-	if (struct_name.empty() || struct_name.find("::") != std::string_view::npos) {
-		return false;
+struct StructManglingInfo {
+	std::string_view struct_name;
+	NamespaceHandle namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
+	bool resolved = false;
+};
+
+inline std::string_view stripNamespacePrefixForMangling(std::string_view struct_name, NamespaceHandle namespace_handle) {
+	if (!namespace_handle.isValid() || namespace_handle.isGlobal()) {
+		return struct_name;
 	}
-	auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
-	if (type_it == getTypesByNameMap().end()) {
-		return false;
+
+	const std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(namespace_handle);
+	if (qualified_namespace.empty() ||
+		!struct_name.starts_with(qualified_namespace) ||
+		struct_name.size() <= qualified_namespace.size() + 2 ||
+		struct_name.substr(qualified_namespace.size(), 2) != "::") {
+		return struct_name;
 	}
-	namespace_handle = type_it->second->namespaceHandle();
-	return true;
+
+	return struct_name.substr(qualified_namespace.size() + 2);
 }
 
-// Build the namespace handle to use when mangling a member on `struct_name`, falling back to the
-// function's own declaration namespace only when the unqualified struct name could not be resolved.
-inline NamespaceHandle resolveMemberNamespaceHandleForMangling(
+inline StructManglingInfo resolveStructManglingInfoForMangling(
 	std::string_view struct_name,
-	NamespaceHandle fallback_namespace_handle) {
+	NamespaceHandle enclosing_namespace_handle) {
+	StructManglingInfo result{struct_name, NamespaceRegistry::GLOBAL_NAMESPACE, false};
+	if (struct_name.empty()) {
+		return result;
+	}
+
+	auto try_resolve_type = [&](StringHandle type_name_handle, std::string_view candidate_name) -> bool {
+		auto type_it = getTypesByNameMap().find(type_name_handle);
+		if (type_it == getTypesByNameMap().end()) {
+			return false;
+		}
+		result.namespace_handle = type_it->second->namespaceHandle();
+		result.struct_name = stripNamespacePrefixForMangling(candidate_name, result.namespace_handle);
+		result.resolved = true;
+		return true;
+	};
+
+	if (struct_name.find("::") == std::string_view::npos && enclosing_namespace_handle.isValid()) {
+		StringHandle qualified_name_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+			enclosing_namespace_handle,
+			StringTable::getOrInternStringHandle(struct_name));
+		if (qualified_name_handle.isValid() &&
+			try_resolve_type(qualified_name_handle, StringTable::getStringView(qualified_name_handle))) {
+			return result;
+		}
+	}
+
+	if (try_resolve_type(StringTable::getOrInternStringHandle(struct_name), struct_name)) {
+		return result;
+	}
+
+	// If lookup fails but the owner name is already qualified, keep the encoded owner
+	// text and suppress any separate namespace emission to avoid double encoding.
 	if (struct_name.find("::") != std::string_view::npos) {
-		// Qualified owners already carry their namespace in `struct_name`, so
-		// mangling must not append a second namespace path.
-		return NamespaceRegistry::GLOBAL_NAMESPACE;
+		return result;
 	}
-	NamespaceHandle namespace_handle;
-	if (tryGetStructNamespaceHandle(struct_name, namespace_handle)) {
-		return namespace_handle;
-	}
-	return fallback_namespace_handle.isValid()
-		? fallback_namespace_handle
-		: NamespaceRegistry::GLOBAL_NAMESPACE;
+
+	return result;
 }
 
 // AstToIr class declaration (methods split across cpp files).
