@@ -44,8 +44,10 @@ bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
 }
 
 // Reconstruct a TypeSpecifierNode from TypeInfo-owned template argument
-// metadata. Returns nullopt for non-type template arguments, because the
-// constexpr type-trait path only needs concrete type arguments.
+// metadata. arg_info supplies the concrete template type argument, and token
+// preserves source location for diagnostics on the synthesized type. Returns
+// nullopt for non-type template arguments, because the constexpr type-trait
+// path only needs concrete type arguments.
 std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	const TypeInfo::TemplateArgInfo& arg_info,
 	const Token& token) {
