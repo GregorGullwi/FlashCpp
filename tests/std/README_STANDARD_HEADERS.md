@@ -140,7 +140,7 @@ timeout):
 | `<compare_ret42>` | ✅ Compiled | 27ms | |
 | `<concepts>` | ✅ Compiled | 409ms | |
 | `<exception>` | ✅ Compiled | 438ms | |
-| `<is_complete_or_unbounded_resolved>` | ✅ Compiled | 356ms | New focused std-helper regression. |
+| `test_std_is_complete_or_unbounded_resolved.cpp` | ✅ Compiled | 356ms | New focused std-helper regression. |
 | `<limits>` | ✅ Compiled | 1273ms | |
 | `<new>` | ✅ Compiled | 47ms | |
 | `<pair_swap_deleted_member>` | ✅ Compiled | 23ms | |

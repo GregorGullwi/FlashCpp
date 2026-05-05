@@ -43,6 +43,50 @@ bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
 	return !isPlaceholderAutoType(type_spec.category());
 }
 
+std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
+	const TypeInfo::TemplateArgInfo& arg_info,
+	const Token& token) {
+	if (arg_info.is_value) {
+		return std::nullopt;
+	}
+
+	TypeSpecifierNode extracted_type(
+		arg_info.type_index.withCategory(arg_info.typeEnum()),
+		get_type_size_bits(arg_info.typeEnum()),
+		token,
+		arg_info.cv_qualifier,
+		ReferenceQualifier::None);
+	for (size_t pointer_level = 0; pointer_level < arg_info.pointer_depth; ++pointer_level) {
+		CVQualifier pointer_cv = pointer_level < arg_info.pointer_cv_qualifiers.size()
+			? arg_info.pointer_cv_qualifiers[pointer_level]
+			: CVQualifier::None;
+		extracted_type.add_pointer_level(pointer_cv);
+	}
+	extracted_type.set_reference_qualifier(arg_info.ref_qualifier);
+	if (arg_info.is_array) {
+		extracted_type.set_array(true, arg_info.array_size);
+	}
+	if (arg_info.function_signature.has_value()) {
+		extracted_type.set_function_signature(*arg_info.function_signature);
+	}
+	return extracted_type;
+}
+
+std::optional<TypeSpecifierNode> tryExtractTypeIdentityArgumentType(const TypeSpecifierNode& type_spec) {
+	if (!type_spec.type_index().is_valid() || !is_struct_type(type_spec.type())) {
+		return std::nullopt;
+	}
+
+	const TypeInfo& identity_type_info = getTypeInfo(type_spec.type_index());
+	if (!identity_type_info.isTemplateInstantiation() ||
+		StringTable::getStringView(identity_type_info.baseTemplateName()) != "__type_identity" ||
+		identity_type_info.templateArgs().empty()) {
+		return std::nullopt;
+	}
+
+	return makeTypeSpecifierFromTemplateArgInfo(identity_type_info.templateArgs().front(), type_spec.token());
+}
+
 EvalResult validateConstexprRead(const EvalResult& heap_val) {
 	if (heap_val.is_indeterminate) {
 		return EvalResult::error(
@@ -4050,7 +4094,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
 	}
 
-	auto tryEvaluateIsCompleteOrUnbounded = [&]() -> std::optional<EvalResult> {
+	auto tryEvaluateStdIsCompleteOrUnbounded = [&]() -> std::optional<EvalResult> {
 		// Special handling for std::__is_complete_or_unbounded
 		// This is a helper function in the standard library that checks if a type is complete
 		// __is_complete_or_unbounded evaluates to true if either:
@@ -4078,37 +4122,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			if (std::holds_alternative<ConstructorCallNode>(expr)) {
 				const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
 				const TypeSpecifierNode& type_spec = ctor.type_node();
-				std::optional<TypeSpecifierNode> identity_arg_type;
-				if (type_spec.type_index().is_valid() && is_struct_type(type_spec.type())) {
-					const TypeInfo& identity_type_info = getTypeInfo(type_spec.type_index());
-					if (identity_type_info.isTemplateInstantiation() &&
-						StringTable::getStringView(identity_type_info.baseTemplateName()) == "__type_identity" &&
-						!identity_type_info.templateArgs().empty()) {
-						const TypeInfo::TemplateArgInfo& arg_info = identity_type_info.templateArgs().front();
-						if (!arg_info.is_value) {
-							TypeSpecifierNode extracted_type(
-								arg_info.type_index.withCategory(arg_info.typeEnum()),
-								get_type_size_bits(arg_info.typeEnum()),
-								type_spec.token(),
-								arg_info.cv_qualifier,
-								ReferenceQualifier::None);
-							for (size_t pointer_level = 0; pointer_level < arg_info.pointer_depth; ++pointer_level) {
-								CVQualifier pointer_cv = pointer_level < arg_info.pointer_cv_qualifiers.size()
-									? arg_info.pointer_cv_qualifiers[pointer_level]
-									: CVQualifier::None;
-								extracted_type.add_pointer_level(pointer_cv);
-							}
-							extracted_type.set_reference_qualifier(arg_info.ref_qualifier);
-							if (arg_info.is_array) {
-								extracted_type.set_array(true, arg_info.array_size);
-							}
-							if (arg_info.function_signature.has_value()) {
-								extracted_type.set_function_signature(*arg_info.function_signature);
-							}
-							identity_arg_type = extracted_type;
-						}
-					}
-				}
+				std::optional<TypeSpecifierNode> identity_arg_type = tryExtractTypeIdentityArgumentType(type_spec);
 				const TypeSpecifierNode& checked_type = identity_arg_type.has_value() ? *identity_arg_type : type_spec;
 				const StructTypeInfo* struct_info = nullptr;
 				if (checked_type.type_index().is_valid() && is_struct_type(checked_type.type())) {
@@ -4128,7 +4142,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		return EvalResult::error("__is_complete_or_unbounded requires a type argument");
 	};
 
-	if (auto is_complete_result = tryEvaluateIsCompleteOrUnbounded()) {
+	if (auto is_complete_result = tryEvaluateStdIsCompleteOrUnbounded()) {
 		return *is_complete_result;
 	}
 
