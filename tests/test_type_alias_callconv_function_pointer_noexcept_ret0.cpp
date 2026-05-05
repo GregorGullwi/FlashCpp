@@ -3,6 +3,12 @@ struct Payload {
 	int y;
 };
 
+typedef char* va_list;
+
+#define va_start(ap, param) __builtin_va_start(ap, param)
+#define va_arg(ap, type) __builtin_va_arg(ap, type)
+#define va_end(ap) ((void)(ap = 0))
+
 using callback_t = int(__stdcall*)(int, float, ...) noexcept;
 using struct_callback_t = int(__stdcall*)(Payload, float) noexcept;
 
@@ -12,7 +18,11 @@ struct Holder {
 };
 
 int __stdcall compute_score(int base, float scale, ...) noexcept {
-	return base + static_cast<int>(scale * 8.0f);
+	va_list args;
+	va_start(args, scale);
+	int bonus = va_arg(args, int);
+	va_end(args);
+	return base + static_cast<int>(scale * 8.0f) + bonus;
 }
 
 int __stdcall score_payload(Payload value, float scale) noexcept {
@@ -35,7 +45,7 @@ int call_struct_callback(struct_callback_t callback, Payload value, float scale)
 
 int main() {
 	callback_t score_callback = compute_score;
-	if (call_callback(score_callback, 10, 1.5f) != 22)
+	if (call_callback(score_callback, 10, 1.5f) != 29)
 		return 1;
 
 	Payload initial{4, 5};
