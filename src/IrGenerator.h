@@ -235,13 +235,18 @@ inline bool tryGetStructNamespacePathStrings(std::string_view struct_name, std::
 }
 
 // Build the namespace path to use when mangling a member on `struct_name`, falling back to the
-// function's own declaration namespace when the struct registry lookup yields no namespace path.
+// function's own declaration namespace only when the unqualified struct name could not be resolved.
 inline std::vector<std::string> resolveMemberNamespacePathForMangling(
 	std::string_view struct_name,
 	NamespaceHandle fallback_namespace_handle) {
 	std::vector<std::string> namespace_path;
-	tryGetStructNamespacePathStrings(struct_name, namespace_path);
-	if (namespace_path.empty() && fallback_namespace_handle.isValid()) {
+	if (struct_name.find("::") != std::string_view::npos) {
+		return namespace_path;
+	}
+	if (tryGetStructNamespacePathStrings(struct_name, namespace_path)) {
+		return namespace_path;
+	}
+	if (fallback_namespace_handle.isValid()) {
 		namespace_path = buildNamespacePathStrings(fallback_namespace_handle);
 	}
 	return namespace_path;

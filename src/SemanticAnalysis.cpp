@@ -90,6 +90,70 @@ bool markLazyMemberOdrUsedForMatchingConstness(
 	return false;
 }
 
+// Walk the receiver type and its bases looking for the instantiated owner that
+// should hold a lazily-registered member body selected by sema. If sema resolved
+// a pattern/base declaration, `resolved_parent_name` lets us match the concrete
+// instantiation that owns that member before marking it ODR-used.
+bool markLazyReceiverMemberOdrUsed(
+	const TypeInfo* receiver_type_info,
+	std::string_view resolved_parent_name,
+	StringHandle member_handle,
+	bool preferred_constness) {
+	if (!receiver_type_info || !receiver_type_info->isStruct()) {
+		return false;
+	}
+
+	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+	StringHandle resolved_parent_handle = resolved_parent_name.empty()
+		? StringHandle()
+		: StringTable::getOrInternStringHandle(resolved_parent_name);
+
+	auto try_mark = [&](const TypeInfo* type_info) -> bool {
+		if (!type_info || !type_info->isStruct()) {
+			return false;
+		}
+		StringHandle candidate_name = type_info->name();
+		if (!candidate_name.isValid()) {
+			return false;
+		}
+		if (resolved_parent_handle.isValid()) {
+			if (candidate_name != resolved_parent_handle) {
+				auto pattern_opt = gTemplateRegistry.get_instantiation_pattern(candidate_name);
+				if (!pattern_opt.has_value() || pattern_opt.value() != resolved_parent_handle) {
+					return false;
+				}
+			}
+		} else if (!type_info->isTemplateInstantiation()) {
+			return false;
+		}
+		return markLazyMemberOdrUsedForMatchingConstness(
+			lazy_registry,
+			candidate_name,
+			member_handle,
+			preferred_constness);
+	};
+
+	if (try_mark(receiver_type_info)) {
+		return true;
+	}
+
+	std::unordered_set<const StructTypeInfo*> visited;
+	auto search_bases = [&](const TypeInfo* type_info, const auto& self) -> bool {
+		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+		if (!struct_info || !visited.insert(struct_info).second) {
+			return false;
+		}
+		for (const auto& base_spec : struct_info->base_classes) {
+			const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index);
+			if (try_mark(base_type_info) || self(base_type_info, self)) {
+				return true;
+			}
+		}
+		return false;
+	};
+	return search_bases(receiver_type_info, search_bases);
+}
+
 bool callableOperatorAcceptsArgumentCount(const FunctionDeclarationNode& candidate, size_t argument_count) {
 	const size_t min_required = countMinRequiredArgs(candidate);
 	if (argument_count < min_required) {
@@ -5537,14 +5601,12 @@ void SemanticAnalysis::tryResolveUnaryDereferenceOperator(const UnaryOperatorNod
 
 	if (const TypeInfo* receiver_type_info = tryGetTypeInfo(object_desc.type_index);
 		receiver_type_info && receiver_type_info->isStruct()) {
-		StringHandle receiver_name = receiver_type_info->name();
 		StringHandle member_handle = best_match->decl_node().identifier_token().handle();
-		auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
 		// Resolver constness can be lost on pattern-owned operator* declarations;
-		// mark whichever concrete lazy entry exists for the receiver instantiation.
-		markLazyMemberOdrUsedForMatchingConstness(
-			lazy_registry,
-			receiver_name,
+		// walk the receiver hierarchy and mark the concrete instantiated owner.
+		markLazyReceiverMemberOdrUsed(
+			receiver_type_info,
+			best_match->parent_struct_name(),
 			member_handle,
 			best_match->is_const_member_function());
 	}
@@ -6369,68 +6431,15 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 		return result;
 	}
 
-	// Walk up the inheritance chain searching for an instantiated struct
-	// whose template pattern matches `parent_sv`. This handles both the
-	// direct case (receiver IS an instantiation of the owning template)
-	// and the using-decl pack case (receiver is a derived aggregate whose
-	// base is the relevant instantiation).
-	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
 	StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
 	const bool is_const = func_decl->is_const_member_function();
-	StringHandle parent_handle = parent_sv.empty()
-		? StringHandle()
-		: StringTable::getOrInternStringHandle(parent_sv);
-
-	auto try_mark = [&](const TypeInfo* type_info) -> bool {
-		if (!type_info || !type_info->isStruct()) {
-			return false;
-		}
-		StringHandle candidate_name = type_info->name();
-		if (!candidate_name.isValid() || (parent_handle.isValid() && candidate_name == parent_handle)) {
-			return false;
-		}
-		if (parent_handle.isValid()) {
-			auto pattern_opt = gTemplateRegistry.get_instantiation_pattern(candidate_name);
-			if (!pattern_opt.has_value() || pattern_opt.value() != parent_handle) {
-				return false;
-			}
-		} else {
-			if (!type_info->isTemplateInstantiation()) {
-				return false;
-			}
-		}
-		// Resolver may have lost const-qualification info when it resolves a
-		// member call through a pack/using-decl/instantiated path; try both
-		// const variants and mark whichever the lazy registry actually knows.
-		return markLazyMemberOdrUsedForMatchingConstness(
-			lazy_registry,
-			candidate_name,
-			member_handle,
-			is_const);
-	};
-
-	if (try_mark(receiver_type_info)) {
-		return result;
-	}
-
-	// Search base classes transitively.
-	auto searchBases = [&](auto&& self, const TypeInfo* ti) -> bool {
-		const StructTypeInfo* si = ti ? ti->getStructInfo() : nullptr;
-		if (!si) {
-			return false;
-		}
-		for (const auto& base_spec : si->base_classes) {
-			const TypeInfo* base_ti = tryGetTypeInfo(base_spec.type_index);
-			if (try_mark(base_ti)) {
-				return true;
-			}
-			if (self(self, base_ti)) {
-				return true;
-			}
-		}
-		return false;
-	};
-	searchBases(searchBases, receiver_type_info);
+	// Walk the receiver hierarchy searching for the instantiated owner that
+	// corresponds to the resolved member's declaring pattern/base.
+	markLazyReceiverMemberOdrUsed(
+		receiver_type_info,
+		parent_sv,
+		member_handle,
+		is_const);
 	return result;
 }
 
