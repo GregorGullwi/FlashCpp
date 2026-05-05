@@ -43,26 +43,72 @@ bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
 	return !isPlaceholderAutoType(type_spec.category());
 }
 
-bool tryCollectFunctionCallArgTypes(
-	const CallExprNode& call_expr,
-	EvaluationContext& context,
-	std::vector<TypeSpecifierNode>& arg_types_out) {
-	if (context.parser == nullptr) {
-		return false;
-	}
+struct SimpleConstexprTypeHelperPattern {
+	std::string_view helper_name;
+	std::string_view wrapper_template_name;
+	TypeTraitKind trait_kind;
+};
 
-	arg_types_out.clear();
-	arg_types_out.reserve(call_expr.arguments().size());
-	for (const ASTNode& argument : call_expr.arguments()) {
-		size_t previous_count = arg_types_out.size();
-		context.parser->appendFunctionCallArgType(argument, &arg_types_out);
-		if (arg_types_out.size() == previous_count ||
-			arg_types_out.back().category() == TypeCategory::Invalid) {
-			return false;
+std::string_view getUnqualifiedFunctionName(std::string_view qualified_name) {
+	size_t qualifier_pos = qualified_name.rfind("::");
+	return qualifier_pos == std::string_view::npos
+		? qualified_name
+		: qualified_name.substr(qualifier_pos + 2);
+}
+
+std::optional<EvalResult> tryEvaluateSimpleConstexprTypeHelperCall(
+	const CallExprNode& call_expr,
+	std::string_view func_name,
+	std::string_view qualified_name) {
+	static constexpr SimpleConstexprTypeHelperPattern kPatterns[] = {
+		{"__is_complete_or_unbounded", "__type_identity", TypeTraitKind::IsCompleteOrUnbounded},
+	};
+
+	const std::string_view lookup_name = getUnqualifiedFunctionName(
+		qualified_name.empty() ? func_name : qualified_name);
+	const SimpleConstexprTypeHelperPattern* matched_pattern = nullptr;
+	for (const auto& pattern : kPatterns) {
+		if (lookup_name == pattern.helper_name) {
+			matched_pattern = &pattern;
+			break;
 		}
 	}
+	if (matched_pattern == nullptr) {
+		return std::nullopt;
+	}
+	if (call_expr.arguments().empty()) {
+		return EvalResult::error(std::string(matched_pattern->helper_name) + " requires a type argument");
+	}
 
-	return true;
+	const ASTNode& arg = call_expr.arguments()[0];
+	if (!arg.is<ExpressionNode>()) {
+		return EvalResult::error(std::string(matched_pattern->helper_name) + " requires a type argument");
+	}
+
+	const ExpressionNode& expr = arg.as<ExpressionNode>();
+	if (!std::holds_alternative<ConstructorCallNode>(expr)) {
+		return EvalResult::error(std::string(matched_pattern->helper_name) + " requires a type argument");
+	}
+
+	const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
+	std::optional<TypeSpecifierNode> checked_type = tryExtractFirstTemplateTypeArgument(
+		ctor.type_node(),
+		ctor.type_node().token(),
+		matched_pattern->wrapper_template_name);
+	if (!checked_type.has_value()) {
+		return EvalResult::error(std::string(matched_pattern->helper_name) + " requires a type argument");
+	}
+
+	const StructTypeInfo* struct_info = nullptr;
+	if (checked_type->type_index().is_valid() && is_struct_type(checked_type->type())) {
+		struct_info = getTypeInfo(checked_type->type_index()).getStructInfo();
+	}
+
+	TypeTraitResult trait = evaluateTypeTrait(matched_pattern->trait_kind, *checked_type, struct_info);
+	if (!trait.success) {
+		return std::nullopt;
+	}
+	return EvalResult::from_bool(trait.value);
 }
 
 EvalResult validateConstexprRead(const EvalResult& heap_val) {
@@ -4072,6 +4118,29 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
 	}
 
+	auto tryCollectFunctionCallArgTypes = [&](std::vector<TypeSpecifierNode>& arg_types_out) {
+		if (context.parser == nullptr) {
+			return false;
+		}
+
+		arg_types_out.clear();
+		arg_types_out.reserve(call_expr.arguments().size());
+		for (const ASTNode& argument : call_expr.arguments()) {
+			size_t previous_count = arg_types_out.size();
+			context.parser->appendFunctionCallArgType(argument, &arg_types_out);
+			if (arg_types_out.size() == previous_count ||
+				arg_types_out.back().category() == TypeCategory::Invalid) {
+				return false;
+			}
+		}
+
+		return true;
+	};
+
+	if (auto helper_eval = tryEvaluateSimpleConstexprTypeHelperCall(call_expr, func_name, qualified_name)) {
+		return *helper_eval;
+	}
+
 	// If we have a struct context, prefer static member functions from the current struct.
 	// This ensures that `helper()` in `static constexpr int value = helper()` resolves
 	// to Box<T>::helper() rather than a global helper() when inside a struct definition.
@@ -4315,7 +4384,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		if (context.parser) {
 			std::optional<ASTNode> instantiated_opt;
 			std::vector<TypeSpecifierNode> arg_types;
-			if (tryCollectFunctionCallArgTypes(call_expr, context, arg_types)) {
+			if (tryCollectFunctionCallArgTypes(arg_types)) {
 				instantiated_opt = context.parser->try_instantiate_template(qualified_name, arg_types);
 				if (!instantiated_opt.has_value() && qualified_name != func_name) {
 					instantiated_opt = context.parser->try_instantiate_template(func_name, arg_types);
