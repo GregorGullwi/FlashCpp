@@ -511,9 +511,10 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 //   • Set is_lvalue_reference(true) on 'from' for lvalue expressions (named variables, etc.)
 //   • Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
-	// String literals and other one-dimensional array expressions can reach overload
-	// resolution as array types. Identifier arrays may already carry pointer metadata
-	// plus retained array extents from earlier decay paths, so do not decay those again.
+	// String literals and other array expressions can reach overload resolution as
+	// array-only types. Identifier arrays may already carry pointer metadata plus
+	// retained array extents from earlier decay paths; !from.is_pointer() keeps
+	// those pre-decayed shapes from receiving a second pointer level here.
 	if (from.is_array() && !from.is_pointer() && !to.is_array() && to.is_pointer()) {
 		TypeSpecifierNode decayed_from = from;
 		decayed_from.set_array(false, std::nullopt);
