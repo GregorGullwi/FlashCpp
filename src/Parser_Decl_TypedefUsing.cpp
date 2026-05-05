@@ -85,40 +85,18 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 			type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);
 		}
 
-		FLASH_LOG_FORMAT(Parser, Debug, "Parsed function reference/pointer type{}: {} to function",
-						 log_context,
-						 is_function_ptr ? "pointer" : (is_rvalue_function_ref ? "rvalue ref" : "lvalue ref"));
+		FLASH_LOG_FORMAT(Parser, Debug, "Parsed function reference/pointer type: {} to function{}",
+						 is_function_ptr ? "pointer" : (is_rvalue_function_ref ? "rvalue ref" : "lvalue ref"),
+						 log_context);
 		discard_saved_token(func_type_saved_pos);
 		return true;
 	}
 
 	std::vector<TypeIndex> param_types;
-	while (!peek().is_eof() && peek() != ")"_tok) {
-		if (peek() == "..."_tok) {
-			advance();
-			break;
-		}
-
-		auto param_type_result = parse_type_specifier();
-		if (param_type_result.is_error() || !param_type_result.node().has_value()) {
-			restore_token_position(func_type_saved_pos);
-			return false;
-		}
-		TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
-		consume_pointer_ref_modifiers(param_type);
-
-		if (peek() == "..."_tok) {
-			advance();
-			param_type.set_pack_expansion(true);
-		}
-
-		param_types.push_back(param_type.type_index());
-
-		if (peek() == ","_tok) {
-			advance();
-		} else {
-			break;
-		}
+	auto param_result = parse_function_pointer_parameter_types(param_types);
+	if (param_result.is_error()) {
+		restore_token_position(func_type_saved_pos);
+		return false;
 	}
 
 	if (peek() != ")"_tok) {
