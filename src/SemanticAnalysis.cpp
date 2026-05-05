@@ -2730,10 +2730,10 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					annotateExpressionTypeSlot(node, result_type_id, inferExpressionValueCategory(node));
 				}
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
-				tryAnnotateConstructorCallArgConversions(e);
 				for (const auto& arg : e.arguments()) {
 					normalizeExpression(arg, ctx);
 				}
+				tryAnnotateConstructorCallArgConversions(e);
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
 				const void* member_access_key = static_cast<const void*>(&e);
@@ -4271,7 +4271,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				// Constructor call returns the type being constructed.
-				return canonicalizeType(e.type_node());
+				TypeSpecifierNode resolved_type = e.type_node();
+				if (const MemberContext* ctor_member_ctx = getCurrentMemberContext();
+					ctor_member_ctx && ctor_member_ctx->type_index.is_valid()) {
+					resolved_type = resolveTypeSpecifierForSelfReference(resolved_type, ctor_member_ctx->type_index);
+				}
+				return canonicalizeType(resolved_type);
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				const ASTNode& target_type_node = e.target_type();
 				if (target_type_node.has_value() && target_type_node.template is<TypeSpecifierNode>())
@@ -4384,9 +4389,31 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					if (!resolved_callable) {
 						return {};
 					}
-					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
-					if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
+					auto getResolvedReturnType = [this](const FunctionDeclarationNode& callable) -> std::optional<TypeSpecifierNode> {
+						ASTNode resolved_return_type = callable.decl_node().type_node();
+						if (!resolved_return_type.has_value() || !resolved_return_type.is<TypeSpecifierNode>()) {
+							return std::nullopt;
+						}
 						TypeSpecifierNode return_type = resolved_return_type.as<TypeSpecifierNode>();
+						if (!isPlaceholderAutoType(return_type.type())) {
+							return return_type;
+						}
+						FunctionDeclarationNode& mutable_callable =
+							const_cast<FunctionDeclarationNode&>(callable);
+						ASTNode mutable_callable_node(&mutable_callable);
+						resolveRemainingAutoReturnsInNode(mutable_callable_node);
+						resolved_return_type = callable.decl_node().type_node();
+						if (!resolved_return_type.has_value() || !resolved_return_type.is<TypeSpecifierNode>()) {
+							return std::nullopt;
+						}
+						return_type = resolved_return_type.as<TypeSpecifierNode>();
+						if (isPlaceholderAutoType(return_type.type())) {
+							return std::nullopt;
+						}
+						return return_type;
+					};
+					if (auto resolved_return_type = getResolvedReturnType(*resolved_callable)) {
+						TypeSpecifierNode return_type = *resolved_return_type;
 						auto try_resolve_self_return = [&](TypeIndex object_type_index) {
 							if (!object_type_index.is_valid()) {
 								return;
@@ -5849,13 +5876,23 @@ void SemanticAnalysis::annotateResolvedCallResultType(const ASTNode& call_node,
 	if (!call_node.is<ExpressionNode>()) {
 		return;
 	}
-	const ASTNode return_type_node = func_decl.decl_node().type_node();
+	ASTNode return_type_node = func_decl.decl_node().type_node();
 	if (!return_type_node.has_value() || !return_type_node.is<TypeSpecifierNode>()) {
 		return;
 	}
-	const TypeSpecifierNode& return_type = return_type_node.as<TypeSpecifierNode>();
+	TypeSpecifierNode return_type = return_type_node.as<TypeSpecifierNode>();
 	if (isPlaceholderAutoType(return_type.type())) {
-		return;
+		FunctionDeclarationNode& mutable_decl = const_cast<FunctionDeclarationNode&>(func_decl);
+		ASTNode mutable_decl_node(&mutable_decl);
+		resolveRemainingAutoReturnsInNode(mutable_decl_node);
+		return_type_node = func_decl.decl_node().type_node();
+		if (!return_type_node.has_value() || !return_type_node.is<TypeSpecifierNode>()) {
+			return;
+		}
+		return_type = return_type_node.as<TypeSpecifierNode>();
+		if (isPlaceholderAutoType(return_type.type())) {
+			return;
+		}
 	}
 	ValueCategory value_category = ValueCategory::PRValue;
 	if (return_type.is_rvalue_reference()) {
@@ -6508,14 +6545,20 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	const TypeSpecifierNode& type_spec = call_node.type_node();
 	if (type_spec.category() != TypeCategory::Struct)
 		return;
-	const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+	TypeSpecifierNode resolved_type_spec = type_spec;
+	if (const MemberContext* member_context = getCurrentMemberContext();
+		member_context &&
+		member_context->type_index.is_valid()) {
+		resolved_type_spec = resolveTypeSpecifierForSelfReference(type_spec, member_context->type_index);
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(resolved_type_spec.type_index());
 	if (const MemberContext* member_context = getCurrentMemberContext();
 		member_context &&
 		member_context->type_index.is_valid()) {
 		if (const TypeInfo* member_type_info = tryGetTypeInfo(member_context->type_index);
 			member_type_info &&
 			member_type_info->isTemplateInstantiation()) {
-			StringHandle constructed_name = type_info ? type_info->name() : type_spec.token().handle();
+			StringHandle constructed_name = type_info ? type_info->name() : resolved_type_spec.token().handle();
 			const std::string_view current_base_template_name =
 				StringTable::getStringView(member_type_info->baseTemplateName());
 			if (constructed_name.isValid() &&
