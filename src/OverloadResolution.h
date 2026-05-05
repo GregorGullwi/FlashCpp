@@ -519,7 +519,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		ConversionPlan plan = buildConversionPlan(decayed_from, to);
 		if (!plan.is_valid)
 			return ConversionPlan::no_match();
-		return {ConversionRank::Conversion, StandardConversionKind::ArrayToPointer, true};
+		return {plan.rank, StandardConversionKind::ArrayToPointer, true};
 	}
 
 	if (from.category() == TypeCategory::Nullptr &&
