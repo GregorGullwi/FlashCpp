@@ -71,6 +71,9 @@ bool placeholderReturnTypesMatch(const TypeSpecifierNode& lhs, const TypeSpecifi
 	return true;
 }
 
+// Mark the lazily-registered member that matches the preferred constness, falling back to the
+// opposite const variant when the resolver returned pattern-owned qualifiers. Returns whether a
+// concrete lazy entry was found and marked ODR-used.
 bool markLazyMemberOdrUsedForMatchingConstness(
 	LazyMemberInstantiationRegistry& lazy_registry,
 	StringHandle owner_name,

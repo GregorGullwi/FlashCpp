@@ -205,6 +205,7 @@ inline bool needsHiddenReturnParam(TypeCategory type, int pointer_depth, bool is
 		   (size_in_bits > getStructReturnThreshold(is_llp64));
 }
 
+// Convert a declaration-site namespace handle into owned strings for mangling APIs.
 inline std::vector<std::string> buildNamespacePathStrings(NamespaceHandle namespace_handle) {
 	std::vector<std::string> namespace_path;
 	if (!namespace_handle.isValid()) {
@@ -218,6 +219,8 @@ inline std::vector<std::string> buildNamespacePathStrings(NamespaceHandle namesp
 	return namespace_path;
 }
 
+// Resolve an unqualified struct name through the type registry and return its declaration namespace.
+// Returns true when the struct was found, even if that namespace is global and therefore empty.
 inline bool tryGetStructNamespacePathStrings(std::string_view struct_name, std::vector<std::string>& namespace_path) {
 	namespace_path.clear();
 	if (struct_name.empty() || struct_name.find("::") != std::string_view::npos) {
@@ -231,6 +234,8 @@ inline bool tryGetStructNamespacePathStrings(std::string_view struct_name, std::
 	return true;
 }
 
+// Build the namespace path to use when mangling a member on `struct_name`, falling back to the
+// function's own declaration namespace when the struct registry lookup yields no namespace path.
 inline std::vector<std::string> resolveMemberNamespacePathForMangling(
 	std::string_view struct_name,
 	NamespaceHandle fallback_namespace_handle) {
