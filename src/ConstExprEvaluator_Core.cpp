@@ -4092,9 +4092,9 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 								type_spec.token(),
 								arg_info.cv_qualifier,
 								ReferenceQualifier::None);
-							for (size_t pointer_index = 0; pointer_index < arg_info.pointer_depth; ++pointer_index) {
-								CVQualifier pointer_cv = pointer_index < arg_info.pointer_cv_qualifiers.size()
-									? arg_info.pointer_cv_qualifiers[pointer_index]
+							for (size_t pointer_level = 0; pointer_level < arg_info.pointer_depth; ++pointer_level) {
+								CVQualifier pointer_cv = pointer_level < arg_info.pointer_cv_qualifiers.size()
+									? arg_info.pointer_cv_qualifiers[pointer_level]
 									: CVQualifier::None;
 								extracted_type.add_pointer_level(pointer_cv);
 							}
