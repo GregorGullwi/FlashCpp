@@ -18,6 +18,14 @@
 #include <cstdio> // for std::snprintf
 #include <time.h>
 
+// Transparent hash for string-keyed maps: enables std::string_view lookups
+// without allocating a std::string (e.g. defines_.find(string_view_key)).
+struct PreprocessorStringHash {
+	using is_transparent = void;
+	size_t operator()(std::string_view sv) const noexcept { return std::hash<std::string_view>{}(sv); }
+	size_t operator()(const std::string& s) const noexcept { return std::hash<std::string_view>{}(s); }
+};
+
 #include "CompileContext.h"
 #include "FileTree.h"
 
@@ -268,6 +276,10 @@ static const std::unordered_map<std::string_view, long> has_cpp_attribute_versio
 // Check if a line has an incomplete macro invocation (unmatched parentheses)
 // Returns true if there's an unmatched opening paren that could be from a macro
 inline bool hasIncompleteMacroInvocation(std::string_view line) {
+	// Fast path: if no '(' at all, unmatched parens are impossible
+	if (line.find('(') == std::string_view::npos)
+		return false;
+
 	int paren_depth = 0;
 	bool in_string = false;
 	bool in_char = false;
@@ -528,7 +540,7 @@ private:
 
 	static bool is_inside_string_literal(const std::string& str, size_t pos);
 	std::string expandMacrosForConditional(const std::string& input);
-	std::string expandMacros(const std::string& input, std::unordered_set<std::string> expanding_macros = {});
+	std::string expandMacros(const std::string& input, std::unordered_set<std::string, PreprocessorStringHash, std::equal_to<>> expanding_macros = {});
 	void apply_operator(std::stack<long>& values, std::stack<Operator>& ops);
 	bool parseIntegerLiteral(std::istringstream& iss, long& value, std::string* out_literal = nullptr);
 	long evaluate_expression(std::istringstream& iss);
@@ -547,7 +559,7 @@ private:
 
 	CompileContext& settings_;
 	FileTree& tree_;
-	std::unordered_map<std::string, Directive> defines_;
+	std::unordered_map<std::string, Directive, PreprocessorStringHash, std::equal_to<>> defines_;
 	std::unordered_set<std::string> processedHeaders_;
 	std::stack<CurrentFile> filestack_;
 	std::string result_;

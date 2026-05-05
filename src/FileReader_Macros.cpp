@@ -10,7 +10,7 @@
 // 3. Recursive expansion is prevented by tracking currently-expanding macros
 // 4. Token pasting (##) is performed after argument substitution
 // 5. Stringification (#) uses unexpanded argument text
-std::string FileReader::expandMacros(const std::string& input, std::unordered_set<std::string> expanding_macros) {
+std::string FileReader::expandMacros(const std::string& input, std::unordered_set<std::string, PreprocessorStringHash, std::equal_to<>> expanding_macros) {
 	// Check if we're inside a multiline raw string from a previous line
 	if (inside_multiline_raw_string_) {
 		std::string closing = ")" + multiline_raw_delimiter_ + "\"";
@@ -42,7 +42,6 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 	// Use a working copy to avoid const_cast issues
 	std::string current = input;
 	std::string output;
-	output.reserve(current.size() * 2);	// Reserve space to avoid reallocations
 
 	size_t loop_guard = 1000;  // Safety limit for expansion iterations
 	bool needs_another_pass = true;	// Controls iteration - start with true to do at least one pass
@@ -54,6 +53,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 		output.clear();
 
 		size_t pos = 0;
+		size_t copy_start = 0;	// Start of the next pending verbatim chunk in 'current'
 		size_t input_size = current.size();
 		bool in_string = false;
 		bool in_char = false;
@@ -63,11 +63,9 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 		while (pos < input_size) {
 			char c = current[pos];
 
-			// Handle escape sequences in strings
+			// Handle escape sequences in strings — skip both bytes, they are covered by copy_start
 			if ((in_string || in_char) && c == '\\' && pos + 1 < input_size) {
-				output += c;
-				output += current[++pos];
-				++pos;
+				pos += 2;
 				continue;
 			}
 
@@ -79,50 +77,41 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 				if (paren != std::string::npos && paren <= delim_start + 16) {
 					raw_delimiter = current.substr(delim_start, paren - delim_start);
 					in_raw_string = true;
-					// Copy up to and including the opening paren
-					while (pos <= paren) {
-						output += current[pos++];
-					}
+					pos = paren + 1;
 					continue;
 				}
 			}
 
 			if (in_raw_string) {
-				// Look for closing delimiter
+				// Look for closing delimiter — advance past raw string content without copying
 				std::string closing = ")" + raw_delimiter + "\"";
 				if (pos + closing.size() <= input_size &&
 					current.compare(pos, closing.size(), closing) == 0) {
-					// Found closing, copy it and exit raw string mode
-					output += current.substr(pos, closing.size());
 					pos += closing.size();
 					in_raw_string = false;
 					raw_delimiter.clear();
-					continue;
+				} else {
+					++pos;
 				}
-				output += c;
-				++pos;
 				continue;
 			}
 
-			// Handle regular string literals
+			// Handle regular string literals — toggle state, just advance
 			if (!in_char && c == '"') {
 				in_string = !in_string;
-				output += c;
 				++pos;
 				continue;
 			}
 
-			// Handle character literals
+			// Handle character literals — toggle state, just advance
 			if (!in_string && c == '\'') {
 				in_char = !in_char;
-				output += c;
 				++pos;
 				continue;
 			}
 
-			// Inside string/char literal, just copy
+			// Inside string/char literal — just advance (no macro expansion inside literals)
 			if (in_string || in_char) {
-				output += c;
 				++pos;
 				continue;
 			}
@@ -137,7 +126,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 				}
 
 				std::string_view ident(current.data() + ident_start, pos - ident_start);
-				std::string ident_str(ident);
+				// No std::string allocation — transparent hash allows string_view lookups directly.
 
 				// Handle _Pragma() operator (C++20 §15.9 [cpp.pragma.op])
 				// _Pragma("string") is destringized and processed as #pragma string
@@ -182,23 +171,26 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 								// else: skip (warning, GCC visibility, etc.)
 							}
 							pos = close_paren + 1;
+							// Flush pending content before this _Pragma invocation (it emits nothing)
+							if (output.empty()) output.reserve(current.size() * 2);
+							output.append(current, copy_start, ident_start - copy_start);
+							copy_start = pos;
 							needs_another_pass = true;
 							continue;
 						}
 					}
-					// Not a valid _Pragma invocation, emit as-is
-					output += ident;
+					// Not a valid _Pragma invocation — stays in pending buffer (copy_start covers it)
 					continue;
 				}
 
 				// Skip if this macro is being expanded (prevent recursion per C++ standard)
-				if (expanding_macros.count(ident_str) > 0) {
-					output += ident;
+				if (expanding_macros.count(ident) > 0) {
+					// Identifier stays in pending buffer (copy_start covers it)
 					continue;
 				}
 
-				// Look up identifier in defines
-				auto it = defines_.find(ident_str);
+				// Look up identifier in defines (transparent hash — no string allocation needed)
+				auto it = defines_.find(ident);
 				if (it != defines_.end()) {
 					const Directive& directive = it->second;
 					std::string replace_str;
@@ -216,16 +208,14 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 							}
 
 							if (paren_pos >= input_size || current[paren_pos] != '(') {
-								// No '(' found - this is not a macro invocation, just copy the identifier
-								output += ident;
+								// No '(' found — not a macro invocation; stays in pending buffer
 								continue;
 							}
 
 							size_t args_start = paren_pos;
 							size_t args_end = findMatchingClosingParen(current, args_start);
 							if (args_end == std::string::npos) {
-								// Malformed - no closing paren
-								output += ident;
+								// Malformed (no closing paren) — stays in pending buffer
 								continue;
 							}
 
@@ -407,37 +397,41 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 
 					// Recursively expand the replacement (with this macro marked as expanding)
 					auto new_expanding = expanding_macros;
-					new_expanding.insert(ident_str);
+					new_expanding.emplace(ident.data(), ident.size());  // create string only when expanding
 					replace_str = expandMacros(replace_str, new_expanding);
 
+					// Macro expansion: flush pending content, append replacement
+					if (output.empty()) output.reserve(current.size() * 2);
+					output.append(current, copy_start, ident_start - copy_start);
 					output += replace_str;
+					copy_start = pos;  // After the macro name (and its args, if any)
 					needs_another_pass = true;  // We expanded something, may need another pass
 				} else {
-					// Not a macro, copy the identifier as-is
-					output += ident;
+					// Not a macro — stays in pending buffer (copy_start covers it)
 				}
 			} else {
-				// Not an identifier, just copy
-				output += c;
+				// Not an identifier — just advance (copy_start covers it)
 				++pos;
 			}
 		}
 
-		// Prepare for next iteration if we had expansions
+		// Flush remaining pending content and advance to next iteration (if macros found)
 		if (needs_another_pass) {
+			if (output.empty()) output.reserve(current.size() * 2);
+			output.append(current, copy_start, input_size - copy_start);
 			current = std::move(output);
-			output.clear();
-			output.reserve(current.size() * 2);
 		}
+		// else: no macros found — 'current' is already the correct result; loop will exit
 	}
 
 	if (loop_guard == 0) {
 		FLASH_LOG(Lexer, Warning, "Macro expansion limit reached for line (possible infinite recursion): ", input.substr(0, 100));
 	}
 
-	// The final result is in 'output' if we completed a full pass without expansions,
-	// or in 'current' if we hit the loop guard during a pass with expansions
-	std::string& result = needs_another_pass ? current : output;
+	// After all passes, 'current' always holds the final result:
+	// - No macros found: current == input (unchanged copy)
+	// - Macros found: current holds the fully-expanded string (via move from output)
+	std::string& result = current;
 
 	// Handle token-pasting operator (##) - done after all substitutions per C++ standard
 	size_t paste_pos;

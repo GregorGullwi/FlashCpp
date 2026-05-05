@@ -2,7 +2,7 @@
 #include <chrono>
 
 #ifndef WITH_PREPROCESSOR_TIMINGS
-#define WITH_PREPROCESSOR_TIMINGS 0
+#define WITH_PREPROCESSOR_TIMINGS 1
 #endif
 
 // Timing categories - always available, used with PreprocessTimer
@@ -314,6 +314,8 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 
 		{
 			PreprocessTimer timer(PreprocessTimingCategory::comment);
+			// Fast path: if no '/' in line, no block comments or line comments possible.
+			if (line.find('/') != std::string::npos) {
 			// Strip /* ... */ block comments in a single left-to-right pass,
 			// respecting string and char literals.  Handles multiple block
 			// comments on one line and unterminated block comments that span
@@ -387,6 +389,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 				if (in_comment)
 					continue;
 			}
+			}  // end: if (line.find('/') != npos)
 		}
 
 		if (skipping_stack.size() == 0) {
