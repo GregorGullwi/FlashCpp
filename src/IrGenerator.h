@@ -222,33 +222,36 @@ inline NamespaceHandle buildNamespaceHandleFromStrings(const std::vector<std::st
 	return current;
 }
 
-struct StructManglingInfo {
-	std::string_view struct_name;
-	NamespaceHandle namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
-	bool resolved = false;
+// Manglers encode the declaration namespace separately from the owner name. For a member of
+// `ns::Outer::Inner`, the correct split is namespace=`ns` and owner=`Outer::Inner`; passing
+// `ns::Outer::Inner` together with namespace=`ns` would double-encode the namespace.
+struct OwnerManglingInfo {
+	std::string_view owner_name_for_mangling;
+	NamespaceHandle owner_namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
+	bool owner_type_resolved = false;
 };
 
-inline std::string_view stripNamespacePrefixForMangling(std::string_view struct_name, NamespaceHandle namespace_handle) {
+inline std::string_view stripResolvedNamespacePrefixForMangling(std::string_view owner_name, NamespaceHandle namespace_handle) {
 	if (!namespace_handle.isValid() || namespace_handle.isGlobal()) {
-		return struct_name;
+		return owner_name;
 	}
 
 	const std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(namespace_handle);
 	if (qualified_namespace.empty() ||
-		!struct_name.starts_with(qualified_namespace) ||
-		struct_name.size() <= qualified_namespace.size() + 2 ||
-		struct_name.substr(qualified_namespace.size(), 2) != "::") {
-		return struct_name;
+		!owner_name.starts_with(qualified_namespace) ||
+		owner_name.size() <= qualified_namespace.size() + 2 ||
+		owner_name.substr(qualified_namespace.size(), 2) != "::") {
+		return owner_name;
 	}
 
-	return struct_name.substr(qualified_namespace.size() + 2);
+	return owner_name.substr(qualified_namespace.size() + 2);
 }
 
-inline StructManglingInfo resolveStructManglingInfoForMangling(
-	std::string_view struct_name,
+inline OwnerManglingInfo resolveOwnerManglingInfoForMangling(
+	std::string_view owner_name,
 	NamespaceHandle enclosing_namespace_handle) {
-	StructManglingInfo result{struct_name, NamespaceRegistry::GLOBAL_NAMESPACE, false};
-	if (struct_name.empty()) {
+	OwnerManglingInfo result{owner_name, NamespaceRegistry::GLOBAL_NAMESPACE, false};
+	if (owner_name.empty()) {
 		return result;
 	}
 
@@ -257,29 +260,30 @@ inline StructManglingInfo resolveStructManglingInfoForMangling(
 		if (type_it == getTypesByNameMap().end()) {
 			return false;
 		}
-		result.namespace_handle = type_it->second->namespaceHandle();
-		result.struct_name = stripNamespacePrefixForMangling(candidate_name, result.namespace_handle);
-		result.resolved = true;
+		result.owner_namespace_handle = type_it->second->namespaceHandle();
+		result.owner_name_for_mangling = stripResolvedNamespacePrefixForMangling(candidate_name, result.owner_namespace_handle);
+		result.owner_type_resolved = true;
 		return true;
 	};
 
-	if (struct_name.find("::") == std::string_view::npos && enclosing_namespace_handle.isValid()) {
+	if (owner_name.find("::") == std::string_view::npos && enclosing_namespace_handle.isValid()) {
 		StringHandle qualified_name_handle = gNamespaceRegistry.buildQualifiedIdentifier(
 			enclosing_namespace_handle,
-			StringTable::getOrInternStringHandle(struct_name));
+			StringTable::getOrInternStringHandle(owner_name));
 		if (qualified_name_handle.isValid() &&
 			try_resolve_type(qualified_name_handle, StringTable::getStringView(qualified_name_handle))) {
 			return result;
 		}
 	}
 
-	if (try_resolve_type(StringTable::getOrInternStringHandle(struct_name), struct_name)) {
+	if (try_resolve_type(StringTable::getOrInternStringHandle(owner_name), owner_name)) {
 		return result;
 	}
 
-	// If lookup fails but the owner name is already qualified, keep the encoded owner
-	// text and suppress any separate namespace emission to avoid double encoding.
-	if (struct_name.find("::") != std::string_view::npos) {
+	// If lookup fails but the owner spelling is already qualified, keep that raw spelling and
+	// suppress separate namespace emission. This preserves existing behavior for unresolved owners
+	// while still avoiding obvious double-encoding.
+	if (owner_name.find("::") != std::string_view::npos) {
 		return result;
 	}
 

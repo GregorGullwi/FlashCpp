@@ -878,7 +878,9 @@ inline void generateItaniumMangledName(
 			}
 		}
 
-		// Add struct/class name if present
+		// Add struct/class name if present. The owner name is expected to be relative to the
+		// separately supplied namespace path, so `namespace_path=["ns"]` pairs with
+		// `struct_name="Outer::Inner"` rather than `struct_name="ns::Outer::Inner"`.
 		if (!struct_name.empty()) {
 			// For nested classes, struct_name may contain "::" separators
 			// We need to encode each component separately

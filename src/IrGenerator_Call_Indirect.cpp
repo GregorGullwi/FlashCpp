@@ -1676,8 +1676,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				// Resolve the concrete owner metadata instead of blindly reusing the
 				// declaration namespace; this avoids double-encoding qualified owners.
 				auto struct_name_view = StringTable::getStringView(struct_name);
-				const StructManglingInfo owner_info =
-					resolveStructManglingInfoForMangling(
+				const OwnerManglingInfo owner_info =
+					resolveOwnerManglingInfoForMangling(
 						struct_name_view,
 						func_for_mangling->namespace_handle());
 
@@ -1687,8 +1687,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					*mangling_return_type,
 					param_types,
 					func_for_mangling->is_variadic(),
-					owner_info.struct_name,
-					owner_info.namespace_handle,
+					owner_info.owner_name_for_mangling,
+					owner_info.owner_namespace_handle,
 					func_for_mangling->is_const_member_function());
 				function_name = StringTable::getOrInternStringHandle(mangled);
 			}

@@ -308,10 +308,10 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	if (node.is_member_function() && !struct_name_for_function.empty()) {
 		// Resolve the owner type from the declaration namespace first so same-named
 		// classes in different namespaces do not collide during mangling.
-		const StructManglingInfo owner_info =
-			resolveStructManglingInfoForMangling(struct_name_for_function, node.namespace_handle());
-		mangling_struct_name = owner_info.struct_name;
-		namespace_for_mangling = owner_info.namespace_handle;
+		const OwnerManglingInfo owner_info =
+			resolveOwnerManglingInfoForMangling(struct_name_for_function, node.namespace_handle());
+		mangling_struct_name = owner_info.owner_name_for_mangling;
+		namespace_for_mangling = owner_info.owner_namespace_handle;
 	} else if (node.namespace_handle().isValid()) {
 		namespace_for_mangling = node.namespace_handle();
 	} else {
