@@ -1009,31 +1009,6 @@ void Parser::reparse_template_function_body(
 		preserve_ref_qualifier);
 }
 
-// Synthesize a TypeSpecifierNode from a TypeInfo::TemplateArgInfo entry.
-// Used when reconstructing a concrete type from a dependent template-arg
-// position (e.g. extracting 'int' from Box<int> when the pattern is Box<Ts>).
-static TypeSpecifierNode makeTypeSpecifierFromTemplateArgInfo(
-	const TypeInfo::TemplateArgInfo& c) {
-	TypeSpecifierNode synth_ts(
-		c.type_index.withCategory(c.typeEnum()),
-		get_type_size_bits(c.typeEnum()),
-		Token(), c.cv_qualifier, ReferenceQualifier::None);
-	for (size_t pd = 0; pd < c.pointer_depth; ++pd) {
-		CVQualifier ptr_cv = (pd < c.pointer_cv_qualifiers.size())
-								 ? c.pointer_cv_qualifiers[pd]
-								 : CVQualifier::None;
-		synth_ts.add_pointer_level(ptr_cv);
-	}
-	synth_ts.set_reference_qualifier(c.ref_qualifier);
-	if (c.is_array) {
-		synth_ts.set_array(true, c.array_size);
-	}
-	if (c.function_signature.has_value()) {
-		synth_ts.set_function_signature(*c.function_signature);
-	}
-	return synth_ts;
-}
-
 namespace {
 void collectDependentTemplateParamNamesFromTemplateArgRecursive(
 	const TypeInfo::TemplateArgInfo& pattern_arg,
@@ -1073,7 +1048,7 @@ std::optional<TemplateTypeArg> extractNestedTemplateArgFromTemplateArgRecursive(
 		if (concrete_arg.is_value) {
 			return TemplateTypeArg::makeValue(concrete_arg.intValue(), concrete_arg.typeEnum());
 		}
-		return TemplateTypeArg::makeTypeSpecifier(makeTypeSpecifierFromTemplateArgInfo(concrete_arg));
+		return TemplateTypeArg::makeTypeSpecifier(*makeTypeSpecifierFromTemplateArgInfo(concrete_arg));
 	}
 
 	const TypeInfo* nested_pattern_info = tryGetTypeInfo(pattern_arg.type_index);
@@ -1114,7 +1089,7 @@ std::optional<bool> preDeduceTemplateArgsFromTemplateArgRecursive(
 		if (param_it != tparam_nodes_by_name.end()) {
 			TemplateTypeArg new_arg = concrete_arg.is_value
 				? TemplateTypeArg::makeValue(concrete_arg.intValue(), concrete_arg.typeEnum())
-				: TemplateTypeArg::makeTypeSpecifier(makeTypeSpecifierFromTemplateArgInfo(concrete_arg));
+				: TemplateTypeArg::makeTypeSpecifier(*makeTypeSpecifierFromTemplateArgInfo(concrete_arg));
 			auto [existing_it, inserted] = param_name_to_arg.emplace(pattern_arg.dependent_name, new_arg);
 			if (!inserted && !(existing_it->second == new_arg)) {
 				FLASH_LOG_FORMAT(Templates, Error,

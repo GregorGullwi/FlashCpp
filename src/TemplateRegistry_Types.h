@@ -844,6 +844,58 @@ inline TypeSpecifierNode makeTypeSpecifierFromTemplateTypeArg(
 	return substituted_spec;
 }
 
+inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
+	const TypeInfo::TemplateArgInfo& arg_info,
+	const Token& token = Token()) {
+	if (arg_info.is_value) {
+		return std::nullopt;
+	}
+
+	TypeSpecifierNode substituted_spec(
+		arg_info.type_index.withCategory(arg_info.typeEnum()),
+		get_type_size_bits(arg_info.typeEnum()),
+		token,
+		arg_info.cv_qualifier,
+		arg_info.ref_qualifier);
+	for (size_t pointer_index = 0; pointer_index < arg_info.pointer_depth; ++pointer_index) {
+		CVQualifier pointer_cv = pointer_index < arg_info.pointer_cv_qualifiers.size()
+			? arg_info.pointer_cv_qualifiers[pointer_index]
+			: CVQualifier::None;
+		substituted_spec.add_pointer_level(pointer_cv);
+	}
+	if (arg_info.is_array) {
+		if (!arg_info.array_size.has_value() || *arg_info.array_size == 0) {
+			substituted_spec.set_array(true, std::nullopt);
+		} else {
+			substituted_spec.set_array(true, *arg_info.array_size);
+		}
+	}
+	if (arg_info.function_signature.has_value()) {
+		substituted_spec.set_function_signature(*arg_info.function_signature);
+	}
+	return substituted_spec;
+}
+
+inline std::optional<TypeSpecifierNode> tryExtractFirstTemplateTypeArgument(
+	const TypeSpecifierNode& wrapper_type,
+	const Token& token = Token(),
+	std::string_view expected_base_template_name = {}) {
+	if (!wrapper_type.type_index().is_valid() || !is_struct_type(wrapper_type.type())) {
+		return std::nullopt;
+	}
+
+	const TypeInfo& wrapper_info = getTypeInfo(wrapper_type.type_index());
+	if (!wrapper_info.isTemplateInstantiation() || wrapper_info.templateArgs().empty()) {
+		return std::nullopt;
+	}
+	if (!expected_base_template_name.empty() &&
+		StringTable::getStringView(wrapper_info.baseTemplateName()) != expected_base_template_name) {
+		return std::nullopt;
+	}
+
+	return makeTypeSpecifierFromTemplateArgInfo(wrapper_info.templateArgs().front(), token);
+}
+
 inline TemplateTypeArg makeTemplateTypeArgFromResolvedAlias(
 	const ResolvedAliasTypeInfo& resolved_alias,
 	TypeIndex fallback_type_index) {

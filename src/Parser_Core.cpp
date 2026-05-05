@@ -380,6 +380,8 @@ void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<Type
 				}
 			}
 			arg_type = TypeSpecifierNode(TypeCategory::Invalid, TypeQualifier::None, 0, Token(), CVQualifier::None);
+		} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+			arg_type = inner.type_node();
 		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 			// For logical-not, deduce Bool; for arithmetic/bitwise unary ops, recurse on the
 			// operand; for dereferencing or address-of, fall through to the Invalid default.

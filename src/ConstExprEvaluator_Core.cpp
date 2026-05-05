@@ -43,123 +43,26 @@ bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
 	return !isPlaceholderAutoType(type_spec.category());
 }
 
-// Builds a TypeSpecifierNode from TypeInfo-owned template argument metadata.
-//
-// arg_info is expected to describe a concrete type template argument, including
-// cv/ref, pointer, array, and function-signature qualifiers. token is copied
-// into the synthesized TypeSpecifierNode so later diagnostics still point at
-// the source expression that carried the template argument.
-//
-// Returns nullopt when arg_info is a non-type template argument; callers should
-// then leave the original expression type unchanged or report that no type
-// argument was available.
-std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
-	const TypeInfo::TemplateArgInfo& arg_info,
-	const Token& token) {
-	if (arg_info.is_value) {
-		return std::nullopt;
-	}
-
-	TypeSpecifierNode extracted_type(
-		arg_info.type_index.withCategory(arg_info.typeEnum()),
-		get_type_size_bits(arg_info.typeEnum()),
-		token,
-		arg_info.cv_qualifier,
-		ReferenceQualifier::None);
-	for (size_t pointer_level = 0; pointer_level < arg_info.pointer_depth; ++pointer_level) {
-		CVQualifier pointer_cv = pointer_level < arg_info.pointer_cv_qualifiers.size()
-			? arg_info.pointer_cv_qualifiers[pointer_level]
-			: CVQualifier::None;
-		extracted_type.add_pointer_level(pointer_cv);
-	}
-	extracted_type.set_reference_qualifier(arg_info.ref_qualifier);
-	if (arg_info.is_array) {
-		extracted_type.set_array(true, arg_info.array_size);
-	}
-	if (arg_info.function_signature.has_value()) {
-		extracted_type.set_function_signature(*arg_info.function_signature);
-	}
-	return extracted_type;
-}
-
-// Extracts T from a std::__type_identity<T> constructor type.
-//
-// type_spec should name the concrete __type_identity<T> wrapper object used by
-// libstdc++'s __is_complete_or_unbounded helper. Returns nullopt when type_spec
-// is not a class-template instantiation of __type_identity, when it has no first
-// template argument, or when that first argument is non-type.
-std::optional<TypeSpecifierNode> tryExtractTypeIdentityArgumentType(const TypeSpecifierNode& type_spec) {
-	if (!type_spec.type_index().is_valid() || !is_struct_type(type_spec.type())) {
-		return std::nullopt;
-	}
-
-	const TypeInfo& identity_type_info = getTypeInfo(type_spec.type_index());
-	if (!identity_type_info.isTemplateInstantiation() ||
-		StringTable::getStringView(identity_type_info.baseTemplateName()) != "__type_identity" ||
-		identity_type_info.templateArgs().empty()) {
-		return std::nullopt;
-	}
-
-	return makeTypeSpecifierFromTemplateArgInfo(identity_type_info.templateArgs().front(), type_spec.token());
-}
-
-// Evaluates libstdc++'s std::__is_complete_or_unbounded helper without
-// instantiating the library overload body.
-//
-// func_name and qualified_name identify the call target; nullopt means the call
-// is not the std helper and ordinary constexpr function-call evaluation should
-// continue. EvalResult::error means the call had the helper name but did not
-// expose the expected __type_identity<T> argument shape. A successful EvalResult
-// contains the shared type-trait evaluator's answer for the unwrapped T.
-std::optional<EvalResult> tryEvaluateStdIsCompleteOrUnboundedCall(
+bool tryCollectFunctionCallArgTypes(
 	const CallExprNode& call_expr,
-	std::string_view func_name,
-	std::string_view qualified_name) {
-	// Special handling for std::__is_complete_or_unbounded
-	// This is a helper function in the standard library that checks if a type is complete
-	// __is_complete_or_unbounded evaluates to true if either:
-	// 1. T is a complete type, or
-	// 2. T is an unbounded array type (e.g. int[])
-	if (qualified_name != "std::__is_complete_or_unbounded" && func_name != "__is_complete_or_unbounded") {
-		return std::nullopt;
+	EvaluationContext& context,
+	std::vector<TypeSpecifierNode>& arg_types_out) {
+	if (context.parser == nullptr) {
+		return false;
 	}
 
-	FLASH_LOG(Templates, Debug, "Special handling for __is_complete_or_unbounded");
-
-	// The function takes a __type_identity<T> argument
-	// We need to extract the type T and check if it's complete or unbounded
-	if (call_expr.arguments().empty()) {
-		return EvalResult::error("__is_complete_or_unbounded requires a type argument");
-	}
-
-	// Get the first argument (should be a ConstructorCallNode for __type_identity<T>{})
-	const ASTNode& arg = call_expr.arguments()[0];
-
-	// Try to extract the type from the argument
-	// The argument is typically __type_identity<T>{} which is a constructor call
-	if (arg.is<ExpressionNode>()) {
-		const ExpressionNode& expr = arg.as<ExpressionNode>();
-		if (std::holds_alternative<ConstructorCallNode>(expr)) {
-			const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
-			const TypeSpecifierNode& type_spec = ctor.type_node();
-			std::optional<TypeSpecifierNode> identity_arg_type = tryExtractTypeIdentityArgumentType(type_spec);
-			const TypeSpecifierNode& checked_type = identity_arg_type.has_value() ? *identity_arg_type : type_spec;
-			const StructTypeInfo* struct_info = nullptr;
-			if (checked_type.type_index().is_valid() && is_struct_type(checked_type.type())) {
-				struct_info = getTypeInfo(checked_type.type_index()).getStructInfo();
-			}
-
-			TypeTraitResult trait = evaluateTypeTrait(
-				TypeTraitKind::IsCompleteOrUnbounded,
-				checked_type,
-				struct_info);
-			if (trait.success) {
-				return EvalResult::from_bool(trait.value);
-			}
+	arg_types_out.clear();
+	arg_types_out.reserve(call_expr.arguments().size());
+	for (const ASTNode& argument : call_expr.arguments()) {
+		size_t previous_count = arg_types_out.size();
+		context.parser->appendFunctionCallArgType(argument, &arg_types_out);
+		if (arg_types_out.size() == previous_count ||
+			arg_types_out.back().category() == TypeCategory::Invalid) {
+			return false;
 		}
 	}
 
-	return EvalResult::error("__is_complete_or_unbounded requires a type argument");
+	return true;
 }
 
 EvalResult validateConstexprRead(const EvalResult& heap_val) {
@@ -4169,10 +4072,6 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
 	}
 
-	if (auto is_complete_result = tryEvaluateStdIsCompleteOrUnboundedCall(call_expr, func_name, qualified_name)) {
-		return *is_complete_result;
-	}
-
 	// If we have a struct context, prefer static member functions from the current struct.
 	// This ensures that `helper()` in `static constexpr int value = helper()` resolves
 	// to Box<T>::helper() rather than a global helper() when inside a struct definition.
@@ -4414,29 +4313,39 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 
 		// No pre-instantiated version found - try to instantiate on-demand if parser is available
 		if (context.parser) {
-			// Use shared helper to deduce template arguments from function call arguments
-			std::vector<TemplateTypeArg> deduced_args = TemplateInstantiationHelper::deduceTemplateArgsFromCall(arguments);
-
-			// Try to instantiate even if we have fewer deduced args than template params
-			// The template might have default parameters that can fill in the rest
-			if (!deduced_args.empty()) {
-				// Use shared helper to try instantiation with various name variations
-				auto instantiated_opt = TemplateInstantiationHelper::tryInstantiateTemplateFunction(
-					*context.parser, qualified_name, func_name, deduced_args);
-				context.normalizePendingSemanticRoots();
-
-				if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
-					const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
-					if (instantiated_func.is_constexpr() || instantiated_func.is_consteval()) {
-						// Successfully instantiated - evaluate it
-						std::unordered_map<std::string_view, EvalResult> empty_bindings;
-						return evaluate_function_call_with_bindings(instantiated_func, arguments, empty_bindings, context);
-					}
-				} else if (instantiated_opt.has_value()) {
-					FLASH_LOG(Templates, Debug, "Instantiation succeeded but result is not a FunctionDeclarationNode");
+			std::optional<ASTNode> instantiated_opt;
+			std::vector<TypeSpecifierNode> arg_types;
+			if (tryCollectFunctionCallArgTypes(call_expr, context, arg_types)) {
+				instantiated_opt = context.parser->try_instantiate_template(qualified_name, arg_types);
+				if (!instantiated_opt.has_value() && qualified_name != func_name) {
+					instantiated_opt = context.parser->try_instantiate_template(func_name, arg_types);
 				}
-			} else {
-				FLASH_LOG(Templates, Debug, "No template arguments could be deduced from function call arguments");
+				if (instantiated_opt.has_value()) {
+					context.normalizePendingSemanticRoots();
+				}
+			}
+
+			if (!instantiated_opt.has_value()) {
+				std::vector<TemplateTypeArg> deduced_args = TemplateInstantiationHelper::deduceTemplateArgsFromCall(arguments);
+				if (!deduced_args.empty()) {
+					instantiated_opt = TemplateInstantiationHelper::tryInstantiateTemplateFunction(
+						*context.parser, qualified_name, func_name, deduced_args);
+					if (instantiated_opt.has_value()) {
+						context.normalizePendingSemanticRoots();
+					}
+				} else {
+					FLASH_LOG(Templates, Debug, "No template arguments could be deduced from function call arguments");
+				}
+			}
+
+			if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
+				const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
+				if (instantiated_func.is_constexpr() || instantiated_func.is_consteval()) {
+					std::unordered_map<std::string_view, EvalResult> empty_bindings;
+					return evaluate_function_call_with_bindings(instantiated_func, arguments, empty_bindings, context);
+				}
+			} else if (instantiated_opt.has_value()) {
+				FLASH_LOG(Templates, Debug, "Instantiation succeeded but result is not a FunctionDeclarationNode");
 			}
 		}
 
