@@ -176,7 +176,7 @@ Representative sites:
 
 - `src\IrGenerator_MemberAccess.cpp:1996` - `sizeof(member_access)` searches instantiated types by string prefix when direct lookup finds unsubstituted template members.
 - `src\IrGenerator_MemberAccess.cpp:2081`, `src\IrGenerator_MemberAccess.cpp:2110`, `src\IrGenerator_MemberAccess.cpp:2131`, `src\IrGenerator_MemberAccess.cpp:2151` - `sizeof(arr[index])` and general `sizeof(expr)` fall through to IR generation and can return zero with only a warning.
-- `src\ConstExprEvaluator_Core.cpp:4002` - `__is_complete_or_unbounded` returns true if it cannot extract the type.
+- `src\ConstExprEvaluator_Core.cpp:4002` - `__is_complete_or_unbounded` previously returned true if it could not extract the type; this now reports a constexpr evaluation error instead of treating missing type metadata as success.
 - `src\ConstExprEvaluator_Members.cpp:4194` - struct initializer evaluation falls back to evaluating the initializer expression directly.
 - `src\IrGenerator_Visitors_TypeInit.cpp:1175`, `src\IrGenerator_Visitors_TypeInit.cpp:1420` - type initialization tries full constexpr eval or emits bytes from fallback zero-initialization.
 
@@ -538,3 +538,4 @@ The audit is now backed by direct suite evidence for several representative temp
   the current member context. The focused regression and the full 2254-test
   Linux suite passed with the hard-fail probe enabled after this change;
 - the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes should still be assumed active until probed or root-fixed individually.
+- the `ConstExprEvaluator_Core.cpp` `__is_complete_or_unbounded` missing-type fallback now hard-fails instead of returning true. Added `tests/test_is_complete_or_unbounded_invalid_arg_fail.cpp`; the existing `tests/test_stdlib_features_ret0.cpp` still covers valid type-shaped use.
