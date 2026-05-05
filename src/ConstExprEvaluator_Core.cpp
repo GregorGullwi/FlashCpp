@@ -43,6 +43,9 @@ bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
 	return !isPlaceholderAutoType(type_spec.category());
 }
 
+// Reconstruct a TypeSpecifierNode from TypeInfo-owned template argument
+// metadata. Returns nullopt for non-type template arguments, because the
+// constexpr type-trait path only needs concrete type arguments.
 std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	const TypeInfo::TemplateArgInfo& arg_info,
 	const Token& token) {
@@ -72,6 +75,9 @@ std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	return extracted_type;
 }
 
+// Extract T from a std::__type_identity<T> constructor type. Returns nullopt
+// when the provided type is not a __type_identity template instantiation or its
+// first template argument is not a type.
 std::optional<TypeSpecifierNode> tryExtractTypeIdentityArgumentType(const TypeSpecifierNode& type_spec) {
 	if (!type_spec.type_index().is_valid() || !is_struct_type(type_spec.type())) {
 		return std::nullopt;
@@ -85,6 +91,57 @@ std::optional<TypeSpecifierNode> tryExtractTypeIdentityArgumentType(const TypeSp
 	}
 
 	return makeTypeSpecifierFromTemplateArgInfo(identity_type_info.templateArgs().front(), type_spec.token());
+}
+
+std::optional<EvalResult> tryEvaluateStdIsCompleteOrUnboundedCall(
+	const CallExprNode& call_expr,
+	std::string_view func_name,
+	std::string_view qualified_name) {
+	// Special handling for std::__is_complete_or_unbounded
+	// This is a helper function in the standard library that checks if a type is complete
+	// __is_complete_or_unbounded evaluates to true if either:
+	// 1. T is a complete type, or
+	// 2. T is an unbounded array type (e.g. int[])
+	if (qualified_name != "std::__is_complete_or_unbounded" && func_name != "__is_complete_or_unbounded") {
+		return std::nullopt;
+	}
+
+	FLASH_LOG(Templates, Debug, "Special handling for __is_complete_or_unbounded");
+
+	// The function takes a __type_identity<T> argument
+	// We need to extract the type T and check if it's complete or unbounded
+	if (call_expr.arguments().empty()) {
+		return EvalResult::error("__is_complete_or_unbounded requires a type argument");
+	}
+
+	// Get the first argument (should be a ConstructorCallNode for __type_identity<T>{})
+	const ASTNode& arg = call_expr.arguments()[0];
+
+	// Try to extract the type from the argument
+	// The argument is typically __type_identity<T>{} which is a constructor call
+	if (arg.is<ExpressionNode>()) {
+		const ExpressionNode& expr = arg.as<ExpressionNode>();
+		if (std::holds_alternative<ConstructorCallNode>(expr)) {
+			const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
+			const TypeSpecifierNode& type_spec = ctor.type_node();
+			std::optional<TypeSpecifierNode> identity_arg_type = tryExtractTypeIdentityArgumentType(type_spec);
+			const TypeSpecifierNode& checked_type = identity_arg_type.has_value() ? *identity_arg_type : type_spec;
+			const StructTypeInfo* struct_info = nullptr;
+			if (checked_type.type_index().is_valid() && is_struct_type(checked_type.type())) {
+				struct_info = getTypeInfo(checked_type.type_index()).getStructInfo();
+			}
+
+			TypeTraitResult trait = evaluateTypeTrait(
+				TypeTraitKind::IsCompleteOrUnbounded,
+				checked_type,
+				struct_info);
+			if (trait.success) {
+				return EvalResult::from_bool(trait.value);
+			}
+		}
+	}
+
+	return EvalResult::error("__is_complete_or_unbounded requires a type argument");
 }
 
 EvalResult validateConstexprRead(const EvalResult& heap_val) {
@@ -4094,55 +4151,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
 	}
 
-	auto tryEvaluateStdIsCompleteOrUnbounded = [&]() -> std::optional<EvalResult> {
-		// Special handling for std::__is_complete_or_unbounded
-		// This is a helper function in the standard library that checks if a type is complete
-		// __is_complete_or_unbounded evaluates to true if either:
-		// 1. T is a complete type, or
-		// 2. T is an unbounded array type (e.g. int[])
-		if (qualified_name != "std::__is_complete_or_unbounded" && func_name != "__is_complete_or_unbounded") {
-			return std::nullopt;
-		}
-
-		FLASH_LOG(Templates, Debug, "Special handling for __is_complete_or_unbounded");
-
-		// The function takes a __type_identity<T> argument
-		// We need to extract the type T and check if it's complete or unbounded
-		if (call_expr.arguments().empty()) {
-			return EvalResult::error("__is_complete_or_unbounded requires a type argument");
-		}
-
-		// Get the first argument (should be a ConstructorCallNode for __type_identity<T>{})
-		const ASTNode& arg = call_expr.arguments()[0];
-
-		// Try to extract the type from the argument
-		// The argument is typically __type_identity<T>{} which is a constructor call
-		if (arg.is<ExpressionNode>()) {
-			const ExpressionNode& expr = arg.as<ExpressionNode>();
-			if (std::holds_alternative<ConstructorCallNode>(expr)) {
-				const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
-				const TypeSpecifierNode& type_spec = ctor.type_node();
-				std::optional<TypeSpecifierNode> identity_arg_type = tryExtractTypeIdentityArgumentType(type_spec);
-				const TypeSpecifierNode& checked_type = identity_arg_type.has_value() ? *identity_arg_type : type_spec;
-				const StructTypeInfo* struct_info = nullptr;
-				if (checked_type.type_index().is_valid() && is_struct_type(checked_type.type())) {
-					struct_info = getTypeInfo(checked_type.type_index()).getStructInfo();
-				}
-
-				TypeTraitResult trait = evaluateTypeTrait(
-					TypeTraitKind::IsCompleteOrUnbounded,
-					checked_type,
-					struct_info);
-				if (trait.success) {
-					return EvalResult::from_bool(trait.value);
-				}
-			}
-		}
-
-		return EvalResult::error("__is_complete_or_unbounded requires a type argument");
-	};
-
-	if (auto is_complete_result = tryEvaluateStdIsCompleteOrUnbounded()) {
+	if (auto is_complete_result = tryEvaluateStdIsCompleteOrUnboundedCall(call_expr, func_name, qualified_name)) {
 		return *is_complete_result;
 	}
 
