@@ -148,38 +148,17 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					arg_idx++;
 				}
 
-				// Build instantiation key and request instantiation
-				std::string instantiation_key = std::to_string(lambda.lambda_id());
-				for (const auto& deduced : deduced_param_types) {
-					instantiation_key += "_" + std::to_string(static_cast<int>(deduced.type())) +
-										 "_" + std::to_string(deduced.size_in_bits());
-				}
-
-				// Check if we've already scheduled this instantiation
-				if (generated_generic_lambda_instantiations_.find(instantiation_key) ==
-					generated_generic_lambda_instantiations_.end()) {
-					// Schedule this instantiation
-					GenericLambdaInstantiation inst;
-					inst.lambda_id = lambda.lambda_id();
-					inst.instantiation_key = StringTable::getOrInternStringHandle(instantiation_key);
-					for (size_t i = 0; i < auto_param_indices.size() && i < deduced_param_types.size(); ++i) {
-						inst.deduced_types.push_back({auto_param_indices[i], deduced_param_types[i]});
-					}
-					pending_generic_lambda_instantiations_.push_back(std::move(inst));
-					generated_generic_lambda_instantiations_.insert(instantiation_key);
-
-					// Also store deduced types in the LambdaInfo for generation
-					// Find the LambdaInfo for this lambda
-					for (auto& lambda_info : collected_lambdas_) {
-						if (lambda_info.lambda_id == lambda.lambda_id()) {
-							// Store deduced types (full TypeSpecifierNode to preserve struct info and reference flags)
-							for (size_t i = 0; i < auto_param_indices.size() && i < deduced_param_types.size(); ++i) {
-								lambda_info.setDeducedType(
-									auto_param_indices[i],
-									deduced_param_types[i]);
-							}
-							break;
+				// Store deduced types directly on the collected LambdaInfo. Deferred lambda
+				// generation consumes lambda_info.deduced_auto_types via
+				// normalizeInstantiatedLambdaBody()/generateCollectedLambdas().
+				for (auto& lambda_info : collected_lambdas_) {
+					if (lambda_info.lambda_id == lambda.lambda_id()) {
+						for (size_t i = 0; i < auto_param_indices.size() && i < deduced_param_types.size(); ++i) {
+							lambda_info.setDeducedType(
+								auto_param_indices[i],
+								deduced_param_types[i]);
 						}
+						break;
 					}
 				}
 			} else {

@@ -1178,17 +1178,6 @@ private:
 	// Phase 4: Using StringHandle
 	std::unordered_set<StringHandle> generated_function_names_;
 
-	// Generic lambda instantiation tracking
-	// Key: lambda_id concatenated with deduced type signature (e.g., "0_int_double")
-	// Value: The deduced parameter types for that instantiation
-	struct GenericLambdaInstantiation {
-		size_t lambda_id;
-		std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_types;	 // param_index -> deduced type
-		StringHandle instantiation_key;	// Unique key for this instantiation
-	};
-	std::vector<GenericLambdaInstantiation> pending_generic_lambda_instantiations_;
-	std::unordered_set<std::string> generated_generic_lambda_instantiations_;  // Track already generated ones
-
 	// Structure to hold info for local struct member functions
 	struct LocalStructMemberInfo {
 		StringHandle struct_name;
