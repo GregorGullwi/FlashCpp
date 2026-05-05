@@ -844,6 +844,79 @@ inline TypeSpecifierNode makeTypeSpecifierFromTemplateTypeArg(
 	return substituted_spec;
 }
 
+// Rebuild a concrete TypeSpecifierNode from stored TemplateArgInfo metadata.
+// Returns std::nullopt when the template argument is a value argument rather
+// than a type argument.
+inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
+	const TypeInfo::TemplateArgInfo& arg_info,
+	const Token& token) {
+	if (arg_info.is_value) {
+		// Only type template arguments can be reconstructed as a TypeSpecifierNode.
+		return std::nullopt;
+	}
+
+	// Use the same completeness-aware size calculation as makeTypeSpecifierFromTemplateTypeArg
+	// to avoid misclassifying forward-declared structs as having a non-zero size.
+	TemplateTypeArg materialized;
+	materialized.type_index = arg_info.type_index;
+	materialized.ref_qualifier = arg_info.ref_qualifier;
+	materialized.pointer_depth = checkedPointerDepthToUint8(arg_info.pointer_depth);
+	materialized.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
+	materialized.cv_qualifier = arg_info.cv_qualifier;
+	materialized.is_array = arg_info.is_array;
+	materialized.array_dimensions = arg_info.array_size
+		? std::vector<size_t>{*arg_info.array_size}
+		: std::vector<size_t>{};
+	materialized.function_signature = arg_info.function_signature;
+
+	TypeSpecifierNode substituted_spec(
+		arg_info.type_index.withCategory(arg_info.typeEnum()),
+		computeTemplateTypeArgSizeBits(materialized),
+		token,
+		arg_info.cv_qualifier,
+		arg_info.ref_qualifier);
+	for (size_t pointer_index = 0; pointer_index < arg_info.pointer_depth; ++pointer_index) {
+		CVQualifier pointer_cv = pointer_index < arg_info.pointer_cv_qualifiers.size()
+			? arg_info.pointer_cv_qualifiers[pointer_index]
+			: CVQualifier::None;
+		substituted_spec.add_pointer_level(pointer_cv);
+	}
+	if (arg_info.is_array) {
+		if (!arg_info.array_size.has_value() || *arg_info.array_size == 0) {
+			substituted_spec.set_array(true, std::nullopt);
+		} else {
+			substituted_spec.set_array(true, *arg_info.array_size);
+		}
+	}
+	if (arg_info.function_signature.has_value()) {
+		substituted_spec.set_function_signature(*arg_info.function_signature);
+	}
+	return substituted_spec;
+}
+
+// Extract the first type template argument from a concrete wrapper instantiation
+// such as __type_identity<T>. Returns std::nullopt for invalid/non-struct types,
+// non-template instantiations, empty template-argument lists, or name mismatch.
+inline std::optional<TypeSpecifierNode> tryExtractFirstTemplateTypeArgument(
+	const TypeSpecifierNode& wrapper_type,
+	const Token& token,
+	std::string_view expected_base_template_name) {
+	if (!wrapper_type.type_index().is_valid() || !is_struct_type(wrapper_type.type())) {
+		return std::nullopt;
+	}
+
+	const TypeInfo& wrapper_info = getTypeInfo(wrapper_type.type_index());
+	if (!wrapper_info.isTemplateInstantiation() || wrapper_info.templateArgs().empty()) {
+		return std::nullopt;
+	}
+	if (!expected_base_template_name.empty() &&
+		StringTable::getStringView(wrapper_info.baseTemplateName()) != expected_base_template_name) {
+		return std::nullopt;
+	}
+
+	return makeTypeSpecifierFromTemplateArgInfo(wrapper_info.templateArgs().front(), token);
+}
+
 inline TemplateTypeArg makeTemplateTypeArgFromResolvedAlias(
 	const ResolvedAliasTypeInfo& resolved_alias,
 	TypeIndex fallback_type_index) {

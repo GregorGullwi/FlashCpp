@@ -4,7 +4,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
-> **Note (2026-05-04 injected-class-name copy-init follow-up):** the rows below still include historical timings from earlier hosts and commits.  The authoritative current Linux/libstdc++-14 state for the retested `tests/std/test_std_*.cpp` files is the latest dated section below the table.
+> **Note (2026-05-05 `__is_complete_or_unbounded` follow-up):** the rows below still include historical timings from earlier hosts and commits.  The authoritative current Linux/libstdc++-14 state for the retested `tests/std/test_std_*.cpp` files is the latest dated section below the table.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
@@ -100,6 +100,96 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-05 `std::__is_complete_or_unbounded` semantic follow-up
+
+This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested every
+`tests/std/test_std_*.cpp` file against Linux/libstdc++-14.
+
+Fixes landed:
+
+- **`std::__is_complete_or_unbounded(__type_identity<T>{})` is evaluated at the
+  standard-library helper layer before constexpr evaluation instantiates the
+  helper overload body.**  The evaluator now unwraps the `__type_identity<T>`
+  template argument and reuses the shared type-trait evaluator for the actual
+  `T`, avoiding false positives where the wrapper type was treated as the
+  queried type.
+- **Forward declarations with allocated `StructTypeInfo` are still incomplete
+  for `__is_complete_or_unbounded`.**  Shared type-trait evaluation and the
+  member constexpr evaluator now require complete object layout, not just a
+  non-null `StructTypeInfo`, for class-type completeness.
+
+Regression test:
+
+- `tests/std/test_std_is_complete_or_unbounded_resolved.cpp`
+
+Validation snapshot:
+
+- Full Linux regression suite (`bash tests/run_all_tests.sh`): 2216 pass / 0 fail
+  / 160 `_fail` correct.
+- Focused regression compiles with clang++ `-std=c++20 -fsyntax-only` and with
+  `x64/Sharded/FlashCpp`.
+
+Focused Linux/libstdc++-14 std-header sweep (`x64/Sharded/FlashCpp`, 60 s
+timeout):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `<aggregate_brace_elision_follow>` | ✅ Compiled | 40ms | |
+| `<bit>` | ✅ Compiled | 479ms | |
+| `<compare_ret42>` | ✅ Compiled | 27ms | |
+| `<concepts>` | ✅ Compiled | 409ms | |
+| `<exception>` | ✅ Compiled | 438ms | |
+| `test_std_is_complete_or_unbounded_resolved.cpp` | ✅ Compiled | 356ms | New focused std-helper regression. |
+| `<limits>` | ✅ Compiled | 1273ms | |
+| `<new>` | ✅ Compiled | 47ms | |
+| `<pair_swap_deleted_member>` | ✅ Compiled | 23ms | |
+| `<rel_ops_no_false_instantiation_ret0>` | ✅ Compiled | 660ms | |
+| `<source_location>` | ✅ Compiled | 34ms | |
+| `<span>` | ✅ Compiled | 35ms | |
+| `<type_traits>` | ✅ Compiled | 352ms | |
+| `<type_traits_is_integral_any_of_fail>` | ✅ Compiled | 16ms | |
+| `<typeinfo_ret0>` | ✅ Compiled | 47ms | |
+| `<utility>` | ✅ Compiled | 659ms | |
+| `<version>` | ✅ Compiled | 34ms | |
+| `<algorithm>` | ❌ Compile Error | 2023ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<any>` | ❌ Compile Error | 477ms | `Ambiguous constructor call` in `main`. |
+| `<array>` | ❌ Compile Error | 1186ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<atomic>` | ❌ Compile Error | 902ms | `/usr/include/c++/14/atomic:92`: no matching member function for `_M_base.load()`. |
+| `<chrono>` | ❌ Compile Error | 2928ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<cmath>` | ❌ Compile Error | 4962ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<deque>` | ❌ Compile Error | 1919ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<fstream>` | ❌ Compile Error | 6535ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<functional>` | ❌ Compile Error | 1902ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<iostream>` | ❌ Compile Error | 6490ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<iterator>` | ❌ Compile Error | 2275ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<latch>` | ❌ Codegen Error | 934ms | `Phase 15: sema missed function call argument conversion (int -> long)` in `__platform_notify`. |
+| `<list>` | ❌ Compile Error | 2131ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<map>` | ❌ Compile Error | 1970ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<memory>` | ❌ Compile Error | 2395ms | `sizeof evaluated to 0 for type '' (incomplete or dependent type) - cannot allocate incomplete types`. |
+| `<numeric>` | ❌ Compile Error | 2024ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<optional>` | ❌ Compile Error | 996ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<optional_codegen_recovery>` | ❌ Compile Error | 996ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<queue>` | ❌ Compile Error | 1972ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<ranges>` | ❌ Compile Error | 2400ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<ratio>` | ❌ Compile Error | 487ms | `ratio_less::value` remains an undefined qualified identifier in a constant expression. |
+| `<set>` | ❌ Compile Error | 1957ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<shared_mutex>` | ❌ Compile Error | 1982ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<sstream>` | ❌ Compile Error | 6489ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<stack>` | ❌ Compile Error | 1925ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<stdexcept>` | ❌ Compile Error | 6375ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<string>` | ❌ Compile Error | 6312ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<string_view>` | ❌ Compile Error | 2163ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<tuple>` | ❌ Compile Error | 1507ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<variant>` | 💥 Crash | 2259ms | SIGSEGV after the fold-expression static-assert diagnostic. |
+| `<vector>` | ❌ Compile Error | 1617ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+| `<wstring_view_find_ret0>` | ❌ Compile Error | 2023ms | `Fold expression requires template instantiation context - each argument type must be a complete class or an unbounded array`. |
+
+The broad next blocker in the Linux/libstdc++ slice remains the recoverable
+fold-expression completeness diagnostic across iterator/ranges-heavy headers.
+Independent blockers still visible are `<atomic>` member lookup for `load`,
+`<latch>` Phase 15 conversion ownership, `<memory>` incomplete dependent size
+classification, and the existing `<ratio>` constant-expression gap.
 
 ### 2026-05-05 Non-class template lookup materialization for `<atomic>` / `<latch>`
 

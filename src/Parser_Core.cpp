@@ -6,6 +6,7 @@
 #include "TemplateProfilingStats.h"
 #include "ExpressionSubstitutor.h"
 #include "TypeTraitEvaluator.h"
+#include "TemplateInstantiationHelper.h"
 #include "LazyMemberResolver.h"
 #include "InstantiationQueue.h"
 #include "RebindStaticMemberAst.h"
@@ -337,8 +338,66 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 // Deduce and append a best-effort argument type for function-call overload
 // resolution. When arg_types_out is null, this becomes a no-op so the same
 // argument-collection path can be reused for calls that do not need type data.
+// Collect a concrete type for each function-call argument. Returns false when
+// any argument cannot be typed well enough for normal template instantiation.
+bool Parser::tryCollectFunctionCallArgTypes(
+	const ChunkedVector<ASTNode>& arguments,
+	std::vector<TypeSpecifierNode>& arg_types_out) {
+	arg_types_out.clear();
+	arg_types_out.reserve(arguments.size());
+	for (const ASTNode& argument : arguments) {
+		size_t previous_count = arg_types_out.size();
+		appendFunctionCallArgType(argument, &arg_types_out);
+		if (arg_types_out.size() == previous_count ||
+			arg_types_out.back().category() == TypeCategory::Invalid) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Try template instantiation from call arguments by first using collected
+// argument types (qualified name first, then simple name) and then falling back
+// to constructor-wrapper deduction such as __type_identity<T>{}.
+std::optional<ASTNode> Parser::tryInstantiateTemplateFromCallArguments(
+	std::string_view qualified_name,
+	std::string_view simple_name,
+	const ChunkedVector<ASTNode>& arguments) {
+	std::vector<TypeSpecifierNode> arg_types;
+	if (tryCollectFunctionCallArgTypes(arguments, arg_types)) {
+		if (!qualified_name.empty()) {
+			if (std::optional<ASTNode> instantiated = try_instantiate_template(qualified_name, arg_types)) {
+				return instantiated;
+			}
+		}
+		if (!simple_name.empty() && simple_name != qualified_name) {
+			if (std::optional<ASTNode> instantiated = try_instantiate_template(simple_name, arg_types)) {
+				return instantiated;
+			}
+		}
+	}
+
+	std::vector<TemplateTypeArg> deduced_template_args =
+		TemplateInstantiationHelper::deduceTemplateArgsFromCall(arguments);
+	if (deduced_template_args.empty()) {
+		return std::nullopt;
+	}
+
+	const std::string_view primary_name = !qualified_name.empty() ? qualified_name : simple_name;
+	return TemplateInstantiationHelper::tryInstantiateTemplateFunction(
+		*this,
+		primary_name,
+		simple_name,
+		deduced_template_args);
+}
+
 void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<TypeSpecifierNode>* arg_types_out) {
 	if (arg_types_out == nullptr || !arg_node.is<ExpressionNode>()) {
+		return;
+	}
+
+	if (std::optional<TypeSpecifierNode> expression_type = get_expression_type(arg_node)) {
+		arg_types_out->push_back(*expression_type);
 		return;
 	}
 
@@ -380,6 +439,8 @@ void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<Type
 				}
 			}
 			arg_type = TypeSpecifierNode(TypeCategory::Invalid, TypeQualifier::None, 0, Token(), CVQualifier::None);
+		} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+			arg_type = inner.type_node();
 		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 			// For logical-not, deduce Bool; for arithmetic/bitwise unary ops, recurse on the
 			// operand; for dereferencing or address-of, fall through to the Invalid default.

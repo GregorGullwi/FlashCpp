@@ -4,6 +4,7 @@
 #include "CallNodeHelpers.h"
 #include "OverloadResolution.h"
 #include "SemanticAnalysis.h"
+#include "TypeTraitEvaluator.h"
 #include <limits>
 
 namespace ConstExpr {
@@ -7291,38 +7292,20 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		break;
 
 	case TypeTraitKind::IsCompleteOrUnbounded:
-			// __is_complete_or_unbounded evaluates to true if either:
-			// 1. T is a complete type, or
-			// 2. T is an unbounded array type (e.g. int[])
-			// Returns false for: void, incomplete class types, bounded arrays with incomplete elements
-
-			// Check for void - always incomplete
-		if (type_cat == TypeCategory::Void && pointer_depth == 0 && !is_reference) {
-			return EvalResult::from_bool(false);
-		}
-
-			// Check for unbounded array - always returns true
-		if (type_spec.is_array() && type_spec.array_size() == 0) {
-			return EvalResult::from_bool(true);
-		}
-
-			// Check for incomplete class/struct types
-			// A type is incomplete if it's a struct/class with no StructTypeInfo
-		if (is_struct_type(type_cat) &&
-			pointer_depth == 0 && !is_reference) {
-			TypeIndex type_idx = type_spec.type_index();
-			if (type_idx.is_valid()) {
-				const TypeInfo& type_info = getTypeInfo(type_idx);
-				const StructTypeInfo* struct_info = type_info.getStructInfo();
-					// If no struct_info, the type is incomplete
-				if (!struct_info) {
-					return EvalResult::from_bool(false);
-				}
+		{
+			const StructTypeInfo* struct_info = nullptr;
+			if (type_spec.type_index().is_valid() && is_struct_type(type_cat)) {
+				struct_info = getTypeInfo(type_spec.type_index()).getStructInfo();
 			}
+			TypeTraitResult trait_result = evaluateTypeTrait(
+				TypeTraitKind::IsCompleteOrUnbounded,
+				type_spec,
+				struct_info);
+			if (trait_result.success) {
+				return EvalResult::from_bool(trait_result.value);
+			}
+			return EvalResult::error("Failed to evaluate __is_complete_or_unbounded");
 		}
-
-			// All other types are considered complete
-		return EvalResult::from_bool(true);
 
 		// Add more type traits as needed
 		// For now, other type traits return false during constexpr evaluation
