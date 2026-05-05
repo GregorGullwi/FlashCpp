@@ -6713,7 +6713,7 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 }
 
 size_t SemanticAnalysis::drainLazyMemberRegistry() {
-	// Phase 5 Slice F: sema owns the pre-codegen lazy-member fixpoint by
+	// Phase 5 lazy-member fixpoint: sema owns the pre-codegen lazy-member drain by
 	// draining only the members that semantic analysis explicitly marked as
 	// ODR-used. That keeps SFINAE/decltype-only registry entries dormant while
 	// guaranteeing that any body codegen can reach has already been
@@ -6733,7 +6733,7 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 	// (see `LazyMemberInstantiationRegistry::markOdrUsed`). Because
 	// SFINAE-probed instantiations never pass through the sema sites that call
 	// `markOdrUsed`, their ODR-use bit stays false and they are safely skipped
-	// here, preserving the invariant that Slice F documented.
+	// here, preserving the ODR-use-only invariant documented above.
 	//
 	// Wrap in a fixpoint loop: materializing a body
 	// may register new lazy entries and may mark additional members as

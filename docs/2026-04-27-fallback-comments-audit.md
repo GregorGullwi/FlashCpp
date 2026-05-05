@@ -104,7 +104,7 @@ Representative sites:
 
 Missing feature:
 
-The architecture is partway through moving lazy member materialization to semantic analysis, but comments and remaining recovery paths show the invariant is not fully encoded for every legacy lowering path: all ODR-used instantiated members must exist before codegen.
+Lazy member materialization now lives in semantic analysis for the exercised corpus, but comments and remaining recovery paths show the invariant is not fully encoded for every legacy lowering path: all ODR-used instantiated members must exist before codegen.
 
 Why the fallback is non-compliant:
 
