@@ -1775,7 +1775,11 @@ private:
 	// incomplete template-instantiation placeholder through the provided concrete
 	// instantiator callback. Returns the resolved TemplateTypeArg when the type
 	// became more concrete, or std::nullopt when no authoritative improvement was
-	// available and callers should keep their existing fallback behavior.
+	// available and callers should keep their existing fallback behavior. Use this
+	// in current-instantiation/deferred-base flows that need full materialization;
+	// simpler pattern/member-chain substitution-map lookups should stay on
+	// tryResolveDeferredBaseTypeArgFromMap(...) in
+	// Parser_Templates_Inst_ClassTemplate.cpp.
 	template <typename TemplateParamsContainer, typename TemplateArgsContainer, typename ConcreteBaseInstantiator>
 	std::optional<TemplateTypeArg> tryMaterializeDeferredBaseTypeArg(
 		const TypeSpecifierNode& type_spec,
@@ -1793,6 +1797,10 @@ private:
 						instantiate_concrete_base)) {
 					TypeIndex resolved_type_index =
 						resolved_type_info->registeredTypeIndex().withCategory(resolved_type_info->typeEnum());
+					// Success means either the placeholder fully materialized, or the
+					// rebound type identity changed even if the result is still marked
+					// incomplete. In both cases callers learned more than the original
+					// TypeSpecifierNode carried and should use the resolved argument.
 					if (!resolved_type_info->is_incomplete_instantiation_ ||
 						resolved_type_index != type_spec.type_index()) {
 						return resolveTypeInfoToTemplateArg(*resolved_type_info, type_spec);

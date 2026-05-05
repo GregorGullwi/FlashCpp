@@ -173,7 +173,11 @@ static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type
 // Resolve a deferred-base type argument through the ordinary substitution map,
 // then apply the use-site cv/ref/pointer modifiers carried by the original type
 // specifier. This keeps the pattern/member-chain paths on their historical
-// qualifier-replacement semantics while sharing the lookup boilerplate.
+// qualifier-replacement semantics while sharing the lookup boilerplate. The
+// primary deferred-base current-instantiation path uses
+// Parser::tryMaterializeDeferredBaseTypeArg(...) instead because that path may
+// need full placeholder materialization and must preserve resolved-type
+// qualifiers when the rebinding becomes more concrete.
 static std::optional<TemplateTypeArg> tryResolveDeferredBaseTypeArgFromMap(
 	const TypeSpecifierNode& type_spec,
 	const TemplateArgSubstitutionMap& name_substitution_map) {
