@@ -1353,6 +1353,13 @@ private:
 		const FunctionDeclarationNode& func_decl,
 		const std::vector<TypeSpecifierNode>& arg_types,
 		int recursion_depth);
+	bool tryCollectFunctionCallArgTypes(
+		const ChunkedVector<ASTNode>& arguments,
+		std::vector<TypeSpecifierNode>& arg_types_out);
+	std::optional<ASTNode> tryInstantiateTemplateFromCallArguments(
+		std::string_view qualified_name,
+		std::string_view simple_name,
+		const ChunkedVector<ASTNode>& arguments);
 	void appendFunctionCallArgType(const ASTNode& arg_node, std::vector<TypeSpecifierNode>* arg_types_out);
 	// Shared helper: re-parse a template function body with concrete argument substitution.
 	// Called from both try_instantiate_template_explicit (preserve_ref_qualifier=true) and

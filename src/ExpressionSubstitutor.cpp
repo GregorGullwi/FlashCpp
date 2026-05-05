@@ -721,18 +721,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 
 			ChunkedVector<ASTNode> substituted_args_nodes;
 			std::vector<TypeSpecifierNode> substituted_arg_types;
-			bool have_complete_substituted_arg_types = true;
-			substituted_arg_types.reserve(call.arguments().size());
 			for (size_t i = 0; i < call.arguments().size(); ++i) {
 				ASTNode substituted_arg = substitute(call.arguments()[i]);
 				substituted_args_nodes.push_back(substituted_arg);
-				size_t previous_count = substituted_arg_types.size();
-				parser_.appendFunctionCallArgType(substituted_arg, &substituted_arg_types);
-				if (substituted_arg_types.size() == previous_count ||
-					substituted_arg_types.back().category() == TypeCategory::Invalid) {
-					have_complete_substituted_arg_types = false;
-				}
 			}
+			bool have_complete_substituted_arg_types =
+				parser_.tryCollectFunctionCallArgTypes(substituted_args_nodes, substituted_arg_types);
 
 			auto tryInstantiateExplicitFunctionTemplate = [&](std::string_view template_name) -> std::optional<ASTNode> {
 				if (template_name.empty()) {
@@ -952,47 +946,17 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		FLASH_LOG(Templates, Debug, "  Function is a template: ", template_func_name);
 
 		ChunkedVector<ASTNode> substituted_args;
-		std::vector<TypeSpecifierNode> substituted_arg_types;
-		bool have_complete_arg_types = true;
-		substituted_arg_types.reserve(call.arguments().size());
 		for (size_t i = 0; i < call.arguments().size(); ++i) {
 			ASTNode substituted_arg = substitute(call.arguments()[i]);
 			substituted_args.push_back(substituted_arg);
-			size_t previous_count = substituted_arg_types.size();
-			parser_.appendFunctionCallArgType(substituted_arg, &substituted_arg_types);
-			if (substituted_arg_types.size() == previous_count ||
-				substituted_arg_types.back().category() == TypeCategory::Invalid) {
-				have_complete_arg_types = false;
-			}
 		}
 
-		// Prefer the parser's main function-template instantiation path, which can
-		// deduce from ordinary argument types (e.g. foo(args...)->foo(int,int)) after
-		// pack expansion. The older constructor-wrapper helper remains as fallback for
-		// specialized patterns such as __type_identity<T>{}.
-		std::optional<ASTNode> instantiated_opt;
-		if (have_complete_arg_types) {
-			if (call.has_qualified_name()) {
-				instantiated_opt = parser_.try_instantiate_template(call.qualified_name(), substituted_arg_types);
-			}
-			if (!instantiated_opt.has_value()) {
-				instantiated_opt = parser_.try_instantiate_template(template_func_name, substituted_arg_types);
-			}
-			if (instantiated_opt.has_value()) {
-				normalizePendingSemanticRoots();
-			}
-		}
-
-		if (!instantiated_opt.has_value()) {
-			std::vector<TemplateTypeArg> deduced_template_args =
-				TemplateInstantiationHelper::deduceTemplateArgsFromCall(substituted_args);
-			if (!deduced_template_args.empty()) {
-				instantiated_opt = TemplateInstantiationHelper::tryInstantiateTemplateFunction(
-					parser_, template_func_name, template_func_name, deduced_template_args);
-				if (instantiated_opt.has_value()) {
-					normalizePendingSemanticRoots();
-				}
-			}
+		std::optional<ASTNode> instantiated_opt = parser_.tryInstantiateTemplateFromCallArguments(
+			call.has_qualified_name() ? call.qualified_name() : std::string_view(),
+			template_func_name,
+			substituted_args);
+		if (instantiated_opt.has_value()) {
+			normalizePendingSemanticRoots();
 		}
 
 		if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {

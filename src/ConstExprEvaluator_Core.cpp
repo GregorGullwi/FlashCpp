@@ -4121,25 +4121,6 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
 	}
 
-	auto tryCollectFunctionCallArgTypes = [&](std::vector<TypeSpecifierNode>& arg_types_out) {
-		if (context.parser == nullptr) {
-			return false;
-		}
-
-		arg_types_out.clear();
-		arg_types_out.reserve(call_expr.arguments().size());
-		for (const ASTNode& argument : call_expr.arguments()) {
-			size_t previous_count = arg_types_out.size();
-			context.parser->appendFunctionCallArgType(argument, &arg_types_out);
-			if (arg_types_out.size() == previous_count ||
-				arg_types_out.back().category() == TypeCategory::Invalid) {
-				return false;
-			}
-		}
-
-		return true;
-	};
-
 	if (auto helper_eval = tryEvaluateSimpleConstexprTypeHelperCall(call_expr, func_name, qualified_name)) {
 		return *helper_eval;
 	}
@@ -4385,30 +4366,12 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 
 		// No pre-instantiated version found - try to instantiate on-demand if parser is available
 		if (context.parser) {
-			std::optional<ASTNode> instantiated_opt;
-			const bool names_differ = qualified_name != func_name;
-			std::vector<TypeSpecifierNode> arg_types;
-			if (tryCollectFunctionCallArgTypes(arg_types)) {
-				instantiated_opt = context.parser->try_instantiate_template(qualified_name, arg_types);
-				if (!instantiated_opt.has_value() && names_differ) {
-					instantiated_opt = context.parser->try_instantiate_template(func_name, arg_types);
-				}
-				if (instantiated_opt.has_value()) {
-					context.normalizePendingSemanticRoots();
-				}
-			}
-
-			if (!instantiated_opt.has_value()) {
-				std::vector<TemplateTypeArg> deduced_args = TemplateInstantiationHelper::deduceTemplateArgsFromCall(arguments);
-				if (!deduced_args.empty()) {
-					instantiated_opt = TemplateInstantiationHelper::tryInstantiateTemplateFunction(
-						*context.parser, qualified_name, func_name, deduced_args);
-					if (instantiated_opt.has_value()) {
-						context.normalizePendingSemanticRoots();
-					}
-				} else {
-					FLASH_LOG(Templates, Debug, "No template arguments could be deduced from function call arguments");
-				}
+			std::optional<ASTNode> instantiated_opt = context.parser->tryInstantiateTemplateFromCallArguments(
+				qualified_name,
+				func_name,
+				arguments);
+			if (instantiated_opt.has_value()) {
+				context.normalizePendingSemanticRoots();
 			}
 
 			if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
