@@ -187,9 +187,11 @@ static std::optional<TemplateTypeArg> tryResolveDeferredBaseTypeArgFromMap(
 		return std::nullopt;
 	}
 
-	return rebindDependentTemplateTypeArg(
-		subst_it->second,
-		TemplateTypeArg(type_spec));
+	TemplateTypeArg resolved_type_arg = subst_it->second;
+	resolved_type_arg.pointer_depth = type_spec.pointer_depth();
+	resolved_type_arg.ref_qualifier = type_spec.reference_qualifier();
+	resolved_type_arg.cv_qualifier = type_spec.cv_qualifier();
+	return resolved_type_arg;
 }
 
 static const TypeSpecifierNode* getDeclarationParamTypeNode(const ASTNode& param) {
@@ -4927,11 +4929,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if ((is_struct_type(resolved_type)) && resolved_index.is_valid()) {
 							if (const TypeInfo* resolved_ti = tryGetTypeInfo(resolved_index)) {
 								std::string_view type_name = StringTable::getStringView(resolved_ti->name());
-								if (std::optional<TemplateTypeArg> substituted_arg =
-										tryResolveDeferredBaseTypeArgFromMap(type_spec, subst_map);
-									substituted_arg.has_value()) {
-									substituted_arg->is_pack = arg_info.is_pack;
-									resolved_args.push_back(*substituted_arg);
+								auto subst_it = subst_map.find(type_name);
+								if (subst_it != subst_map.end()) {
+									TemplateTypeArg subst = rebindDependentTemplateTypeArg(
+										subst_it->second,
+										TemplateTypeArg(type_spec));
+									subst.is_pack = arg_info.is_pack;
+									resolved_args.push_back(subst);
 									resolved = true;
 								} else if (type_name.find("::") != std::string_view::npos) {
 									// Dependent member alias of a template instantiation
