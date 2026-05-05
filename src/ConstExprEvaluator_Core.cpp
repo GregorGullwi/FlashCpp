@@ -4064,7 +4064,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 
 		// The function takes a __type_identity<T> argument
 		// We need to extract the type T and check if it's complete or unbounded
-		if (call_expr.arguments().size() == 0) {
+		if (call_expr.arguments().empty()) {
 			return EvalResult::error("__is_complete_or_unbounded requires a type argument");
 		}
 
