@@ -4151,9 +4151,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			}
 		}
 
-		// If we can't extract the type, return true as a fallback
-		FLASH_LOG(Templates, Debug, "__is_complete_or_unbounded: couldn't extract type, returning true as fallback");
-		return EvalResult::from_bool(true);
+		return EvalResult::error("__is_complete_or_unbounded requires a type argument");
 	}
 
 	// Prefer the parser-stored exact call target before falling back to raw name lookup.
