@@ -398,6 +398,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			new_dtor_ref.set_noexcept_expression(substituted_noexcept);
 			ConstExpr::EvaluationContext ctx(gSymbolTable);
 			ctx.parser = this;
+			ctx.sema = getActiveSemanticAnalysis();
+			auto owner_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
+			if (owner_it != getTypesByNameMap().end() && owner_it->second) {
+				ctx.struct_info = owner_it->second->getStructInfo();
+				ctx.struct_type_index = owner_it->second->registeredTypeIndex().withCategory(TypeCategory::Struct);
+			}
 			auto eval = ConstExpr::Evaluator::evaluate(substituted_noexcept, ctx);
 			if (eval.success()) {
 				new_dtor_ref.set_noexcept(eval.as_bool());

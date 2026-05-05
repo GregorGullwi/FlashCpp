@@ -7824,6 +7824,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_dtor_ref.set_noexcept_expression(substituted_noexcept);
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
 						ctx.parser = this;
+						ctx.sema = getActiveSemanticAnalysis();
+						ctx.struct_info = struct_info_ptr;
+						ctx.struct_type_index =
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct);
 						auto eval = ConstExpr::Evaluator::evaluate(substituted_noexcept, ctx);
 						if (eval.success()) {
 							new_dtor_ref.set_noexcept(eval.as_bool());
