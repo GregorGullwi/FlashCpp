@@ -53,6 +53,91 @@ inline bool isUnsigned(TypeCategory cat) {
 
 } // namespace TypeTraitEval
 
+namespace {
+
+const StructTypeInfo* structInfoFromTypeIndex(TypeIndex type_index) {
+	if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+		return type_info->getStructInfo();
+	}
+	return nullptr;
+}
+
+std::optional<TypeIndex> resolvePseudoDestructorObjectTypeIndex(const ASTNode& object, const SymbolTable& symbols);
+
+std::optional<TypeIndex> resolvePseudoDestructorExpressionTypeIndex(const ExpressionNode& expr, const SymbolTable& symbols) {
+	if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
+		return ctor_call->type_node().type_index();
+	}
+	if (const auto* init_list = std::get_if<InitializerListConstructionNode>(&expr)) {
+		const ASTNode& target_type = init_list->target_type();
+		if (target_type.is<TypeSpecifierNode>()) {
+			return target_type.as<TypeSpecifierNode>().type_index();
+		}
+		return std::nullopt;
+	}
+	if (const auto* obj_id = std::get_if<IdentifierNode>(&expr)) {
+		auto symbol = symbols.lookup(obj_id->name());
+		if (symbol.has_value()) {
+			const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+			if (decl) {
+				return decl->type_specifier_node().type_index();
+			}
+		}
+		return std::nullopt;
+	}
+	if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
+		std::optional<TypeIndex> object_type_index =
+			resolvePseudoDestructorObjectTypeIndex(member_access->object(), symbols);
+		if (!object_type_index.has_value()) {
+			return std::nullopt;
+		}
+		const StructTypeInfo* object_struct = structInfoFromTypeIndex(*object_type_index);
+		if (!object_struct) {
+			return std::nullopt;
+		}
+		std::optional<StructMember> member =
+			object_struct->findMemberRecursive(member_access->member_token().handle());
+		if (member.has_value()) {
+			return member->type_index;
+		}
+		return std::nullopt;
+	}
+	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
+		return resolvePseudoDestructorObjectTypeIndex(subscript->array_expr(), symbols);
+	}
+	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		return call_expr->callee().declaration().type_specifier_node().type_index();
+	}
+	return std::nullopt;
+}
+
+std::optional<TypeIndex> resolvePseudoDestructorObjectTypeIndex(const ASTNode& object, const SymbolTable& symbols) {
+	if (object.is<ConstructorCallNode>()) {
+		return object.as<ConstructorCallNode>().type_node().type_index();
+	}
+	if (object.is<InitializerListConstructionNode>()) {
+		const ASTNode& target_type = object.as<InitializerListConstructionNode>().target_type();
+		if (target_type.is<TypeSpecifierNode>()) {
+			return target_type.as<TypeSpecifierNode>().type_index();
+		}
+		return std::nullopt;
+	}
+	if (object.is<ExpressionNode>()) {
+		return resolvePseudoDestructorExpressionTypeIndex(object.as<ExpressionNode>(), symbols);
+	}
+	return std::nullopt;
+}
+
+const StructTypeInfo* resolvePseudoDestructorObjectStruct(const ASTNode& object, const SymbolTable& symbols) {
+	std::optional<TypeIndex> type_index = resolvePseudoDestructorObjectTypeIndex(object, symbols);
+	if (type_index.has_value()) {
+		return structInfoFromTypeIndex(*type_index);
+	}
+	return nullptr;
+}
+
+} // namespace
+
 bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 	if (!struct_info)
 		return true;
@@ -96,28 +181,14 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 }
 
 bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor, const SymbolTable& symbols) {
-	// Try to resolve the actual type from the object expression's declaration
-	// (not the type_name() token) so that template specializations like
-	// Wrapper<int> resolve to the correct instantiated type.
-	if (pseudo_dtor.object().is<ExpressionNode>()) {
-		const ExpressionNode& obj_expr = pseudo_dtor.object().as<ExpressionNode>();
-		if (const auto* obj_id = std::get_if<IdentifierNode>(&obj_expr)) {
-			auto symbol = symbols.lookup(obj_id->name());
-			if (symbol.has_value()) {
-				const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-				if (decl) {
-					const TypeSpecifierNode& type_spec = decl->type_specifier_node();
-					if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
-						const StructTypeInfo* struct_info = type_info->getStructInfo();
-						if (struct_info) {
-							return isStructNothrowDestructible(struct_info);
-						}
-					}
-				}
-			}
-		}
+	// Resolve the actual object type first so template specializations and
+	// temporary objects do not depend on the destructor-name token.
+	if (const StructTypeInfo* struct_info = resolvePseudoDestructorObjectStruct(pseudo_dtor.object(), symbols)) {
+		return isStructNothrowDestructible(struct_info);
 	}
-	// Fallback: look up by type name token (works for non-template types)
+
+	// Compatibility path for scalar pseudo-destructors and legacy non-template
+	// object shapes where only the destructor type token is available.
 	std::string_view type_name = pseudo_dtor.type_name();
 	auto it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(type_name));
 	if (it != getTypesByNameMap().end()) {

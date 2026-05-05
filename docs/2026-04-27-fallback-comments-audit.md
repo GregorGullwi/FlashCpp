@@ -539,3 +539,9 @@ The audit is now backed by direct suite evidence for several representative temp
   Linux suite passed with the hard-fail probe enabled after this change;
 - the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes should still be assumed active until probed or root-fixed individually.
 - the `ConstExprEvaluator_Core.cpp` `__is_complete_or_unbounded` missing-type fallback now hard-fails instead of returning true. Added `tests/test_is_complete_or_unbounded_invalid_arg_fail.cpp`; the existing `tests/test_stdlib_features_ret0.cpp` still covers valid type-shaped use.
+- pseudo-destructor `noexcept(expr)` evaluation no longer depends on the
+  destructor-name token for template temporaries. `TypeTraitEvaluator.cpp`
+  resolves constructor/list-init temporary object types before the legacy token
+  lookup, and class-template destructor instantiation now substitutes and
+  re-evaluates explicit `noexcept(expr)` specifiers in the concrete template
+  context. Added `tests/test_pseudo_dtor_noexcept_template_temp_ret0.cpp`.

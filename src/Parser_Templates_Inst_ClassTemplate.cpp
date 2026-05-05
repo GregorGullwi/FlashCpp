@@ -7810,14 +7810,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						specialized_dtor_name);
 					setOuterTemplateBindingsFromParams(new_dtor_ref, template_params, template_args_to_use);
 
-					// Copy noexcept properties from the original destructor declaration.
-					// DestructorDeclarationNode defaults to noexcept(true) per C++11, so we
-					// must propagate the original's evaluated flag (and expression, if any)
-					// to handle explicit noexcept(false) correctly.
-					new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
 					new_dtor_ref.set_has_noexcept_specifier(dtor_decl.has_noexcept_specifier());
 					if (dtor_decl.has_noexcept_expression()) {
-						new_dtor_ref.set_noexcept_expression(*dtor_decl.noexcept_expression());
+						ASTNode substituted_noexcept = substituteTemplateParameters(
+							*dtor_decl.noexcept_expression(),
+							template_params,
+							template_args_to_use);
+						new_dtor_ref.set_noexcept_expression(substituted_noexcept);
+						ConstExpr::EvaluationContext ctx(gSymbolTable);
+						ctx.parser = this;
+						ctx.sema = getActiveSemanticAnalysis();
+						ctx.struct_info = struct_info_ptr;
+						ctx.struct_type_index =
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct);
+						ctx.template_args = template_args_to_use;
+						for (const TemplateParameterNode& template_param : template_params) {
+							ctx.template_param_names.push_back(template_param.name());
+						}
+						auto eval = ConstExpr::Evaluator::evaluate(substituted_noexcept, ctx);
+						if (!eval.success()) {
+							throw CompileError("Failed to evaluate instantiated destructor noexcept-expression");
+						}
+						new_dtor_ref.set_noexcept(eval.as_bool());
+					} else {
+						new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
 					}
 
 					new_dtor_ref.set_definition(substituted_body);
