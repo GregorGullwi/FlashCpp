@@ -7307,15 +7307,13 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		}
 
 			// Check for incomplete class/struct types
-			// A type is incomplete if it's a struct/class with no StructTypeInfo
 		if (is_struct_type(type_cat) &&
 			pointer_depth == 0 && !is_reference) {
 			TypeIndex type_idx = type_spec.type_index();
 			if (type_idx.is_valid()) {
 				const TypeInfo& type_info = getTypeInfo(type_idx);
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
-					// If no struct_info, the type is incomplete
-				if (!struct_info) {
+				if (!struct_info || !struct_info->hasCompleteObjectLayout()) {
 					return EvalResult::from_bool(false);
 				}
 			}

@@ -4,6 +4,7 @@
 #include "CallNodeHelpers.h"
 #include "SemanticAnalysis.h"
 #include "StringLiteralTokenUtils.h"
+#include "TypeTraitEvaluator.h"
 
 namespace ConstExpr {
 
@@ -4049,6 +4050,88 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
 	}
 
+	auto tryEvaluateIsCompleteOrUnbounded = [&]() -> std::optional<EvalResult> {
+		// Special handling for std::__is_complete_or_unbounded
+		// This is a helper function in the standard library that checks if a type is complete
+		// __is_complete_or_unbounded evaluates to true if either:
+		// 1. T is a complete type, or
+		// 2. T is an unbounded array type (e.g. int[])
+		if (qualified_name != "std::__is_complete_or_unbounded" && func_name != "__is_complete_or_unbounded") {
+			return std::nullopt;
+		}
+
+		FLASH_LOG(Templates, Debug, "Special handling for __is_complete_or_unbounded");
+
+		// The function takes a __type_identity<T> argument
+		// We need to extract the type T and check if it's complete or unbounded
+		if (call_expr.arguments().size() == 0) {
+			return EvalResult::error("__is_complete_or_unbounded requires a type argument");
+		}
+
+		// Get the first argument (should be a ConstructorCallNode for __type_identity<T>{})
+		const ASTNode& arg = call_expr.arguments()[0];
+
+		// Try to extract the type from the argument
+		// The argument is typically __type_identity<T>{} which is a constructor call
+		if (arg.is<ExpressionNode>()) {
+			const ExpressionNode& expr = arg.as<ExpressionNode>();
+			if (std::holds_alternative<ConstructorCallNode>(expr)) {
+				const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
+				const TypeSpecifierNode& type_spec = ctor.type_node();
+				std::optional<TypeSpecifierNode> identity_arg_type;
+				if (type_spec.type_index().is_valid() && is_struct_type(type_spec.type())) {
+					const TypeInfo& identity_type_info = getTypeInfo(type_spec.type_index());
+					if (identity_type_info.isTemplateInstantiation() &&
+						StringTable::getStringView(identity_type_info.baseTemplateName()) == "__type_identity" &&
+						!identity_type_info.templateArgs().empty()) {
+						const TypeInfo::TemplateArgInfo& arg_info = identity_type_info.templateArgs().front();
+						if (!arg_info.is_value) {
+							TypeSpecifierNode extracted_type(
+								arg_info.type_index.withCategory(arg_info.typeEnum()),
+								get_type_size_bits(arg_info.typeEnum()),
+								type_spec.token(),
+								arg_info.cv_qualifier,
+								ReferenceQualifier::None);
+							for (size_t pointer_index = 0; pointer_index < arg_info.pointer_depth; ++pointer_index) {
+								CVQualifier pointer_cv = pointer_index < arg_info.pointer_cv_qualifiers.size()
+									? arg_info.pointer_cv_qualifiers[pointer_index]
+									: CVQualifier::None;
+								extracted_type.add_pointer_level(pointer_cv);
+							}
+							extracted_type.set_reference_qualifier(arg_info.ref_qualifier);
+							if (arg_info.is_array) {
+								extracted_type.set_array(true, arg_info.array_size);
+							}
+							if (arg_info.function_signature.has_value()) {
+								extracted_type.set_function_signature(*arg_info.function_signature);
+							}
+							identity_arg_type = extracted_type;
+						}
+					}
+				}
+				const TypeSpecifierNode& checked_type = identity_arg_type.has_value() ? *identity_arg_type : type_spec;
+				const StructTypeInfo* struct_info = nullptr;
+				if (checked_type.type_index().is_valid() && is_struct_type(checked_type.type())) {
+					struct_info = getTypeInfo(checked_type.type_index()).getStructInfo();
+				}
+
+				TypeTraitResult trait = evaluateTypeTrait(
+					TypeTraitKind::IsCompleteOrUnbounded,
+					checked_type,
+					struct_info);
+				if (trait.success) {
+					return EvalResult::from_bool(trait.value);
+				}
+			}
+		}
+
+		return EvalResult::error("__is_complete_or_unbounded requires a type argument");
+	};
+
+	if (auto is_complete_result = tryEvaluateIsCompleteOrUnbounded()) {
+		return *is_complete_result;
+	}
+
 	// If we have a struct context, prefer static member functions from the current struct.
 	// This ensures that `helper()` in `static constexpr int value = helper()` resolves
 	// to Box<T>::helper() rather than a global helper() when inside a struct definition.
@@ -4089,69 +4172,6 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 
 	if (const FunctionDeclarationNode* resolved_function = call_expr.callee().function_declaration_or_null()) {
 		return evaluate_resolved_function_call(*resolved_function, call_expr.arguments(), context, nullptr);
-	}
-
-	// Special handling for std::__is_complete_or_unbounded
-	// This is a helper function in the standard library that checks if a type is complete
-	// __is_complete_or_unbounded evaluates to true if either:
-	// 1. T is a complete type, or
-	// 2. T is an unbounded array type (e.g. int[])
-	if (qualified_name == "std::__is_complete_or_unbounded" || func_name == "__is_complete_or_unbounded") {
-		FLASH_LOG(Templates, Debug, "Special handling for __is_complete_or_unbounded");
-
-		// The function takes a __type_identity<T> argument
-		// We need to extract the type T and check if it's complete or unbounded
-		if (call_expr.arguments().size() == 0) {
-			return EvalResult::error("__is_complete_or_unbounded requires a type argument");
-		}
-
-		// Get the first argument (should be a ConstructorCallNode for __type_identity<T>{})
-		const ASTNode& arg = call_expr.arguments()[0];
-
-		// Try to extract the type from the argument
-		// The argument is typically __type_identity<T>{} which is a constructor call
-		if (arg.is<ExpressionNode>()) {
-			const ExpressionNode& expr = arg.as<ExpressionNode>();
-			if (std::holds_alternative<ConstructorCallNode>(expr)) {
-				const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
-				{
-					const TypeSpecifierNode& type_spec = ctor.type_node();
-					TypeCategory base_type = type_spec.type();
-					bool is_reference = type_spec.is_reference();
-					size_t pointer_depth = type_spec.pointer_depth();
-					bool is_array = type_spec.is_array();
-					std::optional<size_t> array_size = type_spec.array_size();
-
-					// Check for void - always incomplete
-					if (base_type == TypeCategory::Void && pointer_depth == 0 && !is_reference) {
-						return EvalResult::from_bool(false);
-					}
-
-					// Check for unbounded array - always returns true
-					if (is_array && (!array_size.has_value() || *array_size == 0)) {
-						return EvalResult::from_bool(true);
-					}
-
-					// Check for incomplete class/struct types
-					// A type is incomplete if it's a struct/class with no StructTypeInfo
-					TypeIndex type_idx = type_spec.type_index();
-					if (type_idx.is_valid() && (is_struct_type(base_type))) {
-						const TypeInfo& type_info = getTypeInfo(type_idx);
-						const StructTypeInfo* struct_info = type_info.getStructInfo();
-
-						// If it's a struct/class type with no struct_info, it's incomplete
-						if (!struct_info && pointer_depth == 0 && !is_reference) {
-							return EvalResult::from_bool(false);
-						}
-					}
-
-					// All other types are considered complete
-					return EvalResult::from_bool(true);
-				}
-			}
-		}
-
-		return EvalResult::error("__is_complete_or_unbounded requires a type argument");
 	}
 
 	// Prefer the parser-stored exact call target before falling back to raw name lookup.

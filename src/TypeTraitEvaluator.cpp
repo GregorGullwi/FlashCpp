@@ -240,9 +240,10 @@ TypeTraitResult evaluateTypeTrait(
 			return TypeTraitResult::success_true();
 		}
 
-			// Check for incomplete class/struct types (struct_info is null for incomplete types)
+			// Check for incomplete class/struct types
 		if (is_struct_type(cat) &&
-			!struct_info && pointer_depth == 0 && !is_reference) {
+			(!struct_info || !struct_info->hasCompleteObjectLayout()) &&
+			pointer_depth == 0 && !is_reference) {
 			return TypeTraitResult::success_false();
 		}
 
