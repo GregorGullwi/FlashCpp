@@ -3393,7 +3393,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 					std::vector<int64_t> template_args = {static_cast<int64_t>(i)};
 					auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
 						"get", return_type, param_types, template_args,
-						get_func.is_variadic(), "", current_namespace_stack_, false);
+						get_func.is_variadic(), "", buildNamespaceHandleFromStrings(current_namespace_stack_), false);
 
 					StringHandle mangled_handle = StringTable::getOrInternStringHandle(mangled.view());
 					binding_info.push_back({mangled_handle, element_type});
@@ -3432,7 +3432,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 							std::vector<int64_t> template_args = {static_cast<int64_t>(i)};
 							auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
 								"get", return_type, param_types, template_args,
-								get_func.is_variadic(), "", current_namespace_stack_, false);
+								get_func.is_variadic(), "", buildNamespaceHandleFromStrings(current_namespace_stack_), false);
 
 							StringHandle mangled_handle = StringTable::getOrInternStringHandle(mangled.view());
 							binding_info.push_back({mangled_handle, element_type});

@@ -108,6 +108,10 @@ bool markLazyReceiverMemberOdrUsed(
 		? StringHandle()
 		: StringTable::getOrInternStringHandle(resolved_parent_name);
 	auto owner_matches_resolved_parent = [&](StringHandle candidate_name) -> bool {
+		// Some sema paths resolve the member without preserving a concrete parent
+		// name. In that case we intentionally accept any instantiated owner in the
+		// receiver hierarchy and let the lazy registry decide whether that owner
+		// actually has a matching member entry to mark ODR-used.
 		if (!resolved_parent_handle.isValid()) {
 			return true;
 		}

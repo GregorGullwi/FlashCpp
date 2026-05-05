@@ -303,23 +303,23 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	// Don't pass namespace_stack when struct_name already includes the namespace
 	// (e.g., "std::simple" already has the namespace embedded, so we shouldn't also pass ["std"])
 	// This avoids double-encoding the namespace in the mangled name
-	std::vector<std::string> namespace_for_mangling;
+	NamespaceHandle namespace_for_mangling = NamespaceRegistry::GLOBAL_NAMESPACE;
 	if (struct_name_for_function.find("::") == std::string_view::npos) {
-		bool struct_found = false;
+		bool resolved_from_struct = false;
 		if (node.is_member_function() && !struct_name_for_function.empty()) {
 			// Always derive namespace from the struct's declaration-site NamespaceHandle
 			// rather than current_namespace_stack_, which may be the instantiation-site
 			// namespace when a template is instantiated from a different namespace.
-			struct_found = tryGetStructNamespacePathStrings(struct_name_for_function, namespace_for_mangling);
+			resolved_from_struct = tryGetStructNamespaceHandle(struct_name_for_function, namespace_for_mangling);
 		}
-		if (!struct_found && namespace_for_mangling.empty()) {
+		if (!resolved_from_struct) {
 			// Non-member functions, or struct not found: fall back to current stack.
-			// Do NOT fall back when the struct was found at global scope — an empty
+			// Do NOT fall back when the struct was found at global scope — a global
 			// namespace_for_mangling is correct and must match the call-site mangling.
 			if (node.namespace_handle().isValid()) {
-				namespace_for_mangling = buildNamespacePathStrings(node.namespace_handle());
+				namespace_for_mangling = node.namespace_handle();
 			} else {
-				namespace_for_mangling = current_namespace_stack_;
+				namespace_for_mangling = buildNamespaceHandleFromStrings(current_namespace_stack_);
 			}
 		}
 	}

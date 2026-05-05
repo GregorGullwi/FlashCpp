@@ -766,15 +766,14 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			function_name = func_decl->mangled_name();
 		} else if (func_decl->linkage() != Linkage::C) {
 			if (struct_name.empty()) {
-				function_name = generateMangledNameForCall(*func_decl, "", current_namespace_stack_);
+				function_name = generateMangledNameForCall(*func_decl, "", func_decl->namespace_handle());
 			} else {
-					// Build namespace path from the struct's NamespaceHandle
-					// so calls to member functions include the correct namespace.
-					// Always recover from NamespaceHandle (not current_namespace_stack_)
-					// to handle template instantiations from a different namespace context.
-				std::vector<std::string> ns_path;
-				ns_path = resolveMemberNamespacePathForMangling(struct_name, func_decl->namespace_handle());
-				function_name = generateMangledNameForCall(*func_decl, struct_name, ns_path);
+				// Build the namespace handle from the struct's declaration-site metadata
+				// so member function calls include the correct namespace.
+				function_name = generateMangledNameForCall(
+					*func_decl,
+					struct_name,
+					resolveMemberNamespaceHandleForMangling(struct_name, func_decl->namespace_handle()));
 			}
 		}
 	};

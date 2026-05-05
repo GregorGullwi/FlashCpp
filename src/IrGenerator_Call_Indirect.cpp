@@ -1676,8 +1676,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				// Build namespace path from the struct's declaration-site namespace
 				// so member function calls get the correct mangled name.
 				auto struct_name_view = StringTable::getStringView(struct_name);
-				std::vector<std::string> namespace_for_mangling =
-					resolveMemberNamespacePathForMangling(
+				NamespaceHandle namespace_for_mangling =
+					resolveMemberNamespaceHandleForMangling(
 						struct_name_view,
 						func_for_mangling->namespace_handle());
 

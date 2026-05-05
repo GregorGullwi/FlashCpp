@@ -205,24 +205,27 @@ inline bool needsHiddenReturnParam(TypeCategory type, int pointer_depth, bool is
 		   (size_in_bits > getStructReturnThreshold(is_llp64));
 }
 
-// Convert a declaration-site namespace handle into owned strings for mangling APIs.
-inline std::vector<std::string> buildNamespacePathStrings(NamespaceHandle namespace_handle) {
-	std::vector<std::string> namespace_path;
-	if (!namespace_handle.isValid()) {
-		return namespace_path;
+inline NamespaceHandle buildNamespaceHandleFromStrings(const std::vector<std::string>& namespace_stack) {
+	if (namespace_stack.empty()) {
+		return NamespaceRegistry::GLOBAL_NAMESPACE;
 	}
-	auto namespace_views = buildNamespacePathFromHandle(namespace_handle);
-	namespace_path.reserve(namespace_views.size());
-	for (auto namespace_view : namespace_views) {
-		namespace_path.emplace_back(namespace_view);
+
+	NamespaceHandle current = NamespaceRegistry::GLOBAL_NAMESPACE;
+	for (const auto& namespace_name : namespace_stack) {
+		current = gNamespaceRegistry.lookupNamespace(
+			current,
+			StringTable::getOrInternStringHandle(namespace_name));
+		if (!current.isValid()) {
+			return NamespaceHandle();
+		}
 	}
-	return namespace_path;
+	return current;
 }
 
 // Resolve an unqualified struct name through the type registry and return its declaration namespace.
-// Returns true when the struct was found, even if that namespace is global and therefore empty.
-inline bool tryGetStructNamespacePathStrings(std::string_view struct_name, std::vector<std::string>& namespace_path) {
-	namespace_path.clear();
+// Returns true when the struct was found, even if that namespace is global.
+inline bool tryGetStructNamespaceHandle(std::string_view struct_name, NamespaceHandle& namespace_handle) {
+	namespace_handle = NamespaceHandle();
 	if (struct_name.empty() || struct_name.find("::") != std::string_view::npos) {
 		return false;
 	}
@@ -230,26 +233,27 @@ inline bool tryGetStructNamespacePathStrings(std::string_view struct_name, std::
 	if (type_it == getTypesByNameMap().end()) {
 		return false;
 	}
-	namespace_path = buildNamespacePathStrings(type_it->second->namespaceHandle());
+	namespace_handle = type_it->second->namespaceHandle();
 	return true;
 }
 
-// Build the namespace path to use when mangling a member on `struct_name`, falling back to the
+// Build the namespace handle to use when mangling a member on `struct_name`, falling back to the
 // function's own declaration namespace only when the unqualified struct name could not be resolved.
-inline std::vector<std::string> resolveMemberNamespacePathForMangling(
+inline NamespaceHandle resolveMemberNamespaceHandleForMangling(
 	std::string_view struct_name,
 	NamespaceHandle fallback_namespace_handle) {
-	std::vector<std::string> namespace_path;
 	if (struct_name.find("::") != std::string_view::npos) {
-		return namespace_path;
+		// Qualified owners already carry their namespace in `struct_name`, so
+		// mangling must not append a second namespace path.
+		return NamespaceRegistry::GLOBAL_NAMESPACE;
 	}
-	if (tryGetStructNamespacePathStrings(struct_name, namespace_path)) {
-		return namespace_path;
+	NamespaceHandle namespace_handle;
+	if (tryGetStructNamespaceHandle(struct_name, namespace_handle)) {
+		return namespace_handle;
 	}
-	if (fallback_namespace_handle.isValid()) {
-		namespace_path = buildNamespacePathStrings(fallback_namespace_handle);
-	}
-	return namespace_path;
+	return fallback_namespace_handle.isValid()
+		? fallback_namespace_handle
+		: NamespaceRegistry::GLOBAL_NAMESPACE;
 }
 
 // AstToIr class declaration (methods split across cpp files).
