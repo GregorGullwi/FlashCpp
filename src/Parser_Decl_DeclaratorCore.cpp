@@ -1146,7 +1146,7 @@ ParseResult Parser::parse_function_pointer_parameter_types(std::vector<TypeIndex
 	}
 
 	while (true) {
-		// Accept a standalone variadic ellipsis, including MSVC header aliases like bool(__stdcall*)(...) noexcept.
+		// Accept standalone or terminal variadic ellipses, including MSVC header aliases like bool(__stdcall*)(...) noexcept.
 		if (peek() == "..."_tok) {
 			advance();
 			break;

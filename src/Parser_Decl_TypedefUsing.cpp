@@ -6,6 +6,8 @@
 
 // Parse the function type suffix used in aliases such as ReturnType (*)(Args...),
 // including vendor calling conventions, variadic ellipses, and trailing noexcept.
+// Returns false after restoring the token position when the next tokens are not
+// a supported alias function type.
 bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::string_view log_context) {
 	if (peek() != "("_tok) {
 		return false;
@@ -113,6 +115,7 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 	func_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
 	func_sig.return_reference_qualifier = type_spec.reference_qualifier();
 	func_sig.parameter_type_indices = std::move(param_types);
+	func_sig.calling_convention = calling_conv;
 	func_sig.is_noexcept = is_noexcept;
 	type_spec.set_function_signature(func_sig);
 
