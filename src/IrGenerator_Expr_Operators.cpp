@@ -362,6 +362,27 @@ void AstToIr::applyCallParameterBindingMetadata(TypedValue& value, const TypeSpe
 	}
 }
 
+TypedValue AstToIr::buildReferenceArgumentFromDeclaration(const DeclarationNode& decl_node, StringHandle identifier_name) {
+	const TypeSpecifierNode& type_node = decl_node.type_specifier_node();
+	if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+		return makeTypedValue(
+			type_node.type_index().withCategory(type_node.type()),
+			SizeInBits{POINTER_SIZE_BITS},
+			IrValue(identifier_name),
+			ReferenceQualifier::LValueReference);
+	}
+
+	TempVar addr_var = emitAddressOf(
+		type_node.category(),
+		static_cast<int>(type_node.size_in_bits()),
+		IrValue(identifier_name));
+	return makeTypedValue(
+		type_node.type_index().withCategory(type_node.type()),
+		SizeInBits{POINTER_SIZE_BITS},
+		IrValue(addr_var),
+		ReferenceQualifier::LValueReference);
+}
+
 TypedValue AstToIr::buildConstructorArgumentValue(
 	const ExprResult& argument_result,
 	const ASTNode& argument,

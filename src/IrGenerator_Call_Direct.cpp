@@ -1363,10 +1363,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						// Argument is a reference variable being passed to a reference parameter
 						// Pass the identifier name directly - the IRConverter will use MOV to
 						// load the address stored in the reference variable
-					appendArgumentValue(
-						type_node.type_index().withCategory(type_node.type()),
-						SizeInBits{POINTER_SIZE_BITS},
-						IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+					call_arguments.push_back(buildReferenceArgumentFromDeclaration(
+						*decl_ptr,
+						StringTable::getOrInternStringHandle(identifier.name())));
 					arg_index++;
 					return;	// Skip the rest of the processing
 				}
@@ -1648,24 +1647,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					IrValue(addr_var));
 			} else if (param_ref_qualifier != CVReferenceQualifier::None) {
 					// Parameter expects a reference - pass the address of the argument
-				if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-						// Argument is already a reference - just pass it through
-						// References are stored as pointers (64 bits), not the pointee size
-					appendArgumentValue(
-						type_node.type_index().withCategory(type_node.type()),
-						SizeInBits{POINTER_SIZE_BITS},
-						IrValue(StringTable::getOrInternStringHandle(identifier.name())));
-				} else {
-						// Argument is a value - take its address
-					TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
-
-						// Pass the address
-					appendArgumentValueWithReference(
-						type_node.type_index().withCategory(type_node.type()),
-						SizeInBits{POINTER_SIZE_BITS},
-						IrValue(addr_var),
-						ReferenceQualifier::LValueReference);
-				}
+				call_arguments.push_back(buildReferenceArgumentFromDeclaration(
+					arg_decl_node,
+					StringTable::getOrInternStringHandle(identifier.name())));
 			} else if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 					// Argument is a reference but parameter expects a value - dereference
 				TempVar deref_var = emitDereference(type_node.category(), 64, 1,

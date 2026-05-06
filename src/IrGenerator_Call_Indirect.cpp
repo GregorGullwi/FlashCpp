@@ -1892,31 +1892,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(identifier.name()))));
 				} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 					const auto& decl_node = symbol->as<DeclarationNode>();
-					const auto& type_node = decl_node.type_specifier_node();
 
 					// Check if parameter expects a reference
 					if (!sema_ref_binding_applied &&
 						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						// Parameter expects a reference - pass the address of the argument
-						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-							// Argument is already a reference - just pass it through
-							// Use 64-bit pointer size since references are passed as pointers
-							call_op.args.push_back(makeTypedValue(
-								type_node.type_index().withCategory(type_node.type()),
-								SizeInBits{POINTER_SIZE_BITS},
-								IrValue(StringTable::getOrInternStringHandle(identifier.name())),
-								ReferenceQualifier::LValueReference));
-						} else {
-							// Argument is a value - take its address
-							TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
-
-							// Pass the address with pointer size
-							call_op.args.push_back(makeTypedValue(
-								type_node.type_index().withCategory(type_node.type()),
-								SizeInBits{POINTER_SIZE_BITS},
-								IrValue(addr_var),
-								ReferenceQualifier::LValueReference));
-						}
+						call_op.args.push_back(buildReferenceArgumentFromDeclaration(
+							decl_node,
+							StringTable::getOrInternStringHandle(identifier.name())));
 					} else {
 						// Regular pass by value; reuse already-evaluated result to avoid double evaluation.
 						ExprResult arg_result = sema_evaluated_arg
@@ -1936,31 +1918,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					// Handle VariableDeclarationNode (local variables)
 					const auto& var_decl = symbol->as<VariableDeclarationNode>();
 					const auto& decl_node = var_decl.declaration();
-					const auto& type_node = decl_node.type_specifier_node();
 
 					// Check if parameter expects a reference
 					if (!sema_ref_binding_applied &&
 						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						// Parameter expects a reference - pass the address of the argument
-						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-							// Argument is already a reference - just pass it through
-							// Use 64-bit pointer size since references are passed as pointers
-							call_op.args.push_back(makeTypedValue(
-								type_node.type_index().withCategory(type_node.type()),
-								SizeInBits{POINTER_SIZE_BITS},
-								IrValue(StringTable::getOrInternStringHandle(identifier.name())),
-								ReferenceQualifier::LValueReference));
-						} else {
-							// Argument is a value - take its address
-							TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
-
-							// Pass the address with pointer size
-							call_op.args.push_back(makeTypedValue(
-								type_node.type_index().withCategory(type_node.type()),
-								SizeInBits{POINTER_SIZE_BITS},
-								IrValue(addr_var),
-								ReferenceQualifier::LValueReference));
-						}
+						call_op.args.push_back(buildReferenceArgumentFromDeclaration(
+							decl_node,
+							StringTable::getOrInternStringHandle(identifier.name())));
 					} else {
 						// Regular pass by value; reuse already-evaluated result to avoid double evaluation.
 						ExprResult arg_result = sema_evaluated_arg
