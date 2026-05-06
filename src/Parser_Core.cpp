@@ -876,7 +876,10 @@ Parser::SaveHandle Parser::save_token_position() {
 
 	// Save current parser state (including injected token for >> splitting)
 	TokenPosition lexer_pos = lexer_.save_token_position();
-	saved_tokens_.push_back(SavedToken{current_token_, injected_token_, ast_nodes_.size(), lexer_pos});
+	if (saved_tokens_.size() <= handle) {
+		saved_tokens_.resize(handle + 1);
+	}
+	saved_tokens_[handle] = SavedToken{current_token_, injected_token_, ast_nodes_.size(), lexer_pos};
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.save_count;
 		++runtime_stats_.active_saves;
