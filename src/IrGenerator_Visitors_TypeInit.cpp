@@ -1055,42 +1055,82 @@ void AstToIr::generateStaticMemberDeclarations() {
 						if (std::holds_alternative<ConstructorCallNode>(init_expr)) {
 							const auto& ctor_call = std::get<ConstructorCallNode>(init_expr);
 							bool evaluated_ctor = false;
+							if (const StructTypeInfo* static_struct_info = tryGetStructTypeInfo(static_member.type_index)) {
+								ConstExpr::EvaluationContext object_ctx = makeStaticMemberEvalContext(struct_info);
+								ConstExpr::EvalResult object_result = ConstExpr::Evaluator::evaluate(ASTNode(&init_expr), object_ctx);
+								if (object_result.success() && !object_result.object_member_bindings.empty()) {
+									op.init_data.resize(toSizeT(static_struct_info->sizeInBytes()), 0);
+									packStructEvalResultIntoInitData(
+										packStructEvalResultIntoInitData,
+										op.init_data,
+										*static_struct_info,
+										object_result,
+										0,
+										0);
+									evaluated_ctor = true;
+									FLASH_LOG(Codegen, Debug, "Packed constexpr constructor-call initializer for static member '",
+										qualified_name, "' (", op.init_data.size(), " bytes)");
+									write_back_constant_bytes();
+								}
+							}
 							// Try constexpr evaluation for constructor calls with arguments
-							if (!ctor_call.arguments().empty()) {
-								const TypeSpecifierNode& ctor_type_spec = ctor_call.type_node();
+							if (!evaluated_ctor && !ctor_call.arguments().empty()) {
+								TypeSpecifierNode ctor_type_spec = ctor_call.type_node();
+								if (struct_info && struct_info->own_type_index_.has_value()) {
+									ctor_type_spec = resolveTypeSpecifierForSelfReference(
+										ctor_type_spec,
+										*struct_info->own_type_index_);
+								}
 								TypeIndex ctor_type_index = ctor_type_spec.type_index();
 								if (const StructTypeInfo* ctor_struct_info = tryGetStructTypeInfo(ctor_type_index)) {
-										const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
-										if (matching_ctor) {
-											FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(ctor_struct_info->name));
+									const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
+									const bool require_sema_resolved_ctor =
+										sema_ &&
+										ctor_struct_info->hasUserDeclaredConstructor();
+									if (matching_ctor &&
+										resolvedConstructorMatchesTargetType(*matching_ctor, ctor_type_index)) {
+										FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(ctor_struct_info->name));
+									} else if (matching_ctor) {
+										if (require_sema_resolved_ctor) {
+											throw InternalError(
+												"Sema-normalized static member constructor call resolved the wrong constructor target for '" +
+												std::string(StringTable::getStringView(ctor_struct_info->name)) +
+												"'");
 										}
-										if (!matching_ctor) {
-											std::vector<TypeSpecifierNode> arg_types;
-											arg_types.reserve(ctor_call.arguments().size());
-											for (const auto& arg : ctor_call.arguments()) {
-												auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
-												if (!arg_type_opt.has_value()) {
-													arg_types.clear();
-													break;
-												}
-												arg_types.push_back(std::move(*arg_type_opt));
+										matching_ctor = nullptr;
+									} else if (require_sema_resolved_ctor) {
+										throw InternalError(
+											"Sema-normalized static member constructor call is missing a resolved constructor for '" +
+											std::string(StringTable::getStringView(ctor_struct_info->name)) +
+											"'");
+									}
+									if (!matching_ctor) {
+										std::vector<TypeSpecifierNode> arg_types;
+										arg_types.reserve(ctor_call.arguments().size());
+										for (const auto& arg : ctor_call.arguments()) {
+											auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
+											if (!arg_type_opt.has_value()) {
+												arg_types.clear();
+												break;
 											}
-											if (arg_types.size() == ctor_call.arguments().size()) {
-												auto resolution = resolve_constructor_overload(*ctor_struct_info, arg_types, false);
-												if (resolution.is_ambiguous) {
-													throw CompileError("Ambiguous constructor call");
-												}
-												matching_ctor = resolution.selected_overload;
+											arg_types.push_back(std::move(*arg_type_opt));
+										}
+										if (arg_types.size() == ctor_call.arguments().size()) {
+											auto resolution = resolve_constructor_overload(*ctor_struct_info, arg_types, false);
+											if (resolution.is_ambiguous) {
+												throw CompileError("Ambiguous constructor call");
 											}
+											matching_ctor = resolution.selected_overload;
 										}
-										if (!matching_ctor) {
-											FLASH_LOG_FORMAT(Codegen, Debug, "Falling back to arity-based constructor resolution for {}", StringTable::getStringView(ctor_struct_info->name));
-											auto arity_resolution = resolve_constructor_overload_arity(*ctor_struct_info, ctor_call.arguments().size(), true);
-											matching_ctor = arity_resolution.selected_overload;
-										}
+									}
+									if (!matching_ctor && !require_sema_resolved_ctor) {
+										FLASH_LOG_FORMAT(Codegen, Debug, "Falling back to arity-based constructor resolution for {}", StringTable::getStringView(ctor_struct_info->name));
+										auto arity_resolution = resolve_constructor_overload_arity(*ctor_struct_info, ctor_call.arguments().size(), true);
+										matching_ctor = arity_resolution.selected_overload;
+									}
 										if (matching_ctor) {
 											// Evaluate arguments
-											ConstExpr::EvaluationContext eval_ctx(*global_symbol_table_);
+											ConstExpr::EvaluationContext eval_ctx = makeStaticMemberEvalContext(struct_info);
 											std::unordered_map<std::string_view, ConstExpr::EvalResult> param_bindings;
 											eval_ctx.local_bindings = &param_bindings;
 											std::unordered_map<std::string_view, long long> param_values;
