@@ -395,6 +395,7 @@ int main_impl(int argc, char* argv[]) {
 		// Allocate Parser on the heap to reduce stack usage - Parser has many large member variables
 		parser = std::make_unique<Parser>(*lexer_ptr, context);
 		parser->setRuntimeStatsEnabled(show_perf_stats);
+		parser->reserveSavedTokenStorage(std::min(source_line_count * 20, static_cast<size_t>(256 * 1024)));
 	}
 	Lexer& lexer = *lexer_ptr;
 	{

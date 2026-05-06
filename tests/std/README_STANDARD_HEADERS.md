@@ -117,9 +117,11 @@ Implementation change from this pass:
   vector index instead of hashing it through `std::unordered_map`.**  The handle
   generator already produces dense increasing ids during one parse, so this
   removes hash lookup/allocation overhead from the parser's hottest speculative
-  save/restore path.  `--stats` now also prints parser runtime counters for
-  token advancement, lookahead, saved-token operations, saved-token storage, AST
-  cleanup during restore, and saved-token timing.
+  save/restore path.  The parser also reserves saved-token capacity from the
+  preprocessed line count with a conservative cap.  `--stats` now also prints
+  parser runtime counters for token advancement, lookahead, saved-token
+  operations, saved-token storage, AST cleanup during restore, and saved-token
+  timing.
 
 Validation baseline before the edit:
 
@@ -131,14 +133,15 @@ Validation baseline before the edit:
 | Run set | Flags | Samples | Preprocessing | Parsing | Total | Note |
 |---------|-------|---------|---------------|---------|-------|------|
 | Before (`26b0d25`) | `--timing --stats` | 5, first run cold | ~16.97ms warm median | ~1135.39ms warm median | ~1172.10ms warm median | First total sample was a cold outlier at 1626ms; warm samples were stable. |
-| After saved-token vector (`91e2463`) | `--timing --stats` | 5 | 17.41ms median | 1112.29ms median | 1149.32ms median | Includes the new stats/timing counters themselves. |
-| After saved-token vector (`91e2463`) | `--timing` | 3 | 17.23ms median | 1109.40ms median | 1145.79ms median | Normal timing path, parser stats disabled. |
+| After final saved-token vector + reserve | `--timing --stats` | 3 after reserve | 17.3ms typical | 1119.59ms median | 1155.77ms median | Includes the new stats/timing counters themselves. |
+| After final saved-token vector + reserve | `--timing` | 3 after reserve | 17.2ms typical | 1110.62ms median | 1146.72ms median | Normal timing path, parser stats disabled. |
 
-Observed improvement against the warm baseline is about **26.0ms less parsing
-time** (`1135.39ms -> 1109.40ms`, roughly **2.3%**) and **26.3ms less total
-compile time** (`1172.10ms -> 1145.79ms`, roughly **2.2%**).  The after-change
-`--stats` median is still faster than the baseline despite paying for the new
-high-resolution timers around saved-token operations.
+Observed improvement against the warm baseline is about **24.8ms less parsing
+time** (`1135.39ms -> 1110.62ms`, roughly **2.2%**) and **25.4ms less total
+compile time** (`1172.10ms -> 1146.72ms`, roughly **2.2%**).  The after-change
+normal timing path is the authoritative performance comparison; the `--stats`
+path is intentionally instrumented and pays for high-resolution timers around
+saved-token operations.
 
 Detailed parser stats for the after-change `--timing --stats` run are stable
 across samples:
@@ -159,15 +162,15 @@ across samples:
 | Peak unreleased saves | 50,075 |
 | Unreleased saves at parse end | 50,071 |
 | Restore AST cleanup scanned/preserved/discarded | 855 / 855 / 0 |
-| Saved-token measured time | save ~7.6-9.0ms, full restore ~0.1-0.24ms, lexer-only restore ~0.0-0.01ms, discard ~0.0-0.02ms |
+| Saved-token measured time | save ~4.0ms median after reserve (~3.9-4.2ms range), full restore ~0.2ms, lexer-only restore ~0.0-0.01ms, discard ~0.0-0.01ms |
 
 Interpretation:
 
 - The parser performs roughly **20 saved-token saves per preprocessed line**.
   Saved-token traffic is therefore a real hot path even though the measured
-  direct time in the saved-token functions is only about 8ms after the vector
-  refactor.  The before/after wall-clock delta shows that avoiding hash-table
-  traffic around those 81k handles still matters.
+  direct time in the saved-token functions is only about 4ms after the vector
+  refactor plus reserve.  The before/after wall-clock delta shows that avoiding
+  hash-table traffic around those 81k handles still matters.
 - `peek(1)`-style lookahead accounts for **16,677 save/restore/discard cycles**.
   These are lexer-only restores and do not need AST cleanup.
 - Full restores are much more frequent than discards.  That leaves about **50k
@@ -220,11 +223,10 @@ Parser/storage suggestions for future performance work:
 2. **Add a cheap token lookahead buffer for `peek(1)`.**  The 16,677 lexer-only
    lookahead cycles could avoid save/restore/discard entirely if the parser kept
    a one- or two-token buffer beside `current_token_` and `injected_token_`.
-3. **Reserve saved-token storage once per parse.**  `<limits>` used 81,739 slots
-   for 4019 preprocessed lines, about 20 slots per line.  A conservative reserve
-   based on preprocessed line count could remove vector growth cost, though the
-   measured save bucket is already only single-digit milliseconds after the
-   vector change.
+3. **Tune saved-token storage reservation across heavier headers.**  `<limits>`
+   used 81,739 slots for 4019 preprocessed lines, about 20 slots per line.  This
+   pass added a conservative capped reserve from that ratio; broader std-header
+   sweeps should verify the cap and ratio before making them more aggressive.
 4. **Use a tighter representation for saved-token validity.**  `std::vector<
    std::optional<SavedToken>>` is simple and faster than the hash map here, but a
    dense `std::vector<SavedToken>` plus a bitset/epoch for discarded handles

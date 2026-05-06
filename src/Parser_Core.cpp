@@ -689,6 +689,10 @@ void Parser::setRuntimeStatsEnabled(bool enabled) {
 	runtime_stats_enabled_ = enabled;
 }
 
+void Parser::reserveSavedTokenStorage(size_t saved_token_capacity) {
+	saved_tokens_.reserve(saved_token_capacity);
+}
+
 void Parser::printRuntimeStats() const {
 	const auto& stats = runtime_stats_;
 	FLASH_LOG(General, Info, "Parser runtime stats:");
@@ -941,10 +945,10 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 		return;
 	}
 
-	// Iterate from the end to avoid invalidating iterators when removing elements
 	size_t scanned_nodes = ast_nodes_.size() - new_size;
 	size_t preserved_nodes = 0;
 	size_t discarded_nodes = 0;
+	// Iterate from the end to avoid invalidating iterators when removing elements
 	for (size_t i = ast_nodes_.size(); i > new_size;) {
 		--i;
 		ASTNode& node = ast_nodes_[i];

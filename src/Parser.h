@@ -443,6 +443,7 @@ public:
 
 	const auto& get_nodes() { return ast_nodes_; }
 	void setRuntimeStatsEnabled(bool enabled);
+	void reserveSavedTokenStorage(size_t saved_token_capacity);
 	void printRuntimeStats() const;
 
 	// Returns true if the node at `index` in `get_nodes()` was added via the
@@ -1042,6 +1043,9 @@ private:
 		TokenPosition lexer_position_;  // Store the lexer position with each save
 	};
 
+	// SaveHandle values are monotonically increasing dense indices during one
+	// parse, so vector-indexed storage avoids hash lookup/allocation overhead in
+	// speculative parser save/restore hot paths.
 	std::vector<std::optional<SavedToken>> saved_tokens_;
 	size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
 	bool runtime_stats_enabled_ = false;
