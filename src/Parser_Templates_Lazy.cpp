@@ -450,23 +450,6 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		owner_struct_decl = &owner_symbol->as<StructDeclarationNode>();
 	}
 
-	// Perform template parameter substitution (same as eager path)
-	// Substitute return type
-	const TypeSpecifierNode& return_type_spec = decl.type_specifier_node();
-	TypeIndex return_type_index = substitute_template_parameter(
-		return_type_spec, lazy_info.template_params, lazy_info.template_args);
-	if (owner_struct_decl) {
-		return_type_index = resolveOwnerAliasTypeIndex(
-			[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
-				return substitute_template_parameter(type_spec, params, args);
-			},
-			*owner_struct_decl,
-			return_type_spec,
-			lazy_info.template_params,
-			lazy_info.template_args,
-			return_type_index);
-	}
-
 	// Resolve self-referential types: when a member function's return type or parameter type
 	// refers to the template class itself (e.g., W& in W<T>::operator+=), the type_index
 	// still points to the uninstantiated template base (e.g., W with size=0). We need to
@@ -482,48 +465,24 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		}
 	};
 
-	resolve_self_type(return_type_index);
-
-	// Use substituteTemplateParameters as the primary substitution: it correctly propagates
-	// pointer depth, reference qualifiers, and other template arg metadata (e.g. I → int*
-	// produces a TypeSpecifierNode with pointer_depth=1 and size=64, not 32-bit int).
-	// The TypeIndex obtained via substitute_template_parameter + resolve_self_type is then
-	// applied on top to handle self-referential types (e.g. W<T>& → W<int>&).
-	ASTNode full_substituted_return_node = substituteTemplateParameters(
-		decl.type_node(), lazy_info.template_params, lazy_info.template_args);
-	TypeSpecifierNode substituted_return_type = full_substituted_return_node.is<TypeSpecifierNode>()
-		? full_substituted_return_node.as<TypeSpecifierNode>()
-		: TypeSpecifierNode(
-			  return_type_index.category(),
-			  return_type_spec.qualifier(),
-			  get_type_size_bits(return_type_index.category()),
-			  return_type_spec.token(),
-			  CVQualifier::None);
-	// Apply the self-type-resolved TypeIndex so self-referential returns get the right
-	// instantiated struct type index (e.g. unresolved W → resolved W<int>).
-	if (return_type_index.is_valid()) {
-		substituted_return_type.set_type_index(return_type_index);
-	}
-	if (!full_substituted_return_node.is<TypeSpecifierNode>()) {
-		// Fallback: copy pointer levels and reference qualifiers from the original spec.
-		for (const auto& ptr_level : return_type_spec.pointer_levels()) {
-			substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
-		}
-		substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
-	}
-	if (return_type_spec.has_function_signature()) {
-		substituted_return_type.set_function_signature(return_type_spec.function_signature());
-	} else if (return_type_index.category() == TypeCategory::FunctionPointer ||
-			   return_type_index.category() == TypeCategory::MemberFunctionPointer) {
-		// The original return_type_spec is a dependent placeholder (e.g. "F")
-		// that has no function_signature.  Look up the concrete TemplateTypeArg.
-		if (const auto* arg = findTemplateArgByName(return_type_spec.token().value(),
-													lazy_info.template_params, lazy_info.template_args)) {
-			if (arg->function_signature.has_value())
-				substituted_return_type.set_function_signature(*arg->function_signature);
-		}
-	}
-	normalizeSubstitutedTypeSpec(substituted_return_type);
+	const TypeSpecifierNode& return_type_spec = decl.type_specifier_node();
+	TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
+		return_type_spec,
+		decl.type_node(),
+		return_type_spec.token(),
+		lazy_info.template_params,
+		lazy_info.template_args,
+		[this](const ASTNode& node, const auto& params, const auto& args) {
+			return substituteTemplateParameters(node, params, args);
+		},
+		[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+			return substitute_template_parameter(type_spec, params, args);
+		},
+		owner_struct_decl,
+		instantiated_owner_type_index,
+		TypeIndex{},
+		false,
+		true);
 
 	auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 

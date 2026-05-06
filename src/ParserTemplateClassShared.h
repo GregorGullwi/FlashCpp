@@ -31,6 +31,98 @@ inline void normalizeSubstitutedTypeSpec(TypeSpecifierNode& type_spec) {
 	}
 }
 
+inline int getSubstitutedTypeSizeBits(TypeIndex substituted_type_index) {
+	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(substituted_type_index);
+	TypeIndex size_type_index = resolved_alias.type_index.is_valid()
+		? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+		: substituted_type_index;
+	if (resolved_alias.pointer_depth > 0 ||
+		resolved_alias.reference_qualifier != ReferenceQualifier::None ||
+		size_type_index.category() == TypeCategory::FunctionPointer ||
+		size_type_index.category() == TypeCategory::MemberFunctionPointer ||
+		size_type_index.category() == TypeCategory::MemberObjectPointer) {
+		return 64;
+	}
+
+	if (size_type_index.is_valid()) {
+		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(size_type_index)) {
+			return static_cast<int>(toSizeT(struct_info->sizeInBytes()) * 8);
+		}
+		if (const TypeInfo* type_info = tryGetTypeInfo(size_type_index)) {
+			if (type_info->hasStoredSize()) {
+				return static_cast<int>(toSizeT(type_info->sizeInBytes()) * 8);
+			}
+		}
+	}
+
+	return get_type_size_bits(size_type_index.category());
+}
+
+template <typename ParamContainer, typename ArgContainer>
+inline std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
+	const TypeSpecifierNode& type_spec,
+	TypeIndex substituted_type_index,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	if (substituted_type_index.category() != TypeCategory::FunctionPointer &&
+		substituted_type_index.category() != TypeCategory::MemberFunctionPointer)
+		return std::nullopt;
+	if (type_spec.has_function_signature())
+		return type_spec.function_signature();
+
+	StringHandle type_name_handle;
+	if (const TypeInfo* ts_ti = tryGetTypeInfo(type_spec.type_index()))
+		type_name_handle = ts_ti->name();
+	if (!type_name_handle.isValid())
+		type_name_handle = type_spec.token().handle();
+	if (!type_name_handle.isValid())
+		return std::nullopt;
+
+	if (const auto* arg = findTemplateArgByName(type_name_handle.view(), template_params, template_args)) {
+		if (arg->function_signature.has_value())
+			return arg->function_signature;
+	}
+	return std::nullopt;
+}
+
+template <typename ParamContainer, typename ArgContainer>
+inline void applyBoundTemplateArgMetadata(
+	TypeSpecifierNode& substituted_type,
+	const TypeSpecifierNode& original_type,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+
+	StringHandle type_name_handle;
+	if (const TypeInfo* ts_ti = tryGetTypeInfo(original_type.type_index()))
+		type_name_handle = ts_ti->name();
+	if (!type_name_handle.isValid())
+		type_name_handle = original_type.token().handle();
+	if (!type_name_handle.isValid())
+		return;
+
+	const auto* arg = findTemplateArgByName(type_name_handle.view(), template_params, template_args);
+	if (arg == nullptr || arg->is_value) {
+		return;
+	}
+
+	for (size_t i = 0; i < arg->pointer_depth; ++i) {
+		CVQualifier cv = i < arg->pointer_cv_qualifiers.size()
+			? arg->pointer_cv_qualifiers[i]
+			: CVQualifier::None;
+		substituted_type.add_pointer_level(cv);
+	}
+	substituted_type.set_reference_qualifier(collapseReferenceQualifiers(
+		arg->ref_qualifier,
+		substituted_type.reference_qualifier()));
+	if (!substituted_type.has_function_signature() && arg->function_signature.has_value()) {
+		substituted_type.set_function_signature(*arg->function_signature);
+	}
+	const int resolved_size_bits = getTypeSpecSizeBits(substituted_type);
+	if (resolved_size_bits > 0) {
+		substituted_type.set_size_in_bits(resolved_size_bits);
+	}
+}
+
 template <typename TSubstituteFn, typename TOwnerDecl, typename TParams, typename TArgs>
 TypeIndex resolveOwnerAliasTypeIndex(
 	TSubstituteFn&& substitute_fn,
@@ -47,12 +139,12 @@ TypeIndex resolveOwnerAliasTypeIndex(
 		original_type_spec.type() != TypeCategory::Template) {
 		return current_type_index;
 	}
-	std::string_view type_name = original_type_spec.token().value();
-	if (type_name.empty()) {
+	StringHandle type_name_handle = original_type_spec.token().handle();
+	if (!type_name_handle.isValid()) {
 		return current_type_index;
 	}
 	for (const auto& type_alias : owner_decl.type_aliases()) {
-		if (StringTable::getStringView(type_alias.alias_name) != type_name ||
+		if (type_alias.alias_name != type_name_handle ||
 			!type_alias.type_node.template is<TypeSpecifierNode>()) {
 			continue;
 		}
@@ -66,6 +158,84 @@ TypeIndex resolveOwnerAliasTypeIndex(
 		break;
 	}
 	return current_type_index;
+}
+
+template <
+	typename ParamContainer,
+	typename ArgContainer,
+	typename SubstituteAstFn,
+	typename SubstituteTypeIndexFn>
+TypeSpecifierNode buildSubstitutedTypeSpecifier(
+	const TypeSpecifierNode& original_type_spec,
+	const ASTNode& original_type_node,
+	const Token& fallback_token,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args,
+	SubstituteAstFn&& substitute_ast,
+	SubstituteTypeIndexFn&& substitute_type_index,
+	const StructDeclarationNode* owner_decl,
+	TypeIndex instantiated_owner_type_index,
+	TypeIndex override_type_index,
+	bool apply_bound_metadata_to_full_substitution,
+	bool apply_resolved_index_to_full_substitution) {
+	ASTNode full_substituted_node = substitute_ast(original_type_node, template_params, template_args);
+	TypeIndex substituted_type_index = override_type_index.is_valid()
+		? override_type_index
+		: substitute_type_index(original_type_spec, template_params, template_args);
+	if (owner_decl != nullptr) {
+		substituted_type_index = resolveOwnerAliasTypeIndex(
+			substitute_type_index,
+			*owner_decl,
+			original_type_spec,
+			template_params,
+			template_args,
+			substituted_type_index);
+	}
+	if (instantiated_owner_type_index.is_valid()) {
+		substituted_type_index = resolveSelfRefParamIndex(
+			substituted_type_index,
+			instantiated_owner_type_index);
+	}
+
+	TypeSpecifierNode substituted_type = full_substituted_node.is<TypeSpecifierNode>()
+		? full_substituted_node.as<TypeSpecifierNode>()
+		: TypeSpecifierNode(
+			  substituted_type_index.category(),
+			  original_type_spec.qualifier(),
+			  getSubstitutedTypeSizeBits(substituted_type_index),
+			  fallback_token,
+			  original_type_spec.cv_qualifier());
+	if (substituted_type_index.is_valid() &&
+		(apply_resolved_index_to_full_substitution ||
+		 !full_substituted_node.is<TypeSpecifierNode>())) {
+		substituted_type.set_type_index(substituted_type_index.withCategory(substituted_type_index.category()));
+		substituted_type.set_category(substituted_type_index.category());
+	}
+	if (!full_substituted_node.is<TypeSpecifierNode>()) {
+		for (const auto& ptr_level : original_type_spec.pointer_levels()) {
+			substituted_type.add_pointer_level(ptr_level.cv_qualifier);
+		}
+		substituted_type.set_reference_qualifier(original_type_spec.reference_qualifier());
+	}
+	if (apply_bound_metadata_to_full_substitution ||
+		!full_substituted_node.is<TypeSpecifierNode>()) {
+		applyBoundTemplateArgMetadata(
+			substituted_type,
+			original_type_spec,
+			template_params,
+			template_args);
+	}
+	if (original_type_spec.has_function_signature()) {
+		substituted_type.set_function_signature(original_type_spec.function_signature());
+	} else if (auto signature = resolveTemplateFunctionPointerSignature(
+				   original_type_spec,
+				   substituted_type.type_index(),
+				   template_params,
+				   template_args)) {
+		substituted_type.set_function_signature(*signature);
+	}
+	normalizeSubstitutedTypeSpec(substituted_type);
+	return substituted_type;
 }
 
 template <typename TDest, typename TSource>

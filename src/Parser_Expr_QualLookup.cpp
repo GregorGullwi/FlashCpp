@@ -2287,14 +2287,13 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 // Helper function to deduce the type of an expression for auto type deduction
 TypeCategory Parser::deduce_type_from_expression(const ASTNode& expr) {
-	// For now, use a simple approach: use the existing get_expression_type function
-	// which returns TypeSpecifierNode, and extract the type from it
 	auto type_spec_opt = get_expression_type(expr);
 	if (type_spec_opt.has_value()) {
 		return type_spec_opt->type();
 	}
 
-	// Default to int if we can't determine the type
+	// TODO: replace this with an explicit StillDependent/HardError result so
+	// dependent template contexts don't get rejected as hard-use failures.
 	return TypeCategory::Int;
 }
 
@@ -2337,6 +2336,12 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	std::optional<TypeSpecifierNode> deduced_type;
 	std::vector<std::pair<TypeSpecifierNode, Token>> all_return_types;  // Track all return types for validation
 
+	auto make_void_return_type = [&]() {
+		TypeSpecifierNode void_type(TypeCategory::Void, TypeQualifier::None, 0, decl_node.identifier_token(), CVQualifier::None);
+		void_type.set_type_index(nativeTypeIndex(TypeCategory::Void));
+		return void_type;
+	};
+
 	// Recursive lambda to search for return statements
 	auto find_return_statements = [&](const auto& self, const ASTNode& node) -> void {
 		if (node.is<ReturnStatementNode>()) {
@@ -2355,6 +2360,12 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 						FLASH_LOG(Parser, Debug, "  Found return statement, deduced type: ",
 								  (int)deduced_type->type(), " size: ", (int)deduced_type->size_in_bits());
 					}
+				}
+			} else {
+				TypeSpecifierNode void_type = make_void_return_type();
+				all_return_types.emplace_back(void_type, ret.return_token());
+				if (!deduced_type.has_value()) {
+					deduced_type = void_type;
 				}
 			}
 		} else if (node.is<BlockNode>()) {
@@ -2424,15 +2435,26 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 		const TypeSpecifierNode& first_type = all_return_types[0].first;
 		for (size_t i = 1; i < all_return_types.size(); ++i) {
 			const TypeSpecifierNode& current_type = all_return_types[i].first;
-			if (!are_types_compatible(first_type, current_type)) {
-				// Log error but don't fail compilation (just log warning)
-				// We could make this a hard error, but for now just warn
-				FLASH_LOG(Parser, Warning, "Function '", decl_node.identifier_token().value(),
-						  "' has inconsistent return types: first return has type '",
-						  type_to_string(first_type), "', but another return has type '",
-						  type_to_string(current_type), "'");
+			if (first_type.category() != current_type.category() ||
+				first_type.type_index() != current_type.type_index() ||
+				first_type.pointer_depth() != current_type.pointer_depth() ||
+				first_type.reference_qualifier() != current_type.reference_qualifier() ||
+				first_type.cv_qualifier() != current_type.cv_qualifier()) {
+				throw CompileError(std::string(StringBuilder()
+					.append("function '")
+					.append(decl_node.identifier_token().value())
+					.append("' has inconsistent deduced auto return types: first return has type '")
+					.append(type_to_string(first_type))
+					.append("', but another return has type '")
+					.append(type_to_string(current_type))
+					.append("'")
+					.commit()));
 			}
 		}
+	}
+
+	if (!deduced_type.has_value()) {
+		deduced_type = make_void_return_type();
 	}
 
 	// If we found a deduced type, update the function declaration's return type

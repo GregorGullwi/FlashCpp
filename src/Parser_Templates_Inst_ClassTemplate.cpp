@@ -521,74 +521,6 @@ static InlineVector<StringHandle, 4> collectParamNameHandles(
 	return names;
 }
 
-template <typename ParamContainer, typename ArgContainer>
-static std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
-	const TypeSpecifierNode& type_spec,
-	TypeIndex substituted_type_index,
-	const ParamContainer& template_params,
-	const ArgContainer& template_args) {
-	if (substituted_type_index.category() != TypeCategory::FunctionPointer &&
-		substituted_type_index.category() != TypeCategory::MemberFunctionPointer)
-		return std::nullopt;
-	// Use the original declaration-site type_spec here. In several instantiation paths
-	// the substituted TypeSpecifierNode is freshly reconstructed from TypeIndex and does
-	// not carry function_signature, so the live metadata source is either the original
-	// type node or the bound TemplateTypeArg for a dependent placeholder such as "F".
-	if (type_spec.has_function_signature())
-		return type_spec.function_signature();
-
-	std::string_view type_name;
-	if (const TypeInfo* ts_ti = tryGetTypeInfo(type_spec.type_index()))
-		type_name = StringTable::getStringView(ts_ti->name());
-	if (type_name.empty())
-		type_name = type_spec.token().value();
-	if (type_name.empty())
-		return std::nullopt;
-
-	if (const auto* arg = findTemplateArgByName(type_name, template_params, template_args)) {
-		if (arg->function_signature.has_value())
-			return arg->function_signature;
-	}
-	return std::nullopt;
-}
-
-template <typename ParamContainer, typename ArgContainer>
-static void applyBoundTemplateArgMetadata(
-	TypeSpecifierNode& substituted_type,
-	const TypeSpecifierNode& original_type,
-	const ParamContainer& template_params,
-	const ArgContainer& template_args) {
-	std::string_view type_name;
-	if (const TypeInfo* ts_ti = tryGetTypeInfo(original_type.type_index()))
-		type_name = StringTable::getStringView(ts_ti->name());
-	if (type_name.empty())
-		type_name = original_type.token().value();
-	if (type_name.empty())
-		return;
-
-	const auto* arg = findTemplateArgByName(type_name, template_params, template_args);
-	if (arg == nullptr || arg->is_value) {
-		return;
-	}
-
-	for (size_t i = 0; i < arg->pointer_depth; ++i) {
-		CVQualifier cv = i < arg->pointer_cv_qualifiers.size()
-			? arg->pointer_cv_qualifiers[i]
-			: CVQualifier::None;
-		substituted_type.add_pointer_level(cv);
-	}
-	substituted_type.set_reference_qualifier(collapseReferenceQualifiers(
-		arg->ref_qualifier,
-		substituted_type.reference_qualifier()));
-	if (!substituted_type.has_function_signature() && arg->function_signature.has_value()) {
-		substituted_type.set_function_signature(*arg->function_signature);
-	}
-	const int resolved_size_bits = getTypeSpecSizeBits(substituted_type);
-	if (resolved_size_bits > 0) {
-		substituted_type.set_size_in_bits(resolved_size_bits);
-	}
-}
-
 ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const ASTNode& node,
 	const StructTypeInfo* struct_info,
@@ -3053,35 +2985,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// The pattern has Type::UserDefined for T, which needs to be replaced with the concrete type
 					const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
 
-					// Use substitute_template_parameter for return type — handles all params by name,
-					// not just template_args[0].
-					TypeIndex substituted_return_type_index = substitute_template_parameter(
-						orig_return_type, template_params, template_args_for_member_copy);
-					ASTNode substituted_return_node = substituteTemplateParameters(
+					TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
+						orig_return_type,
 						orig_decl.type_node(),
+						orig_decl.identifier_token(),
 						template_params,
-						template_args_for_member_copy);
-					if (!substituted_return_node.is<TypeSpecifierNode>()) {
-						substituted_return_node = emplace_node<TypeSpecifierNode>(
-							substituted_return_type_index,
-							get_substituted_type_size_bits(substituted_return_type_index),
-							orig_decl.identifier_token(),
-							orig_return_type.cv_qualifier(),
-							ReferenceQualifier::None);
-						substituted_return_node.as<TypeSpecifierNode>().copy_indirection_from(orig_return_type);
-						applyBoundTemplateArgMetadata(
-							substituted_return_node.as<TypeSpecifierNode>(),
-							orig_return_type,
-							template_params,
-							template_args_for_member_copy);
-					}
+						template_args_for_member_copy,
+						[this](const ASTNode& node, const auto& params, const auto& args) {
+							return substituteTemplateParameters(node, params, args);
+						},
+						[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+							return substitute_template_parameter(type_spec, params, args);
+						},
+						nullptr,
+						TypeIndex{},
+						TypeIndex{},
+						false,
+						false);
 					clampPartialPatternTemplateParamIndirection(
-						substituted_return_node.as<TypeSpecifierNode>(),
+						substituted_return_type,
 						orig_return_type);
+					auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 					StringHandle effective_name = computeInstantiatedLookupName(
 						orig_decl.identifier_token().handle(),
 						mem_func.operator_kind,
-						substituted_return_node.as<TypeSpecifierNode>());
+						substituted_return_type);
 					Token effective_identifier_token(
 						Token::Type::Identifier,
 						StringTable::getStringView(effective_name),
@@ -4047,54 +3975,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						template_args_for_pattern,
 						return_type_index);
 
-					TypeSpecifierNode substituted_return_type(
-						return_type_index.category(),
-						orig_return_type.qualifier(),
-						get_substituted_type_size_bits(return_type_index),
+					TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
+						orig_return_type,
+						ASTNode(&orig_return_type),
 						orig_decl.identifier_token(),
-						orig_return_type.cv_qualifier());
-					if (ASTNode substituted_return_node = substituteTemplateParameters(
-							ASTNode(&orig_return_type),
-							template_params,
-							template_args_for_pattern);
-						substituted_return_node.is<TypeSpecifierNode>()) {
-						substituted_return_type = substituted_return_node.as<TypeSpecifierNode>();
-						substituted_return_type.set_type_index(return_type_index);
-						for (const auto& ptr_level : orig_return_type.pointer_levels()) {
-							substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
-						}
-						substituted_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
-						applyBoundTemplateArgMetadata(
-							substituted_return_type,
-							orig_return_type,
-							template_params,
-							template_args_for_pattern);
-					} else {
-						substituted_return_type.set_type_index(return_type_index);
-						for (const auto& ptr_level : orig_return_type.pointer_levels()) {
-							substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
-						}
-						substituted_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
-						applyBoundTemplateArgMetadata(
-							substituted_return_type,
-							orig_return_type,
-							template_params,
-							template_args_for_pattern);
-					}
-					if (orig_return_type.has_function_signature()) {
-						substituted_return_type.set_function_signature(orig_return_type.function_signature());
-					} else if (return_type_index.category() == TypeCategory::FunctionPointer ||
-							   return_type_index.category() == TypeCategory::MemberFunctionPointer) {
-						if (const auto* arg = findTemplateArgByName(
-								orig_return_type.token().value(),
-								template_params,
-								template_args_for_pattern)) {
-							if (arg->function_signature.has_value()) {
-								substituted_return_type.set_function_signature(*arg->function_signature);
-							}
-						}
-					}
-					normalizeSubstitutedTypeSpec(substituted_return_type);
+						template_params,
+						template_args_for_pattern,
+						[this](const ASTNode& node, const auto& params, const auto& args) {
+							return substituteTemplateParameters(node, params, args);
+						},
+						[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+							return substitute_template_parameter(type_spec, params, args);
+						},
+						&pattern_struct,
+						TypeIndex{},
+						return_type_index,
+						false,
+						true);
 					clampPartialPatternTemplateParamIndirection(substituted_return_type, orig_return_type);
 
 					auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
@@ -7173,104 +7070,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Substitute return type
 				const TypeSpecifierNode& return_type_spec = decl.type_specifier_node();
-				ASTNode substituted_return_type_node = substituteTemplateParameters(
-					decl.type_node(), template_params, template_args_to_use);
-				TypeCategory return_type = return_type_spec.type();
-				TypeIndex return_type_index = return_type_spec.type_index();
-				return_type_index = resolveOwnerAliasTypeIndex(
+				TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
+					return_type_spec,
+					decl.type_node(),
+					decl.identifier_token(),
+					template_params,
+					template_args_to_use,
+					[this](const ASTNode& node, const auto& params, const auto& args) {
+						return substituteTemplateParameters(node, params, args);
+					},
 					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
 						return substitute_template_parameter(type_spec, params, args);
 					},
-					class_decl,
-					return_type_spec,
-					template_params,
-					template_args_to_use,
-					return_type_index);
-				resolve_member_self_type(return_type_index);
-				if (return_type_index.is_valid() && return_type_index.category() != TypeCategory::UserDefined) {
-					return_type = return_type_index.category();
-				}
-
-				// First, check if the return type is a type alias defined in this template class
-				// (e.g., "operator value_type()" where "using value_type = T;")
-				// This is needed because substitute_template_parameter doesn't have access to type aliases
-				if (return_type == TypeCategory::UserDefined && !return_type_index.is_valid()) {
-					// type_index=0 means this is a placeholder (type parsed inside template before registration)
-					// Try to find the type name from the token
-					std::string_view return_type_name = return_type_spec.token().value();
-					if (!return_type_name.empty()) {
-						// Look up in the template class's type aliases
-						for (const auto& type_alias : class_decl.type_aliases()) {
-							if (StringTable::getStringView(type_alias.alias_name) == return_type_name) {
-								// Found the type alias - check what it resolves to
-								const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
-
-								// If the alias resolves to a template parameter, substitute it
-								if ((alias_type_spec.category() == TypeCategory::UserDefined || alias_type_spec.category() == TypeCategory::TypeAlias || alias_type_spec.category() == TypeCategory::Template)) {
-									// Try to substitute the alias target
-									TypeIndex subst_index = substitute_template_parameter(
-										alias_type_spec, template_params, template_args_to_use);
-									if (subst_index.category() != TypeCategory::UserDefined || subst_index.is_valid()) {
-										return_type = subst_index.category();
-										return_type_index = subst_index;
-										FLASH_LOG(Templates, Debug, "Resolved return type alias '", return_type_name,
-												  "' to type=", static_cast<int>(return_type));
-									}
-								}
-								break;
-							}
-						}
-					}
-				}
-
-				// If not resolved via type alias, try normal substitution
-				if (return_type == TypeCategory::UserDefined) {
-					TypeIndex subst_index = substitute_template_parameter(
-						return_type_spec, template_params, template_args_to_use);
-					return_type = subst_index.category();
-					return_type_index = subst_index;
-				}
-				resolve_member_self_type(return_type_index);
-
-				// Create substituted return type node
-				TypeSpecifierNode substituted_return_type = substituted_return_type_node.is<TypeSpecifierNode>()
-					? substituted_return_type_node.as<TypeSpecifierNode>()
-					: TypeSpecifierNode(
-						  return_type,
-						  return_type_spec.qualifier(),
-						  get_substituted_type_size_bits(return_type_index.withCategory(return_type)),
-						  decl.identifier_token(),
-						  CVQualifier::None);
-				substituted_return_type.set_category(return_type);
-				if (return_type_index.is_valid()) {
-					substituted_return_type.set_type_index(return_type_index.withCategory(return_type));
-				}
-				if (!substituted_return_type_node.is<TypeSpecifierNode>()) {
-					// Copy pointer levels and reference qualifiers from original
-					for (const auto& ptr_level : return_type_spec.pointer_levels()) {
-						substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
-					}
-					substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
-				}
-				applyBoundTemplateArgMetadata(
-					substituted_return_type,
-					return_type_spec,
-					template_params,
-					template_args_to_use);
-				if (return_type_spec.has_function_signature()) {
-					substituted_return_type.set_function_signature(return_type_spec.function_signature());
-				} else if (substituted_return_type.type_index().category() == TypeCategory::FunctionPointer ||
-						   substituted_return_type.type_index().category() == TypeCategory::MemberFunctionPointer) {
-					if (const auto* arg = findTemplateArgByName(
-							return_type_spec.token().value(),
-							template_params,
-							template_args_to_use)) {
-						if (arg->function_signature.has_value()) {
-							substituted_return_type.set_function_signature(*arg->function_signature);
-						}
-					}
-				}
-				normalizeSubstitutedTypeSpec(substituted_return_type);
+					&class_decl,
+					instantiated_member_owner_type_index,
+					TypeIndex{},
+					false,
+					true);
 
 				// Slice 2: fill canonical instantiated lookup name (conversion operator renaming)
 				lazy_info.identity.instantiated_lookup_name = computeInstantiatedLookupName(
@@ -7435,60 +7251,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (func_decl.has_any_body_source()) {
 				// Substitute return type
 				const TypeSpecifierNode& return_type_spec = decl.type_specifier_node();
-				ASTNode substituted_return_type_node = substituteTemplateParameters(
-					decl.type_node(), template_params, template_args_to_use);
-				TypeIndex return_type_index = substitute_template_parameter(
-					return_type_spec, template_params, template_args_to_use);
-				return_type_index = resolveOwnerAliasTypeIndex(
+				TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
+					return_type_spec,
+					decl.type_node(),
+					decl.identifier_token(),
+					template_params,
+					template_args_to_use,
+					[this](const ASTNode& node, const auto& params, const auto& args) {
+						return substituteTemplateParameters(node, params, args);
+					},
 					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
 						return substitute_template_parameter(type_spec, params, args);
 					},
-					class_decl,
-					return_type_spec,
-					template_params,
-					template_args_to_use,
-					return_type_index);
-				resolve_member_self_type(return_type_index);
-
-				// Create substituted return type node
-				TypeSpecifierNode substituted_return_type = substituted_return_type_node.is<TypeSpecifierNode>()
-					? substituted_return_type_node.as<TypeSpecifierNode>()
-					: TypeSpecifierNode(
-						  return_type_index.category(),
-						  return_type_spec.qualifier(),
-						  get_substituted_type_size_bits(return_type_index),
-						  decl.identifier_token(),
-						  CVQualifier::None);
-				substituted_return_type.set_category(return_type_index.category());
-				if (return_type_index.is_valid()) {
-					substituted_return_type.set_type_index(return_type_index.withCategory(return_type_index.category()));
-				}
-				if (!substituted_return_type_node.is<TypeSpecifierNode>()) {
-					// Copy pointer levels and reference qualifiers from original
-					for (const auto& ptr_level : return_type_spec.pointer_levels()) {
-						substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
-					}
-					substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
-				}
-				applyBoundTemplateArgMetadata(
-					substituted_return_type,
-					return_type_spec,
-					template_params,
-					template_args_to_use);
-				if (return_type_spec.has_function_signature()) {
-					substituted_return_type.set_function_signature(return_type_spec.function_signature());
-				} else if (substituted_return_type.type_index().category() == TypeCategory::FunctionPointer ||
-						   substituted_return_type.type_index().category() == TypeCategory::MemberFunctionPointer) {
-					if (const auto* arg = findTemplateArgByName(
-							return_type_spec.token().value(),
-							template_params,
-							template_args_to_use)) {
-						if (arg->function_signature.has_value()) {
-							substituted_return_type.set_function_signature(*arg->function_signature);
-						}
-					}
-				}
-				normalizeSubstitutedTypeSpec(substituted_return_type);
+					&class_decl,
+					instantiated_member_owner_type_index,
+					TypeIndex{},
+					false,
+					true);
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 				StringHandle effective_name = computeInstantiatedLookupName(
@@ -7725,92 +7504,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Substitute return type
 				const TypeSpecifierNode& return_type_spec = decl.type_specifier_node();
-				TypeCategory return_type = return_type_spec.type();
-				TypeIndex return_type_index = return_type_spec.type_index();
-				return_type_index = resolveOwnerAliasTypeIndex(
+				TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
+					return_type_spec,
+					decl.type_node(),
+					decl.identifier_token(),
+					template_params,
+					template_args_to_use,
+					[this](const ASTNode& node, const auto& params, const auto& args) {
+						return substituteTemplateParameters(node, params, args);
+					},
 					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
 						return substitute_template_parameter(type_spec, params, args);
 					},
-					class_decl,
-					return_type_spec,
-					template_params,
-					template_args_to_use,
-					return_type_index);
-				if (return_type_index.is_valid() && return_type_index.category() != TypeCategory::UserDefined) {
-					return_type = return_type_index.category();
-				}
-
-				// First, check if the return type is a type alias defined in this template class
-				// (e.g., "operator value_type()" where "using value_type = T;")
-				if (return_type == TypeCategory::UserDefined && !return_type_index.is_valid()) {
-					// type_index=0 means this is a placeholder (type parsed inside template before registration)
-					std::string_view return_type_name = return_type_spec.token().value();
-					if (!return_type_name.empty()) {
-						// Look up in the template class's type aliases
-						for (const auto& type_alias : class_decl.type_aliases()) {
-							if (StringTable::getStringView(type_alias.alias_name) == return_type_name) {
-								// Found the type alias - check what it resolves to
-								const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
-
-								// If the alias resolves to a template parameter, substitute it
-								if ((alias_type_spec.category() == TypeCategory::UserDefined || alias_type_spec.category() == TypeCategory::TypeAlias || alias_type_spec.category() == TypeCategory::Template)) {
-									TypeIndex subst_index = substitute_template_parameter(
-										alias_type_spec, template_params, template_args_to_use);
-									if (subst_index.category() != TypeCategory::UserDefined || subst_index.is_valid()) {
-										return_type = subst_index.category();
-										return_type_index = subst_index;
-										FLASH_LOG(Templates, Debug, "Resolved return type alias '", return_type_name,
-												  "' to type=", static_cast<int>(return_type), " (no-definition path)");
-									}
-								}
-								break;
-							}
-						}
-					}
-				}
-
-				// If not resolved via type alias, try normal substitution
-				if (return_type == TypeCategory::UserDefined) {
-					TypeIndex subst_index = substitute_template_parameter(
-						return_type_spec, template_params, template_args_to_use);
-					return_type = subst_index.category();
-					return_type_index = subst_index;
-				}
-				resolve_member_self_type(return_type_index);
-
-				// Create substituted return type node
-				TypeSpecifierNode substituted_return_type(
-					return_type,
-					return_type_spec.qualifier(),
-					get_substituted_type_size_bits(return_type_index.withCategory(return_type)),
-					decl.identifier_token(),
-					CVQualifier::None);
-				substituted_return_type.set_type_index(return_type_index);
-
-				// Copy pointer levels and reference qualifiers from original
-				for (const auto& ptr_level : return_type_spec.pointer_levels()) {
-					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
-				}
-				substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
-				applyBoundTemplateArgMetadata(
-					substituted_return_type,
-					return_type_spec,
-					template_params,
-					template_args_to_use);
-				if (return_type_spec.has_function_signature()) {
-					substituted_return_type.set_function_signature(return_type_spec.function_signature());
-				} else if (return_type_index.category() == TypeCategory::FunctionPointer ||
-						   return_type_index.category() == TypeCategory::MemberFunctionPointer) {
-					if (const auto* arg = findTemplateArgByName(
-							return_type_spec.token().value(),
-							template_params,
-							template_args_to_use)) {
-						if (arg->function_signature.has_value()) {
-							substituted_return_type.set_function_signature(*arg->function_signature);
-						}
-					}
-				}
-				normalizeSubstitutedTypeSpec(substituted_return_type);
+					&class_decl,
+					instantiated_member_owner_type_index,
+					TypeIndex{},
+					false,
+					true);
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 				StringHandle effective_name = computeInstantiatedLookupName(
