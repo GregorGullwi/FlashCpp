@@ -1832,24 +1832,37 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					if (rhs_is_ptr && !lhs_is_ptr) {
 						return *rhs_type_opt;
 					}
+					// ptr + ptr is invalid
+					if (lhs_is_ptr && rhs_is_ptr) {
+						return std::nullopt;
+					}
 				}
 				if (op_kind == tok::Minus) {
 					if (lhs_is_ptr && !rhs_is_ptr) {
 						return *lhs_type_opt;
 					}
 					if (lhs_is_ptr && rhs_is_ptr) {
-						const TypeCategory diff_cat =
-							(g_target_data_model == TargetDataModel::LLP64)
-								? TypeCategory::LongLong
-								: TypeCategory::Long;
-						return TypeSpecifierNode(
-							diff_cat,
-							TypeQualifier::None,
-							get_type_size_bits(diff_cat),
-							Token{},
-							CVQualifier::None);
+						// ptr - ptr requires compatible pointed-to types
+						if (lhs_type_opt->type() == rhs_type_opt->type() &&
+							lhs_type_opt->cv_qualifier() == rhs_type_opt->cv_qualifier() &&
+							lhs_type_opt->type_index() == rhs_type_opt->type_index()) {
+							const TypeCategory diff_cat =
+								(g_target_data_model == TargetDataModel::LLP64)
+									? TypeCategory::LongLong
+									: TypeCategory::Long;
+							return TypeSpecifierNode(
+								diff_cat,
+								TypeQualifier::None,
+								get_type_size_bits(diff_cat),
+								Token{},
+								CVQualifier::None);
+						}
+						// Incompatible pointer types
+						return std::nullopt;
 					}
 				}
+				// Any other pointer operation not explicitly handled is invalid
+				return std::nullopt;
 			}
 		}
 

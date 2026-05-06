@@ -2357,11 +2357,7 @@ void AstToIr::generateNestedMemberStores(
 				ExprResult init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
 				IrValue member_value = 0ULL;
 				bool member_value_overridden = false;
-				if ((member.pointer_depth > 0 ||
-					 (member.size == 8 &&
-					  !member.is_reference() &&
-					  !member.is_rvalue_reference() &&
-					  !member.is_array)) &&
+				if (member.pointer_depth > 0 &&
 					std::holds_alternative<IdentifierNode>(nested_initializers[0].as<ExpressionNode>())) {
 					const IdentifierNode& ident = std::get<IdentifierNode>(nested_initializers[0].as<ExpressionNode>());
 					auto symbol = lookupSymbol(ident.name());
@@ -2390,11 +2386,7 @@ void AstToIr::generateNestedMemberStores(
 					} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
 						auto symbol = lookupSymbol(*string);
 						const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
-						if ((member.pointer_depth > 0 ||
-							 (member.size == 8 &&
-							  !member.is_reference() &&
-							  !member.is_rvalue_reference() &&
-							  !member.is_array)) &&
+						if (member.pointer_depth > 0 &&
 							decl && decl->is_array()) {
 							const TypeSpecifierNode& type_node = decl->type_specifier_node();
 							int element_size_bits = get_type_size_bits(type_node.type());
@@ -2432,11 +2424,7 @@ void AstToIr::generateNestedMemberStores(
 			ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 			IrValue member_value = 0ULL;
 			bool member_value_overridden = false;
-			if ((member.pointer_depth > 0 ||
-				 (member.size == 8 &&
-				  !member.is_reference() &&
-				  !member.is_rvalue_reference() &&
-				  !member.is_array)) &&
+			if (member.pointer_depth > 0 &&
 				std::holds_alternative<IdentifierNode>(init_expr.as<ExpressionNode>())) {
 				const IdentifierNode& ident = std::get<IdentifierNode>(init_expr.as<ExpressionNode>());
 				auto symbol = lookupSymbol(ident.name());
@@ -2465,11 +2453,7 @@ void AstToIr::generateNestedMemberStores(
 				} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
 					auto symbol = lookupSymbol(*string);
 					const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
-					if ((member.pointer_depth > 0 ||
-						 (member.size == 8 &&
-						  !member.is_reference() &&
-						  !member.is_rvalue_reference() &&
-						  !member.is_array)) &&
+					if (member.pointer_depth > 0 &&
 						decl && decl->is_array()) {
 						const TypeSpecifierNode& type_node = decl->type_specifier_node();
 						int element_size_bits = get_type_size_bits(type_node.type());

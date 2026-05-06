@@ -243,6 +243,14 @@ static int resolveCodegenSizeBits(const TypeSpecifierNode& type_node, std::strin
 				if (struct_size_bits > 0) {
 					return struct_size_bits;
 				}
+				// Incomplete/unspecialized alias type detected
+				throw CompileError(std::string(StringBuilder()
+											.append("Incomplete or unspecialized alias type (type_index=")
+											.append(static_cast<int64_t>(alias_info.type_index.value))
+											.append(") in ")
+											.append(context)
+											.commit()),
+								   type_node.token());
 			}
 		}
 	}
