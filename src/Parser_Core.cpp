@@ -925,11 +925,11 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 	#endif
 	if (handle >= saved_tokens_.size() || !saved_tokens_[handle].has_value()) {
 		// Handle not found - this shouldn't happen in correct usage
-#if WITH_PARSER_RUNTIME_STATS
+	#if WITH_PARSER_RUNTIME_STATS
 		if (runtime_stats_enabled_) {
 			++runtime_stats_.missing_restore_count;
 		}
-#endif
+	#endif
 		return;
 	}
 
@@ -992,7 +992,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 		}
 	};
 
-#if WITH_PARSER_RUNTIME_STATS
+	#if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
 		size_t scanned_nodes = ast_nodes_.size() - new_size;
 		size_t preserved_nodes = 0;
@@ -1007,9 +1007,9 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 	} else {
 		cleanupAstNodesAfterRestore(nullptr, nullptr);
 	}
-#else
+	#else
 	cleanupAstNodesAfterRestore(nullptr, nullptr);
-#endif
+	#endif
 }
 
 void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
@@ -1021,11 +1021,11 @@ void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
 	#endif
 	// Restore lexer position and current token, but keep AST nodes
 	if (handle >= saved_tokens_.size() || !saved_tokens_[handle].has_value()) {
-#if WITH_PARSER_RUNTIME_STATS
+	#if WITH_PARSER_RUNTIME_STATS
 		if (runtime_stats_enabled_) {
 			++runtime_stats_.missing_restore_count;
 		}
-#endif
+	#endif
 		return;
 	}
 
@@ -1052,11 +1052,11 @@ void Parser::discard_saved_token(SaveHandle handle) {
 	#endif
 	if (handle < saved_tokens_.size() && saved_tokens_[handle].has_value()) {
 		saved_tokens_[handle].reset();
-#if WITH_PARSER_RUNTIME_STATS
+	#if WITH_PARSER_RUNTIME_STATS
 		if (runtime_stats_enabled_) {
 			--runtime_stats_.active_saves;
 		}
-#endif
+	#endif
 	}
 	#if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
