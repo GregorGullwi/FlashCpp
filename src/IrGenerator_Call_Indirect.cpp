@@ -962,8 +962,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 		if (struct_info) {
 			// Find the member function in the struct
-			std::string_view func_name = func_decl_node.identifier_token().value();
-			StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+			StringHandle func_name_handle = func_decl_node.identifier_token().handle();
 			for (const auto& member_func : struct_info->member_functions) {
 				if (member_func.getName() == func_name_handle &&
 					member_func.function_decl.is<FunctionDeclarationNode>() &&
@@ -1103,7 +1102,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						member_load.object = StringTable::getOrInternStringHandle(object_name);
 					}
 
-					member_load.member_name = StringTable::getOrInternStringHandle(func_name); // Member name
+					member_load.member_name = func_name_handle; // Member name
 					member_load.offset = static_cast<int>(member.offset); // Member offset
 					member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					member_load.struct_type_info = nullptr; // Not used downstream; consistent with all other MemberLoadOp sites
