@@ -2617,17 +2617,14 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 				}
 				sema_applied = true;
 			} else if (ci.cast_kind == StandardConversionKind::ArrayToPointer) {
-				// Array-to-pointer decay: emit AddressOf for the array identifier.
-				if (std::holds_alternative<StringHandle>(arg_result.value)) {
-					const StringHandle arr_name = std::get<StringHandle>(arg_result.value);
-					const TypeCategory elem_type = arg_result.typeEnum();
-					const int elem_size = get_type_size_bits(elem_type);
-					TempVar addr_var = emitAddressOf(elem_type, elem_size > 0 ? elem_size : 32, IrValue(arr_name), source_token);
-					arg_result.value = addr_var;
-					arg_result.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
-					arg_result.pointer_depth = PointerDepth{1};
-					sema_applied = true;
-				}
+				// Array-to-pointer decay: emit AddressOf for any addressable array expression.
+				const TypeCategory elem_type = arg_result.typeEnum();
+				const int elem_size = get_type_size_bits(elem_type);
+				TempVar addr_var = emitAddressOf(elem_type, elem_size > 0 ? elem_size : 32, arg_result.value, source_token);
+				arg_result.value = addr_var;
+				arg_result.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+				arg_result.pointer_depth = PointerDepth{arg_result.pointer_depth.value + 1};
+				sema_applied = true;
 			} else if (!is_struct_type(from_t) && !is_struct_type(to_t)) {
 					// Sema may annotate as TypeCategory::Enum while codegen resolves enum
 					// constants to their underlying type; use actual runtime type.
