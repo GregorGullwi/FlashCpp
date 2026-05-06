@@ -18,6 +18,14 @@
 #include <cstdio> // for std::snprintf
 #include <time.h>
 
+// Transparent hash for string-keyed maps: enables std::string_view lookups
+// without allocating a std::string (e.g. defines_.find(string_view_key)).
+struct PreprocessorStringHash {
+	using is_transparent = void;
+	size_t operator()(std::string_view sv) const noexcept { return std::hash<std::string_view>{}(sv); }
+	size_t operator()(const std::string& s) const noexcept { return std::hash<std::string_view>{}(s); }
+};
+
 #include "CompileContext.h"
 #include "FileTree.h"
 
@@ -268,6 +276,10 @@ static const std::unordered_map<std::string_view, long> has_cpp_attribute_versio
 // Check if a line has an incomplete macro invocation (unmatched parentheses)
 // Returns true if there's an unmatched opening paren that could be from a macro
 inline bool hasIncompleteMacroInvocation(std::string_view line) {
+	// Fast path: if no '(' at all, unmatched parens are impossible
+	if (line.find('(') == std::string_view::npos)
+		return false;
+
 	int paren_depth = 0;
 	bool in_string = false;
 	bool in_char = false;
@@ -507,9 +519,9 @@ public:
 	const std::vector<SourceLineMapping>& get_line_map() const { return line_map_; }
 	const std::deque<std::string>& get_file_paths() const { return file_paths_; }
 
-	size_t find_first_non_whitespace_after_hash(const std::string& str);
+	size_t find_first_non_whitespace_after_hash(std::string_view str);
 	bool readFile(std::string_view file, long included_at_line = 0);
-	bool preprocessFileContent(const std::string& file_content);
+	bool preprocessFileContent(std::string_view file_content);
 	void push_file_to_stack(const CurrentFile& current_file) { filestack_.emplace(current_file); }
 	const std::string& get_result() const { return result_; }
 	void append_line_with_tracking(const std::string& line);
@@ -526,17 +538,17 @@ private:
 		build_separator_bitset_chunk(3)	// Chars 192-255
 	};
 
-	static bool is_inside_string_literal(const std::string& str, size_t pos);
-	std::string expandMacrosForConditional(const std::string& input);
-	std::string expandMacros(const std::string& input, std::unordered_set<std::string> expanding_macros = {});
+	std::string expandMacrosForConditional(std::string_view input);
+	std::string expandMacros(std::string_view input);
+	std::string expandMacros(std::string_view input, std::unordered_set<std::string, PreprocessorStringHash, std::equal_to<>> expanding_macros);
 	void apply_operator(std::stack<long>& values, std::stack<Operator>& ops);
-	bool parseIntegerLiteral(std::istringstream& iss, long& value, std::string* out_literal = nullptr);
-	long evaluate_expression(std::istringstream& iss);
-	bool processIncludeDirective(const std::string& line, const std::string_view& current_file, long include_line_number);
-	bool processIncludeNextDirective(const std::string& line, const std::string_view& current_file, long include_line_number);
+	bool parseIntegerLiteral(std::string_view sv, size_t& pos, long& value, std::string* out_literal = nullptr);
+	long evaluate_expression(std::string_view sv);
+	bool processIncludeDirective(std::string_view line, std::string_view current_file, long include_line_number);
+	bool processIncludeNextDirective(std::string_view line, std::string_view current_file, long include_line_number);
 	void processPragmaPack(std::string_view line);
-	void processLineDirective(const std::string& line);
-	void handleDefine(std::istringstream& iss);
+	void processLineDirective(std::string_view line);
+	void handleDefine(std::string_view sv);
 	void addBuiltinDefines();
 
 	struct ScopedFileStack {
@@ -547,7 +559,7 @@ private:
 
 	CompileContext& settings_;
 	FileTree& tree_;
-	std::unordered_map<std::string, Directive> defines_;
+	std::unordered_map<std::string, Directive, PreprocessorStringHash, std::equal_to<>> defines_;
 	std::unordered_set<std::string> processedHeaders_;
 	std::stack<CurrentFile> filestack_;
 	std::string result_;

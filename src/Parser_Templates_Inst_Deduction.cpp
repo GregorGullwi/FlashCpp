@@ -954,10 +954,11 @@ void Parser::reparse_template_function_body(
 		// Phase 1 (C++20 [temp.res]/9): record the template body's opening-brace line so
 		// createBoundIdentifier can detect names that were not visible at definition time.
 		{
-			auto it = saved_tokens_.find(func_decl.template_body_position());
-			if (it != saved_tokens_.end()) {
-				phase1_cutoff_line_ = it->second.current_token_.line();
-				phase1_cutoff_file_idx_ = it->second.current_token_.file_index();
+			SaveHandle body_position = func_decl.template_body_position();
+			if (body_position < saved_tokens_.size() && saved_tokens_[body_position].has_value()) {
+				const SavedToken& saved_token = *saved_tokens_[body_position];
+				phase1_cutoff_line_ = saved_token.current_token_.line();
+				phase1_cutoff_file_idx_ = saved_token.current_token_.file_index();
 				phase1_violation_token_.reset();
 			}
 		}

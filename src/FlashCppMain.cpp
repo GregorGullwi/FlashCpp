@@ -356,6 +356,8 @@ int main_impl(int argc, char* argv[]) {
 
 	// Count source lines for operand storage reservation
 	size_t source_line_count = std::count(preprocessed_source.begin(), preprocessed_source.end(), '\n');
+	static constexpr size_t SAVED_TOKEN_SLOTS_PER_LINE = 20;
+	static constexpr size_t SAVED_TOKEN_MAX_RESERVE = 256 * 1024;
 
 	// Log preprocessing completion for progress tracking with lines/second
 	double lines_per_sec = preprocessing_time > 0 ? (source_line_count * 1000.0 / preprocessing_time) : 0.0;
@@ -394,6 +396,11 @@ int main_impl(int argc, char* argv[]) {
 		lexer_ptr->setMsvcSehKeywords(context.isMsvcMode());
 		// Allocate Parser on the heap to reduce stack usage - Parser has many large member variables
 		parser = std::make_unique<Parser>(*lexer_ptr, context);
+		parser->setRuntimeStatsEnabled(show_perf_stats);
+		// tests/std/README_STANDARD_HEADERS.md measured ~81,739 saved-token slots
+		// for 4019 preprocessed <limits> lines (~20/line). Cap the heuristic so
+		// unusually large translation units do not reserve excessive memory.
+		parser->reserveSavedTokenStorage(std::min(source_line_count * SAVED_TOKEN_SLOTS_PER_LINE, SAVED_TOKEN_MAX_RESERVE));
 	}
 	Lexer& lexer = *lexer_ptr;
 	{
@@ -422,6 +429,9 @@ int main_impl(int argc, char* argv[]) {
 			std::cerr << error_msg << std::endl;
 			return 1;
 		}
+	}
+	if (show_perf_stats) {
+		parser->printRuntimeStats();
 	}
 
 	const auto& ast = parser->get_nodes();
