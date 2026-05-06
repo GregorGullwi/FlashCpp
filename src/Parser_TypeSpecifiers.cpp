@@ -389,11 +389,12 @@ ParseResult Parser::parse_type_specifier() {
 				underlying, TypeQualifier::None, underlying_size, underlying_token, CVQualifier::None));
 		}
 
-		// For non-enum types in template context, return a placeholder
-		// The actual type will be resolved when the template is instantiated
-		FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of non-enum or deferred, returning int placeholder");
-		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			TypeCategory::Int, TypeQualifier::None, 32, underlying_token, CVQualifier::None));
+		if (type_info.is_incomplete_instantiation_ || type_info.isDependentMemberType()) {
+			FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of incomplete dependent type, returning dependent placeholder");
+			return ParseResult::success(makeDependentUnderlyingType(arg_type));
+		}
+
+		return ParseResult::error("__underlying_type requires an enumeration type", underlying_token);
 	}
 
 	// Check for typename keyword (used in template-dependent contexts)
