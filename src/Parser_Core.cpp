@@ -1027,7 +1027,7 @@ void Parser::discard_saved_token(SaveHandle handle) {
 	}
 	if (handle < saved_tokens_.size() && saved_tokens_[handle].has_value()) {
 		saved_tokens_[handle].reset();
-		if (runtime_stats_enabled_ && runtime_stats_.active_saves > 0) {
+		if (runtime_stats_enabled_) {
 			--runtime_stats_.active_saves;
 		}
 	}
