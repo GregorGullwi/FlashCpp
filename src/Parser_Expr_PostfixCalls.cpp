@@ -113,13 +113,7 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 		return std::nullopt;
 	}
 	if (call_arg_types.empty()) {
-		throw InternalError(std::string(StringBuilder()
-			.append("Non-dependent member template call '")
-			.append(struct_name)
-			.append("::")
-			.append(member_name)
-			.append("' has call arguments but no collected argument types")
-			.commit()));
+		return std::nullopt;
 	}
 	return try_instantiate_member_function_template(
 		struct_name,
@@ -344,17 +338,13 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 				LazyMemberKey member_key = LazyMemberKey::anyConst(class_name_handle, func_name_handle);
 				if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
 					FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for: ", *object_struct_name, "::", func_name);
-					struct ScopedLazyMemberInstantiationFlag {
-						bool& flag;
-						explicit ScopedLazyMemberInstantiationFlag(bool& target)
-							: flag(target) {
-							flag = true;
-						}
-						~ScopedLazyMemberInstantiationFlag() {
-							flag = false;
-						}
-					} scoped_lazy_instantiation(instantiating_lazy_member_);
-					instantiated_func = instantiateLazyMemberIfNeeded(member_key);
+					instantiating_lazy_member_ = true;
+					auto restore_lazy_instantiation = ScopeGuard([&]() {
+						instantiating_lazy_member_ = false;
+					});
+					if (!instantiated_func.has_value()) {
+						instantiated_func = instantiateLazyMemberIfNeeded(member_key);
+					}
 					if (instantiated_func.has_value()) {
 						FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
 					}
@@ -980,7 +970,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						if (class_type_it != getTypesByNameMap().end() && class_type_it->second->isTemplateInstantiation()) {
 							StringHandle member_name_handle = final_identifier.handle();
 							LazyMemberKey member_key = LazyMemberKey::anyConst(class_name_handle, member_name_handle);
-							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
+							if (!instantiating_lazy_member_ &&
+								LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
+								instantiating_lazy_member_ = true;
+								auto restore_lazy_instantiation = ScopeGuard([&]() {
+									instantiating_lazy_member_ = false;
+								});
 								auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);
 								if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 									qualified_symbol = instantiated_func;

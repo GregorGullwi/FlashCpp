@@ -4149,7 +4149,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						throw CompileError(error_msg);
 					}
 					FLASH_LOG(Templates, Error, error_msg);
-					continue;
+					return std::nullopt;
 				}
 
 				// Check if the assertion failed
@@ -4160,7 +4160,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						throw CompileError(error_msg);
 					}
 					FLASH_LOG(Templates, Error, error_msg);
-					continue;
+					return std::nullopt;
 				}
 
 				FLASH_LOG(Templates, Debug, "Deferred static_assert passed during template instantiation");
@@ -8928,7 +8928,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				throw CompileError(error_msg);
 			}
 			FLASH_LOG(Templates, Error, error_msg);
-			continue;
+			return std::nullopt;
 		}
 
 		// Check if the assertion failed
@@ -8939,7 +8939,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				throw CompileError(error_msg);
 			}
 			FLASH_LOG(Templates, Error, error_msg);
-			continue;
+			return std::nullopt;
 		}
 
 		FLASH_LOG(Templates, Debug, "Deferred static_assert passed during template instantiation");

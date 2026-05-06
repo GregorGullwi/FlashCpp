@@ -698,27 +698,27 @@ private:
 		void setNames(const InlineVector<StringHandle, 4>& param_names) {
 			names = param_names;
 			kinds.clear();
-			non_type_categories.clear();
+			non_type_categories.assign(names.size(), TypeCategory::Invalid);
 		}
 
 		void setNames(InlineVector<StringHandle, 4>&& param_names) {
 			names = std::move(param_names);
 			kinds.clear();
-			non_type_categories.clear();
+			non_type_categories.assign(names.size(), TypeCategory::Invalid);
 		}
 
 		void setNamesAndKinds(const InlineVector<StringHandle, 4>& param_names,
 							  const InlineVector<TemplateParameterKind, 4>& param_kinds) {
 			names = param_names;
 			kinds = param_kinds;
-			non_type_categories.clear();
+			non_type_categories.assign(names.size(), TypeCategory::Invalid);
 		}
 
 		void setNamesAndKinds(InlineVector<StringHandle, 4>&& param_names,
 							  InlineVector<TemplateParameterKind, 4>&& param_kinds) {
 			names = std::move(param_names);
 			kinds = std::move(param_kinds);
-			non_type_categories.clear();
+			non_type_categories.assign(names.size(), TypeCategory::Invalid);
 		}
 
 		void setNamesKindsAndCategories(
@@ -728,6 +728,7 @@ private:
 			names = param_names;
 			kinds = param_kinds;
 			non_type_categories = param_categories;
+			non_type_categories.resize(names.size(), TypeCategory::Invalid);
 		}
 
 		void setNamesKindsAndCategories(
@@ -737,16 +738,19 @@ private:
 			names = std::move(param_names);
 			kinds = std::move(param_kinds);
 			non_type_categories = std::move(param_categories);
+			non_type_categories.resize(names.size(), TypeCategory::Invalid);
 		}
 
 		void pushName(StringHandle param_name) {
 			names.push_back(param_name);
+			non_type_categories.push_back(TypeCategory::Invalid);
 		}
 
 		void pushParameter(
 			StringHandle param_name,
 			TemplateParameterKind param_kind,
 			TypeCategory non_type_category) {
+			non_type_categories.resize(names.size(), TypeCategory::Invalid);
 			names.push_back(param_name);
 			kinds.push_back(param_kind);
 			non_type_categories.push_back(non_type_category);

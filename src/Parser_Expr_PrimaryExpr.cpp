@@ -2764,9 +2764,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									if (template_instantiation_mode_ == TemplateInstantiationMode::HardUse &&
 										LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
 										auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);
-										if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-											member_lookup = instantiated_func;
-											decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
+										if (!instantiated_func.has_value() || !instantiated_func->is<FunctionDeclarationNode>()) {
+											return ParseResult::error(
+												"Failed to materialize lazy member function '" + std::string(member_token.value()) + "'",
+												member_token);
+										}
+										member_lookup = instantiated_func;
+										decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
 										}
 									}
 								}
@@ -3720,9 +3724,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							if (template_instantiation_mode_ == TemplateInstantiationMode::HardUse &&
 								LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
 								auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);
-								if (instantiated_func.has_value()) {
-									identifierType = *instantiated_func;
+								if (!instantiated_func.has_value() || !instantiated_func->is<FunctionDeclarationNode>()) {
+									return ParseResult::error(
+										"Failed to materialize lazy member function '" + std::string(final_identifier.value()) + "'",
+										final_identifier);
 								}
+								identifierType = *instantiated_func;
 							}
 						}
 					}

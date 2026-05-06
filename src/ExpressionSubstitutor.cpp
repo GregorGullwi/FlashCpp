@@ -1672,10 +1672,10 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			FLASH_LOG(Templates, Debug, "  Substituting template parameter: ", type_name,
 					  " -> base_type=", (int)subst.typeEnum(), ", type_index=", subst.type_index);
 			if (subst.is_value) {
-				throw InternalError("ExpressionSubstitutor attempted to substitute a value template argument as a type");
+				throw CompileError("Template argument used in a type position did not resolve to a type");
 			}
 
-			return makeTypeSpecifierFromTemplateTypeArg(subst, Token{});
+			return makeTypeSpecifierFromTemplateTypeArg(subst, type.token());
 		}
 
 		if (!type_name.empty()) {
