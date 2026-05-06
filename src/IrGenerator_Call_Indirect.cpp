@@ -618,7 +618,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 		const MemberAccessNode& member_access = std::get<MemberAccessNode>(*object_expr);
 		const FunctionDeclarationNode& check_func_decl = member_func_decl;
-		std::string_view called_func_name = check_func_decl.decl_node().identifier_token().value();
+		StringHandle func_name_handle = check_func_decl.decl_node().identifier_token().handle();
 		bool resolved_member_object_type = false;
 
 		// Try to resolve the type of the object (e.g., o.inner resolves to type Inner)
@@ -662,7 +662,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					const StructTypeInfo* member_struct_info = member_type_info->getStructInfo();
 					if (member_struct_info) {
 						// Look for the called function name in this struct's members
-						StringHandle func_name_handle = StringTable::getOrInternStringHandle(called_func_name);
 						for (const auto& member : member_struct_info->members) {
 							if (member.getName() == func_name_handle && member.type_index.category() == TypeCategory::FunctionPointer) {
 								// Found a function pointer member! Generate indirect call
