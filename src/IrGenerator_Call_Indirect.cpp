@@ -193,6 +193,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 					const auto& identifier = std::get<IdentifierNode>(arg_expr);
 					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+					StringHandle identifier_name = identifier.nameHandle();
 					const auto& decl_node = symbol->as<DeclarationNode>();
 					const auto& type_node = decl_node.type_specifier_node();
 					// Convert to TypedValue
@@ -200,7 +201,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					arg.setType(type_node.type());
 					arg.ir_type = toIrType(type_node.type());
 					arg.size_in_bits = SizeInBits{static_cast<int>(type_node.size_in_bits())};
-					arg.value = StringTable::getOrInternStringHandle(identifier.name());
+					arg.value = identifier_name;
 					call_op.args.push_back(arg);
 				} else {
 					// Convert argumentIrOperands to TypedValue
@@ -1381,6 +1382,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			// For variables, we need to add the type and size
 			if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
+				StringHandle identifier_name = identifier.nameHandle();
 				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 				const auto& decl_node = symbol->as<DeclarationNode>();
 				const auto& type_node = decl_node.type_specifier_node();
@@ -1389,7 +1391,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				tv.setType(type_node.type());
 				tv.ir_type = toIrType(type_node.type());
 				tv.size_in_bits = SizeInBits{type_node.size_in_bits()};
-				tv.value = StringTable::getOrInternStringHandle(identifier.name());
+				tv.value = identifier_name;
 				vcall_op.arguments.push_back(tv);
 			} else {
 				// Convert from IrOperand to TypedValue
@@ -1884,21 +1886,20 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			// when passing reference arguments to reference parameters
 			if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
+				StringHandle identifier_name = identifier.nameHandle();
 				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 
 				// Check if this is a function being passed as a function pointer argument
 				if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
 					// Function being passed as function pointer - just pass its name
-					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(identifier.name()))));
+					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(identifier_name)));
 				} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 					const auto& decl_node = symbol->as<DeclarationNode>();
 
 					// Check if parameter expects a reference
 					if (!sema_ref_binding_applied &&
 						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						call_op.args.push_back(buildReferenceArgumentFromDeclaration(
-							decl_node,
-							StringTable::getOrInternStringHandle(identifier.name())));
+						appendReferenceCallArgument(call_op.args, decl_node, identifier_name);
 					} else {
 						appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
 					}
@@ -1910,9 +1911,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					// Check if parameter expects a reference
 					if (!sema_ref_binding_applied &&
 						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						call_op.args.push_back(buildReferenceArgumentFromDeclaration(
-							decl_node,
-							StringTable::getOrInternStringHandle(identifier.name())));
+						appendReferenceCallArgument(call_op.args, decl_node, identifier_name);
 					} else {
 						appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
 					}

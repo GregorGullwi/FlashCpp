@@ -501,7 +501,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						op.result = result_var;
 
 							// Get type info from the identifier
-						StringHandle id_handle = StringTable::getOrInternStringHandle(ident.name());
+						StringHandle id_handle = ident.nameHandle();
 						TypeCategory operand_type = TypeCategory::Int;  // Default
 						static constexpr int DefaultInlineAlwaysOperandSizeBits = 32;
 						int operand_size = DefaultInlineAlwaysOperandSizeBits;
@@ -1356,16 +1356,15 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			param_ref_qualifier != CVReferenceQualifier::None &&
 			std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 			const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-			const DeclarationNode* decl_ptr = lookupDeclaration(identifier.name());
+			StringHandle identifier_name = identifier.nameHandle();
+			const DeclarationNode* decl_ptr = lookupDeclaration(identifier_name);
 			if (decl_ptr) {
 				const auto& type_node = decl_ptr->type_specifier_node();
 				if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 						// Argument is a reference variable being passed to a reference parameter
 						// Pass the identifier name directly - the IRConverter will use MOV to
 						// load the address stored in the reference variable
-					call_arguments.push_back(buildReferenceArgumentFromDeclaration(
-						*decl_ptr,
-						StringTable::getOrInternStringHandle(identifier.name())));
+					appendReferenceCallArgument(call_arguments, *decl_ptr, identifier_name);
 					arg_index++;
 					return;	// Skip the rest of the processing
 				}
@@ -1592,6 +1591,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			// For identifiers that returned local variable references (string_view), handle specially
 		if (!use_computed_result && std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 			const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
+			StringHandle identifier_name = identifier.nameHandle();
 			std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
 			if (!symbol.has_value()) {
 				FLASH_LOG(Codegen, Error, "Symbol '", identifier.name(), "' not found for function argument");
@@ -1610,7 +1610,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				// Enumerator constants should be passed as immediate values, not variable references.
 			if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(
 					type_node,
-					StringTable::getOrInternStringHandle(identifier.name()))) {
+					identifier_name)) {
 				appendArgumentIrResult(*enumerator_constant);
 				return;
 			}
@@ -1640,20 +1640,18 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 			if (needs_array_decay) {
 					// Emit AddressOf to get the address of the array's first element.
-				TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+				TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(identifier_name));
 
 				appendPointerArgumentValue(
 					type_node.type_index().withCategory(type_node.type()),
 					IrValue(addr_var));
 			} else if (param_ref_qualifier != CVReferenceQualifier::None) {
 					// Parameter expects a reference - pass the address of the argument
-				call_arguments.push_back(buildReferenceArgumentFromDeclaration(
-					arg_decl_node,
-					StringTable::getOrInternStringHandle(identifier.name())));
+				appendReferenceCallArgument(call_arguments, arg_decl_node, identifier_name);
 			} else if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 					// Argument is a reference but parameter expects a value - dereference
 				TempVar deref_var = emitDereference(type_node.category(), 64, 1,
-													StringTable::getOrInternStringHandle(identifier.name()));
+													identifier_name);
 
 					// Pass the dereferenced value
 				appendArgumentValue(
@@ -1667,12 +1665,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				if (type_node.pointer_depth() > 0) {
 					appendPointerArgumentValue(
 						type_node.type_index().withCategory(type_node.type()),
-						IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+						IrValue(identifier_name));
 				} else {
 					appendArgumentValue(
 						type_node.type_index().withCategory(type_node.type()),
 						SizeInBits{arg_size},
-						IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+						IrValue(identifier_name));
 				}
 			}
 		} else {

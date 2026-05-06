@@ -393,25 +393,29 @@ void AstToIr::appendOrdinaryCallArgument(
 	call_op.args.push_back(toTypedValue(argument_result));
 }
 
-TypedValue AstToIr::buildReferenceArgumentFromDeclaration(const DeclarationNode& decl_node, StringHandle identifier_name) {
+void AstToIr::appendReferenceCallArgument(
+	std::vector<TypedValue>& args,
+	const DeclarationNode& decl_node,
+	StringHandle identifier_name) {
 	const TypeSpecifierNode& type_node = decl_node.type_specifier_node();
 	if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-		return makeTypedValue(
+		args.push_back(makeTypedValue(
 			type_node.type_index().withCategory(type_node.type()),
 			SizeInBits{POINTER_SIZE_BITS},
 			IrValue(identifier_name),
-			ReferenceQualifier::LValueReference);
+			ReferenceQualifier::LValueReference));
+		return;
 	}
 
 	TempVar addr_var = emitAddressOf(
 		type_node.category(),
 		static_cast<int>(type_node.size_in_bits()),
 		IrValue(identifier_name));
-	return makeTypedValue(
+	args.push_back(makeTypedValue(
 		type_node.type_index().withCategory(type_node.type()),
 		SizeInBits{POINTER_SIZE_BITS},
 		IrValue(addr_var),
-		ReferenceQualifier::LValueReference);
+		ReferenceQualifier::LValueReference));
 }
 
 TypedValue AstToIr::buildConstructorArgumentValue(
