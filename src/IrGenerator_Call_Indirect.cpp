@@ -1937,66 +1937,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 					// Parameter expects a reference, but argument is not an identifier
 					// We need to materialize the value into a temporary and pass its address
-
-					// Check if this is a literal value
-					bool is_literal =
-						std::holds_alternative<unsigned long long>(argument_result.value) ||
-						std::holds_alternative<double>(argument_result.value);
-
-					if (is_literal) {
-						// Materialize the literal into a temporary variable
-						TypeCategory literal_type = argument_result.typeEnum();
-						int literal_size = argument_result.size_in_bits.value;
-
-						// Create a temporary variable to hold the literal value
-						TempVar temp_var = var_counter.next();
-
-						// Generate an assignment IR to store the literal using typed payload
-						AssignmentOp assign_op;
-						assign_op.result = temp_var; // unused but required
-
-						// Convert IrOperand to IrValue for the literal
-						IrValue rhs_value;
-						if (const auto* ull_val = std::get_if<unsigned long long>(&argument_result.value)) {
-							rhs_value = *ull_val;
-						} else if (const auto* d_val = std::get_if<double>(&argument_result.value)) {
-							rhs_value = *d_val;
-						}
-
-						// Create TypedValue for lhs and rhs
-						assign_op.lhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, temp_var);
-						assign_op.rhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, rhs_value);
-
-						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-
-						// Now take the address of the temporary
-						TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
-
-						// Pass the address
-						call_op.args.push_back(makeTypedValue(
-							argument_result.type_index.withCategory(literal_type),
-							SizeInBits{POINTER_SIZE_BITS},
-							IrValue(addr_var),
-							ReferenceQualifier::LValueReference));
-					} else {
-						// Not a literal (expression result in a TempVar) - take its address
-						if (std::holds_alternative<TempVar>(argument_result.value)) {
-							TypeCategory expr_type = argument_result.typeEnum();
-							int expr_size = argument_result.size_in_bits.value;
-							TempVar expr_var = std::get<TempVar>(argument_result.value);
-
-							TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
-
-							call_op.args.push_back(makeTypedValue(
-								argument_result.type_index.withCategory(expr_type),
-								SizeInBits{POINTER_SIZE_BITS},
-								IrValue(addr_var),
-								ReferenceQualifier::LValueReference));
-						} else {
-							// Fallback - just pass through
-							call_op.args.push_back(toTypedValue(argument_result));
-						}
-					}
+					call_op.args.push_back(buildReferenceCallArgumentFromResult(
+						argument_result,
+						callExprNode.called_from(),
+						true));
 				} else {
 					// Parameter doesn't expect a reference - pass through as-is
 					appendOrdinaryCallArgument(call_op, argument, param_type, argument_result, callExprNode.called_from());

@@ -1197,6 +1197,7 @@ private:
 	ExprResult applyCallArgumentConversions(ExprResult argument_result, const ASTNode& argument, const TypeSpecifierNode* param_type, const Token& token);
 	void appendOrdinaryCallArgument(CallOp& call_op, const ASTNode& argument, const TypeSpecifierNode* param_type, const std::optional<ExprResult>& evaluated_arg, const Token& token);
 	void appendReferenceCallArgument(std::vector<TypedValue>& args, const DeclarationNode& decl_node, StringHandle identifier_name);
+	TypedValue buildReferenceCallArgumentFromResult(const ExprResult& argument_result, const Token& token, bool reuse_address_valued_temp);
 	TypedValue buildConstructorArgumentValue(const ExprResult& argument_result,
 											 const ASTNode& argument,
 											 const TypeSpecifierNode* param_type,

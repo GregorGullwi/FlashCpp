@@ -1691,93 +1691,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			if (param_ref_qualifier != CVReferenceQualifier::None) {
 				// Parameter expects a reference, but argument is not an identifier
 				// We need to materialize the value into a temporary and pass its address
-
-				// Check if this is a literal value (has unsigned long long or double in value)
-				bool is_literal = (std::holds_alternative<unsigned long long>(argumentIrOperands.value) ||
-								   std::holds_alternative<double>(argumentIrOperands.value));
-
-				if (is_literal) {
-					// Materialize the literal into a temporary variable
-					TypeCategory literal_type = argumentIrOperands.typeEnum();
-					int literal_size = argumentIrOperands.size_in_bits.value;
-
-					// Create a temporary variable to hold the literal value
-					TempVar temp_var = var_counter.next();
-
-					// Generate an assignment IR to store the literal using typed payload
-					AssignmentOp assign_op;
-					assign_op.result = temp_var;	 // unused but required
-
-					// Convert IrOperand to IrValue for the literal
-					IrValue rhs_value;
-					if (const auto* ull_val = std::get_if<unsigned long long>(&argumentIrOperands.value)) {
-						rhs_value = *ull_val;
-					} else if (const auto* d_val = std::get_if<double>(&argumentIrOperands.value)) {
-						rhs_value = *d_val;
-					}
-
-					// Create TypedValue for lhs and rhs
-					assign_op.lhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, temp_var);
-					assign_op.rhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, rhs_value);
-
-					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-
-					// Now take the address of the temporary
-					TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
-
-					// Pass the address
-					appendArgumentValueWithReference(
-						argumentIrOperands.type_index.withCategory(literal_type),
-						SizeInBits{POINTER_SIZE_BITS},
-						IrValue(addr_var),
-						ReferenceQualifier::LValueReference);
-				} else {
-						// Not a literal (expression result in a TempVar) - check if it needs address taken
-					if (std::holds_alternative<TempVar>(argumentIrOperands.value)) {
-						TypeCategory expr_type = argumentIrOperands.typeEnum();
-						int expr_size = argumentIrOperands.size_in_bits.value;
-						TempVar expr_var = std::get<TempVar>(argumentIrOperands.value);
-
-						// Check if the TempVar already holds an address
-						// This can happen when:
-						// 1. It's the result of a cast to reference (xvalue/lvalue)
-						// 2. It's a 64-bit struct (pointer to struct)
-						// 3. It has lvalue/xvalue metadata indicating it's already an address
-						bool is_already_address = false;
-
-						// Check for xvalue/lvalue metadata (from reference casts)
-						auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
-						if (metadata_storage.hasMetadata(expr_var)) {
-							TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
-							if (metadata.category == ValueCategory::LValue ||
-								metadata.category == ValueCategory::XValue) {
-								is_already_address = true;
-							}
-						}
-
-						// Fallback heuristic: 64-bit struct type likely holds an address
-						if (!is_already_address && expr_size == 64 && expr_type == TypeCategory::Struct) {
-							is_already_address = true;
-						}
-
-						if (is_already_address) {
-							// Already an address - pass through directly
-							appendArgumentIrResult(argumentIrOperands);
-						} else {
-								// Need to take address of the value
-							TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
-
-							appendArgumentValueWithReference(
-								argumentIrOperands.type_index.withCategory(expr_type),
-								SizeInBits{POINTER_SIZE_BITS},
-								IrValue(addr_var),
-								ReferenceQualifier::LValueReference);
-						}
-					} else {
-						// Fallback - just pass through directly
-						appendArgumentIrResult(argumentIrOperands);
-					}
-				}
+				call_arguments.push_back(buildReferenceCallArgumentFromResult(
+					argumentIrOperands,
+					callExprNode.called_from(),
+					true));
 			} else {
 				// Parameter doesn't expect a reference - pass through as-is
 				appendArgumentIrResult(argumentIrOperands);

@@ -418,6 +418,72 @@ void AstToIr::appendReferenceCallArgument(
 		ReferenceQualifier::LValueReference));
 }
 
+TypedValue AstToIr::buildReferenceCallArgumentFromResult(
+	const ExprResult& argument_result,
+	const Token& token,
+	bool reuse_address_valued_temp) {
+	bool is_literal =
+		std::holds_alternative<unsigned long long>(argument_result.value) ||
+		std::holds_alternative<double>(argument_result.value);
+	if (is_literal) {
+		TypeCategory literal_type = argument_result.typeEnum();
+		int literal_size = argument_result.size_in_bits.value;
+		TempVar temp_var = var_counter.next();
+
+		AssignmentOp assign_op;
+		assign_op.result = temp_var;
+		assign_op.lhs = makeTypedValue(literal_type, SizeInBits{literal_size}, temp_var);
+
+		IrValue rhs_value;
+		if (const auto* ull_val = std::get_if<unsigned long long>(&argument_result.value)) {
+			rhs_value = *ull_val;
+		} else if (const auto* d_val = std::get_if<double>(&argument_result.value)) {
+			rhs_value = *d_val;
+		}
+		assign_op.rhs = makeTypedValue(literal_type, SizeInBits{literal_size}, rhs_value);
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), token));
+
+		TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var), token);
+		return makeTypedValue(
+			argument_result.type_index.withCategory(literal_type),
+			SizeInBits{POINTER_SIZE_BITS},
+			IrValue(addr_var),
+			ReferenceQualifier::LValueReference);
+	}
+
+	if (std::holds_alternative<TempVar>(argument_result.value)) {
+		TypeCategory expr_type = argument_result.typeEnum();
+		int expr_size = argument_result.size_in_bits.value;
+		TempVar expr_var = std::get<TempVar>(argument_result.value);
+
+		bool is_already_address = false;
+		if (reuse_address_valued_temp) {
+			auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
+			if (metadata_storage.hasMetadata(expr_var)) {
+				TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
+				is_already_address =
+					metadata.category == ValueCategory::LValue ||
+					metadata.category == ValueCategory::XValue;
+			}
+			if (!is_already_address && expr_size == POINTER_SIZE_BITS && expr_type == TypeCategory::Struct) {
+				is_already_address = true;
+			}
+		}
+		if (is_already_address) {
+			return toTypedValue(argument_result);
+		}
+
+		TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var), token);
+		return makeTypedValue(
+			argument_result.type_index.withCategory(expr_type),
+			SizeInBits{POINTER_SIZE_BITS},
+			IrValue(addr_var),
+			ReferenceQualifier::LValueReference);
+	}
+
+	return toTypedValue(argument_result);
+}
+
 TypedValue AstToIr::buildConstructorArgumentValue(
 	const ExprResult& argument_result,
 	const ASTNode& argument,
