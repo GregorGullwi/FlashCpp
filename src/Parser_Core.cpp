@@ -969,7 +969,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 		return;
 	}
 
-	auto cleanupAstNodesAfterRestore = [&](size_t* preserved_nodes, size_t* discarded_nodes) {
+	auto cleanup_ast_nodes_after_restore = [&](size_t* preserved_nodes, size_t* discarded_nodes) {
 		// Iterate from the end to avoid invalidating iterators when removing elements
 		for (size_t i = ast_nodes_.size(); i > new_size;) {
 			--i;
@@ -997,7 +997,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 		size_t scanned_nodes = ast_nodes_.size() - new_size;
 		size_t preserved_nodes = 0;
 		size_t discarded_nodes = 0;
-		cleanupAstNodesAfterRestore(&preserved_nodes, &discarded_nodes);
+		cleanup_ast_nodes_after_restore(&preserved_nodes, &discarded_nodes);
 		++runtime_stats_.restore_count;
 		runtime_stats_.restore_ast_nodes_scanned += scanned_nodes;
 		runtime_stats_.restore_ast_nodes_preserved += preserved_nodes;
@@ -1005,11 +1005,11 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 		auto end = std::chrono::high_resolution_clock::now();
 		runtime_stats_.restore_time_us += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 	} else {
-		cleanupAstNodesAfterRestore(nullptr, nullptr);
+		cleanup_ast_nodes_after_restore(nullptr, nullptr);
 	}
-	#else
-	cleanupAstNodesAfterRestore(nullptr, nullptr);
-	#endif
+#else
+	cleanup_ast_nodes_after_restore(nullptr, nullptr);
+#endif
 }
 
 void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {

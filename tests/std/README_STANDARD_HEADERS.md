@@ -105,6 +105,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 This pass measured `tests/std/test_std_limits.cpp` on Linux/libstdc++-14 with
 the clang++ sharded debug build (`x64/Sharded/FlashCpp`) and `--timing --stats`.
+Parser runtime stats in these measurements were taken from binaries built with
+`-DWITH_PARSER_RUNTIME_STATS=1`; with the default build that define is `0`, so
+`--stats` still shows the other perf stats but omits the parser runtime block.
 The header still compiles successfully.  The important shape of the run is that
 `<limits>` is not template-instantiation heavy in FlashCpp: template profiling
 reported only two `std::numeric_limits` instantiations and about `0.057ms` total
