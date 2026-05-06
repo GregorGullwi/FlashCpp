@@ -294,10 +294,7 @@ const FunctionDeclarationNode* Parser::tryInstantiateOperatorTemplateForBinary(
 	return nullptr;
 }
 
-void Parser::annotateConcreteBinaryMinusOperatorOverload(BinaryOperatorNode& binary_operator_node) {
-	if (binary_operator_node.op() != "-"sv) {
-		return;
-	}
+void Parser::annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_operator_node) {
 	if (!binary_operator_node.get_lhs().is<ExpressionNode>() || !binary_operator_node.get_rhs().is<ExpressionNode>()) {
 		return;
 	}

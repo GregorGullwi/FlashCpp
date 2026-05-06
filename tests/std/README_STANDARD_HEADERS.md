@@ -101,7 +101,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
-### 2026-05-06 Substituted free `operator-` template semantic annotation
+### 2026-05-06 Substituted free operator template semantic annotation
 
 This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested every
 `tests/std/test_std_*.cpp` file against Linux/libstdc++-14. The top summary
@@ -109,13 +109,14 @@ table remains historical; use this dated section for the current Linux state.
 
 Fix landed:
 
-- **Concrete substituted binary `operator-` expressions now re-run free operator
-  overload resolution after template substitution.** Template bodies can parse
-  expressions such as `last - first` while the operands are still dependent;
-  after instantiation the substituted operands may require a free function
-  operator template. The substitution paths now annotate those concrete minus
-  expressions with the resolved overload before semantic/codegen lowering,
-  keeping the fix above codegen.
+- **Concrete substituted binary operator expressions now re-run free operator
+  overload resolution after template substitution.** C++20 resolves dependent
+  operator expressions when template instantiation makes the operand types known;
+  template bodies can parse expressions such as `last - first` while the operands
+  are still dependent, and after instantiation the substituted operands may
+  require a free function operator template. The substitution paths now annotate
+  concrete overloadable binary operators with the resolved overload before
+  semantic/codegen lowering, keeping the fix above codegen.
 
 Regression test:
 
