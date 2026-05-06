@@ -65,10 +65,7 @@ IrType toIrType(TypeCategory cat) {
 	case TypeCategory::Void:
 		return IrType::Void;
 
-		// Auto still appears on a few parser-created internal temporaries; keep
-		// the historical lowering until those call sites carry concrete type info.
 	case TypeCategory::Auto:
-		return IrType::Integer;
 	case TypeCategory::DeclTypeAuto:
 	case TypeCategory::Template:
 		throw InternalError("Unresolved semantic type reached IR type conversion: category " + std::to_string(static_cast<int>(cat)));

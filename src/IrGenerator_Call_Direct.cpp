@@ -189,6 +189,17 @@ ExprResult AstToIr::buildIndirectCallReturnResult(const FunctionSignature& signa
 }
 
 static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type) {
+	if (isPlaceholderAutoType(return_type.type()) && return_type.type_index().is_valid()) {
+		if (const TypeInfo* return_type_info = tryGetTypeInfo(return_type.type_index())) {
+			TypeCategory resolved_type = return_type_info->typeEnum();
+			if (!isPlaceholderAutoType(resolved_type) && resolved_type != TypeCategory::Invalid) {
+				return_type.set_category(resolved_type);
+				if (return_type.size_in_bits() == 0) {
+					return_type.set_size_in_bits(return_type_info->sizeInBits());
+				}
+			}
+		}
+	}
 	if (return_type.type() != TypeCategory::TypeAlias || !return_type.type_index().is_valid()) {
 		return return_type;
 	}

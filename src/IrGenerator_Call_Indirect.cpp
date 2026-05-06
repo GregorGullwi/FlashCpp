@@ -590,9 +590,18 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		const DeclarationNode& decl = *call_info->declaration;
 		{
 			TypeSpecifierNode ret_type = decl.type_specifier_node();
-			if (isIrStructType(toIrType(ret_type.type())) ||
+			if (parser_) {
+				if (auto expression_type = parser_->get_expression_type(object_node); expression_type.has_value()) {
+					ret_type = *expression_type;
+				}
+			}
+			if (auto resolved_ret_type = normalizeResolvedStructType(ret_type); resolved_ret_type.has_value()) {
+				object_type = *resolved_ret_type;
+				// object_name remains empty; expression will be evaluated when needed
+			} else if (!isPlaceholderAutoType(ret_type.type()) &&
+				(isIrStructType(toIrType(ret_type.type())) ||
 				ret_type.is_function_pointer() ||
-				ret_type.has_function_signature()) {
+				ret_type.has_function_signature())) {
 				object_type = ret_type;
 				// object_name remains empty; expression will be evaluated when needed
 			}
