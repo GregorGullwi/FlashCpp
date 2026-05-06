@@ -399,23 +399,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	auto appendArgumentIrResult = [&](const ExprResult& result) {
 		call_arguments.push_back(toTypedValue(result));
 	};
-	auto appendArgumentValue = [&](TypeIndex type_index, SizeInBits size_in_bits, IrValue value) {
-		if (!type_index.is_valid()) {
-			type_index = nativeTypeIndex(type_index.category());
-		}
-		call_arguments.push_back(makeTypedValue(type_index, size_in_bits, std::move(value)));
-	};
-	auto appendArgumentValueWithReference = [&](TypeIndex type_index, SizeInBits size_in_bits, IrValue value, ReferenceQualifier ref_qualifier) {
-		call_arguments.push_back(makeTypedValue(type_index, size_in_bits, std::move(value), ref_qualifier));
-	};
-	auto appendPointerArgumentValue = [&](TypeIndex type_index, IrValue value) {
-		if (!type_index.is_valid()) {
-			type_index = nativeTypeIndex(type_index.category());
-		}
-		TypedValue arg = makeTypedValue(type_index, SizeInBits{POINTER_SIZE_BITS}, std::move(value));
-		arg.pointer_depth = PointerDepth{1};
-		call_arguments.push_back(std::move(arg));
-	};
 
 	const auto& decl_node = callExprNode.callee().declaration();
 	StringHandle func_name = decl_node.identifier_token().handle();
@@ -1617,74 +1600,14 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 
 			const auto& arg_decl_node = *decl_ptr;
-			const auto& type_node = arg_decl_node.type_specifier_node();
-
-				// Enumerator constants should be passed as immediate values, not variable references.
-			if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(
-					type_node,
-					identifier_name)) {
-				appendArgumentIrResult(*enumerator_constant);
-				return;
-			}
-
-			// C++20 [conv.array]: Arrays decay to pointers when passed to functions.
-			// Primary path: sema annotates the argument expression with
-			// StandardConversionKind::ArrayToPointer when it visits a sema-normalised
-			// function body.  Fallback: when sema did not normalise the current body
-			// (e.g. template instantiation codegen) fall back to inspecting
-			// DeclarationNode::is_array() directly.
-			bool needs_array_decay = false;
-			if (argument.is<ExpressionNode>()) {
-				const void* arg_key = &argument.as<ExpressionNode>();
-				const auto arg_slot = sema_->getSlot(arg_key);
-				if (arg_slot.has_value() && arg_slot->has_cast()) {
-					const ImplicitCastInfo& ci =
-						sema_->castInfoTable()[arg_slot->cast_info_index.value - 1];
-					needs_array_decay =
-						(ci.cast_kind == StandardConversionKind::ArrayToPointer);
-				}
-			}
-			// Fallback only for non-sema-normalized bodies (e.g. template-instantiation
-			// codegen); sema-normalized functions must carry the ArrayToPointer cast.
-			if (!needs_array_decay && !sema_normalized_current_function_) {
-				needs_array_decay = arg_decl_node.is_array();
-			}
-
-			if (needs_array_decay) {
-				// Emit AddressOf to get the address of the array's first element.
-				TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(identifier_name));
-
-				appendPointerArgumentValue(
-					type_node.type_index().withCategory(type_node.type()),
-					IrValue(addr_var));
-			} else if (param_ref_qualifier != CVReferenceQualifier::None) {
-				// Parameter expects a reference - pass the address of the argument
-				appendReferenceCallArgument(call_arguments, arg_decl_node, identifier_name);
-			} else if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-				// Argument is a reference but parameter expects a value - dereference
-				TempVar deref_var = emitDereference(type_node.category(), 64, 1,
-													identifier_name);
-
-				// Pass the dereferenced value
-				appendArgumentValue(
-					type_node.type_index().withCategory(type_node.type()),
-					SizeInBits{static_cast<int>(type_node.size_in_bits())},
-					IrValue(deref_var));
-			} else {
-				// Regular variable - pass by value
-				// For pointer types, size is always 64 bits regardless of pointee type
-				int arg_size = (type_node.pointer_depth() > 0) ? 64 : static_cast<int>(type_node.size_in_bits());
-				if (type_node.pointer_depth() > 0) {
-					appendPointerArgumentValue(
-						type_node.type_index().withCategory(type_node.type()),
-						IrValue(identifier_name));
-				} else {
-					appendArgumentValue(
-						type_node.type_index().withCategory(type_node.type()),
-						SizeInBits{arg_size},
-						IrValue(identifier_name));
-				}
-			}
+			appendDirectIdentifierCallArgument(
+				call_arguments,
+				arg_decl_node,
+				identifier_name,
+				param_ref_qualifier,
+				argument,
+				callExprNode.called_from());
+			return;
 		} else {
 			// Not an identifier - could be a literal, expression result, etc.
 			// Check if parameter expects a reference and argument is a literal

@@ -484,6 +484,86 @@ TypedValue AstToIr::buildReferenceCallArgumentFromResult(
 	return toTypedValue(argument_result);
 }
 
+void AstToIr::appendDirectIdentifierCallArgument(
+	std::vector<TypedValue>& args,
+	const DeclarationNode& arg_decl_node,
+	StringHandle identifier_name,
+	CVReferenceQualifier param_ref_qualifier,
+	const ASTNode& argument,
+	const Token& token) {
+	const TypeSpecifierNode& type_node = arg_decl_node.type_specifier_node();
+
+	if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(
+			type_node,
+			identifier_name)) {
+		args.push_back(toTypedValue(*enumerator_constant));
+		return;
+	}
+
+	bool needs_array_decay = false;
+	if (argument.is<ExpressionNode>()) {
+		const void* arg_key = &argument.as<ExpressionNode>();
+		const auto arg_slot = sema_->getSlot(arg_key);
+		if (arg_slot.has_value() && arg_slot->has_cast()) {
+			const ImplicitCastInfo& ci =
+				sema_->castInfoTable()[arg_slot->cast_info_index.value - 1];
+			needs_array_decay =
+				(ci.cast_kind == StandardConversionKind::ArrayToPointer);
+		}
+	}
+	if (!needs_array_decay && !sema_normalized_current_function_) {
+		needs_array_decay = arg_decl_node.is_array();
+	}
+
+	if (needs_array_decay) {
+		TempVar addr_var = emitAddressOf(
+			type_node.category(),
+			static_cast<int>(type_node.size_in_bits()),
+			IrValue(identifier_name),
+			token);
+		TypedValue arg = makeTypedValue(
+			type_node.type_index().withCategory(type_node.type()),
+			SizeInBits{POINTER_SIZE_BITS},
+			IrValue(addr_var));
+		arg.pointer_depth = PointerDepth{1};
+		args.push_back(std::move(arg));
+		return;
+	}
+
+	if (param_ref_qualifier != CVReferenceQualifier::None) {
+		appendReferenceCallArgument(args, arg_decl_node, identifier_name);
+		return;
+	}
+
+	if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+		TempVar deref_var = emitDereference(
+			type_node.category(),
+			POINTER_SIZE_BITS,
+			1,
+			identifier_name);
+		args.push_back(makeTypedValue(
+			type_node.type_index().withCategory(type_node.type()),
+			SizeInBits{static_cast<int>(type_node.size_in_bits())},
+			IrValue(deref_var)));
+		return;
+	}
+
+	if (type_node.pointer_depth() > 0) {
+		TypedValue arg = makeTypedValue(
+			type_node.type_index().withCategory(type_node.type()),
+			SizeInBits{POINTER_SIZE_BITS},
+			IrValue(identifier_name));
+		arg.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
+		args.push_back(std::move(arg));
+		return;
+	}
+
+	args.push_back(makeTypedValue(
+		type_node.type_index().withCategory(type_node.type()),
+		SizeInBits{static_cast<int>(type_node.size_in_bits())},
+		IrValue(identifier_name)));
+}
+
 TypedValue AstToIr::buildConstructorArgumentValue(
 	const ExprResult& argument_result,
 	const ASTNode& argument,
