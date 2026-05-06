@@ -1821,6 +1821,38 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 		}
 
+		if (lhs_type_opt.has_value() && rhs_type_opt.has_value()) {
+			const bool lhs_is_ptr = lhs_type_opt->pointer_depth() > 0;
+			const bool rhs_is_ptr = rhs_type_opt->pointer_depth() > 0;
+			if (lhs_is_ptr || rhs_is_ptr) {
+				if (op_kind == tok::Plus) {
+					if (lhs_is_ptr && !rhs_is_ptr) {
+						return *lhs_type_opt;
+					}
+					if (rhs_is_ptr && !lhs_is_ptr) {
+						return *rhs_type_opt;
+					}
+				}
+				if (op_kind == tok::Minus) {
+					if (lhs_is_ptr && !rhs_is_ptr) {
+						return *lhs_type_opt;
+					}
+					if (lhs_is_ptr && rhs_is_ptr) {
+						const TypeCategory diff_cat =
+							(g_target_data_model == TargetDataModel::LLP64)
+								? TypeCategory::LongLong
+								: TypeCategory::Long;
+						return TypeSpecifierNode(
+							diff_cat,
+							TypeQualifier::None,
+							get_type_size_bits(diff_cat),
+							Token{},
+							CVQualifier::None);
+					}
+				}
+			}
+		}
+
 		// For same-type operands, return the LHS type
 		if (lhs_type_opt.has_value()) {
 			if (rhs_type_opt.has_value() && lhs_type_opt->type() == rhs_type_opt->type()) {

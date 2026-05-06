@@ -1085,6 +1085,27 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			return false;
 		if (expected_cat != TypeCategory::Invalid && to_t != expected_cat)
 			return false;
+		if (ci.cast_kind == StandardConversionKind::ArrayToPointer) {
+			if (const auto* identifier_name = std::get_if<StringHandle>(&expr.value)) {
+				int element_size_bits = get_type_size_bits(from_t);
+				if (element_size_bits <= 0) {
+					element_size_bits = expr.size_in_bits.value > 0 ? expr.size_in_bits.value : 32;
+				}
+				TempVar addr_var = emitAddressOf(
+					from_t,
+					element_size_bits,
+					IrValue(*identifier_name),
+					binaryOperatorNode.get_token());
+				expr = makeExprResult(
+					TypeIndex{}.withCategory(to_t),
+					SizeInBits{POINTER_SIZE_BITS},
+					IrOperand{addr_var},
+					PointerDepth{1},
+					ValueStorage::ContainsData);
+				return true;
+			}
+			return false;
+		}
 		// Defensive: sema source type should match the expression's runtime type.
 		// Exception: sema may annotate as Enum while codegen resolves enum
 		// constants to their underlying type early (via tryMakeEnumeratorConstantExpr).
@@ -1374,6 +1395,40 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	ExpressionContext lhs_context = (op == "=") ? ExpressionContext::LValueAddress : ExpressionContext::Load;
 	ExprResult lhsExprResult = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>(), lhs_context);
 	ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+	auto decayArrayIdentifierForPointerOperand = [&](ExprResult& operand_result,
+													 const ASTNode& operand_node,
+													 const ExprResult& other_result) {
+		if (!other_result.pointer_depth.is_pointer() ||
+			!operand_node.is<ExpressionNode>() ||
+			!std::holds_alternative<IdentifierNode>(operand_node.as<ExpressionNode>())) {
+			return;
+		}
+		const IdentifierNode& ident = std::get<IdentifierNode>(operand_node.as<ExpressionNode>());
+		auto symbol = lookupSymbol(ident.name());
+		const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
+		if (!decl || !decl->is_array()) {
+			return;
+		}
+		const TypeSpecifierNode& type_node = decl->type_specifier_node();
+		int element_size_bits = get_type_size_bits(type_node.type());
+		if (element_size_bits <= 0) {
+			element_size_bits = static_cast<int>(type_node.size_in_bits());
+		}
+		TempVar addr_var = emitAddressOf(
+			type_node.type(),
+			element_size_bits > 0 ? element_size_bits : 32,
+			IrValue(StringTable::getOrInternStringHandle(ident.name())),
+			binaryOperatorNode.get_token());
+		operand_result = makeExprResult(
+			TypeIndex{}.withCategory(type_node.type()),
+			SizeInBits{POINTER_SIZE_BITS},
+			IrOperand{addr_var},
+			PointerDepth{1},
+			ValueStorage::ContainsData);
+	};
+	decayArrayIdentifierForPointerOperand(lhsExprResult, binaryOperatorNode.get_lhs(), rhsExprResult);
+	decayArrayIdentifierForPointerOperand(rhsExprResult, binaryOperatorNode.get_rhs(), lhsExprResult);
 
 	// Try unified metadata-based handler for compound assignments on identifiers
 	// This ensures implicit member accesses (including [*this] lambdas) use the correct base object

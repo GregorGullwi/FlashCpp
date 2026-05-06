@@ -254,10 +254,10 @@ static void applyResolvedTemplateArgTypeMetadata(TypeSpecifierNode& target, cons
 		target.add_pointer_level(cv);
 	}
 
-	if (target.reference_qualifier() == ReferenceQualifier::None &&
-		resolved_arg->ref_qualifier != ReferenceQualifier::None) {
-		target.set_reference_qualifier(resolved_arg->ref_qualifier);
-	}
+	target.add_cv_qualifier(resolved_arg->cv_qualifier);
+	target.set_reference_qualifier(collapseReferenceQualifiers(
+		resolved_arg->ref_qualifier,
+		target.reference_qualifier()));
 
 	if (!target.has_function_signature() && resolved_arg->function_signature.has_value()) {
 		target.set_function_signature(*resolved_arg->function_signature);
@@ -2433,6 +2433,61 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			const auto& template_params = pattern_template_params;
 
+			InlineVector<TemplateTypeArg, 4> pattern_args_for_member_copy;
+			if (patterns_it != gTemplateRegistry.specialization_patterns_.end()) {
+				for (const auto& pattern : patterns_it->second) {
+					const StructDeclarationNode* spec_struct_ptr = nullptr;
+					if (pattern.specialized_node.is<StructDeclarationNode>()) {
+						spec_struct_ptr = &pattern.specialized_node.as<StructDeclarationNode>();
+					} else if (pattern.specialized_node.is<TemplateClassDeclarationNode>()) {
+						spec_struct_ptr = &pattern.specialized_node.as<TemplateClassDeclarationNode>().class_decl_node();
+					}
+					if (spec_struct_ptr && spec_struct_ptr == &pattern_struct) {
+						pattern_args_for_member_copy = pattern.pattern_args;
+						break;
+					}
+				}
+			}
+			std::vector<TemplateTypeArg> template_args_for_member_copy_storage;
+			if (!pattern_args_for_member_copy.empty()) {
+				size_t template_param_slot = 0;
+				template_args_for_member_copy_storage.reserve(template_params.size());
+				for (const auto& template_param : template_params) {
+					if (!template_param.is<TemplateParameterNode>()) {
+						continue;
+					}
+
+					std::optional<TemplateTypeArg> deduced_arg;
+					for (size_t pattern_idx = 0;
+						 pattern_idx < pattern_args_for_member_copy.size() && pattern_idx < template_args.size();
+						 ++pattern_idx) {
+						const TemplateTypeArg& pattern_arg = pattern_args_for_member_copy[pattern_idx];
+						if (pattern_arg.is_value || !pattern_arg.is_dependent) {
+							continue;
+						}
+
+						size_t dependent_param_index = 0;
+						for (size_t i = 0; i < pattern_idx; ++i) {
+							if (!pattern_args_for_member_copy[i].is_value && pattern_args_for_member_copy[i].is_dependent) {
+								dependent_param_index++;
+							}
+						}
+
+						if (dependent_param_index == template_param_slot) {
+							deduced_arg = deduceArgFromPattern(template_args[pattern_idx], pattern_arg);
+							break;
+						}
+					}
+
+					if (deduced_arg.has_value()) {
+						template_args_for_member_copy_storage.push_back(*deduced_arg);
+					}
+					template_param_slot++;
+				}
+			}
+			const std::vector<TemplateTypeArg>& template_args_for_member_copy =
+				template_args_for_member_copy_storage.empty() ? template_args : template_args_for_member_copy_storage;
+
 			// Push class template pack info for specialization path
 			ClassTemplatePackGuard spec_pack_guard(class_template_pack_stack_);
 			bool has_spec_pack_info = false;
@@ -2852,10 +2907,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// For pattern specializations, member types need substitution!
 				// Use substitute_template_parameter to properly match template parameters by name
 				TypeIndex member_type_index = substitute_template_parameter(
-					type_spec, template_params, template_args);
+					type_spec, template_params, template_args_for_member_copy);
 				size_t ptr_depth = type_spec.pointer_depth();
 				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(member_type_index);
-				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(decl, template_params, template_args);
+				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(
+					decl, template_params, template_args_for_member_copy);
 				if (resolved_array_dimensions.empty()) {
 					resolved_array_dimensions = resolved_member_alias.array_dimensions;
 				}
@@ -2885,7 +2941,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Substitute template parameters in default member initializers
 				std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
-					member_decl.default_initializer, template_args, template_params);
+					member_decl.default_initializer, template_args_for_member_copy, template_params);
 
 				// For function pointer members instantiated from a template parameter (e.g., F func
 				// where F=int(*)(int)), the pattern TypeSpecifierNode won't have a function_signature
@@ -2904,8 +2960,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					is_array_member,
 					std::move(resolved_array_dimensions),
 					static_cast<int>(ptr_depth),
-					resolve_bitfield_width(member_decl, template_params, template_args),
-					resolveTemplateFunctionPointerSignature(type_spec, member_type_index, template_params, template_args),
+					resolve_bitfield_width(member_decl, template_params, template_args_for_member_copy),
+					resolveTemplateFunctionPointerSignature(
+						type_spec,
+						member_type_index,
+						template_params,
+						template_args_for_member_copy),
 					member_decl.is_no_unique_address);
 			}
 
@@ -2922,15 +2982,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						orig_ctor.parameter_nodes(),
 						new_ctor_ref,
 						template_params,
-						template_args,
+						template_args_for_member_copy,
 						orig_ctor.is_implicit()
 							? makeImplicitCtorSelfTypeRewrite(
 								pattern_struct.name(),
 								struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct))
 							: std::nullopt);
-					substituteAndCopyInitializers(orig_ctor, new_ctor_ref, template_params, template_args);
+					substituteAndCopyInitializers(
+						orig_ctor,
+						new_ctor_ref,
+						template_params,
+						template_args_for_member_copy);
 					if (orig_ctor.is_materialized()) {
-						new_ctor_ref.set_definition(substituteTemplateParameters(*orig_ctor.get_definition(), template_params, template_args));
+						new_ctor_ref.set_definition(substituteTemplateParameters(
+							*orig_ctor.get_definition(),
+							template_params,
+							template_args_for_member_copy));
 					}
 					pack_param_info_.resize(saved_pack_info);
 					new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
@@ -2969,11 +3036,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Use substitute_template_parameter for return type — handles all params by name,
 					// not just template_args[0].
 					TypeIndex substituted_return_type_index = substitute_template_parameter(
-						orig_return_type, template_params, template_args);
+						orig_return_type, template_params, template_args_for_member_copy);
 					ASTNode substituted_return_node = substituteTemplateParameters(
 						orig_decl.type_node(),
 						template_params,
-						template_args);
+						template_args_for_member_copy);
 					if (!substituted_return_node.is<TypeSpecifierNode>()) {
 						substituted_return_node = emplace_node<TypeSpecifierNode>(
 							substituted_return_type_index,
@@ -2986,7 +3053,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							substituted_return_node.as<TypeSpecifierNode>(),
 							orig_return_type,
 							template_params,
-							template_args);
+							template_args_for_member_copy);
 					}
 					StringHandle effective_name = computeInstantiatedLookupName(
 						orig_decl.identifier_token().handle(),
@@ -3005,10 +3072,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 						new_func_decl_ref,
 						instantiated_name);
-					setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args);
+					setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args_for_member_copy);
 
 					size_t saved_pack_info = pack_param_info_.size();
-					substituteAndCopyParams(orig_func.parameter_nodes(), new_func_ref, template_params, template_args);
+					substituteAndCopyParams(
+						orig_func.parameter_nodes(),
+						new_func_ref,
+						template_params,
+						template_args_for_member_copy);
 
 					copy_function_properties(new_func_ref, orig_func);
 					// Ensure is_const_member_function is set from pattern so propagateAstProperties derives cv_qualifier.
@@ -3018,7 +3089,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						ASTNode substituted_body = substituteTemplateParameters(
 							*orig_func.get_definition(),
 							template_params,
-							template_args);
+							template_args_for_member_copy);
 						if (orig_func.is_static()) {
 							substituted_body = rebindStaticMemberInitializerFunctionCalls(
 								substituted_body,
@@ -7364,6 +7435,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 				}
+				applyBoundTemplateArgMetadata(
+					substituted_return_type,
+					return_type_spec,
+					template_params,
+					template_args_to_use);
 				if (return_type_spec.has_function_signature()) {
 					substituted_return_type.set_function_signature(return_type_spec.function_signature());
 				} else if (substituted_return_type.type_index().category() == TypeCategory::FunctionPointer ||
@@ -7433,6 +7509,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
 						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+						applyBoundTemplateArgMetadata(
+							substituted_param_type,
+							param_type_spec,
+							template_params,
+							template_args_to_use);
 						if (param_type_spec.has_function_signature()) {
 							substituted_param_type.set_function_signature(param_type_spec.function_signature());
 						} else if (param_type_index.category() == TypeCategory::FunctionPointer ||

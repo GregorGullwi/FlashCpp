@@ -2348,14 +2348,60 @@ void AstToIr::generateNestedMemberStores(
 			if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
 				ExprResult init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
 				IrValue member_value = 0ULL;
-				if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
-					member_value = *temp_var;
-				} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
-					member_value = *ull_val;
-				} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
-					member_value = *d_val;
-				} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
-					member_value = *string;
+				bool member_value_overridden = false;
+				if ((member.pointer_depth > 0 ||
+					 (member.size == 8 &&
+					  !member.is_reference() &&
+					  !member.is_rvalue_reference() &&
+					  !member.is_array)) &&
+					std::holds_alternative<IdentifierNode>(nested_initializers[0].as<ExpressionNode>())) {
+					const IdentifierNode& ident = std::get<IdentifierNode>(nested_initializers[0].as<ExpressionNode>());
+					auto symbol = lookupSymbol(ident.name());
+					const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
+					if (decl && decl->is_array()) {
+						const TypeSpecifierNode& type_node = decl->type_specifier_node();
+						int element_size_bits = get_type_size_bits(type_node.type());
+						if (element_size_bits <= 0) {
+							element_size_bits = static_cast<int>(type_node.size_in_bits());
+						}
+						member_value = emitAddressOf(
+							type_node.type(),
+							element_size_bits > 0 ? element_size_bits : 32,
+							IrValue(StringTable::getOrInternStringHandle(ident.name())),
+							token);
+						member_value_overridden = true;
+					}
+				}
+				if (!member_value_overridden) {
+					if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+						member_value = *temp_var;
+					} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+						member_value = *ull_val;
+					} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+						member_value = *d_val;
+					} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+						auto symbol = lookupSymbol(*string);
+						const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
+						if ((member.pointer_depth > 0 ||
+							 (member.size == 8 &&
+							  !member.is_reference() &&
+							  !member.is_rvalue_reference() &&
+							  !member.is_array)) &&
+							decl && decl->is_array()) {
+							const TypeSpecifierNode& type_node = decl->type_specifier_node();
+							int element_size_bits = get_type_size_bits(type_node.type());
+							if (element_size_bits <= 0) {
+								element_size_bits = static_cast<int>(type_node.size_in_bits());
+							}
+							member_value = emitAddressOf(
+								type_node.type(),
+								element_size_bits > 0 ? element_size_bits : 32,
+								IrValue(*string),
+								token);
+						} else {
+							member_value = *string;
+						}
+					}
 				}
 
 				MemberStoreOp member_store;
@@ -2377,14 +2423,60 @@ void AstToIr::generateNestedMemberStores(
 			// Direct expression initializer
 			ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 			IrValue member_value = 0ULL;
-			if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
-				member_value = *temp_var;
-			} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
-				member_value = *ull_val;
-			} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
-				member_value = *d_val;
-			} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
-				member_value = *string;
+			bool member_value_overridden = false;
+			if ((member.pointer_depth > 0 ||
+				 (member.size == 8 &&
+				  !member.is_reference() &&
+				  !member.is_rvalue_reference() &&
+				  !member.is_array)) &&
+				std::holds_alternative<IdentifierNode>(init_expr.as<ExpressionNode>())) {
+				const IdentifierNode& ident = std::get<IdentifierNode>(init_expr.as<ExpressionNode>());
+				auto symbol = lookupSymbol(ident.name());
+				const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
+				if (decl && decl->is_array()) {
+					const TypeSpecifierNode& type_node = decl->type_specifier_node();
+					int element_size_bits = get_type_size_bits(type_node.type());
+					if (element_size_bits <= 0) {
+						element_size_bits = static_cast<int>(type_node.size_in_bits());
+					}
+					member_value = emitAddressOf(
+						type_node.type(),
+						element_size_bits > 0 ? element_size_bits : 32,
+						IrValue(StringTable::getOrInternStringHandle(ident.name())),
+						token);
+					member_value_overridden = true;
+				}
+			}
+			if (!member_value_overridden) {
+				if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+					member_value = *temp_var;
+				} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+					member_value = *ull_val;
+				} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+					member_value = *d_val;
+				} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+					auto symbol = lookupSymbol(*string);
+					const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
+					if ((member.pointer_depth > 0 ||
+						 (member.size == 8 &&
+						  !member.is_reference() &&
+						  !member.is_rvalue_reference() &&
+						  !member.is_array)) &&
+						decl && decl->is_array()) {
+						const TypeSpecifierNode& type_node = decl->type_specifier_node();
+						int element_size_bits = get_type_size_bits(type_node.type());
+						if (element_size_bits <= 0) {
+							element_size_bits = static_cast<int>(type_node.size_in_bits());
+						}
+						member_value = emitAddressOf(
+							type_node.type(),
+							element_size_bits > 0 ? element_size_bits : 32,
+							IrValue(*string),
+							token);
+					} else {
+						member_value = *string;
+					}
+				}
 			}
 
 			MemberStoreOp member_store;

@@ -838,14 +838,16 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 								*right_type_spec,
 								op_kind,
 								gSymbolTable);
-							if (const FunctionDeclarationNode* instantiated_overload =
-									tryInstantiateOperatorTemplateForBinary(operator_token.value(), *left_type_spec, *right_type_spec)) {
+							if (template_instantiation_mode_ == TemplateInstantiationMode::HardUse) {
+								if (const FunctionDeclarationNode* instantiated_overload =
+										tryInstantiateOperatorTemplateForBinary(operator_token.value(), *left_type_spec, *right_type_spec)) {
 								if (!overload_result.has_match ||
 									overload_result.is_ambiguous ||
 									(overload_result.is_free_function &&
 									 isTemplateDerivedFreeFunction(overload_result.free_function_overload))) {
 									overload_result = OperatorOverloadResult(instantiated_overload);
 								}
+							}
 							}
 						}
 
