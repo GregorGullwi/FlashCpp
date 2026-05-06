@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "AstTraversal.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -6,6 +7,47 @@
 #include "TypeTraitEvaluator.h"
 
 #include <numeric>
+
+template <typename ParamContainer>
+static bool defaultExpressionReferencesTemplateParams(
+	const ASTNode& expr,
+	const ParamContainer& template_params) {
+	InlineVector<StringHandle, 4> param_names;
+	for (const auto& param : template_params) {
+		param_names.push_back(param.nameHandle());
+	}
+
+	auto is_template_param = [&](StringHandle name) {
+		return std::find(param_names.begin(), param_names.end(), name) != param_names.end();
+	};
+
+	return AstTraversal::visitASTUntil(expr, [&](const ASTNode& current) {
+		if (current.is<TemplateParameterReferenceNode>()) {
+			return true;
+		}
+		if (current.is<IdentifierNode>()) {
+			return is_template_param(current.as<IdentifierNode>().nameHandle());
+		}
+		if (current.is<TypeSpecifierNode>()) {
+			return is_template_param(current.as<TypeSpecifierNode>().token().handle());
+		}
+		if (current.is<QualifiedIdentifierNode>()) {
+			const QualifiedIdentifierNode& qualified_identifier = current.as<QualifiedIdentifierNode>();
+			std::string_view namespace_name =
+				gNamespaceRegistry.getQualifiedName(qualified_identifier.namespace_handle());
+			if (namespace_name.empty()) {
+				return false;
+			}
+			auto type_it = getTypesByNameMap().find(
+				StringTable::getOrInternStringHandle(namespace_name));
+			return type_it != getTypesByNameMap().end() &&
+				   type_it->second != nullptr &&
+				   (type_it->second->isDependentPlaceholder() ||
+					type_it->second->is_incomplete_instantiation_);
+		}
+		return false;
+	});
+}
 
 template <typename ParamContainer, typename ArgContainer>
 static void propagateFunctionSignatureFromTemplateArg(
@@ -811,6 +853,10 @@ bool Parser::tryAppendDefaultTemplateArg(
 
 		if (tryReparseNonTypeDefaultArg()) {
 			return true;
+		}
+
+		if (defaultExpressionReferencesTemplateParams(default_node, template_params)) {
+			return false;
 		}
 
 		return appendEvaluatedNonTypeArg(default_node);

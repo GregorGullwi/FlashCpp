@@ -2231,9 +2231,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					if (filled_args_for_pattern_match.size() == size_before) {
-						filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(0)));
-						FLASH_LOG(Templates, Warning, "Could not evaluate pattern-match default for param ", i,
-								  " of '", template_name, "', using 0");
+						throw CompileError(std::string(StringBuilder()
+							.append("Could not evaluate non-type template default for parameter ")
+							.append(std::to_string(i))
+							.append(" of '")
+							.append(template_name)
+							.append("'")
+							.commit()));
 					}
 				}
 			}
@@ -4604,9 +4608,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::string("Could not resolve template-template default for param ") +
 					std::to_string(i) + " of '" + std::string(template_name) + "'");
 			} else {
-				filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(0)));
-				FLASH_LOG(Templates, Warning, "Could not evaluate default for param ", i,
-						  " of '", template_name, "', using 0");
+				throw CompileError(std::string(StringBuilder()
+					.append("Could not evaluate non-type template default for parameter ")
+					.append(std::to_string(i))
+					.append(" of '")
+					.append(template_name)
+					.append("'")
+					.commit()));
 			}
 		}
 	}
