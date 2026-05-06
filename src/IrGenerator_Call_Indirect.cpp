@@ -193,6 +193,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 					const auto& identifier = std::get<IdentifierNode>(arg_expr);
 					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+					StringHandle identifier_name = identifier.nameHandle();
 					const auto& decl_node = symbol->as<DeclarationNode>();
 					const auto& type_node = decl_node.type_specifier_node();
 					// Convert to TypedValue
@@ -200,7 +201,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					arg.setType(type_node.type());
 					arg.ir_type = toIrType(type_node.type());
 					arg.size_in_bits = SizeInBits{static_cast<int>(type_node.size_in_bits())};
-					arg.value = StringTable::getOrInternStringHandle(identifier.name());
+					arg.value = identifier_name;
 					call_op.args.push_back(arg);
 				} else {
 					// Convert argumentIrOperands to TypedValue
@@ -617,7 +618,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 		const MemberAccessNode& member_access = std::get<MemberAccessNode>(*object_expr);
 		const FunctionDeclarationNode& check_func_decl = member_func_decl;
-		std::string_view called_func_name = check_func_decl.decl_node().identifier_token().value();
+		StringHandle func_name_handle = check_func_decl.decl_node().identifier_token().handle();
 		bool resolved_member_object_type = false;
 
 		// Try to resolve the type of the object (e.g., o.inner resolves to type Inner)
@@ -661,7 +662,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					const StructTypeInfo* member_struct_info = member_type_info->getStructInfo();
 					if (member_struct_info) {
 						// Look for the called function name in this struct's members
-						StringHandle func_name_handle = StringTable::getOrInternStringHandle(called_func_name);
 						for (const auto& member : member_struct_info->members) {
 							if (member.getName() == func_name_handle && member.type_index.category() == TypeCategory::FunctionPointer) {
 								// Found a function pointer member! Generate indirect call
@@ -962,8 +962,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 		if (struct_info) {
 			// Find the member function in the struct
-			std::string_view func_name = func_decl_node.identifier_token().value();
-			StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+			StringHandle func_name_handle = func_decl_node.identifier_token().handle();
 			for (const auto& member_func : struct_info->member_functions) {
 				if (member_func.getName() == func_name_handle &&
 					member_func.function_decl.is<FunctionDeclarationNode>() &&
@@ -1103,7 +1102,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						member_load.object = StringTable::getOrInternStringHandle(object_name);
 					}
 
-					member_load.member_name = StringTable::getOrInternStringHandle(func_name); // Member name
+					member_load.member_name = func_name_handle; // Member name
 					member_load.offset = static_cast<int>(member.offset); // Member offset
 					member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					member_load.struct_type_info = nullptr; // Not used downstream; consistent with all other MemberLoadOp sites
@@ -1381,6 +1380,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			// For variables, we need to add the type and size
 			if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
+				StringHandle identifier_name = identifier.nameHandle();
 				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 				const auto& decl_node = symbol->as<DeclarationNode>();
 				const auto& type_node = decl_node.type_specifier_node();
@@ -1389,7 +1389,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				tv.setType(type_node.type());
 				tv.ir_type = toIrType(type_node.type());
 				tv.size_in_bits = SizeInBits{type_node.size_in_bits()};
-				tv.value = StringTable::getOrInternStringHandle(identifier.name());
+				tv.value = identifier_name;
 				vcall_op.arguments.push_back(tv);
 			} else {
 				// Convert from IrOperand to TypedValue
@@ -1872,14 +1872,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				if (auto sema_bound_arg = tryApplySemaCallArgReferenceBinding(
 						*sema_evaluated_arg, argument, *param_type, sema_ref_binding, callExprNode.called_from())) {
 					TypedValue typed_arg = toTypedValue(*sema_bound_arg);
-					typed_arg.cv_qualifier = param_type->cv_qualifier();
-					typed_arg.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
-					if (param_type->type_index().is_valid()) {
-						typed_arg.type_index = param_type->type_index();
-					}
-					typed_arg.ref_qualifier = param_type->is_rvalue_reference()
-												  ? ReferenceQualifier::RValueReference
-												  : ReferenceQualifier::LValueReference;
+					applyCallParameterBindingMetadata(typed_arg, *param_type);
 					call_op.args.push_back(std::move(typed_arg));
 					arg_index++;
 					sema_ref_binding_applied = true;
@@ -1891,100 +1884,37 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			// when passing reference arguments to reference parameters
 			if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
+				StringHandle identifier_name = identifier.nameHandle();
 				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 
 				// Check if this is a function being passed as a function pointer argument
 				if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
 					// Function being passed as function pointer - just pass its name
-					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(identifier.name()))));
+					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(identifier_name)));
 				} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 					const auto& decl_node = symbol->as<DeclarationNode>();
-					const auto& type_node = decl_node.type_specifier_node();
 
 					// Check if parameter expects a reference
 					if (!sema_ref_binding_applied &&
 						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						// Parameter expects a reference - pass the address of the argument
-						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-							// Argument is already a reference - just pass it through
-							// Use 64-bit pointer size since references are passed as pointers
-							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
-																  IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
-						} else {
-							// Argument is a value - take its address
-							TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
-
-							// Pass the address with pointer size
-							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
-																  IrValue(addr_var), ReferenceQualifier::LValueReference));
-						}
+						appendReferenceCallArgument(call_op.args, decl_node, identifier_name);
 					} else {
-						// Regular pass by value; reuse already-evaluated result to avoid double evaluation.
-						ExprResult arg_result = sema_evaluated_arg
-													? *sema_evaluated_arg
-													: visitExpressionNode(argument.as<ExpressionNode>());
-						if (param_type) {
-							if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-									arg_result, argument, *param_type, callExprNode.called_from())) {
-								arg_result = *materialized;
-							} else {
-								arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, callExprNode.called_from());
-							}
-						}
-						call_op.args.push_back(toTypedValue(arg_result));
+						appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
 					}
 				} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
 					// Handle VariableDeclarationNode (local variables)
 					const auto& var_decl = symbol->as<VariableDeclarationNode>();
 					const auto& decl_node = var_decl.declaration();
-					const auto& type_node = decl_node.type_specifier_node();
 
 					// Check if parameter expects a reference
 					if (!sema_ref_binding_applied &&
 						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						// Parameter expects a reference - pass the address of the argument
-						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-							// Argument is already a reference - just pass it through
-							// Use 64-bit pointer size since references are passed as pointers
-							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
-																  IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
-						} else {
-							// Argument is a value - take its address
-							TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
-
-							// Pass the address with pointer size
-							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
-																  IrValue(addr_var), ReferenceQualifier::LValueReference));
-						}
+						appendReferenceCallArgument(call_op.args, decl_node, identifier_name);
 					} else {
-						// Regular pass by value; reuse already-evaluated result to avoid double evaluation.
-						ExprResult arg_result = sema_evaluated_arg
-													? *sema_evaluated_arg
-													: visitExpressionNode(argument.as<ExpressionNode>());
-						if (param_type) {
-							if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-									arg_result, argument, *param_type, callExprNode.called_from())) {
-								arg_result = *materialized;
-							} else {
-								arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, callExprNode.called_from());
-							}
-						}
-						call_op.args.push_back(toTypedValue(arg_result));
+						appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
 					}
 				} else {
-					// Unknown symbol type - fall back to visitExpressionNode
-					ExprResult argument_result = sema_evaluated_arg
-													 ? *sema_evaluated_arg
-													 : visitExpressionNode(argument.as<ExpressionNode>());
-					if (param_type) {
-						if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-								argument_result, argument, *param_type, callExprNode.called_from())) {
-							argument_result = *materialized;
-						} else {
-							argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, callExprNode.called_from());
-						}
-					}
-					call_op.args.push_back(toTypedValue(argument_result));
+					appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
 				}
 			} else {
 				// Not an identifier - reuse the already-evaluated result when sema
@@ -2034,8 +1964,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
 
 						// Pass the address
-						call_op.args.push_back(makeTypedValue(literal_type, SizeInBits{64},
-															  IrValue(addr_var), ReferenceQualifier::LValueReference));
+						call_op.args.push_back(makeTypedValue(
+							argument_result.type_index.withCategory(literal_type),
+							SizeInBits{POINTER_SIZE_BITS},
+							IrValue(addr_var),
+							ReferenceQualifier::LValueReference));
 					} else {
 						// Not a literal (expression result in a TempVar) - take its address
 						if (std::holds_alternative<TempVar>(argument_result.value)) {
@@ -2045,8 +1978,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 							TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 
-							call_op.args.push_back(makeTypedValue(expr_type, SizeInBits{64},
-																  IrValue(addr_var), ReferenceQualifier::LValueReference));
+							call_op.args.push_back(makeTypedValue(
+								argument_result.type_index.withCategory(expr_type),
+								SizeInBits{POINTER_SIZE_BITS},
+								IrValue(addr_var),
+								ReferenceQualifier::LValueReference));
 						} else {
 							// Fallback - just pass through
 							call_op.args.push_back(toTypedValue(argument_result));
@@ -2054,15 +1990,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					}
 				} else {
 					// Parameter doesn't expect a reference - pass through as-is
-					if (param_type) {
-						if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-								argument_result, argument, *param_type, callExprNode.called_from())) {
-							argument_result = *materialized;
-						} else {
-							argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, callExprNode.called_from());
-						}
-					}
-					call_op.args.push_back(toTypedValue(argument_result));
+					appendOrdinaryCallArgument(call_op, argument, param_type, argument_result, callExprNode.called_from());
 				}
 			}
 

@@ -351,6 +351,73 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 	}
 }
 
+void AstToIr::applyCallParameterBindingMetadata(TypedValue& value, const TypeSpecifierNode& param_type) {
+	value.cv_qualifier = param_type.cv_qualifier();
+	if (param_type.is_rvalue_reference()) {
+		value.ref_qualifier = ReferenceQualifier::RValueReference;
+	} else if (param_type.is_reference()) {
+		value.ref_qualifier = ReferenceQualifier::LValueReference;
+	} else {
+		value.ref_qualifier = ReferenceQualifier::None;
+	}
+}
+
+ExprResult AstToIr::applyCallArgumentConversions(
+	ExprResult argument_result,
+	const ASTNode& argument,
+	const TypeSpecifierNode* param_type,
+	const Token& token) {
+	if (!param_type) {
+		return argument_result;
+	}
+	if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
+			argument_result,
+			argument,
+			*param_type,
+			token)) {
+		return *materialized;
+	}
+	return applyConstructorArgConversion(argument_result, argument, *param_type, token);
+}
+
+void AstToIr::appendOrdinaryCallArgument(
+	CallOp& call_op,
+	const ASTNode& argument,
+	const TypeSpecifierNode* param_type,
+	const std::optional<ExprResult>& evaluated_arg,
+	const Token& token) {
+	ExprResult argument_result = evaluated_arg
+									 ? *evaluated_arg
+									 : visitExpressionNode(argument.as<ExpressionNode>());
+	argument_result = applyCallArgumentConversions(argument_result, argument, param_type, token);
+	call_op.args.push_back(toTypedValue(argument_result));
+}
+
+void AstToIr::appendReferenceCallArgument(
+	std::vector<TypedValue>& args,
+	const DeclarationNode& decl_node,
+	StringHandle identifier_name) {
+	const TypeSpecifierNode& type_node = decl_node.type_specifier_node();
+	if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+		args.push_back(makeTypedValue(
+			type_node.type_index().withCategory(type_node.type()),
+			SizeInBits{POINTER_SIZE_BITS},
+			IrValue(identifier_name),
+			ReferenceQualifier::LValueReference));
+		return;
+	}
+
+	TempVar addr_var = emitAddressOf(
+		type_node.category(),
+		static_cast<int>(type_node.size_in_bits()),
+		IrValue(identifier_name));
+	args.push_back(makeTypedValue(
+		type_node.type_index().withCategory(type_node.type()),
+		SizeInBits{POINTER_SIZE_BITS},
+		IrValue(addr_var),
+		ReferenceQualifier::LValueReference));
+}
+
 TypedValue AstToIr::buildConstructorArgumentValue(
 	const ExprResult& argument_result,
 	const ASTNode& argument,

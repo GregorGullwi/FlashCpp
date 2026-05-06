@@ -2442,7 +2442,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					} else if (pattern.specialized_node.is<TemplateClassDeclarationNode>()) {
 						spec_struct_ptr = &pattern.specialized_node.as<TemplateClassDeclarationNode>().class_decl_node();
 					}
-					if (spec_struct_ptr && spec_struct_ptr == &pattern_struct) {
+					if (spec_struct_ptr &&
+						(spec_struct_ptr == &pattern_struct || spec_struct_ptr->name() == pattern_struct.name())) {
 						pattern_args_for_member_copy = pattern.pattern_args;
 						break;
 					}
@@ -2487,6 +2488,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			const std::vector<TemplateTypeArg>& template_args_for_member_copy =
 				template_args_for_member_copy_storage.empty() ? template_args : template_args_for_member_copy_storage;
+			auto clampPartialPatternTemplateParamIndirection = [&](TypeSpecifierNode& substituted_type, const TypeSpecifierNode& pattern_type) {
+				if (StringTable::getStringView(pattern_struct.name()).find("$pattern_") == std::string_view::npos ||
+					substituted_type.pointer_depth() <= pattern_type.pointer_depth()) {
+					return;
+				}
+				std::string_view pattern_type_name = pattern_type.token().value();
+				if (pattern_type_name.empty()) {
+					if (const TypeInfo* pattern_type_info = tryGetTypeInfo(pattern_type.type_index())) {
+						pattern_type_name = StringTable::getStringView(pattern_type_info->name());
+					}
+				}
+				for (const ASTNode& template_param_node : template_params) {
+					if (template_param_node.is<TemplateParameterNode>() &&
+						template_param_node.as<TemplateParameterNode>().name() == pattern_type_name) {
+						substituted_type.limit_pointer_depth(pattern_type.pointer_depth());
+						return;
+					}
+				}
+			};
 
 			// Push class template pack info for specialization path
 			ClassTemplatePackGuard spec_pack_guard(class_template_pack_stack_);
@@ -3055,6 +3075,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							template_params,
 							template_args_for_member_copy);
 					}
+					clampPartialPatternTemplateParamIndirection(
+						substituted_return_node.as<TypeSpecifierNode>(),
+						orig_return_type);
 					StringHandle effective_name = computeInstantiatedLookupName(
 						orig_decl.identifier_token().handle(),
 						mem_func.operator_kind,
@@ -3632,7 +3655,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					} else if (pattern.specialized_node.is<TemplateClassDeclarationNode>()) {
 						spec_struct_ptr_alias = &pattern.specialized_node.as<TemplateClassDeclarationNode>().class_decl_node();
 					}
-					if (spec_struct_ptr_alias && spec_struct_ptr_alias == &pattern_struct) {
+					if (spec_struct_ptr_alias &&
+						(spec_struct_ptr_alias == &pattern_struct || spec_struct_ptr_alias->name() == pattern_struct.name())) {
 						pattern_args = pattern.pattern_args;
 						break;
 					}
@@ -4071,6 +4095,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					normalizeSubstitutedTypeSpec(substituted_return_type);
+					clampPartialPatternTemplateParamIndirection(substituted_return_type, orig_return_type);
 
 					auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 					auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(

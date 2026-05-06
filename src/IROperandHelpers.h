@@ -170,6 +170,14 @@ inline TypedValue makeTypedValue(TypeCategory type, SizeInBits size_in_bits, IrV
 	return tv;
 }
 
+/// TypedValue factory with TypeIndex and ReferenceQualifier for reference-typed
+/// values that still need concrete type identity.
+inline TypedValue makeTypedValue(TypeIndex type_index, SizeInBits size_in_bits, IrValue value, ReferenceQualifier ref_qual) {
+	TypedValue tv = makeTypedValue(type_index, size_in_bits, std::move(value));
+	tv.ref_qualifier = ref_qual;
+	return tv;
+}
+
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][metadata]");
 	assert(std::holds_alternative<TypeCategory>(operands[0]) && "Expected operand order [type][size_in_bits][value][metadata]");
