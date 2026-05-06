@@ -1359,7 +1359,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					// Argument is a reference variable being passed to a reference parameter
 					// Pass the identifier name directly - the IRConverter will use MOV to
 					// load the address stored in the reference variable
-					appendReferenceCallArgument(call_arguments, *decl_ptr, identifier_name);
+					call_arguments.push_back(buildReferenceCallArgumentFromDeclaration(*decl_ptr, identifier_name));
 					arg_index++;
 					return;	// Skip the rest of the processing
 				}
@@ -1595,13 +1595,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 
 			const auto& arg_decl_node = *decl_ptr;
-			appendDirectIdentifierCallArgument(
-				call_arguments,
+			call_arguments.push_back(buildDirectIdentifierCallArgument(
 				arg_decl_node,
 				identifier_name,
 				param_ref_qualifier,
 				argument,
-				callExprNode.called_from());
+				callExprNode.called_from()));
 			return;
 		} else {
 			// Not an identifier - could be a literal, expression result, etc.

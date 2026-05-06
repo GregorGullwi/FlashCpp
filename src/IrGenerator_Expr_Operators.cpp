@@ -380,8 +380,7 @@ ExprResult AstToIr::applyCallArgumentConversions(
 	return applyConstructorArgConversion(argument_result, argument, *param_type, token);
 }
 
-void AstToIr::appendOrdinaryCallArgument(
-	CallOp& call_op,
+TypedValue AstToIr::buildOrdinaryCallArgument(
 	const ASTNode& argument,
 	const TypeSpecifierNode* param_type,
 	const std::optional<ExprResult>& evaluated_arg,
@@ -390,32 +389,30 @@ void AstToIr::appendOrdinaryCallArgument(
 									 ? *evaluated_arg
 									 : visitExpressionNode(argument.as<ExpressionNode>());
 	argument_result = applyCallArgumentConversions(argument_result, argument, param_type, token);
-	call_op.args.push_back(toTypedValue(argument_result));
+	return toTypedValue(argument_result);
 }
 
-void AstToIr::appendReferenceCallArgument(
-	std::vector<TypedValue>& args,
+TypedValue AstToIr::buildReferenceCallArgumentFromDeclaration(
 	const DeclarationNode& decl_node,
 	StringHandle identifier_name) {
 	const TypeSpecifierNode& type_node = decl_node.type_specifier_node();
 	if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-		args.push_back(makeTypedValue(
+		return makeTypedValue(
 			type_node.type_index().withCategory(type_node.type()),
 			SizeInBits{POINTER_SIZE_BITS},
 			IrValue(identifier_name),
-			ReferenceQualifier::LValueReference));
-		return;
+			ReferenceQualifier::LValueReference);
 	}
 
 	TempVar addr_var = emitAddressOf(
 		type_node.category(),
 		static_cast<int>(type_node.size_in_bits()),
 		IrValue(identifier_name));
-	args.push_back(makeTypedValue(
+	return makeTypedValue(
 		type_node.type_index().withCategory(type_node.type()),
 		SizeInBits{POINTER_SIZE_BITS},
 		IrValue(addr_var),
-		ReferenceQualifier::LValueReference));
+		ReferenceQualifier::LValueReference);
 }
 
 TypedValue AstToIr::buildReferenceCallArgumentFromResult(
@@ -481,8 +478,7 @@ TypedValue AstToIr::buildReferenceCallArgumentFromResult(
 	return toTypedValue(argument_result);
 }
 
-void AstToIr::appendDirectIdentifierCallArgument(
-	std::vector<TypedValue>& args,
+TypedValue AstToIr::buildDirectIdentifierCallArgument(
 	const DeclarationNode& arg_decl_node,
 	StringHandle identifier_name,
 	CVReferenceQualifier param_ref_qualifier,
@@ -493,8 +489,7 @@ void AstToIr::appendDirectIdentifierCallArgument(
 	if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(
 			type_node,
 			identifier_name)) {
-		args.push_back(toTypedValue(*enumerator_constant));
-		return;
+		return toTypedValue(*enumerator_constant);
 	}
 
 	bool needs_array_decay = false;
@@ -519,13 +514,11 @@ void AstToIr::appendDirectIdentifierCallArgument(
 			SizeInBits{POINTER_SIZE_BITS},
 			IrValue(addr_var));
 		arg.pointer_depth = PointerDepth{1};
-		args.push_back(std::move(arg));
-		return;
+		return arg;
 	}
 
 	if (param_ref_qualifier != CVReferenceQualifier::None) {
-		appendReferenceCallArgument(args, arg_decl_node, identifier_name);
-		return;
+		return buildReferenceCallArgumentFromDeclaration(arg_decl_node, identifier_name);
 	}
 
 	if (type_node.is_reference() || type_node.is_rvalue_reference()) {
@@ -534,11 +527,10 @@ void AstToIr::appendDirectIdentifierCallArgument(
 			POINTER_SIZE_BITS,
 			1,
 			identifier_name);
-		args.push_back(makeTypedValue(
+		return makeTypedValue(
 			type_node.type_index().withCategory(type_node.type()),
 			SizeInBits{static_cast<int>(type_node.size_in_bits())},
-			IrValue(deref_var)));
-		return;
+			IrValue(deref_var));
 	}
 
 	if (type_node.pointer_depth() > 0) {
@@ -547,14 +539,13 @@ void AstToIr::appendDirectIdentifierCallArgument(
 			SizeInBits{POINTER_SIZE_BITS},
 			IrValue(identifier_name));
 		arg.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
-		args.push_back(std::move(arg));
-		return;
+		return arg;
 	}
 
-	args.push_back(makeTypedValue(
+	return makeTypedValue(
 		type_node.type_index().withCategory(type_node.type()),
 		SizeInBits{static_cast<int>(type_node.size_in_bits())},
-		IrValue(identifier_name)));
+		IrValue(identifier_name));
 }
 
 TypedValue AstToIr::buildConstructorArgumentValue(

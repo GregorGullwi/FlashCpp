@@ -1906,9 +1906,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					// Check if parameter expects a reference
 					if (!sema_ref_binding_applied &&
 						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						appendReferenceCallArgument(call_op.args, decl_node, identifier_name);
+						call_op.args.push_back(buildReferenceCallArgumentFromDeclaration(decl_node, identifier_name));
 					} else {
-						appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
+						call_op.args.push_back(buildOrdinaryCallArgument(argument, param_type, sema_evaluated_arg, callExprNode.called_from()));
 					}
 				} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
 					// Handle VariableDeclarationNode (local variables)
@@ -1918,12 +1918,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					// Check if parameter expects a reference
 					if (!sema_ref_binding_applied &&
 						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						appendReferenceCallArgument(call_op.args, decl_node, identifier_name);
+						call_op.args.push_back(buildReferenceCallArgumentFromDeclaration(decl_node, identifier_name));
 					} else {
-						appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
+						call_op.args.push_back(buildOrdinaryCallArgument(argument, param_type, sema_evaluated_arg, callExprNode.called_from()));
 					}
 				} else {
-					appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
+					call_op.args.push_back(buildOrdinaryCallArgument(argument, param_type, sema_evaluated_arg, callExprNode.called_from()));
 				}
 			} else {
 				// Not an identifier - reuse the already-evaluated result when sema
@@ -1943,7 +1943,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						true));
 				} else {
 					// Parameter doesn't expect a reference - pass through as-is
-					appendOrdinaryCallArgument(call_op, argument, param_type, argument_result, callExprNode.called_from());
+					call_op.args.push_back(buildOrdinaryCallArgument(argument, param_type, argument_result, callExprNode.called_from()));
 				}
 			}
 
