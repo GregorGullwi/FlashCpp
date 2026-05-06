@@ -109,10 +109,17 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 			member_name,
 			{});
 	}
-	// Reaching this point means the call was syntactically non-empty, so an empty
-	// collected-type list means deduction still has to wait for instantiation-time typing.
-	if (has_dependent_call_args || call_arg_types.empty()) {
+	if (has_dependent_call_args) {
 		return std::nullopt;
+	}
+	if (call_arg_types.empty()) {
+		throw InternalError(std::string(StringBuilder()
+			.append("Non-dependent member template call '")
+			.append(struct_name)
+			.append("::")
+			.append(member_name)
+			.append("' has call arguments but no collected argument types")
+			.commit()));
 	}
 	return try_instantiate_member_function_template(
 		struct_name,
