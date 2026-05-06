@@ -969,7 +969,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 		return;
 	}
 
-	auto cleanup_ast_nodes_after_restore = [&](size_t* preserved_nodes, size_t* discarded_nodes) {
+	auto cleanupAstNodesAfterRestore = [&, this]() {
 		// Iterate from the end to avoid invalidating iterators when removing elements
 		for (size_t i = ast_nodes_.size(); i > new_size;) {
 			--i;
@@ -978,37 +978,29 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 				// Keep function and struct declarations - they may be template instantiations
 				// or struct definitions that are already registered in the symbol table
 				// Leave this node in place
-				if (preserved_nodes != nullptr) {
-					++(*preserved_nodes);
-				}
+				#if WITH_PARSER_RUNTIME_STATS
+					++runtime_stats_.restore_ast_nodes_preserved;
+				#endif
 			} else {
 				// Move this node to discarded list to keep it alive, then remove from ast_nodes_
 				ast_discarded_nodes_.push_back(std::move(node));
 				eraseTopLevelNodeAt(i);
-				if (discarded_nodes != nullptr) {
-					++(*discarded_nodes);
-				}
+				#if WITH_PARSER_RUNTIME_STATS
+					++runtime_stats_.restore_ast_nodes_discarded;
+				#endif
 			}
 		}
 	};
 
+	[[maybe_unused]]size_t scanned_nodes = ast_nodes_.size() - new_size;
+	cleanupAstNodesAfterRestore();
 #if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
-		size_t scanned_nodes = ast_nodes_.size() - new_size;
-		size_t preserved_nodes = 0;
-		size_t discarded_nodes = 0;
-		cleanup_ast_nodes_after_restore(&preserved_nodes, &discarded_nodes);
 		++runtime_stats_.restore_count;
 		runtime_stats_.restore_ast_nodes_scanned += scanned_nodes;
-		runtime_stats_.restore_ast_nodes_preserved += preserved_nodes;
-		runtime_stats_.restore_ast_nodes_discarded += discarded_nodes;
 		auto end = std::chrono::high_resolution_clock::now();
 		runtime_stats_.restore_time_us += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-	} else {
-		cleanup_ast_nodes_after_restore(nullptr, nullptr);
 	}
-#else
-	cleanup_ast_nodes_after_restore(nullptr, nullptr);
 #endif
 }
 
