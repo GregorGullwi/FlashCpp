@@ -1325,6 +1325,7 @@ private:
 		// template arguments (e.g. Ts→int) from pack call arguments (e.g. Box<int>) rather
 		// than deducing the outer type (Box<int>) directly.
 		TypeIndex function_pack_element_type_index;
+		std::unordered_set<StringHandle, StringHash, StringEqual> positional_deducible_param_names;
 	};
 	static void collectDependentTemplateParamNamesFromType(
 		TypeIndex pattern_type_index,

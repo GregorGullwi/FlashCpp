@@ -1636,11 +1636,36 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	};
 	func_param_to_call_arg_index.assign(func_params.size(), SIZE_MAX);
 	size_t call_arg_index = 0;
+	size_t abbreviated_auto_param_index = 0;
 	for (size_t i = 0; i < func_params.size(); ++i) {
 		if (!func_params[i].is<DeclarationNode>()) {
 			continue;
 		}
 		const DeclarationNode& func_param_decl = func_params[i].as<DeclarationNode>();
+		const TypeSpecifierNode& direct_fp_type = func_param_decl.type_specifier_node();
+		if (direct_fp_type.category() == TypeCategory::Auto) {
+			while (abbreviated_auto_param_index < template_params.size() &&
+				   template_params[abbreviated_auto_param_index].kind() != TemplateParameterKind::Type) {
+				++abbreviated_auto_param_index;
+			}
+			if (abbreviated_auto_param_index < template_params.size()) {
+				deduction_info.positional_deducible_param_names.insert(
+					template_params[abbreviated_auto_param_index].nameHandle());
+				++abbreviated_auto_param_index;
+			}
+		}
+		StringHandle direct_fp_type_name;
+		if (const TypeInfo* direct_type_info = tryGetTypeInfo(direct_fp_type.type_index())) {
+			direct_fp_type_name = direct_type_info->name();
+		}
+		if (!direct_fp_type_name.isValid()) {
+			direct_fp_type_name = direct_fp_type.token().handle();
+		}
+		auto direct_param_it = tparam_nodes_by_name.find(direct_fp_type_name);
+		if (direct_param_it != tparam_nodes_by_name.end() &&
+			direct_param_it->second->kind() == TemplateParameterKind::Type) {
+			deduction_info.positional_deducible_param_names.insert(direct_fp_type_name);
+		}
 		// Detect whether this function parameter is a pack.  The explicit
 		// `is_parameter_pack` flag is the primary signal, but for class-template
 		// member function templates the inner template's pack parameter flag
@@ -2994,7 +3019,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 			}
 
 			skipPreDeducedArgs();
-			if (arg_index < arg_types.size()) {
+			if (arg_index < arg_types.size() &&
+				deduction_info.positional_deducible_param_names.count(param_handle)) {
 				template_args.push_back(TemplateTypeArg::makeTypeSpecifier(arg_types[arg_index]));
 				++arg_index;
 				continue;
