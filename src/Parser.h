@@ -2303,7 +2303,7 @@ public:	// Public methods for template instantiation
 	// Helper to extract type from an expression for overload resolution.
 	// Public so codegen/constexpr consumers can reuse the parser's type deduction.
 	std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
-	void annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_operator_node);
+	void annotateConcreteBinaryMinusOperatorOverload(BinaryOperatorNode& binary_operator_node);
 
 	// Returns the current parser-level instantiation context chain (null when not inside any instantiation).
 	// The chain is linked via ParserInstantiationContext::parent for backtrace traversal.

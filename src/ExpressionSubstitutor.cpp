@@ -1107,7 +1107,7 @@ ASTNode ExpressionSubstitutor::substituteBinaryOp(const BinaryOperatorNode& bino
 		binop.get_token(),
 		substituted_lhs,
 		substituted_rhs);
-	parser_.annotateConcreteBinaryOperatorOverload(new_binop_value);
+	parser_.annotateConcreteBinaryMinusOperatorOverload(new_binop_value);
 
 	// Wrap in ExpressionNode so it can be evaluated by try_evaluate_constant_expression
 	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_binop_value);
