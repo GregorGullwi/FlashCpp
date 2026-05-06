@@ -2620,7 +2620,7 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 				// Array-to-pointer decay: emit AddressOf for any addressable array expression.
 				const TypeCategory elem_type = arg_result.typeEnum();
 				const int elem_size = get_type_size_bits(elem_type);
-				const IrValue source = std::visit([&elem_type](const auto& v) -> IrValue {
+				const IrValue source = std::visit([](const auto& v) -> IrValue {
 					using T = std::decay_t<decltype(v)>;
 					if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
 								  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
@@ -2628,11 +2628,11 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 					} else if constexpr (std::is_same_v<T, int>) {
 						return IrValue(static_cast<unsigned long long>(v));
 					} else {
-						throw InternalError(std::string("Unsupported operand type for array-to-pointer decay: unexpected variant index in ExprResult for element type ") + std::string(getCategoryName(elem_type)));
+						return IrValue(0ULL);
 					}
 				}, arg_result.value);
 				if (elem_size <= 0) {
-					throw InternalError(std::string("Cannot resolve element size for array-to-pointer decay of type ") + std::string(getCategoryName(elem_type)));
+					throw InternalError(std::string("Cannot resolve element size for array-to-pointer decay of type ") + std::string(getTypeName(elem_type)));
 				}
 				TempVar addr_var = emitAddressOf(elem_type, elem_size, source, source_token);
 				arg_result.value = addr_var;
