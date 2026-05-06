@@ -250,6 +250,14 @@ void AstToIr::generateCollectedLocalStructMembers() {
 		current_struct_name_ = member_info.struct_name;
 		current_function_name_ = member_info.enclosing_function_name;
 
+		auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+		if (current_struct_it != getTypesByNameMap().end() &&
+			(current_struct_it->second->is_incomplete_instantiation_ ||
+			 typeIndexContainsDependentPlaceholder(current_struct_it->second->registeredTypeIndex(), 8))) {
+			current_function_name_ = saved_function;
+			continue;
+		}
+
 		// Visit the member function
 		visit(member_info.member_function_node);
 

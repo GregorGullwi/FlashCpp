@@ -43,7 +43,28 @@ namespace {
 		.append(" resolved the wrong constructor target for '")
 		.append(StringTable::getStringView(struct_name))
 		.append("'")
-		.commit()));
+			.commit()));
+}
+
+bool typeSpecStillNeedsTemplateMaterialization(const TypeSpecifierNode& type_spec) {
+	if (type_spec.type_index().is_valid() &&
+		typeIndexContainsDependentPlaceholder(type_spec.type_index(), 8)) {
+		return true;
+	}
+	return false;
+}
+
+bool functionSignatureStillNeedsTemplateMaterialization(const FunctionDeclarationNode& func_decl) {
+	if (typeSpecStillNeedsTemplateMaterialization(func_decl.decl_node().type_specifier_node())) {
+		return true;
+	}
+	for (const auto& param : func_decl.parameter_nodes()) {
+		if (param.is<DeclarationNode>() &&
+			typeSpecStillNeedsTemplateMaterialization(param.as<DeclarationNode>().type_specifier_node())) {
+			return true;
+		}
+	}
+	return false;
 }
 
 } // namespace
@@ -1187,7 +1208,9 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 		// Skip structs with incomplete instantiation - they have unresolved template params
 	{
 		auto incomplete_it = getTypesByNameMap().find(node.name());
-		if (incomplete_it != getTypesByNameMap().end() && incomplete_it->second->is_incomplete_instantiation_) {
+		if (incomplete_it != getTypesByNameMap().end() &&
+			(incomplete_it->second->is_incomplete_instantiation_ ||
+			 typeIndexContainsDependentPlaceholder(incomplete_it->second->registeredTypeIndex(), 8))) {
 			FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(node.name()), "' (incomplete instantiation)");
 			return false;
 		}
@@ -1225,6 +1248,12 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 
 	auto type_it = getTypesByNameMap().find(lookup_name);
 	if (type_it != getTypesByNameMap().end()) {
+		if (type_it->second->is_incomplete_instantiation_ ||
+			typeIndexContainsDependentPlaceholder(type_it->second->registeredTypeIndex(), 8)) {
+			FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(node.name()),
+					  "' (still dependent after qualified lookup)");
+			return false;
+		}
 		current_struct_name_ = type_it->second->name();
 	} else {
 		// If simple name lookup failed, search for namespace-qualified version
@@ -1282,6 +1311,12 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 						}
 					}
 					if (!fn_has_auto) {
+						if (functionSignatureStillNeedsTemplateMaterialization(fn)) {
+							FLASH_LOG(Codegen, Debug,
+									  "Skipping member function with still-dependent signature in struct '",
+									  struct_name, "': ", fn.decl_node().identifier_token().value());
+							continue;
+						}
 						if (!fn.is_materialized() && !fn.is_implicit() &&
 							current_struct_name_.isValid() && member_name.isValid() &&
 							LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
