@@ -47,11 +47,44 @@ namespace {
 }
 
 bool typeSpecStillNeedsTemplateMaterialization(const TypeSpecifierNode& type_spec) {
+	if (isPlaceholderAutoType(type_spec.type())) {
+		return true;
+	}
 	if (type_spec.type_index().is_valid() &&
 		typeIndexContainsDependentPlaceholder(type_spec.type_index(), AstToIr::kMaxPlaceholderRecursionDepth)) {
 		return true;
 	}
 	return false;
+}
+
+[[noreturn]] void reportUnresolvedFunctionTypeForCodegen(
+	std::string_view function_name,
+	std::string_view type_role,
+	const TypeSpecifierNode& type_spec,
+	std::string_view reason) {
+	throw InternalError(std::string(StringBuilder()
+		.append("Function '")
+		.append(function_name)
+		.append("' reached IR generation with unresolved ")
+		.append(type_role)
+		.append(" type (category=")
+		.append(static_cast<int64_t>(type_spec.type()))
+		.append(", type_index=")
+		.append(static_cast<uint64_t>(type_spec.type_index().index()))
+		.append("): ")
+		.append(reason)
+		.commit()));
+}
+
+void requireFunctionTypeReadyForCodegen(
+	std::string_view function_name,
+	std::string_view type_role,
+	const TypeSpecifierNode& type_spec,
+	int resolved_size_bits) {
+	(void)resolved_size_bits;
+	if (isPlaceholderAutoType(type_spec.type())) {
+		reportUnresolvedFunctionTypeForCodegen(function_name, type_role, type_spec, "placeholder return/parameter type was not resolved by parser/sema");
+	}
 }
 
 bool functionSignatureStillNeedsTemplateMaterialization(const FunctionDeclarationNode& func_decl) {
@@ -190,6 +223,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	// emitReturn calls in the function body use the correct size.  Previously this
 	// used the unresolved ret_type_spec, which could be 0 for self-referential types.
 	int actual_ret_size = getTypeSpecSizeBits(resolved_ret_type);
+	requireFunctionTypeReadyForCodegen(func_name_view, "return", resolved_ret_type, actual_ret_size);
 	current_function_return_size_ = (resolved_ret_type.pointer_depth() > 0 || resolved_ret_type.is_reference() || currentFunctionReturnsFunctionPointer())
 										? 64
 										: actual_ret_size;

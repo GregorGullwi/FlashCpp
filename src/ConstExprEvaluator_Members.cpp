@@ -1771,22 +1771,12 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 	if (context.sema) {
 		(void)context.sema->ensureMemberFunctionMaterialized(
 			context.struct_info->name, function_name_handle, std::nullopt);
-	} else if (context.parser && LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
-									 LazyMemberKey::anyConst(
-										 context.struct_info->name,
-										 function_name_handle))) {
-		auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
-			LazyMemberKey::anyConst(
-				context.struct_info->name,
-				function_name_handle));
-		if (lazy_info_opt.has_value()) {
-			context.parser->instantiateLazyMemberFunction(*lazy_info_opt);
+	} else if (context.parser) {
+		LazyMemberKey member_key = LazyMemberKey::anyConst(
+			context.struct_info->name,
+			function_name_handle);
+		if (context.parser->instantiateLazyMemberIfNeeded(member_key).has_value()) {
 			context.normalizePendingSemanticRoots();
-			LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-				LazyMemberKey::exact(
-					context.struct_info->name,
-					function_name_handle,
-					lazy_info_opt->identity.is_const_method));
 		}
 	}
 

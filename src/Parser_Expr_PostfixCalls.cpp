@@ -337,17 +337,18 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 				LazyMemberKey member_key = LazyMemberKey::anyConst(class_name_handle, func_name_handle);
 				if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
 					FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for: ", *object_struct_name, "::", func_name);
-					auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(member_key);
-					if (lazy_info_opt.has_value()) {
-						const LazyMemberFunctionInfo& lazy_info = *lazy_info_opt;
-						instantiating_lazy_member_ = true;
-						instantiated_func = instantiateLazyMemberFunction(lazy_info);
-						instantiating_lazy_member_ = false;
-						LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-							LazyMemberKey::exact(
-								class_name_handle,
-								func_name_handle,
-								lazy_info.identity.is_const_method));
+					struct ScopedLazyMemberInstantiationFlag {
+						bool& flag;
+						explicit ScopedLazyMemberInstantiationFlag(bool& target)
+							: flag(target) {
+							flag = true;
+						}
+						~ScopedLazyMemberInstantiationFlag() {
+							flag = false;
+						}
+					} scoped_lazy_instantiation(instantiating_lazy_member_);
+					instantiated_func = instantiateLazyMemberIfNeeded(member_key);
+					if (instantiated_func.has_value()) {
 						FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
 					}
 				}
@@ -973,18 +974,10 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							StringHandle member_name_handle = final_identifier.handle();
 							LazyMemberKey member_key = LazyMemberKey::anyConst(class_name_handle, member_name_handle);
 							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
-								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(member_key);
-								if (lazy_info_opt.has_value()) {
-									auto instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
-									if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-										qualified_symbol = instantiated_func;
-										decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
-										LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-											LazyMemberKey::exact(
-												class_name_handle,
-												member_name_handle,
-												lazy_info_opt->identity.is_const_method));
-									}
+								auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);
+								if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+									qualified_symbol = instantiated_func;
+									decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
 								}
 							}
 						}

@@ -85,6 +85,23 @@ static void buildTemplateArgSubstitutionMaps(
 	}
 }
 
+static std::string buildDeferredStaticAssertInstantiationError(
+	std::string_view evaluation_error,
+	StringHandle message_handle,
+	bool include_evaluation_error) {
+	std::string error_msg = "static_assert failed during template instantiation";
+	if (include_evaluation_error) {
+		error_msg += ": ";
+		error_msg += std::string(evaluation_error);
+	}
+	std::string_view message_view = StringTable::getStringView(message_handle);
+	if (!message_view.empty()) {
+		error_msg += include_evaluation_error ? " - " : ": ";
+		error_msg += std::string(message_view);
+	}
+	return error_msg;
+}
+
 // Collect pack bindings referenced by a deferred base specifier and verify that
 // every participating pack expands to the same number of elements.
 static DeferredBasePackExpansionBindingInfo collectDeferredBasePackExpansionBindings(
@@ -780,17 +797,7 @@ static void instantiateDeferredStaticInitializerCalls(
 			return;
 		}
 
-		auto lazy_info = lazy_registry.getLazyMemberInfo(member_key);
-		if (!lazy_info.has_value()) {
-			return;
-		}
-
-		parser->instantiateLazyMemberFunction(*lazy_info);
-		lazy_registry.markInstantiated(
-			LazyMemberKey::exact(
-				owner_name,
-				member_name,
-				lazy_info->identity.is_const_method));
+		(void)parser->instantiateLazyMemberIfNeeded(member_key);
 	});
 }
 
@@ -4136,27 +4143,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
 
 				if (!eval_result.success()) {
-					std::string error_msg = "static_assert failed during template instantiation: " +
-											eval_result.error_message;
-					std::string_view message_view = StringTable::getStringView(deferred_assert.message);
-					if (!message_view.empty()) {
-						error_msg += " - " + std::string(message_view);
+					std::string error_msg = buildDeferredStaticAssertInstantiationError(
+						eval_result.error_message, deferred_assert.message, true);
+					if (!is_implicit_instantiation) {
+						throw CompileError(error_msg);
 					}
 					FLASH_LOG(Templates, Error, error_msg);
-					// Don't return error - continue with other static_asserts
-					// This matches the behavior of most compilers which report all failures
 					continue;
 				}
 
 				// Check if the assertion failed
 				if (!eval_result.as_bool()) {
-					std::string error_msg = "static_assert failed during template instantiation";
-					std::string_view message_view = StringTable::getStringView(deferred_assert.message);
-					if (!message_view.empty()) {
-						error_msg += ": " + std::string(message_view);
+					std::string error_msg = buildDeferredStaticAssertInstantiationError(
+						std::string_view(), deferred_assert.message, false);
+					if (!is_implicit_instantiation) {
+						throw CompileError(error_msg);
 					}
 					FLASH_LOG(Templates, Error, error_msg);
-					// Don't return error - continue with other static_asserts
 					continue;
 				}
 
@@ -8919,27 +8922,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
 
 		if (!eval_result.success()) {
-			std::string error_msg = "static_assert failed during template instantiation: " +
-									eval_result.error_message;
-			std::string_view message_view = StringTable::getStringView(deferred_assert.message);
-			if (!message_view.empty()) {
-				error_msg += " - " + std::string(message_view);
+			std::string error_msg = buildDeferredStaticAssertInstantiationError(
+				eval_result.error_message, deferred_assert.message, true);
+			if (force_eager) {
+				throw CompileError(error_msg);
 			}
 			FLASH_LOG(Templates, Error, error_msg);
-			// Don't return error - continue with other static_asserts
-			// This matches the behavior of most compilers which report all failures
 			continue;
 		}
 
 		// Check if the assertion failed
 		if (!eval_result.as_bool()) {
-			std::string error_msg = "static_assert failed during template instantiation";
-			std::string_view message_view = StringTable::getStringView(deferred_assert.message);
-			if (!message_view.empty()) {
-				error_msg += ": " + std::string(message_view);
+			std::string error_msg = buildDeferredStaticAssertInstantiationError(
+				std::string_view(), deferred_assert.message, false);
+			if (force_eager) {
+				throw CompileError(error_msg);
 			}
 			FLASH_LOG(Templates, Error, error_msg);
-			// Don't return error - continue with other static_asserts
 			continue;
 		}
 

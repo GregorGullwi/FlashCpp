@@ -7,6 +7,22 @@
 #include "ParserTemplateClassShared.h"
 #include "RebindStaticMemberAst.h"
 
+std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey& member_key) {
+	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
+	auto lazy_info_opt = lazy_registry.getLazyMemberInfo(member_key);
+	if (!lazy_info_opt.has_value()) {
+		return std::nullopt;
+	}
+
+	auto instantiated = instantiateLazyMemberFunction(*lazy_info_opt);
+	lazy_registry.markInstantiated(
+		LazyMemberKey::exact(
+			lazy_info_opt->identity.instantiated_owner_name,
+			effectiveLookupName(lazy_info_opt->identity),
+			lazy_info_opt->identity.is_const_method));
+	return instantiated;
+}
+
 std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info) {
 	FLASH_LOG(Templates, Debug, "instantiateLazyMemberFunction: ",
 			  lazy_info.identity.instantiated_owner_name, "::", effectiveLookupName(lazy_info.identity));

@@ -2221,6 +2221,7 @@ public:
 		}
 	}
 	std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
+	std::optional<ASTNode> instantiateLazyMemberIfNeeded(const LazyMemberKey& member_key);
 	std::optional<ASTNode> try_instantiate_constructor_template(StringHandle instantiated_struct_name, const ConstructorDeclarationNode& ctor_decl, const std::vector<TypeSpecifierNode>& arg_types);
 	const ConstructorDeclarationNode* materializeMatchingConstructorTemplate(
 		StringHandle instantiated_struct_name,

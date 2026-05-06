@@ -114,8 +114,11 @@ ParseResult Parser::parse_template_declaration() {
 					registerAndNormalizeLateMaterializedTopLevelNode(*instantiated);
 					FLASH_LOG(Templates, Debug, "Successfully explicitly instantiated: ", name_token.value());
 				} else {
-					// Template not found or instantiation failed
-					FLASH_LOG(Templates, Warning, "Could not explicitly instantiate template: ", name_token.value());
+					throw CompileError(std::string(StringBuilder()
+						.append("Could not explicitly instantiate template '")
+						.append(name_token.value())
+						.append("'")
+						.commit()));
 				}
 			} else if (is_extern) {
 				// extern template - suppresses implicit instantiation

@@ -2763,18 +2763,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										member_is_const);
 									if (template_instantiation_mode_ == TemplateInstantiationMode::HardUse &&
 										LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
-										auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(member_key);
-										if (lazy_info_opt.has_value()) {
-											auto instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
-											if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-												member_lookup = instantiated_func;
-												decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
-												LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-													LazyMemberKey::exact(
-														class_name_handle,
-														member_name_handle,
-														lazy_info_opt->identity.is_const_method));
-											}
+										auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);
+										if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+											member_lookup = instantiated_func;
+											decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
 										}
 									}
 								}
@@ -3727,17 +3719,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								member_is_const);
 							if (template_instantiation_mode_ == TemplateInstantiationMode::HardUse &&
 								LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
-								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(member_key);
-								if (lazy_info_opt.has_value()) {
-									auto instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
-									if (instantiated_func.has_value()) {
-										identifierType = *instantiated_func;
-										LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-											LazyMemberKey::exact(
-												class_name_handle,
-												member_name_handle,
-												lazy_info_opt->identity.is_const_method));
-									}
+								auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);
+								if (instantiated_func.has_value()) {
+									identifierType = *instantiated_func;
 								}
 							}
 						}
