@@ -1586,7 +1586,9 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
 
 	// Update the saved position to include this new node so it doesn't get erased
-	saved_tokens_[current_pos].ast_nodes_size_ = ast_nodes_.size();
+	if (current_pos < saved_tokens_.size() && saved_tokens_[current_pos].has_value()) {
+		saved_tokens_[current_pos]->ast_nodes_size_ = ast_nodes_.size();
+	}
 
 	if (new_func_ref.is_materialized()) {
 		finalize_function_after_definition(new_func_ref);

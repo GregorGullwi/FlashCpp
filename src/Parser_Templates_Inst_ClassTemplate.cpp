@@ -8840,7 +8840,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		FLASH_LOG(Templates, Debug, "About to restore to saved position: ", saved_pos);
 
 		// Check if the saved position is still valid
-		if (saved_tokens_.find(saved_pos) == saved_tokens_.end()) {
+		if (saved_pos >= saved_tokens_.size() || !saved_tokens_[saved_pos].has_value()) {
 			FLASH_LOG(Templates, Error, "Saved position ", saved_pos, " not found in saved_tokens_!");
 		} else {
 			FLASH_LOG(Templates, Debug, "Saved position ", saved_pos, " found, restoring...");
