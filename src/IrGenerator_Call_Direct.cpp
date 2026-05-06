@@ -395,9 +395,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		call_arguments.push_back(makeTypedValue(type_index, size_in_bits, std::move(value)));
 	};
 	auto appendArgumentValueWithReference = [&](TypeIndex type_index, SizeInBits size_in_bits, IrValue value, ReferenceQualifier ref_qualifier) {
-		TypedValue arg = makeTypedValue(type_index, size_in_bits, std::move(value));
-		arg.ref_qualifier = ref_qualifier;
-		call_arguments.push_back(std::move(arg));
+		call_arguments.push_back(makeTypedValue(type_index, size_in_bits, std::move(value), ref_qualifier));
 	};
 	auto appendPointerArgumentValue = [&](TypeIndex type_index, IrValue value) {
 		if (!type_index.is_valid()) {
@@ -1893,14 +1891,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			// Preserve the lowered argument's type identity and pointer depth.
 			// They describe the runtime value being passed; copying them from the
 			// parameter recreates the old flattened-operand ambiguity in a typed payload.
-			arg.cv_qualifier = param_type_spec->cv_qualifier();
-			if (param_type_spec->is_rvalue_reference()) {
-				arg.ref_qualifier = ReferenceQualifier::RValueReference;
-			} else if (param_type_spec->is_reference()) {
-				arg.ref_qualifier = ReferenceQualifier::LValueReference;
-			} else {
-				arg.ref_qualifier = ReferenceQualifier::None;
-			}
+			applyCallParameterBindingMetadata(arg, *param_type_spec);
 		}
 
 		call_op.args.push_back(arg);

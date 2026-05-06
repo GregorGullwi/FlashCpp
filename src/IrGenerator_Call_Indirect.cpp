@@ -1872,14 +1872,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				if (auto sema_bound_arg = tryApplySemaCallArgReferenceBinding(
 						*sema_evaluated_arg, argument, *param_type, sema_ref_binding, callExprNode.called_from())) {
 					TypedValue typed_arg = toTypedValue(*sema_bound_arg);
-					typed_arg.cv_qualifier = param_type->cv_qualifier();
-					typed_arg.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
-					if (param_type->type_index().is_valid()) {
-						typed_arg.type_index = param_type->type_index();
-					}
-					typed_arg.ref_qualifier = param_type->is_rvalue_reference()
-												  ? ReferenceQualifier::RValueReference
-												  : ReferenceQualifier::LValueReference;
+					applyCallParameterBindingMetadata(typed_arg, *param_type);
 					call_op.args.push_back(std::move(typed_arg));
 					arg_index++;
 					sema_ref_binding_applied = true;
@@ -1908,15 +1901,21 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 							// Argument is already a reference - just pass it through
 							// Use 64-bit pointer size since references are passed as pointers
-							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
-																  IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
+							call_op.args.push_back(makeTypedValue(
+								type_node.type_index().withCategory(type_node.type()),
+								SizeInBits{POINTER_SIZE_BITS},
+								IrValue(StringTable::getOrInternStringHandle(identifier.name())),
+								ReferenceQualifier::LValueReference));
 						} else {
 							// Argument is a value - take its address
 							TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 							// Pass the address with pointer size
-							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
-																  IrValue(addr_var), ReferenceQualifier::LValueReference));
+							call_op.args.push_back(makeTypedValue(
+								type_node.type_index().withCategory(type_node.type()),
+								SizeInBits{POINTER_SIZE_BITS},
+								IrValue(addr_var),
+								ReferenceQualifier::LValueReference));
 						}
 					} else {
 						// Regular pass by value; reuse already-evaluated result to avoid double evaluation.
@@ -1946,15 +1945,21 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 							// Argument is already a reference - just pass it through
 							// Use 64-bit pointer size since references are passed as pointers
-							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
-																  IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
+							call_op.args.push_back(makeTypedValue(
+								type_node.type_index().withCategory(type_node.type()),
+								SizeInBits{POINTER_SIZE_BITS},
+								IrValue(StringTable::getOrInternStringHandle(identifier.name())),
+								ReferenceQualifier::LValueReference));
 						} else {
 							// Argument is a value - take its address
 							TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 							// Pass the address with pointer size
-							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
-																  IrValue(addr_var), ReferenceQualifier::LValueReference));
+							call_op.args.push_back(makeTypedValue(
+								type_node.type_index().withCategory(type_node.type()),
+								SizeInBits{POINTER_SIZE_BITS},
+								IrValue(addr_var),
+								ReferenceQualifier::LValueReference));
 						}
 					} else {
 						// Regular pass by value; reuse already-evaluated result to avoid double evaluation.
@@ -2034,8 +2039,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
 
 						// Pass the address
-						call_op.args.push_back(makeTypedValue(literal_type, SizeInBits{64},
-															  IrValue(addr_var), ReferenceQualifier::LValueReference));
+						call_op.args.push_back(makeTypedValue(
+							argument_result.type_index.withCategory(literal_type),
+							SizeInBits{POINTER_SIZE_BITS},
+							IrValue(addr_var),
+							ReferenceQualifier::LValueReference));
 					} else {
 						// Not a literal (expression result in a TempVar) - take its address
 						if (std::holds_alternative<TempVar>(argument_result.value)) {
@@ -2045,8 +2053,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 							TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 
-							call_op.args.push_back(makeTypedValue(expr_type, SizeInBits{64},
-																  IrValue(addr_var), ReferenceQualifier::LValueReference));
+							call_op.args.push_back(makeTypedValue(
+								argument_result.type_index.withCategory(expr_type),
+								SizeInBits{POINTER_SIZE_BITS},
+								IrValue(addr_var),
+								ReferenceQualifier::LValueReference));
 						} else {
 							// Fallback - just pass through
 							call_op.args.push_back(toTypedValue(argument_result));

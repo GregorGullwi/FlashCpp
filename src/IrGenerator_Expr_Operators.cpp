@@ -351,6 +351,17 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 	}
 }
 
+void AstToIr::applyCallParameterBindingMetadata(TypedValue& value, const TypeSpecifierNode& param_type) {
+	value.cv_qualifier = param_type.cv_qualifier();
+	if (param_type.is_rvalue_reference()) {
+		value.ref_qualifier = ReferenceQualifier::RValueReference;
+	} else if (param_type.is_reference()) {
+		value.ref_qualifier = ReferenceQualifier::LValueReference;
+	} else {
+		value.ref_qualifier = ReferenceQualifier::None;
+	}
+}
+
 TypedValue AstToIr::buildConstructorArgumentValue(
 	const ExprResult& argument_result,
 	const ASTNode& argument,
