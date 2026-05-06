@@ -1380,10 +1380,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 		arg_index++;
 
-		if (param_type && sema_ref_binding && sema_ref_binding->is_valid()) {
-			if (auto sema_bound_arg = tryApplySemaCallArgReferenceBinding(
+		if (param_type) {
+			if (auto sema_bound_arg = tryBuildSemaBoundCallArgument(
 					argumentIrOperands, argument, *param_type, sema_ref_binding, callExprNode.called_from())) {
-				appendArgumentIrResult(*sema_bound_arg);
+				call_arguments.push_back(std::move(*sema_bound_arg));
 				return;
 			}
 		}

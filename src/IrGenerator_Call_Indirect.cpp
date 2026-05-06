@@ -1878,11 +1878,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 													? ExpressionContext::LValueAddress
 													: ExpressionContext::Load;
 				sema_evaluated_arg = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
-				if (auto sema_bound_arg = tryApplySemaCallArgReferenceBinding(
+				if (auto sema_bound_arg = tryBuildSemaBoundCallArgument(
 						*sema_evaluated_arg, argument, *param_type, sema_ref_binding, callExprNode.called_from())) {
-					TypedValue typed_arg = toTypedValue(*sema_bound_arg);
-					applyCallParameterBindingMetadata(typed_arg, *param_type);
-					call_op.args.push_back(std::move(typed_arg));
+					call_op.args.push_back(std::move(*sema_bound_arg));
 					arg_index++;
 					sema_ref_binding_applied = true;
 					return;

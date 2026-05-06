@@ -362,6 +362,31 @@ void AstToIr::applyCallParameterBindingMetadata(TypedValue& value, const TypeSpe
 	}
 }
 
+std::optional<TypedValue> AstToIr::tryBuildSemaBoundCallArgument(
+	ExprResult argument_result,
+	const ASTNode& argument,
+	const TypeSpecifierNode& param_type,
+	const CallArgReferenceBindingInfo* sema_ref_binding,
+	const Token& token) {
+	if (!sema_ref_binding || !sema_ref_binding->is_valid()) {
+		return std::nullopt;
+	}
+
+	std::optional<ExprResult> sema_bound_arg = tryApplySemaCallArgReferenceBinding(
+		argument_result,
+		argument,
+		param_type,
+		sema_ref_binding,
+		token);
+	if (!sema_bound_arg) {
+		return std::nullopt;
+	}
+
+	TypedValue typed_arg = toTypedValue(*sema_bound_arg);
+	applyCallParameterBindingMetadata(typed_arg, param_type);
+	return typed_arg;
+}
+
 ExprResult AstToIr::applyCallArgumentConversions(
 	ExprResult argument_result,
 	const ASTNode& argument,
