@@ -550,13 +550,13 @@ private:
 	std::string expandMacrosForConditional(const std::string& input);
 	std::string expandMacros(const std::string& input, std::unordered_set<std::string, PreprocessorStringHash, std::equal_to<>> expanding_macros = {});
 	void apply_operator(std::stack<long>& values, std::stack<Operator>& ops);
-	bool parseIntegerLiteral(std::istringstream& iss, long& value, std::string* out_literal = nullptr);
-	long evaluate_expression(std::istringstream& iss);
+	bool parseIntegerLiteral(std::string_view sv, size_t& pos, long& value, std::string* out_literal = nullptr);
+	long evaluate_expression(std::string_view sv);
 	bool processIncludeDirective(const std::string& line, const std::string_view& current_file, long include_line_number);
 	bool processIncludeNextDirective(const std::string& line, const std::string_view& current_file, long include_line_number);
 	void processPragmaPack(std::string_view line);
 	void processLineDirective(const std::string& line);
-	void handleDefine(std::istringstream& iss);
+	void handleDefine(std::string_view sv);
 	void addBuiltinDefines();
 
 	struct ScopedFileStack {

@@ -571,20 +571,32 @@ void FileReader::apply_operator(std::stack<long>& values, std::stack<Operator>& 
 	ops.pop();
 }
 
-bool FileReader::parseIntegerLiteral(std::istringstream& iss, long& value, std::string* out_literal) {
+bool FileReader::parseIntegerLiteral(std::string_view sv, size_t& pos, long& value, std::string* out_literal) {
 	std::string literal;
-	iss >> std::ws;	// Skip leading whitespace
+
+	// Skip leading whitespace
+	while (pos < sv.size() && std::isspace(sv[pos]))
+		pos++;
+
+	if (pos >= sv.size())
+		return false;
+
 	int base = 10;
 
-	if (iss.peek() == '0') {
-		iss.get();
-		char next = iss.peek();
-		if (next == 'x' || next == 'X') {
-			base = 16;
-			iss.get();
-		} else if (next == 'b' || next == 'B') {
-			base = 2;
-			iss.get();
+	if (sv[pos] == '0') {
+		pos++;
+		if (pos < sv.size()) {
+			char next = sv[pos];
+			if (next == 'x' || next == 'X') {
+				base = 16;
+				pos++;
+			} else if (next == 'b' || next == 'B') {
+				base = 2;
+				pos++;
+			} else {
+				base = 8;
+				literal.push_back('0');
+			}
 		} else {
 			base = 8;
 			literal.push_back('0');
@@ -608,19 +620,20 @@ bool FileReader::parseIntegerLiteral(std::istringstream& iss, long& value, std::
 		}
 	};
 
-	while (iss && is_digit_char(iss.peek())) {
-		if (iss.peek() == '\'') {
-			iss.get();
+	while (pos < sv.size() && is_digit_char(sv[pos])) {
+		if (sv[pos] == '\'') {
+			pos++;
 			continue;
 		}
-		literal += iss.get();
+		literal += sv[pos];
+		pos++;
 	}
 
 	if (literal.empty())
 		return false;
 
-	while (iss && (iss.peek() == 'u' || iss.peek() == 'U' || iss.peek() == 'l' || iss.peek() == 'L'))
-		iss.get();
+	while (pos < sv.size() && (sv[pos] == 'u' || sv[pos] == 'U' || sv[pos] == 'l' || sv[pos] == 'L'))
+		pos++;
 
 	auto [ptr, ec] = std::from_chars(literal.data(),
 									 literal.data() + literal.size(),
@@ -633,27 +646,23 @@ bool FileReader::parseIntegerLiteral(std::istringstream& iss, long& value, std::
 		   ptr == literal.data() + literal.size();
 }
 
-long FileReader::evaluate_expression(std::istringstream& iss) {
+long FileReader::evaluate_expression(std::string_view sv) {
+	size_t pos = 0;
 	if (settings_.isVerboseMode()) {
-		// Save position and read entire expression for debug
-		auto pos = iss.tellg();
-		std::string debug_expr;
-		std::getline(iss, debug_expr);
-		iss.clear();
-		iss.seekg(pos);
-		FLASH_LOG(Lexer, Trace, "Evaluating expression: '", debug_expr, "'");
+		FLASH_LOG(Lexer, Trace, "Evaluating expression: '", sv, "'");
 	}
 
+	// Skip leading whitespace
+	while (pos < sv.size() && std::isspace(sv[pos]))
+		pos++;
+
 	// Check if expression is empty (all whitespace) - treat as 0
-	auto start_pos = iss.tellg();
-	iss >> std::ws;	// Skip whitespace
-	if (iss.eof() || iss.peek() == EOF) {
+	if (pos >= sv.size()) {
 		if (settings_.isVerboseMode()) {
 			FLASH_LOG(Lexer, Trace, "  Empty expression, returning 0");
 		}
 		return 0;
 	}
-	iss.seekg(start_pos);  // Reset to start
 
 	std::stack<long> values;
 	std::stack<Operator> ops;
@@ -661,12 +670,19 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 	std::string op_str;
 	size_t eval_loop_guard = 10000;	// Add loop guard
 
-	while (iss && eval_loop_guard-- > 0) {
-		char c = iss.peek();
+	while (pos < sv.size() && eval_loop_guard-- > 0) {
+		// Skip whitespace
+		while (pos < sv.size() && std::isspace(sv[pos]))
+			pos++;
+
+		if (pos >= sv.size())
+			break;
+
+		char c = sv[pos];
 		if (isdigit(c)) {
 			long value = 0;
 			std::string literal;
-			if (!parseIntegerLiteral(iss, value, &literal)) {
+			if (!parseIntegerLiteral(sv, pos, value, &literal)) {
 				FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '", literal, "' in preprocessor expression, in file ",
 								 filestack_.empty() ? "<unknown>" : filestack_.top().file_name,
 								 " at line ", filestack_.empty() ? 0 : filestack_.top().line_number);
@@ -677,11 +693,13 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 			}
 		} else if (auto it = char_info_table.find(c); it != char_info_table.end()) {
 			CharInfo info = it->second;
-			op_str = iss.get(); // Consume the operator
+			op_str = c;
+			pos++;  // Consume the operator
 
 			// Handle multi-character operators
-			if (info.is_multi_char && (iss.peek() == '=' || (c != '!' && iss.peek() == c))) {
-				op_str += iss.get();
+			if (info.is_multi_char && pos < sv.size() && (sv[pos] == '=' || (c != '!' && sv[pos] == c))) {
+				op_str += sv[pos];
+				pos++;
 			}
 
 			const Operator op = string_to_operator(op_str);
@@ -706,121 +724,148 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 				ops.push(op);
 			}
 		} else if (isalpha(c) || c == '_') {
-			// Manually consume only identifier characters to avoid consuming operators
+			// Manually consume only identifier characters
 			std::string keyword;
-			while (iss) {
-				char next = iss.peek();
-				if (!isalnum(next) && next != '_')
-					break;
-				keyword += iss.get();
+			while (pos < sv.size() && (isalnum(sv[pos]) || sv[pos] == '_')) {
+				keyword += sv[pos];
+				pos++;
 			}
+
 			if (keyword == "defined") {
 				std::string symbol;
 				bool has_parenthesis = false;
-				if (iss.peek() == '(') {
-					iss.ignore(); // Consume the '('
+
+				// Skip whitespace
+				while (pos < sv.size() && std::isspace(sv[pos]))
+					pos++;
+
+				if (pos < sv.size() && sv[pos] == '(') {
+					pos++;  // Consume the '('
 					has_parenthesis = true;
+
+					// Skip whitespace
+					while (pos < sv.size() && std::isspace(sv[pos]))
+						pos++;
 				}
-				iss >> symbol;
+
+				// Read symbol
+				while (pos < sv.size() && (isalnum(sv[pos]) || sv[pos] == '_')) {
+					symbol += sv[pos];
+					pos++;
+				}
+
 				if (has_parenthesis) {
-					// The symbol may have ')' at the end if it was read by >> operator
-					// Remove ')' from the symbol, but don't call ignore() because >> already consumed it
-					symbol.erase(std::remove(symbol.begin(), symbol.end(), ')'), symbol.end());
+					// Skip whitespace
+					while (pos < sv.size() && std::isspace(sv[pos]))
+						pos++;
+
+					// Consume closing ')'
+					if (pos < sv.size() && sv[pos] == ')') {
+						pos++;
+					}
 				}
 
 				const bool value = defines_.count(symbol) > 0;
 				values.push(value);
 				if (settings_.isVerboseMode()) {
-					FLASH_LOG(Lexer, Trace, "  Pushed defined() result: ", value, " (symbol='", symbol, "', values.size=", values.size(), ")");
-					// Don't print stream state here anymore since it was misleading
+					FLASH_LOG(Lexer, Trace, "  Pushed defined() result: ", value, " (symbol='", symbol, "')");
 				}
 			} else if (keyword == "__has_include") {
-				// __has_include(<header>) or __has_include("header") - check if header exists
-				// Read the argument from the input stream
+				// __has_include(<header>) or __has_include("header")
 				long exists = 0;
 				char include_name_buf[256] = {};
 
-				// Skip whitespace and expect '('
-				iss >> std::ws;
-				if (iss.peek() == '(') {
-					iss.ignore(); // Consume '('
+				// Skip whitespace
+				while (pos < sv.size() && std::isspace(sv[pos]))
+					pos++;
 
-					// Skip whitespace after '('
-					iss >> std::ws;
+				if (pos < sv.size() && sv[pos] == '(') {
+					pos++;  // Consume '('
 
-					// Check for < or "
-					char quote_char = iss.peek();
-					char end_char = (quote_char == '<') ? '>' : '"';
+					// Skip whitespace
+					while (pos < sv.size() && std::isspace(sv[pos]))
+						pos++;
 
-					if (quote_char == '<' || quote_char == '"') {
-						iss.ignore(); // Consume opening < or "
+					if (pos < sv.size()) {
+						char quote_char = sv[pos];
+						char end_char = (quote_char == '<') ? '>' : '"';
 
-						// Read the include name into buffer
-						size_t i = 0;
-						while (i < sizeof(include_name_buf) - 1 && iss && iss.peek() != end_char) {
-							include_name_buf[i++] = iss.get();
-						}
-						include_name_buf[i] = '\0';
+						if (quote_char == '<' || quote_char == '"') {
+							pos++;  // Consume opening < or "
 
-						// Consume closing > or "
-						if (iss.peek() == end_char) {
-							iss.ignore();
-						}
-
-						// Skip whitespace before ')'
-						iss >> std::ws;
-
-						// Consume closing ')' if present
-						if (iss.peek() == ')') {
-							iss.ignore();
-						}
-
-						std::string_view include_name(include_name_buf);
-
-						// Check if the file exists in any include directory
-						for (const auto& include_dir : settings_.getIncludeDirs()) {
-							std::string include_file(include_dir);
-							include_file.append("/");
-							include_file.append(include_name);
-							if (std::filesystem::exists(include_file)) {
-								exists = 1;
-								break;
+							// Read the include name into buffer
+							size_t i = 0;
+							while (i < sizeof(include_name_buf) - 1 && pos < sv.size() && sv[pos] != end_char) {
+								include_name_buf[i++] = sv[pos];
+								pos++;
 							}
-						}
+							include_name_buf[i] = '\0';
 
-						if (settings_.isVerboseMode()) {
-							std::cout << "__has_include(" << quote_char << include_name << end_char << ") = " << exists << std::endl;
+							// Consume closing > or "
+							if (pos < sv.size() && sv[pos] == end_char) {
+								pos++;
+							}
+
+							// Skip whitespace
+							while (pos < sv.size() && std::isspace(sv[pos]))
+								pos++;
+
+							// Consume closing ')'
+							if (pos < sv.size() && sv[pos] == ')') {
+								pos++;
+							}
+
+							std::string_view include_name(include_name_buf);
+
+							// Check if the file exists in any include directory
+							for (const auto& include_dir : settings_.getIncludeDirs()) {
+								std::string include_file(include_dir);
+								include_file.append("/");
+								include_file.append(include_name);
+								if (std::filesystem::exists(include_file)) {
+									exists = 1;
+									break;
+								}
+							}
+
+							if (settings_.isVerboseMode()) {
+								std::cout << "__has_include(" << quote_char << include_name << end_char << ") = " << exists << std::endl;
+							}
 						}
 					}
 				}
 				values.push(exists);
 			} else if (keyword == "__has_builtin") {
-				// __has_builtin(__builtin_name) - check if a compiler builtin is supported
-				// Read the argument from the input stream
+				// __has_builtin(__builtin_name)
 				long exists = 0;
 				char builtin_name_buf[128] = {};
 
-				// Skip whitespace and expect '('
-				iss >> std::ws;
-				if (iss.peek() == '(') {
-					iss.ignore(); // Consume '('
+				// Skip whitespace
+				while (pos < sv.size() && std::isspace(sv[pos]))
+					pos++;
 
-					// Skip whitespace after '(' (allows "__has_builtin( __is_void)")
-					iss >> std::ws;
+				if (pos < sv.size() && sv[pos] == '(') {
+					pos++;  // Consume '('
+
+					// Skip whitespace
+					while (pos < sv.size() && std::isspace(sv[pos]))
+						pos++;
 
 					// Read the builtin name into buffer
 					size_t i = 0;
-					while (i < sizeof(builtin_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
-						builtin_name_buf[i++] = iss.get();
+					while (i < sizeof(builtin_name_buf) - 1 && pos < sv.size() && sv[pos] != ')' && !std::isspace(sv[pos])) {
+						builtin_name_buf[i++] = sv[pos];
+						pos++;
 					}
 					builtin_name_buf[i] = '\0';
 
-					// Skip whitespace before ')' (allows "__has_builtin(__is_void )")
-					iss >> std::ws;
+					// Skip whitespace
+					while (pos < sv.size() && std::isspace(sv[pos]))
+						pos++;
 
-					// Consume closing ')' if present
-					if (iss.peek() == ')') {
-						iss.ignore();
+					// Consume closing ')'
+					if (pos < sv.size() && sv[pos] == ')') {
+						pos++;
 					}
 
 					std::string_view builtin_name(builtin_name_buf);
@@ -888,32 +933,36 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 				}
 				values.push(exists);
 			} else if (keyword == "__has_cpp_attribute") {
-				// __has_cpp_attribute(attribute_name) - check C++ attribute support
-				// Read the argument from the input stream
+				// __has_cpp_attribute(attribute_name)
 				long version = 0;
 				char attribute_name_buf[128] = {};
 
-				// Skip whitespace and expect '('
-				iss >> std::ws;
-				if (iss.peek() == '(') {
-					iss.ignore(); // Consume '('
+				// Skip whitespace
+				while (pos < sv.size() && std::isspace(sv[pos]))
+					pos++;
 
-					// Skip whitespace after '('
-					iss >> std::ws;
+				if (pos < sv.size() && sv[pos] == '(') {
+					pos++;  // Consume '('
+
+					// Skip whitespace
+					while (pos < sv.size() && std::isspace(sv[pos]))
+						pos++;
 
 					// Read the attribute name into buffer
 					size_t i = 0;
-					while (i < sizeof(attribute_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
-						attribute_name_buf[i++] = iss.get();
+					while (i < sizeof(attribute_name_buf) - 1 && pos < sv.size() && sv[pos] != ')' && !std::isspace(sv[pos])) {
+						attribute_name_buf[i++] = sv[pos];
+						pos++;
 					}
 					attribute_name_buf[i] = '\0';
 
-					// Skip whitespace before ')'
-					iss >> std::ws;
+					// Skip whitespace
+					while (pos < sv.size() && std::isspace(sv[pos]))
+						pos++;
 
-					// Consume closing ')' if present
-					if (iss.peek() == ')') {
-						iss.ignore();
+					// Consume closing ')'
+					if (pos < sv.size() && sv[pos] == ')') {
+						pos++;
 					}
 
 					std::string_view attribute_name(attribute_name_buf);
@@ -946,17 +995,20 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 				const long push_value = (keyword == "__is_identifier") ? 1 : 0;
 				// Consume the "( arg )" — we don't care about the argument value,
 				// but we must consume it so it doesn't pollute the expression stack.
-				iss >> std::ws;
-				if (iss.peek() == '(') {
-					iss.ignore();
+				while (pos < sv.size() && std::isspace(sv[pos]))
+					pos++;
+
+				if (pos < sv.size() && sv[pos] == '(') {
+					pos++;
 					int paren_depth = 1;
-					while (iss && paren_depth > 0) {
-						char ch = iss.get();
+					while (pos < sv.size() && paren_depth > 0) {
+						char ch = sv[pos];
 						if (ch == '(') {
 							++paren_depth;
 						} else if (ch == ')') {
 							--paren_depth;
 						}
+						pos++;
 					}
 				}
 				values.push(push_value);
@@ -968,9 +1020,9 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 				const auto& body = define_it->second.getBody();
 				if (!body.empty()) {
 					long value = 0;
-					std::istringstream body_iss(body);
+					size_t body_pos = 0;
 					std::string literal;
-					if (!parseIntegerLiteral(body_iss, value, &literal)) {
+					if (!parseIntegerLiteral(body, body_pos, value, &literal)) {
 						FLASH_LOG_FORMAT(Lexer, Warning, "Non-integer macro value in #if directive: ", keyword, "='", body, "' literal='", literal, "' at ",
 										 filestack_.top().file_name, ":", filestack_.top().line_number);
 						values.push(0);
@@ -990,7 +1042,7 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 				values.push(0);
 			}
 		} else {
-			c = iss.get();
+			pos++;
 		}
 	}
 
@@ -1334,25 +1386,63 @@ void FileReader::processLineDirective(const std::string& line) {
 	}
 }
 
-void FileReader::handleDefine(std::istringstream& iss) {
+void FileReader::handleDefine(std::string_view sv) {
 	DefineDirective define;
+	constexpr std::string_view horizontal_whitespace = " \t\f\v\r";
+	auto isIdentifierChar = [](unsigned char ch) {
+		return std::isalnum(ch) || ch == '_';
+	};
+	auto trimArgument = [](std::string_view token) {
+		auto begin = std::find_if_not(token.begin(), token.end(), [](unsigned char ch) {
+			return std::isspace(ch);
+		});
+		auto end = std::find_if_not(token.rbegin(), token.rend(), [](unsigned char ch) {
+			return std::isspace(ch);
+		}).base();
+		if (begin >= end)
+			return std::string_view{};
+		return token.substr(static_cast<size_t>(begin - token.begin()), static_cast<size_t>(end - begin));
+	};
 
-	// Parse the name
-	std::string name;
-	iss >> name;
+	// Skip leading whitespace
+	size_t pos = sv.find_first_not_of(horizontal_whitespace);
+	if (pos == std::string_view::npos)
+		pos = sv.size();
 
-	// Check for the presence of a macro argument list
-	// A function-like macro has '(' immediately after the name (no space).
-	// When parsed with >>, the name will include the '(' if there's no space.
-	// An object-like macro may have '(' in its body, but there's a space before it.
+	// Parse the name (may include '(' for function-like macros with no space)
+	size_t name_start = pos;
+	auto name_end = std::find_if_not(sv.begin() + pos, sv.end(), [&](char ch) {
+		return isIdentifierChar(static_cast<unsigned char>(ch));
+	});
+	pos = static_cast<size_t>(name_end - sv.begin());
+
+	// Check if there's a '(' immediately after (no space) - function-like macro
+	if (pos < sv.size() && sv[pos] == '(') {
+		pos++;  // Include the '(' in the name
+	}
+
+	std::string name(sv.substr(name_start, pos - name_start));
+
+	// Skip whitespace after the name so object-like macros can keep a leading
+	// '(' in their replacement list without being mistaken for function-like ones.
+	size_t body_pos = sv.find_first_not_of(horizontal_whitespace, pos);
+	pos = (body_pos == std::string_view::npos) ? sv.size() : body_pos;
+
+	// Extract the rest of line
 	std::string rest_of_line;
-	std::getline(iss >> std::ws, rest_of_line);
+	if (pos < sv.size()) {
+		rest_of_line = sv.substr(pos);
+	}
+
+	// A function-like macro has '(' immediately after the name (no space).
+	// Object-like macros may still contain '(' in the replacement list, but only
+	// after intervening whitespace, so the no-space spelling remains the signal.
 	size_t open_paren = name.find("(");
 	bool is_function_like = (open_paren != std::string::npos);
 
 	if (is_function_like) {
 		// Function-like macro: prepend the '(' and everything after it from name to rest_of_line
-		// E.g., name="FOO(x)" -> name="FOO", rest_of_line="(x) body"
+		// Example: name="FOO(" with rest_of_line="x) body" becomes "(x) body".
 		rest_of_line.insert(0, name.substr(open_paren));
 		name.erase(open_paren);
 	}
@@ -1370,34 +1460,52 @@ void FileReader::handleDefine(std::istringstream& iss) {
 				return;
 			}
 
-			std::string arg_list = rest_of_line.substr(open_paren + 1, close_paren - open_paren - 1);
+			std::string_view arg_list(rest_of_line.data() + open_paren + 1, close_paren - open_paren - 1);
 
-			// Tokenize the argument list
-			std::istringstream arg_stream(arg_list);
-			std::string token;
+			// Keep the old getline-style behavior for malformed lists so empty
+			// parameters such as "F(x,)" still round-trip the same way.
 			bool found_variadic_args = false;
-			while (std::getline(arg_stream, token, ',')) {
-				// Remove leading and trailing whitespace
-				auto start = std::find_if_not(token.begin(), token.end(), [](unsigned char c) { return std::isspace(c); });
-				auto end = std::find_if_not(token.rbegin(), token.rend(), [](unsigned char c) { return std::isspace(c); }).base();
-				token = std::string(start, end);
+			if (!arg_list.empty()) {
+				size_t arg_pos = 0;
+				while (true) {
+					size_t arg_end = arg_list.find(',', arg_pos);
+					if (arg_end == std::string_view::npos)
+						arg_end = arg_list.size();
 
-				if (token == "..." && !found_variadic_args) {
-					found_variadic_args = true;
-				} else if (token == "..." && found_variadic_args) {
-					FLASH_LOG(Lexer, Error, "Duplicate variadic arguments '...' detected in macro argument list for ", name);
-					return;
-				} else {
-					define.args.push_back(std::move(token));
-					token = std::string(); // it's undefined behavior to move a string and then use it again
+					std::string token(trimArgument(arg_list.substr(arg_pos, arg_end - arg_pos)));
+
+					if (token == "..." && !found_variadic_args) {
+						found_variadic_args = true;
+					} else if (token == "..." && found_variadic_args) {
+						FLASH_LOG(Lexer, Error, "Duplicate variadic arguments '...' detected in macro argument list for ", name);
+						return;
+					} else {
+						define.args.push_back(std::move(token));
+					}
+
+					if (arg_end == arg_list.size())
+						break;
+					arg_pos = arg_end + 1;
 				}
 			}
 
 			// Save the macro body after the closing parenthesis
-			rest_of_line.erase(0, rest_of_line.find_first_not_of(' ', close_paren + 1));
+			size_t body_start = rest_of_line.find_first_not_of(horizontal_whitespace, close_paren + 1);
+
+			if (body_start != std::string::npos) {
+				rest_of_line = rest_of_line.substr(body_start);
+			} else {
+				rest_of_line.clear();
+			}
 			define.is_function_like = true;	// This is a function-like macro
 		} else {
-			rest_of_line.erase(0, rest_of_line.find_first_not_of(' '));
+			// Trim leading whitespace from body for object-like macros
+			size_t body_start = rest_of_line.find_first_not_of(horizontal_whitespace);
+			if (body_start != std::string::npos) {
+				rest_of_line = rest_of_line.substr(body_start);
+			} else {
+				rest_of_line.clear();
+			}
 		}
 	}
 

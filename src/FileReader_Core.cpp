@@ -488,8 +488,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 							condition.clear();
 						}
 						condition = expandMacrosForConditional(condition);
-						std::istringstream iss(condition);
-						long expression_result = evaluate_expression(iss);
+						long expression_result = evaluate_expression(condition);
 						if (expression_result != 0) {
 							skipping_stack.top() = false;  // Stop skipping
 							condition_was_true_stack.top() = true;  // Mark that we found a true condition
@@ -667,9 +666,9 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			prev_line_number = 0;
 		} else if (line.find("#define", 0) == 0) {
 			PreprocessTimer timer(PreprocessTimingCategory::define);
-			std::istringstream iss(line);
-			iss.seekg("#define"sv.length());
-			handleDefine(iss);
+			std::string_view sv(line);
+			sv.remove_prefix("#define"sv.length());
+			handleDefine(sv);
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#ifdef", 0) == 0) {
 			PreprocessTimer timer(PreprocessTimingCategory::conditional);
@@ -699,8 +698,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			// Extract and expand macros in the condition before evaluation
 			std::string condition = line.substr(3);	// Skip "#if"
 			condition = expandMacrosForConditional(condition);
-			std::istringstream iss(condition);
-			long expression_result = evaluate_expression(iss);
+			long expression_result = evaluate_expression(condition);
 			bool condition_true = (expression_result != 0);
 			FLASH_LOG(Lexer, Debug, "Preprocessor: #if (result=", condition_true, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size() + 1, " at ", filestack_.top().file_name, ":", line_number);
 			skipping_stack.push(!condition_true);
@@ -719,8 +717,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 				// Evaluate the #elif condition
 				std::string condition = line.substr(5);	// Skip "#elif"
 				condition = expandMacrosForConditional(condition);
-				std::istringstream iss(condition);
-				long expression_result = evaluate_expression(iss);
+				long expression_result = evaluate_expression(condition);
 				if (expression_result != 0) {
 					skipping_stack.top() = false;  // Stop skipping
 					condition_was_true_stack.top() = true;  // Mark condition as true
