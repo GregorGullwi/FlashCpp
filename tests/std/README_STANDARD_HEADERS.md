@@ -101,6 +101,143 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+### 2026-05-06 `<limits>` parser timing and saved-token storage analysis
+
+This pass measured `tests/std/test_std_limits.cpp` on Linux/libstdc++-14 with
+the clang++ sharded debug build (`x64/Sharded/FlashCpp`) and `--timing --stats`.
+The header still compiles successfully.  The important shape of the run is that
+`<limits>` is not template-instantiation heavy in FlashCpp: template profiling
+reported only two `std::numeric_limits` instantiations and about `0.057ms` total
+template-instantiation time.  The cost is overwhelmingly in the parser/lexer
+loop that walks the expanded standard header.
+
+Implementation change from this pass:
+
+- **Parser saved-token storage now uses the monotonic `SaveHandle` directly as a
+  vector index instead of hashing it through `std::unordered_map`.**  The handle
+  generator already produces dense increasing ids during one parse, so this
+  removes hash lookup/allocation overhead from the parser's hottest speculative
+  save/restore path.  `--stats` now also prints parser runtime counters for
+  token advancement, lookahead, saved-token operations, saved-token storage, AST
+  cleanup during restore, and saved-token timing.
+
+Validation baseline before the edit:
+
+- `make sharded CXX=clang++`: success.
+- `bash tests/run_all_tests.sh`: 2220 pass / 0 fail, 160 `_fail` correct.
+
+`<limits>` timing before/after, same machine and build mode:
+
+| Run set | Flags | Samples | Preprocessing | Parsing | Total | Note |
+|---------|-------|---------|---------------|---------|-------|------|
+| Before (`26b0d25`) | `--timing --stats` | 5, first run cold | ~16.97ms warm median | ~1135.39ms warm median | ~1172.10ms warm median | First total sample was a cold outlier at 1626ms; warm samples were stable. |
+| After saved-token vector (`91e2463`) | `--timing --stats` | 5 | 17.41ms median | 1112.29ms median | 1149.32ms median | Includes the new stats/timing counters themselves. |
+| After saved-token vector (`91e2463`) | `--timing` | 3 | 17.23ms median | 1109.40ms median | 1145.79ms median | Normal timing path, parser stats disabled. |
+
+Observed improvement against the warm baseline is about **26.0ms less parsing
+time** (`1135.39ms -> 1109.40ms`, roughly **2.3%**) and **26.3ms less total
+compile time** (`1172.10ms -> 1145.79ms`, roughly **2.2%**).  The after-change
+`--stats` median is still faster than the baseline despite paying for the new
+high-resolution timers around saved-token operations.
+
+Detailed parser stats for the after-change `--timing --stats` run are stable
+across samples:
+
+| Metric | Value |
+|--------|-------|
+| Preprocessed source lines | 4019 |
+| Top-level nodes / AST nodes | 7 / 178 |
+| Tokens advanced | 98,738 |
+| Lookahead peeks | 16,677 |
+| Lookahead tokens consumed | 16,677 |
+| Saved-token saves | 81,739 |
+| Full restores | 70,063 |
+| Lexer-only restores | 16,677 |
+| Discards | 31,668 |
+| Missing restore/discard handles | 0 |
+| Peak saved-token slots | 81,739 |
+| Peak unreleased saves | 50,075 |
+| Unreleased saves at parse end | 50,071 |
+| Restore AST cleanup scanned/preserved/discarded | 855 / 855 / 0 |
+| Saved-token measured time | save ~7.6-9.0ms, full restore ~0.1-0.24ms, lexer-only restore ~0.0-0.01ms, discard ~0.0-0.02ms |
+
+Interpretation:
+
+- The parser performs roughly **20 saved-token saves per preprocessed line**.
+  Saved-token traffic is therefore a real hot path even though the measured
+  direct time in the saved-token functions is only about 8ms after the vector
+  refactor.  The before/after wall-clock delta shows that avoiding hash-table
+  traffic around those 81k handles still matters.
+- `peek(1)`-style lookahead accounts for **16,677 save/restore/discard cycles**.
+  These are lexer-only restores and do not need AST cleanup.
+- Full restores are much more frequent than discards.  That leaves about **50k
+  saved handles unreleased at parse end**.  This is not a correctness issue in a
+  short-lived compilation, but it means save/restore/discard semantics are
+  overloaded: some saved positions are persistent anchors for deferred body
+  parsing, while many are speculative positions that should be consumed or
+  discarded deterministically.
+- AST cleanup during restores is not the bottleneck for `<limits>`.  Only 855
+  nodes were scanned and all were preserved declaration nodes; no ordinary
+  nodes were moved to `ast_discarded_nodes_`.
+- Type/sema allocation is not the primary `<limits>` cost.  This run reported
+  664 canonical type interning events, only 38 unique canonical types, and
+  about 4.6-4.8ms in semantic analysis.
+
+Detailed preprocessor timing, captured by rebuilding once with
+`-DWITH_PREPROCESSOR_TIMINGS=1`, shows preprocessing is also not the dominant
+cost:
+
+| Preprocessor category | Time |
+|-----------------------|------|
+| Files / input lines seen by preprocessor | 16 files / 5490 lines |
+| I/O open+read | 0.282ms |
+| Line read | 0.011ms |
+| Line trim | 0.016ms |
+| Strip `//` comments | 0.125ms |
+| Append line | 0.099ms |
+| Block `/* */` comments | 0.077ms |
+| `#define` | 1.430ms |
+| `#if/#ifdef/#else/#endif` | 2.791ms |
+| Macro expansion | 5.447ms |
+| Whole preprocessing phase | 20.099ms |
+
+Preprocessor suggestions:
+
+- Macro expansion is the largest measured preprocessor bucket, but the entire
+  preprocessing phase is only about **1.5-1.8%** of total compile time for
+  `<limits>`.  It should not be prioritized over parser lookahead/save traffic
+  for this header.
+- If preprocessing is optimized later, focus on macro expansion and conditional
+  evaluation first; line trimming/comment stripping are already sub-millisecond.
+
+Parser/storage suggestions for future performance work:
+
+1. **Split saved-token APIs into ephemeral and persistent handles.**  Most
+   speculative lookahead saves should be consumed by restore or discard; deferred
+   function/template body anchors are the smaller set that need long-lived
+   handles.  This would make the 50k unreleased speculative handles visible as
+   bugs instead of normal operation.
+2. **Add a cheap token lookahead buffer for `peek(1)`.**  The 16,677 lexer-only
+   lookahead cycles could avoid save/restore/discard entirely if the parser kept
+   a one- or two-token buffer beside `current_token_` and `injected_token_`.
+3. **Reserve saved-token storage once per parse.**  `<limits>` used 81,739 slots
+   for 4019 preprocessed lines, about 20 slots per line.  A conservative reserve
+   based on preprocessed line count could remove vector growth cost, though the
+   measured save bucket is already only single-digit milliseconds after the
+   vector change.
+4. **Use a tighter representation for saved-token validity.**  `std::vector<
+   std::optional<SavedToken>>` is simple and faster than the hash map here, but a
+   dense `std::vector<SavedToken>` plus a bitset/epoch for discarded handles
+   would reduce per-slot overhead if saved-token memory becomes an issue.
+5. **Do not prioritize type pre-allocation for `<limits>` yet.**  The semantic
+   phase is below 5ms and unique canonical types are low.  Type preallocation or
+   allocator replacement should be justified on heavier headers such as
+   `<string>`, `<tuple>`, `<ranges>`, or `<iostream>`, not on this run.
+6. **Allocator/type replacement needs broader evidence.**  The current `<limits>`
+   timing supports refactoring the parser's saved-token lifecycle and lookahead
+   path first.  Replacing general allocators or type containers should wait for a
+   header where allocation dominates measured phase or subsystem stats.
+
 ### 2026-05-05 `std::__is_complete_or_unbounded` semantic follow-up
 
 This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested every
