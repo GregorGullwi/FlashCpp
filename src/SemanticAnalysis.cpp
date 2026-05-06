@@ -6758,8 +6758,6 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 		return std::nullopt;
 	}
 
-	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
-
 	// Resolve a matching lazy-member entry. When the caller is indifferent to
 	// const-ness, fall back to the "Any" variant so both const and non-const
 	// candidates are considered. getLazyMemberInfo / getLazyMemberInfoAny already
