@@ -1205,17 +1205,6 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 		return false;
 	}
 
-		// Skip structs with incomplete instantiation - they have unresolved template params
-	{
-		auto incomplete_it = getTypesByNameMap().find(node.name());
-		if (incomplete_it != getTypesByNameMap().end() &&
-			(incomplete_it->second->is_incomplete_instantiation_ ||
-			 typeIndexContainsDependentPlaceholder(incomplete_it->second->registeredTypeIndex(), kMaxPlaceholderRecursionDepth))) {
-			FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(node.name()), "' (incomplete instantiation)");
-			return false;
-		}
-	}
-
 	StructCodegenFrame frame;
 	frame.saved_enclosing_function = current_function_name_;
 	frame.saved_enclosing_function_mangled = current_function_mangled_name_;
@@ -1248,12 +1237,6 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 
 	auto type_it = getTypesByNameMap().find(lookup_name);
 	if (type_it != getTypesByNameMap().end()) {
-		if (type_it->second->is_incomplete_instantiation_ ||
-			typeIndexContainsDependentPlaceholder(type_it->second->registeredTypeIndex(), kMaxPlaceholderRecursionDepth)) {
-			FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(node.name()),
-					  "' (still dependent after qualified lookup)");
-			return false;
-		}
 		current_struct_name_ = type_it->second->name();
 	} else {
 		// If simple name lookup failed, search for namespace-qualified version
@@ -1274,6 +1257,25 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 		}
 		if (!found_qualified) {
 			current_struct_name_ = lookup_name;
+		}
+	}
+
+	// After qualified lookup/disambiguation completes, check if the resolved type is incomplete or dependent.
+	// Use the resolved current_struct_name_ instead of node.name() to avoid wrongly skipping
+	// valid namespaced/nested structs before disambiguation.
+	{
+		auto resolved_type_it = getTypesByNameMap().find(current_struct_name_);
+		if (resolved_type_it != getTypesByNameMap().end() &&
+			(resolved_type_it->second->is_incomplete_instantiation_ ||
+			 typeIndexContainsDependentPlaceholder(resolved_type_it->second->registeredTypeIndex(), kMaxPlaceholderRecursionDepth))) {
+			FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(current_struct_name_),
+					  "' (incomplete instantiation after qualified lookup)");
+			// Restore frame before early return to keep struct_codegen_frame_stack_ balanced
+			struct_codegen_frame_stack_.pop_back();
+			current_function_name_ = frame.saved_enclosing_function;
+			current_function_mangled_name_ = frame.saved_enclosing_function_mangled;
+			current_struct_name_ = frame.saved_struct_name;
+			return false;
 		}
 	}
 

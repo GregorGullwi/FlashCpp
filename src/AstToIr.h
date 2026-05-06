@@ -1083,12 +1083,9 @@ private:
 	// ============================================================================
 	// Array-to-pointer decay helper
 	// ============================================================================
-	/// Determine the element size in bits from a TypeSpecifierNode, falling back to
-	/// kFallbackElementSizeBits when the type system cannot produce a known size.
-	static constexpr int kFallbackElementSizeBits = 32;
-
 	/// Resolve the element size in bits for array-to-pointer decay.
-	/// Uses get_type_size_bits first, then falls back to the stored size_in_bits, then kFallbackElementSizeBits.
+	/// Uses get_type_size_bits first, then falls back to the stored size_in_bits.
+	/// Throws InternalError if no valid size can be determined.
 	static int resolveArrayElementSizeBits(const TypeSpecifierNode& elem_type_spec);
 
 	/// Emit an AddressOf for array-to-pointer decay: resolves element size and calls emitAddressOf.
