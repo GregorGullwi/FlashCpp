@@ -380,6 +380,19 @@ ExprResult AstToIr::applyCallArgumentConversions(
 	return applyConstructorArgConversion(argument_result, argument, *param_type, token);
 }
 
+void AstToIr::appendOrdinaryCallArgument(
+	CallOp& call_op,
+	const ASTNode& argument,
+	const TypeSpecifierNode* param_type,
+	const std::optional<ExprResult>& evaluated_arg,
+	const Token& token) {
+	ExprResult argument_result = evaluated_arg
+									 ? *evaluated_arg
+									 : visitExpressionNode(argument.as<ExpressionNode>());
+	argument_result = applyCallArgumentConversions(argument_result, argument, param_type, token);
+	call_op.args.push_back(toTypedValue(argument_result));
+}
+
 TypedValue AstToIr::buildReferenceArgumentFromDeclaration(const DeclarationNode& decl_node, StringHandle identifier_name) {
 	const TypeSpecifierNode& type_node = decl_node.type_specifier_node();
 	if (type_node.is_reference() || type_node.is_rvalue_reference()) {

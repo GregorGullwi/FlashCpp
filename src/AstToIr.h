@@ -1195,6 +1195,7 @@ private:
 	void applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& type_node);
 	void applyCallParameterBindingMetadata(TypedValue& value, const TypeSpecifierNode& param_type);
 	ExprResult applyCallArgumentConversions(ExprResult argument_result, const ASTNode& argument, const TypeSpecifierNode* param_type, const Token& token);
+	void appendOrdinaryCallArgument(CallOp& call_op, const ASTNode& argument, const TypeSpecifierNode* param_type, const std::optional<ExprResult>& evaluated_arg, const Token& token);
 	TypedValue buildReferenceArgumentFromDeclaration(const DeclarationNode& decl_node, StringHandle identifier_name);
 	TypedValue buildConstructorArgumentValue(const ExprResult& argument_result,
 											 const ASTNode& argument,

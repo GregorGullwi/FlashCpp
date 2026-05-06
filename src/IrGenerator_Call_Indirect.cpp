@@ -1900,12 +1900,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 							decl_node,
 							StringTable::getOrInternStringHandle(identifier.name())));
 					} else {
-						// Regular pass by value; reuse already-evaluated result to avoid double evaluation.
-						ExprResult arg_result = sema_evaluated_arg
-													? *sema_evaluated_arg
-													: visitExpressionNode(argument.as<ExpressionNode>());
-						arg_result = applyCallArgumentConversions(arg_result, argument, param_type, callExprNode.called_from());
-						call_op.args.push_back(toTypedValue(arg_result));
+						appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
 					}
 				} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
 					// Handle VariableDeclarationNode (local variables)
@@ -1919,20 +1914,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 							decl_node,
 							StringTable::getOrInternStringHandle(identifier.name())));
 					} else {
-						// Regular pass by value; reuse already-evaluated result to avoid double evaluation.
-						ExprResult arg_result = sema_evaluated_arg
-													? *sema_evaluated_arg
-													: visitExpressionNode(argument.as<ExpressionNode>());
-						arg_result = applyCallArgumentConversions(arg_result, argument, param_type, callExprNode.called_from());
-						call_op.args.push_back(toTypedValue(arg_result));
+						appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
 					}
 				} else {
-					// Unknown symbol type - fall back to visitExpressionNode
-					ExprResult argument_result = sema_evaluated_arg
-													 ? *sema_evaluated_arg
-													 : visitExpressionNode(argument.as<ExpressionNode>());
-					argument_result = applyCallArgumentConversions(argument_result, argument, param_type, callExprNode.called_from());
-					call_op.args.push_back(toTypedValue(argument_result));
+					appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
 				}
 			} else {
 				// Not an identifier - reuse the already-evaluated result when sema
@@ -2008,8 +1993,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					}
 				} else {
 					// Parameter doesn't expect a reference - pass through as-is
-					argument_result = applyCallArgumentConversions(argument_result, argument, param_type, callExprNode.called_from());
-					call_op.args.push_back(toTypedValue(argument_result));
+					appendOrdinaryCallArgument(call_op, argument, param_type, argument_result, callExprNode.called_from());
 				}
 			}
 
