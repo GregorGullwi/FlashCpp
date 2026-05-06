@@ -101,6 +101,99 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+### 2026-05-06 Substituted free `operator-` template semantic annotation
+
+This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested every
+`tests/std/test_std_*.cpp` file against Linux/libstdc++-14. The top summary
+table remains historical; use this dated section for the current Linux state.
+
+Fix landed:
+
+- **Concrete substituted binary `operator-` expressions now re-run free operator
+  overload resolution after template substitution.** Template bodies can parse
+  expressions such as `last - first` while the operands are still dependent;
+  after instantiation the substituted operands may require a free function
+  operator template. The substitution paths now annotate those concrete minus
+  expressions with the resolved overload before semantic/codegen lowering,
+  keeping the fix above codegen.
+
+Regression test:
+
+- `tests/test_template_substituted_free_operator_template_minus_ret0.cpp`
+
+Validation snapshot:
+
+- Full Linux regression suite (`bash tests/run_all_tests.sh`): 2219 pass / 0 fail
+  / 160 `_fail` correct.
+- Focused regression compiles with clang++ `-std=c++20 -fsyntax-only`, compiles
+  with `x64/Sharded/FlashCpp`, links with clang++, and returns 0.
+
+Focused Linux/libstdc++-14 std-header sweep (`x64/Sharded/FlashCpp`, 60 s
+timeout):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `<aggregate_brace_elision_follow>` | ✅ Compiled | 36ms |  |
+| `<algorithm>` | ❌ Compile Error | 2077ms | IR conversion failed for node '24NamespaceDeclarationNode': Phase 15: sema missed binary RHS conversion (int -> unsigned long) |
+| `<any>` | ❌ Compile Error | 520ms | Compile error in 'main': Ambiguous constructor call |
+| `<array>` | ❌ Compile Error | 1231ms | [33m[WARN ][Codegen] Non-void function 'size' does not end with a return statement[0m |
+| `<atomic>` | ❌ Compile Error | 962ms | /usr/include/c++/14/atomic:92:26: error: No matching member function for call to 'load' |
+| `<bit>` | ❌ Compile Error | 501ms | Compile error in 'std::__is_complete_or_unbounded$88c2c45cbd77af0a': Itanium name mangling: unresolved 'auto' type reached mangling |
+| `<chrono>` | ❌ Compile Error | 2977ms | Fatal error: Unregistered dependent placeholder type reached template argument classification |
+| `<cmath>` | ❌ Compile Error | 5260ms | error: non-dependent name '__poly_hermite_recursion' was not declared before the template definition (C++20 [temp.res]/9) |
+| `<compare>` | ✅ Compiled | 25ms |  |
+| `<concepts>` | ❌ Compile Error | 432ms | Compile error in 'std::__is_complete_or_unbounded$88c2c45cbd77af0a': Itanium name mangling: unresolved 'auto' type reached mangling |
+| `<deque>` | ❌ Compile Error | 1970ms | error: non-dependent name '_M_deallocate_node' was not declared before the template definition (C++20 [temp.res]/9) |
+| `<exception>` | ❌ Compile Error | 453ms | Compile error in 'std::__is_complete_or_unbounded$88c2c6efef4c42af': Itanium name mangling: unresolved 'auto' type reached mangling |
+| `<fstream>` | ❌ Compile Error | 6639ms | error: non-dependent name '__cerb' was not declared before the template definition (C++20 [temp.res]/9) |
+| `<functional>` | ❌ Compile Error | 1935ms | Fatal error: ExpressionSubstitutor missing binding for ordered template parameter '_Head' while collecting bound args for ExpressionSubstitutor::substituteFunctionCallImpl |
+| `<iostream>` | ❌ Compile Error | 6586ms | error: non-dependent name '__cerb' was not declared before the template definition (C++20 [temp.res]/9) |
+| `<is_complete_or_unbounded_resolved>` | ❌ Compile Error | 380ms | Compile error in 'std::__is_complete_or_unbounded$88c2c45cbd77af0a': Itanium name mangling: unresolved 'auto' type reached mangling |
+| `<iterator>` | ❌ Compile Error | 2329ms | /usr/include/c++/14/bits/stl_pair.h:308:5: error: Call to deleted function 'swap' |
+| `<latch>` | ❌ Compile Error | 995ms | IR conversion failed for node '24NamespaceDeclarationNode': sema missed return conversion (int -> long) |
+| `<limits>` | ✅ Compiled | 1266ms |  |
+| `<list>` | ❌ Compile Error | 2180ms | Fatal error: ExpressionSubstitutor missing binding for ordered template parameter '_Head' while collecting bound args for ExpressionSubstitutor::substituteFunctionCallImpl |
+| `<map>` | ❌ Compile Error | 2004ms | Fatal error: Unregistered dependent placeholder type reached template argument classification |
+| `<memory>` | ❌ Compile Error | 2454ms | Fatal error: ExpressionSubstitutor missing binding for ordered template parameter '_Head' while collecting bound args for ExpressionSubstitutor::substituteFunctionCallImpl |
+| `<new>` | ✅ Compiled | 45ms |  |
+| `<numeric>` | ❌ Compile Error | 2059ms | Compile error in '__begin': Itanium name mangling: unresolved 'auto' type reached mangling |
+| `<optional>` | ❌ Compile Error | 1030ms | IR conversion failed for node '_M_is_engaged': Member not found in struct |
+| `<optional_codegen_recovery>` | ❌ Compile Error | 1041ms | IR conversion failed for node '_M_is_engaged': Member not found in struct |
+| `<pair_swap_deleted_member>` | ✅ Compiled | 22ms |  |
+| `<queue>` | ❌ Compile Error | 2050ms | error: non-dependent name '_M_deallocate_node' was not declared before the template definition (C++20 [temp.res]/9) |
+| `<ranges>` | ❌ Compile Error | 2453ms | /usr/include/c++/14/bits/stl_pair.h:308:5: error: Call to deleted function 'swap' |
+| `<ratio>` | ❌ Compile Error | 518ms | No first-order diagnostic captured |
+| `<rel_ops_no_false_instantiation>` | ❌ Compile Error | 692ms | Compile error in 'std::__is_complete_or_unbounded$88c2c3e317c399e6': Itanium name mangling: unresolved 'auto' type reached mangling |
+| `<set>` | ❌ Compile Error | 2004ms | Fatal error: Unregistered dependent placeholder type reached template argument classification |
+| `<shared_mutex>` | ❌ Compile Error | 2018ms | Fatal error: Unregistered dependent placeholder type reached template argument classification |
+| `<source_location>` | ✅ Compiled | 32ms |  |
+| `<span>` | ✅ Compiled | 33ms |  |
+| `<sstream>` | ❌ Compile Error | 6596ms | error: non-dependent name '__cerb' was not declared before the template definition (C++20 [temp.res]/9) |
+| `<stack>` | ❌ Compile Error | 1974ms | error: non-dependent name '_M_deallocate_node' was not declared before the template definition (C++20 [temp.res]/9) |
+| `<stdexcept>` | 💥 Crash | 7924ms | IR conversion failed for node 'to_char_type': Internal error: struct info not found for constructor call type '_CharT' at 21839:25 |
+| `<string>` | ❌ Compile Error | 7318ms | error: cannot initialize a variable of type 'struct' with an lvalue of type 'const char[6]' |
+| `<string_view>` | ❌ Compile Error | 2226ms | Fatal error: Operator- not defined for operand types |
+| `<tuple>` | ❌ Compile Error | 1541ms | Fatal error: ExpressionSubstitutor missing binding for ordered template parameter '_Head' while collecting bound args for ExpressionSubstitutor::substituteFunctionCallImpl |
+| `<type_traits>` | ❌ Compile Error | 368ms | Compile error in 'std::__is_complete_or_unbounded$88c2c45cbd77af0a': Itanium name mangling: unresolved 'auto' type reached mangling |
+| `<type_traits_is_integral_any_of>` | ✅ Compiled | 14ms |  |
+| `<typeinfo>` | ✅ Compiled | 45ms |  |
+| `<utility>` | ❌ Compile Error | 682ms | Compile error in 'std::__is_complete_or_unbounded$88c2c3e317c399e6': Itanium name mangling: unresolved 'auto' type reached mangling |
+| `<variant>` | 💥 Crash | 2475ms | No first-order diagnostic captured |
+| `<vector>` | ❌ Compile Error | 3677ms | /usr/include/c++/14/tuple:82:37: error: Expected expression after '=' in template parameter default |
+| `<version>` | ✅ Compiled | 32ms |  |
+| `<wstring_view_find>` | ❌ Compile Error | 2066ms | No first-order diagnostic captured |
+
+Notes from this sweep:
+
+- The substituted free-operator fix covers the focused semantic gap, but the
+  broader `<string_view>` path still has unresolved iterator/operator-minus
+  sites and stops at the existing `Operator- not defined for operand types`
+  blocker.
+- Current high-impact blockers include unresolved `auto` mangling in
+  `std::__is_complete_or_unbounded` helpers, tuple `_Head` substitution binding,
+  non-dependent-name false positives for container/iostream internals, and
+  dependent placeholder classification in associative/chrono headers.
+
 ### 2026-05-05 `std::__is_complete_or_unbounded` semantic follow-up
 
 This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested every
