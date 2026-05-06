@@ -132,12 +132,27 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 					normalized.type_index = param_type.type_index();
 					normalized.setCategory(param_type.type());
 				} else if (!normalized.type_index.is_valid()) {
-					normalized.type_index = nativeTypeIndex(TypeCategory::Int);
-					normalized.setCategory(TypeCategory::Int);
+					throw InternalError("Non-type alias template parameter is missing a declared type");
 				}
 			}
 		}
 		return normalized;
+	};
+	const auto make_dependent_value_for_alias_param = [&](StringHandle param_name) -> std::optional<TemplateTypeArg> {
+		auto alias_param_idx = find_param_index(param_name);
+		if (!alias_param_idx.has_value() || *alias_param_idx >= template_parameters.size()) {
+			return std::nullopt;
+		}
+		const TemplateParameterNode* alias_param = tryGetTemplateParameterNode(template_parameters[*alias_param_idx]);
+		if (alias_param == nullptr || alias_param->kind() != TemplateParameterKind::NonType) {
+			return std::nullopt;
+		}
+		if (!alias_param->has_type()) {
+			throw InternalError("Non-type alias template parameter is missing a declared type");
+		}
+		return TemplateTypeArg::makeDependentValue(
+			param_name,
+			alias_param->type_specifier_node().type());
 	};
 
 	if (arg_node.is<TypeSpecifierNode>()) {
@@ -162,7 +177,7 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 			alias_param_idx.has_value() && *alias_param_idx < template_args.size()) {
 			return normalize_alias_param_arg(*alias_param_idx, template_args[*alias_param_idx]);
 		}
-		return TemplateTypeArg::makeDependentValue(tparam_ref->param_name(), TypeCategory::Int);
+		return make_dependent_value_for_alias_param(tparam_ref->param_name());
 	}
 
 	if (const auto* id = std::get_if<IdentifierNode>(&arg_expr)) {
@@ -172,7 +187,7 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 			return normalize_alias_param_arg(*alias_param_idx, template_args[*alias_param_idx]);
 		}
 
-		return TemplateTypeArg::makeDependentValue(id_handle, TypeCategory::Int);
+		return make_dependent_value_for_alias_param(id_handle);
 	}
 
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
