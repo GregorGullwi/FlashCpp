@@ -686,7 +686,11 @@ ParseResult Parser::ScopedTokenPosition::propagate(ParseResult&& result) {
 }
 
 void Parser::setRuntimeStatsEnabled(bool enabled) {
+#if WITH_PARSER_RUNTIME_STATS
 	runtime_stats_enabled_ = enabled;
+#else
+	(void)enabled;
+#endif
 }
 
 void Parser::reserveSavedTokenStorage(size_t saved_token_capacity) {
@@ -694,6 +698,7 @@ void Parser::reserveSavedTokenStorage(size_t saved_token_capacity) {
 }
 
 void Parser::printRuntimeStats() const {
+#if WITH_PARSER_RUNTIME_STATS
 	const auto& stats = runtime_stats_;
 	FLASH_LOG(General, Info, "Parser runtime stats:");
 	FLASH_LOG(General, Info, "  Tokens advanced: ", stats.tokens_advanced);
@@ -714,6 +719,7 @@ void Parser::printRuntimeStats() const {
 			  " ms, restore=", stats.restore_time_us / 1000.0,
 			  " ms, restore-lexer-only=", stats.restore_lexer_only_time_us / 1000.0,
 			  " ms, discard=", stats.discard_time_us / 1000.0, " ms");
+#endif
 }
 
 Token Parser::consume_token() {
@@ -747,10 +753,12 @@ Token Parser::peek_token(size_t lookahead) {
 	if (lookahead == 0) {
 		return peek_token();	 // Peek at current token
 	}
+#if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.lookahead_peeks;
 		runtime_stats_.lookahead_tokens_consumed += lookahead;
 	}
+#endif
 
 	// Save current position
 	SaveHandle saved_handle = save_token_position();
@@ -832,9 +840,11 @@ Token Parser::peek_info(size_t lookahead) {
 
 Token Parser::advance() {
 	Token result = current_token_;
+#if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.tokens_advanced;
 	}
+#endif
 
 	// Phase 5: Check if we have an injected token (from >> splitting)
 	if (injected_token_.type() != Token::Type::Uninitialized) {
@@ -873,10 +883,12 @@ Token Parser::expect(TokenKind kind) {
 }
 
 Parser::SaveHandle Parser::save_token_position() {
+	#if WITH_PARSER_RUNTIME_STATS
 	std::chrono::high_resolution_clock::time_point start;
 	if (runtime_stats_enabled_) {
 		start = std::chrono::high_resolution_clock::now();
 	}
+	#endif
 	// Generate unique handle using static incrementing counter
 	// This prevents collisions even when multiple saves happen at the same cursor position
 	SaveHandle handle = next_save_handle_++;
@@ -887,6 +899,7 @@ Parser::SaveHandle Parser::save_token_position() {
 		saved_tokens_.resize(handle + 1);
 	}
 	saved_tokens_[handle] = SavedToken{current_token_, injected_token_, ast_nodes_.size(), lexer_pos};
+	#if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.save_count;
 		++runtime_stats_.active_saves;
@@ -895,6 +908,7 @@ Parser::SaveHandle Parser::save_token_position() {
 		auto end = std::chrono::high_resolution_clock::now();
 		runtime_stats_.save_time_us += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 	}
+	#endif
 
 	FLASH_LOG_FORMAT(Parser, Debug, "save_token_position: handle={}, token={}",
 					 static_cast<unsigned long>(handle), std::string(current_token_.value()));
@@ -903,15 +917,19 @@ Parser::SaveHandle Parser::save_token_position() {
 }
 
 void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const std::source_location location) {
+	#if WITH_PARSER_RUNTIME_STATS
 	std::chrono::high_resolution_clock::time_point start;
 	if (runtime_stats_enabled_) {
 		start = std::chrono::high_resolution_clock::now();
 	}
+	#endif
 	if (handle >= saved_tokens_.size() || !saved_tokens_[handle].has_value()) {
 		// Handle not found - this shouldn't happen in correct usage
+#if WITH_PARSER_RUNTIME_STATS
 		if (runtime_stats_enabled_) {
 			++runtime_stats_.missing_restore_count;
 		}
+#endif
 		return;
 	}
 
@@ -951,6 +969,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 		return;
 	}
 
+	#if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
 		size_t scanned_nodes = ast_nodes_.size() - new_size;
 		size_t preserved_nodes = 0;
@@ -978,6 +997,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 		auto end = std::chrono::high_resolution_clock::now();
 		runtime_stats_.restore_time_us += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 	} else {
+	#endif
 		// Iterate from the end to avoid invalidating iterators when removing elements
 		for (size_t i = ast_nodes_.size(); i > new_size;) {
 			--i;
@@ -992,19 +1012,25 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 				eraseTopLevelNodeAt(i);
 			}
 		}
+#if WITH_PARSER_RUNTIME_STATS
 	}
+#endif
 }
 
 void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
+	#if WITH_PARSER_RUNTIME_STATS
 	std::chrono::high_resolution_clock::time_point start;
 	if (runtime_stats_enabled_) {
 		start = std::chrono::high_resolution_clock::now();
 	}
+	#endif
 	// Restore lexer position and current token, but keep AST nodes
 	if (handle >= saved_tokens_.size() || !saved_tokens_[handle].has_value()) {
+#if WITH_PARSER_RUNTIME_STATS
 		if (runtime_stats_enabled_) {
 			++runtime_stats_.missing_restore_count;
 		}
+#endif
 		return;
 	}
 
@@ -1013,29 +1039,37 @@ void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
 	current_token_ = saved_token.current_token_;
 	injected_token_ = saved_token.injected_token_;
 	// Don't erase AST nodes - they were intentionally created during re-parsing
+	#if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.restore_lexer_only_count;
 		auto end = std::chrono::high_resolution_clock::now();
 		runtime_stats_.restore_lexer_only_time_us += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 	}
+	#endif
 }
 
 void Parser::discard_saved_token(SaveHandle handle) {
+	#if WITH_PARSER_RUNTIME_STATS
 	std::chrono::high_resolution_clock::time_point start;
 	if (runtime_stats_enabled_) {
 		start = std::chrono::high_resolution_clock::now();
 	}
+	#endif
 	if (handle < saved_tokens_.size() && saved_tokens_[handle].has_value()) {
 		saved_tokens_[handle].reset();
+#if WITH_PARSER_RUNTIME_STATS
 		if (runtime_stats_enabled_) {
 			--runtime_stats_.active_saves;
 		}
+#endif
 	}
+	#if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.discard_count;
 		auto end = std::chrono::high_resolution_clock::now();
 		runtime_stats_.discard_time_us += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 	}
+	#endif
 }
 
 void Parser::skip_balanced_braces() {
