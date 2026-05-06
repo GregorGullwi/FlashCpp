@@ -2620,7 +2620,18 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 				// Array-to-pointer decay: emit AddressOf for any addressable array expression.
 				const TypeCategory elem_type = arg_result.typeEnum();
 				const int elem_size = get_type_size_bits(elem_type);
-				TempVar addr_var = emitAddressOf(elem_type, elem_size > 0 ? elem_size : 32, arg_result.value, source_token);
+				const IrValue source = std::visit([](const auto& v) -> IrValue {
+					using T = std::decay_t<decltype(v)>;
+					if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+								  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+						return IrValue(v);
+					} else if constexpr (std::is_same_v<T, int>) {
+						return IrValue(static_cast<unsigned long long>(v));
+					} else {
+						return IrValue(0ULL);
+					}
+				}, arg_result.value);
+				TempVar addr_var = emitAddressOf(elem_type, elem_size > 0 ? elem_size : kFallbackElementSizeBits, source, source_token);
 				arg_result.value = addr_var;
 				arg_result.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 				arg_result.pointer_depth = PointerDepth{arg_result.pointer_depth.value + 1};

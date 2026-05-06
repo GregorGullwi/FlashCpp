@@ -4,6 +4,55 @@
 #include "ReachableStructWalker.h"
 #include "RebindStaticMemberAst.h"
 
+// ============================================================================
+// Shared helpers: array-to-pointer decay
+// ============================================================================
+
+/*static*/
+int AstToIr::resolveArrayElementSizeBits(const TypeSpecifierNode& elem_type_spec) {
+	int bits = get_type_size_bits(elem_type_spec.type());
+	if (bits <= 0) {
+		bits = static_cast<int>(elem_type_spec.size_in_bits());
+	}
+	return bits > 0 ? bits : kFallbackElementSizeBits;
+}
+
+TempVar AstToIr::emitArrayToPointerDecay(const TypeSpecifierNode& elem_type_spec, IrValue source, Token token) {
+	return emitAddressOf(elem_type_spec.type(), resolveArrayElementSizeBits(elem_type_spec), source, token);
+}
+
+// ============================================================================
+// Shared helpers: call expression return-type resolution
+// ============================================================================
+
+std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTNode& callNode) const {
+	std::optional<TypeSpecifierNode> result;
+	if (sema_) {
+		result = sema_->getExpressionType(callNode);
+	}
+	if ((!result.has_value() || isPlaceholderAutoType(result->type())) && parser_) {
+		result = parser_->get_expression_type(callNode);
+	}
+	return result;
+}
+
+/*static*/
+bool AstToIr::shouldPreferExpressionReturnType(
+	const TypeSpecifierNode& expr_type,
+	const TypeSpecifierNode& decl_type) {
+	if (isPlaceholderAutoType(expr_type.type())) {
+		return false;
+	}
+	if (decl_type.pointer_depth() > expr_type.pointer_depth()) {
+		return false;
+	}
+	if ((decl_type.is_reference() || decl_type.is_rvalue_reference()) &&
+		!expr_type.is_reference() && !expr_type.is_rvalue_reference()) {
+		return false;
+	}
+	return true;
+}
+
 AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
 	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
 	// Generate static member declarations for template classes before processing AST
@@ -253,7 +302,7 @@ void AstToIr::generateCollectedLocalStructMembers() {
 		auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
 		if (current_struct_it != getTypesByNameMap().end() &&
 			(current_struct_it->second->is_incomplete_instantiation_ ||
-			 typeIndexContainsDependentPlaceholder(current_struct_it->second->registeredTypeIndex(), 8))) {
+			 typeIndexContainsDependentPlaceholder(current_struct_it->second->registeredTypeIndex(), kMaxPlaceholderRecursionDepth))) {
 			current_function_name_ = saved_function;
 			continue;
 		}
@@ -2364,13 +2413,8 @@ void AstToIr::generateNestedMemberStores(
 					const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
 					if (decl && decl->is_array()) {
 						const TypeSpecifierNode& type_node = decl->type_specifier_node();
-						int element_size_bits = get_type_size_bits(type_node.type());
-						if (element_size_bits <= 0) {
-							element_size_bits = static_cast<int>(type_node.size_in_bits());
-						}
-						member_value = emitAddressOf(
-							type_node.type(),
-							element_size_bits > 0 ? element_size_bits : 32,
+						member_value = emitArrayToPointerDecay(
+							type_node,
 							IrValue(StringTable::getOrInternStringHandle(ident.name())),
 							token);
 						member_value_overridden = true;
@@ -2389,15 +2433,7 @@ void AstToIr::generateNestedMemberStores(
 						if (member.pointer_depth > 0 &&
 							decl && decl->is_array()) {
 							const TypeSpecifierNode& type_node = decl->type_specifier_node();
-							int element_size_bits = get_type_size_bits(type_node.type());
-							if (element_size_bits <= 0) {
-								element_size_bits = static_cast<int>(type_node.size_in_bits());
-							}
-							member_value = emitAddressOf(
-								type_node.type(),
-								element_size_bits > 0 ? element_size_bits : 32,
-								IrValue(*string),
-								token);
+							member_value = emitArrayToPointerDecay(type_node, IrValue(*string), token);
 						} else {
 							member_value = *string;
 						}
@@ -2431,13 +2467,8 @@ void AstToIr::generateNestedMemberStores(
 				const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
 				if (decl && decl->is_array()) {
 					const TypeSpecifierNode& type_node = decl->type_specifier_node();
-					int element_size_bits = get_type_size_bits(type_node.type());
-					if (element_size_bits <= 0) {
-						element_size_bits = static_cast<int>(type_node.size_in_bits());
-					}
-					member_value = emitAddressOf(
-						type_node.type(),
-						element_size_bits > 0 ? element_size_bits : 32,
+					member_value = emitArrayToPointerDecay(
+						type_node,
 						IrValue(StringTable::getOrInternStringHandle(ident.name())),
 						token);
 					member_value_overridden = true;
@@ -2456,15 +2487,7 @@ void AstToIr::generateNestedMemberStores(
 					if (member.pointer_depth > 0 &&
 						decl && decl->is_array()) {
 						const TypeSpecifierNode& type_node = decl->type_specifier_node();
-						int element_size_bits = get_type_size_bits(type_node.type());
-						if (element_size_bits <= 0) {
-							element_size_bits = static_cast<int>(type_node.size_in_bits());
-						}
-						member_value = emitAddressOf(
-							type_node.type(),
-							element_size_bits > 0 ? element_size_bits : 32,
-							IrValue(*string),
-							token);
+						member_value = emitArrayToPointerDecay(type_node, IrValue(*string), token);
 					} else {
 						member_value = *string;
 					}

@@ -48,7 +48,7 @@ namespace {
 
 bool typeSpecStillNeedsTemplateMaterialization(const TypeSpecifierNode& type_spec) {
 	if (type_spec.type_index().is_valid() &&
-		typeIndexContainsDependentPlaceholder(type_spec.type_index(), 8)) {
+		typeIndexContainsDependentPlaceholder(type_spec.type_index(), AstToIr::kMaxPlaceholderRecursionDepth)) {
 		return true;
 	}
 	return false;
@@ -1210,7 +1210,7 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 		auto incomplete_it = getTypesByNameMap().find(node.name());
 		if (incomplete_it != getTypesByNameMap().end() &&
 			(incomplete_it->second->is_incomplete_instantiation_ ||
-			 typeIndexContainsDependentPlaceholder(incomplete_it->second->registeredTypeIndex(), 8))) {
+			 typeIndexContainsDependentPlaceholder(incomplete_it->second->registeredTypeIndex(), kMaxPlaceholderRecursionDepth))) {
 			FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(node.name()), "' (incomplete instantiation)");
 			return false;
 		}
@@ -1249,7 +1249,7 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 	auto type_it = getTypesByNameMap().find(lookup_name);
 	if (type_it != getTypesByNameMap().end()) {
 		if (type_it->second->is_incomplete_instantiation_ ||
-			typeIndexContainsDependentPlaceholder(type_it->second->registeredTypeIndex(), 8)) {
+			typeIndexContainsDependentPlaceholder(type_it->second->registeredTypeIndex(), kMaxPlaceholderRecursionDepth)) {
 			FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(node.name()),
 					  "' (still dependent after qualified lookup)");
 			return false;

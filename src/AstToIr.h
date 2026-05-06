@@ -53,6 +53,10 @@ public:
 	// pre-computed implicit-cast annotations instead of recomputing them.
 	void setSemanticData(SemanticAnalysis* sema) { sema_ = sema; }
 
+	/// Recursion depth cap for typeIndexContainsDependentPlaceholder checks.
+	/// Public so that file-local helpers outside the class can use the same limit.
+	static constexpr int kMaxPlaceholderRecursionDepth = 8;
+
 private:
 	struct MultiDimArrayAccess {
 		std::string_view base_array_name;
@@ -1075,6 +1079,35 @@ private:
 
 	/// Emit an AddressOf IR instruction and return the result TempVar holding the address.
 	TempVar emitAddressOf(TypeCategory type, int size_in_bits, IrValue source, Token token = Token());
+
+	// ============================================================================
+	// Array-to-pointer decay helper
+	// ============================================================================
+	/// Determine the element size in bits from a TypeSpecifierNode, falling back to
+	/// kFallbackElementSizeBits when the type system cannot produce a known size.
+	static constexpr int kFallbackElementSizeBits = 32;
+
+	/// Resolve the element size in bits for array-to-pointer decay.
+	/// Uses get_type_size_bits first, then falls back to the stored size_in_bits, then kFallbackElementSizeBits.
+	static int resolveArrayElementSizeBits(const TypeSpecifierNode& elem_type_spec);
+
+	/// Emit an AddressOf for array-to-pointer decay: resolves element size and calls emitAddressOf.
+	TempVar emitArrayToPointerDecay(const TypeSpecifierNode& elem_type_spec, IrValue source, Token token = Token());
+
+	// ============================================================================
+	// Call return-type resolution helpers
+	// ============================================================================
+
+	/// Fetch the expression-level return type annotation for a call expression.
+	/// Queries sema first, then the parser's expression-type cache.
+	/// Returns an empty optional when no concrete type is available.
+	std::optional<TypeSpecifierNode> getCallExpressionReturnType(const ASTNode& callNode) const;
+
+	/// Return true when `expr_type` is a better return-type choice than `decl_type`.
+	/// Keeps pointer-depth and reference-qualifier consistency rules in one place.
+	static bool shouldPreferExpressionReturnType(
+		const TypeSpecifierNode& expr_type,
+		const TypeSpecifierNode& decl_type);
 
 	/// Emit a Dereference IR instruction and return the result TempVar holding the loaded value.
 	TempVar emitDereference(TypeCategory pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token = Token());

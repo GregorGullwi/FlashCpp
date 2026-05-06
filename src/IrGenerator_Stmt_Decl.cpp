@@ -1766,23 +1766,17 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											const DeclarationNode* source_decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
 											if (member.pointer_depth > 0 && source_decl && source_decl->is_array()) {
 												const TypeSpecifierNode& source_type = source_decl->type_specifier_node();
-												int element_size_bits = get_type_size_bits(source_type.type());
-												if (element_size_bits <= 0) {
-													element_size_bits = static_cast<int>(source_type.size_in_bits());
-												}
-												member_value = emitAddressOf(
-													source_type.type(),
-													element_size_bits > 0 ? element_size_bits : 32,
+												member_value = emitArrayToPointerDecay(
+													source_type,
 													IrValue(*string),
 													decl.identifier_token());
 											} else if (source_decl && source_decl->is_array() &&
-													   !member.is_pointer() && !member.is_reference() && !member.is_rvalue_reference()) {
+													   member.pointer_depth <= 0 && !member.is_reference() && !member.is_rvalue_reference()) {
 												throw CompileError(std::string(StringBuilder()
-																	.append("Invalid initializer for non-pointer member '")
-																	.append(decl.identifier_token().toString())
-																	.append("': cannot assign array to non-pointer type")
-																	.commit()),
-																   decl.identifier_token());
+																		.append("Invalid initializer for non-pointer member '")
+																		.append(decl.identifier_token().value())
+																		.append("': cannot assign array to non-pointer type")
+																		.commit()));
 											} else {
 												member_value = *string;
 											}

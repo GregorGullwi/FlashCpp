@@ -1325,13 +1325,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 	// Compute effective return type early to ensure VirtualCallOp/CallOp creation and ABI metadata
 	// use the same resolved type that buildCallReturnResult will eventually use.
-	std::optional<TypeSpecifierNode> expression_return_type;
-	if (sema_) {
-		expression_return_type = sema_->getExpressionType(ASTNode(&callExprNode));
-	}
-	if ((!expression_return_type.has_value() || isPlaceholderAutoType(expression_return_type->type())) && parser_) {
-		expression_return_type = parser_->get_expression_type(ASTNode(&callExprNode));
-	}
+	std::optional<TypeSpecifierNode> expression_return_type = getCallExpressionReturnType(ASTNode(&callExprNode));
 
 	if (is_virtual_call && vtable_index >= 0) {
 		// Generate virtual function call using VirtualCallOp
@@ -1341,19 +1335,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		const TypeSpecifierNode& declared_return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 									  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_specifier_node()
 									  : func_decl_node.type_specifier_node();
-		auto shouldPreferExpressionReturnType = [&](const TypeSpecifierNode& expr_type, const TypeSpecifierNode& decl_type) {
-			if (isPlaceholderAutoType(expr_type.type())) {
-				return false;
-			}
-			if (decl_type.pointer_depth() > expr_type.pointer_depth()) {
-				return false;
-			}
-			if ((decl_type.is_reference() || decl_type.is_rvalue_reference()) &&
-				!expr_type.is_reference() && !expr_type.is_rvalue_reference()) {
-				return false;
-			}
-			return true;
-		};
 		const TypeSpecifierNode& return_type =
 			expression_return_type.has_value() && shouldPreferExpressionReturnType(*expression_return_type, declared_return_type)
 				? *expression_return_type
@@ -1715,19 +1696,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			declared_return_type_ptr = &func_decl_node.type_specifier_node();
 		}
 		const TypeSpecifierNode& declared_return_type = *declared_return_type_ptr;
-		auto shouldPreferExpressionReturnType = [&](const TypeSpecifierNode& expr_type, const TypeSpecifierNode& decl_type) {
-			if (isPlaceholderAutoType(expr_type.type())) {
-				return false;
-			}
-			if (decl_type.pointer_depth() > expr_type.pointer_depth()) {
-				return false;
-			}
-			if ((decl_type.is_reference() || decl_type.is_rvalue_reference()) &&
-				!expr_type.is_reference() && !expr_type.is_rvalue_reference()) {
-				return false;
-			}
-			return true;
-		};
 		const TypeSpecifierNode& return_type =
 			expression_return_type.has_value() && shouldPreferExpressionReturnType(*expression_return_type, declared_return_type)
 				? *expression_return_type
@@ -2119,19 +2087,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			: (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 					  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_specifier_node()
 					  : func_decl_node.type_specifier_node();
-	auto shouldPreferExpressionReturnType = [&](const TypeSpecifierNode& expr_type, const TypeSpecifierNode& decl_type) {
-		if (isPlaceholderAutoType(expr_type.type())) {
-			return false;
-		}
-		if (decl_type.pointer_depth() > expr_type.pointer_depth()) {
-			return false;
-		}
-		if ((decl_type.is_reference() || decl_type.is_rvalue_reference()) &&
-			!expr_type.is_reference() && !expr_type.is_rvalue_reference()) {
-			return false;
-		}
-		return true;
-	};
 	const auto& return_type =
 		expression_return_type.has_value() && shouldPreferExpressionReturnType(*expression_return_type, declared_return_type)
 			? *expression_return_type
