@@ -383,13 +383,29 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 }
 
 ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key) {
-	std::vector<IrOperand> irOperands;
-	irOperands.reserve(2 + callExprNode.arguments().size() * 4);	 // ret_var + name + ~4 operands per arg
+	std::vector<TypedValue> call_arguments;
+	call_arguments.reserve(callExprNode.arguments().size());
 	auto appendArgumentIrResult = [&](const ExprResult& result) {
-		irOperands.reserve(irOperands.size() + 3);
-		irOperands.emplace_back(result.typeEnum());
-		irOperands.emplace_back(result.size_in_bits.value);
-		irOperands.emplace_back(result.value);
+		call_arguments.push_back(toTypedValue(result));
+	};
+	auto appendArgumentValue = [&](TypeIndex type_index, SizeInBits size_in_bits, IrValue value) {
+		if (!type_index.is_valid()) {
+			type_index = nativeTypeIndex(type_index.category());
+		}
+		call_arguments.push_back(makeTypedValue(type_index, size_in_bits, std::move(value)));
+	};
+	auto appendArgumentValueWithReference = [&](TypeIndex type_index, SizeInBits size_in_bits, IrValue value, ReferenceQualifier ref_qualifier) {
+		TypedValue arg = makeTypedValue(type_index, size_in_bits, std::move(value));
+		arg.ref_qualifier = ref_qualifier;
+		call_arguments.push_back(std::move(arg));
+	};
+	auto appendPointerArgumentValue = [&](TypeIndex type_index, IrValue value) {
+		if (!type_index.is_valid()) {
+			type_index = nativeTypeIndex(type_index.category());
+		}
+		TypedValue arg = makeTypedValue(type_index, SizeInBits{POINTER_SIZE_BITS}, std::move(value));
+		arg.pointer_depth = PointerDepth{1};
+		call_arguments.push_back(std::move(arg));
 	};
 
 	const auto& decl_node = callExprNode.callee().declaration();
@@ -1263,9 +1279,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// Function returns (by value) produce temporaries with no persistent identity
 	setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
 
-	irOperands.emplace_back(ret_var);
-	irOperands.emplace_back(StringTable::getOrInternStringHandle(function_name));
-
 	const std::vector<CachedParamInfo>* cached_param_list = nullptr;
 	{
 		StringHandle cache_key = callExprNode.has_mangled_name()
@@ -1352,9 +1365,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						// Argument is a reference variable being passed to a reference parameter
 						// Pass the identifier name directly - the IRConverter will use MOV to
 						// load the address stored in the reference variable
-					irOperands.emplace_back(type_node.type());
-					irOperands.emplace_back(64);	 // References are stored as 64-bit pointers
-					irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
+					appendArgumentValue(
+						type_node.type_index().withCategory(type_node.type()),
+						SizeInBits{POINTER_SIZE_BITS},
+						IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 					arg_index++;
 					return;	// Skip the rest of the processing
 				}
@@ -1631,25 +1645,28 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					// Emit AddressOf to get the address of the array's first element.
 				TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
-				irOperands.emplace_back(type_node.type());  // Element type (e.g., Char for char[])
-				irOperands.emplace_back(64);	 // Pointer size is 64 bits on x64
-				irOperands.emplace_back(addr_var);
+				appendPointerArgumentValue(
+					type_node.type_index().withCategory(type_node.type()),
+					IrValue(addr_var));
 			} else if (param_ref_qualifier != CVReferenceQualifier::None) {
 					// Parameter expects a reference - pass the address of the argument
 				if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 						// Argument is already a reference - just pass it through
 						// References are stored as pointers (64 bits), not the pointee size
-					irOperands.emplace_back(type_node.type());
-					irOperands.emplace_back(64);	 // Pointer size, not pointee size
-					irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
+					appendArgumentValue(
+						type_node.type_index().withCategory(type_node.type()),
+						SizeInBits{POINTER_SIZE_BITS},
+						IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 				} else {
 						// Argument is a value - take its address
 					TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 						// Pass the address
-					irOperands.emplace_back(type_node.type());
-					irOperands.emplace_back(64);	 // Pointer size
-					irOperands.emplace_back(addr_var);
+					appendArgumentValueWithReference(
+						type_node.type_index().withCategory(type_node.type()),
+						SizeInBits{POINTER_SIZE_BITS},
+						IrValue(addr_var),
+						ReferenceQualifier::LValueReference);
 				}
 			} else if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 					// Argument is a reference but parameter expects a value - dereference
@@ -1657,16 +1674,24 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 													StringTable::getOrInternStringHandle(identifier.name()));
 
 					// Pass the dereferenced value
-				irOperands.emplace_back(type_node.type());
-				irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
-				irOperands.emplace_back(deref_var);
+				appendArgumentValue(
+					type_node.type_index().withCategory(type_node.type()),
+					SizeInBits{static_cast<int>(type_node.size_in_bits())},
+					IrValue(deref_var));
 			} else {
 					// Regular variable - pass by value
 					// For pointer types, size is always 64 bits regardless of pointee type
 				int arg_size = (type_node.pointer_depth() > 0) ? 64 : static_cast<int>(type_node.size_in_bits());
-				irOperands.emplace_back(type_node.type());
-				irOperands.emplace_back(arg_size);
-				irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
+				if (type_node.pointer_depth() > 0) {
+					appendPointerArgumentValue(
+						type_node.type_index().withCategory(type_node.type()),
+						IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+				} else {
+					appendArgumentValue(
+						type_node.type_index().withCategory(type_node.type()),
+						SizeInBits{arg_size},
+						IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+				}
 			}
 		} else {
 				// Not an identifier - could be a literal, expression result, etc.
@@ -1709,9 +1734,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
 
 						// Pass the address
-					irOperands.emplace_back(literal_type);
-					irOperands.emplace_back(64);	 // Pointer size
-					irOperands.emplace_back(addr_var);
+					appendArgumentValueWithReference(
+						argumentIrOperands.type_index.withCategory(literal_type),
+						SizeInBits{POINTER_SIZE_BITS},
+						IrValue(addr_var),
+						ReferenceQualifier::LValueReference);
 				} else {
 						// Not a literal (expression result in a TempVar) - check if it needs address taken
 					if (std::holds_alternative<TempVar>(argumentIrOperands.value)) {
@@ -1748,9 +1775,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 								// Need to take address of the value
 							TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 
-							irOperands.emplace_back(expr_type);
-							irOperands.emplace_back(64);	 // Pointer size
-							irOperands.emplace_back(addr_var);
+							appendArgumentValueWithReference(
+								argumentIrOperands.type_index.withCategory(expr_type),
+								SizeInBits{POINTER_SIZE_BITS},
+								IrValue(addr_var),
+								ReferenceQualifier::LValueReference);
 						}
 					} else {
 							// Fallback - just pass through directly
@@ -1842,11 +1871,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	}
 	call_op.fixed_argument_count = param_nodes.size() + (call_op.is_member_function ? 1u : 0u);
 
-		// Convert operands to TypedValue arguments (skip first 2: result and function_name)
-		// Operands come in fixed groups of 3: [type, size, value].
 	size_t arg_idx = 0;
-	for (size_t i = 2; i + 2 < irOperands.size(); i += 3) {
-		TypedValue arg = toTypedValue(std::span<const IrOperand>(&irOperands[i], 3));
+	for (TypedValue arg : call_arguments) {
 		const TypeSpecifierNode* param_type_spec = nullptr;
 		if (matched_func_decl && arg_idx < param_nodes.size() && param_nodes[arg_idx].is<DeclarationNode>()) {
 			param_type_spec = &param_nodes[arg_idx].as<DeclarationNode>().type_specifier_node();
@@ -1864,18 +1890,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 		if (param_type_spec) {
-				// For regular call arguments, only apply metadata that the argument
-				// evaluation couldn't know (pointer_depth, cv_qualifier, ref_qualifier).
-				// Do NOT overwrite type/size_in_bits — the argument's evaluated type
-				// must be preserved so the backend emits the correct-width MOV.
-				// (e.g., a short arg must stay 16-bit even if the param is int;
-				// the backend handles the implicit promotion.)
-				// applyTypeNodeMetadata is still used for default arguments where the
-				// parameter type IS the correct type.
-			arg.pointer_depth = PointerDepth{static_cast<int>(param_type_spec->pointer_depth())};
-			if (param_type_spec->type_index().is_valid()) {
-				arg.type_index = param_type_spec->type_index();
-			}
+			// Preserve the lowered argument's type identity and pointer depth.
+			// They describe the runtime value being passed; copying them from the
+			// parameter recreates the old flattened-operand ambiguity in a typed payload.
 			arg.cv_qualifier = param_type_spec->cv_qualifier();
 			if (param_type_spec->is_rvalue_reference()) {
 				arg.ref_qualifier = ReferenceQualifier::RValueReference;
