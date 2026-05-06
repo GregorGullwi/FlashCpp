@@ -46,6 +46,27 @@ namespace {
 		.commit()));
 }
 
+bool typeSpecStillNeedsTemplateMaterialization(const TypeSpecifierNode& type_spec) {
+	if (type_spec.type_index().is_valid() &&
+		typeIndexContainsDependentPlaceholder(type_spec.type_index(), AstToIr::kMaxPlaceholderRecursionDepth)) {
+		return true;
+	}
+	return false;
+}
+
+bool functionSignatureStillNeedsTemplateMaterialization(const FunctionDeclarationNode& func_decl) {
+	if (typeSpecStillNeedsTemplateMaterialization(func_decl.decl_node().type_specifier_node())) {
+		return true;
+	}
+	for (const auto& param : func_decl.parameter_nodes()) {
+		if (param.is<DeclarationNode>() &&
+			typeSpecStillNeedsTemplateMaterialization(param.as<DeclarationNode>().type_specifier_node())) {
+			return true;
+		}
+	}
+	return false;
+}
+
 } // namespace
 
 void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
@@ -1184,15 +1205,6 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 		return false;
 	}
 
-		// Skip structs with incomplete instantiation - they have unresolved template params
-	{
-		auto incomplete_it = getTypesByNameMap().find(node.name());
-		if (incomplete_it != getTypesByNameMap().end() && incomplete_it->second->is_incomplete_instantiation_) {
-			FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(node.name()), "' (incomplete instantiation)");
-			return false;
-		}
-	}
-
 	StructCodegenFrame frame;
 	frame.saved_enclosing_function = current_function_name_;
 	frame.saved_enclosing_function_mangled = current_function_mangled_name_;
@@ -1248,6 +1260,25 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 		}
 	}
 
+	// After qualified lookup/disambiguation completes, check if the resolved type is incomplete or dependent.
+	// Use the resolved current_struct_name_ instead of node.name() to avoid wrongly skipping
+	// valid namespaced/nested structs before disambiguation.
+	{
+		auto resolved_type_it = getTypesByNameMap().find(current_struct_name_);
+		if (resolved_type_it != getTypesByNameMap().end() &&
+			(resolved_type_it->second->is_incomplete_instantiation_ ||
+			 typeIndexContainsDependentPlaceholder(resolved_type_it->second->registeredTypeIndex(), kMaxPlaceholderRecursionDepth))) {
+			FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(current_struct_name_),
+					  "' (incomplete instantiation after qualified lookup)");
+			// Restore frame before early return to keep struct_codegen_frame_stack_ balanced
+			struct_codegen_frame_stack_.pop_back();
+			current_function_name_ = frame.saved_enclosing_function;
+			current_function_mangled_name_ = frame.saved_enclosing_function_mangled;
+			current_struct_name_ = frame.saved_struct_name;
+			return false;
+		}
+	}
+
 	// For local structs, collect member functions for deferred generation
 	// For global structs, visit them immediately
 	if (is_local_struct) {
@@ -1282,6 +1313,12 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 						}
 					}
 					if (!fn_has_auto) {
+						if (functionSignatureStillNeedsTemplateMaterialization(fn)) {
+							FLASH_LOG(Codegen, Debug,
+									  "Skipping member function with still-dependent signature in struct '",
+									  struct_name, "': ", fn.decl_node().identifier_token().value());
+							continue;
+						}
 						if (!fn.is_materialized() && !fn.is_implicit() &&
 							current_struct_name_.isValid() && member_name.isValid() &&
 							LazyMemberInstantiationRegistry::getInstance().needsInstantiation(

@@ -1762,7 +1762,24 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
 											member_value = *d_val;
 										} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
-											member_value = *string;
+											auto symbol = lookupSymbol(*string);
+											const DeclarationNode* source_decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
+											if (member.pointer_depth > 0 && source_decl && source_decl->is_array()) {
+												const TypeSpecifierNode& source_type = source_decl->type_specifier_node();
+												member_value = emitArrayToPointerDecay(
+													source_type,
+													IrValue(*string),
+													decl.identifier_token());
+											} else if (source_decl && source_decl->is_array() &&
+													   member.pointer_depth <= 0 && !member.is_reference() && !member.is_rvalue_reference()) {
+												throw CompileError(std::string(StringBuilder()
+																		.append("Invalid initializer for non-pointer member '")
+																		.append(decl.identifier_token().value())
+																		.append("': cannot assign array to non-pointer type")
+																		.commit()));
+											} else {
+												member_value = *string;
+											}
 										} else {
 											member_value = 0ULL;	 // fallback
 										}

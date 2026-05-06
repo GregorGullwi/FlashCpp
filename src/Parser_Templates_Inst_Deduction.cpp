@@ -1884,6 +1884,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// During template parsing, trailing return types like decltype(u->foo(), void(), true)
 		// may resolve to concrete types (e.g., bool) even when they contain dependent expressions.
 		// The re-parse with concrete template arguments will fail if substitution is invalid.
+		std::optional<TypeSpecifierNode> reparsed_trailing_return_type;
 		if (func_decl.has_trailing_return_type_position()) {
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
@@ -1912,10 +1913,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			restore_lexer_position_only(sfinae_pos);
 			// guard_ptb, guard_param_names and guard_sfinae_map restore their fields automatically
 
-			if (return_type_result.is_error() || !return_type_result.node().has_value()) {
+			if (return_type_result.is_error() ||
+				!return_type_result.node().has_value() ||
+				!return_type_result.node()->is<TypeSpecifierNode>()) {
 				FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: trailing return type re-parse failed for '{}', trying next overload", template_name);
 				continue;  // SFINAE: this overload's return type failed, try next
 			}
+			reparsed_trailing_return_type = return_type_result.node()->as<TypeSpecifierNode>();
 		}
 
 		// Instantiate the template (same logic as try_instantiate_template)
@@ -2124,32 +2128,43 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 		// Substitute template parameters in the return type
 		const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
-		TypeIndex substituted_return_type_index = substitute_template_parameter(
-			orig_return_type, template_params, template_args);
+		ASTNode return_type;
+		if (reparsed_trailing_return_type.has_value()) {
+			TypeSpecifierNode reparsed_return_type = *reparsed_trailing_return_type;
+			apply_resolved_alias_metadata_local(reparsed_return_type);
+			const int resolved_size_bits = getTypeSpecSizeBits(reparsed_return_type);
+			if (resolved_size_bits > 0) {
+				reparsed_return_type.set_size_in_bits(resolved_size_bits);
+			}
+			return_type = emplace_node<TypeSpecifierNode>(reparsed_return_type);
+		} else {
+			TypeIndex substituted_return_type_index = substitute_template_parameter(
+				orig_return_type, template_params, template_args);
 
-		// Create return type with substituted type, preserving qualifiers
-		ASTNode return_type = emplace_node<TypeSpecifierNode>(
-			substituted_return_type_index,
-			get_type_size_bits(substituted_return_type_index.category()),
-			orig_return_type.token(),
-			orig_return_type.cv_qualifier(),
-			ReferenceQualifier::None);
+			// Create return type with substituted type, preserving qualifiers
+			return_type = emplace_node<TypeSpecifierNode>(
+				substituted_return_type_index,
+				get_type_size_bits(substituted_return_type_index.category()),
+				orig_return_type.token(),
+				orig_return_type.cv_qualifier(),
+				ReferenceQualifier::None);
 
-		// Apply pointer levels and references from original type
-		TypeSpecifierNode& return_type_ref = return_type.as<TypeSpecifierNode>();
-		return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
-		applyTemplateArgIndirection(return_type_ref, orig_return_type, template_params, template_args,
-									/*propagate_reference_qualifier=*/true);
-		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
-			return_type_ref.add_pointer_level(ptr_level.cv_qualifier);
+			// Apply pointer levels and references from original type
+			TypeSpecifierNode& return_type_ref = return_type.as<TypeSpecifierNode>();
+			return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
+			applyTemplateArgIndirection(return_type_ref, orig_return_type, template_params, template_args,
+										/*propagate_reference_qualifier=*/true);
+			for (const auto& ptr_level : orig_return_type.pointer_levels()) {
+				return_type_ref.add_pointer_level(ptr_level.cv_qualifier);
+			}
+			propagateFunctionSignatureFromTemplateArg(
+				return_type_ref,
+				orig_return_type,
+				substituted_return_type_index,
+				template_params,
+				template_args);
+			apply_resolved_alias_metadata_local(return_type_ref);
 		}
-		propagateFunctionSignatureFromTemplateArg(
-			return_type_ref,
-			orig_return_type,
-			substituted_return_type_index,
-			template_params,
-			template_args);
-		apply_resolved_alias_metadata_local(return_type_ref);
 
 		auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 		auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());

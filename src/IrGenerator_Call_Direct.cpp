@@ -1779,10 +1779,19 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		best_return_type = &decl_node.type_specifier_node();
 	}
 	const auto& return_type = *best_return_type;
+
+	// Compute effective return type early to ensure CallOp creation and ABI metadata
+	// use the same resolved type that buildCallReturnResult will eventually use.
+	std::optional<TypeSpecifierNode> expression_return_type = getCallExpressionReturnType(ASTNode(&callExprNode));
+	const TypeSpecifierNode& effective_return_type =
+		expression_return_type.has_value() && shouldPreferExpressionReturnType(*expression_return_type, return_type)
+			? *expression_return_type
+			: return_type;
+
 	CallOp call_op = createCallOp(
 		ret_var,
 		StringTable::getOrInternStringHandle(function_name),
-		return_type,
+		effective_return_type,
 		false,
 		false);
 
@@ -1813,18 +1822,18 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
 		// Exclude references - they return a pointer, not a struct by value
-	bool returns_struct = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
-	bool needs_hidden_ret = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), return_type.size_in_bits(), context_->isLLP64());
+	bool returns_struct = returnsStructByValue(effective_return_type.type(), effective_return_type.pointer_depth(), effective_return_type.is_reference());
+	bool needs_hidden_ret = needsHiddenReturnParam(effective_return_type.type(), effective_return_type.pointer_depth(), effective_return_type.is_reference(), effective_return_type.size_in_bits(), context_->isLLP64());
 	if (needs_hidden_ret) {
 		call_op.return_slot = ret_var;  // The result temp var serves as the return slot
 
 		FLASH_LOG_FORMAT(Codegen, Debug,
 						 "Function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
-						 function_name, return_type.size_in_bits(), ret_var.var_number);
+						 function_name, effective_return_type.size_in_bits(), ret_var.var_number);
 	} else if (returns_struct) {
 		FLASH_LOG_FORMAT(Codegen, Debug,
 						 "Function call {} returns small struct by value (size={} bits) - will return in RAX",
-						 function_name, return_type.size_in_bits());
+						 function_name, effective_return_type.size_in_bits());
 	}
 
 		// Set is_variadic based on function declaration (if available)
@@ -1891,5 +1900,5 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// Add the function call instruction with typed payload
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), callExprNode.called_from()));
 
-	return buildCallReturnResult(return_type, ret_var, context, callExprNode.called_from());
+	return buildCallReturnResult(effective_return_type, ret_var, context, callExprNode.called_from());
 }

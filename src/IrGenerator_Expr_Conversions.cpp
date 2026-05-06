@@ -2616,6 +2616,29 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 					arg_result = generateTypeConversion(arg_result, ctor_from_t, ctor_first_param_type, source_token);
 				}
 				sema_applied = true;
+			} else if (ci.cast_kind == StandardConversionKind::ArrayToPointer) {
+				// Array-to-pointer decay: emit AddressOf for any addressable array expression.
+				const TypeCategory elem_type = arg_result.typeEnum();
+				const int elem_size = get_type_size_bits(elem_type);
+				const IrValue source = std::visit([](const auto& v) -> IrValue {
+					using T = std::decay_t<decltype(v)>;
+					if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+								  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+						return IrValue(v);
+					} else if constexpr (std::is_same_v<T, int>) {
+						return IrValue(static_cast<unsigned long long>(v));
+					} else {
+						return IrValue(0ULL);
+					}
+				}, arg_result.value);
+				if (elem_size <= 0) {
+					throw InternalError(std::string("Cannot resolve element size for array-to-pointer decay of type ") + std::string(getTypeName(elem_type)));
+				}
+				TempVar addr_var = emitAddressOf(elem_type, elem_size, source, source_token);
+				arg_result.value = addr_var;
+				arg_result.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+				arg_result.pointer_depth = PointerDepth{arg_result.pointer_depth.value + 1};
+				sema_applied = true;
 			} else if (!is_struct_type(from_t) && !is_struct_type(to_t)) {
 					// Sema may annotate as TypeCategory::Enum while codegen resolves enum
 					// constants to their underlying type; use actual runtime type.

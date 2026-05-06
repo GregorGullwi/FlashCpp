@@ -229,6 +229,31 @@ static int resolveCodegenSizeBits(const TypeSpecifierNode& type_node, std::strin
 		return resolved_size;
 	}
 
+	if (type_node.type_index().is_valid()) {
+		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_node.type_index())) {
+			const int struct_size_bits = static_cast<int>(struct_info->sizeInBits().value);
+			if (struct_size_bits > 0) {
+				return struct_size_bits;
+			}
+		}
+		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(type_node.type_index());
+		if (alias_info.type_index.is_valid()) {
+			if (const StructTypeInfo* alias_struct_info = tryGetStructTypeInfo(alias_info.type_index)) {
+				const int struct_size_bits = static_cast<int>(alias_struct_info->sizeInBits().value);
+				if (struct_size_bits > 0) {
+					return struct_size_bits;
+				}
+				// Incomplete/unspecialized alias type detected
+				throw CompileError(std::string(StringBuilder()
+											.append("Incomplete or unspecialized alias type (type_index=")
+											.append(static_cast<int64_t>(alias_info.type_index.index()))
+											.append(") in ")
+											.append(context)
+											.commit()));
+			}
+		}
+	}
+
 	throw InternalError(std::string(StringBuilder()
 										.append("Type with no runtime size reached codegen in ")
 										.append(context)

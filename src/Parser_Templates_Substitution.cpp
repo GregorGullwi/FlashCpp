@@ -614,6 +614,7 @@ ASTNode Parser::substituteTemplateParameters(
 			ASTNode substituted_left = substituteTemplateParameters(bin_op.get_lhs(), template_params, template_args);
 			ASTNode substituted_right = substituteTemplateParameters(bin_op.get_rhs(), template_params, template_args);
 			BinaryOperatorNode substituted_binop(bin_op.get_token(), substituted_left, substituted_right);
+			annotateConcreteBinaryOperatorOverload(substituted_binop);
 			return emplace_node<ExpressionNode>(substituted_binop);
 		} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 			return substituteWithExpressionSubstitutor(node);
@@ -1214,7 +1215,9 @@ ASTNode Parser::substituteTemplateParameters(
 		ASTNode substituted_left = substituteTemplateParameters(bin_op.get_lhs(), template_params, template_args);
 		ASTNode substituted_right = substituteTemplateParameters(bin_op.get_rhs(), template_params, template_args);
 
-		return emplace_node<BinaryOperatorNode>(bin_op.get_token(), substituted_left, substituted_right);
+		BinaryOperatorNode substituted_binop(bin_op.get_token(), substituted_left, substituted_right);
+		annotateConcreteBinaryOperatorOverload(substituted_binop);
+		return emplace_node<BinaryOperatorNode>(substituted_binop);
 
 	} else if (node.is<PointerToMemberAccessNode>()) {
 		const PointerToMemberAccessNode& member_access = node.as<PointerToMemberAccessNode>();
@@ -1331,6 +1334,7 @@ ASTNode Parser::substituteTemplateParameters(
 			type_spec.category() == TypeCategory::TypeAlias ||
 			type_spec.category() == TypeCategory::Template ||
 			type_spec.category() == TypeCategory::Auto) {
+			const TemplateTypeArg* matched_direct_template_arg = nullptr;
 			bool exact_template_param_substituted = false;
 			std::optional<ASTNode> exact_template_param_node;
 			std::string_view direct_type_name = type_spec.token().value();
@@ -1349,6 +1353,7 @@ ASTNode Parser::substituteTemplateParameters(
 						!template_arg.isTypeArgument()) {
 						return;
 					}
+					matched_direct_template_arg = &template_arg;
 					exact_template_param_node = makeTypeSpecifierFromTemplateArg(template_arg);
 					exact_template_param_substituted = true;
 				});
@@ -1383,6 +1388,25 @@ ASTNode Parser::substituteTemplateParameters(
 					type_spec.reference_qualifier());
 				substituted_spec.copy_indirection_from(type_spec);
 				substituted_spec.set_reference_qualifier(type_spec.reference_qualifier());
+				if (matched_direct_template_arg != nullptr) {
+					for (size_t i = 0; i < matched_direct_template_arg->pointer_depth; ++i) {
+						CVQualifier cv = i < matched_direct_template_arg->pointer_cv_qualifiers.size()
+							? matched_direct_template_arg->pointer_cv_qualifiers[i]
+							: CVQualifier::None;
+						substituted_spec.add_pointer_level(cv);
+					}
+					substituted_spec.set_reference_qualifier(collapseReferenceQualifiers(
+						matched_direct_template_arg->ref_qualifier,
+						substituted_spec.reference_qualifier()));
+					if (!substituted_spec.has_function_signature() &&
+						matched_direct_template_arg->function_signature.has_value()) {
+						substituted_spec.set_function_signature(*matched_direct_template_arg->function_signature);
+					}
+					const int resolved_size_bits = getTypeSpecSizeBits(substituted_spec);
+					if (resolved_size_bits > 0) {
+						substituted_spec.set_size_in_bits(resolved_size_bits);
+					}
+				}
 				return emplace_node<TypeSpecifierNode>(substituted_spec);
 			}
 		}

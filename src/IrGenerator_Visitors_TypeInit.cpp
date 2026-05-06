@@ -4,6 +4,58 @@
 #include "ReachableStructWalker.h"
 #include "RebindStaticMemberAst.h"
 
+// ============================================================================
+// Shared helpers: array-to-pointer decay
+// ============================================================================
+
+/*static*/
+int AstToIr::resolveArrayElementSizeBits(const TypeSpecifierNode& elem_type_spec) {
+	int bits = get_type_size_bits(elem_type_spec.type());
+	if (bits <= 0) {
+		bits = static_cast<int>(elem_type_spec.size_in_bits());
+	}
+	if (bits <= 0) {
+		throw InternalError("Failed to resolve array element size for decay");
+	}
+	return bits;
+}
+
+TempVar AstToIr::emitArrayToPointerDecay(const TypeSpecifierNode& elem_type_spec, IrValue source, Token token) {
+	return emitAddressOf(elem_type_spec.type(), resolveArrayElementSizeBits(elem_type_spec), source, token);
+}
+
+// ============================================================================
+// Shared helpers: call expression return-type resolution
+// ============================================================================
+
+std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTNode& callNode) const {
+	std::optional<TypeSpecifierNode> result;
+	if (sema_) {
+		result = sema_->getExpressionType(callNode);
+	}
+	if ((!result.has_value() || isPlaceholderAutoType(result->type())) && parser_) {
+		result = parser_->get_expression_type(callNode);
+	}
+	return result;
+}
+
+/*static*/
+bool AstToIr::shouldPreferExpressionReturnType(
+	const TypeSpecifierNode& expr_type,
+	const TypeSpecifierNode& decl_type) {
+	if (isPlaceholderAutoType(expr_type.type())) {
+		return false;
+	}
+	if (decl_type.pointer_depth() > expr_type.pointer_depth()) {
+		return false;
+	}
+	if ((decl_type.is_reference() || decl_type.is_rvalue_reference()) &&
+		!expr_type.is_reference() && !expr_type.is_rvalue_reference()) {
+		return false;
+	}
+	return true;
+}
+
 AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
 	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
 	// Generate static member declarations for template classes before processing AST
@@ -249,6 +301,14 @@ void AstToIr::generateCollectedLocalStructMembers() {
 		StringHandle saved_function = current_function_name_;
 		current_struct_name_ = member_info.struct_name;
 		current_function_name_ = member_info.enclosing_function_name;
+
+		auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+		if (current_struct_it != getTypesByNameMap().end() &&
+			(current_struct_it->second->is_incomplete_instantiation_ ||
+			 typeIndexContainsDependentPlaceholder(current_struct_it->second->registeredTypeIndex(), kMaxPlaceholderRecursionDepth))) {
+			current_function_name_ = saved_function;
+			continue;
+		}
 
 		// Visit the member function
 		visit(member_info.member_function_node);
@@ -2348,14 +2408,39 @@ void AstToIr::generateNestedMemberStores(
 			if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
 				ExprResult init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
 				IrValue member_value = 0ULL;
-				if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
-					member_value = *temp_var;
-				} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
-					member_value = *ull_val;
-				} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
-					member_value = *d_val;
-				} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
-					member_value = *string;
+				bool member_value_overridden = false;
+				if (member.pointer_depth > 0 &&
+					std::holds_alternative<IdentifierNode>(nested_initializers[0].as<ExpressionNode>())) {
+					const IdentifierNode& ident = std::get<IdentifierNode>(nested_initializers[0].as<ExpressionNode>());
+					auto symbol = lookupSymbol(ident.name());
+					const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
+					if (decl && decl->is_array()) {
+						const TypeSpecifierNode& type_node = decl->type_specifier_node();
+						member_value = emitArrayToPointerDecay(
+							type_node,
+							IrValue(StringTable::getOrInternStringHandle(ident.name())),
+							token);
+						member_value_overridden = true;
+					}
+				}
+				if (!member_value_overridden) {
+					if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+						member_value = *temp_var;
+					} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+						member_value = *ull_val;
+					} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+						member_value = *d_val;
+					} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+						auto symbol = lookupSymbol(*string);
+						const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
+						if (member.pointer_depth > 0 &&
+							decl && decl->is_array()) {
+							const TypeSpecifierNode& type_node = decl->type_specifier_node();
+							member_value = emitArrayToPointerDecay(type_node, IrValue(*string), token);
+						} else {
+							member_value = *string;
+						}
+					}
 				}
 
 				MemberStoreOp member_store;
@@ -2377,14 +2462,39 @@ void AstToIr::generateNestedMemberStores(
 			// Direct expression initializer
 			ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 			IrValue member_value = 0ULL;
-			if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
-				member_value = *temp_var;
-			} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
-				member_value = *ull_val;
-			} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
-				member_value = *d_val;
-			} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
-				member_value = *string;
+			bool member_value_overridden = false;
+			if (member.pointer_depth > 0 &&
+				std::holds_alternative<IdentifierNode>(init_expr.as<ExpressionNode>())) {
+				const IdentifierNode& ident = std::get<IdentifierNode>(init_expr.as<ExpressionNode>());
+				auto symbol = lookupSymbol(ident.name());
+				const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
+				if (decl && decl->is_array()) {
+					const TypeSpecifierNode& type_node = decl->type_specifier_node();
+					member_value = emitArrayToPointerDecay(
+						type_node,
+						IrValue(StringTable::getOrInternStringHandle(ident.name())),
+						token);
+					member_value_overridden = true;
+				}
+			}
+			if (!member_value_overridden) {
+				if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+					member_value = *temp_var;
+				} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+					member_value = *ull_val;
+				} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+					member_value = *d_val;
+				} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+					auto symbol = lookupSymbol(*string);
+					const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
+					if (member.pointer_depth > 0 &&
+						decl && decl->is_array()) {
+						const TypeSpecifierNode& type_node = decl->type_specifier_node();
+						member_value = emitArrayToPointerDecay(type_node, IrValue(*string), token);
+					} else {
+						member_value = *string;
+					}
+				}
 			}
 
 			MemberStoreOp member_store;
