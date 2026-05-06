@@ -4035,6 +4035,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							template_args_for_pattern);
 						substituted_return_node.is<TypeSpecifierNode>()) {
 						substituted_return_type = substituted_return_node.as<TypeSpecifierNode>();
+						substituted_return_type.set_type_index(return_type_index);
+						for (const auto& ptr_level : orig_return_type.pointer_levels()) {
+							substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+						}
+						substituted_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
+						applyBoundTemplateArgMetadata(
+							substituted_return_type,
+							orig_return_type,
+							template_params,
+							template_args_for_pattern);
 					} else {
 						substituted_return_type.set_type_index(return_type_index);
 						for (const auto& ptr_level : orig_return_type.pointer_levels()) {
