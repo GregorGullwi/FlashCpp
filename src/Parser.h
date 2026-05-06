@@ -617,7 +617,7 @@ private:
 	// Each save gets a unique handle from a static incrementing counter
 	using SaveHandle = size_t;
 
-	#if WITH_PARSER_RUNTIME_STATS
+#if WITH_PARSER_RUNTIME_STATS
 	struct RuntimeStats {
 		size_t tokens_advanced = 0;
 		size_t lookahead_peeks = 0;
@@ -638,7 +638,7 @@ private:
 		int64_t restore_lexer_only_time_us = 0;
 		int64_t discard_time_us = 0;
 	};
-	#endif
+#endif
 
 	// Delayed function body parsing for inline member functions
 	struct DelayedFunctionBody {
@@ -1054,10 +1054,10 @@ private:
 	// speculative parser save/restore hot paths.
 	std::vector<std::optional<SavedToken>> saved_tokens_;
 	size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
-	#if WITH_PARSER_RUNTIME_STATS
+#if WITH_PARSER_RUNTIME_STATS
 	bool runtime_stats_enabled_ = false;
 	RuntimeStats runtime_stats_;
-	#endif
+#endif
 
 	Token consume_token();
 
