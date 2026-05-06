@@ -442,6 +442,8 @@ public:
 	}
 
 	const auto& get_nodes() { return ast_nodes_; }
+	void setRuntimeStatsEnabled(bool enabled);
+	void printRuntimeStats() const;
 
 	// Returns true if the node at `index` in `get_nodes()` was added via the
 	// late-materialization helpers (`registerLateMaterializedTopLevelNode*`),
@@ -609,6 +611,27 @@ private:
 	// Handle-based save/restore to avoid cursor position collisions
 	// Each save gets a unique handle from a static incrementing counter
 	using SaveHandle = size_t;
+
+	struct RuntimeStats {
+		size_t tokens_advanced = 0;
+		size_t lookahead_peeks = 0;
+		size_t lookahead_tokens_consumed = 0;
+		size_t save_count = 0;
+		size_t restore_count = 0;
+		size_t restore_lexer_only_count = 0;
+		size_t discard_count = 0;
+		size_t missing_restore_count = 0;
+		size_t active_saves = 0;
+		size_t peak_active_saves = 0;
+		size_t saved_token_slots_peak = 0;
+		size_t restore_ast_nodes_scanned = 0;
+		size_t restore_ast_nodes_preserved = 0;
+		size_t restore_ast_nodes_discarded = 0;
+		int64_t save_time_us = 0;
+		int64_t restore_time_us = 0;
+		int64_t restore_lexer_only_time_us = 0;
+		int64_t discard_time_us = 0;
+	};
 
 	// Delayed function body parsing for inline member functions
 	struct DelayedFunctionBody {
@@ -1019,8 +1042,10 @@ private:
 		TokenPosition lexer_position_;  // Store the lexer position with each save
 	};
 
-	std::unordered_map<SaveHandle, SavedToken> saved_tokens_;
+	std::vector<std::optional<SavedToken>> saved_tokens_;
 	size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
+	bool runtime_stats_enabled_ = false;
+	RuntimeStats runtime_stats_;
 
 	Token consume_token();
 

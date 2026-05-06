@@ -394,6 +394,7 @@ int main_impl(int argc, char* argv[]) {
 		lexer_ptr->setMsvcSehKeywords(context.isMsvcMode());
 		// Allocate Parser on the heap to reduce stack usage - Parser has many large member variables
 		parser = std::make_unique<Parser>(*lexer_ptr, context);
+		parser->setRuntimeStatsEnabled(show_perf_stats);
 	}
 	Lexer& lexer = *lexer_ptr;
 	{
@@ -422,6 +423,9 @@ int main_impl(int argc, char* argv[]) {
 			std::cerr << error_msg << std::endl;
 			return 1;
 		}
+	}
+	if (show_perf_stats) {
+		parser->printRuntimeStats();
 	}
 
 	const auto& ast = parser->get_nodes();
