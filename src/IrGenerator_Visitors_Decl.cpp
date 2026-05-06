@@ -43,7 +43,7 @@ namespace {
 		.append(" resolved the wrong constructor target for '")
 		.append(StringTable::getStringView(struct_name))
 		.append("'")
-			.commit()));
+		.commit()));
 }
 
 bool typeSpecStillNeedsTemplateMaterialization(const TypeSpecifierNode& type_spec) {
