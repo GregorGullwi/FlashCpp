@@ -1,5 +1,9 @@
 #include "IrType.h"
 
+#include "CompileError.h"
+
+#include <string>
+
 IrType toIrType(TypeCategory cat) {
 	switch (cat) {
 		// All integer-like types map to IrType::Integer
@@ -61,15 +65,13 @@ IrType toIrType(TypeCategory cat) {
 	case TypeCategory::Void:
 		return IrType::Void;
 
-		// These must not reach IR — they must be resolved before codegen.
-		// During the transition period, we still tolerate some semantic-only
-		// forms to preserve existing runtime behavior until their lowering moves
-		// earlier in the pipeline (ideally a semantic pass, not parser/codegen).
+		// Auto still appears on a few parser-created internal temporaries; keep
+		// the historical lowering until those call sites carry concrete type info.
 	case TypeCategory::Auto:
-	case TypeCategory::DeclTypeAuto:
 		return IrType::Integer;
+	case TypeCategory::DeclTypeAuto:
 	case TypeCategory::Template:
-		return IrType::Void;
+		throw InternalError("Unresolved semantic type reached IR type conversion: category " + std::to_string(static_cast<int>(cat)));
 	case TypeCategory::Function:
 		return IrType::FunctionPointer;
 	case TypeCategory::Invalid:
