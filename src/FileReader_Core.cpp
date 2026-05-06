@@ -316,19 +316,18 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			PreprocessTimer timer(PreprocessTimingCategory::comment);
 			// Fast path: if no '/' in line, no block comments or line comments possible.
 			if (line.find('/') != std::string::npos) {
-			// Strip /* ... */ block comments in a single left-to-right pass,
-			// respecting string and char literals.  Handles multiple block
-			// comments on one line and unterminated block comments that span
-			// to subsequent lines.
-			//
-			// IMPORTANT: We intentionally do NOT strip // line comments here.
-			// Per the C++ standard, line splicing (phase 2: backslash-newline
-			// continuation) must happen before comment removal (phase 3).
-			// The #directive continuation handler below (lines with trailing \)
-			// needs to see the full line including any // and trailing \.
-			// The // comments are stripped later by stripLineComment() after
-			// line continuation has been processed.
-			{
+				// Strip /* ... */ block comments in a single left-to-right pass,
+				// respecting string and char literals.  Handles multiple block
+				// comments on one line and unterminated block comments that span
+				// to subsequent lines.
+				//
+				// IMPORTANT: We intentionally do NOT strip // line comments here.
+				// Per the C++ standard, line splicing (phase 2: backslash-newline
+				// continuation) must happen before comment removal (phase 3).
+				// The #directive continuation handler below (lines with trailing \)
+				// needs to see the full line including any // and trailing \.
+				// The // comments are stripped later by stripLineComment() after
+				// line continuation has been processed.
 				result.clear();
 				result.reserve(line.size());
 				bool l_in_string = false;
@@ -388,7 +387,6 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 				result.clear();  // Reuse buffer for next iteration
 				if (in_comment)
 					continue;
-			}
 			}  // end: if (line.find('/') != npos)
 		}
 
