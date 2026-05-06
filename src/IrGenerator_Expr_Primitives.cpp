@@ -221,22 +221,40 @@ static void requireResolvedCodegenType(TypeCategory type, std::string_view conte
 	}
 }
 
-static int resolveCodegenSizeBits(const TypeSpecifierNode& type_node, std::string_view context) {
-	requireResolvedCodegenType(type_node.type(), context);
+static TypeCategory resolveCodegenTypeCategory(const TypeSpecifierNode& type_node, std::string_view context) {
+	TypeCategory type = type_node.type();
+	if (!isPlaceholderAutoType(type)) {
+		return type;
+	}
+	if (type_node.type_index().is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index())) {
+			TypeCategory resolved_type = type_info->typeEnum();
+			if (!isPlaceholderAutoType(resolved_type) && resolved_type != TypeCategory::Invalid) {
+				return resolved_type;
+			}
+		}
+	}
+	requireResolvedCodegenType(type, context);
+	return type;
+}
 
-	const int resolved_size = getTypeSpecSizeBits(type_node);
+static int resolveCodegenSizeBits(const TypeSpecifierNode& type_node, std::string_view context) {
+	TypeSpecifierNode resolved_type_node = type_node;
+	resolved_type_node.set_category(resolveCodegenTypeCategory(type_node, context));
+
+	const int resolved_size = getTypeSpecSizeBits(resolved_type_node);
 	if (resolved_size != 0) {
 		return resolved_size;
 	}
 
-	if (type_node.type_index().is_valid()) {
-		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_node.type_index())) {
+	if (resolved_type_node.type_index().is_valid()) {
+		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(resolved_type_node.type_index())) {
 			const int struct_size_bits = static_cast<int>(struct_info->sizeInBits().value);
 			if (struct_size_bits > 0) {
 				return struct_size_bits;
 			}
 		}
-		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(type_node.type_index());
+		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(resolved_type_node.type_index());
 		if (alias_info.type_index.is_valid()) {
 			if (const StructTypeInfo* alias_struct_info = tryGetStructTypeInfo(alias_info.type_index)) {
 				const int struct_size_bits = static_cast<int>(alias_struct_info->sizeInBits().value);
@@ -258,9 +276,9 @@ static int resolveCodegenSizeBits(const TypeSpecifierNode& type_node, std::strin
 										.append("Type with no runtime size reached codegen in ")
 										.append(context)
 										.append(" (type=")
-										.append(static_cast<int64_t>(type_node.type()))
+										.append(static_cast<int64_t>(resolved_type_node.type()))
 										.append(", pointer_depth=")
-										.append(static_cast<int64_t>(type_node.pointer_depth()))
+										.append(static_cast<int64_t>(resolved_type_node.pointer_depth()))
 										.append(")")
 										.commit()));
 }
@@ -279,10 +297,11 @@ int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, boo
 			// Fallback: if size_bits is 0, calculate from type. Placeholder types must
 			// be resolved before codegen reaches identifier lowering.
 		if (size_bits == 0) {
-			requireResolvedCodegenType(type_node.type(), "identifier size calculation");
-			const int fallback_size = getTypeSpecSizeBits(type_node);
+			TypeSpecifierNode resolved_type_node = type_node;
+			resolved_type_node.set_category(resolveCodegenTypeCategory(type_node, "identifier size calculation"));
+			const int fallback_size = getTypeSpecSizeBits(resolved_type_node);
 			FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name,
-					  "' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation (fallback_size=",
+					  "' (type=", static_cast<int>(resolved_type_node.type()), ") - using fallback calculation (fallback_size=",
 					  fallback_size, ")");
 			size_bits = fallback_size;
 		}
@@ -308,6 +327,9 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			// keeps enum values identifiable after integral lowering and keeps enum pointers usable
 			// for still-unmigrated pointer-depth consumers.
 		TypeCategory result_type = type_node.type();
+		if (isPlaceholderAutoType(result_type)) {
+			result_type = resolveCodegenTypeCategory(type_node, "identifier lowering");
+		}
 		const bool is_enum_pointer = type_node.category() == TypeCategory::Enum && type_node.pointer_depth() > 0;
 		if (!is_enum_pointer && type_node.category() == TypeCategory::Enum) {
 			if (const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
@@ -1343,9 +1365,8 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 				// Regular local variable (not a reference) - return variable name.
 			int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
-			TypeCategory result_type = type_node.type();
+			TypeCategory result_type = resolveCodegenTypeCategory(type_node, "identifier lowering");
 			TypeIndex result_type_index = type_node.type_index();
-			requireResolvedCodegenType(result_type, "identifier lowering");
 
 				// For the 4th element:
 				// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)

@@ -987,7 +987,7 @@ inline TypeSpecifierNode resolveTypeInfoToTypeSpec(
 // dependent names from the provided template parameter/argument lists.
 // This is the single authoritative conversion point — all call sites that previously
 // had hand-rolled loops copying TemplateArgInfo fields should use this instead.
-// EvalFn: callable with signature std::optional<int64_t>(const ASTNode&, std::span<const ASTNode>, std::span<const TemplateTypeArg>)
+// EvalFn: callable with signature std::optional<TemplateTypeArg>(const ASTNode&, std::span<const ASTNode>, std::span<const TemplateTypeArg>)
 // Pass nullptr when dependent NTTP expression evaluation is not needed (e.g., non-Parser contexts).
 template <typename ParamContainer, typename ArgContainer, typename EvalFn>
 inline TemplateTypeArg materializeTemplateArg(
@@ -1013,6 +1013,7 @@ inline TemplateTypeArg materializeTemplateArg(
 	concrete_arg.dependent_expr = arg_info.dependent_expr;
 	concrete_arg.is_dependent = arg_info.dependent_name.isValid() || arg_info.dependent_expr.has_value();
 
+	bool substituted_dependent_name = false;
 	if (arg_info.dependent_name.isValid()) {
 		std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);
 		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
@@ -1027,10 +1028,12 @@ inline TemplateTypeArg materializeTemplateArg(
 				} else {
 					concrete_arg = substituted_arg;
 				}
+				substituted_dependent_name = true;
 				break;
 			}
 		}
-	} else if (arg_info.dependent_expr.has_value() && arg_info.is_value) {
+	}
+	if (!substituted_dependent_name && arg_info.dependent_expr.has_value() && arg_info.is_value) {
 		// For dependent NTTP expressions (e.g., sizeof(T)), evaluate with concrete args.
 		// Only attempted when a non-null evaluator callback is provided.
 		if constexpr (!std::is_null_pointer_v<std::decay_t<EvalFn>>) {
@@ -1041,7 +1044,7 @@ inline TemplateTypeArg materializeTemplateArg(
 						*arg_info.dependent_expr,
 						std::span<const ASTNode>(std::data(template_params), std::size(template_params)),
 						std::span<const TemplateTypeArg>(std::data(template_args), std::size(template_args)))) {
-					concrete_arg.value = *evaluated;
+					concrete_arg = *evaluated;
 					concrete_arg.is_dependent = false;
 					concrete_arg.dependent_expr = std::nullopt;
 				}
@@ -1060,7 +1063,7 @@ inline TemplateTypeArg materializeTemplateArg(
 						*arg_info.dependent_expr,
 						std::span<const ASTNode>(ast_template_params.data(), ast_template_params.size()),
 						std::span<const TemplateTypeArg>(std::data(template_args), std::size(template_args)))) {
-					concrete_arg.value = *evaluated;
+					concrete_arg = *evaluated;
 					concrete_arg.is_dependent = false;
 					concrete_arg.dependent_expr = std::nullopt;
 				}

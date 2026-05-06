@@ -1325,6 +1325,7 @@ private:
 		// template arguments (e.g. Ts→int) from pack call arguments (e.g. Box<int>) rather
 		// than deducing the outer type (Box<int>) directly.
 		TypeIndex function_pack_element_type_index;
+		std::unordered_set<StringHandle, StringHash, StringEqual> positional_deducible_param_names;
 	};
 	static void collectDependentTemplateParamNamesFromType(
 		TypeIndex pattern_type_index,
@@ -1906,8 +1907,8 @@ private:
 		const Token& sizeof_token);
 	// Evaluate a dependent NTTP expression (e.g., sizeof(T), alignof(T)) with concrete template arguments.
 	// Builds substitution maps, substitutes the expression, then evaluates via ConstExpr::Evaluator.
-	// Returns the evaluated integer value, or nullopt if evaluation fails.
-	std::optional<int64_t> evaluateDependentNTTPExpression(
+// Returns the evaluated value and its category, or nullopt if evaluation fails.
+	std::optional<TemplateTypeArg> evaluateDependentNTTPExpression(
 		const ASTNode& dependent_expr,
 		std::span<const ASTNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
@@ -2402,7 +2403,18 @@ private:	 // Resume private methods
 	ParseResult parse_seh_leave_statement();	 // Parse __leave statement
 
 	// Helper functions for auto type deduction
-	TypeCategory deduce_type_from_expression(const ASTNode& expr);
+	enum class ExpressionTypeDeductionStatus {
+		Deduced,
+		StillDependent,
+		Failed
+	};
+
+	struct ExpressionTypeDeductionResult {
+		ExpressionTypeDeductionStatus status = ExpressionTypeDeductionStatus::Failed;
+		TypeCategory type = TypeCategory::Invalid;
+	};
+
+	ExpressionTypeDeductionResult deduce_type_from_expression(const ASTNode& expr);
 	void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
 	std::optional<TypeSpecifierNode> deduce_lambda_return_type(const LambdaExpressionNode& lambda);
 	std::optional<TypeSpecifierNode> build_function_pointer_type_from_lambda(const LambdaExpressionNode& lambda);
@@ -2703,6 +2715,28 @@ private:	 // Resume private methods
 		const InlineVector<TemplateTypeArg, 4>& template_args);
 	TypeIndex substitute_template_parameter(
 		const TypeSpecifierNode& original_type,
+		const InlineVector<TemplateParameterNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args);
+
+	enum class DependentAliasResolutionStatus {
+		NotApplicable,
+		Resolved,
+		StillDependent
+	};
+	DependentAliasResolutionStatus resolveDependentMemberAlias(
+		ASTNode& type_node,
+		const InlineVector<ASTNode, 4>& template_params,
+		const std::vector<TemplateTypeArg>& template_args);
+	DependentAliasResolutionStatus resolveDependentMemberAlias(
+		ASTNode& type_node,
+		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args);
+	DependentAliasResolutionStatus resolveDependentMemberAlias(
+		ASTNode& type_node,
+		const InlineVector<TemplateParameterNode, 4>& template_params,
+		const std::vector<TemplateTypeArg>& template_args);
+	DependentAliasResolutionStatus resolveDependentMemberAlias(
+		ASTNode& type_node,
 		const InlineVector<TemplateParameterNode, 4>& template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args);
 

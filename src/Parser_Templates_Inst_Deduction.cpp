@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "AstTraversal.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -6,6 +7,47 @@
 #include "TypeTraitEvaluator.h"
 
 #include <numeric>
+
+template <typename ParamContainer>
+static bool defaultExpressionReferencesTemplateParams(
+	const ASTNode& expr,
+	const ParamContainer& template_params) {
+	InlineVector<StringHandle, 4> param_names;
+	for (const auto& param : template_params) {
+		param_names.push_back(param.nameHandle());
+	}
+
+	auto is_template_param = [&](StringHandle name) {
+		return std::find(param_names.begin(), param_names.end(), name) != param_names.end();
+	};
+
+	return AstTraversal::visitASTUntil(expr, [&](const ASTNode& current) {
+		if (current.is<TemplateParameterReferenceNode>()) {
+			return true;
+		}
+		if (current.is<IdentifierNode>()) {
+			return is_template_param(current.as<IdentifierNode>().nameHandle());
+		}
+		if (current.is<TypeSpecifierNode>()) {
+			return is_template_param(current.as<TypeSpecifierNode>().token().handle());
+		}
+		if (current.is<QualifiedIdentifierNode>()) {
+			const QualifiedIdentifierNode& qualified_identifier = current.as<QualifiedIdentifierNode>();
+			std::string_view namespace_name =
+				gNamespaceRegistry.getQualifiedName(qualified_identifier.namespace_handle());
+			if (namespace_name.empty()) {
+				return false;
+			}
+			auto type_it = getTypesByNameMap().find(
+				StringTable::getOrInternStringHandle(namespace_name));
+			return type_it != getTypesByNameMap().end() &&
+				   type_it->second != nullptr &&
+				   (type_it->second->isDependentPlaceholder() ||
+					type_it->second->is_incomplete_instantiation_);
+		}
+		return false;
+	});
+}
 
 template <typename ParamContainer, typename ArgContainer>
 static void propagateFunctionSignatureFromTemplateArg(
@@ -150,6 +192,274 @@ static void mergeAliasAndUseSiteTypeSpec(
 	if (use_site_spec.has_function_signature()) {
 		resolved_spec.set_function_signature(use_site_spec.function_signature());
 	}
+}
+
+Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
+	ASTNode& type_node,
+	const InlineVector<ASTNode, 4>& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	if (!type_node.is<TypeSpecifierNode>())
+		return DependentAliasResolutionStatus::NotApplicable;
+	auto& ts = type_node.as<TypeSpecifierNode>();
+	if (ts.category() != TypeCategory::UserDefined &&
+		ts.category() != TypeCategory::TypeAlias &&
+		ts.category() != TypeCategory::Template)
+		return DependentAliasResolutionStatus::NotApplicable;
+	TypeIndex idx = ts.type_index();
+	const TypeInfo* type_info = tryGetTypeInfo(idx);
+	if (!type_info)
+		return DependentAliasResolutionStatus::StillDependent;
+
+	std::string_view type_name = StringTable::getStringView(type_info->name());
+	auto emplaceResolvedSpec = [&](const TypeInfo* resolved_info) {
+		ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
+		TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
+			? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+			: resolved_info->registeredTypeIndex();
+		int resolved_size_bits = resolved_info->hasStoredSize()
+			? static_cast<int>(resolved_info->sizeInBits().value)
+			: get_type_size_bits(resolved_type_index.category());
+		TypeSpecifierNode resolved_spec(
+			resolved_type_index,
+			resolved_size_bits,
+			ts.token(),
+			CVQualifier::None,
+			ReferenceQualifier::None);
+		mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
+		type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
+		return DependentAliasResolutionStatus::Resolved;
+	};
+
+	if (const StructTypeInfo* owner_struct = type_info->getStructInfo();
+		owner_struct && type_name.find("::") == std::string_view::npos) {
+		std::string_view token_name = ts.token().value();
+		std::string_view owner_name = StringTable::getStringView(owner_struct->name);
+		if (!token_name.empty() && token_name != owner_name) {
+			StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
+				StringBuilder().append(owner_struct->name).append("::").append(token_name).commit());
+			auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
+			if (qualified_type_it != getTypesByNameMap().end() &&
+				qualified_type_it->second != nullptr &&
+				!qualified_type_it->second->is_incomplete_instantiation_) {
+				return emplaceResolvedSpec(qualified_type_it->second);
+			}
+		}
+	}
+
+	if (auto direct_alias = gTemplateRegistry.lookup_alias_template(std::string(type_name));
+		direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
+		const auto& alias_node = direct_alias->as<TemplateAliasNode>();
+		type_node = substituteTemplateParameters(
+			ASTNode(&alias_node.target_type()),
+			template_params,
+			template_args);
+		if (!type_node.is<TypeSpecifierNode>())
+			return DependentAliasResolutionStatus::StillDependent;
+		idx = type_node.as<TypeSpecifierNode>().type_index();
+		type_info = tryGetTypeInfo(idx);
+		if (!type_info)
+			return DependentAliasResolutionStatus::StillDependent;
+		type_name = StringTable::getStringView(type_info->name());
+		FLASH_LOG(Templates, Debug, "Resolved dependent alias through substitution: ", type_name);
+	}
+
+	auto sep_pos = type_name.find("::");
+	if (sep_pos == std::string_view::npos)
+		return DependentAliasResolutionStatus::NotApplicable;
+
+	std::string base_part(type_name.substr(0, sep_pos));
+	std::string_view member_part = type_name.substr(sep_pos + 2);
+	auto build_resolved_handle = [](std::string_view base, std::string_view member) {
+		StringBuilder sb;
+		return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
+	};
+	auto instantiate_base_and_get_name = [&](std::string_view base_template_name,
+										   const std::vector<TemplateTypeArg>& args_to_use) -> std::string_view {
+		auto instantiation = try_instantiate_class_template(base_template_name, args_to_use);
+		if (instantiation.has_value() && instantiation->is<StructDeclarationNode>()) {
+			return StringTable::getStringView(instantiation->as<StructDeclarationNode>().name());
+		}
+		auto registry_hit = gTemplateRegistry.getInstantiation(
+			StringTable::getOrInternStringHandle(base_template_name), args_to_use);
+		if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
+			return StringTable::getStringView(registry_hit->as<StructDeclarationNode>().name());
+		}
+		return get_instantiated_class_name(base_template_name, args_to_use);
+	};
+
+	FLASH_LOG(Templates, Debug, "resolveDependentMemberAlias: type_name=", type_name,
+			  " base_part=", base_part, " member_part=", member_part,
+			  " template_args=", template_args.size());
+
+	forEachNonPackTemplateParamArgBinding(
+		template_params,
+		template_args,
+		[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
+			std::string_view tname = tparam.name();
+			auto pos = base_part.find(tname);
+			if (pos != std::string::npos) {
+				base_part.replace(pos, tname.size(), arg.toString());
+			}
+		});
+
+	StringHandle resolved_handle = build_resolved_handle(base_part, member_part);
+	FLASH_LOG(Templates, Debug, "resolveDependentMemberAlias: resolved_name=",
+			  StringTable::getStringView(resolved_handle));
+	auto type_it = getTypesByNameMap().find(resolved_handle);
+	if (type_it != getTypesByNameMap().end() &&
+		type_it->second != nullptr &&
+		type_it->second->is_incomplete_instantiation_) {
+		type_it = getTypesByNameMap().end();
+	}
+
+	std::vector<TemplateTypeArg> concrete_instantiation_args;
+	if (type_info->isTemplateInstantiation()) {
+		concrete_instantiation_args =
+			materializePlaceholderTemplateArgs(*type_info, template_params, template_args);
+	}
+	if (concrete_instantiation_args.empty()) {
+		auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_part));
+		if (base_type_it != getTypesByNameMap().end() &&
+			base_type_it->second != nullptr &&
+			base_type_it->second->isTemplateInstantiation()) {
+			concrete_instantiation_args =
+				materializePlaceholderTemplateArgs(*base_type_it->second, template_params, template_args);
+		}
+	}
+	if (type_it == getTypesByNameMap().end() && type_info->isTemplateInstantiation()) {
+		std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
+		if (!base_template_name.empty()) {
+			std::string_view instantiated_base =
+				instantiate_base_and_get_name(base_template_name, concrete_instantiation_args);
+			resolved_handle = build_resolved_handle(instantiated_base, member_part);
+			type_it = getTypesByNameMap().find(resolved_handle);
+			if (type_it != getTypesByNameMap().end() &&
+				type_it->second != nullptr &&
+				type_it->second->is_incomplete_instantiation_) {
+				type_it = getTypesByNameMap().end();
+			}
+		}
+	}
+
+	auto resolve_base_template_name = [&](std::string_view candidate) {
+		std::string_view base_template_name = extractBaseTemplateName(candidate);
+		if (base_template_name.empty()) {
+			base_template_name = extract_base_template_name(candidate);
+		}
+		return base_template_name;
+	};
+	if (type_it == getTypesByNameMap().end()) {
+		std::string_view base_template_name = resolve_base_template_name(base_part);
+		if (!base_template_name.empty()) {
+			auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
+			if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+				std::vector<TemplateTypeArg> args_to_use = concrete_instantiation_args.empty()
+					? std::vector<TemplateTypeArg>(template_args.begin(), template_args.end())
+					: concrete_instantiation_args;
+				std::string_view instantiated_base =
+					instantiate_base_and_get_name(base_template_name, args_to_use);
+				resolved_handle = build_resolved_handle(instantiated_base, member_part);
+				type_it = getTypesByNameMap().find(resolved_handle);
+				if (type_it != getTypesByNameMap().end() &&
+					type_it->second != nullptr &&
+					type_it->second->is_incomplete_instantiation_) {
+					type_it = getTypesByNameMap().end();
+				}
+				if (type_it == getTypesByNameMap().end()) {
+					StringHandle primary_handle = build_resolved_handle(base_template_name, member_part);
+					type_it = getTypesByNameMap().find(primary_handle);
+					if (type_it != getTypesByNameMap().end() &&
+						type_it->second != nullptr &&
+						type_it->second->is_incomplete_instantiation_) {
+						type_it = getTypesByNameMap().end();
+					}
+				}
+				FLASH_LOG(Templates, Debug, "resolveDependentMemberAlias: after instantiation lookup '",
+						  StringTable::getStringView(resolved_handle), "' found=", (type_it != getTypesByNameMap().end()));
+			}
+		}
+	}
+
+	if (type_it == getTypesByNameMap().end()) {
+		if (type_info->isTemplateInstantiation()) {
+			std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
+			if (!base_template_name.empty()) {
+				std::vector<TemplateTypeArg> args_to_use = concrete_instantiation_args.empty()
+					? std::vector<TemplateTypeArg>(template_args.begin(), template_args.end())
+					: concrete_instantiation_args;
+				auto instantiation_opt = gTemplateRegistry.getInstantiation(
+					StringTable::getOrInternStringHandle(base_template_name),
+					args_to_use);
+				if (instantiation_opt.has_value() && instantiation_opt->is<StructDeclarationNode>()) {
+					const auto& instantiated_struct = instantiation_opt->as<StructDeclarationNode>();
+					for (const auto& type_alias : instantiated_struct.type_aliases()) {
+						if (StringTable::getStringView(type_alias.alias_name) != member_part) {
+							continue;
+						}
+						StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
+							StringBuilder()
+								.append(StringTable::getStringView(instantiated_struct.name()))
+								.append("::")
+								.append(member_part)
+								.commit());
+						auto qualified_alias_it = getTypesByNameMap().find(qualified_alias_handle);
+						if (qualified_alias_it != getTypesByNameMap().end() && qualified_alias_it->second != nullptr) {
+							FLASH_LOG(Templates, Debug, "Resolved dependent alias from registered qualified alias '",
+									  StringTable::getStringView(qualified_alias_handle), "'");
+							return emplaceResolvedSpec(qualified_alias_it->second);
+						}
+						if (type_alias.type_node.is<TypeSpecifierNode>()) {
+							type_node = emplace_node<TypeSpecifierNode>(type_alias.type_node.as<TypeSpecifierNode>());
+							FLASH_LOG(Templates, Debug, "Resolved dependent alias from instantiated struct '",
+									  type_name, "' -> ", member_part);
+							return DependentAliasResolutionStatus::Resolved;
+						}
+					}
+				}
+			}
+		}
+		auto alias_opt = gTemplateRegistry.lookup_alias_template(StringTable::getStringView(resolved_handle));
+		if (alias_opt.has_value() && alias_opt->is<TemplateAliasNode>()) {
+			const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
+			type_node = emplace_node<TypeSpecifierNode>(alias_node.target_type());
+			FLASH_LOG(Templates, Debug, "Resolved dependent alias via registry '", type_name, "' -> ", alias_node.alias_name());
+			return DependentAliasResolutionStatus::Resolved;
+		}
+		return DependentAliasResolutionStatus::StillDependent;
+	}
+
+	auto status = emplaceResolvedSpec(type_it->second);
+	FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(type_it->second->typeEnum()),
+			  ", index=", type_it->second->type_index_);
+	return status;
+}
+
+Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
+	ASTNode& type_node,
+	const InlineVector<ASTNode, 4>& template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	std::vector<TemplateTypeArg> vector_args(template_args.begin(), template_args.end());
+	return resolveDependentMemberAlias(type_node, template_params, vector_args);
+}
+
+Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
+	ASTNode& type_node,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	InlineVector<ASTNode, 4> ast_params;
+	ast_params.reserve(template_params.size());
+	for (const TemplateParameterNode& param : template_params) {
+		ast_params.push_back(emplace_node<TemplateParameterNode>(param));
+	}
+	return resolveDependentMemberAlias(type_node, ast_params, template_args);
+}
+
+Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
+	ASTNode& type_node,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	std::vector<TemplateTypeArg> vector_args(template_args.begin(), template_args.end());
+	return resolveDependentMemberAlias(type_node, template_params, vector_args);
 }
 
 static bool hasUsableTemplateFunctionDefinition(const FunctionDeclarationNode& func_decl) {
@@ -543,6 +853,10 @@ bool Parser::tryAppendDefaultTemplateArg(
 
 		if (tryReparseNonTypeDefaultArg()) {
 			return true;
+		}
+
+		if (defaultExpressionReferencesTemplateParams(default_node, template_params)) {
+			return false;
 		}
 
 		return appendEvaluatedNonTypeArg(default_node);
@@ -1322,11 +1636,36 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	};
 	func_param_to_call_arg_index.assign(func_params.size(), SIZE_MAX);
 	size_t call_arg_index = 0;
+	size_t abbreviated_auto_param_index = 0;
 	for (size_t i = 0; i < func_params.size(); ++i) {
 		if (!func_params[i].is<DeclarationNode>()) {
 			continue;
 		}
 		const DeclarationNode& func_param_decl = func_params[i].as<DeclarationNode>();
+		const TypeSpecifierNode& direct_fp_type = func_param_decl.type_specifier_node();
+		if (direct_fp_type.category() == TypeCategory::Auto) {
+			while (abbreviated_auto_param_index < template_params.size() &&
+				   template_params[abbreviated_auto_param_index].kind() != TemplateParameterKind::Type) {
+				++abbreviated_auto_param_index;
+			}
+			if (abbreviated_auto_param_index < template_params.size()) {
+				deduction_info.positional_deducible_param_names.insert(
+					template_params[abbreviated_auto_param_index].nameHandle());
+				++abbreviated_auto_param_index;
+			}
+		}
+		StringHandle direct_fp_type_name;
+		if (const TypeInfo* direct_type_info = tryGetTypeInfo(direct_fp_type.type_index())) {
+			direct_fp_type_name = direct_type_info->name();
+		}
+		if (!direct_fp_type_name.isValid()) {
+			direct_fp_type_name = direct_fp_type.token().handle();
+		}
+		auto direct_param_it = tparam_nodes_by_name.find(direct_fp_type_name);
+		if (direct_param_it != tparam_nodes_by_name.end() &&
+			direct_param_it->second->kind() == TemplateParameterKind::Type) {
+			deduction_info.positional_deducible_param_names.insert(direct_fp_type_name);
+		}
 		// Detect whether this function parameter is a pack.  The explicit
 		// `is_parameter_pack` flag is the primary signal, but for class-template
 		// member function templates the inner template's pack parameter flag
@@ -1943,167 +2282,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 							orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
 							orig_decl.identifier_token().file_index());
 
-		// Resolve dependent qualified aliases like Helper_T::type after substituting template arguments
-		auto resolve_dependent_member_alias_local = [&](ASTNode& type_node) {
-			if (!type_node.is<TypeSpecifierNode>())
-				return;
-			auto& ts = type_node.as<TypeSpecifierNode>();
-			if (ts.category() != TypeCategory::UserDefined && ts.category() != TypeCategory::TypeAlias && ts.category() != TypeCategory::Template)
-				return;
-			TypeIndex idx = ts.type_index();
-			const TypeInfo* type_info = tryGetTypeInfo(idx);
-			if (!type_info)
-				return;
-
-			std::string_view type_name = StringTable::getStringView(type_info->name());
-			if (const StructTypeInfo* owner_struct = type_info->getStructInfo(); owner_struct && type_name.find("::") == std::string_view::npos) {
-				std::string_view token_name = ts.token().value();
-				std::string_view owner_name = StringTable::getStringView(owner_struct->name);
-				if (!token_name.empty() && token_name != owner_name) {
-					StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
-						StringBuilder().append(owner_struct->name).append("::").append(token_name).commit());
-					auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
-					if (qualified_type_it != getTypesByNameMap().end() &&
-						qualified_type_it->second != nullptr &&
-						!qualified_type_it->second->is_incomplete_instantiation_) {
-						const TypeInfo* resolved_info = qualified_type_it->second;
-						ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
-						TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
-							? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
-							: resolved_info->registeredTypeIndex();
-						int resolved_size_bits = resolved_info->hasStoredSize()
-							? static_cast<int>(resolved_info->sizeInBits().value)
-							: get_type_size_bits(resolved_type_index.category());
-						TypeSpecifierNode resolved_spec(
-							resolved_type_index,
-							resolved_size_bits,
-							ts.token(),
-							CVQualifier::None,
-							ReferenceQualifier::None);
-						mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
-						type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
-						return;
-					}
-				}
-			}
-			if (auto direct_alias = gTemplateRegistry.lookup_alias_template(type_name);
-				direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
-				const auto& alias_node = direct_alias->as<TemplateAliasNode>();
-				type_node = substituteTemplateParameters(
-					ASTNode(&alias_node.target_type()),
-					template_params,
-					template_args);
-				if (!type_node.is<TypeSpecifierNode>())
-					return;
-				idx = type_node.as<TypeSpecifierNode>().type_index();
-				type_info = tryGetTypeInfo(idx);
-				if (!type_info)
-					return;
-				type_name = StringTable::getStringView(type_info->name());
-			}
-
-			auto sep_pos = type_name.find("::");
-			if (sep_pos == std::string_view::npos)
-				return;
-
-			std::string base_part(type_name.substr(0, sep_pos));
-			std::string_view member_part = type_name.substr(sep_pos + 2);
-			auto build_resolved_handle = [](std::string_view base, std::string_view member) {
-				StringBuilder sb;
-				return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
-			};
-
-			forEachNonPackTemplateParamArgBinding(
-				template_params,
-				template_args,
-				[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
-					std::string_view tname = tparam.name();
-					auto pos = base_part.find(tname);
-					if (pos != std::string::npos) {
-						base_part.replace(pos, tname.size(), arg.toString());
-					}
-				});
-
-			StringHandle resolved_handle = build_resolved_handle(base_part, member_part);
-			auto type_it = getTypesByNameMap().find(resolved_handle);
-			if (type_it != getTypesByNameMap().end() &&
-				type_it->second != nullptr &&
-				type_it->second->is_incomplete_instantiation_) {
-				type_it = getTypesByNameMap().end();
-			}
-			if (type_it == getTypesByNameMap().end() && type_info->isTemplateInstantiation()) {
-				std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
-				if (!base_template_name.empty()) {
-					try_instantiate_class_template(base_template_name, template_args);
-					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
-					resolved_handle = build_resolved_handle(instantiated_base, member_part);
-					type_it = getTypesByNameMap().find(resolved_handle);
-					if (type_it != getTypesByNameMap().end() &&
-						type_it->second != nullptr &&
-						type_it->second->is_incomplete_instantiation_) {
-						type_it = getTypesByNameMap().end();
-					}
-				}
-			}
-			auto resolve_base_template_name = [&](std::string_view candidate) {
-				// Prefer the exact template-instantiation metadata when it is available.
-				// Fall back to the older underscore-based extractor for synthesized names
-				// that do not have a registered TypeInfo entry yet.
-				std::string_view base_template_name = extractBaseTemplateName(candidate);
-				if (base_template_name.empty()) {
-					base_template_name = extract_base_template_name(candidate);
-				}
-				return base_template_name;
-			};
-			if (type_it == getTypesByNameMap().end()) {
-				std::string_view base_template_name = resolve_base_template_name(base_part);
-				if (!base_template_name.empty()) {
-					auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
-					if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-						try_instantiate_class_template(base_template_name, template_args);
-						std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
-						resolved_handle = build_resolved_handle(instantiated_base, member_part);
-						type_it = getTypesByNameMap().find(resolved_handle);
-						if (type_it != getTypesByNameMap().end() &&
-							type_it->second != nullptr &&
-							type_it->second->is_incomplete_instantiation_) {
-							type_it = getTypesByNameMap().end();
-						}
-						if (type_it == getTypesByNameMap().end()) {
-							StringHandle primary_handle = build_resolved_handle(base_template_name, member_part);
-							type_it = getTypesByNameMap().find(primary_handle);
-							if (type_it != getTypesByNameMap().end() &&
-								type_it->second != nullptr &&
-								type_it->second->is_incomplete_instantiation_) {
-								type_it = getTypesByNameMap().end();
-							}
-						}
-					}
-				}
-			}
-
-			if (type_it == getTypesByNameMap().end()) {
-				auto alias_opt = gTemplateRegistry.lookup_alias_template(StringTable::getStringView(resolved_handle));
-				if (alias_opt.has_value() && alias_opt->is<TemplateAliasNode>()) {
-					const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
-					type_node = emplace_node<TypeSpecifierNode>(alias_node.target_type());
-				}
-			} else {
-				const TypeInfo* resolved_info = type_it->second;
-				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
-				TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
-					? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
-					: resolved_info->registeredTypeIndex();
-				TypeSpecifierNode resolved_spec(
-					resolved_type_index,
-					get_type_size_bits(resolved_type_index.category()),
-					ts.token(),
-					CVQualifier::None,
-					ReferenceQualifier::None);
-				mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
-				type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
-			}
-		};
 		auto apply_resolved_alias_metadata_local = [&](TypeSpecifierNode& type_spec) {
 			if (!type_spec.type_index().is_valid()) {
 				return;
@@ -2300,7 +2478,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					original_param_type.token(),
 					original_param_type.cv_qualifier(),
 					ReferenceQualifier::None);
-				resolve_dependent_member_alias_local(param_type);
+				resolveDependentMemberAlias(param_type, materialized_template_params, materialized_template_args);
 
 				TypeSpecifierNode& param_type_ref = param_type.as<TypeSpecifierNode>();
 				int resolved_param_size_bits = getTypeSpecSizeBits(param_type_ref);
@@ -2378,7 +2556,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					orig_param_type.token(),
 					orig_param_type.cv_qualifier(),
 					ReferenceQualifier::None);
-				resolve_dependent_member_alias_local(param_type);
+				resolveDependentMemberAlias(param_type, template_params, template_args);
 
 				// Apply pointer levels and references from original type
 				TypeSpecifierNode& param_type_ref = param_type.as<TypeSpecifierNode>();
@@ -2841,7 +3019,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 			}
 
 			skipPreDeducedArgs();
-			if (arg_index < arg_types.size()) {
+			if (arg_index < arg_types.size() &&
+				deduction_info.positional_deducible_param_names.count(param_handle)) {
 				template_args.push_back(TemplateTypeArg::makeTypeSpecifier(arg_types[arg_index]));
 				++arg_index;
 				continue;
@@ -3368,278 +3547,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Resolve dependent qualified aliases like Helper_T::type after substituting template arguments
-	auto resolve_dependent_member_alias = [&](ASTNode& type_node) {
-		if (!type_node.is<TypeSpecifierNode>())
-			return;
-		auto& ts = type_node.as<TypeSpecifierNode>();
-		if (ts.category() != TypeCategory::UserDefined && ts.category() != TypeCategory::TypeAlias && ts.category() != TypeCategory::Template)
-			return;
-		TypeIndex idx = ts.type_index();
-		const TypeInfo* type_info = tryGetTypeInfo(idx);
-		if (!type_info)
-			return;
-
-		std::string_view type_name = StringTable::getStringView(type_info->name());
-		if (const StructTypeInfo* owner_struct = type_info->getStructInfo(); owner_struct && type_name.find("::") == std::string_view::npos) {
-			std::string_view token_name = ts.token().value();
-			std::string_view owner_name = StringTable::getStringView(owner_struct->name);
-			if (!token_name.empty() && token_name != owner_name) {
-				StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
-					StringBuilder().append(owner_struct->name).append("::").append(token_name).commit());
-				auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
-				if (qualified_type_it != getTypesByNameMap().end() &&
-					qualified_type_it->second != nullptr &&
-					!qualified_type_it->second->is_incomplete_instantiation_) {
-					const TypeInfo* resolved_info = qualified_type_it->second;
-					ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
-					TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
-						? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
-						: resolved_info->registeredTypeIndex();
-					int resolved_size_bits = resolved_info->hasStoredSize()
-						? static_cast<int>(resolved_info->sizeInBits().value)
-						: get_type_size_bits(resolved_type_index.category());
-					TypeSpecifierNode resolved_spec(
-						resolved_type_index,
-						resolved_size_bits,
-						ts.token(),
-						CVQualifier::None,
-						ReferenceQualifier::None);
-					mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
-					type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
-					return;
-				}
-			}
-		}
-
-		// Fast path: check alias registry for the exact dependent name
-		if (auto direct_alias = gTemplateRegistry.lookup_alias_template(std::string(type_name));
-			direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
-			const auto& alias_node = direct_alias->as<TemplateAliasNode>();
-			type_node = substituteTemplateParameters(
-				ASTNode(&alias_node.target_type()),
-				template_params,
-				template_args);
-			if (!type_node.is<TypeSpecifierNode>())
-				return;
-			idx = type_node.as<TypeSpecifierNode>().type_index();
-			type_info = tryGetTypeInfo(idx);
-			if (!type_info)
-				return;
-			type_name = StringTable::getStringView(type_info->name());
-			FLASH_LOG(Templates, Debug, "Resolved dependent alias through substitution: ", type_name);
-		}
-
-		auto sep_pos = type_name.find("::");
-		if (sep_pos == std::string_view::npos)
-			return;
-
-		std::string base_part(type_name.substr(0, sep_pos));
-		std::string_view member_part = type_name.substr(sep_pos + 2);
-		auto build_resolved_handle = [](std::string_view base, std::string_view member) {
-			StringBuilder sb;
-			return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
-		};
-		auto instantiate_base_and_get_name = [&](std::string_view base_template_name,
-											   const std::vector<TemplateTypeArg>& args_to_use) -> std::string_view {
-			auto instantiation = try_instantiate_class_template(base_template_name, args_to_use);
-			if (instantiation.has_value() && instantiation->is<StructDeclarationNode>()) {
-				return StringTable::getStringView(instantiation->as<StructDeclarationNode>().name());
-			}
-			auto registry_hit = gTemplateRegistry.getInstantiation(
-				StringTable::getOrInternStringHandle(base_template_name), args_to_use);
-			if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
-				return StringTable::getStringView(registry_hit->as<StructDeclarationNode>().name());
-			}
-			return get_instantiated_class_name(base_template_name, args_to_use);
-		};
-		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: type_name=", type_name,
-				  " base_part=", base_part, " member_part=", member_part,
-				  " template_args=", template_args.size());
-
-		// Substitute template parameter names with concrete argument strings
-		forEachNonPackTemplateParamArgBinding(
-			template_params,
-			template_args,
-			[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
-				std::string_view tname = tparam.name();
-				auto pos = base_part.find(tname);
-				if (pos != std::string::npos) {
-					base_part.replace(pos, tname.size(), arg.toString());
-				}
-			});
-
-		StringHandle resolved_handle = build_resolved_handle(base_part, member_part);
-		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: resolved_name=",
-				  StringTable::getStringView(resolved_handle));
-		auto type_it = getTypesByNameMap().find(resolved_handle);
-		if (type_it != getTypesByNameMap().end() &&
-			type_it->second != nullptr &&
-			type_it->second->is_incomplete_instantiation_) {
-			type_it = getTypesByNameMap().end();
-		}
-		std::vector<TemplateTypeArg> concrete_instantiation_args;
-		if (type_info->isTemplateInstantiation()) {
-			concrete_instantiation_args =
-				materializePlaceholderTemplateArgs(*type_info, template_params, template_args);
-		}
-		if (concrete_instantiation_args.empty()) {
-			auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_part));
-			if (base_type_it != getTypesByNameMap().end() &&
-				base_type_it->second != nullptr &&
-				base_type_it->second->isTemplateInstantiation()) {
-				concrete_instantiation_args =
-					materializePlaceholderTemplateArgs(*base_type_it->second, template_params, template_args);
-			}
-		}
-		if (type_it == getTypesByNameMap().end() && type_info->isTemplateInstantiation()) {
-			std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
-			if (!base_template_name.empty()) {
-				std::string_view instantiated_base =
-					instantiate_base_and_get_name(base_template_name, concrete_instantiation_args);
-				resolved_handle = build_resolved_handle(instantiated_base, member_part);
-				type_it = getTypesByNameMap().find(resolved_handle);
-				if (type_it != getTypesByNameMap().end() &&
-					type_it->second != nullptr &&
-					type_it->second->is_incomplete_instantiation_) {
-					type_it = getTypesByNameMap().end();
-				}
-			}
-		}
-
-		auto resolve_base_template_name = [&](std::string_view candidate) {
-			// Prefer the exact template-instantiation metadata when it is available.
-			// Fall back to the older underscore-based extractor for synthesized names
-			// that do not have a registered TypeInfo entry yet.
-			std::string_view base_template_name = extractBaseTemplateName(candidate);
-			if (base_template_name.empty()) {
-				base_template_name = extract_base_template_name(candidate);
-			}
-			return base_template_name;
-		};
-		if (type_it == getTypesByNameMap().end()) {
-			// Try instantiating the base template to register member aliases
-			// The base_part contains a mangled name like "enable_if_void_int"
-			// We need to find the actual template name, which could be "enable_if" not just "enable"
-			std::string_view base_template_name = resolve_base_template_name(base_part);
-
-			// Only try to instantiate if we found a class template (not a function template)
-			if (!base_template_name.empty()) {
-				auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
-				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-					std::vector<TemplateTypeArg> args_to_use;
-					if (concrete_instantiation_args.empty()) {
-						args_to_use.assign(template_args.begin(), template_args.end());
-					} else {
-						args_to_use = concrete_instantiation_args;
-					}
-					std::string_view instantiated_base =
-						instantiate_base_and_get_name(base_template_name, args_to_use);
-					resolved_handle = build_resolved_handle(instantiated_base, member_part);
-					type_it = getTypesByNameMap().find(resolved_handle);
-					if (type_it != getTypesByNameMap().end() &&
-						type_it->second != nullptr &&
-						type_it->second->is_incomplete_instantiation_) {
-						type_it = getTypesByNameMap().end();
-					}
-
-					if (type_it == getTypesByNameMap().end()) {
-						StringHandle primary_handle = build_resolved_handle(base_template_name, member_part);
-						type_it = getTypesByNameMap().find(primary_handle);
-						if (type_it != getTypesByNameMap().end() &&
-							type_it->second != nullptr &&
-							type_it->second->is_incomplete_instantiation_) {
-							type_it = getTypesByNameMap().end();
-						}
-					}
-					FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: after instantiation lookup '",
-							  StringTable::getStringView(resolved_handle), "' found=", (type_it != getTypesByNameMap().end()));
-				}
-			}
-		}
-
-		if (type_it == getTypesByNameMap().end()) {
-			if (type_info->isTemplateInstantiation()) {
-				std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
-				if (!base_template_name.empty()) {
-					std::vector<TemplateTypeArg> args_to_use;
-					if (concrete_instantiation_args.empty()) {
-						args_to_use.assign(template_args.begin(), template_args.end());
-					} else {
-						args_to_use = concrete_instantiation_args;
-					}
-
-					auto instantiation_opt = gTemplateRegistry.getInstantiation(
-						StringTable::getOrInternStringHandle(base_template_name),
-						args_to_use);
-					if (instantiation_opt.has_value() && instantiation_opt->is<StructDeclarationNode>()) {
-						const auto& instantiated_struct = instantiation_opt->as<StructDeclarationNode>();
-						for (const auto& type_alias : instantiated_struct.type_aliases()) {
-							if (StringTable::getStringView(type_alias.alias_name) != member_part) {
-								continue;
-							}
-							StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
-								StringBuilder()
-									.append(StringTable::getStringView(instantiated_struct.name()))
-									.append("::")
-									.append(member_part)
-									.commit());
-							auto qualified_alias_it = getTypesByNameMap().find(qualified_alias_handle);
-							if (qualified_alias_it != getTypesByNameMap().end() && qualified_alias_it->second != nullptr) {
-								const TypeInfo* resolved_info = qualified_alias_it->second;
-								ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
-								TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
-									? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
-									: resolved_info->registeredTypeIndex();
-								TypeSpecifierNode resolved_spec(
-									resolved_type_index,
-									get_type_size_bits(resolved_type_index.category()),
-									ts.token(),
-									CVQualifier::None,
-									ReferenceQualifier::None);
-								mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
-								type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
-								FLASH_LOG(Templates, Debug, "Resolved dependent alias from registered qualified alias '",
-										  StringTable::getStringView(qualified_alias_handle), "'");
-								return;
-							}
-							if (type_alias.type_node.is<TypeSpecifierNode>()) {
-								type_node = emplace_node<TypeSpecifierNode>(type_alias.type_node.as<TypeSpecifierNode>());
-								FLASH_LOG(Templates, Debug, "Resolved dependent alias from instantiated struct '",
-										  type_name, "' -> ", member_part);
-								return;
-							}
-						}
-					}
-				}
-			}
-			auto alias_opt = gTemplateRegistry.lookup_alias_template(StringTable::getStringView(resolved_handle));
-			if (alias_opt.has_value() && alias_opt->is<TemplateAliasNode>()) {
-				const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
-				const auto& alias_ts = alias_node.target_type();
-				type_node = emplace_node<TypeSpecifierNode>(alias_ts);
-				FLASH_LOG(Templates, Debug, "Resolved dependent alias via registry '", type_name, "' -> ", alias_node.alias_name());
-				return;
-			}
-		} else {
-			const TypeInfo* resolved_info = type_it->second;
-			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
-			TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
-				? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
-				: resolved_info->registeredTypeIndex();
-			TypeSpecifierNode resolved_spec(
-				resolved_type_index,
-				get_type_size_bits(resolved_type_index.category()),
-				ts.token(),
-				CVQualifier::None,
-				ReferenceQualifier::None);
-			mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
-			type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
-			FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(resolved_info->typeEnum()),
-					  ", index=", resolved_info->type_index_);
-		}
-	};
-
-	resolve_dependent_member_alias(return_type);
+	resolveDependentMemberAlias(return_type, template_params, template_args);
 	if (return_type.is<TypeSpecifierNode>()) {
 		const auto& rt = return_type.as<TypeSpecifierNode>();
 		if ((rt.category() == TypeCategory::UserDefined ||
@@ -3861,7 +3769,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
 				}
 
-				resolve_dependent_member_alias(param_type);
+				resolveDependentMemberAlias(param_type, template_params, template_args);
 				TypeSpecifierNode& resolved_param_type = param_type.as<TypeSpecifierNode>();
 				const ResolvedAliasTypeInfo param_alias_info = resolveAliasTypeInfo(resolved_param_type.type_index());
 				if (param_alias_info.type_index.is_valid() && param_alias_info.type_index != resolved_param_type.type_index()) {

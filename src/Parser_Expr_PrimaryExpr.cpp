@@ -7,6 +7,8 @@
 #include "Parser_FunctionTypeHelpers.h"
 #include "TypeTraitEvaluator.h"
 
+#include <algorithm>
+
 std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);
 
 void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec);
@@ -4145,6 +4147,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 
 				auto all_overloads = gSymbolTable.lookup_all(identifier_token.value());
+				all_overloads.erase(
+					std::remove_if(
+						all_overloads.begin(),
+						all_overloads.end(),
+						[](const ASTNode& overload) {
+							return overload.is<TemplateFunctionDeclarationNode>();
+						}),
+					all_overloads.end());
 				auto resolution = resolve_overload(all_overloads, arg_types);
 				if (resolution.has_match && !resolution.is_ambiguous) {
 					result = emplace_node<ExpressionNode>(
