@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "AstTraversal.h"
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include <span>
@@ -9,6 +10,53 @@
 #include "TypeTraitEvaluator.h"
 
 #include "LambdaHelpers.h"
+
+namespace {
+bool identifierRefersToActiveTemplateParam(
+	StringHandle identifier,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return std::find(
+		current_template_param_names.begin(),
+		current_template_param_names.end(),
+		identifier) != current_template_param_names.end();
+}
+
+bool expressionTypeDeductionIsStillDependent(
+	const ASTNode& expr,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return AstTraversal::visitASTUntil(expr, [&](const ASTNode& current) {
+		if (current.is<TemplateParameterReferenceNode>()) {
+			return true;
+		}
+		if (current.is<IdentifierNode>()) {
+			return identifierRefersToActiveTemplateParam(
+				current.as<IdentifierNode>().nameHandle(),
+				current_template_param_names);
+		}
+		if (current.is<QualifiedIdentifierNode>()) {
+			const QualifiedIdentifierNode& qualified_identifier = current.as<QualifiedIdentifierNode>();
+			const std::string_view namespace_name =
+				gNamespaceRegistry.getQualifiedName(qualified_identifier.namespace_handle());
+			if (namespace_name.empty()) {
+				return false;
+			}
+			auto type_it = getTypesByNameMap().find(
+				StringTable::getOrInternStringHandle(namespace_name));
+			return type_it != getTypesByNameMap().end() &&
+				   type_it->second != nullptr &&
+				   (type_it->second->isDependentPlaceholder() ||
+					type_it->second->is_incomplete_instantiation_);
+		}
+		if (current.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_spec = current.as<TypeSpecifierNode>();
+			return identifierRefersToActiveTemplateParam(
+				type_spec.token().handle(),
+				current_template_param_names);
+		}
+		return false;
+	});
+}
+}
 
 // Helper: Parse template brace initialization: Template<Args>{}
 // Parses the brace initializer, looks up the instantiated type, and creates a ConstructorCallNode
@@ -2135,10 +2183,34 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 		}
 	} else if (std::holds_alternative<PointerToMemberAccessNode>(expr)) {
-		// For pointer-to-member access expressions like obj.*ptr_to_member or obj->*ptr_to_member
-		// The type depends on the pointer-to-member type, which is complex to determine
-		// For now, return nullopt as this is primarily used in decltype contexts where
-		// the actual type isn't needed during parsing
+		const auto& pointer_to_member_access = std::get<PointerToMemberAccessNode>(expr);
+		auto member_pointer_type_opt = get_expression_type(pointer_to_member_access.member_pointer());
+		if (!member_pointer_type_opt.has_value()) {
+			return std::nullopt;
+		}
+
+		const TypeSpecifierNode& member_pointer_type = *member_pointer_type_opt;
+		if (!member_pointer_type.has_member_class() || member_pointer_type.pointer_depth() == 0 ||
+			member_pointer_type.is_member_function_pointer() || member_pointer_type.has_function_signature()) {
+			return std::nullopt;
+		}
+
+		TypeSpecifierNode result(
+			member_pointer_type.type_index(),
+			member_pointer_type.qualifier(),
+			member_pointer_type.sizeBits(),
+			member_pointer_type.token(),
+			member_pointer_type.cv_qualifier());
+		for (size_t i = 1; i < member_pointer_type.pointer_depth(); ++i) {
+			result.add_pointer_level(member_pointer_type.pointer_levels()[i].cv_qualifier);
+		}
+		if (member_pointer_type.is_array()) {
+			result.set_array_dimensions(member_pointer_type.array_dimensions());
+		}
+		return result;
+	} else if (std::holds_alternative<NoexceptExprNode>(expr)) {
+		return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	} else if (std::holds_alternative<ThrowExpressionNode>(expr)) {
 		return std::nullopt;
 	} else if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
 		// Pseudo-destructor call (obj.~Type()) always returns void
@@ -2286,15 +2358,18 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 }
 
 // Helper function to deduce the type of an expression for auto type deduction
-TypeCategory Parser::deduce_type_from_expression(const ASTNode& expr) {
+Parser::ExpressionTypeDeductionResult Parser::deduce_type_from_expression(const ASTNode& expr) {
 	auto type_spec_opt = get_expression_type(expr);
 	if (type_spec_opt.has_value()) {
-		return type_spec_opt->type();
+		return {ExpressionTypeDeductionStatus::Deduced, type_spec_opt->type()};
 	}
 
-	// TODO: replace this with an explicit StillDependent/HardError result so
-	// dependent template contexts don't get rejected as hard-use failures.
-	return TypeCategory::Int;
+	if (isDependentTemplateContext() &&
+		expressionTypeDeductionIsStillDependent(expr, currentTemplateParamNames())) {
+		return {ExpressionTypeDeductionStatus::StillDependent, TypeCategory::Auto};
+	}
+
+	return {ExpressionTypeDeductionStatus::Failed, TypeCategory::Invalid};
 }
 
 // Helper function to deduce and update auto return type from function body

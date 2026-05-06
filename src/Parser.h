@@ -2402,7 +2402,18 @@ private:	 // Resume private methods
 	ParseResult parse_seh_leave_statement();	 // Parse __leave statement
 
 	// Helper functions for auto type deduction
-	TypeCategory deduce_type_from_expression(const ASTNode& expr);
+	enum class ExpressionTypeDeductionStatus {
+		Deduced,
+		StillDependent,
+		Failed
+	};
+
+	struct ExpressionTypeDeductionResult {
+		ExpressionTypeDeductionStatus status = ExpressionTypeDeductionStatus::Failed;
+		TypeCategory type = TypeCategory::Invalid;
+	};
+
+	ExpressionTypeDeductionResult deduce_type_from_expression(const ASTNode& expr);
 	void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
 	std::optional<TypeSpecifierNode> deduce_lambda_return_type(const LambdaExpressionNode& lambda);
 	std::optional<TypeSpecifierNode> build_function_pointer_type_from_lambda(const LambdaExpressionNode& lambda);

@@ -1334,11 +1334,23 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 				FLASH_LOG(Parser, Debug, "Deduced auto variable type from initializer: type=",
 						  (int)type_specifier.type(), " size=", (int)type_specifier.size_in_bits());
 			} else {
-				// Fallback: deduce basic type
-				TypeCategory deduced_type = deduce_type_from_expression(*initializer);
+				ExpressionTypeDeductionResult deduction_result = deduce_type_from_expression(*initializer);
+				if (deduction_result.status == ExpressionTypeDeductionStatus::StillDependent) {
+					FLASH_LOG(Parser, Debug, "Deferred auto variable type deduction for dependent initializer");
+					return initializer;
+				}
+				if (deduction_result.status != ExpressionTypeDeductionStatus::Deduced) {
+					throw CompileError(std::string(StringBuilder()
+													   .append("Could not deduce auto type from initializer for '")
+													   .append(decl_node.identifier_token().value())
+													   .append("'; use an explicit type when the initializer's type cannot be inferred")
+													   .commit()));
+				}
+
+				TypeCategory deduced_type = deduction_result.type;
 				const SizeInBits deduced_size{get_type_size_bits(deduced_type)};
 				type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, decl_node.identifier_token(), original_cv_qual);
-				FLASH_LOG(Parser, Debug, "Deduced auto variable type (fallback): type=",
+				FLASH_LOG(Parser, Debug, "Deduced auto variable type: type=",
 						  (int)type_specifier.type(), " size=", deduced_size);
 			}
 
