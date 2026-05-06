@@ -1896,8 +1896,23 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 				// Check if this is a function being passed as a function pointer argument
 				if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
-					// Function being passed as function pointer - just pass its name
-					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(identifier_name)));
+					// Function being passed as function pointer — emit a FunctionAddress
+					// instruction to load the global function's address into a TempVar,
+					// then pass the TempVar.  Passing the raw StringHandle directly would
+					// make the codegen look the name up in the local variables map (where
+					// it is not present), causing a code-generation error.
+					const auto& fp_func_decl = symbol->as<FunctionDeclarationNode>();
+					std::string_view fp_mangled = generateMangledNameForCall(fp_func_decl, StringHandle{}, {});
+					TempVar func_addr_var = var_counter.next();
+					FunctionAddressOp fa_op;
+					fa_op.result.setType(TypeCategory::FunctionPointer);
+					fa_op.result.ir_type = IrType::FunctionPointer;
+					fa_op.result.size_in_bits = SizeInBits{64};
+					fa_op.result.value = func_addr_var;
+					fa_op.function_name = identifier_name;
+					fa_op.mangled_name = StringTable::getOrInternStringHandle(fp_mangled);
+					ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(fa_op), callExprNode.called_from()));
+					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(func_addr_var)));
 				} else if (symbol.has_value()) {
 					const DeclarationNode* decl_node = get_decl_from_symbol(*symbol);
 					// Check if parameter expects a reference
