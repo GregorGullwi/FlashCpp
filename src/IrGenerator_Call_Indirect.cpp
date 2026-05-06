@@ -1894,31 +1894,18 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 				StringHandle identifier_name = identifier.nameHandle();
-				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+				const std::optional<ASTNode> symbol = lookupSymbol(identifier_name);
 
 				// Check if this is a function being passed as a function pointer argument
 				if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
 					// Function being passed as function pointer - just pass its name
 					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(identifier_name)));
-				} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-					const auto& decl_node = symbol->as<DeclarationNode>();
-
+				} else if (symbol.has_value()) {
+					const DeclarationNode* decl_node = get_decl_from_symbol(*symbol);
 					// Check if parameter expects a reference
-					if (!sema_ref_binding_applied &&
+					if (decl_node && !sema_ref_binding_applied &&
 						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						call_op.args.push_back(buildReferenceCallArgumentFromDeclaration(decl_node, identifier_name));
-					} else {
-						call_op.args.push_back(buildOrdinaryCallArgument(argument, param_type, sema_evaluated_arg, callExprNode.called_from()));
-					}
-				} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
-					// Handle VariableDeclarationNode (local variables)
-					const auto& var_decl = symbol->as<VariableDeclarationNode>();
-					const auto& decl_node = var_decl.declaration();
-
-					// Check if parameter expects a reference
-					if (!sema_ref_binding_applied &&
-						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						call_op.args.push_back(buildReferenceCallArgumentFromDeclaration(decl_node, identifier_name));
+						call_op.args.push_back(buildReferenceCallArgumentFromDeclaration(*decl_node, identifier_name));
 					} else {
 						call_op.args.push_back(buildOrdinaryCallArgument(argument, param_type, sema_evaluated_arg, callExprNode.called_from()));
 					}
