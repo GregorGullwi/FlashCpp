@@ -2027,8 +2027,8 @@ std::optional<ASTNode> Parser::substitute_nontype_template_param(
 // Evaluates a dependent NTTP expression (e.g., sizeof(T), alignof(T)) with concrete template arguments.
 // Delegates to substitute_template_params_in_expression then ConstExpr::Evaluator for correctness
 // with struct types and complex expressions.
-// Returns the evaluated value if successful, or nullopt if evaluation fails.
-std::optional<int64_t> Parser::evaluateDependentNTTPExpression(
+// Returns the evaluated value and its category if successful, or nullopt if evaluation fails.
+std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 	const ASTNode& dependent_expr,
 	std::span<const ASTNode> template_params,
 	std::span<const TemplateTypeArg> template_args) {
@@ -2092,7 +2092,7 @@ std::optional<int64_t> Parser::evaluateDependentNTTPExpression(
 	eval_ctx.parser = this;
 	ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
 	if (result.success()) {
-		return static_cast<int64_t>(result.as_int());
+		return templateTypeArgFromEvalResult(result);
 	}
 
 	FLASH_LOG(Templates, Debug, "evaluateDependentNTTPExpression: evaluation failed for dependent expression");

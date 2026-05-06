@@ -1907,8 +1907,8 @@ private:
 		const Token& sizeof_token);
 	// Evaluate a dependent NTTP expression (e.g., sizeof(T), alignof(T)) with concrete template arguments.
 	// Builds substitution maps, substitutes the expression, then evaluates via ConstExpr::Evaluator.
-	// Returns the evaluated integer value, or nullopt if evaluation fails.
-	std::optional<int64_t> evaluateDependentNTTPExpression(
+// Returns the evaluated value and its category, or nullopt if evaluation fails.
+	std::optional<TemplateTypeArg> evaluateDependentNTTPExpression(
 		const ASTNode& dependent_expr,
 		std::span<const ASTNode> template_params,
 		std::span<const TemplateTypeArg> template_args);

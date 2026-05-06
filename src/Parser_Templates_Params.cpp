@@ -1143,7 +1143,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// For compile-time expressions like sizeof(T), alignof(T), store the AST expression
 						// so it can be re-evaluated during template instantiation with concrete arguments.
 						std::optional<ASTNode> stored_expr = std::nullopt;
-						if (std::holds_alternative<SizeofExprNode>(expr) ||
+						if (std::holds_alternative<IdentifierNode>(expr) ||
+							std::holds_alternative<TemplateParameterReferenceNode>(expr) ||
+							std::holds_alternative<QualifiedIdentifierNode>(expr) ||
+							std::holds_alternative<SizeofExprNode>(expr) ||
 							std::holds_alternative<AlignofExprNode>(expr) ||
 							std::holds_alternative<NoexceptExprNode>(expr) ||
 							std::holds_alternative<TypeTraitExprNode>(expr) ||
