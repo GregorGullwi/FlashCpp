@@ -1904,14 +1904,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						ExprResult arg_result = sema_evaluated_arg
 													? *sema_evaluated_arg
 													: visitExpressionNode(argument.as<ExpressionNode>());
-						if (param_type) {
-							if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-									arg_result, argument, *param_type, callExprNode.called_from())) {
-								arg_result = *materialized;
-							} else {
-								arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, callExprNode.called_from());
-							}
-						}
+						arg_result = applyCallArgumentConversions(arg_result, argument, param_type, callExprNode.called_from());
 						call_op.args.push_back(toTypedValue(arg_result));
 					}
 				} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
@@ -1930,14 +1923,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						ExprResult arg_result = sema_evaluated_arg
 													? *sema_evaluated_arg
 													: visitExpressionNode(argument.as<ExpressionNode>());
-						if (param_type) {
-							if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-									arg_result, argument, *param_type, callExprNode.called_from())) {
-								arg_result = *materialized;
-							} else {
-								arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, callExprNode.called_from());
-							}
-						}
+						arg_result = applyCallArgumentConversions(arg_result, argument, param_type, callExprNode.called_from());
 						call_op.args.push_back(toTypedValue(arg_result));
 					}
 				} else {
@@ -1945,14 +1931,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					ExprResult argument_result = sema_evaluated_arg
 													 ? *sema_evaluated_arg
 													 : visitExpressionNode(argument.as<ExpressionNode>());
-					if (param_type) {
-						if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-								argument_result, argument, *param_type, callExprNode.called_from())) {
-							argument_result = *materialized;
-						} else {
-							argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, callExprNode.called_from());
-						}
-					}
+					argument_result = applyCallArgumentConversions(argument_result, argument, param_type, callExprNode.called_from());
 					call_op.args.push_back(toTypedValue(argument_result));
 				}
 			} else {
@@ -2029,14 +2008,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					}
 				} else {
 					// Parameter doesn't expect a reference - pass through as-is
-					if (param_type) {
-						if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-								argument_result, argument, *param_type, callExprNode.called_from())) {
-							argument_result = *materialized;
-						} else {
-							argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, callExprNode.called_from());
-						}
-					}
+					argument_result = applyCallArgumentConversions(argument_result, argument, param_type, callExprNode.called_from());
 					call_op.args.push_back(toTypedValue(argument_result));
 				}
 			}

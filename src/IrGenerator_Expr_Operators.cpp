@@ -362,6 +362,24 @@ void AstToIr::applyCallParameterBindingMetadata(TypedValue& value, const TypeSpe
 	}
 }
 
+ExprResult AstToIr::applyCallArgumentConversions(
+	ExprResult argument_result,
+	const ASTNode& argument,
+	const TypeSpecifierNode* param_type,
+	const Token& token) {
+	if (!param_type) {
+		return argument_result;
+	}
+	if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
+			argument_result,
+			argument,
+			*param_type,
+			token)) {
+		return *materialized;
+	}
+	return applyConstructorArgConversion(argument_result, argument, *param_type, token);
+}
+
 TypedValue AstToIr::buildReferenceArgumentFromDeclaration(const DeclarationNode& decl_node, StringHandle identifier_name) {
 	const TypeSpecifierNode& type_node = decl_node.type_specifier_node();
 	if (type_node.is_reference() || type_node.is_rvalue_reference()) {
