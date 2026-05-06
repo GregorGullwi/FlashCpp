@@ -209,8 +209,8 @@ const FunctionDeclarationNode* Parser::tryInstantiateOperatorTemplateForBinary(
 	auto adl_candidates = gSymbolTable.lookup_adl_only(op_name, arg_types);
 	candidates.insert(candidates.end(), adl_candidates.begin(), adl_candidates.end());
 
-	int template_recursion_depth = initial_template_instantiation_depth;
 	for (size_t candidate_index = 0; candidate_index < candidates.size(); ++candidate_index) {
+		int template_recursion_depth = initial_template_instantiation_depth;
 		const auto& candidate = candidates[candidate_index];
 		if (!candidate.is<TemplateFunctionDeclarationNode>()) {
 			continue;
