@@ -214,6 +214,61 @@ static const TypeSpecifierNode* getDeclarationParamTypeNode(const ASTNode& param
 	return &type_node.as<TypeSpecifierNode>();
 }
 
+static const TemplateTypeArg* findResolvedTypeTemplateArg(
+	const TypeSpecifierNode& type_spec,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	if (!type_spec.type_index().is_valid()) {
+		return nullptr;
+	}
+
+	const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+	if (type_info == nullptr) {
+		return nullptr;
+	}
+
+	const std::string_view type_name = StringTable::getStringView(type_info->name());
+	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+		const TemplateParameterNode& template_param = template_params[i];
+		if (template_param.kind() != TemplateParameterKind::Type) {
+			continue;
+		}
+		if (template_param.name() != type_name || template_args[i].is_value) {
+			continue;
+		}
+		return &template_args[i];
+	}
+
+	return nullptr;
+}
+
+static void applyResolvedTemplateArgTypeMetadata(TypeSpecifierNode& target, const TemplateTypeArg* resolved_arg) {
+	if (resolved_arg == nullptr) {
+		return;
+	}
+
+	for (size_t i = 0; i < resolved_arg->pointer_depth; ++i) {
+		CVQualifier cv = i < resolved_arg->pointer_cv_qualifiers.size()
+			? resolved_arg->pointer_cv_qualifiers[i]
+			: CVQualifier::None;
+		target.add_pointer_level(cv);
+	}
+
+	if (target.reference_qualifier() == ReferenceQualifier::None &&
+		resolved_arg->ref_qualifier != ReferenceQualifier::None) {
+		target.set_reference_qualifier(resolved_arg->ref_qualifier);
+	}
+
+	if (!target.has_function_signature() && resolved_arg->function_signature.has_value()) {
+		target.set_function_signature(*resolved_arg->function_signature);
+	}
+
+	const int resolved_size_bits = getTypeSpecSizeBits(target);
+	if (resolved_size_bits > 0) {
+		target.set_size_in_bits(resolved_size_bits);
+	}
+}
+
 static bool constructorDeclarationsHaveMatchingParameterShape(
 	const ConstructorDeclarationNode& ctor_decl,
 	const FunctionDeclarationNode& out_of_line_stub) {
@@ -495,6 +550,43 @@ static std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 			return arg->function_signature;
 	}
 	return std::nullopt;
+}
+
+template <typename ParamContainer, typename ArgContainer>
+static void applyBoundTemplateArgMetadata(
+	TypeSpecifierNode& substituted_type,
+	const TypeSpecifierNode& original_type,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	std::string_view type_name;
+	if (const TypeInfo* ts_ti = tryGetTypeInfo(original_type.type_index()))
+		type_name = StringTable::getStringView(ts_ti->name());
+	if (type_name.empty())
+		type_name = original_type.token().value();
+	if (type_name.empty())
+		return;
+
+	const auto* arg = findTemplateArgByName(type_name, template_params, template_args);
+	if (arg == nullptr || arg->is_value) {
+		return;
+	}
+
+	for (size_t i = 0; i < arg->pointer_depth; ++i) {
+		CVQualifier cv = i < arg->pointer_cv_qualifiers.size()
+			? arg->pointer_cv_qualifiers[i]
+			: CVQualifier::None;
+		substituted_type.add_pointer_level(cv);
+	}
+	substituted_type.set_reference_qualifier(collapseReferenceQualifiers(
+		arg->ref_qualifier,
+		substituted_type.reference_qualifier()));
+	if (!substituted_type.has_function_signature() && arg->function_signature.has_value()) {
+		substituted_type.set_function_signature(*arg->function_signature);
+	}
+	const int resolved_size_bits = getTypeSpecSizeBits(substituted_type);
+	if (resolved_size_bits > 0) {
+		substituted_type.set_size_in_bits(resolved_size_bits);
+	}
 }
 
 ASTNode rebindStaticMemberInitializerFunctionCalls(
@@ -2865,14 +2957,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// not just template_args[0].
 					TypeIndex substituted_return_type_index = substitute_template_parameter(
 						orig_return_type, template_params, template_args);
-
-					auto substituted_return_node = emplace_node<TypeSpecifierNode>(
-						substituted_return_type_index,
-						get_substituted_type_size_bits(substituted_return_type_index),
-						orig_decl.identifier_token(),
-						orig_return_type.cv_qualifier(),
-						ReferenceQualifier::None);
-					substituted_return_node.as<TypeSpecifierNode>().copy_indirection_from(orig_return_type);
+					ASTNode substituted_return_node = substituteTemplateParameters(
+						orig_decl.type_node(),
+						template_params,
+						template_args);
+					if (!substituted_return_node.is<TypeSpecifierNode>()) {
+						substituted_return_node = emplace_node<TypeSpecifierNode>(
+							substituted_return_type_index,
+							get_substituted_type_size_bits(substituted_return_type_index),
+							orig_decl.identifier_token(),
+							orig_return_type.cv_qualifier(),
+							ReferenceQualifier::None);
+						substituted_return_node.as<TypeSpecifierNode>().copy_indirection_from(orig_return_type);
+						applyBoundTemplateArgMetadata(
+							substituted_return_node.as<TypeSpecifierNode>(),
+							orig_return_type,
+							template_params,
+							template_args);
+					}
 					StringHandle effective_name = computeInstantiatedLookupName(
 						orig_decl.identifier_token().handle(),
 						mem_func.operator_kind,
@@ -3843,11 +3945,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						get_substituted_type_size_bits(return_type_index),
 						orig_decl.identifier_token(),
 						orig_return_type.cv_qualifier());
-					substituted_return_type.set_type_index(return_type_index);
-					for (const auto& ptr_level : orig_return_type.pointer_levels()) {
-						substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+					if (ASTNode substituted_return_node = substituteTemplateParameters(
+							ASTNode(&orig_return_type),
+							template_params,
+							template_args_for_pattern);
+						substituted_return_node.is<TypeSpecifierNode>()) {
+						substituted_return_type = substituted_return_node.as<TypeSpecifierNode>();
+					} else {
+						substituted_return_type.set_type_index(return_type_index);
+						for (const auto& ptr_level : orig_return_type.pointer_levels()) {
+							substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+						}
+						substituted_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
+						applyBoundTemplateArgMetadata(
+							substituted_return_type,
+							orig_return_type,
+							template_params,
+							template_args_for_pattern);
 					}
-					substituted_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
 					if (orig_return_type.has_function_signature()) {
 						substituted_return_type.set_function_signature(orig_return_type.function_signature());
 					} else if (return_type_index.category() == TypeCategory::FunctionPointer ||
@@ -5747,12 +5862,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Copy pointer levels from the original type specifier
 		auto& substituted_type_spec = substituted_type.as<TypeSpecifierNode>();
+		const TemplateTypeArg* resolved_member_arg =
+			findResolvedTypeTemplateArg(type_spec, template_params, template_args_to_use);
 		for (const auto& ptr_level : type_spec.pointer_levels()) {
 			substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 		}
 
 		// Preserve reference qualifiers from the original type
 		substituted_type_spec.set_reference_qualifier(type_spec.reference_qualifier());
+		applyResolvedTemplateArgTypeMetadata(substituted_type_spec, resolved_member_arg);
 
 		// Add to the instantiated struct
 		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
@@ -5769,16 +5887,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		size_t member_size;
 		if (is_array_member) {
 			// Compute per-element size, looking up struct sizes from gTypeInfo
-			member_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_size_type_index).size;
+			member_size = calculateResolvedMemberSizeAndAlignment(substituted_type_spec, member_size_type_index).size;
 			for (size_t dim_size : resolved_array_dimensions) {
 				member_size *= dim_size;
 			}
 		} else if (substituted_array_size.has_value()) {
 			throw InternalError("Array dimensions should be resolved before layout substitution");
 		} else {
-			// Check if the ORIGINAL type is a pointer or reference (use original type_spec, not substituted member_type)
-			member_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_size_type_index).size;
-			if (!type_spec.is_pointer() && !type_spec.is_reference() && !type_spec.is_rvalue_reference() && member_type_index.category() == TypeCategory::Struct) {
+			member_size = calculateResolvedMemberSizeAndAlignment(substituted_type_spec, member_size_type_index).size;
+			if (!substituted_type_spec.is_pointer() && !substituted_type_spec.is_reference() && !substituted_type_spec.is_rvalue_reference() && member_type_index.category() == TypeCategory::Struct) {
 				if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index);
 					member_type_info && member_type_info->getStructInfo()) {
 					FLASH_LOG_FORMAT(Templates, Debug, "Primary template: Found struct member '{}' with type_index={}, total_size={} bytes, struct name={}",
@@ -5793,12 +5910,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Calculate member alignment
 		// For pointers and references, use 8-byte alignment (pointer alignment on x64)
 		size_t member_alignment = get_type_alignment(member_size_type_index.category(), member_size);
-		if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+		if (substituted_type_spec.is_pointer() || substituted_type_spec.is_reference() || substituted_type_spec.is_rvalue_reference()) {
 			member_alignment = 8; // Pointer/reference alignment on x64
 		} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_size_type_index)) {
 			member_alignment = member_struct_info->alignment;
 		}
-		ReferenceQualifier ref_qual = type_spec.reference_qualifier();
+		ReferenceQualifier ref_qual = substituted_type_spec.reference_qualifier();
 
 		// For reference members, we need to pass the size of the referenced type, not the pointer size
 		size_t referenced_size_bits = 0;
@@ -5826,9 +5943,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			referenced_size_bits,
 			is_array_member,
 			std::move(resolved_array_dimensions),
-			static_cast<int>(type_spec.pointer_depth()),
+			static_cast<int>(substituted_type_spec.pointer_depth()),
 			resolve_bitfield_width(member_decl, template_params, template_args_to_use),
-			resolveTemplateFunctionPointerSignature(type_spec, member_type_index, template_params, template_args_to_use),
+			resolveTemplateFunctionPointerSignature(substituted_type_spec, member_type_index, template_params, template_args_to_use),
 			member_decl.is_no_unique_address);
 	}
 
@@ -6490,9 +6607,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						type_spec.token(),
 						type_spec.cv_qualifier(),
 						type_spec.reference_qualifier());
+					const TemplateTypeArg* resolved_member_arg =
+						findResolvedTypeTemplateArg(type_spec, template_params, template_args_to_use);
 					for (const auto& ptr_level : type_spec.pointer_levels()) {
 						substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 					}
+					applyResolvedTemplateArgTypeMetadata(substituted_type_spec, resolved_member_arg);
 					if (is_array_member) {
 						substituted_type_spec.set_array(true);
 						substituted_type_spec.set_array_dimensions(resolved_array_dimensions);
@@ -7013,6 +7133,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 				}
+				applyBoundTemplateArgMetadata(
+					substituted_return_type,
+					return_type_spec,
+					template_params,
+					template_args_to_use);
 				if (return_type_spec.has_function_signature()) {
 					substituted_return_type.set_function_signature(return_type_spec.function_signature());
 				} else if (substituted_return_type.type_index().category() == TypeCategory::FunctionPointer ||
@@ -7094,6 +7219,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
 						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+						applyBoundTemplateArgMetadata(
+							substituted_param_type,
+							param_type_spec,
+							template_params,
+							template_args_to_use);
 						if (param_type_spec.has_function_signature()) {
 							substituted_param_type.set_function_signature(param_type_spec.function_signature());
 						} else if (param_type_index.category() == TypeCategory::FunctionPointer ||
@@ -7533,6 +7663,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 				}
 				substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
+				applyBoundTemplateArgMetadata(
+					substituted_return_type,
+					return_type_spec,
+					template_params,
+					template_args_to_use);
 				if (return_type_spec.has_function_signature()) {
 					substituted_return_type.set_function_signature(return_type_spec.function_signature());
 				} else if (return_type_index.category() == TypeCategory::FunctionPointer ||
@@ -7600,6 +7735,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
 						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+						applyBoundTemplateArgMetadata(
+							substituted_param_type,
+							param_type_spec,
+							template_params,
+							template_args_to_use);
 						if (param_type_spec.has_function_signature()) {
 							substituted_param_type.set_function_signature(param_type_spec.function_signature());
 						} else if (param_type_index.category() == TypeCategory::FunctionPointer ||

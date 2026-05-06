@@ -1891,5 +1891,29 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// Add the function call instruction with typed payload
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), callExprNode.called_from()));
 
-	return buildCallReturnResult(return_type, ret_var, context, callExprNode.called_from());
+	std::optional<TypeSpecifierNode> expression_return_type;
+	if (sema_) {
+		expression_return_type = sema_->getExpressionType(ASTNode(&callExprNode));
+	}
+	if ((!expression_return_type.has_value() || isPlaceholderAutoType(expression_return_type->type())) && parser_) {
+		expression_return_type = parser_->get_expression_type(ASTNode(&callExprNode));
+	}
+	auto shouldPreferExpressionReturnType = [&](const TypeSpecifierNode& expr_type, const TypeSpecifierNode& decl_type) {
+		if (isPlaceholderAutoType(expr_type.type())) {
+			return false;
+		}
+		if (decl_type.pointer_depth() > expr_type.pointer_depth()) {
+			return false;
+		}
+		if ((decl_type.is_reference() || decl_type.is_rvalue_reference()) &&
+			!expr_type.is_reference() && !expr_type.is_rvalue_reference()) {
+			return false;
+		}
+		return true;
+	};
+	const TypeSpecifierNode& effective_return_type =
+		expression_return_type.has_value() && shouldPreferExpressionReturnType(*expression_return_type, return_type)
+			? *expression_return_type
+			: return_type;
+	return buildCallReturnResult(effective_return_type, ret_var, context, callExprNode.called_from());
 }
