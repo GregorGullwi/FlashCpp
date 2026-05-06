@@ -46,6 +46,310 @@ static int computeFunctionTemplateSpecificity(const TemplateFunctionDeclarationN
 	return score;
 }
 
+static bool isTemplateDerivedFreeFunction(const FunctionDeclarationNode* func_decl) {
+	return func_decl != nullptr &&
+		(func_decl->has_template_body_position() || func_decl->has_template_declaration_position());
+}
+
+}
+
+const FunctionDeclarationNode* Parser::tryInstantiateOperatorTemplateForBinary(
+	std::string_view op_symbol,
+	const TypeSpecifierNode& left_type_spec,
+	const TypeSpecifierNode& right_type_spec) {
+	if (current_linkage_ == Linkage::C) {
+		return nullptr;
+	}
+
+	StringBuilder op_name_builder;
+	op_name_builder.append("operator").append(op_symbol);
+	std::string_view op_name = op_name_builder.commit();
+
+	std::vector<TypeSpecifierNode> arg_types;
+	arg_types.reserve(2);
+	arg_types.push_back(left_type_spec);
+	arg_types.push_back(right_type_spec);
+
+	enum class OperatorTemplateCandidateSource {
+		Registry,
+		LookupAll,
+		AdlOnly,
+	};
+	struct RankedOperatorTemplateCandidate {
+		ConversionRank lhs_rank = ConversionRank::NoMatch;
+		ConversionRank rhs_rank = ConversionRank::NoMatch;
+		int specificity = 0;
+		const FunctionDeclarationNode* function = nullptr;
+		OperatorTemplateCandidateSource source = OperatorTemplateCandidateSource::Registry;
+	};
+
+	auto tryRankOperatorTemplateCandidate = [&left_type_spec, &right_type_spec](
+		const FunctionDeclarationNode& func_decl,
+		OperatorTemplateCandidateSource source,
+		int specificity,
+		RankedOperatorTemplateCandidate& ranked_candidate) -> bool {
+		const auto& params = func_decl.parameter_nodes();
+		if (params.size() < 2 || !params[0].is<DeclarationNode>() || !params[1].is<DeclarationNode>()) {
+			return false;
+		}
+
+		const auto& lhs_type_node = params[0].as<DeclarationNode>().type_node();
+		const auto& rhs_type_node = params[1].as<DeclarationNode>().type_node();
+		if (!lhs_type_node.is<TypeSpecifierNode>() || !rhs_type_node.is<TypeSpecifierNode>()) {
+			return false;
+		}
+
+		ConversionRank lhs_rank = rankBinaryOperatorOperandMatch(
+			left_type_spec,
+			lhs_type_node.as<TypeSpecifierNode>(),
+			left_type_spec.type_index());
+		if (lhs_rank == ConversionRank::NoMatch) {
+			return false;
+		}
+
+		ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
+			right_type_spec,
+			rhs_type_node.as<TypeSpecifierNode>(),
+			right_type_spec.type_index());
+		if (rhs_rank == ConversionRank::NoMatch) {
+			return false;
+		}
+
+		ranked_candidate = {lhs_rank, rhs_rank, specificity, &func_decl, source};
+		return true;
+	};
+
+	bool has_ranked_candidate = false;
+	RankedOperatorTemplateCandidate single_candidate;
+	std::vector<RankedOperatorTemplateCandidate> ranked_candidates;
+	auto sameFunction = [](const RankedOperatorTemplateCandidate& candidate, const FunctionDeclarationNode& func_decl) -> bool {
+		if (candidate.function == &func_decl) {
+			return true;
+		}
+
+		if (candidate.function != nullptr && candidate.function->has_mangled_name() && func_decl.has_mangled_name()) {
+			return candidate.function->mangled_name() == func_decl.mangled_name();
+		}
+
+		return false;
+	};
+	auto updateDuplicateCandidateSpecificity = [&has_ranked_candidate, &single_candidate, &ranked_candidates, &sameFunction](
+		const FunctionDeclarationNode& func_decl,
+		int specificity) -> bool {
+		if (!has_ranked_candidate) {
+			return false;
+		}
+
+		if (sameFunction(single_candidate, func_decl)) {
+			single_candidate.specificity = std::max(single_candidate.specificity, specificity);
+			return true;
+		}
+
+		for (auto& candidate : ranked_candidates) {
+			if (sameFunction(candidate, func_decl)) {
+				candidate.specificity = std::max(candidate.specificity, specificity);
+				return true;
+			}
+		}
+
+		return false;
+	};
+	auto addSuccessfulCandidate = [&](const FunctionDeclarationNode& func_decl, OperatorTemplateCandidateSource source, int specificity) {
+		if (updateDuplicateCandidateSpecificity(func_decl, specificity)) {
+			return;
+		}
+
+		RankedOperatorTemplateCandidate ranked_candidate;
+		if (!tryRankOperatorTemplateCandidate(func_decl, source, specificity, ranked_candidate)) {
+			return;
+		}
+
+		if (!has_ranked_candidate) {
+			single_candidate = ranked_candidate;
+			has_ranked_candidate = true;
+			return;
+		}
+
+		if (ranked_candidates.empty()) {
+			ranked_candidates.reserve(4);
+			ranked_candidates.push_back(single_candidate);
+		}
+		ranked_candidates.push_back(ranked_candidate);
+	};
+
+	constexpr int initial_template_instantiation_depth = 1;
+
+	{
+		auto eligible_ns = gSymbolTable.get_adl_eligible_namespaces(arg_types);
+		std::vector<ASTNode> phase1_templates_copy;
+		if (const std::vector<ASTNode>* phase1_templates = gTemplateRegistry.lookupAllTemplates(op_name)) {
+			phase1_templates_copy = *phase1_templates;
+		}
+		if (!phase1_templates_copy.empty()) {
+			for (const auto& tmpl : phase1_templates_copy) {
+				if (!tmpl.is<TemplateFunctionDeclarationNode>()) continue;
+				const FunctionDeclarationNode& fdecl =
+					tmpl.as<TemplateFunctionDeclarationNode>().function_decl_node();
+				NamespaceHandle tmpl_ns = fdecl.namespace_handle();
+				if (tmpl_ns.isValid() && !eligible_ns.count(tmpl_ns)) continue;
+				ScopedParserInstantiationContext inst_guard(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
+				int depth = initial_template_instantiation_depth;
+				if (auto instantiated = try_instantiate_single_template(tmpl, op_name, arg_types, depth)) {
+					if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
+						int specificity = computeFunctionTemplateSpecificity(tmpl.as<TemplateFunctionDeclarationNode>());
+						addSuccessfulCandidate(*func_decl, OperatorTemplateCandidateSource::Registry, specificity);
+					}
+				}
+			}
+		}
+	}
+
+	std::vector<ASTNode> candidates = gSymbolTable.lookup_all(op_name);
+	size_t lookup_all_candidate_count = candidates.size();
+	auto adl_candidates = gSymbolTable.lookup_adl_only(op_name, arg_types);
+	candidates.insert(candidates.end(), adl_candidates.begin(), adl_candidates.end());
+
+	int template_recursion_depth = initial_template_instantiation_depth;
+	for (size_t candidate_index = 0; candidate_index < candidates.size(); ++candidate_index) {
+		const auto& candidate = candidates[candidate_index];
+		if (!candidate.is<TemplateFunctionDeclarationNode>()) {
+			continue;
+		}
+
+		ScopedParserInstantiationContext guard_instantiation_mode_phase2(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
+		std::optional<ASTNode> instantiated = try_instantiate_single_template(
+			candidate,
+			op_name,
+			arg_types,
+			template_recursion_depth);
+
+		if (instantiated.has_value()) {
+			if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
+				OperatorTemplateCandidateSource source = candidate_index < lookup_all_candidate_count
+					? OperatorTemplateCandidateSource::LookupAll
+					: OperatorTemplateCandidateSource::AdlOnly;
+				int specificity = computeFunctionTemplateSpecificity(candidate.as<TemplateFunctionDeclarationNode>());
+				addSuccessfulCandidate(*func_decl, source, specificity);
+			}
+		}
+	}
+
+	if (!has_ranked_candidate) {
+		return nullptr;
+	}
+
+	if (ranked_candidates.empty()) {
+		return single_candidate.function;
+	}
+
+	std::vector<const RankedOperatorTemplateCandidate*> best_candidates;
+	best_candidates.reserve(ranked_candidates.size());
+
+	for (size_t i = 0; i < ranked_candidates.size(); ++i) {
+		const auto& candidate = ranked_candidates[i];
+		bool is_dominated = false;
+
+		for (size_t j = 0; j < ranked_candidates.size(); ++j) {
+			if (i == j) {
+				continue;
+			}
+
+			if (compareBinaryOperatorCandidateRanks(
+					ranked_candidates[j].lhs_rank,
+					ranked_candidates[j].rhs_rank,
+					candidate.lhs_rank,
+					candidate.rhs_rank) == BinaryOperatorCandidateComparison::Better) {
+				is_dominated = true;
+				break;
+			}
+			BinaryOperatorCandidateComparison equivalent_compare = compareBinaryOperatorCandidateRanks(
+				ranked_candidates[j].lhs_rank,
+				ranked_candidates[j].rhs_rank,
+				candidate.lhs_rank,
+				candidate.rhs_rank);
+			if (equivalent_compare == BinaryOperatorCandidateComparison::Equivalent &&
+				ranked_candidates[j].source == OperatorTemplateCandidateSource::Registry &&
+				candidate.source == OperatorTemplateCandidateSource::LookupAll) {
+				is_dominated = true;
+				break;
+			}
+			if (equivalent_compare == BinaryOperatorCandidateComparison::Equivalent &&
+				ranked_candidates[j].specificity > candidate.specificity &&
+				!(candidate.source == OperatorTemplateCandidateSource::Registry &&
+				  ranked_candidates[j].source == OperatorTemplateCandidateSource::LookupAll)) {
+				is_dominated = true;
+				break;
+			}
+		}
+
+		if (!is_dominated) {
+			best_candidates.push_back(&candidate);
+		}
+	}
+
+	if (best_candidates.size() == 1) {
+		return best_candidates[0]->function;
+	}
+
+	return nullptr;
+}
+
+void Parser::annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_operator_node) {
+	if (!binary_operator_node.get_lhs().is<ExpressionNode>() || !binary_operator_node.get_rhs().is<ExpressionNode>()) {
+		return;
+	}
+
+	auto left_type_spec = get_expression_type(binary_operator_node.get_lhs());
+	auto right_type_spec = get_expression_type(binary_operator_node.get_rhs());
+	OverloadableOperator op_kind = stringToOverloadableOperator(binary_operator_node.op());
+
+	bool has_concrete_left_type = left_type_spec.has_value() && isConcreteBinaryOperatorOperandType(*left_type_spec);
+	bool has_concrete_right_type = right_type_spec.has_value() && isConcreteBinaryOperatorOperandType(*right_type_spec);
+	bool has_user_defined_operand =
+		(left_type_spec.has_value() && isUserDefinedBinaryOperatorOperandType(*left_type_spec)) ||
+		(right_type_spec.has_value() && isUserDefinedBinaryOperatorOperandType(*right_type_spec));
+
+	if (!has_concrete_left_type || !has_concrete_right_type || !has_user_defined_operand || !isOverloadableBinaryOperator(op_kind)) {
+		return;
+	}
+
+	adjust_argument_type_for_overload_resolution(binary_operator_node.get_lhs(), *left_type_spec);
+	adjust_argument_type_for_overload_resolution(binary_operator_node.get_rhs(), *right_type_spec);
+
+	OperatorOverloadResult overload_result;
+	if (op_kind == OverloadableOperator::Assign) {
+		overload_result = findBinaryOperatorOverload(
+			*left_type_spec,
+			*right_type_spec,
+			op_kind);
+	} else {
+		overload_result = findBinaryOperatorOverloadWithFreeFunction(
+			*left_type_spec,
+			*right_type_spec,
+			op_kind,
+			gSymbolTable);
+		if (const FunctionDeclarationNode* instantiated_overload =
+				tryInstantiateOperatorTemplateForBinary(binary_operator_node.op(), *left_type_spec, *right_type_spec)) {
+			if (!overload_result.has_match ||
+				overload_result.is_ambiguous ||
+				(overload_result.is_free_function &&
+				 isTemplateDerivedFreeFunction(overload_result.free_function_overload))) {
+				overload_result = OperatorOverloadResult(instantiated_overload);
+			}
+		}
+	}
+
+	if (overload_result.is_ambiguous) {
+		binary_operator_node.set_ambiguous_operator_overload();
+	} else if (overload_result.has_match) {
+		if (overload_result.is_free_function) {
+			binary_operator_node.set_resolved_free_function_operator_overload(overload_result.free_function_overload);
+		} else {
+			binary_operator_node.set_resolved_member_operator_overload(overload_result.member_overload);
+		}
+	} else {
+		binary_operator_node.set_no_match_operator_overload();
+	}
 }
 
 ParseResult Parser::parse_expression(int precedence, ExpressionContext context) {
@@ -61,268 +365,6 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		ExprRecursionGuard(int& d) : depth(d) { ++depth; }
 		~ExprRecursionGuard() { --depth; }
 	} guard(recursion_depth);
-
-	auto tryInstantiateOperatorTemplate = [&](std::string_view op_symbol, const TypeSpecifierNode& left_type_spec, const TypeSpecifierNode& right_type_spec)
-		-> const FunctionDeclarationNode* {
-		if (current_linkage_ == Linkage::C) {
-			return nullptr;
-		}
-
-		StringBuilder op_name_builder;
-		op_name_builder.append("operator").append(op_symbol);
-		std::string_view op_name = op_name_builder.commit();
-
-		std::vector<TypeSpecifierNode> arg_types;
-		arg_types.reserve(2);
-		arg_types.push_back(left_type_spec);
-		arg_types.push_back(right_type_spec);
-
-		// C++20 [basic.lookup.argdep]/1, [over.match.oper]/2: form a single
-		// candidate set from the template registry, ordinary unqualified lookup,
-		// and ADL, then try each template candidate under SFINAE.  We must NOT
-		// short-circuit after the registry hit because an ADL-only hidden friend
-		// template could be a better (more-specialized) match.
-		enum class OperatorTemplateCandidateSource {
-			Registry,
-			LookupAll,
-			AdlOnly,
-		};
-		struct RankedOperatorTemplateCandidate {
-			ConversionRank lhs_rank = ConversionRank::NoMatch;
-			ConversionRank rhs_rank = ConversionRank::NoMatch;
-			int specificity = 0;
-			const FunctionDeclarationNode* function = nullptr;
-			OperatorTemplateCandidateSource source = OperatorTemplateCandidateSource::Registry;
-		};
-
-		auto tryRankOperatorTemplateCandidate = [&left_type_spec, &right_type_spec](
-			const FunctionDeclarationNode& func_decl,
-			OperatorTemplateCandidateSource source,
-			int specificity,
-			RankedOperatorTemplateCandidate& ranked_candidate) -> bool {
-			const auto& params = func_decl.parameter_nodes();
-			if (params.size() < 2 || !params[0].is<DeclarationNode>() || !params[1].is<DeclarationNode>()) {
-				return false;
-			}
-
-			const auto& lhs_type_node = params[0].as<DeclarationNode>().type_node();
-			const auto& rhs_type_node = params[1].as<DeclarationNode>().type_node();
-			if (!lhs_type_node.is<TypeSpecifierNode>() || !rhs_type_node.is<TypeSpecifierNode>()) {
-				return false;
-			}
-
-			ConversionRank lhs_rank = rankBinaryOperatorOperandMatch(
-				left_type_spec,
-				lhs_type_node.as<TypeSpecifierNode>(),
-				left_type_spec.type_index());
-			if (lhs_rank == ConversionRank::NoMatch) {
-				return false;
-			}
-
-			ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
-				right_type_spec,
-				rhs_type_node.as<TypeSpecifierNode>(),
-				right_type_spec.type_index());
-			if (rhs_rank == ConversionRank::NoMatch) {
-				return false;
-			}
-
-			ranked_candidate = {lhs_rank, rhs_rank, specificity, &func_decl, source};
-			return true;
-		};
-
-		bool has_ranked_candidate = false;
-		RankedOperatorTemplateCandidate single_candidate;
-		std::vector<RankedOperatorTemplateCandidate> ranked_candidates;
-		auto sameFunction = [](const RankedOperatorTemplateCandidate& candidate, const FunctionDeclarationNode& func_decl) -> bool {
-			if (candidate.function == &func_decl) {
-				return true;
-			}
-
-			if (candidate.function != nullptr && candidate.function->has_mangled_name() && func_decl.has_mangled_name()) {
-				return candidate.function->mangled_name() == func_decl.mangled_name();
-			}
-
-			return false;
-		};
-		auto updateDuplicateCandidateSpecificity = [&has_ranked_candidate, &single_candidate, &ranked_candidates, &sameFunction](
-			const FunctionDeclarationNode& func_decl,
-			int specificity) -> bool {
-			if (!has_ranked_candidate) {
-				return false;
-			}
-
-			if (sameFunction(single_candidate, func_decl)) {
-				single_candidate.specificity = std::max(single_candidate.specificity, specificity);
-				return true;
-			}
-
-			for (auto& candidate : ranked_candidates) {
-				if (sameFunction(candidate, func_decl)) {
-					candidate.specificity = std::max(candidate.specificity, specificity);
-					return true;
-				}
-			}
-
-			return false;
-		};
-		auto addSuccessfulCandidate = [&](const FunctionDeclarationNode& func_decl, OperatorTemplateCandidateSource source, int specificity) {
-			if (updateDuplicateCandidateSpecificity(func_decl, specificity)) {
-				return;
-			}
-
-			RankedOperatorTemplateCandidate ranked_candidate;
-			if (!tryRankOperatorTemplateCandidate(func_decl, source, specificity, ranked_candidate)) {
-				return;
-			}
-
-			if (!has_ranked_candidate) {
-				single_candidate = ranked_candidate;
-				has_ranked_candidate = true;
-				return;
-			}
-
-			if (ranked_candidates.empty()) {
-				ranked_candidates.reserve(4);
-				ranked_candidates.push_back(single_candidate);
-			}
-			ranked_candidates.push_back(ranked_candidate);
-		};
-
-		constexpr int initial_template_instantiation_depth = 1;
-
-		// Phase 1: try operator templates from the template registry, but restricted to
-		// namespaces that are eligible for operator lookup per C++20 [basic.lookup.argdep].
-		// Associated namespaces of a class type are the namespaces in which the class (and
-		// its base classes) are declared; non-inline nested namespaces of an associated
-		// namespace are NOT included.  For example, std::rel_ops is not an associated
-		// namespace of std::pair, so operator templates defined there must not be found
-		// when the operands are of pair type.
-		{
-			auto eligible_ns = gSymbolTable.get_adl_eligible_namespaces(arg_types);
-			// Copy the vector to avoid iterator invalidation: try_instantiate_single_template
-			// can register new templates and cause the registry's internal vector to reallocate.
-			std::vector<ASTNode> phase1_templates_copy;
-			if (const std::vector<ASTNode>* phase1_templates = gTemplateRegistry.lookupAllTemplates(op_name)) {
-				phase1_templates_copy = *phase1_templates;
-			}
-			if (!phase1_templates_copy.empty()) {
-				for (const auto& tmpl : phase1_templates_copy) {
-					if (!tmpl.is<TemplateFunctionDeclarationNode>()) continue;
-					const FunctionDeclarationNode& fdecl =
-						tmpl.as<TemplateFunctionDeclarationNode>().function_decl_node();
-					NamespaceHandle tmpl_ns = fdecl.namespace_handle();
-					// Skip templates from namespaces that are not eligible for this lookup.
-					// Note: eligible_ns always contains the global namespace, so global-namespace templates
-					// pass the count check without needing an explicit isGlobal() guard.
-					if (tmpl_ns.isValid() && !eligible_ns.count(tmpl_ns)) continue;
-					ScopedParserInstantiationContext inst_guard(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
-					int depth = initial_template_instantiation_depth;
-					if (auto instantiated = try_instantiate_single_template(tmpl, op_name, arg_types, depth)) {
-						if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
-							int specificity = computeFunctionTemplateSpecificity(tmpl.as<TemplateFunctionDeclarationNode>());
-							addSuccessfulCandidate(*func_decl, OperatorTemplateCandidateSource::Registry, specificity);
-						}
-					}
-				}
-			}
-		}
-
-		// Phase 2: collect remaining candidates via ordinary + ADL-only lookup
-		std::vector<ASTNode> candidates = gSymbolTable.lookup_all(op_name);
-		size_t lookup_all_candidate_count = candidates.size();
-		auto adl_candidates = gSymbolTable.lookup_adl_only(op_name, arg_types);
-		candidates.insert(candidates.end(), adl_candidates.begin(), adl_candidates.end());
-
-		int template_recursion_depth = initial_template_instantiation_depth;
-		for (size_t candidate_index = 0; candidate_index < candidates.size(); ++candidate_index) {
-			const auto& candidate = candidates[candidate_index];
-			if (!candidate.is<TemplateFunctionDeclarationNode>()) {
-				continue;
-			}
-
-			ScopedParserInstantiationContext guard_instantiation_mode_phase2(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
-			std::optional<ASTNode> instantiated = try_instantiate_single_template(
-				candidate,
-				op_name,
-				arg_types,
-				template_recursion_depth);
-
-			if (instantiated.has_value()) {
-				if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
-					OperatorTemplateCandidateSource source = candidate_index < lookup_all_candidate_count
-						? OperatorTemplateCandidateSource::LookupAll
-						: OperatorTemplateCandidateSource::AdlOnly;
-					int specificity = computeFunctionTemplateSpecificity(candidate.as<TemplateFunctionDeclarationNode>());
-					addSuccessfulCandidate(*func_decl, source, specificity);
-				}
-			}
-		}
-
-		if (!has_ranked_candidate) {
-			return nullptr;
-		}
-
-		if (ranked_candidates.empty()) {
-			return single_candidate.function;
-		}
-
-		std::vector<const RankedOperatorTemplateCandidate*> best_candidates;
-		best_candidates.reserve(ranked_candidates.size());
-
-		for (size_t i = 0; i < ranked_candidates.size(); ++i) {
-			const auto& candidate = ranked_candidates[i];
-			bool is_dominated = false;
-
-			for (size_t j = 0; j < ranked_candidates.size(); ++j) {
-				if (i == j) {
-					continue;
-				}
-
-				if (compareBinaryOperatorCandidateRanks(
-						ranked_candidates[j].lhs_rank,
-						ranked_candidates[j].rhs_rank,
-						candidate.lhs_rank,
-						candidate.rhs_rank) == BinaryOperatorCandidateComparison::Better) {
-					is_dominated = true;
-					break;
-				}
-				BinaryOperatorCandidateComparison equivalent_compare = compareBinaryOperatorCandidateRanks(
-						ranked_candidates[j].lhs_rank,
-						ranked_candidates[j].rhs_rank,
-						candidate.lhs_rank,
-						candidate.rhs_rank);
-				if (equivalent_compare == BinaryOperatorCandidateComparison::Equivalent &&
-					ranked_candidates[j].source == OperatorTemplateCandidateSource::Registry &&
-					candidate.source == OperatorTemplateCandidateSource::LookupAll) {
-					is_dominated = true;
-					break;
-				}
-				if (equivalent_compare == BinaryOperatorCandidateComparison::Equivalent &&
-					ranked_candidates[j].specificity > candidate.specificity &&
-					!(candidate.source == OperatorTemplateCandidateSource::Registry &&
-					  ranked_candidates[j].source == OperatorTemplateCandidateSource::LookupAll)) {
-					is_dominated = true;
-					break;
-				}
-			}
-
-			if (!is_dominated) {
-				best_candidates.push_back(&candidate);
-			}
-		}
-
-		if (best_candidates.size() == 1) {
-			return best_candidates[0]->function;
-		}
-
-		return nullptr;
-	};
-
-	auto isTemplateDerivedFreeFunction = [](const FunctionDeclarationNode* func_decl) {
-		return func_decl != nullptr &&
-			(func_decl->has_template_body_position() || func_decl->has_template_declaration_position());
-	};
 
 	if (recursion_depth > MAX_RECURSION_DEPTH) {
 		FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_RECURSION_DEPTH limit ({}) in parse_expression", MAX_RECURSION_DEPTH);
@@ -744,7 +786,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 								gSymbolTable);
 							if (op_kind != OverloadableOperator::Assign) {
 								if (const FunctionDeclarationNode* instantiated_overload =
-										tryInstantiateOperatorTemplate(op_symbol, *left_type_spec, *right_type_spec)) {
+										tryInstantiateOperatorTemplateForBinary(op_symbol, *left_type_spec, *right_type_spec)) {
 									if (!overload_result.has_match ||
 										overload_result.is_ambiguous ||
 										(overload_result.is_free_function &&
@@ -768,56 +810,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				}
 
 				BinaryOperatorNode binary_operator_node(operator_token, *leftNode, *rightNode);
-				if (leftNode->is<ExpressionNode>() && rightNode->is<ExpressionNode>()) {
-					auto left_type_spec = get_expression_type(*leftNode);
-					auto right_type_spec = get_expression_type(*rightNode);
-					OverloadableOperator op_kind = stringToOverloadableOperator(operator_token.value());
-
-					bool has_concrete_left_type = left_type_spec.has_value() && isConcreteBinaryOperatorOperandType(*left_type_spec);
-					bool has_concrete_right_type = right_type_spec.has_value() && isConcreteBinaryOperatorOperandType(*right_type_spec);
-					bool has_user_defined_operand =
-						(left_type_spec.has_value() && isUserDefinedBinaryOperatorOperandType(*left_type_spec)) || (right_type_spec.has_value() && isUserDefinedBinaryOperatorOperandType(*right_type_spec));
-
-					if (has_concrete_left_type && has_concrete_right_type && has_user_defined_operand && isOverloadableBinaryOperator(op_kind)) {
-						adjust_argument_type_for_overload_resolution(*leftNode, *left_type_spec);
-						adjust_argument_type_for_overload_resolution(*rightNode, *right_type_spec);
-
-						OperatorOverloadResult overload_result;
-						if (op_kind == OverloadableOperator::Assign) {
-							overload_result = findBinaryOperatorOverload(
-								*left_type_spec,
-								*right_type_spec,
-								op_kind);
-						} else {
-							overload_result = findBinaryOperatorOverloadWithFreeFunction(
-								*left_type_spec,
-								*right_type_spec,
-								op_kind,
-								gSymbolTable);
-							if (const FunctionDeclarationNode* instantiated_overload =
-									tryInstantiateOperatorTemplate(operator_token.value(), *left_type_spec, *right_type_spec)) {
-								if (!overload_result.has_match ||
-									overload_result.is_ambiguous ||
-									(overload_result.is_free_function &&
-									 isTemplateDerivedFreeFunction(overload_result.free_function_overload))) {
-									overload_result = OperatorOverloadResult(instantiated_overload);
-								}
-							}
-						}
-
-						if (overload_result.is_ambiguous) {
-							binary_operator_node.set_ambiguous_operator_overload();
-						} else if (overload_result.has_match) {
-							if (overload_result.is_free_function) {
-								binary_operator_node.set_resolved_free_function_operator_overload(overload_result.free_function_overload);
-							} else {
-								binary_operator_node.set_resolved_member_operator_overload(overload_result.member_overload);
-							}
-						} else {
-							binary_operator_node.set_no_match_operator_overload();
-						}
-					}
-				}
+				annotateConcreteBinaryOperatorOverload(binary_operator_node);
 
 				// Create the binary operation and update the result
 				auto binary_op = emplace_node<ExpressionNode>(binary_operator_node);

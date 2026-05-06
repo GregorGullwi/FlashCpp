@@ -1261,6 +1261,7 @@ private:
 	std::optional<ConstantValue> try_evaluate_constant_expression(const ASTNode& expr_node);	 // NEW: Evaluate constant expressions for template arguments (e.g., is_int<T>::value)
 	std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
 	std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types, int& recursion_depth);	 // Helper: Try to instantiate a specific template node (for SFINAE)
+	const FunctionDeclarationNode* tryInstantiateOperatorTemplateForBinary(std::string_view op_symbol, const TypeSpecifierNode& left_type_spec, const TypeSpecifierNode& right_type_spec);
 	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count = SIZE_MAX);	// NEW: Instantiate with explicit args
 	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, const std::vector<TypeSpecifierNode>& arg_types);
 	struct CallArgDeductionInfo {
@@ -2302,6 +2303,7 @@ public:	// Public methods for template instantiation
 	// Helper to extract type from an expression for overload resolution.
 	// Public so codegen/constexpr consumers can reuse the parser's type deduction.
 	std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
+	void annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_operator_node);
 
 	// Returns the current parser-level instantiation context chain (null when not inside any instantiation).
 	// The chain is linked via ParserInstantiationContext::parent for backtrace traversal.

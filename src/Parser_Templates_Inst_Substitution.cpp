@@ -981,6 +981,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 			binop.get_token(),
 			new_left,
 			new_right);
+		annotateConcreteBinaryOperatorOverload(new_binop);
 		return emplace_node<ExpressionNode>(new_binop);
 	}
 
