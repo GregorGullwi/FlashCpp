@@ -772,11 +772,19 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 			FLASH_LOG(Lexer, Warning, message);
 		} else if (line.find("#undef") == 0) {
-			std::istringstream iss(line);
-			iss.seekg("#undef"sv.length());
-			std::string symbol;
-			iss >> symbol;
-			defines_.erase(symbol);
+			std::string_view sv(line);
+			sv.remove_prefix("#undef"sv.length());
+			while (!sv.empty() && std::isspace(static_cast<unsigned char>(sv.front()))) {
+				sv.remove_prefix(1);
+			}
+			size_t end = 0;
+			while (end < sv.size() && (std::isalnum(static_cast<unsigned char>(sv[end])) || sv[end] == '_')) {
+				++end;
+			}
+			auto it = defines_.find(sv.substr(0, end));
+			if (it != defines_.end()) {
+				defines_.erase(it);
+			}
 			append_line_with_tracking("");  // Preserve line numbering
 		} else if (line.find("#pragma once", 0) == 0) {
 			processedHeaders_.insert(std::string(filestack_.top().file_name));

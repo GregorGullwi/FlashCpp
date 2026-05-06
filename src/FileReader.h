@@ -26,6 +26,14 @@ struct PreprocessorStringHash {
 	size_t operator()(const std::string& s) const noexcept { return std::hash<std::string_view>{}(s); }
 };
 
+struct PreprocessorStringEqual {
+	using is_transparent = void;
+	bool operator()(std::string_view a, std::string_view b) const noexcept { return a == b; }
+	bool operator()(const std::string& a, const std::string& b) const noexcept { return a == b; }
+	bool operator()(std::string_view a, const std::string& b) const noexcept { return a == b; }
+	bool operator()(const std::string& a, std::string_view b) const noexcept { return a == b; }
+};
+
 #include "CompileContext.h"
 #include "FileTree.h"
 
@@ -559,7 +567,7 @@ private:
 
 	CompileContext& settings_;
 	FileTree& tree_;
-	std::unordered_map<std::string, Directive, PreprocessorStringHash, std::equal_to<>> defines_;
+	std::unordered_map<std::string, Directive, PreprocessorStringHash, PreprocessorStringEqual> defines_;
 	std::unordered_set<std::string> processedHeaders_;
 	std::stack<CurrentFile> filestack_;
 	std::string result_;
