@@ -14,7 +14,7 @@ constexpr auto operator-(const reverse_like<L>& x, const reverse_like<R>& y)
 }
 
 template<class T, class U>
-int distance_like(reverse_like<T> first, reverse_like<U> last) {
+auto distance_like(reverse_like<T> first, reverse_like<U> last) {
 	return first - last;
 }
 
@@ -22,6 +22,6 @@ int main() {
 	int values[3] = {};
 	reverse_like<int*> first{values};
 	reverse_like<int*> last{values + 1};
-	int distance = distance_like(first, last);
-	return distance - distance;
+	int distance = static_cast<int>(distance_like(first, last));
+	return distance - 1;
 }
