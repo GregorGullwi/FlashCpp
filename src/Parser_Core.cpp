@@ -873,7 +873,10 @@ Token Parser::expect(TokenKind kind) {
 }
 
 Parser::SaveHandle Parser::save_token_position() {
-	auto start = std::chrono::high_resolution_clock::now();
+	std::chrono::high_resolution_clock::time_point start;
+	if (runtime_stats_enabled_) {
+		start = std::chrono::high_resolution_clock::now();
+	}
 	// Generate unique handle using static incrementing counter
 	// This prevents collisions even when multiple saves happen at the same cursor position
 	SaveHandle handle = next_save_handle_++;
@@ -900,7 +903,10 @@ Parser::SaveHandle Parser::save_token_position() {
 }
 
 void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const std::source_location location) {
-	auto start = std::chrono::high_resolution_clock::now();
+	std::chrono::high_resolution_clock::time_point start;
+	if (runtime_stats_enabled_) {
+		start = std::chrono::high_resolution_clock::now();
+	}
 	if (handle >= saved_tokens_.size() || !saved_tokens_[handle].has_value()) {
 		// Handle not found - this shouldn't happen in correct usage
 		if (runtime_stats_enabled_) {
@@ -975,7 +981,10 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 }
 
 void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
-	auto start = std::chrono::high_resolution_clock::now();
+	std::chrono::high_resolution_clock::time_point start;
+	if (runtime_stats_enabled_) {
+		start = std::chrono::high_resolution_clock::now();
+	}
 	// Restore lexer position and current token, but keep AST nodes
 	if (handle >= saved_tokens_.size() || !saved_tokens_[handle].has_value()) {
 		if (runtime_stats_enabled_) {
@@ -997,7 +1006,10 @@ void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
 }
 
 void Parser::discard_saved_token(SaveHandle handle) {
-	auto start = std::chrono::high_resolution_clock::now();
+	std::chrono::high_resolution_clock::time_point start;
+	if (runtime_stats_enabled_) {
+		start = std::chrono::high_resolution_clock::now();
+	}
 	if (handle < saved_tokens_.size() && saved_tokens_[handle].has_value()) {
 		saved_tokens_[handle].reset();
 		if (runtime_stats_enabled_ && runtime_stats_.active_saves > 0) {

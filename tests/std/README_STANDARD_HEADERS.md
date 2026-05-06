@@ -133,12 +133,12 @@ Validation baseline before the edit:
 | Run set | Flags | Samples | Preprocessing | Parsing | Total | Note |
 |---------|-------|---------|---------------|---------|-------|------|
 | Before (`26b0d25`) | `--timing --stats` | 5, first run cold | ~16.97ms warm median | ~1135.39ms warm median | ~1172.10ms warm median | First total sample was a cold outlier at 1626ms; warm samples were stable. |
-| After final saved-token vector + reserve | `--timing --stats` | 3 after reserve | 17.3ms typical | 1119.59ms median | 1155.77ms median | Includes the new stats/timing counters themselves. |
-| After final saved-token vector + reserve | `--timing` | 3 after reserve | 17.2ms typical | 1110.62ms median | 1146.72ms median | Normal timing path, parser stats disabled. |
+| After final saved-token vector + reserve | `--timing --stats` | 3 final | 17.3ms typical | 1118.90ms median | 1155.10ms median | Includes the new stats/timing counters themselves. |
+| After final saved-token vector + reserve | `--timing` | 3 final | 17.2ms typical | 1104.10ms median | 1140.33ms median | Normal timing path, parser stats disabled. |
 
-Observed improvement against the warm baseline is about **24.8ms less parsing
-time** (`1135.39ms -> 1110.62ms`, roughly **2.2%**) and **25.4ms less total
-compile time** (`1172.10ms -> 1146.72ms`, roughly **2.2%**).  The after-change
+Observed improvement against the warm baseline is about **31.3ms less parsing
+time** (`1135.39ms -> 1104.10ms`, roughly **2.8%**) and **31.8ms less total
+compile time** (`1172.10ms -> 1140.33ms`, roughly **2.7%**).  The after-change
 normal timing path is the authoritative performance comparison; the `--stats`
 path is intentionally instrumented and pays for high-resolution timers around
 saved-token operations.
@@ -162,7 +162,7 @@ across samples:
 | Peak unreleased saves | 50,075 |
 | Unreleased saves at parse end | 50,071 |
 | Restore AST cleanup scanned/preserved/discarded | 855 / 855 / 0 |
-| Saved-token measured time | save ~4.0ms median after reserve (~3.9-4.2ms range), full restore ~0.2ms, lexer-only restore ~0.0-0.01ms, discard ~0.0-0.01ms |
+| Saved-token measured time | save ~3.8ms median after reserve (~3.6-3.9ms range), full restore ~0.1-0.2ms, lexer-only restore ~0.0-0.01ms, discard ~0.0-0.01ms |
 
 Interpretation:
 
