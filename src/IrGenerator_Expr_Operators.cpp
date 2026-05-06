@@ -465,9 +465,6 @@ TypedValue AstToIr::buildReferenceCallArgumentFromResult(
 					metadata.category == ValueCategory::LValue ||
 					metadata.category == ValueCategory::XValue;
 			}
-			if (!is_already_address && expr_size == POINTER_SIZE_BITS && expr_type == TypeCategory::Struct) {
-				is_already_address = true;
-			}
 		}
 		if (is_already_address) {
 			return toTypedValue(argument_result);
@@ -511,10 +508,6 @@ void AstToIr::appendDirectIdentifierCallArgument(
 				(ci.cast_kind == StandardConversionKind::ArrayToPointer);
 		}
 	}
-	if (!needs_array_decay && !sema_normalized_current_function_) {
-		needs_array_decay = arg_decl_node.is_array();
-	}
-
 	if (needs_array_decay) {
 		TempVar addr_var = emitAddressOf(
 			type_node.category(),

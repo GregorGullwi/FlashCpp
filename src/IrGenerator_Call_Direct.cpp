@@ -1461,12 +1461,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				}
 			}
 
-			// sema should annotate all standard primitive argument conversions.
-			// Non-arithmetic types (struct, user_defined, enum, auto, function_pointer)
-			// are outside sema's current scope — keep fallback unconditionally.
-			// For arithmetic types, assert when sema missed the annotation.
+			// sema should annotate all resolved standard argument conversions.
 			// Exception: hasUnresolvedCallArgs means sema tried but couldn't resolve the callee
-			// (e.g. template specialization) — Phase 16+ work item.
+			// (e.g. template specialization), so keep conversion recovery for that path.
 			if (!sema_applied_arg_conversion &&
 				param_ref_qualifier == CVReferenceQualifier::None &&
 				param_type->pointer_depth() == 0 &&
@@ -1474,9 +1471,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
 				if (standard_conversion.is_valid &&
 					standard_conversion.rank != ConversionRank::UserDefined) {
-					if (sema_normalized_current_function_ &&
-						is_standard_arithmetic_type(arg_type) && is_standard_arithmetic_type(param_base_type) &&
-						!sema_->hasUnresolvedCallArgs(sema_call_key)) {
+					if (sema_normalized_current_function_ && !sema_->hasUnresolvedCallArgs(sema_call_key)) {
 						throw InternalError(std::string("Phase 15: sema missed function call argument conversion (") + std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 					}
 					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, callExprNode.called_from());
