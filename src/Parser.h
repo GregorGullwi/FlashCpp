@@ -1876,12 +1876,14 @@ private:
 		const ASTNode& arg_node,
 		const InlineVector<ASTNode, 4>& template_parameters,
 		const InlineVector<StringHandle, 4>& param_names,
-		const std::vector<TemplateTypeArg>& template_args);
+		const std::vector<TemplateTypeArg>& template_args,
+		const TemplateParameterNode* target_template_param);
 	std::optional<TemplateTypeArg> materializeDeferredAliasTemplateArg(
 		const ASTNode& arg_node,
 		const InlineVector<TemplateParameterNode, 4>& template_parameters,
 		const InlineVector<StringHandle, 4>& param_names,
-		const std::vector<TemplateTypeArg>& template_args);
+		const std::vector<TemplateTypeArg>& template_args,
+		const TemplateParameterNode* target_template_param);
 	std::optional<std::vector<TemplateTypeArg>> materializeDeferredAliasTemplateArgs(
 		const TemplateAliasNode& alias_node,
 		const std::vector<TemplateTypeArg>& template_args);
