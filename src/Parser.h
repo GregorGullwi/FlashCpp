@@ -2706,6 +2706,28 @@ private:	 // Resume private methods
 		const InlineVector<TemplateParameterNode, 4>& template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args);
 
+	enum class DependentAliasResolutionStatus {
+		NotApplicable,
+		Resolved,
+		StillDependent
+	};
+	DependentAliasResolutionStatus resolveDependentMemberAlias(
+		ASTNode& type_node,
+		const InlineVector<ASTNode, 4>& template_params,
+		const std::vector<TemplateTypeArg>& template_args);
+	DependentAliasResolutionStatus resolveDependentMemberAlias(
+		ASTNode& type_node,
+		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args);
+	DependentAliasResolutionStatus resolveDependentMemberAlias(
+		ASTNode& type_node,
+		const InlineVector<TemplateParameterNode, 4>& template_params,
+		const std::vector<TemplateTypeArg>& template_args);
+	DependentAliasResolutionStatus resolveDependentMemberAlias(
+		ASTNode& type_node,
+		const InlineVector<TemplateParameterNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args);
+
 	// Lookup symbol with template parameter checking
 	std::optional<ASTNode> lookup_symbol_with_template_check(StringHandle identifier);
 
