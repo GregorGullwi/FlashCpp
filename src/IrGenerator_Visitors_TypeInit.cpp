@@ -1092,19 +1092,17 @@ void AstToIr::generateStaticMemberDeclarations() {
 										FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(ctor_struct_info->name));
 									} else if (matching_ctor) {
 										if (require_sema_resolved_ctor) {
-											throw InternalError(std::string(StringBuilder()
-												.append("Sema-normalized static member constructor call resolved the wrong constructor target for '")
-												.append(StringTable::getStringView(ctor_struct_info->name))
-												.append("'")
-												.commit()));
+											throw InternalError(
+												"Sema-normalized static member constructor call resolved the wrong constructor target for '" +
+												std::string(StringTable::getStringView(ctor_struct_info->name)) +
+												"'");
 										}
 										matching_ctor = nullptr;
 									} else if (require_sema_resolved_ctor) {
-										throw InternalError(std::string(StringBuilder()
-											.append("Sema-normalized static member constructor call is missing a resolved constructor for '")
-											.append(StringTable::getStringView(ctor_struct_info->name))
-											.append("'")
-											.commit()));
+										throw InternalError(
+											"Sema-normalized static member constructor call is missing a resolved constructor for '" +
+											std::string(StringTable::getStringView(ctor_struct_info->name)) +
+											"'");
 									}
 									if (!matching_ctor) {
 										std::vector<TypeSpecifierNode> arg_types;
@@ -1136,53 +1134,6 @@ void AstToIr::generateStaticMemberDeclarations() {
 											std::unordered_map<std::string_view, ConstExpr::EvalResult> param_bindings;
 											eval_ctx.local_bindings = &param_bindings;
 											std::unordered_map<std::string_view, long long> param_values;
-											auto recoverCtorArgEvalResult =
-												[&](const ASTNode& arg_node, const DeclarationNode& param_decl) -> ConstExpr::EvalResult {
-													ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
-													if (result.success()) {
-														return result;
-													}
-
-													unsigned long long raw_value = 0;
-													if (!evaluate_static_initializer(arg_node, raw_value, struct_info)) {
-														return result;
-													}
-
-													TypeSpecifierNode param_type = param_decl.type_specifier_node();
-													if (struct_info && struct_info->own_type_index_.has_value()) {
-														param_type = resolveTypeSpecifierForSelfReference(
-															param_type,
-															*struct_info->own_type_index_);
-													}
-
-													switch (param_type.category()) {
-														case TypeCategory::Bool:
-															return ConstExpr::EvalResult::from_bool(raw_value != 0);
-														case TypeCategory::Float: {
-															uint32_t bits = static_cast<uint32_t>(raw_value);
-															float value = 0.0f;
-															std::memcpy(&value, &bits, sizeof(float));
-															return ConstExpr::EvalResult::from_double(value);
-														}
-														case TypeCategory::Double: {
-															double value = 0.0;
-															std::memcpy(&value, &raw_value, sizeof(double));
-															return ConstExpr::EvalResult::from_double(value);
-														}
-														case TypeCategory::UnsignedChar:
-														case TypeCategory::UnsignedShort:
-														case TypeCategory::UnsignedInt:
-														case TypeCategory::UnsignedLong:
-														case TypeCategory::UnsignedLongLong:
-														case TypeCategory::Char8:
-														case TypeCategory::Char16:
-														case TypeCategory::Char32:
-														case TypeCategory::WChar:
-															return ConstExpr::EvalResult::from_uint(raw_value);
-														default:
-															return ConstExpr::EvalResult::from_int(static_cast<long long>(raw_value));
-													}
-												};
 											bool args_ok = true;
 											const auto& params = matching_ctor->parameter_nodes();
 											for (size_t ai = 0; ai < params.size(); ++ai) {
@@ -1191,7 +1142,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 												const auto& param_decl = params[ai].as<DeclarationNode>();
 												ConstExpr::EvalResult arg_result;
 												if (ai < ctor_call.arguments().size()) {
-													arg_result = recoverCtorArgEvalResult(ctor_call.arguments()[ai], param_decl);
+													arg_result = ConstExpr::Evaluator::evaluate(ctor_call.arguments()[ai], eval_ctx);
 												} else if (param_decl.has_default_value()) {
 													arg_result = ConstExpr::Evaluator::evaluate(param_decl.default_value(), eval_ctx);
 												} else {

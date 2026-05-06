@@ -252,6 +252,10 @@ private:
 	void resolveRemainingAutoReturnsInNode(ASTNode& node);
 	std::optional<TypeSpecifierNode> deducePlaceholderReturnType(const ASTNode& body, TypeCategory placeholder_type);
 	TypeSpecifierNode finalizePlaceholderDeduction(TypeCategory placeholder_type, const TypeSpecifierNode& deduced_type) const;
+	std::optional<TypeSpecifierNode> resolveCallableReturnType(const FunctionDeclarationNode& callable);
+	std::optional<TypeSpecifierNode> resolveCallReturnType(
+		const FunctionDeclarationNode& callable,
+		const CallExprNode& call_expr);
 
 	// Infer the canonical type of a simple expression without full evaluation.
 	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).
@@ -485,6 +489,7 @@ private:
 	// (e.g. template instantiation member functions generated during parsing).
 	std::unordered_set<const void*> normalized_bodies_;
 	std::unordered_set<const void*> normalized_ast_nodes_;
+	std::unordered_set<const FunctionDeclarationNode*> resolving_auto_return_functions_;
 
 	// Track call-expression pointers where sema attempted call-arg annotation
 	// but couldn't resolve the callee (e.g. template specialization static members

@@ -1889,6 +1889,66 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 	}
 }
 
+std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallableReturnType(const FunctionDeclarationNode& callable) {
+	ASTNode resolved_return_type = callable.decl_node().type_node();
+	if (!resolved_return_type.has_value() || !resolved_return_type.is<TypeSpecifierNode>()) {
+		return std::nullopt;
+	}
+
+	TypeSpecifierNode return_type = resolved_return_type.as<TypeSpecifierNode>();
+	if (!isPlaceholderAutoType(return_type.type())) {
+		return return_type;
+	}
+
+	if (!resolving_auto_return_functions_.insert(&callable).second) {
+		return std::nullopt;
+	}
+	auto guard = ScopeGuard([this, &callable]() {
+		resolving_auto_return_functions_.erase(&callable);
+	});
+
+	FunctionDeclarationNode& mutable_callable = const_cast<FunctionDeclarationNode&>(callable);
+	ASTNode mutable_callable_node(&mutable_callable);
+	resolveRemainingAutoReturnsInNode(mutable_callable_node);
+	resolved_return_type = callable.decl_node().type_node();
+	if (!resolved_return_type.has_value() || !resolved_return_type.is<TypeSpecifierNode>()) {
+		return std::nullopt;
+	}
+
+	return_type = resolved_return_type.as<TypeSpecifierNode>();
+	if (isPlaceholderAutoType(return_type.type())) {
+		return std::nullopt;
+	}
+	return return_type;
+}
+
+std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallReturnType(
+	const FunctionDeclarationNode& callable,
+	const CallExprNode& call_expr) {
+	auto return_type = resolveCallableReturnType(callable);
+	if (!return_type.has_value()) {
+		return std::nullopt;
+	}
+
+	auto resolveSelfReturn = [&](TypeIndex object_type_index) {
+		if (object_type_index.is_valid()) {
+			*return_type = resolveTypeSpecifierForSelfReference(*return_type, object_type_index);
+		}
+	};
+	if (call_expr.has_receiver()) {
+		if (const CanonicalTypeId receiver_type_id = inferExpressionType(call_expr.receiver())) {
+			const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
+			resolveSelfReturn(receiver_desc.type_index);
+		}
+	} else if (callable.is_member_function()) {
+		if (const MemberContext* member_context = getCurrentMemberContext()) {
+			resolveSelfReturn(member_context->type_index);
+		}
+	}
+
+	return return_type;
+}
+
 std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(const ASTNode& body, TypeCategory placeholder_type) {
 	if (!body.has_value()) {
 		return std::nullopt;
@@ -2297,6 +2357,18 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 			normalizeExpression(*member.bitfield_width_expr, ctx);
 		}
 	}
+
+	std::optional<MemberContext> static_member_context;
+	if (const TypeInfo* type_info = findStructTypeInfoByNameFragment(StringTable::getStringView(decl.name()));
+		type_info && type_info->getStructInfo()) {
+		static_member_context = MemberContext{type_info->type_index_, false, CVQualifier::None};
+		member_context_stack_.push_back(*static_member_context);
+	}
+	auto static_member_context_cleanup = ScopeGuard([this, &static_member_context]() {
+		if (static_member_context.has_value()) {
+			member_context_stack_.pop_back();
+		}
+	});
 
 	for (const auto& static_member : decl.static_members()) {
 		if (static_member.initializer.has_value()) {
@@ -4389,48 +4461,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					if (!resolved_callable) {
 						return {};
 					}
-					auto getResolvedReturnType = [this](const FunctionDeclarationNode& callable) -> std::optional<TypeSpecifierNode> {
-						ASTNode resolved_return_type = callable.decl_node().type_node();
-						if (!resolved_return_type.has_value() || !resolved_return_type.is<TypeSpecifierNode>()) {
-							return std::nullopt;
-						}
-						TypeSpecifierNode return_type = resolved_return_type.as<TypeSpecifierNode>();
-						if (!isPlaceholderAutoType(return_type.type())) {
-							return return_type;
-						}
-						FunctionDeclarationNode& mutable_callable =
-							const_cast<FunctionDeclarationNode&>(callable);
-						ASTNode mutable_callable_node(&mutable_callable);
-						resolveRemainingAutoReturnsInNode(mutable_callable_node);
-						resolved_return_type = callable.decl_node().type_node();
-						if (!resolved_return_type.has_value() || !resolved_return_type.is<TypeSpecifierNode>()) {
-							return std::nullopt;
-						}
-						return_type = resolved_return_type.as<TypeSpecifierNode>();
-						if (isPlaceholderAutoType(return_type.type())) {
-							return std::nullopt;
-						}
-						return return_type;
-					};
-					if (auto resolved_return_type = getResolvedReturnType(*resolved_callable)) {
-						TypeSpecifierNode return_type = *resolved_return_type;
-						auto try_resolve_self_return = [&](TypeIndex object_type_index) {
-							if (!object_type_index.is_valid()) {
-								return;
-							}
-							return_type = resolveTypeSpecifierForSelfReference(return_type, object_type_index);
-						};
-						if (e.has_receiver()) {
-							if (const CanonicalTypeId receiver_type_id = inferExpressionType(e.receiver())) {
-								const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
-								try_resolve_self_return(receiver_desc.type_index);
-							}
-						} else if (resolved_callable->is_member_function()) {
-							if (const MemberContext* call_member_ctx = getCurrentMemberContext()) {
-								try_resolve_self_return(call_member_ctx->type_index);
-							}
-						}
-						return canonicalizeType(return_type);
+					if (auto resolved_return_type = resolveCallReturnType(*resolved_callable, e)) {
+						return canonicalizeType(*resolved_return_type);
 					}
 					return {};
 				};
@@ -5876,31 +5908,22 @@ void SemanticAnalysis::annotateResolvedCallResultType(const ASTNode& call_node,
 	if (!call_node.is<ExpressionNode>()) {
 		return;
 	}
-	ASTNode return_type_node = func_decl.decl_node().type_node();
-	if (!return_type_node.has_value() || !return_type_node.is<TypeSpecifierNode>()) {
+	std::optional<TypeSpecifierNode> return_type;
+	if (call_node.is<CallExprNode>()) {
+		return_type = resolveCallReturnType(func_decl, call_node.as<CallExprNode>());
+	} else {
+		return_type = resolveCallableReturnType(func_decl);
+	}
+	if (!return_type.has_value()) {
 		return;
 	}
-	TypeSpecifierNode return_type = return_type_node.as<TypeSpecifierNode>();
-	if (isPlaceholderAutoType(return_type.type())) {
-		FunctionDeclarationNode& mutable_decl = const_cast<FunctionDeclarationNode&>(func_decl);
-		ASTNode mutable_decl_node(&mutable_decl);
-		resolveRemainingAutoReturnsInNode(mutable_decl_node);
-		return_type_node = func_decl.decl_node().type_node();
-		if (!return_type_node.has_value() || !return_type_node.is<TypeSpecifierNode>()) {
-			return;
-		}
-		return_type = return_type_node.as<TypeSpecifierNode>();
-		if (isPlaceholderAutoType(return_type.type())) {
-			return;
-		}
-	}
 	ValueCategory value_category = ValueCategory::PRValue;
-	if (return_type.is_rvalue_reference()) {
+	if (return_type->is_rvalue_reference()) {
 		value_category = ValueCategory::XValue;
-	} else if (return_type.is_reference()) {
+	} else if (return_type->is_reference()) {
 		value_category = ValueCategory::LValue;
 	}
-	annotateExpressionTypeSlot(call_node, canonicalizeType(return_type), value_category);
+	annotateExpressionTypeSlot(call_node, canonicalizeType(*return_type), value_category);
 }
 
 // --- Function call argument conversion annotation ---

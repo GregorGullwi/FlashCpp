@@ -472,6 +472,15 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 			}
 		}
 
+		EvalResult arg_eval_result = outer_bindings
+			? evaluate_expression_with_bindings_const(argument, *outer_bindings, context)
+			: evaluate(argument, context);
+		if (arg_eval_result.success()) {
+			if (auto constexpr_arg_type = try_get_type_from_eval_result(arg_eval_result); constexpr_arg_type.has_value()) {
+				arg_type_opt = constexpr_arg_type;
+			}
+		}
+
 		if (!arg_type_opt.has_value()) {
 			has_all_arg_types = false;
 			break;
