@@ -1,5 +1,29 @@
 #include "FileReader.h"
 
+namespace {
+	constexpr std::string_view horizontal_whitespace = " \t"sv;
+
+	bool isSpaceChar(char ch) {
+		return std::isspace(static_cast<unsigned char>(ch)) != 0;
+	}
+
+	bool isDigitChar(char ch) {
+		return std::isdigit(static_cast<unsigned char>(ch)) != 0;
+	}
+
+	bool isAlphaChar(char ch) {
+		return std::isalpha(static_cast<unsigned char>(ch)) != 0;
+	}
+
+	bool isAlnumChar(char ch) {
+		return std::isalnum(static_cast<unsigned char>(ch)) != 0;
+	}
+
+	bool isIdentifierChar(char ch) {
+		return isAlnumChar(ch) || ch == '_';
+	}
+}
+
 // Optimized single-pass macro expansion (C++20 compliant)
 // Instead of searching for all ~200 defines at every position (O(D*N*M)),
 // we scan the input once, extract identifiers, and look them up in the hash table (O(N*avgIdLen))
@@ -10,6 +34,10 @@
 // 3. Recursive expansion is prevented by tracking currently-expanding macros
 // 4. Token pasting (##) is performed after argument substitution
 // 5. Stringification (#) uses unexpanded argument text
+std::string FileReader::expandMacros(const std::string& input) {
+	return expandMacros(input, {});
+}
+
 std::string FileReader::expandMacros(const std::string& input, std::unordered_set<std::string, PreprocessorStringHash, std::equal_to<>> expanding_macros) {
 	// Check if we're inside a multiline raw string from a previous line
 	if (inside_multiline_raw_string_) {
@@ -262,7 +290,10 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 							// Substitute macro arguments
 							if (args.size() < defineDirective->args.size()) {
 								// Not enough arguments per C++ standard - skip expansion
+								if (output.empty()) output.reserve(current.size() * 2);
+								output.append(current, copy_start, ident_start - copy_start);
 								output += ident;
+								copy_start = pos;
 								continue;
 							}
 
@@ -575,7 +606,7 @@ bool FileReader::parseIntegerLiteral(std::string_view sv, size_t& pos, long& val
 	std::string literal;
 
 	// Skip leading whitespace
-	while (pos < sv.size() && std::isspace(sv[pos]))
+	while (pos < sv.size() && isSpaceChar(sv[pos]))
 		pos++;
 
 	if (pos >= sv.size())
@@ -653,7 +684,7 @@ long FileReader::evaluate_expression(std::string_view sv) {
 	}
 
 	// Skip leading whitespace
-	while (pos < sv.size() && std::isspace(sv[pos]))
+	while (pos < sv.size() && isSpaceChar(sv[pos]))
 		pos++;
 
 	// Check if expression is empty (all whitespace) - treat as 0
@@ -672,14 +703,14 @@ long FileReader::evaluate_expression(std::string_view sv) {
 
 	while (pos < sv.size() && eval_loop_guard-- > 0) {
 		// Skip whitespace
-		while (pos < sv.size() && std::isspace(sv[pos]))
+		while (pos < sv.size() && isSpaceChar(sv[pos]))
 			pos++;
 
 		if (pos >= sv.size())
 			break;
 
 		char c = sv[pos];
-		if (isdigit(c)) {
+		if (isDigitChar(c)) {
 			long value = 0;
 			std::string literal;
 			if (!parseIntegerLiteral(sv, pos, value, &literal)) {
@@ -723,20 +754,18 @@ long FileReader::evaluate_expression(std::string_view sv) {
 				}
 				ops.push(op);
 			}
-		} else if (isalpha(c) || c == '_') {
-			// Manually consume only identifier characters
-			std::string keyword;
-			while (pos < sv.size() && (isalnum(sv[pos]) || sv[pos] == '_')) {
-				keyword += sv[pos];
+		} else if (isAlphaChar(c) || c == '_') {
+			size_t keyword_start = pos;
+			while (pos < sv.size() && isIdentifierChar(sv[pos]))
 				pos++;
-			}
+			std::string_view keyword = sv.substr(keyword_start, pos - keyword_start);
 
 			if (keyword == "defined") {
-				std::string symbol;
+				size_t symbol_start = pos;
 				bool has_parenthesis = false;
 
 				// Skip whitespace
-				while (pos < sv.size() && std::isspace(sv[pos]))
+				while (pos < sv.size() && isSpaceChar(sv[pos]))
 					pos++;
 
 				if (pos < sv.size() && sv[pos] == '(') {
@@ -744,19 +773,19 @@ long FileReader::evaluate_expression(std::string_view sv) {
 					has_parenthesis = true;
 
 					// Skip whitespace
-					while (pos < sv.size() && std::isspace(sv[pos]))
+					while (pos < sv.size() && isSpaceChar(sv[pos]))
 						pos++;
 				}
 
 				// Read symbol
-				while (pos < sv.size() && (isalnum(sv[pos]) || sv[pos] == '_')) {
-					symbol += sv[pos];
+				symbol_start = pos;
+				while (pos < sv.size() && isIdentifierChar(sv[pos]))
 					pos++;
-				}
+				std::string_view symbol = sv.substr(symbol_start, pos - symbol_start);
 
 				if (has_parenthesis) {
 					// Skip whitespace
-					while (pos < sv.size() && std::isspace(sv[pos]))
+					while (pos < sv.size() && isSpaceChar(sv[pos]))
 						pos++;
 
 					// Consume closing ')'
@@ -773,17 +802,16 @@ long FileReader::evaluate_expression(std::string_view sv) {
 			} else if (keyword == "__has_include") {
 				// __has_include(<header>) or __has_include("header")
 				long exists = 0;
-				char include_name_buf[256] = {};
 
 				// Skip whitespace
-				while (pos < sv.size() && std::isspace(sv[pos]))
+				while (pos < sv.size() && isSpaceChar(sv[pos]))
 					pos++;
 
 				if (pos < sv.size() && sv[pos] == '(') {
 					pos++;  // Consume '('
 
 					// Skip whitespace
-					while (pos < sv.size() && std::isspace(sv[pos]))
+					while (pos < sv.size() && isSpaceChar(sv[pos]))
 						pos++;
 
 					if (pos < sv.size()) {
@@ -791,45 +819,36 @@ long FileReader::evaluate_expression(std::string_view sv) {
 						char end_char = (quote_char == '<') ? '>' : '"';
 
 						if (quote_char == '<' || quote_char == '"') {
-							pos++;  // Consume opening < or "
-
-							// Read the include name into buffer
-							size_t i = 0;
-							while (i < sizeof(include_name_buf) - 1 && pos < sv.size() && sv[pos] != end_char) {
-								include_name_buf[i++] = sv[pos];
+							size_t include_start = ++pos;
+							while (pos < sv.size() && sv[pos] != end_char)
 								pos++;
-							}
-							include_name_buf[i] = '\0';
-
-							// Consume closing > or "
-							if (pos < sv.size() && sv[pos] == end_char) {
-								pos++;
-							}
-
-							// Skip whitespace
-							while (pos < sv.size() && std::isspace(sv[pos]))
+							if (pos < sv.size()) {
+								std::string_view include_name = sv.substr(include_start, pos - include_start);
 								pos++;
 
-							// Consume closing ')'
-							if (pos < sv.size() && sv[pos] == ')') {
-								pos++;
-							}
+								// Skip whitespace
+								while (pos < sv.size() && isSpaceChar(sv[pos]))
+									pos++;
 
-							std::string_view include_name(include_name_buf);
-
-							// Check if the file exists in any include directory
-							for (const auto& include_dir : settings_.getIncludeDirs()) {
-								std::string include_file(include_dir);
-								include_file.append("/");
-								include_file.append(include_name);
-								if (std::filesystem::exists(include_file)) {
-									exists = 1;
-									break;
+								// Consume closing ')'
+								if (pos < sv.size() && sv[pos] == ')') {
+									pos++;
 								}
-							}
 
-							if (settings_.isVerboseMode()) {
-								std::cout << "__has_include(" << quote_char << include_name << end_char << ") = " << exists << std::endl;
+								// Check if the file exists in any include directory
+								for (const auto& include_dir : settings_.getIncludeDirs()) {
+									std::string include_file(include_dir);
+									include_file.append("/");
+									include_file.append(include_name);
+									if (std::filesystem::exists(include_file)) {
+										exists = 1;
+										break;
+									}
+								}
+
+								if (settings_.isVerboseMode()) {
+									std::cout << "__has_include(" << quote_char << include_name << end_char << ") = " << exists << std::endl;
+								}
 							}
 						}
 					}
@@ -838,37 +857,32 @@ long FileReader::evaluate_expression(std::string_view sv) {
 			} else if (keyword == "__has_builtin") {
 				// __has_builtin(__builtin_name)
 				long exists = 0;
-				char builtin_name_buf[128] = {};
 
 				// Skip whitespace
-				while (pos < sv.size() && std::isspace(sv[pos]))
+				while (pos < sv.size() && isSpaceChar(sv[pos]))
 					pos++;
 
 				if (pos < sv.size() && sv[pos] == '(') {
 					pos++;  // Consume '('
 
 					// Skip whitespace
-					while (pos < sv.size() && std::isspace(sv[pos]))
+					while (pos < sv.size() && isSpaceChar(sv[pos]))
 						pos++;
 
-					// Read the builtin name into buffer
-					size_t i = 0;
-					while (i < sizeof(builtin_name_buf) - 1 && pos < sv.size() && sv[pos] != ')' && !std::isspace(sv[pos])) {
-						builtin_name_buf[i++] = sv[pos];
+					size_t builtin_start = pos;
+					while (pos < sv.size() && sv[pos] != ')' && !isSpaceChar(sv[pos])) {
 						pos++;
 					}
-					builtin_name_buf[i] = '\0';
+					std::string_view builtin_name = sv.substr(builtin_start, pos - builtin_start);
 
 					// Skip whitespace
-					while (pos < sv.size() && std::isspace(sv[pos]))
+					while (pos < sv.size() && isSpaceChar(sv[pos]))
 						pos++;
 
 					// Consume closing ')'
 					if (pos < sv.size() && sv[pos] == ')') {
 						pos++;
 					}
-
-					std::string_view builtin_name(builtin_name_buf);
 
 					// Set of all supported type trait and other compiler builtins
 					// This must match the builtins supported in Parser.cpp
@@ -935,37 +949,32 @@ long FileReader::evaluate_expression(std::string_view sv) {
 			} else if (keyword == "__has_cpp_attribute") {
 				// __has_cpp_attribute(attribute_name)
 				long version = 0;
-				char attribute_name_buf[128] = {};
 
 				// Skip whitespace
-				while (pos < sv.size() && std::isspace(sv[pos]))
+				while (pos < sv.size() && isSpaceChar(sv[pos]))
 					pos++;
 
 				if (pos < sv.size() && sv[pos] == '(') {
 					pos++;  // Consume '('
 
 					// Skip whitespace
-					while (pos < sv.size() && std::isspace(sv[pos]))
+					while (pos < sv.size() && isSpaceChar(sv[pos]))
 						pos++;
 
-					// Read the attribute name into buffer
-					size_t i = 0;
-					while (i < sizeof(attribute_name_buf) - 1 && pos < sv.size() && sv[pos] != ')' && !std::isspace(sv[pos])) {
-						attribute_name_buf[i++] = sv[pos];
+					size_t attribute_start = pos;
+					while (pos < sv.size() && sv[pos] != ')' && !isSpaceChar(sv[pos])) {
 						pos++;
 					}
-					attribute_name_buf[i] = '\0';
+					std::string_view attribute_name = sv.substr(attribute_start, pos - attribute_start);
 
 					// Skip whitespace
-					while (pos < sv.size() && std::isspace(sv[pos]))
+					while (pos < sv.size() && isSpaceChar(sv[pos]))
 						pos++;
 
 					// Consume closing ')'
 					if (pos < sv.size() && sv[pos] == ')') {
 						pos++;
 					}
-
-					std::string_view attribute_name(attribute_name_buf);
 
 					// Check if the attribute is supported and get its version
 					if (auto attr_it = has_cpp_attribute_versions.find(attribute_name); attr_it != has_cpp_attribute_versions.end()) {
@@ -995,7 +1004,7 @@ long FileReader::evaluate_expression(std::string_view sv) {
 				const long push_value = (keyword == "__is_identifier") ? 1 : 0;
 				// Consume the "( arg )" — we don't care about the argument value,
 				// but we must consume it so it doesn't pollute the expression stack.
-				while (pos < sv.size() && std::isspace(sv[pos]))
+				while (pos < sv.size() && isSpaceChar(sv[pos]))
 					pos++;
 
 				if (pos < sv.size() && sv[pos] == '(') {
@@ -1272,8 +1281,8 @@ void FileReader::processPragmaPack(std::string_view line) {
 	std::string_view content = line.substr(open_paren + 1, close_paren - open_paren - 1);
 
 	// Trim whitespace
-	auto trim_start = content.find_first_not_of(" \t"sv);
-	auto trim_end = content.find_last_not_of(" \t"sv);
+	auto trim_start = content.find_first_not_of(horizontal_whitespace);
+	auto trim_end = content.find_last_not_of(horizontal_whitespace);
 	if (trim_start != std::string_view::npos && trim_end != std::string_view::npos) {
 		content = content.substr(trim_start, trim_end - trim_start + 1);
 	} else {
@@ -1304,14 +1313,14 @@ void FileReader::processPragmaPack(std::string_view line) {
 		std::string_view second_part = content.substr(comma_pos + 1);
 
 		// Trim both parts
-		auto trim_first_start = first_part.find_first_not_of(" \t");
-		auto trim_first_end = first_part.find_last_not_of(" \t");
+		auto trim_first_start = first_part.find_first_not_of(horizontal_whitespace);
+		auto trim_first_end = first_part.find_last_not_of(horizontal_whitespace);
 		if (trim_first_start != std::string_view::npos && trim_first_end != std::string_view::npos) {
 			first_part = first_part.substr(trim_first_start, trim_first_end - trim_first_start + 1);
 		}
 
-		auto trim_second_start = second_part.find_first_not_of(" \t");
-		auto trim_second_end = second_part.find_last_not_of(" \t");
+		auto trim_second_start = second_part.find_first_not_of(horizontal_whitespace);
+		auto trim_second_end = second_part.find_last_not_of(horizontal_whitespace);
 		if (trim_second_start != std::string_view::npos && trim_second_end != std::string_view::npos) {
 			second_part = second_part.substr(trim_second_start, trim_second_end - trim_second_start + 1);
 		}
@@ -1388,10 +1397,6 @@ void FileReader::processLineDirective(const std::string& line) {
 
 void FileReader::handleDefine(std::string_view sv) {
 	DefineDirective define;
-	constexpr std::string_view horizontal_whitespace = " \t\f\v\r";
-	auto isIdentifierChar = [](unsigned char ch) {
-		return std::isalnum(ch) || ch == '_';
-	};
 	auto trimArgument = [](std::string_view token) {
 		auto begin = std::find_if_not(token.begin(), token.end(), [](unsigned char ch) {
 			return std::isspace(ch);

@@ -2,7 +2,7 @@
 #include <chrono>
 
 #ifndef WITH_PREPROCESSOR_TIMINGS
-#define WITH_PREPROCESSOR_TIMINGS 1
+#define WITH_PREPROCESSOR_TIMINGS 0
 #endif
 
 // Timing categories - always available, used with PreprocessTimer
@@ -50,16 +50,16 @@ static double preprocessTimingToMs(std::chrono::microseconds duration) {
 
 static void printPreprocessTimingSummary() {
 	auto& t = PreprocessTimer::timings;
-	printf("    Preprocess timing (%zu lines, %zu files):\n", PreprocessTimer::line_count, PreprocessTimer::files_processed);
-	printf("      I/O (open+read)          : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::include_exists)]));
-	printf("        line read              : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::line_read)]));
-	printf("        line trim              : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::line_trim)]));
-	printf("        strip // comment       : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::line_comment)]));
-	printf("        append line            : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::line_append)]));
-	printf("        block /* */ comment    : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::comment)]));
-	printf("        #define                : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::define)]));
-	printf("        #if/#ifdef/#else/#endif: %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::conditional)]));
-	printf("        macro expansion        : %8.3f ms\n", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::macro)]));
+	FLASH_LOG_FORMAT(Lexer, Info, "Preprocess timing ({} lines, {} files):", PreprocessTimer::line_count, PreprocessTimer::files_processed);
+	FLASH_LOG_FORMAT(Lexer, Info, "  I/O (open+read)          : {:.3f} ms", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::include_exists)]));
+	FLASH_LOG_FORMAT(Lexer, Info, "    line read              : {:.3f} ms", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::line_read)]));
+	FLASH_LOG_FORMAT(Lexer, Info, "    line trim              : {:.3f} ms", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::line_trim)]));
+	FLASH_LOG_FORMAT(Lexer, Info, "    strip // comment       : {:.3f} ms", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::line_comment)]));
+	FLASH_LOG_FORMAT(Lexer, Info, "    append line            : {:.3f} ms", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::line_append)]));
+	FLASH_LOG_FORMAT(Lexer, Info, "    block /* */ comment    : {:.3f} ms", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::comment)]));
+	FLASH_LOG_FORMAT(Lexer, Info, "    #define                : {:.3f} ms", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::define)]));
+	FLASH_LOG_FORMAT(Lexer, Info, "    #if/#ifdef/#else/#endif: {:.3f} ms", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::conditional)]));
+	FLASH_LOG_FORMAT(Lexer, Info, "    macro expansion        : {:.3f} ms", preprocessTimingToMs(t[static_cast<size_t>(PreprocessTimingCategory::macro)]));
 }
 
 struct ScopedPreprocessTimingSummary {
@@ -276,6 +276,72 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 	};
 
 	std::string result;  // Reused for block comment stripping
+	auto stripBlockCommentsPreservingLineComments = [&](std::string& current_line) -> bool {
+		if (in_comment) {
+			size_t end_comment_pos = current_line.find("*/");
+			if (end_comment_pos != std::string::npos) {
+				in_comment = false;
+				current_line = current_line.substr(end_comment_pos + 2);
+			} else {
+				current_line.clear();
+				return false;
+			}
+		}
+
+		if (current_line.find('/') == std::string::npos)
+			return true;
+
+		result.clear();
+		result.reserve(current_line.size());
+		bool l_in_string = false;
+		bool l_in_char = false;
+		size_t i = 0;
+		while (i < current_line.size()) {
+			char c = current_line[i];
+			if ((l_in_string || l_in_char) && c == '\\' && i + 1 < current_line.size()) {
+				result += c;
+				result += current_line[i + 1];
+				i += 2;
+				continue;
+			}
+			if (c == '"' && !l_in_char) {
+				l_in_string = !l_in_string;
+				result += c;
+				++i;
+			} else if (c == '\'' && !l_in_string) {
+				l_in_char = !l_in_char;
+				result += c;
+				++i;
+			} else if (!l_in_string && !l_in_char && c == '/' && i + 1 < current_line.size()) {
+				if (current_line[i + 1] == '*') {
+					size_t close = current_line.find("*/", i + 2);
+					if (close != std::string::npos) {
+						size_t nested = current_line.find("/*", i + 2);
+						if (nested != std::string::npos && nested < close && !filestack_.empty()) {
+							FLASH_LOG(Lexer, Warning, "'/*' within block comment at ",
+									  filestack_.top().file_name, ":", line_number);
+						}
+						i = close + 2;
+					} else {
+						in_comment = true;
+						break;
+					}
+				} else if (current_line[i + 1] == '/') {
+					result.append(current_line, i, current_line.size() - i);
+					i = current_line.size();
+				} else {
+					result += c;
+					++i;
+				}
+			} else {
+				result += c;
+				++i;
+			}
+		}
+		current_line.swap(result);
+		result.clear();
+		return !in_comment;
+	};
 
 	while (getNextLine()) {
 #if WITH_PREPROCESSOR_TIMINGS
@@ -302,92 +368,10 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			++prev_line_number;
 		}
 
-		if (in_comment) {
-			size_t end_comment_pos = line.find("*/");
-			if (end_comment_pos != std::string::npos) {
-				in_comment = false;
-				line = line.substr(end_comment_pos + 2);
-			} else {
-				continue;
-			}
-		}
-
 		{
 			PreprocessTimer timer(PreprocessTimingCategory::comment);
-			// Fast path: if no '/' in line, no block comments or line comments possible.
-			if (line.find('/') != std::string::npos) {
-				// Strip /* ... */ block comments in a single left-to-right pass,
-				// respecting string and char literals.  Handles multiple block
-				// comments on one line and unterminated block comments that span
-				// to subsequent lines.
-				//
-				// IMPORTANT: We intentionally do NOT strip // line comments here.
-				// Per the C++ standard, line splicing (phase 2: backslash-newline
-				// continuation) must happen before comment removal (phase 3).
-				// The #directive continuation handler below (lines with trailing \)
-				// needs to see the full line including any // and trailing \.
-				// The // comments are stripped later by stripLineComment() after
-				// line continuation has been processed.
-				result.clear();
-				result.reserve(line.size());
-				bool l_in_string = false;
-				bool l_in_char = false;
-				size_t i = 0;
-				while (i < line.size()) {
-					char c = line[i];
-					// Skip escaped characters inside string/char literals
-					if ((l_in_string || l_in_char) && c == '\\' && i + 1 < line.size()) {
-						result += c;
-						result += line[i + 1];
-						i += 2;
-						continue;
-					}
-					if (c == '"' && !l_in_char) {
-						l_in_string = !l_in_string;
-						result += c;
-						++i;
-					} else if (c == '\'' && !l_in_string) {
-						l_in_char = !l_in_char;
-						result += c;
-						++i;
-					} else if (!l_in_string && !l_in_char && c == '/' && i + 1 < line.size()) {
-						if (line[i + 1] == '*') {
-							// Block comment: find closing */
-							size_t close = line.find("*/", i + 2);
-							if (close != std::string::npos) {
-								// Warn about /* inside block comment (-Wcomment equivalent)
-								size_t nested = line.find("/*", i + 2);
-								if (nested != std::string::npos && nested < close && !filestack_.empty()) {
-									FLASH_LOG(Lexer, Warning, "'/*' within block comment at ",
-											  filestack_.top().file_name, ":", line_number);
-								}
-								i = close + 2; // skip past */
-							} else {
-								// Unterminated block comment — spans to next line(s)
-								in_comment = true;
-								break;
-							}
-						} else if (line[i + 1] == '/') {
-							// Line comment: stop scanning for block comments on the
-							// rest of this line.  Copy the // and everything after it
-							// verbatim — stripLineComment() will remove it later,
-							// AFTER line continuation has been processed.
-							result.append(line, i, line.size() - i);
-							i = line.size();
-						} else {
-							result += c;
-							++i;
-						}
-					} else {
-						result += c;
-						++i;
-					}
-				}
-				line.swap(result);
-				result.clear();  // Reuse buffer for next iteration
-				if (in_comment)
-					continue;
-			}  // end: if (line.find('/') != npos)
+			if (!stripBlockCommentsPreservingLineComments(line))
+				continue;
 		}
 
 		if (skipping_stack.size() == 0) {
@@ -539,6 +523,8 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 				// Strip // comments from merged lines (they were not processed
 				// by the main loop's comment stripping since they come from
 				// raw stream reads during multi-line macro merging).
+				if (!stripBlockCommentsPreservingLineComments(next_line))
+					return true;
 				stripLineComment(next_line);
 
 				line += " ";
@@ -600,6 +586,9 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 									// Merge: the next line continues this macro invocation
 									if (has_pending_line)
 										has_pending_line = false;
+									if (!stripBlockCommentsPreservingLineComments(peek_line))
+										peek_line.clear();
+									stripLineComment(peek_line);
 									line += " " + peek_line;
 									// Continue merging if parens are still unmatched
 									while (hasIncompleteMacroInvocation(line)) {

@@ -26,14 +26,6 @@ struct PreprocessorStringHash {
 	size_t operator()(const std::string& s) const noexcept { return std::hash<std::string_view>{}(s); }
 };
 
-struct PreprocessorStringEqual {
-	using is_transparent = void;
-	bool operator()(std::string_view a, std::string_view b) const noexcept { return a == b; }
-	bool operator()(const std::string& a, const std::string& b) const noexcept { return a == b; }
-	bool operator()(std::string_view a, const std::string& b) const noexcept { return a == b; }
-	bool operator()(const std::string& a, std::string_view b) const noexcept { return a == b; }
-};
-
 #include "CompileContext.h"
 #include "FileTree.h"
 
@@ -548,7 +540,8 @@ private:
 
 	static bool is_inside_string_literal(const std::string& str, size_t pos);
 	std::string expandMacrosForConditional(const std::string& input);
-	std::string expandMacros(const std::string& input, std::unordered_set<std::string, PreprocessorStringHash, std::equal_to<>> expanding_macros = {});
+	std::string expandMacros(const std::string& input);
+	std::string expandMacros(const std::string& input, std::unordered_set<std::string, PreprocessorStringHash, std::equal_to<>> expanding_macros);
 	void apply_operator(std::stack<long>& values, std::stack<Operator>& ops);
 	bool parseIntegerLiteral(std::string_view sv, size_t& pos, long& value, std::string* out_literal = nullptr);
 	long evaluate_expression(std::string_view sv);
@@ -567,7 +560,7 @@ private:
 
 	CompileContext& settings_;
 	FileTree& tree_;
-	std::unordered_map<std::string, Directive, PreprocessorStringHash, PreprocessorStringEqual> defines_;
+	std::unordered_map<std::string, Directive, PreprocessorStringHash, std::equal_to<>> defines_;
 	std::unordered_set<std::string> processedHeaders_;
 	std::stack<CurrentFile> filestack_;
 	std::string result_;
