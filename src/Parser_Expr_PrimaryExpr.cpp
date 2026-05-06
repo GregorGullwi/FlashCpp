@@ -4804,6 +4804,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return ParseResult::error("Expected ')' after function call arguments", current_token_);
 					}
 
+					const bool has_dependent_call_args =
+						argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+						argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
+					const bool allow_undeclared_decltype_call_recovery =
+						context != ExpressionContext::Decltype || has_dependent_call_args;
+
 					// Try to instantiate the template function (skip in extern "C" contexts - C has no templates)
 					if (current_linkage_ != Linkage::C) {
 						template_func_inst = try_instantiate_template(identifier_token.value(), arg_types);
@@ -4824,6 +4830,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 						if (!found_member_function_in_context && !identifierType.has_value() &&
 							!lookupTypeInCurrentContext(identifier_token.handle())) {
+							if (!allow_undeclared_decltype_call_recovery) {
+								return ParseResult::error("Missing identifier", identifier_token);
+							}
 							auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 							auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 							gSymbolTable.insertGlobal(identifier_token.value(), forward_decl);
@@ -4842,14 +4851,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// bogus forward declaration that would confuse Phase 1 two-phase lookup.
 				if (!found_member_function_in_context && !identifierType.has_value() &&
 					!lookupTypeInCurrentContext(identifier_token.handle())) {
-					// We'll assume it returns int for now (this is a simplification)
-					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
-					auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
-
-					// Add to GLOBAL symbol table as a forward declaration
-					// Using insertGlobal ensures it persists after scope exits
-					gSymbolTable.insertGlobal(identifier_token.value(), forward_decl);
-					identifierType = forward_decl;
 				}
 
 				if (peek().is_eof())
@@ -4878,6 +4879,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);
+				}
+
+				if (!found_member_function_in_context && !identifierType.has_value() &&
+					!lookupTypeInCurrentContext(identifier_token.handle())) {
+					if (context == ExpressionContext::Decltype &&
+						!argsHaveDeferredTemplateDependency(args, currentTemplateParamNames())) {
+						return ParseResult::error("Missing identifier", identifier_token);
+					}
+					// We'll assume it returns int for now (this is a simplification)
+					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
+					auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+
+					// Add to GLOBAL symbol table as a forward declaration
+					// Using insertGlobal ensures it persists after scope exits
+					gSymbolTable.insertGlobal(identifier_token.value(), forward_decl);
+					identifierType = forward_decl;
 				}
 
 				// Unified resolution: collect candidates, augment with ADL, resolve overload.

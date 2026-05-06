@@ -2461,7 +2461,38 @@ ParseResult Parser::parse_decltype_specifier() {
 			CVQualifier::None,
 			ReferenceQualifier::None);
 	};
+	auto tokenRangeMentionsActiveTemplateParam = [&](SaveHandle scan_start) {
+		if (!isTemplateParameterTrackingActive()) {
+			return false;
+		}
 
+		SaveHandle resume_pos = save_token_position();
+		restore_token_position(scan_start);
+		int paren_depth = 1;
+		bool mentions_active_template_param = false;
+		while (!peek().is_eof() && paren_depth > 0) {
+			const Token token = peek_info();
+			if (token.type() == Token::Type::Identifier &&
+				std::find(
+					currentTemplateParamNames().begin(),
+					currentTemplateParamNames().end(),
+					token.handle()) != currentTemplateParamNames().end()) {
+				mentions_active_template_param = true;
+				break;
+			}
+			if (peek() == "("_tok) {
+				paren_depth++;
+			} else if (peek() == ")"_tok) {
+				paren_depth--;
+				if (paren_depth == 0) {
+					break;
+				}
+			}
+			advance();
+		}
+		restore_token_position(resume_pos);
+		return mentions_active_template_param;
+	};
 	// Expect '('
 	if (!consume("("_tok)) {
 		return ParseResult::error(std::string("Expected '(' after '") + std::string(keyword) + "'", current_token_);
@@ -2491,7 +2522,7 @@ ParseResult Parser::parse_decltype_specifier() {
 		// trailing return type) even in SFINAE context so the error doesn't cascade.
 		bool is_recursion_error = expr_result.error_message().find("recursion depth") != std::string::npos ||
 								  expr_result.error_message().find("recursion") != std::string::npos;
-		bool should_recover = isTemplateParameterTrackingActive() &&
+		bool should_recover = tokenRangeMentionsActiveTemplateParam(expr_start_pos) &&
 							  (template_instantiation_mode_ != TemplateInstantiationMode::SfinaeProbe || is_recursion_error);
 		if (should_recover) {
 			FLASH_LOG(Templates, Debug, "Creating dependent type for failed decltype expression in template context");
@@ -2518,8 +2549,6 @@ ParseResult Parser::parse_decltype_specifier() {
 		discard_saved_token(expr_start_pos);
 		return expr_result;
 	}
-	discard_saved_token(expr_start_pos);
-
 	// Handle comma operator inside decltype: decltype(expr1, expr2, expr3)
 	// The comma here is the C++ comma operator, not an argument separator.
 	// The result type of decltype is the type of the last expression.
@@ -2531,7 +2560,7 @@ ParseResult Parser::parse_decltype_specifier() {
 			// In template context, create dependent type and skip to closing paren.
 			// Restore to position before the failed parse_expression to ensure
 			// reliable paren depth counting (mirrors the first-expression recovery above).
-			if (isTemplateParameterTrackingActive() &&
+			if (tokenRangeMentionsActiveTemplateParam(comma_expr_pos) &&
 				template_instantiation_mode_ != TemplateInstantiationMode::SfinaeProbe) {
 				restore_token_position(comma_expr_pos);
 				int paren_depth = 1;
@@ -2557,6 +2586,10 @@ ParseResult Parser::parse_decltype_specifier() {
 		expr_result = std::move(next_expr);
 	}
 
+	const bool decltype_source_mentions_active_template_param =
+		tokenRangeMentionsActiveTemplateParam(expr_start_pos);
+	discard_saved_token(expr_start_pos);
+
 	// Expect ')'
 	if (!consume(")"_tok)) {
 		return ParseResult::error("Expected ')' after decltype expression", current_token_);
@@ -2570,7 +2603,7 @@ ParseResult Parser::parse_decltype_specifier() {
 		// Check both parsing_template_depth_ > 0 and current_template_param_names_ since
 		// some template contexts (like member function templates in structs) might not
 		// set parsing_template_depth_ > 0 but will have template parameter names.
-		if (isTemplateParameterTrackingActive()) {
+		if (decltype_source_mentions_active_template_param) {
 			FLASH_LOG(Templates, Debug, "Creating dependent type for decltype expression in template context");
 			return saved_position.success(makeDependentDecltypeType(decltype_token));
 		}
