@@ -956,7 +956,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 	const StructMemberFunction* called_member_func = nullptr;
 	const StructTypeInfo* struct_info = nullptr;
-	const FunctionDeclarationNode* materialized_member_func_decl = nullptr;
 
 	if (const TypeInfo* type_info = tryGetTypeInfo(object_type.type_index())) {
 		struct_info = type_info->getStructInfo();
@@ -1044,8 +1043,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			// already materialized every reachable instantiation's members by
 			// the time we reach codegen.
 
-			const FunctionDeclarationNode* resolved_member_func =
-				materialized_member_func_decl ? materialized_member_func_decl : &func_decl;
+			const FunctionDeclarationNode* resolved_member_func = &func_decl;
 			if (called_member_func &&
 				called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 				resolved_member_func = &called_member_func->function_decl.as<FunctionDeclarationNode>();
@@ -1325,14 +1323,41 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	// while building the CallOp payload and later when shaping the final ExprResult.
 	std::optional<TypeSpecifierNode> resolved_generic_return_type;
 
+	// Compute effective return type early to ensure VirtualCallOp/CallOp creation and ABI metadata
+	// use the same resolved type that buildCallReturnResult will eventually use.
+	std::optional<TypeSpecifierNode> expression_return_type;
+	if (sema_) {
+		expression_return_type = sema_->getExpressionType(ASTNode(&callExprNode));
+	}
+	if ((!expression_return_type.has_value() || isPlaceholderAutoType(expression_return_type->type())) && parser_) {
+		expression_return_type = parser_->get_expression_type(ASTNode(&callExprNode));
+	}
+
 	if (is_virtual_call && vtable_index >= 0) {
 		// Generate virtual function call using VirtualCallOp
 		VirtualCallOp vcall_op;
 		// Get return type from the actual member function (if found) instead of the placeholder declaration
 		// The placeholder may not have correct pointer depth information for the return type
-		const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
+		const TypeSpecifierNode& declared_return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 									  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_specifier_node()
 									  : func_decl_node.type_specifier_node();
+		auto shouldPreferExpressionReturnType = [&](const TypeSpecifierNode& expr_type, const TypeSpecifierNode& decl_type) {
+			if (isPlaceholderAutoType(expr_type.type())) {
+				return false;
+			}
+			if (decl_type.pointer_depth() > expr_type.pointer_depth()) {
+				return false;
+			}
+			if ((decl_type.is_reference() || decl_type.is_rvalue_reference()) &&
+				!expr_type.is_reference() && !expr_type.is_rvalue_reference()) {
+				return false;
+			}
+			return true;
+		};
+		const TypeSpecifierNode& return_type =
+			expression_return_type.has_value() && shouldPreferExpressionReturnType(*expression_return_type, declared_return_type)
+				? *expression_return_type
+				: declared_return_type;
 		vcall_op.result.setType(return_type.category());
 		vcall_op.result.ir_type = toIrType(return_type.type());
 		// For pointer return types, use 64 bits (pointer size), otherwise use the type's size
@@ -1456,8 +1481,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				// embedded func_decl may still reference the unsubstituted pattern declaration
 				// (e.g., with T& instead of int&) because the call expression stores a
 				// const reference that cannot be rebound during template substitution.
-				const FunctionDeclarationNode* func_for_mangling =
-					materialized_member_func_decl ? materialized_member_func_decl : &func_decl;
+				const FunctionDeclarationNode* func_for_mangling = &func_decl;
 				if (called_member_func &&
 					called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 					func_for_mangling = &called_member_func->function_decl.as<FunctionDeclarationNode>();
@@ -1682,24 +1706,37 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// Get return type information from the actual member function declaration
 		// Use called_member_func if available (has the substituted template types)
 		// Otherwise fall back to func_decl or func_decl_node
-		const TypeSpecifierNode* return_type_ptr = nullptr;
+		const TypeSpecifierNode* declared_return_type_ptr = nullptr;
 		if (resolved_generic_return_type.has_value()) {
-			return_type_ptr = &*resolved_generic_return_type;
-		} else if (materialized_member_func_decl != nullptr) {
-			return_type_ptr = &materialized_member_func_decl->decl_node().type_specifier_node();
+			declared_return_type_ptr = &*resolved_generic_return_type;
 		} else if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
-			return_type_ptr = &called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_specifier_node();
+			declared_return_type_ptr = &called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_specifier_node();
 		} else {
-			return_type_ptr = &func_decl_node.type_specifier_node();
+			declared_return_type_ptr = &func_decl_node.type_specifier_node();
 		}
-		const auto& return_type = *return_type_ptr;
+		const TypeSpecifierNode& declared_return_type = *declared_return_type_ptr;
+		auto shouldPreferExpressionReturnType = [&](const TypeSpecifierNode& expr_type, const TypeSpecifierNode& decl_type) {
+			if (isPlaceholderAutoType(expr_type.type())) {
+				return false;
+			}
+			if (decl_type.pointer_depth() > expr_type.pointer_depth()) {
+				return false;
+			}
+			if ((decl_type.is_reference() || decl_type.is_rvalue_reference()) &&
+				!expr_type.is_reference() && !expr_type.is_rvalue_reference()) {
+				return false;
+			}
+			return true;
+		};
+		const TypeSpecifierNode& return_type =
+			expression_return_type.has_value() && shouldPreferExpressionReturnType(*expression_return_type, declared_return_type)
+				? *expression_return_type
+				: declared_return_type;
 		CallOp call_op = createCallOp(ret_var, function_name, return_type, true, false);
 
 		// Get the actual function declaration to check if it's variadic
 		const FunctionDeclarationNode* actual_func_decl_for_variadic = &func_decl;
-		if (materialized_member_func_decl != nullptr) {
-			actual_func_decl_for_variadic = materialized_member_func_decl;
-		} else if (called_member_func &&
+		if (called_member_func &&
 			called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 			actual_func_decl_for_variadic = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 		}
@@ -1822,8 +1859,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// carries any substituted default arguments from the outer class template
 		// bindings. struct_info may still point at the original uninstantiated
 		// template declaration.
-		const FunctionDeclarationNode* actual_func_decl =
-			materialized_member_func_decl ? materialized_member_func_decl : &func_decl;
+		const FunctionDeclarationNode* actual_func_decl = &func_decl;
 		if (called_member_func &&
 			called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 			actual_func_decl = &called_member_func->function_decl.as<FunctionDeclarationNode>();
@@ -2075,22 +2111,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	}
 
 	// Build the final ExprResult from the best available return type metadata.
-	// Prefer sema/parser-owned expression typing for the concrete call expression,
-	// because instantiated member stubs can still carry stale declaration-side
-	// type metadata while sema already knows the normalized concrete result type.
-	std::optional<TypeSpecifierNode> expression_return_type;
-	if (sema_) {
-		expression_return_type = sema_->getExpressionType(ASTNode(&callExprNode));
-	}
-	if ((!expression_return_type.has_value() || isPlaceholderAutoType(expression_return_type->type())) && parser_) {
-		expression_return_type = parser_->get_expression_type(ASTNode(&callExprNode));
-	}
+	// The effective return type was already computed earlier and used consistently
+	// for both VirtualCallOp/CallOp creation and ABI metadata.
 	const TypeSpecifierNode& declared_return_type =
 		resolved_generic_return_type.has_value()
 			? *resolved_generic_return_type
-			: materialized_member_func_decl != nullptr
-				? materialized_member_func_decl->decl_node().type_specifier_node()
-				: (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
+			: (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 					  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_specifier_node()
 					  : func_decl_node.type_specifier_node();
 	auto shouldPreferExpressionReturnType = [&](const TypeSpecifierNode& expr_type, const TypeSpecifierNode& decl_type) {
