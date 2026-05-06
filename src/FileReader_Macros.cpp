@@ -727,9 +727,9 @@ long FileReader::evaluate_expression(std::string_view sv) {
 			long value = 0;
 			std::string literal;
 			if (!parseIntegerLiteral(sv, pos, value, &literal)) {
-				FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '{}' in preprocessor expression, in file {} at line {}",
+				FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '{}' in preprocessor expression, in file '{}' at line {}",
 								 literal,
-								 filestack_.empty() ? "<unknown>"sv : filestack_.top().file_name,
+								 filestack_.empty() ? "<unknown>" : filestack_.top().file_name,
 								 filestack_.empty() ? 0 : filestack_.top().line_number);
 				values.push(0);
 			} else {
