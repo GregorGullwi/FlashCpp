@@ -727,9 +727,10 @@ long FileReader::evaluate_expression(std::string_view sv) {
 			long value = 0;
 			std::string literal;
 			if (!parseIntegerLiteral(sv, pos, value, &literal)) {
-				FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '", literal, "' in preprocessor expression, in file ",
-								 filestack_.empty() ? "<unknown>" : filestack_.top().file_name,
-								 " at line ", filestack_.empty() ? 0 : filestack_.top().line_number);
+				FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '{}' in preprocessor expression, in file {} at line {}",
+								 literal,
+								 filestack_.empty() ? "<unknown>"sv : filestack_.top().file_name,
+								 filestack_.empty() ? 0 : filestack_.top().line_number);
 				values.push(0);
 			} else {
 				values.push(value);
@@ -1045,8 +1046,12 @@ long FileReader::evaluate_expression(std::string_view sv) {
 					size_t body_pos = 0;
 					std::string literal;
 					if (!parseIntegerLiteral(body, body_pos, value, &literal)) {
-						FLASH_LOG_FORMAT(Lexer, Warning, "Non-integer macro value in #if directive: ", keyword, "='", body, "' literal='", literal, "' at ",
-										 filestack_.top().file_name, ":", filestack_.top().line_number);
+						FLASH_LOG_FORMAT(Lexer, Warning, "Non-integer macro value in #if directive: {}='{}' literal='{}' at {}:{}",
+										 keyword,
+										 body,
+										 literal,
+										 filestack_.top().file_name,
+										 filestack_.top().line_number);
 						values.push(0);
 					} else {
 						values.push(value);

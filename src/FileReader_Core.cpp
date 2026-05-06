@@ -276,13 +276,24 @@ bool FileReader::preprocessFileContent(std::string_view content_view) {
 
 	std::string result;  // Reused for block comment stripping
 	auto stripBlockCommentsPreservingLineComments = [&](std::string& current_line) -> bool {
+		auto appendCommentReplacement = [&](const std::string& source, size_t next_index) {
+			bool left_is_space = !result.empty() && std::isspace(static_cast<unsigned char>(result.back()));
+			bool right_is_space = next_index < source.size() && std::isspace(static_cast<unsigned char>(source[next_index]));
+			if (!left_is_space || !right_is_space)
+				result += ' ';
+		};
+
 		if (in_comment) {
 			size_t end_comment_pos = current_line.find("*/");
 			if (end_comment_pos != std::string::npos) {
 				in_comment = false;
-				current_line = current_line.substr(end_comment_pos + 2);
+				std::string_view suffix = std::string_view(current_line).substr(end_comment_pos + 2);
+				current_line = suffix;
+				if (!current_line.empty() && !std::isspace(static_cast<unsigned char>(current_line.front()))) {
+					current_line.insert(current_line.begin(), ' ');
+				}
 			} else {
-				current_line.clear();
+				current_line = " ";
 				return false;
 			}
 		}
@@ -320,8 +331,10 @@ bool FileReader::preprocessFileContent(std::string_view content_view) {
 							FLASH_LOG(Lexer, Warning, "'/*' within block comment at ",
 									  filestack_.top().file_name, ":", line_number);
 						}
+						appendCommentReplacement(current_line, close + 2);
 						i = close + 2;
 					} else {
+						appendCommentReplacement(current_line, current_line.size());
 						in_comment = true;
 						break;
 					}
@@ -408,9 +421,13 @@ bool FileReader::preprocessFileContent(std::string_view content_view) {
 					content_view = content_view.substr(newline_pos + 1);
 				}
 				next_line = stripTrailingCarriageReturnView(next_line);
+				std::string merged_line(next_line);
+				stripBlockCommentsPreservingLineComments(merged_line);
 				line.erase(line.end() - 1);
-				line.append(next_line);
+				line.append(merged_line);
 				++line_number;
+				if (in_comment)
+					break;
 			}
 		}
 
