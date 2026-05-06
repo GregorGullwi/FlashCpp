@@ -407,7 +407,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	};
 
 	const auto& decl_node = callExprNode.callee().declaration();
-	std::string_view func_name_view = decl_node.identifier_token().value();
+	StringHandle func_name = decl_node.identifier_token().handle();
+	std::string_view func_name_view = func_name.view();
 	std::string_view lookup_name_view = callExprNode.has_qualified_name()
 											? callExprNode.qualified_name()
 											: func_name_view;
@@ -424,7 +425,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	FLASH_LOG_FORMAT(Codegen, Debug, "=== generateFunctionCallIr: func_name={} ===", func_name_view);
 
-		// Check for compiler intrinsics and handle them specially
+	// Check for compiler intrinsics and handle them specially
 	auto intrinsic_result = tryGenerateIntrinsicIr(func_name_view, callExprNode);
 	if (intrinsic_result.has_value()) {
 		return intrinsic_result.value();
@@ -487,20 +488,20 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				FLASH_LOG(Codegen, Debug, "Inlining pure expression function (inline_always): ", func_name_view);
 
 				if (returns_reference) {
-						// For functions returning references (like std::move, std::forward),
-						// we need to generate an addressof the argument, not just return it
+					// For functions returning references (like std::move, std::forward),
+					// we need to generate an addressof the argument, not just return it
 					const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
 
-						// Check if the argument is an identifier (common case for move(x))
+					// Check if the argument is an identifier (common case for move(x))
 					if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 						const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
 
-							// Generate addressof for the identifier
+						// Generate addressof for the identifier
 						TempVar result_var = var_counter.next();
 						AddressOfOp op;
 						op.result = result_var;
 
-							// Get type info from the identifier
+						// Get type info from the identifier
 						StringHandle id_handle = ident.nameHandle();
 						TypeCategory operand_type = TypeCategory::Int;  // Default
 						static constexpr int DefaultInlineAlwaysOperandSizeBits = 32;
@@ -520,13 +521,13 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
 
-							// Return pointer type (64-bit address) with pointer depth 1
+						// Return pointer type (64-bit address) with pointer depth 1
 						return makeExprResult(nativeTypeIndex(operand_type), SizeInBits{64}, IrOperand{result_var}, PointerDepth{1}, ValueStorage::ContainsData);
 					}
-						// For non-identifier expressions, fall through to generate a regular call
-						// (we can't inline complex expressions that need reference semantics)
+					// For non-identifier expressions, fall through to generate a regular call
+					// (we can't inline complex expressions that need reference semantics)
 				} else {
-						// Non-reference return - can inline directly by returning argument
+					// Non-reference return - can inline directly by returning argument
 					auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
 					return arg_ir;
 				}
@@ -534,16 +535,16 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		}
 	}
 
-		// Check if this is a function pointer call
-		// Look up the identifier in both local and global symbol tables
+	// Check if this is a function pointer call
+	// Look up the identifier in both local and global symbol tables
 	const std::optional<ASTNode> func_symbol = lookupSymbol(func_name_view);
 	const DeclarationNode* func_ptr_decl = nullptr;
 
-		// Check for DeclarationNode directly
+	// Check for DeclarationNode directly
 	if (func_symbol.has_value() && func_symbol->is<DeclarationNode>()) {
 		func_ptr_decl = &func_symbol->as<DeclarationNode>();
 	}
-		// Also check for VariableDeclarationNode (from comma-separated declarations)
+	// Also check for VariableDeclarationNode (from comma-separated declarations)
 	else if (func_symbol.has_value() && func_symbol->is<VariableDeclarationNode>()) {
 		func_ptr_decl = &func_symbol->as<VariableDeclarationNode>().declaration();
 	}
@@ -569,24 +570,24 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			return generateMemberFunctionCallIr(member_call, context, sema_call_key);
 		}
 
-			// Check if this is a function pointer or a substituted function type carrying
-			// a function signature. Free-function template parameters can instantiate into
-			// the latter form before full canonicalization.
-			// auto&& parameters in recursive lambdas need to be treated as callables
+		// Check if this is a function pointer or a substituted function type carrying
+		// a function signature. Free-function template parameters can instantiate into
+		// the latter form before full canonicalization.
+		// auto&& parameters in recursive lambdas need to be treated as callables
 		if (func_type.category() != TypeCategory::Struct &&
 			(func_type.is_function_pointer() || func_type.has_function_signature())) {
-				// This is an indirect call through a function pointer
-				// Generate IndirectCall IR: [result_var, func_ptr_var, arg1, arg2, ...]
+			// This is an indirect call through a function pointer
+			// Generate IndirectCall IR: [result_var, func_ptr_var, arg1, arg2, ...]
 			TempVar ret_var = var_counter.next();
 
-				// Mark function return value as prvalue (Option 2: Value Category Tracking)
+			// Mark function return value as prvalue (Option 2: Value Category Tracking)
 			setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
 
-				// Generate IR for function arguments
+			// Generate IR for function arguments
 			std::vector<TypedValue> arguments;
 			callExprNode.arguments().visit([&](ASTNode argument) {
 				ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-					// Extract type, size, and value from the expression result
+				// Extract type, size, and value from the expression result
 				TypeCategory arg_type = argumentIrOperands.typeEnum();
 				int arg_size = argumentIrOperands.size_in_bits.value;
 				IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
@@ -602,21 +603,21 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				arguments.push_back(makeTypedValue(arg_type, SizeInBits{arg_size}, arg_value));
 			});
 
-				// Add the indirect call instruction
+			// Add the indirect call instruction
 			IndirectCallOp op{
 				.result = ret_var,
-				.function_pointer = StringTable::getOrInternStringHandle(func_name_view),
+				.function_pointer = func_name,
 				.arguments = std::move(arguments)};
 			if (func_type.has_function_signature()) {
 				populateIndirectCallReturnInfo(op, func_type.function_signature());
 			}
 			ir_.addInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from());
 
-				// Return the result variable with the return type from the function signature
+			// Return the result variable with the return type from the function signature
 			if (func_type.has_function_signature()) {
 				return buildIndirectCallReturnResult(func_type.function_signature(), ret_var);
 			} else {
-					// For auto types or missing signature, default to int
+				// For auto types or missing signature, default to int
 				return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 		}
@@ -625,8 +626,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// as member calls; codegen no longer recovers `operator()` targets by
 		// traversing the struct/base-class hierarchy.
 
-			// decltype(auto) is not a valid parameter type; reject it before
-			// the recursive-lambda auto&& callable fallback can mishandle it.
+		// decltype(auto) is not a valid parameter type; reject it before
+		// the recursive-lambda auto&& callable fallback can mishandle it.
 		if (func_type.category() == TypeCategory::DeclTypeAuto) {
 			throw CompileError("'decltype(auto)' is not allowed as a parameter type");
 		}
@@ -641,28 +642,28 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 
-			// Handle the normalized recursive lambda self parameter
-			// (e.g., self(self, n - 1)). Generic lambda callable parameters must have
-			// been semantically normalized before codegen; do not treat unresolved
-			// placeholder `auto` as the current closure or invent an `int` return type.
+		// Handle the normalized recursive lambda self parameter
+		// (e.g., self(self, n - 1)). Generic lambda callable parameters must have
+		// been semantically normalized before codegen; do not treat unresolved
+		// placeholder `auto` as the current closure or invent an `int` return type.
 		if (is_recursive_lambda_self) {
-				// This is likely a recursive lambda call pattern where 'self' is a lambda passed as auto&&
-				// We need to find the lambda's closure type and call its operator()
+			// This is likely a recursive lambda call pattern where 'self' is a lambda passed as auto&&
+			// We need to find the lambda's closure type and call its operator()
 
-				// Look up the deduced type for this auto parameter
-				// First, check if we're inside a lambda context
+			// Look up the deduced type for this auto parameter
+			// First, check if we're inside a lambda context
 			if (current_lambda_context_.isActive()) {
-					// We're inside a lambda - this could be a recursive call through an auto&& parameter
-					// The pattern is: auto factorial = [](auto&& self, int n) { ... self(self, n-1); }
+				// We're inside a lambda - this could be a recursive call through an auto&& parameter
+				// The pattern is: auto factorial = [](auto&& self, int n) { ... self(self, n-1); }
 
-					// Get the current lambda's closure type name to construct the operator() call
+				// Get the current lambda's closure type name to construct the operator() call
 				std::string_view closure_type_name = StringTable::getStringView(current_lambda_context_.closure_type);
 
-					// Generate a member function call to operator()
+				// Generate a member function call to operator()
 				TempVar ret_var = var_counter.next();
 				setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
 
-					// Build the call operands
+				// Build the call operands
 				CallOp call_op = createCallOp(
 					ret_var,
 					StringHandle{},
@@ -671,13 +672,13 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					false,
 					false);
 
-					// Add the object (self) as the first argument (this pointer)
-				call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
+				// Add the object (self) as the first argument (this pointer)
+				call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(func_name)));
 
-					// Generate IR for the remaining arguments and collect types for mangling
+				// Generate IR for the remaining arguments and collect types for mangling
 				std::vector<TypeSpecifierNode> arg_types;
 
-					// Look up the closure type to get the proper type_index
+				// Look up the closure type to get the proper type_index
 				TypeIndex closure_type_index{};
 				auto it = getTypesByNameMap().find(current_lambda_context_.closure_type);
 				if (it != getTypesByNameMap().end()) {
@@ -685,8 +686,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				}
 
 				callExprNode.arguments().visit([&](ASTNode argument) {
-						// Check if this argument is the same as the callee (recursive lambda pattern)
-						// In that case, we should pass the reference directly without dereferencing
+					// Check if this argument is the same as the callee (recursive lambda pattern)
+					// In that case, we should pass the reference directly without dereferencing
 					bool is_self_arg = false;
 					const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
 					if (const auto* id = std::get_if<IdentifierNode>(&arg_expr)) {
@@ -696,16 +697,16 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					}
 
 					if (is_self_arg) {
-							// For the self argument in recursive lambda calls, pass the reference directly
-							// Don't call visitExpressionNode which would dereference it
-						call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
+						// For the self argument in recursive lambda calls, pass the reference directly
+						// Don't call visitExpressionNode which would dereference it
+						call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(func_name)));
 
 							// Type for mangling is rvalue reference to closure type
 						TypeSpecifierNode self_type(closure_type_index.withCategory(TypeCategory::Struct), 8, Token(), CVQualifier::None, ReferenceQualifier::None);
 						self_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
 						arg_types.push_back(self_type);
 					} else {
-							// Normal argument - visit the expression
+						// Normal argument - visit the expression
 						ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 						TypeCategory arg_type = argumentIrOperands.typeEnum();
 						int arg_size = argumentIrOperands.size_in_bits.value;
@@ -802,11 +803,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 		const TypeInfo* type_info = nullptr;
 
-			// When inside a struct context, try the struct-qualified name first.
-			// Template instantiation registers type aliases with the instantiated
-			// struct name (e.g., "Outer$hash::MidType"), which carries the correct
-			// substituted type.  The bare name (e.g., "MidType") may still point to
-			// the template pattern's placeholder (e.g., TTT$hash) from parse time.
+		// When inside a struct context, try the struct-qualified name first.
+		// Template instantiation registers type aliases with the instantiated
+		// struct name (e.g., "Outer$hash::MidType"), which carries the correct
+		// substituted type.  The bare name (e.g., "MidType") may still point to
+		// the template pattern's placeholder (e.g., TTT$hash) from parse time.
 		if (current_struct_name_.isValid() && struct_part.find("::") == std::string_view::npos) {
 			std::string_view alias_qualified_name = StringBuilder()
 														.append(StringTable::getStringView(current_struct_name_))
@@ -824,9 +825,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		constexpr size_t kMaxAliasDepth = 100;
 		size_t alias_depth = 0;
 		while (type_info && alias_depth < kMaxAliasDepth) {
-				// Accept any TypeInfo that carries StructTypeInfo, regardless of type_ tag.
-				// A template placeholder may be stored as Type::UserDefined yet still have
-				// struct_info_ populated once instantiated.
+			// Accept any TypeInfo that carries StructTypeInfo, regardless of type_ tag.
+			// A template placeholder may be stored as Type::UserDefined yet still have
+			// struct_info_ populated once instantiated.
 			if (type_info->getStructInfo() != nullptr) {
 				return type_info;
 			}
@@ -1081,8 +1082,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 
-		// For instantiated template calls, the concrete specialization is registered under its
-		// mangled name in the symbol table. Prefer that over falling back to the template pattern.
+	// For instantiated template calls, the concrete specialization is registered under its
+	// mangled name in the symbol table. Prefer that over falling back to the template pattern.
 	if (!matched_func_decl && has_precomputed_mangled) {
 		auto mangled_symbol = lookupSymbol(callExprNode.mangled_name());
 		if (mangled_symbol.has_value()) {
@@ -1110,31 +1111,31 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		}
 	}
 
-		// Audit 2026-04-27: the prior `scoped_overloads` and `gSymbolTable_overloads`
-		// single-overload codegen recovery branches here were probed across the
-		// full 2239-test corpus with hard-fail guards and never hit. Sema's
-		// resolved direct-call target plus the precomputed-mangled path above
-		// already cover these cases.
+	// Audit 2026-04-27: the prior `scoped_overloads` and `gSymbolTable_overloads`
+	// single-overload codegen recovery branches here were probed across the
+	// full 2239-test corpus with hard-fail guards and never hit. Sema's
+	// resolved direct-call target plus the precomputed-mangled path above
+	// already cover these cases.
 
-		// Invariant (audit 2026-04-27): the resolved-target paths above already
-		// populate `matched_func_decl` for precomputed-mangled call sites
-		// (including consteval enforcement, C++20 [dcl.consteval]). The earlier
-		// `gSymbolTable` and `gSymbolTable_overloads` defensive scans, the
-		// "current-struct + base-class member by name" recovery, and the
-		// "qualified static member by struct iteration" recovery were all
-		// removed after probing showed zero hits.
+	// Invariant (audit 2026-04-27): the resolved-target paths above already
+	// populate `matched_func_decl` for precomputed-mangled call sites
+	// (including consteval enforcement, C++20 [dcl.consteval]). The earlier
+	// `gSymbolTable` and `gSymbolTable_overloads` defensive scans, the
+	// "current-struct + base-class member by name" recovery, and the
+	// "qualified static member by struct iteration" recovery were all
+	// removed after probing showed zero hits.
 
-		// Handle dependent qualified function names: Base$dependentHash::member
-		// These occur when a template body contains Base<T>::member() and T is substituted
-		// but the hash was computed with the dependent type, not the concrete type.
+	// Handle dependent qualified function names: Base$dependentHash::member
+	// These occur when a template body contains Base<T>::member() and T is substituted
+	// but the hash was computed with the dependent type, not the concrete type.
 	if (!matched_func_decl) {
 		size_t scope_pos = lookup_name_view.find("::");
 		std::string_view base_template_name;
 		if (scope_pos != std::string_view::npos) {
 			base_template_name = extractBaseTemplateName(lookup_name_view.substr(0, scope_pos));
 		}
-			// Direct lookup: if the struct qualifier is directly in getTypesByNameMap() (e.g., "Mid$hash::get"),
-			// find it immediately rather than only checking base classes.
+		// Direct lookup: if the struct qualifier is directly in getTypesByNameMap() (e.g., "Mid$hash::get"),
+		// find it immediately rather than only checking base classes.
 		if (scope_pos != std::string_view::npos && !matched_func_decl) {
 			std::string_view struct_part = lookup_name_view.substr(0, scope_pos);
 			std::string_view member_name_direct = lookup_name_view.substr(scope_pos + 2);
@@ -1143,7 +1144,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				const StructTypeInfo* si = direct_type_info->getStructInfo();
 				if (si) {
 					std::string_view resolved_struct_part = StringTable::getStringView(direct_type_info->name());
-						// Count expected parameters for overload disambiguation
+					// Count expected parameters for overload disambiguation
 					size_t direct_expected_param_count = 0;
 					callExprNode.arguments().visit([&](ASTNode) { ++direct_expected_param_count; });
 					for (const auto& mf : si->member_functions) {
@@ -1152,15 +1153,15 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 							if (fd.decl_node().identifier_token().value() == member_name_direct && fd.parameter_nodes().size() == direct_expected_param_count) {
 								matched_func_decl = &fd;
 								resolveMangledName(matched_func_decl, StringTable::getOrInternStringHandle(resolved_struct_part));
-									// Queue all member functions of this struct for deferred generation
+								// Queue all member functions of this struct for deferred generation
 								queueDeferredMemberFunctions(direct_type_info->name(), si, resolved_struct_part);
 								break;
 							}
 						}
 					}
-						// Invariant: empty `member_functions` (lazy-instantiated template)
-						// is impossible here — sema's drain materializes members
-						// before this point.
+					// Invariant: empty `member_functions` (lazy-instantiated template)
+					// is impossible here — sema's drain materializes members
+					// before this point.
 				}
 			}
 		}
@@ -1169,7 +1170,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 			FLASH_LOG_FORMAT(Codegen, Debug, "Resolving dependent qualified call: base_template='{}', member='{}'", base_template_name, member_name);
 
-				// Search current struct's base classes for a matching template instantiation
+			// Search current struct's base classes for a matching template instantiation
 			if (current_struct_name_.isValid()) {
 				auto type_it = getTypesByNameMap().find(current_struct_name_);
 				if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
@@ -1215,16 +1216,16 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				.commit()));
 	}
 
-		// consteval enforcement: every call to a consteval function is an immediate invocation and
-		// must be a constant expression (C++20 [dcl.consteval]).  generateFunctionCallIr is only
-		// reached when emitting runtime IR, so we first try to fold the call at compile time.
-		// If the fold succeeds we return the constant directly (no runtime call emitted).
-		// If it fails the call is genuinely ill-formed — throw a CompileError.
-		// Note: when has_precomputed_mangled is true, matched_func_decl may be null if all
-		// symbol-table lookups failed.  In that case the call will be emitted as a runtime call,
-		// which is safe for constexpr functions; consteval functions are checked below.
+	// consteval enforcement: every call to a consteval function is an immediate invocation and
+	// must be a constant expression (C++20 [dcl.consteval]).  generateFunctionCallIr is only
+	// reached when emitting runtime IR, so we first try to fold the call at compile time.
+	// If the fold succeeds we return the constant directly (no runtime call emitted).
+	// If it fails the call is genuinely ill-formed — throw a CompileError.
+	// Note: when has_precomputed_mangled is true, matched_func_decl may be null if all
+	// symbol-table lookups failed.  In that case the call will be emitted as a runtime call,
+	// which is safe for constexpr functions; consteval functions are checked below.
 	if (matched_func_decl && matched_func_decl->is_consteval()) {
-			// Use the global symbol table so free functions declared at namespace scope can be found.
+		// Use the global symbol table so free functions declared at namespace scope can be found.
 		extern SymbolTable gSymbolTable;
 		ConstExpr::EvaluationContext ctx(global_symbol_table_ ? *global_symbol_table_ : gSymbolTable);
 		ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
@@ -1236,14 +1237,14 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			throw CompileError("call to consteval function '" + std::string(func_name_view) +
 							   "' cannot be used in a non-constant context: " + eval_result.error_message);
 		}
-			// Materialize the constant result into an ExprResult without emitting a call instruction.
+		// Materialize the constant result into an ExprResult without emitting a call instruction.
 		const TypeSpecifierNode& ret_spec =
 			matched_func_decl->decl_node().type_specifier_node();
 		const TypeCategory ret_type = ret_spec.type();
 		const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
 		const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
 
-			// Float / double
+		// Float / double
 		if (ret_type == TypeCategory::Float) {
 			float fval = static_cast<float>(eval_result.as_double());
 			uint32_t fbits;
@@ -1257,7 +1258,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{64}, IrOperand{dbits}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
-			// Aggregate / struct: emit VariableDecl + MemberStore sequence
+		// Aggregate / struct: emit VariableDecl + MemberStore sequence
 		if (!eval_result.object_member_bindings.empty()) {
 			auto agg = materializeConstevalAggregateResult(
 				eval_result, ret_spec, ret_type, ret_size, callExprNode.called_from());
@@ -1265,16 +1266,16 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				return agg;
 		}
 
-			// Scalar integer / bool / enum
+		// Scalar integer / bool / enum
 		return makeExprResult(nativeTypeIndex(ret_type), ret_size, IrOperand{evalResultScalarToRaw(eval_result)}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
-		// Always add the return variable and function name (mangled for overload resolution)
+	// Always add the return variable and function name (mangled for overload resolution)
 	FLASH_LOG_FORMAT(Codegen, Debug, "Final function_name for call: '{}'", function_name);
 	TempVar ret_var = var_counter.next();
 
-		// Mark function return value as prvalue (Option 2: Value Category Tracking)
-		// Function returns (by value) produce temporaries with no persistent identity
+	// Mark function return value as prvalue (Option 2: Value Category Tracking)
+	// Function returns (by value) produce temporaries with no persistent identity
 	setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
 
 	const std::vector<CachedParamInfo>* cached_param_list = nullptr;
@@ -1288,17 +1289,17 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		}
 	}
 
-		// Process arguments - match them with parameter types
+	// Process arguments - match them with parameter types
 	size_t arg_index = 0;
 	const auto& func_decl_node = callExprNode.callee().declaration();
 
-		// Get parameters from the function declaration
+	// Get parameters from the function declaration
 	std::vector<ASTNode> param_nodes;
 	if (matched_func_decl) {
 		param_nodes = matched_func_decl->parameter_nodes();
 	} else if (!has_precomputed_mangled) {
-			// Try to get it from the function declaration stored in the call expression
-			// Look up the function in symbol table to get full declaration with parameters
+		// Try to get it from the function declaration stored in the call expression
+		// Look up the function in symbol table to get full declaration with parameters
 		auto local_func_symbol = lookupSymbol(func_decl_node.identifier_token().value());
 		if (local_func_symbol.has_value() && local_func_symbol->is<FunctionDeclarationNode>()) {
 			const auto& resolved_func_decl = local_func_symbol->as<FunctionDeclarationNode>();
@@ -1307,7 +1308,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	}
 
 	callExprNode.arguments().visit([&](ASTNode argument) {
-			// Get the parameter type for this argument (if it exists)
+		// Get the parameter type for this argument (if it exists)
 		const TypeSpecifierNode* param_type = nullptr;
 		const DeclarationNode* param_decl = nullptr;
 		if (arg_index < param_nodes.size() && param_nodes[arg_index].is<DeclarationNode>()) {
@@ -1347,11 +1348,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				arg_index);
 		}
 
-			// Special case: if argument is a reference identifier being passed to a reference parameter,
-			// handle it directly without visiting the expression. This prevents the Load context from
-			// generating a Dereference operation (which would give us the value, not the address).
-			// For reference-to-reference passing, we just want to pass the variable name directly,
-			// and let the IRConverter use MOV to load the address stored in the reference.
+		// Special case: if argument is a reference identifier being passed to a reference parameter,
+		// handle it directly without visiting the expression. This prevents the Load context from
+		// generating a Dereference operation (which would give us the value, not the address).
+		// For reference-to-reference passing, we just want to pass the variable name directly,
+		// and let the IRConverter use MOV to load the address stored in the reference.
 		if ((!sema_ref_binding || !sema_ref_binding->is_valid()) &&
 			param_ref_qualifier != CVReferenceQualifier::None &&
 			std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
@@ -1361,9 +1362,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			if (decl_ptr) {
 				const auto& type_node = decl_ptr->type_specifier_node();
 				if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-						// Argument is a reference variable being passed to a reference parameter
-						// Pass the identifier name directly - the IRConverter will use MOV to
-						// load the address stored in the reference variable
+					// Argument is a reference variable being passed to a reference parameter
+					// Pass the identifier name directly - the IRConverter will use MOV to
+					// load the address stored in the reference variable
 					appendReferenceCallArgument(call_arguments, *decl_ptr, identifier_name);
 					arg_index++;
 					return;	// Skip the rest of the processing
@@ -1371,12 +1372,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 
-			// Determine expression context for the argument
-			// Default to Load context, which reads values
+		// Determine expression context for the argument
+		// Default to Load context, which reads values
 		ExpressionContext arg_context = ExpressionContext::Load;
 
-			// If the parameter expects a reference, use LValueAddress context to avoid dereferencing
-			// This is needed for non-reference arguments being passed to reference parameters
+		// If the parameter expects a reference, use LValueAddress context to avoid dereferencing
+		// This is needed for non-reference arguments being passed to reference parameters
 		if (param_ref_qualifier != CVReferenceQualifier::None &&
 			(!sema_ref_binding || !sema_ref_binding->is_valid() || sema_ref_binding->binds_directly())) {
 			arg_context = ExpressionContext::LValueAddress;
@@ -1402,15 +1403,15 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 
-			// Check if we need to call a conversion operator for this argument
-			// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
+		// Check if we need to call a conversion operator for this argument
+		// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
 		if (param_type && !materialized_selected_ctor) {
 			TypeCategory arg_type = argumentIrOperands.typeEnum();
 			TypeCategory param_base_type = param_type->type();
 
 			TypeIndex arg_type_index = argumentIrOperands.type_index;
 
-				// Check sema annotation first: if the semantic pass pre-computed a conversion, use it.
+			// Check sema annotation first: if the semantic pass pre-computed a conversion, use it.
 			bool sema_applied_arg_conversion = false;
 			if (argument.is<ExpressionNode>()) {
 				const void* key = &argument.as<ExpressionNode>();
@@ -1444,18 +1445,18 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						}
 					} else if (!is_struct_type(from_type) && !is_struct_type(to_type) &&
 								   cast_info.cast_kind != StandardConversionKind::ArrayToPointer) {
-							// Sema may annotate as Type::Enum while codegen resolves enum
-							// constants to their underlying type; use actual runtime type.
-							// NOTE: ArrayToPointer is excluded from generateTypeConversion because that
-							//   function converts between scalar types (e.g. int->long), whereas
-							//   array-to-pointer decay requires emitting an AddressOf IR node to
-							//   materialise the base pointer from a stack-allocated array object.
-							//   Calling generateTypeConversion on an array operand would instead
-							//   integer-widen or reinterpret the value, producing garbage.
-							//   String-literal args already carry a 64-bit TempVar pointer from
-							//   generateStringLiteralIr, so decay is already complete.
-							//   Identifier-array args are handled in the needs_array_decay block
-							//   further below, which calls emitAddressOf to get the base pointer.
+						// Sema may annotate as Type::Enum while codegen resolves enum
+						// constants to their underlying type; use actual runtime type.
+						// NOTE: ArrayToPointer is excluded from generateTypeConversion because that
+						//   function converts between scalar types (e.g. int->long), whereas
+						//   array-to-pointer decay requires emitting an AddressOf IR node to
+						//   materialise the base pointer from a stack-allocated array object.
+						//   Calling generateTypeConversion on an array operand would instead
+						//   integer-widen or reinterpret the value, producing garbage.
+						//   String-literal args already carry a 64-bit TempVar pointer from
+						//   generateStringLiteralIr, so decay is already complete.
+						//   Identifier-array args are handled in the needs_array_decay block
+						//   further below, which calls emitAddressOf to get the base pointer.
 						if (from_type == TypeCategory::Enum && from_type != argumentIrOperands.typeEnum())
 							from_type = argumentIrOperands.typeEnum();
 						argumentIrOperands = generateTypeConversion(argumentIrOperands, from_type, to_type, callExprNode.called_from());
@@ -1466,12 +1467,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				}
 			}
 
-				// Phase 15: sema should annotate all standard primitive argument conversions.
-				// Non-arithmetic types (struct, user_defined, enum, auto, function_pointer)
-				// are outside sema's current scope — keep fallback unconditionally.
-				// For arithmetic types, assert when sema missed the annotation.
-				// Exception: hasUnresolvedCallArgs means sema tried but couldn't resolve the callee
-				// (e.g. template specialization) — Phase 16+ work item.
+			// sema should annotate all standard primitive argument conversions.
+			// Non-arithmetic types (struct, user_defined, enum, auto, function_pointer)
+			// are outside sema's current scope — keep fallback unconditionally.
+			// For arithmetic types, assert when sema missed the annotation.
+			// Exception: hasUnresolvedCallArgs means sema tried but couldn't resolve the callee
+			// (e.g. template specialization) — Phase 16+ work item.
 			if (!sema_applied_arg_conversion &&
 				param_ref_qualifier == CVReferenceQualifier::None &&
 				param_type->pointer_depth() == 0 &&
@@ -1490,8 +1491,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				}
 			}
 
-				// Check if argument type doesn't match parameter type and parameter expects struct
-				// This handles implicit conversions via converting constructors
+			// Check if argument type doesn't match parameter type and parameter expects struct
+			// This handles implicit conversions via converting constructors
 			if (arg_type != param_base_type && param_base_type == TypeCategory::Struct && param_type->pointer_depth() == 0) {
 				TypeIndex param_type_index = param_type->type_index();
 
@@ -1549,7 +1550,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 							}
 						}
 
-							// Emit error only when every matching converting constructor is explicit.
+						// Emit error only when every matching converting constructor is explicit.
 						if (found_matching_ctor && !found_non_explicit_ctor) {
 							FLASH_LOG(General, Error, "Cannot use implicit conversion with explicit constructor for type '",
 									  StringTable::getStringView(target_type_info->name()), "'");
@@ -1562,7 +1563,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				}
 			}
 
-				// Check if argument is struct type and parameter expects different type
+			// Check if argument is struct type and parameter expects different type
 			if (arg_type == TypeCategory::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
 				if (const TypeInfo* source_type_info = tryGetTypeInfo(arg_type_index)) {
 					const int param_size = static_cast<int>(param_type->size_in_bits());
@@ -1584,11 +1585,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 
-			// Check if visitExpressionNode returned a TempVar - this means the value was computed
-			// (e.g., global load, expression result, etc.) and we should use the TempVar directly
+		// Check if visitExpressionNode returned a TempVar - this means the value was computed
+		// (e.g., global load, expression result, etc.) and we should use the TempVar directly
 		bool use_computed_result = std::holds_alternative<TempVar>(argumentIrOperands.value);
 
-			// For identifiers that returned local variable references (string_view), handle specially
+		// For identifiers that returned local variable references (string_view), handle specially
 		if (!use_computed_result && std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 			const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 			StringHandle identifier_name = identifier.nameHandle();
@@ -1615,7 +1616,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				return;
 			}
 
-				// C++20 [conv.array]: Arrays decay to pointers when passed to functions.
+			// C++20 [conv.array]: Arrays decay to pointers when passed to functions.
 			// Primary path: sema annotates the argument expression with
 			// StandardConversionKind::ArrayToPointer when it visits a sema-normalised
 			// function body.  Fallback: when sema did not normalise the current body
@@ -1639,28 +1640,28 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 
 			if (needs_array_decay) {
-					// Emit AddressOf to get the address of the array's first element.
+				// Emit AddressOf to get the address of the array's first element.
 				TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(identifier_name));
 
 				appendPointerArgumentValue(
 					type_node.type_index().withCategory(type_node.type()),
 					IrValue(addr_var));
 			} else if (param_ref_qualifier != CVReferenceQualifier::None) {
-					// Parameter expects a reference - pass the address of the argument
+				// Parameter expects a reference - pass the address of the argument
 				appendReferenceCallArgument(call_arguments, arg_decl_node, identifier_name);
 			} else if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-					// Argument is a reference but parameter expects a value - dereference
+				// Argument is a reference but parameter expects a value - dereference
 				TempVar deref_var = emitDereference(type_node.category(), 64, 1,
 													identifier_name);
 
-					// Pass the dereferenced value
+				// Pass the dereferenced value
 				appendArgumentValue(
 					type_node.type_index().withCategory(type_node.type()),
 					SizeInBits{static_cast<int>(type_node.size_in_bits())},
 					IrValue(deref_var));
 			} else {
-					// Regular variable - pass by value
-					// For pointer types, size is always 64 bits regardless of pointee type
+				// Regular variable - pass by value
+				// For pointer types, size is always 64 bits regardless of pointee type
 				int arg_size = (type_node.pointer_depth() > 0) ? 64 : static_cast<int>(type_node.size_in_bits());
 				if (type_node.pointer_depth() > 0) {
 					appendPointerArgumentValue(
@@ -1674,29 +1675,29 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				}
 			}
 		} else {
-				// Not an identifier - could be a literal, expression result, etc.
-				// Check if parameter expects a reference and argument is a literal
+			// Not an identifier - could be a literal, expression result, etc.
+			// Check if parameter expects a reference and argument is a literal
 			if (param_ref_qualifier != CVReferenceQualifier::None) {
-					// Parameter expects a reference, but argument is not an identifier
-					// We need to materialize the value into a temporary and pass its address
+				// Parameter expects a reference, but argument is not an identifier
+				// We need to materialize the value into a temporary and pass its address
 
-					// Check if this is a literal value (has unsigned long long or double in value)
+				// Check if this is a literal value (has unsigned long long or double in value)
 				bool is_literal = (std::holds_alternative<unsigned long long>(argumentIrOperands.value) ||
 								   std::holds_alternative<double>(argumentIrOperands.value));
 
 				if (is_literal) {
-						// Materialize the literal into a temporary variable
+					// Materialize the literal into a temporary variable
 					TypeCategory literal_type = argumentIrOperands.typeEnum();
 					int literal_size = argumentIrOperands.size_in_bits.value;
 
-						// Create a temporary variable to hold the literal value
+					// Create a temporary variable to hold the literal value
 					TempVar temp_var = var_counter.next();
 
-						// Generate an assignment IR to store the literal using typed payload
+					// Generate an assignment IR to store the literal using typed payload
 					AssignmentOp assign_op;
 					assign_op.result = temp_var;	 // unused but required
 
-						// Convert IrOperand to IrValue for the literal
+					// Convert IrOperand to IrValue for the literal
 					IrValue rhs_value;
 					if (const auto* ull_val = std::get_if<unsigned long long>(&argumentIrOperands.value)) {
 						rhs_value = *ull_val;
@@ -1704,16 +1705,16 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						rhs_value = *d_val;
 					}
 
-						// Create TypedValue for lhs and rhs
+					// Create TypedValue for lhs and rhs
 					assign_op.lhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, temp_var);
 					assign_op.rhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, rhs_value);
 
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 
-						// Now take the address of the temporary
+					// Now take the address of the temporary
 					TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
 
-						// Pass the address
+					// Pass the address
 					appendArgumentValueWithReference(
 						argumentIrOperands.type_index.withCategory(literal_type),
 						SizeInBits{POINTER_SIZE_BITS},
@@ -1726,14 +1727,14 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						int expr_size = argumentIrOperands.size_in_bits.value;
 						TempVar expr_var = std::get<TempVar>(argumentIrOperands.value);
 
-							// Check if the TempVar already holds an address
-							// This can happen when:
-							// 1. It's the result of a cast to reference (xvalue/lvalue)
-							// 2. It's a 64-bit struct (pointer to struct)
-							// 3. It has lvalue/xvalue metadata indicating it's already an address
+						// Check if the TempVar already holds an address
+						// This can happen when:
+						// 1. It's the result of a cast to reference (xvalue/lvalue)
+						// 2. It's a 64-bit struct (pointer to struct)
+						// 3. It has lvalue/xvalue metadata indicating it's already an address
 						bool is_already_address = false;
 
-							// Check for xvalue/lvalue metadata (from reference casts)
+						// Check for xvalue/lvalue metadata (from reference casts)
 						auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
 						if (metadata_storage.hasMetadata(expr_var)) {
 							TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
@@ -1743,13 +1744,13 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 							}
 						}
 
-							// Fallback heuristic: 64-bit struct type likely holds an address
+						// Fallback heuristic: 64-bit struct type likely holds an address
 						if (!is_already_address && expr_size == 64 && expr_type == TypeCategory::Struct) {
 							is_already_address = true;
 						}
 
 						if (is_already_address) {
-								// Already an address - pass through directly
+							// Already an address - pass through directly
 							appendArgumentIrResult(argumentIrOperands);
 						} else {
 								// Need to take address of the value
@@ -1762,21 +1763,21 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 								ReferenceQualifier::LValueReference);
 						}
 					} else {
-							// Fallback - just pass through directly
+						// Fallback - just pass through directly
 						appendArgumentIrResult(argumentIrOperands);
 					}
 				}
 			} else {
-					// Parameter doesn't expect a reference - pass through as-is
+				// Parameter doesn't expect a reference - pass through as-is
 				appendArgumentIrResult(argumentIrOperands);
 			}
 		}
 	});
 
-		// Get return type information
-		// Prefer the matched function declaration's return type over the original call's,
-		// since template instantiation may have resolved dependent types (e.g., Tp* → int*)
-		// But DON'T use it if the return type is still unresolved (UserDefined = template param)
+	// Get return type information
+	// Prefer the matched function declaration's return type over the original call's,
+	// since template instantiation may have resolved dependent types (e.g., Tp* → int*)
+	// But DON'T use it if the return type is still unresolved (UserDefined = template param)
 	const TypeSpecifierNode* best_return_type = nullptr;
 	if (matched_func_decl) {
 		const auto& mrt = matched_func_decl->decl_node().type_specifier_node();
@@ -1804,7 +1805,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		false,
 		false);
 
-		// Check if this is an indirect call (function pointer/reference)
+	// Check if this is an indirect call (function pointer/reference)
 	call_op.is_indirect_call = callExprNode.callee().is_indirect();
 	if (matched_func_decl &&
 		matched_func_decl->is_member_function() &&
@@ -1829,8 +1830,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		}
 	}
 
-		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
-		// Exclude references - they return a pointer, not a struct by value
+	// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
+	// Exclude references - they return a pointer, not a struct by value
 	bool returns_struct = returnsStructByValue(effective_return_type.type(), effective_return_type.pointer_depth(), effective_return_type.is_reference());
 	bool needs_hidden_ret = needsHiddenReturnParam(effective_return_type.type(), effective_return_type.pointer_depth(), effective_return_type.is_reference(), effective_return_type.size_in_bits(), context_->isLLP64());
 	if (needs_hidden_ret) {
@@ -1845,7 +1846,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						 function_name, effective_return_type.size_in_bits());
 	}
 
-		// Set is_variadic based on function declaration (if available)
+	// Set is_variadic based on function declaration (if available)
 	if (matched_func_decl) {
 		call_op.is_variadic = matched_func_decl->is_variadic();
 	}
@@ -1880,14 +1881,14 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		arg_idx++;
 	}
 
-		// Fill in default arguments for parameters that weren't explicitly provided
+	// Fill in default arguments for parameters that weren't explicitly provided
 	if (matched_func_decl) {
 		fillInDefaultArguments(call_op, param_nodes, arg_idx);
 	} else if (cached_param_list) {
 		fillInCachedDefaultArguments(call_op, *cached_param_list, arg_idx);
 	}
 
-		// Add the function call instruction with typed payload
+	// Add the function call instruction with typed payload
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), callExprNode.called_from()));
 
 	return buildCallReturnResult(effective_return_type, ret_var, context, callExprNode.called_from());
