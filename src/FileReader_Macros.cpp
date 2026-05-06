@@ -22,6 +22,19 @@ namespace {
 	bool isIdentifierChar(char ch) {
 		return isAlnumChar(ch) || ch == '_';
 	}
+
+	std::string_view extractDirectiveToken(std::string_view& sv) {
+		while (!sv.empty() && isSpaceChar(sv.front()))
+			sv.remove_prefix(1);
+
+		size_t end = 0;
+		while (end < sv.size() && !isSpaceChar(sv[end]))
+			++end;
+
+		std::string_view token = sv.substr(0, end);
+		sv.remove_prefix(end);
+		return token;
+	}
 }
 
 // Optimized single-pass macro expansion (C++20 compliant)
@@ -34,11 +47,11 @@ namespace {
 // 3. Recursive expansion is prevented by tracking currently-expanding macros
 // 4. Token pasting (##) is performed after argument substitution
 // 5. Stringification (#) uses unexpanded argument text
-std::string FileReader::expandMacros(const std::string& input) {
+std::string FileReader::expandMacros(std::string_view input) {
 	return expandMacros(input, {});
 }
 
-std::string FileReader::expandMacros(const std::string& input, std::unordered_set<std::string, PreprocessorStringHash, std::equal_to<>> expanding_macros) {
+std::string FileReader::expandMacros(std::string_view input, std::unordered_set<std::string, PreprocessorStringHash, std::equal_to<>> expanding_macros) {
 	// Check if we're inside a multiline raw string from a previous line
 	if (inside_multiline_raw_string_) {
 		std::string closing = ")" + multiline_raw_delimiter_ + "\"";
@@ -47,7 +60,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 			inside_multiline_raw_string_ = false;
 			multiline_raw_delimiter_.clear();
 		}
-		return input;
+		return std::string(input);
 	}
 
 	// Check for multiline raw string start
@@ -56,19 +69,19 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 		size_t delim_start = raw_start + 2;
 		size_t paren_pos = input.find('(', delim_start);
 		if (paren_pos != std::string::npos && paren_pos <= delim_start + 16) { // max delimiter length
-			std::string delimiter = input.substr(delim_start, paren_pos - delim_start);
+			std::string delimiter(input.substr(delim_start, paren_pos - delim_start));
 			std::string closing = ")" + delimiter + "\"";
 			if (input.find(closing, paren_pos) == std::string::npos) {
 				inside_multiline_raw_string_ = true;
 				multiline_raw_delimiter_ = delimiter;
-				return input;
+				return std::string(input);
 			}
 		}
 		raw_start++;
 	}
 
 	// Use a working copy to avoid const_cast issues
-	std::string current = input;
+	std::string current(input);
 	std::string output;
 
 	size_t loop_guard = 1000;  // Safety limit for expansion iterations
@@ -355,7 +368,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 								std::string_view arg_value = args[i];
 								std::string expanded_arg;
 								if (!paramAdjacentToHashHash(defineDirective->args[i], defineDirective->body)) {
-									expanded_arg = expandMacros(std::string(arg_value), expanding_macros);
+									expanded_arg = expandMacros(arg_value, expanding_macros);
 									arg_value = expanded_arg;
 								}
 								replaceAll(replace_str, defineDirective->args[i], arg_value);
@@ -1077,14 +1090,13 @@ long FileReader::evaluate_expression(std::string_view sv) {
 	return values.top();
 }
 
-bool FileReader::processIncludeDirective(const std::string& line, const std::string_view& current_file, long include_line_number) {
-	std::istringstream iss(line);
-	std::string token;
-	iss >> token;
-	if (iss.eof() || token != "#include") {
+bool FileReader::processIncludeDirective(std::string_view line, std::string_view current_file, long include_line_number) {
+	std::string_view token = extractDirectiveToken(line);
+	if (token != "#include") {
 		return true;
 	}
-	iss >> token;
+
+	token = extractDirectiveToken(line);
 	if (token.size() < 2 || (token.front() != '"' && token.front() != '<') || (token.front() == '"' && token.back() != '"') || (token.front() == '<' && token.back() != '>')) {
 		return true;
 	}
@@ -1153,18 +1165,16 @@ bool FileReader::processIncludeDirective(const std::string& line, const std::str
 	return true;
 }
 
-bool FileReader::processIncludeNextDirective(const std::string& line, const std::string_view& current_file, long include_line_number) {
+bool FileReader::processIncludeNextDirective(std::string_view line, std::string_view current_file, long include_line_number) {
 	// #include_next <header> - GCC extension
 	// Searches for the header starting from the directory AFTER the one
 	// where the current file was found. Used by C++ standard library headers
 	// to include the underlying C headers (e.g., cmath -> math.h).
-	std::istringstream iss(line);
-	std::string token;
-	iss >> token;
-	if (iss.eof() || token != "#include_next") {
+	std::string_view token = extractDirectiveToken(line);
+	if (token != "#include_next") {
 		return true;
 	}
-	iss >> token;
+	token = extractDirectiveToken(line);
 	if (token.size() < 2 || (token.front() != '"' && token.front() != '<') || (token.front() == '"' && token.back() != '"') || (token.front() == '<' && token.back() != '>')) {
 		return true;
 	}
@@ -1358,17 +1368,18 @@ void FileReader::processPragmaPack(std::string_view line) {
 	}
 }
 
-void FileReader::processLineDirective(const std::string& line) {
+void FileReader::processLineDirective(std::string_view line) {
 	// #line directive format:
 	// #line line_number
 	// #line line_number "filename"
-	std::istringstream iss(line);
-	iss.seekg("#line"sv.length());
+	line.remove_prefix("#line"sv.length());
+	std::string_view line_number_token = extractDirectiveToken(line);
 
-	long new_line_number;
-	iss >> new_line_number;
-
-	if (iss.fail()) {
+	long new_line_number = 0;
+	auto [ptr, ec] = std::from_chars(line_number_token.data(),
+									 line_number_token.data() + line_number_token.size(),
+									 new_line_number);
+	if (line_number_token.empty() || ec != std::errc() || ptr != line_number_token.data() + line_number_token.size()) {
 		FLASH_LOG(Lexer, Error, "Invalid #line directive: expected line number");
 		return;
 	}
@@ -1379,10 +1390,11 @@ void FileReader::processLineDirective(const std::string& line) {
 	}
 
 	// Check if there's a filename
-	std::string filename;
-	iss >> std::ws;	// Skip whitespace
-	if (!iss.eof()) {
-		std::getline(iss, filename);
+	while (!line.empty() && isSpaceChar(line.front()))
+		line.remove_prefix(1);
+	if (!line.empty()) {
+		size_t filename_end = line.find_last_not_of(horizontal_whitespace);
+		std::string filename(line.substr(0, filename_end == std::string_view::npos ? 0 : filename_end + 1));
 		// Remove quotes if present
 		if (filename.size() >= 2 && filename.front() == '"' && filename.back() == '"') {
 			filename = filename.substr(1, filename.size() - 2);

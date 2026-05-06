@@ -142,9 +142,9 @@ FileReader::FileReader(CompileContext& settings, FileTree& tree) : settings_(set
 	result_.reserve(default_result_size);
 }
 
-size_t FileReader::find_first_non_whitespace_after_hash(const std::string& str) {
+size_t FileReader::find_first_non_whitespace_after_hash(std::string_view str) {
 	size_t pos = str.find('#');
-	if (pos == std::string::npos) {
+	if (pos == std::string_view::npos) {
 		return pos;
 	}
 	return str.find_first_not_of(" \t", pos + 1);
@@ -226,12 +226,11 @@ bool FileReader::readFile(std::string_view file, long included_at_line) {
 	return result;
 }
 
-bool FileReader::preprocessFileContent(const std::string& file_content) {
+bool FileReader::preprocessFileContent(std::string_view content_view) {
 #if WITH_PREPROCESSOR_TIMINGS
 	++PreprocessTimer::files_processed;
 	ScopedPreprocessTimingSummary scopedTimingSummary;
 #endif
-	std::string_view content_view(file_content);
 	std::string line;
 	std::string pending_line;  // Line that was read but needs to be processed on next iteration
 	bool has_pending_line = false;
@@ -829,81 +828,8 @@ size_t FileReader::get_or_add_file_path(std::string_view file_path) {
 	return new_index;
 }
 
-// Helper function to check if a position is inside a string literal (static version)
-// Handles both regular strings "..." and raw strings R"(...)" or R"delim(...)delim"
-bool FileReader::is_inside_string_literal(const std::string& str, size_t pos) {
-	bool inside_string = false;
-	bool inside_raw_string = false;
-	bool escaped = false;
-	std::string_view raw_delimiter;
-
-	for (size_t i = 0; i < pos && i < str.size(); ++i) {
-		if (inside_raw_string) {
-			// Inside a raw string - look for )" followed by delimiter and "
-			if (str[i] == ')' && i + 1 + raw_delimiter.size() < str.size()) {
-				if (str[i + 1] == '"') {
-					// Check if delimiter matches (empty delimiter case)
-					if (raw_delimiter.empty()) {
-						inside_raw_string = false;
-						i += 1; // Skip the closing "
-						continue;
-					}
-				} else if (i + 1 + raw_delimiter.size() < str.size()) {
-					// Check if delimiter matches
-					bool delimiter_matches = true;
-					for (size_t j = 0; j < raw_delimiter.size(); ++j) {
-						if (str[i + 1 + j] != raw_delimiter[j]) {
-							delimiter_matches = false;
-							break;
-						}
-					}
-					if (delimiter_matches && str[i + 1 + raw_delimiter.size()] == '"') {
-						inside_raw_string = false;
-						i += raw_delimiter.size() + 1; // Skip delimiter and closing "
-						continue;
-					}
-				}
-			}
-		} else if (inside_string) {
-			// Inside a regular string
-			if (escaped) {
-				escaped = false;
-				continue;
-			}
-
-			if (str[i] == '\\') {
-				escaped = true;
-			} else if (str[i] == '"') {
-				inside_string = false;
-			}
-		} else {
-			// Outside any string - check for string start
-			// Check for raw string literal: R"delim(
-			if (str[i] == 'R' && i + 2 < str.size() && str[i + 1] == '"') {
-				inside_raw_string = true;
-				raw_delimiter = std::string_view{};
-				i += 2; // Skip R"
-
-				// Extract delimiter (characters between " and ()
-				while (i < str.size() && str[i] != '(') {
-					++i;
-				}
-				raw_delimiter = std::string_view(str.data() + 2, i - 2);
-				// i now points to '(', continue from next character
-				continue;
-			}
-			// Check for regular string literal
-			else if (str[i] == '"') {
-				inside_string = true;
-			}
-		}
-	}
-
-	return inside_string || inside_raw_string;
-}
-
 // Expand macros for #if/#elif expressions, preserving identifiers inside defined()
-std::string FileReader::expandMacrosForConditional(const std::string& input) {
+std::string FileReader::expandMacrosForConditional(std::string_view input) {
 	if (settings_.isVerboseMode()) {
 		FLASH_LOG(Lexer, Trace, "expandMacrosForConditional input: '", input, "'");
 	}
@@ -943,13 +869,13 @@ std::string FileReader::expandMacrosForConditional(const std::string& input) {
 		bool is_keyword = true;
 		if (keyword_pos > 0) {
 			char prev = input[keyword_pos - 1];
-			if (std::isalnum(prev) || prev == '_') {
+			if (std::isalnum(static_cast<unsigned char>(prev)) || prev == '_') {
 				is_keyword = false;
 			}
 		}
 		if (is_keyword && keyword_pos + keyword_len < input.size()) {
 			char next = input[keyword_pos + keyword_len];
-			if (std::isalnum(next) || next == '_') {
+			if (std::isalnum(static_cast<unsigned char>(next)) || next == '_') {
 				is_keyword = false;
 			}
 		}
@@ -973,7 +899,7 @@ std::string FileReader::expandMacrosForConditional(const std::string& input) {
 			pos = keyword_pos + keyword_len;
 
 			// Skip whitespace
-			while (pos < input.size() && std::isspace(input[pos])) {
+			while (pos < input.size() && std::isspace(static_cast<unsigned char>(input[pos]))) {
 				result += input[pos++];
 			}
 
@@ -1002,7 +928,7 @@ std::string FileReader::expandMacrosForConditional(const std::string& input) {
 		pos = keyword_pos + 7; // length of "defined"
 
 		// Skip whitespace
-		while (pos < input.size() && std::isspace(input[pos])) {
+		while (pos < input.size() && std::isspace(static_cast<unsigned char>(input[pos]))) {
 			result += input[pos++];
 		}
 
@@ -1012,20 +938,20 @@ std::string FileReader::expandMacrosForConditional(const std::string& input) {
 			result += "(";
 			pos++;
 			// Skip whitespace after '('
-			while (pos < input.size() && std::isspace(input[pos])) {
+			while (pos < input.size() && std::isspace(static_cast<unsigned char>(input[pos]))) {
 				result += input[pos++];
 			}
 		}
 
 		// Extract the identifier (don't expand it!)
 		size_t ident_start = pos;
-		while (pos < input.size() && (std::isalnum(input[pos]) || input[pos] == '_')) {
+		while (pos < input.size() && (std::isalnum(static_cast<unsigned char>(input[pos])) || input[pos] == '_')) {
 			pos++;
 		}
 		result += input.substr(ident_start, pos - ident_start);
 
 		// Skip whitespace
-		while (pos < input.size() && std::isspace(input[pos])) {
+		while (pos < input.size() && std::isspace(static_cast<unsigned char>(input[pos]))) {
 			result += input[pos++];
 		}
 

@@ -519,9 +519,9 @@ public:
 	const std::vector<SourceLineMapping>& get_line_map() const { return line_map_; }
 	const std::deque<std::string>& get_file_paths() const { return file_paths_; }
 
-	size_t find_first_non_whitespace_after_hash(const std::string& str);
+	size_t find_first_non_whitespace_after_hash(std::string_view str);
 	bool readFile(std::string_view file, long included_at_line = 0);
-	bool preprocessFileContent(const std::string& file_content);
+	bool preprocessFileContent(std::string_view file_content);
 	void push_file_to_stack(const CurrentFile& current_file) { filestack_.emplace(current_file); }
 	const std::string& get_result() const { return result_; }
 	void append_line_with_tracking(const std::string& line);
@@ -538,17 +538,16 @@ private:
 		build_separator_bitset_chunk(3)	// Chars 192-255
 	};
 
-	static bool is_inside_string_literal(const std::string& str, size_t pos);
-	std::string expandMacrosForConditional(const std::string& input);
-	std::string expandMacros(const std::string& input);
-	std::string expandMacros(const std::string& input, std::unordered_set<std::string, PreprocessorStringHash, std::equal_to<>> expanding_macros);
+	std::string expandMacrosForConditional(std::string_view input);
+	std::string expandMacros(std::string_view input);
+	std::string expandMacros(std::string_view input, std::unordered_set<std::string, PreprocessorStringHash, std::equal_to<>> expanding_macros);
 	void apply_operator(std::stack<long>& values, std::stack<Operator>& ops);
 	bool parseIntegerLiteral(std::string_view sv, size_t& pos, long& value, std::string* out_literal = nullptr);
 	long evaluate_expression(std::string_view sv);
-	bool processIncludeDirective(const std::string& line, const std::string_view& current_file, long include_line_number);
-	bool processIncludeNextDirective(const std::string& line, const std::string_view& current_file, long include_line_number);
+	bool processIncludeDirective(std::string_view line, std::string_view current_file, long include_line_number);
+	bool processIncludeNextDirective(std::string_view line, std::string_view current_file, long include_line_number);
 	void processPragmaPack(std::string_view line);
-	void processLineDirective(const std::string& line);
+	void processLineDirective(std::string_view line);
 	void handleDefine(std::string_view sv);
 	void addBuiltinDefines();
 
