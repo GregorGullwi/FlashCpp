@@ -14,7 +14,10 @@ int AstToIr::resolveArrayElementSizeBits(const TypeSpecifierNode& elem_type_spec
 	if (bits <= 0) {
 		bits = static_cast<int>(elem_type_spec.size_in_bits());
 	}
-	return bits > 0 ? bits : kFallbackElementSizeBits;
+	if (bits <= 0) {
+		throw InternalError("Failed to resolve array element size for decay");
+	}
+	return bits;
 }
 
 TempVar AstToIr::emitArrayToPointerDecay(const TypeSpecifierNode& elem_type_spec, IrValue source, Token token) {
