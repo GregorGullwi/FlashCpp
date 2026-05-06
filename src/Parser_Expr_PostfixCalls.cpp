@@ -113,6 +113,9 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 		return std::nullopt;
 	}
 	if (call_arg_types.empty()) {
+		FLASH_LOG(Templates, Debug,
+			"Deferring member template instantiation for ", struct_name, "::", member_name,
+			" because no concrete argument types were collected at this parse point");
 		return std::nullopt;
 	}
 	return try_instantiate_member_function_template(
@@ -338,11 +341,11 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 				LazyMemberKey member_key = LazyMemberKey::anyConst(class_name_handle, func_name_handle);
 				if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
 					FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for: ", *object_struct_name, "::", func_name);
-					instantiating_lazy_member_ = true;
-					auto restore_lazy_instantiation = ScopeGuard([&]() {
-						instantiating_lazy_member_ = false;
-					});
 					if (!instantiated_func.has_value()) {
+						instantiating_lazy_member_ = true;
+						auto restore_lazy_instantiation = ScopeGuard([&]() {
+							instantiating_lazy_member_ = false;
+						});
 						instantiated_func = instantiateLazyMemberIfNeeded(member_key);
 					}
 					if (instantiated_func.has_value()) {

@@ -306,7 +306,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasTemp
 		getTargetTemplateParameters(StringTable::getOrInternStringHandle(alias_node.target_template_name()));
 	substituted_args.reserve(target_template_args.size());
 
-	auto get_target_template_param = [&](size_t index) -> const TemplateParameterNode* {
+	auto getTargetTemplateParam = [&](size_t index) -> const TemplateParameterNode* {
 		if (index < target_template_params.size()) {
 			return &target_template_params[index];
 		}
@@ -317,7 +317,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasTemp
 	};
 
 	for (size_t i = 0; i < target_template_args.size(); ++i) {
-		const TemplateParameterNode* target_template_param = get_target_template_param(i);
+		const TemplateParameterNode* target_template_param = getTargetTemplateParam(i);
 		auto materialized_arg = materializeDeferredAliasTemplateArg(
 			target_template_args[i],
 			alias_node.template_parameters(),
