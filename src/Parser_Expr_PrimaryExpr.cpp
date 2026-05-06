@@ -2771,7 +2771,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										}
 										member_lookup = instantiated_func;
 										decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
-										}
 									}
 								}
 							}
