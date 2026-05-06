@@ -951,32 +951,47 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 		return;
 	}
 
-	size_t scanned_nodes = ast_nodes_.size() - new_size;
-	size_t preserved_nodes = 0;
-	size_t discarded_nodes = 0;
-	// Iterate from the end to avoid invalidating iterators when removing elements
-	for (size_t i = ast_nodes_.size(); i > new_size;) {
-		--i;
-		ASTNode& node = ast_nodes_[i];
-		if (node.is<FunctionDeclarationNode>() || node.is<StructDeclarationNode>()) {
-			// Keep function and struct declarations - they may be template instantiations
-			// or struct definitions that are already registered in the symbol table
-			// Leave this node in place
-			++preserved_nodes;
-		} else {
-			// Move this node to discarded list to keep it alive, then remove from ast_nodes_
-			ast_discarded_nodes_.push_back(std::move(node));
-			eraseTopLevelNodeAt(i);
-			++discarded_nodes;
-		}
-	}
 	if (runtime_stats_enabled_) {
+		size_t scanned_nodes = ast_nodes_.size() - new_size;
+		size_t preserved_nodes = 0;
+		size_t discarded_nodes = 0;
+		// Iterate from the end to avoid invalidating iterators when removing elements
+		for (size_t i = ast_nodes_.size(); i > new_size;) {
+			--i;
+			ASTNode& node = ast_nodes_[i];
+			if (node.is<FunctionDeclarationNode>() || node.is<StructDeclarationNode>()) {
+				// Keep function and struct declarations - they may be template instantiations
+				// or struct definitions that are already registered in the symbol table
+				// Leave this node in place
+				++preserved_nodes;
+			} else {
+				// Move this node to discarded list to keep it alive, then remove from ast_nodes_
+				ast_discarded_nodes_.push_back(std::move(node));
+				eraseTopLevelNodeAt(i);
+				++discarded_nodes;
+			}
+		}
 		++runtime_stats_.restore_count;
 		runtime_stats_.restore_ast_nodes_scanned += scanned_nodes;
 		runtime_stats_.restore_ast_nodes_preserved += preserved_nodes;
 		runtime_stats_.restore_ast_nodes_discarded += discarded_nodes;
 		auto end = std::chrono::high_resolution_clock::now();
 		runtime_stats_.restore_time_us += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+	} else {
+		// Iterate from the end to avoid invalidating iterators when removing elements
+		for (size_t i = ast_nodes_.size(); i > new_size;) {
+			--i;
+			ASTNode& node = ast_nodes_[i];
+			if (node.is<FunctionDeclarationNode>() || node.is<StructDeclarationNode>()) {
+				// Keep function and struct declarations - they may be template instantiations
+				// or struct definitions that are already registered in the symbol table
+				// Leave this node in place
+			} else {
+				// Move this node to discarded list to keep it alive, then remove from ast_nodes_
+				ast_discarded_nodes_.push_back(std::move(node));
+				eraseTopLevelNodeAt(i);
+			}
+		}
 	}
 }
 

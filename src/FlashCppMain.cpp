@@ -356,6 +356,8 @@ int main_impl(int argc, char* argv[]) {
 
 	// Count source lines for operand storage reservation
 	size_t source_line_count = std::count(preprocessed_source.begin(), preprocessed_source.end(), '\n');
+	static constexpr size_t savedTokenSlotsPerLine = 20;
+	static constexpr size_t savedTokenMaxReserve = 256 * 1024;
 
 	// Log preprocessing completion for progress tracking with lines/second
 	double lines_per_sec = preprocessing_time > 0 ? (source_line_count * 1000.0 / preprocessing_time) : 0.0;
@@ -398,7 +400,7 @@ int main_impl(int argc, char* argv[]) {
 		// tests/std/README_STANDARD_HEADERS.md measured ~81,739 saved-token slots
 		// for 4019 preprocessed <limits> lines (~20/line). Cap the heuristic so
 		// unusually large translation units do not reserve excessive memory.
-		parser->reserveSavedTokenStorage(std::min(source_line_count * 20, static_cast<size_t>(256 * 1024)));
+		parser->reserveSavedTokenStorage(std::min(source_line_count * savedTokenSlotsPerLine, savedTokenMaxReserve));
 	}
 	Lexer& lexer = *lexer_ptr;
 	{
