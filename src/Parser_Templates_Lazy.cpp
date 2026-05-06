@@ -7,6 +7,26 @@
 #include "ParserTemplateClassShared.h"
 #include "RebindStaticMemberAst.h"
 
+namespace {
+
+[[noreturn]] void throwLazyMemberDefinitionCompileError(
+	const LazyMemberFunctionInfo& lazy_info,
+	std::string_view member_kind,
+	std::string_view detail) {
+	throw CompileError(std::string(StringBuilder()
+		.append("Lazy ")
+		.append(member_kind)
+		.append(" '")
+		.append(StringTable::getStringView(effectiveLookupName(lazy_info.identity)))
+		.append("' for '")
+		.append(StringTable::getStringView(lazy_info.identity.instantiated_owner_name))
+		.append("' ")
+		.append(detail)
+		.commit()));
+}
+
+} // namespace
+
 std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey& member_key) {
 	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
 	auto lazy_info_opt = lazy_registry.getLazyMemberInfo(member_key);
@@ -35,8 +55,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	if (lazy_info.identity.kind == DeferredMemberIdentity::Kind::Constructor && lazy_info.identity.original_member_node.is<ConstructorDeclarationNode>()) {
 		const ConstructorDeclarationNode& ctor_decl = lazy_info.identity.original_member_node.as<ConstructorDeclarationNode>();
 		if (!ctor_decl.has_any_body_source()) {
-			FLASH_LOG(Templates, Error, "Lazy constructor has no definition and no deferred body position");
-			return std::nullopt;
+			throwLazyMemberDefinitionCompileError(
+				lazy_info,
+				"constructor",
+				"has no definition or deferred body position");
 		}
 
 		StringHandle ctor_name_handle = effectiveLookupName(lazy_info.identity);
@@ -374,8 +396,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	if (lazy_info.identity.kind == DeferredMemberIdentity::Kind::Destructor && lazy_info.identity.original_member_node.is<DestructorDeclarationNode>()) {
 		const DestructorDeclarationNode& dtor_decl = lazy_info.identity.original_member_node.as<DestructorDeclarationNode>();
 		if (!dtor_decl.is_materialized()) {
-			FLASH_LOG(Templates, Error, "Lazy destructor has no definition");
-			return std::nullopt;
+			throwLazyMemberDefinitionCompileError(
+				lazy_info,
+				"destructor",
+				"has no materialized definition");
 		}
 
 		StringHandle dtor_name_handle = effectiveLookupName(lazy_info.identity);
@@ -447,16 +471,17 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	// Get the original function declaration
 	if (!lazy_info.identity.original_member_node.is<FunctionDeclarationNode>()) {
-		FLASH_LOG(Templates, Error, "Lazy member function node is not a FunctionDeclarationNode");
-		return std::nullopt;
+		throw InternalError("Lazy member function node is not a FunctionDeclarationNode");
 	}
 
 	const FunctionDeclarationNode& func_decl = lazy_info.identity.original_member_node.as<FunctionDeclarationNode>();
 	const DeclarationNode& decl = func_decl.decl_node();
 
 	if (!func_decl.has_any_body_source()) {
-		FLASH_LOG(Templates, Error, "Lazy member function has no definition and no deferred body position");
-		return std::nullopt;
+		throwLazyMemberDefinitionCompileError(
+			lazy_info,
+			"member function",
+			"has no definition or deferred body position");
 	}
 
 	// Look up the owner struct once for use in both return type and parameter alias resolution.
