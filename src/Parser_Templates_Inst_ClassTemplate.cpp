@@ -1524,23 +1524,36 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			if (handled_as_pack)
 				continue;
+			// Use substituteTemplateParameters as the primary substitution to correctly
+			// propagate pointer depth from template args (e.g. I→int* gives ptr_depth=1).
+			// The TypeIndex from substitute_template_parameter+self_type_rewrite is applied
+			// on top to handle self-referential types.
+			ASTNode full_substituted_param_node = substituteTemplateParameters(
+				param_decl.type_node(), tmpl_params, tmpl_args);
 			TypeIndex param_type_index = substitute_template_parameter(
 				param_type_spec, tmpl_params, tmpl_args);
 			if (self_type_rewrite.has_value() &&
 				param_type_index == self_type_rewrite->from_type_index) {
 				param_type_index = self_type_rewrite->to_type_index;
 			}
-			TypeSpecifierNode substituted_param_type(
-				param_type_index.category(),
-				param_type_spec.qualifier(),
-				get_substituted_type_size_bits(param_type_index),
-				param_decl.identifier_token(),
-				param_type_spec.cv_qualifier());
-			substituted_param_type.set_type_index(param_type_index);
-			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
-				substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+			TypeSpecifierNode substituted_param_type = full_substituted_param_node.is<TypeSpecifierNode>()
+				? full_substituted_param_node.as<TypeSpecifierNode>()
+				: TypeSpecifierNode(
+					  param_type_index.category(),
+					  param_type_spec.qualifier(),
+					  get_substituted_type_size_bits(param_type_index),
+					  param_decl.identifier_token(),
+					  param_type_spec.cv_qualifier());
+			// Apply the resolved TypeIndex (self-type rewrite or alias resolution).
+			if (param_type_index.is_valid()) {
+				substituted_param_type.set_type_index(param_type_index);
 			}
-			substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+			if (!full_substituted_param_node.is<TypeSpecifierNode>()) {
+				for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+					substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+				}
+				substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+			}
 			if (param_type_spec.has_function_signature()) {
 				substituted_param_type.set_function_signature(param_type_spec.function_signature());
 			} else if (param_type_index.category() == TypeCategory::FunctionPointer ||

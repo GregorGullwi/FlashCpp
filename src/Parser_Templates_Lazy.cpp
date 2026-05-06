@@ -484,20 +484,33 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	resolve_self_type(return_type_index);
 
-	// Create substituted return type node (use the return type's token, not the function identifier)
-	TypeSpecifierNode substituted_return_type(
-		return_type_index.category(),
-		return_type_spec.qualifier(),
-		get_type_size_bits(return_type_index.category()),
-		return_type_spec.token(),
-		CVQualifier::None);
-	substituted_return_type.set_type_index(return_type_index);
-
-	// Copy pointer levels and reference qualifiers from original
-	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
-		substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+	// Use substituteTemplateParameters as the primary substitution: it correctly propagates
+	// pointer depth, reference qualifiers, and other template arg metadata (e.g. I → int*
+	// produces a TypeSpecifierNode with pointer_depth=1 and size=64, not 32-bit int).
+	// The TypeIndex obtained via substitute_template_parameter + resolve_self_type is then
+	// applied on top to handle self-referential types (e.g. W<T>& → W<int>&).
+	ASTNode full_substituted_return_node = substituteTemplateParameters(
+		decl.type_node(), lazy_info.template_params, lazy_info.template_args);
+	TypeSpecifierNode substituted_return_type = full_substituted_return_node.is<TypeSpecifierNode>()
+		? full_substituted_return_node.as<TypeSpecifierNode>()
+		: TypeSpecifierNode(
+			  return_type_index.category(),
+			  return_type_spec.qualifier(),
+			  get_type_size_bits(return_type_index.category()),
+			  return_type_spec.token(),
+			  CVQualifier::None);
+	// Apply the self-type-resolved TypeIndex so self-referential returns get the right
+	// instantiated struct type index (e.g. unresolved W → resolved W<int>).
+	if (return_type_index.is_valid()) {
+		substituted_return_type.set_type_index(return_type_index);
 	}
-	substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
+	if (!full_substituted_return_node.is<TypeSpecifierNode>()) {
+		// Fallback: copy pointer levels and reference qualifiers from the original spec.
+		for (const auto& ptr_level : return_type_spec.pointer_levels()) {
+			substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+		}
+		substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
+	}
 	if (return_type_spec.has_function_signature()) {
 		substituted_return_type.set_function_signature(return_type_spec.function_signature());
 	} else if (return_type_index.category() == TypeCategory::FunctionPointer ||
@@ -617,20 +630,31 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			// Resolve self-referential class types (same as return type)
 			resolve_self_type(param_type_index);
 
-			// Create substituted parameter type
-			TypeSpecifierNode substituted_param_type(
-				param_type_index.category(),
-				param_type_spec.qualifier(),
-				get_type_size_bits(param_type_index.category()),
-				param_decl.identifier_token(),
-				param_type_spec.cv_qualifier());
-			substituted_param_type.set_type_index(param_type_index);
-
-			// Copy pointer levels and reference qualifiers
-			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
-				substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+			// Use substituteTemplateParameters as the primary substitution to correctly
+			// propagate pointer depth from template args (e.g. I→int* gives ptr_depth=1).
+			// The TypeIndex from substitute_template_parameter+resolve_self_type is then
+			// applied on top to handle self-referential types.
+			ASTNode full_substituted_param_node = substituteTemplateParameters(
+				param_decl.type_node(), lazy_info.template_params, lazy_info.template_args);
+			TypeSpecifierNode substituted_param_type = full_substituted_param_node.is<TypeSpecifierNode>()
+				? full_substituted_param_node.as<TypeSpecifierNode>()
+				: TypeSpecifierNode(
+					  param_type_index.category(),
+					  param_type_spec.qualifier(),
+					  get_type_size_bits(param_type_index.category()),
+					  param_decl.identifier_token(),
+					  param_type_spec.cv_qualifier());
+			// Apply the self-type-resolved TypeIndex.
+			if (param_type_index.is_valid()) {
+				substituted_param_type.set_type_index(param_type_index);
 			}
-			substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+			if (!full_substituted_param_node.is<TypeSpecifierNode>()) {
+				// Fallback: copy pointer levels and reference qualifiers from original.
+				for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+					substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+				}
+				substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+			}
 			if (param_type_spec.has_function_signature()) {
 				substituted_param_type.set_function_signature(param_type_spec.function_signature());
 			} else if (param_type_index.category() == TypeCategory::FunctionPointer ||
