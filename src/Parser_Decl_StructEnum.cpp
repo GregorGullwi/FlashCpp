@@ -1299,32 +1299,16 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						// Add DeclarationNode to struct_ref for symbol table and AST purposes
 						// During layout phase, these will be skipped (already processed as union members)
 						std::optional<ASTNode> anon_default_initializer;
-						if (peek() == "{"_tok) {
-							ParseResult init_result = parse_brace_initializer(anon_member_type_spec);
+						const bool has_brace_initializer = peek() == "{"_tok;
+						if (has_brace_initializer || consume("="_tok)) {
+							ParseResult init_result = has_brace_initializer
+								? parse_brace_initializer(anon_member_type_spec)
+								: parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 							if (init_result.is_error()) {
 								return init_result;
 							}
 							if (init_result.node().has_value()) {
 								anon_default_initializer = *init_result.node();
-							}
-						} else if (peek() == "="_tok) {
-							advance(); // consume '='
-							if (peek() == "{"_tok) {
-								ParseResult init_result = parse_brace_initializer(anon_member_type_spec);
-								if (init_result.is_error()) {
-									return init_result;
-								}
-								if (init_result.node().has_value()) {
-									anon_default_initializer = *init_result.node();
-								}
-							} else {
-								ParseResult init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-								if (init_result.is_error()) {
-									return init_result;
-								}
-								if (init_result.node().has_value()) {
-									anon_default_initializer = *init_result.node();
-								}
 							}
 						}
 

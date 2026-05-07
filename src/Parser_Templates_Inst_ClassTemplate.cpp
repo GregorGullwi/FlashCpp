@@ -7727,19 +7727,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					sfinae_type_map_.clear();
 
 					SaveHandle saved_pos = save_token_position();
+					auto restore_lexer = ScopeGuard([&]() {
+						restore_lexer_position_only(saved_pos);
+						discard_saved_token(saved_pos);
+					});
 					restore_lexer_position_only(new_func_ref.trailing_return_type_position());
 					advance();  // consume '->'
 
-					FlashCpp::SymbolTableScope param_scope(ScopeType::Function);
-					register_parameters_in_scope(new_func_ref.parameter_nodes());
+					FlashCpp::FunctionParsingScopeGuard func_guard(
+						*this,
+						true,
+						!new_func_ref.is_static(),
+						&instantiated_struct_ref,
+						instantiated_name,
+						struct_type_info.type_index_,
+						new_func_ref.parameter_nodes(),
+						&new_func_ref);
 
 					FlashCpp::TemplateParameterScope template_scope;
 					registerTypeParamsInScope(template_params, template_args_to_use, template_scope, &sfinae_type_map_);
 
 					auto return_type_result = parse_type_specifier();
-					gSymbolTable.exit_scope();
-					param_scope.dismiss();  // prevent double exit in destructor
-					restore_lexer_position_only(saved_pos);
 
 					if (!return_type_result.is_error() &&
 						return_type_result.node().has_value() &&

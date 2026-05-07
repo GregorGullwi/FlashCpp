@@ -1178,7 +1178,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				// e.g. is_same_v<remove_const_t<int>, int> matches the T==T specialization.
 				// Only resolve when the type is a plain alias (no outer pointer/ref/cv added by
 				// the call site) to avoid merging unrelated qualifiers.
-				if (type_info->isTypeAlias() && !arg.is_value && arg.pointer_depth == 0 && arg.ref_qualifier == ReferenceQualifier::None) {
+				if (type_info->isTypeAlias() && !arg.is_value && arg.pointer_depth == 0 &&
+					arg.ref_qualifier == ReferenceQualifier::None && arg.cv_qualifier == CVQualifier::None) {
 					ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(arg.type_index);
 					if (resolved_alias.type_index.is_valid() && resolved_alias.type_index != arg.type_index) {
 						TemplateTypeArg resolved = makeTemplateTypeArgFromResolvedAlias(resolved_alias, arg.type_index);
