@@ -2598,7 +2598,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// an unsubstituted placeholder type.  Body-less instantiations are forward
 		// declarations or SFINAE probes; instantiations with Auto parameters were
 		// never fully substituted and will crash the IR/name-mangling layer.
-		if (new_func_ref.is_materialized() && !functionHasUnresolvedPlaceholderParams(new_func_ref)) {
+		if (new_func_ref.is_materialized() && !functionHasUnresolvedPlaceholderSignature(new_func_ref)) {
 			registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
 		}
 
@@ -3946,12 +3946,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	//   1. Bodyless instantiations (forward declarations, SFINAE probes) — no code to emit.
 	//   2. Bodied instantiations where any parameter still carries an explicit dependent
 	//      placeholder TypeInfo after substitution/alias resolution.
-	const bool has_unresolved_params = functionHasUnresolvedPlaceholderParams(new_func_ref);
+	const bool has_unresolved_signature = functionHasUnresolvedPlaceholderSignature(new_func_ref);
 	FLASH_LOG_FORMAT(Templates, Debug,
-		"'{}': has_body={}, has_unresolved_params={}, registering={}",
-		template_name, func_definition.has_value(), has_unresolved_params,
-		func_definition.has_value() && !has_unresolved_params && commit_instantiation);
-	if (func_definition.has_value() && !has_unresolved_params && commit_instantiation) {
+		"'{}': has_body={}, has_unresolved_signature={}, registering={}",
+		template_name, func_definition.has_value(), has_unresolved_signature,
+		func_definition.has_value() && !has_unresolved_signature && commit_instantiation);
+	if (func_definition.has_value() && !has_unresolved_signature && commit_instantiation) {
 		registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
 	}
 

@@ -2787,7 +2787,10 @@ private:
 // declared, so it can call their member functions.
 // Used by instantiation and codegen paths to decide whether a function node
 // is safe to register for code generation.
-inline bool functionHasUnresolvedPlaceholderParams(const FunctionDeclarationNode& func) {
+inline bool functionHasUnresolvedPlaceholderSignature(const FunctionDeclarationNode& func) {
+	if (typeSpecStillUsesDependentPlaceholder(func.decl_node().type_specifier_node())) {
+		return true;
+	}
 	for (const auto& param : func.parameter_nodes()) {
 		if (param.is<DeclarationNode>()) {
 			const auto& type_node = param.as<DeclarationNode>().type_node();
@@ -2799,4 +2802,8 @@ inline bool functionHasUnresolvedPlaceholderParams(const FunctionDeclarationNode
 		}
 	}
 	return false;
+}
+
+inline bool functionHasUnresolvedPlaceholderParams(const FunctionDeclarationNode& func) {
+	return functionHasUnresolvedPlaceholderSignature(func);
 }
