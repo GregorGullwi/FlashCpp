@@ -1197,7 +1197,6 @@ private:
 		const CachedParamInfo* cached = nullptr;
 		std::optional<TypeSpecifierNode> deduced_type;
 		CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
-		bool is_parameter_pack = false;
 
 		const TypeSpecifierNode* type() const;
 	};

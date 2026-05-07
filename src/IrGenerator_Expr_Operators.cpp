@@ -419,7 +419,6 @@ AstToIr::CallParamView AstToIr::resolveCallParamView(
 	}
 
 	if (view.declaration) {
-		view.is_parameter_pack = view.declaration->is_parameter_pack();
 		view.ref_qualifier = callParameterRefQualifier(view.type());
 		return view;
 	}
@@ -432,7 +431,6 @@ AstToIr::CallParamView AstToIr::resolveCallParamView(
 		}
 	}
 	if (view.cached) {
-		view.is_parameter_pack = view.cached->is_parameter_pack;
 		view.ref_qualifier = view.cached->ref_qualifier;
 	}
 
