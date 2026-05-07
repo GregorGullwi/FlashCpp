@@ -2751,9 +2751,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			std::vector<TemplateTypeArg> template_args_for_member_copy_storage;
 			if (!pattern_args_for_member_copy.empty()) {
-				size_t template_param_slot = 0;
 				template_args_for_member_copy_storage.reserve(template_params.size());
-				for (const TemplateParameterNode& template_param : template_params) {
+				for (size_t template_param_slot = 0; template_param_slot < template_params.size(); ++template_param_slot) {
 					std::optional<TemplateTypeArg> deduced_arg;
 					for (size_t pattern_idx = 0;
 						 pattern_idx < pattern_args_for_member_copy.size() && pattern_idx < template_args.size();
@@ -2779,30 +2778,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (deduced_arg.has_value()) {
 						template_args_for_member_copy_storage.push_back(*deduced_arg);
 					}
-					template_param_slot++;
 				}
 			}
 			std::span<const TemplateTypeArg> template_args_for_member_copy =
 				template_args_for_member_copy_storage.empty() ? template_args : std::span<const TemplateTypeArg>(template_args_for_member_copy_storage);
-			auto clampPartialPatternTemplateParamIndirection = [&](TypeSpecifierNode& substituted_type, const TypeSpecifierNode& pattern_type) {
-				if (StringTable::getStringView(pattern_struct.name()).find("$pattern_") == std::string_view::npos ||
-					substituted_type.pointer_depth() <= pattern_type.pointer_depth()) {
-					return;
-				}
-				std::string_view pattern_type_name = pattern_type.token().value();
-				if (pattern_type_name.empty()) {
-					if (const TypeInfo* pattern_type_info = tryGetTypeInfo(pattern_type.type_index())) {
-						pattern_type_name = StringTable::getStringView(pattern_type_info->name());
-					}
-				}
-				for (const TemplateParameterNode& template_param_node : template_params) {
-					if (template_param_node.name() == pattern_type_name) {
-						substituted_type.limit_pointer_depth(pattern_type.pointer_depth());
-						return;
-					}
-				}
-			};
-
 			// Push class template pack info for specialization path
 			ClassTemplatePackGuard spec_pack_guard(class_template_pack_stack_);
 			bool has_spec_pack_info = false;
@@ -3937,9 +3916,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// sema-owned AST copy path so bindings stay positional.
 			std::vector<TemplateTypeArg> template_args_for_pattern_storage;
 			if (!pattern_args.empty()) {
-				size_t template_param_slot = 0;
 				template_args_for_pattern_storage.reserve(template_params.size());
-				for (const TemplateParameterNode& template_param : template_params) {
+				for (size_t template_param_slot = 0; template_param_slot < template_params.size(); ++template_param_slot) {
 					std::optional<TemplateTypeArg> deduced_arg;
 					for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < template_args.size(); ++pattern_idx) {
 						const TemplateTypeArg& pattern_arg = pattern_args[pattern_idx];
@@ -3963,7 +3941,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (deduced_arg.has_value()) {
 						template_args_for_pattern_storage.push_back(*deduced_arg);
 					}
-					template_param_slot++;
 				}
 			}
 			std::span<const TemplateTypeArg> template_args_for_pattern =
