@@ -1194,9 +1194,12 @@ private:
 	std::unordered_map<StringHandle, std::vector<CachedParamInfo>> function_param_cache_;
 	void applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& type_node);
 	void applyCallParameterBindingMetadata(TypedValue& value, const TypeSpecifierNode& param_type);
+	std::optional<TypedValue> tryBuildSemaBoundCallArgument(ExprResult argument_result, const ASTNode& argument, const TypeSpecifierNode& param_type, const CallArgReferenceBindingInfo* sema_ref_binding, const Token& token);
 	ExprResult applyCallArgumentConversions(ExprResult argument_result, const ASTNode& argument, const TypeSpecifierNode* param_type, const Token& token);
-	void appendOrdinaryCallArgument(CallOp& call_op, const ASTNode& argument, const TypeSpecifierNode* param_type, const std::optional<ExprResult>& evaluated_arg, const Token& token);
-	void appendReferenceCallArgument(std::vector<TypedValue>& args, const DeclarationNode& decl_node, StringHandle identifier_name);
+	TypedValue buildOrdinaryCallArgument(const ASTNode& argument, const TypeSpecifierNode* param_type, const std::optional<ExprResult>& evaluated_arg, const Token& token);
+	TypedValue buildReferenceCallArgumentFromDeclaration(const DeclarationNode& decl_node, StringHandle identifier_name);
+	TypedValue buildReferenceCallArgumentFromResult(const ExprResult& argument_result, const Token& token, bool reuse_address_valued_temp);
+	TypedValue buildDirectIdentifierCallArgument(const DeclarationNode& arg_decl_node, StringHandle identifier_name, CVReferenceQualifier param_ref_qualifier, const ASTNode& argument, const Token& token);
 	TypedValue buildConstructorArgumentValue(const ExprResult& argument_result,
 											 const ASTNode& argument,
 											 const TypeSpecifierNode* param_type,

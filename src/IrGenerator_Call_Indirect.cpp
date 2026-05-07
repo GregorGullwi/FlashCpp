@@ -1878,11 +1878,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 													? ExpressionContext::LValueAddress
 													: ExpressionContext::Load;
 				sema_evaluated_arg = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
-				if (auto sema_bound_arg = tryApplySemaCallArgReferenceBinding(
+				if (auto sema_bound_arg = tryBuildSemaBoundCallArgument(
 						*sema_evaluated_arg, argument, *param_type, sema_ref_binding, callExprNode.called_from())) {
-					TypedValue typed_arg = toTypedValue(*sema_bound_arg);
-					applyCallParameterBindingMetadata(typed_arg, *param_type);
-					call_op.args.push_back(std::move(typed_arg));
+					call_op.args.push_back(std::move(*sema_bound_arg));
 					arg_index++;
 					sema_ref_binding_applied = true;
 					return;
@@ -1894,36 +1892,38 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 				StringHandle identifier_name = identifier.nameHandle();
-				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+				const std::optional<ASTNode> symbol = lookupSymbol(identifier_name);
 
 				// Check if this is a function being passed as a function pointer argument
 				if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
-					// Function being passed as function pointer - just pass its name
-					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(identifier_name)));
-				} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-					const auto& decl_node = symbol->as<DeclarationNode>();
-
+					// Function being passed as function pointer — emit a FunctionAddress
+					// instruction to load the global function's address into a TempVar,
+					// then pass the TempVar.  Passing the raw StringHandle directly would
+					// make the codegen look the name up in the local variables map (where
+					// it is not present), causing a code-generation error.
+					const auto& fp_func_decl = symbol->as<FunctionDeclarationNode>();
+					std::string_view fp_mangled = generateMangledNameForCall(fp_func_decl, StringHandle{}, {});
+					TempVar func_addr_var = var_counter.next();
+					FunctionAddressOp fa_op;
+					fa_op.result.setType(TypeCategory::FunctionPointer);
+					fa_op.result.ir_type = IrType::FunctionPointer;
+					fa_op.result.size_in_bits = SizeInBits{64};
+					fa_op.result.value = func_addr_var;
+					fa_op.function_name = identifier_name;
+					fa_op.mangled_name = StringTable::getOrInternStringHandle(fp_mangled);
+					ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(fa_op), callExprNode.called_from()));
+					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(func_addr_var)));
+				} else if (symbol.has_value()) {
+					const DeclarationNode* decl_node = get_decl_from_symbol(*symbol);
 					// Check if parameter expects a reference
-					if (!sema_ref_binding_applied &&
+					if (decl_node && !sema_ref_binding_applied &&
 						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						appendReferenceCallArgument(call_op.args, decl_node, identifier_name);
+						call_op.args.push_back(buildReferenceCallArgumentFromDeclaration(*decl_node, identifier_name));
 					} else {
-						appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
-					}
-				} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
-					// Handle VariableDeclarationNode (local variables)
-					const auto& var_decl = symbol->as<VariableDeclarationNode>();
-					const auto& decl_node = var_decl.declaration();
-
-					// Check if parameter expects a reference
-					if (!sema_ref_binding_applied &&
-						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						appendReferenceCallArgument(call_op.args, decl_node, identifier_name);
-					} else {
-						appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
+						call_op.args.push_back(buildOrdinaryCallArgument(argument, param_type, sema_evaluated_arg, callExprNode.called_from()));
 					}
 				} else {
-					appendOrdinaryCallArgument(call_op, argument, param_type, sema_evaluated_arg, callExprNode.called_from());
+					call_op.args.push_back(buildOrdinaryCallArgument(argument, param_type, sema_evaluated_arg, callExprNode.called_from()));
 				}
 			} else {
 				// Not an identifier - reuse the already-evaluated result when sema
@@ -1937,69 +1937,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 					// Parameter expects a reference, but argument is not an identifier
 					// We need to materialize the value into a temporary and pass its address
-
-					// Check if this is a literal value
-					bool is_literal =
-						std::holds_alternative<unsigned long long>(argument_result.value) ||
-						std::holds_alternative<double>(argument_result.value);
-
-					if (is_literal) {
-						// Materialize the literal into a temporary variable
-						TypeCategory literal_type = argument_result.typeEnum();
-						int literal_size = argument_result.size_in_bits.value;
-
-						// Create a temporary variable to hold the literal value
-						TempVar temp_var = var_counter.next();
-
-						// Generate an assignment IR to store the literal using typed payload
-						AssignmentOp assign_op;
-						assign_op.result = temp_var; // unused but required
-
-						// Convert IrOperand to IrValue for the literal
-						IrValue rhs_value;
-						if (const auto* ull_val = std::get_if<unsigned long long>(&argument_result.value)) {
-							rhs_value = *ull_val;
-						} else if (const auto* d_val = std::get_if<double>(&argument_result.value)) {
-							rhs_value = *d_val;
-						}
-
-						// Create TypedValue for lhs and rhs
-						assign_op.lhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, temp_var);
-						assign_op.rhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, rhs_value);
-
-						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-
-						// Now take the address of the temporary
-						TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
-
-						// Pass the address
-						call_op.args.push_back(makeTypedValue(
-							argument_result.type_index.withCategory(literal_type),
-							SizeInBits{POINTER_SIZE_BITS},
-							IrValue(addr_var),
-							ReferenceQualifier::LValueReference));
-					} else {
-						// Not a literal (expression result in a TempVar) - take its address
-						if (std::holds_alternative<TempVar>(argument_result.value)) {
-							TypeCategory expr_type = argument_result.typeEnum();
-							int expr_size = argument_result.size_in_bits.value;
-							TempVar expr_var = std::get<TempVar>(argument_result.value);
-
-							TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
-
-							call_op.args.push_back(makeTypedValue(
-								argument_result.type_index.withCategory(expr_type),
-								SizeInBits{POINTER_SIZE_BITS},
-								IrValue(addr_var),
-								ReferenceQualifier::LValueReference));
-						} else {
-							// Fallback - just pass through
-							call_op.args.push_back(toTypedValue(argument_result));
-						}
-					}
+					call_op.args.push_back(buildReferenceCallArgumentFromResult(
+						argument_result,
+						callExprNode.called_from(),
+						true));
 				} else {
 					// Parameter doesn't expect a reference - pass through as-is
-					appendOrdinaryCallArgument(call_op, argument, param_type, argument_result, callExprNode.called_from());
+					call_op.args.push_back(buildOrdinaryCallArgument(argument, param_type, argument_result, callExprNode.called_from()));
 				}
 			}
 
