@@ -2466,6 +2466,40 @@ ParseResult Parser::parse_decltype_specifier() {
 			return false;
 		}
 
+		auto typeSpecDependsOnActiveTemplateParam = [&](const TypeSpecifierNode& type_spec) {
+			if (std::find(
+					currentTemplateParamNames().begin(),
+					currentTemplateParamNames().end(),
+					type_spec.token().handle()) != currentTemplateParamNames().end()) {
+				return true;
+			}
+
+			const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+			if (!type_info) {
+				return false;
+			}
+			if (type_info->isTemplatePlaceholder() ||
+				type_info->isDependentPlaceholder() ||
+				type_info->is_incomplete_instantiation_) {
+				return true;
+			}
+			const TypeSpecifierNode* alias_type_spec = type_info->aliasTypeSpecifier();
+			return alias_type_spec &&
+				   std::find(
+					   currentTemplateParamNames().begin(),
+					   currentTemplateParamNames().end(),
+					   alias_type_spec->token().handle()) != currentTemplateParamNames().end();
+		};
+
+		auto identifierMentionsDependentDeclaration = [&](const Token& token) {
+			if (token.type() != Token::Type::Identifier) {
+				return false;
+			}
+			std::optional<ASTNode> symbol = lookup_symbol(token.handle());
+			const DeclarationNode* decl = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
+			return decl && typeSpecDependsOnActiveTemplateParam(decl->type_specifier_node());
+		};
+
 		SaveHandle resume_pos = save_token_position();
 		restore_token_position(scan_start);
 		int paren_depth = 1;
@@ -2477,6 +2511,10 @@ ParseResult Parser::parse_decltype_specifier() {
 					currentTemplateParamNames().begin(),
 					currentTemplateParamNames().end(),
 					token.handle()) != currentTemplateParamNames().end()) {
+				mentions_active_template_param = true;
+				break;
+			}
+			if (identifierMentionsDependentDeclaration(token)) {
 				mentions_active_template_param = true;
 				break;
 			}
