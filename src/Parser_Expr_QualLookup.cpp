@@ -1020,7 +1020,7 @@ ParseResult Parser::validate_and_add_base_class(
 // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
 TypeIndex Parser::substitute_template_parameter(
 	const TypeSpecifierNode& original_type,
-	const InlineVector<ASTNode, 4>& template_params,
+	std::span<const ASTNode> template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args) {
 	TypeCategory current_type = original_type.type();
 	TypeIndex current_type_index = original_type.type_index();

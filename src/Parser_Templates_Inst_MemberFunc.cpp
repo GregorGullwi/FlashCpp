@@ -831,7 +831,7 @@ bool Parser::buildSubstitutionForPackElement(
 	StringHandle pack_param_name,
 	size_t pack_element_offset,
 	const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
-	const InlineVector<ASTNode, 4>& template_params,
+	std::span<const ASTNode> template_params,
 	const std::vector<size_t>& template_param_arg_starts,
 	const std::vector<size_t>& template_param_arg_counts,
 	const std::vector<TemplateTypeArg>& template_args,

@@ -197,7 +197,7 @@ static void mergeAliasAndUseSiteTypeSpec(
 
 Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 	ASTNode& type_node,
-	const InlineVector<ASTNode, 4>& template_params,
+	std::span<const ASTNode> template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
 	if (!type_node.is<TypeSpecifierNode>())
 		return DependentAliasResolutionStatus::NotApplicable;
@@ -437,7 +437,7 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 
 Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 	ASTNode& type_node,
-	const InlineVector<ASTNode, 4>& template_params,
+	std::span<const ASTNode> template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args) {
 	std::vector<TemplateTypeArg> vector_args(template_args.begin(), template_args.end());
 	return resolveDependentMemberAlias(type_node, template_params, vector_args);
@@ -878,7 +878,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 
 bool Parser::tryAppendDefaultTemplateArg(
 	const TemplateParameterNode& param,
-	const std::vector<ASTNode>& template_params,
+	std::span<const ASTNode> template_params,
 	InlineVector<TemplateTypeArg, 4>& template_args,
 	NamespaceHandle source_namespace) {
 	InlineVector<TemplateParameterNode, 4> typed_template_params;
@@ -1121,7 +1121,7 @@ void Parser::populateTemplateParamSubstitutions(
 
 void Parser::populateTemplateParamSubstitutions(
 	InlineVector<TemplateParamSubstitution, 4>& subs,
-	const std::vector<ASTNode>& template_params,
+	std::span<const ASTNode> template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
 	forEachNonPackTemplateParamArgBinding(
 		template_params,
@@ -1192,7 +1192,7 @@ void Parser::populateTemplateParamSubstitutions(
 void Parser::reparse_template_function_body(
 	FunctionDeclarationNode& new_func_ref,
 	const FunctionDeclarationNode& func_decl,
-	const InlineVector<ASTNode, 4>& template_params,
+	std::span<const ASTNode> template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args,
 	bool preserve_ref_qualifier) {
 	// Depth guard: function-template body replay can recursively re-enter via
@@ -1241,7 +1241,12 @@ void Parser::reparse_template_function_body(
 	}
 	// preserve_ref_qualifier=true for the explicit path (user-written T=int& must be
 	// reflected in TypeInfo); false for the deduced path.
-	registerTypeParamsInScope(template_params, template_args, template_scope, preserve_ref_qualifier);
+	InlineVector<ASTNode, 4> template_param_nodes;
+	template_param_nodes.reserve(template_params.size());
+	for (const ASTNode& template_param_node : template_params) {
+		template_param_nodes.push_back(template_param_node);
+	}
+	registerTypeParamsInScope(template_param_nodes, template_args, template_scope, preserve_ref_qualifier);
 
 	// Save lexer position and function context.
 	SaveHandle current_pos = save_token_position();

@@ -1450,7 +1450,7 @@ private:
 		NamespaceHandle source_namespace);
 	bool tryAppendDefaultTemplateArg(
 		const TemplateParameterNode& param,
-		const std::vector<ASTNode>& template_params,
+		std::span<const ASTNode> template_params,
 		InlineVector<TemplateTypeArg, 4>& template_args,
 		NamespaceHandle source_namespace);
 	bool tryAppendMemberDefaultTemplateArg(
@@ -1512,7 +1512,7 @@ private:
 	void reparse_template_function_body(
 		FunctionDeclarationNode& new_func_ref,
 		const FunctionDeclarationNode& func_decl,
-		const InlineVector<ASTNode, 4>& template_params,
+		std::span<const ASTNode> template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args,
 		bool preserve_ref_qualifier = false);
 	void reparse_template_function_body(
@@ -1531,7 +1531,7 @@ private:
 		const std::vector<TemplateTypeArg>& type_args);
 	void populateTemplateParamSubstitutions(
 		InlineVector<TemplateParamSubstitution, 4>& subs,
-		const std::vector<ASTNode>& template_params,
+		std::span<const ASTNode> template_params,
 		const std::vector<TemplateTypeArg>& template_args);
 	void populateTemplateParamSubstitutions(
 		InlineVector<TemplateParamSubstitution, 4>& subs,
@@ -2061,7 +2061,7 @@ private:
 		StringHandle pack_param_name,
 		size_t pack_element_offset,
 		const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
-		const InlineVector<ASTNode, 4>& template_params,
+		std::span<const ASTNode> template_params,
 		const std::vector<size_t>& template_param_arg_starts,
 		const std::vector<size_t>& template_param_arg_counts,
 		const std::vector<TemplateTypeArg>& template_args,
@@ -2390,7 +2390,7 @@ private:
 		const Token& source_token);
 	const TypeInfo* materializeInstantiatedMemberAliasTarget(
 		const TypeSpecifierNode& alias_type_spec,
-		const InlineVector<ASTNode, 4>& template_params,
+		std::span<const ASTNode> template_params,
 		const std::vector<TemplateTypeArg>& template_args);
 	const TypeInfo* materializeInstantiatedMemberAliasTarget(
 		const TypeSpecifierNode& alias_type_spec,
@@ -2465,7 +2465,7 @@ public:	// Public methods for template instantiation
 	// Substitute template parameters in an AST node with concrete types/values
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
-		const InlineVector<ASTNode, 4>& template_params,
+		std::span<const ASTNode> template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args);
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
@@ -2603,7 +2603,7 @@ private:	 // Resume private methods
 	// legitimately contribute zero arguments.
 	bool expandPackExpansionArgs(
 		const PackExpansionExprNode& pack_expansion,
-		const InlineVector<ASTNode, 4>& template_params,
+		std::span<const ASTNode> template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args,
 		ChunkedVector<ASTNode>& out_args);
 	bool expandPackExpansionArgs(
@@ -2617,7 +2617,7 @@ private:	 // Resume private methods
 		// for non-pack arguments.  Appends result(s) to `out`.
 	void substituteArgWithPackExpansion(
 		const ASTNode& arg,
-		const InlineVector<ASTNode, 4>& template_params,
+		std::span<const ASTNode> template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args,
 		ChunkedVector<ASTNode>& out);
 
@@ -2845,7 +2845,7 @@ private:	 // Resume private methods
 	// Handles complex transformations like const T& -> const int&, T* -> int*, etc.
 	TypeIndex substitute_template_parameter(
 		const TypeSpecifierNode& original_type,
-		const InlineVector<ASTNode, 4>& template_params,
+		std::span<const ASTNode> template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args);
 	TypeIndex substitute_template_parameter(
 		const TypeSpecifierNode& original_type,
@@ -2859,11 +2859,11 @@ private:	 // Resume private methods
 	};
 	DependentAliasResolutionStatus resolveDependentMemberAlias(
 		ASTNode& type_node,
-		const InlineVector<ASTNode, 4>& template_params,
+		std::span<const ASTNode> template_params,
 		const std::vector<TemplateTypeArg>& template_args);
 	DependentAliasResolutionStatus resolveDependentMemberAlias(
 		ASTNode& type_node,
-		const InlineVector<ASTNode, 4>& template_params,
+		std::span<const ASTNode> template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args);
 	DependentAliasResolutionStatus resolveDependentMemberAlias(
 		ASTNode& type_node,

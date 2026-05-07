@@ -587,7 +587,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 
 const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	const TypeSpecifierNode& alias_type_spec,
-	const InlineVector<ASTNode, 4>& template_params,
+	std::span<const ASTNode> template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
 	const TypeInfo* original_alias_target_info = tryGetTypeInfo(alias_type_spec.type_index());
 	if (!original_alias_target_info) {
@@ -667,9 +667,10 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	const TypeSpecifierNode& alias_type_spec,
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
+	InlineVector<ASTNode, 4> cloned_template_params = cloneTemplateParameterNodes(template_params);
 	return materializeInstantiatedMemberAliasTarget(
 		alias_type_spec,
-		cloneTemplateParameterNodes(template_params),
+		std::span<const ASTNode>(cloned_template_params),
 		template_args);
 }
 

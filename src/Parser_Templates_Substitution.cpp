@@ -282,7 +282,7 @@ bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
 
 ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
-	const InlineVector<ASTNode, 4>& template_params,
+	std::span<const ASTNode> template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args) {
 	// Helper function to get type name as string
 	auto get_type_name = [](TypeCategory type) -> std::string_view {
@@ -1801,7 +1801,7 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 // then template parameters are substituted.
 bool Parser::expandPackExpansionArgs(
 	const PackExpansionExprNode& pack_expansion,
-	const InlineVector<ASTNode, 4>& template_params,
+	std::span<const ASTNode> template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args,
 	ChunkedVector<ASTNode>& out_args) {
 
@@ -1892,7 +1892,7 @@ bool Parser::expandPackExpansionArgs(
 // ordinary call-expression, constructor-call, and member-call handlers.
 void Parser::substituteArgWithPackExpansion(
 	const ASTNode& arg,
-	const InlineVector<ASTNode, 4>& template_params,
+	std::span<const ASTNode> template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args,
 	ChunkedVector<ASTNode>& out) {
 	if (arg.is<ExpressionNode>()) {
