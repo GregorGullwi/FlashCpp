@@ -918,6 +918,10 @@ static std::optional<StringHandle> findUnresolvedHardUseTypeSpecifier(const ASTN
 	std::optional<StringHandle> unresolved_name;
 
 	auto check_type_spec = [&](const TypeSpecifierNode& type_spec) {
+		if (unresolved_name.has_value()) {
+			return;
+		}
+
 		const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
 		if (typeSpecStillUsesDependentPlaceholder(type_spec)) {
 			unresolved_name = type_info ? type_info->name() : type_spec.token().handle();
@@ -935,13 +939,19 @@ static std::optional<StringHandle> findUnresolvedHardUseTypeSpecifier(const ASTN
 		}
 	};
 
-	AstTraversal::visitAST(root, [&](const ASTNode& current) {
+	AstTraversal::visitASTWithDecisions(root, [&](const ASTNode& current) {
 		if (current.is<TypeSpecifierNode>()) {
 			check_type_spec(current.as<TypeSpecifierNode>());
 		} else if (current.is<DeclarationNode>()) {
-			check_type_spec(current.as<DeclarationNode>().type_specifier_node());
+			const DeclarationNode& decl = current.as<DeclarationNode>();
+			if (decl.type_node().is<TypeSpecifierNode>()) {
+				check_type_spec(decl.type_specifier_node());
+			}
 		} else if (current.is<VariableDeclarationNode>()) {
-			check_type_spec(current.as<VariableDeclarationNode>().declaration().type_specifier_node());
+			const DeclarationNode& decl = current.as<VariableDeclarationNode>().declaration();
+			if (decl.type_node().is<TypeSpecifierNode>()) {
+				check_type_spec(decl.type_specifier_node());
+			}
 		}
 		return unresolved_name.has_value()
 			? AstTraversal::VisitDecision::Stop
