@@ -1504,6 +1504,8 @@ void Parser::register_builtin_functions() {
 	const ASTNode void_type = make_builtin_type(TypeCategory::Void, CVQualifier::None, 0);
 	const ASTNode bool_type = make_builtin_type(TypeCategory::Bool, CVQualifier::None, 0);
 	const ASTNode int_type = make_builtin_type(TypeCategory::Int, CVQualifier::None, 0);
+	const ASTNode unsigned_short_type = make_builtin_type(TypeCategory::UnsignedShort, CVQualifier::None, 0);
+	const ASTNode unsigned_int_type = make_builtin_type(TypeCategory::UnsignedInt, CVQualifier::None, 0);
 	const ASTNode void_ptr = make_builtin_type(TypeCategory::Void, CVQualifier::None, 1);
 	const ASTNode const_void_ptr = make_builtin_type(TypeCategory::Void, CVQualifier::Const, 1);
 	const ASTNode volatile_void_ptr = make_builtin_type(TypeCategory::Void, CVQualifier::Volatile, 1);
@@ -1574,6 +1576,10 @@ void Parser::register_builtin_functions() {
 	register_extern_c_builtin("__atomic_clear", void_type, {volatile_void_ptr, int_type});
 	register_extern_c_builtin("__atomic_thread_fence", void_type, {int_type});
 	register_extern_c_builtin("__atomic_signal_fence", void_type, {int_type});
+	register_extern_c_builtin("__builtin_bswap16", unsigned_short_type, {unsigned_short_type});
+	register_extern_c_builtin("__builtin_bswap32", unsigned_int_type, {unsigned_int_type});
+	register_extern_c_builtin("__builtin_bswap64", generic_atomic_value_type, {generic_atomic_value_type});
+	register_extern_c_builtin("__builtin_ia32_pause", void_type, {});
 
 	// MSVC atomic headers rely on several barrier/interlocked intrinsics via macros
 	// (for example _Compiler_barrier() -> _ReadWriteBarrier()).

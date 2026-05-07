@@ -3810,8 +3810,14 @@ std::optional<ExprResult> AstToIr::tryGenerateIntrinsicIr(std::string_view func_
 	if (func_name == "__builtin_expect") {
 		return generateBuiltinExpectIntrinsic(callExprNode);
 	}
+	if (func_name == "__builtin_bswap16" || func_name == "__builtin_bswap32" || func_name == "__builtin_bswap64") {
+		return generateBuiltinIdentityIntrinsic(callExprNode, func_name);
+	}
 	if (func_name == "__builtin_launder") {
 		return generateBuiltinLaunderIntrinsic(callExprNode);
+	}
+	if (func_name == "__builtin_ia32_pause") {
+		return generateBuiltinNoOpIntrinsic(callExprNode, func_name);
 	}
 
 	// __builtin_strlen - maps to libc strlen function, not an inline intrinsic
@@ -4815,6 +4821,15 @@ ExprResult AstToIr::generateBuiltinUnreachableIntrinsic(const CallExprNode& call
 	return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
+ExprResult AstToIr::generateBuiltinNoOpIntrinsic(const CallExprNode& callExprNode, std::string_view func_name) {
+	if (!callExprNode.arguments().empty()) {
+		FLASH_LOG_FORMAT(Codegen, Warning, "{} should not have arguments (ignoring)", func_name);
+	}
+
+	FLASH_LOG_FORMAT(Codegen, Debug, "{} encountered - no code emitted", func_name);
+	return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
+}
+
 ExprResult AstToIr::generateBuiltinAssumeIntrinsic(const CallExprNode& callExprNode) {
 	if (callExprNode.arguments().size() != 1) {
 		FLASH_LOG(Codegen, Error, "__builtin_assume requires exactly 1 argument (condition)");
@@ -4865,36 +4880,20 @@ ExprResult AstToIr::generateBuiltinExpectIntrinsic(const CallExprNode& callExprN
 	return expr_ir;
 }
 
-ExprResult AstToIr::generateBuiltinLaunderIntrinsic(const CallExprNode& callExprNode) {
+ExprResult AstToIr::generateBuiltinIdentityIntrinsic(const CallExprNode& callExprNode, std::string_view func_name) {
 	if (callExprNode.arguments().size() != 1) {
-		FLASH_LOG(Codegen, Error, "__builtin_launder requires exactly 1 argument (pointer)");
+		FLASH_LOG_FORMAT(Codegen, Error, "{} requires exactly 1 argument", func_name);
 		return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
-	// Evaluate the pointer argument
-	ASTNode ptr_arg = callExprNode.arguments()[0];
-	ExprResult ptrExprResult = visitExpressionNode(ptr_arg.as<ExpressionNode>());
+	ASTNode arg = callExprNode.arguments()[0];
+	ExprResult arg_result = visitExpressionNode(arg.as<ExpressionNode>());
+	FLASH_LOG_FORMAT(Codegen, Debug, "{} encountered - returning argument unchanged", func_name);
+	return arg_result;
+}
 
-	// Extract pointer details
-	[[maybe_unused]] TypeCategory ptr_type = ptrExprResult.typeEnum();
-	[[maybe_unused]] int ptr_size = ptrExprResult.size_in_bits.value;
-
-	// For now, we just return the pointer unchanged
-	// In a real implementation, __builtin_launder would:
-	// 1. Create an optimization barrier so compiler can't assume anything about pointee
-	// 2. Prevent const/restrict/alias analysis from making invalid assumptions
-	// 3. Essential after placement new to get a pointer to the new object
-	//
-	// Example use case:
-	//   struct S { const int x; };
-	//   alignas(S) char buffer[sizeof(S)];
-	//   new (buffer) S{42};  // placement new
-	//   S* ptr = std::launder(reinterpret_cast<S*>(buffer));  // safe access
-
-	FLASH_LOG(Codegen, Debug, "__builtin_launder encountered - optimization barrier created");
-
-	// Return the pointer unchanged (but optimization barrier is implied)
-	return ptrExprResult;
+ExprResult AstToIr::generateBuiltinLaunderIntrinsic(const CallExprNode& callExprNode) {
+	return generateBuiltinIdentityIntrinsic(callExprNode, "__builtin_launder");
 }
 
 ExprResult AstToIr::generateGetExceptionCodeIntrinsic(const CallExprNode& callExprNode) {
