@@ -408,6 +408,27 @@ static_assert(r.lo == 2 && r.hi == 9);  // ✅ Works
 
 More complex constructor-body execution involving complex aliasing or non-trivial call chains is still a remaining limitation.
 
+Constructor bodies may now also mutate member subobjects through straightforward
+constexpr helper calls that take the member address:
+
+```cpp
+struct Pair { int value; };
+constexpr void setPair(Pair* p, int v) { p->value = v; }
+
+struct Box {
+    Pair pair;
+    constexpr Box(int v) {
+        pair.value = 0;
+        setPair(&pair, v);
+    }
+};
+
+constexpr Box b(42);
+static_assert(b.pair.value == 42);  // ✅ Works
+```
+
+This is covered by `tests/test_constexpr_ctor_body_member_pointer_call_ret0.cpp`.
+
 **Preferred style when practical:** Use member initializer lists:
 ```cpp
 constexpr Point(int x_val, int y_val) : x(x_val), y(y_val) {}  // ✅ Works
@@ -1321,7 +1342,7 @@ Potential areas for enhancement (in order of complexity):
   - ✅ **Global constexpr struct arrays now preserve constructor semantics in emitted runtime data** *(Implemented)* — The static-storage array path now tries full-array constexpr materialization before falling back to the older per-element packing logic, and the array packer now recognizes struct-valued `EvalResult` leaves instead of collapsing them through scalar conversion. In addition, global unsized-array declarations now keep the inferred outer bound on the registered declaration node, so later codegen/runtime uses the real array extent instead of the pre-inference `[]` form. This fixes cases like `constexpr Pair arr[2] = {{1, 2}, {3, 4}};` and `constexpr Pair arr[] = {{1, 2}, {3, 4}, {5, 6}};` when `Pair` has a user-declared constructor that reorders/transforms its arguments. Covered by `tests/test_constexpr_global_struct_array_ctor_runtime_ret0.cpp` and `tests/test_constexpr_global_unsized_struct_array_ctor_runtime_ret0.cpp`.
 
 ### Hard
-- ⚠️ Complex constructor body statement execution involving complex aliasing or non-trivial call chains (simple assignments, conditionals, loops, and switch now work)
+- ⚠️ Complex constructor body statement execution involving complex aliasing or non-trivial call chains (simple assignments, conditionals, loops, switch, and straightforward member-address helper calls now work)
 - ✅ **Short-circuit `&&` / `||` in top-level `evaluate_binary_operator`** *(Implemented)* — Both the top-level path (`static_assert`, constexpr variable initializers) and the bindings-aware path (constexpr function bodies) now short-circuit correctly. The `is_speculative` flag in `EvaluationContext` is set to `true` during template-argument disambiguation so that speculative evaluation does not change parse behavior.
   - ⚠️ **`is_speculative` disables short-circuit globally** — The flag is set on the `EvaluationContext` and applies to all sub-expressions (including nested function calls). This means expressions like `constexpr bool x = false && some_complex_call()` evaluated speculatively will eagerly evaluate `some_complex_call()`, potentially producing spurious errors. This is acceptable since speculative evaluation returns `nullopt` on failure anyway.
   - ⚠️ **`is_speculative` only affects the top-level path** — The bindings-aware paths (`evaluate_expression_with_bindings`, `evaluate_expression_with_bindings_dispatch`) always short-circuit regardless of the flag. This is correct because `try_evaluate_constant_expression` only uses the top-level evaluator for template-argument disambiguation.
