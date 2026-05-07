@@ -1575,6 +1575,46 @@ void Parser::register_builtin_functions() {
 	register_extern_c_builtin("__atomic_thread_fence", void_type, {int_type});
 	register_extern_c_builtin("__atomic_signal_fence", void_type, {int_type});
 
+	// MSVC atomic headers rely on several barrier/interlocked intrinsics via macros
+	// (for example _Compiler_barrier() -> _ReadWriteBarrier()).
+	// Registering them here keeps semantic lookup stable even when intrin wrappers
+	// are skipped by preprocessing or architecture guards.
+	const ASTNode volatile_long_ptr = make_builtin_type(TypeCategory::Long, CVQualifier::Volatile, 1);
+	const ASTNode long_type = make_builtin_type(TypeCategory::Long, CVQualifier::None, 0);
+	const ASTNode const_volatile_short_ptr = make_builtin_type(TypeCategory::Short, CVQualifier::ConstVolatile, 1);
+	const ASTNode const_volatile_int_ptr = make_builtin_type(TypeCategory::Int, CVQualifier::ConstVolatile, 1);
+	const ASTNode const_volatile_long_long_ptr = make_builtin_type(TypeCategory::LongLong, CVQualifier::ConstVolatile, 1);
+	const ASTNode const_volatile_char_ptr = make_builtin_type(TypeCategory::Char, CVQualifier::ConstVolatile, 1);
+	const ASTNode volatile_short_ptr = make_builtin_type(TypeCategory::Short, CVQualifier::Volatile, 1);
+	const ASTNode volatile_int_ptr = make_builtin_type(TypeCategory::Int, CVQualifier::Volatile, 1);
+	const ASTNode volatile_long_long_ptr = make_builtin_type(TypeCategory::LongLong, CVQualifier::Volatile, 1);
+	const ASTNode volatile_char_ptr = make_builtin_type(TypeCategory::Char, CVQualifier::Volatile, 1);
+	const ASTNode short_type = make_builtin_type(TypeCategory::Short, CVQualifier::None, 0);
+	const ASTNode char_type = make_builtin_type(TypeCategory::Char, CVQualifier::None, 0);
+	const ASTNode long_long_type = make_builtin_type(TypeCategory::LongLong, CVQualifier::None, 0);
+	const ASTNode long_long_ptr = make_builtin_type(TypeCategory::LongLong, CVQualifier::None, 1);
+	const ASTNode unsigned_char_type = make_builtin_type(TypeCategory::UnsignedChar, CVQualifier::None, 0);
+	register_extern_c_builtin("_ReadWriteBarrier", void_type, {});
+	register_extern_c_builtin("_mm_pause", void_type, {});
+	register_extern_c_builtin("_Memory_barrier", void_type, {});
+	register_extern_c_builtin("_Memory_load_acquire_barrier", void_type, {});
+	register_extern_c_builtin("_InterlockedIncrement", long_type, {volatile_long_ptr});
+	register_extern_c_builtin("_InterlockedExchange", long_type, {volatile_long_ptr, long_type});
+	register_extern_c_builtin("_InterlockedCompareExchange128", unsigned_char_type, {volatile_long_long_ptr, long_long_type, long_long_type, long_long_ptr});
+	register_extern_c_builtin("_InterlockedCompareExchange128_nf", unsigned_char_type, {volatile_long_long_ptr, long_long_type, long_long_type, long_long_ptr});
+	register_extern_c_builtin("__iso_volatile_load8", char_type, {const_volatile_char_ptr});
+	register_extern_c_builtin("__iso_volatile_load16", short_type, {const_volatile_short_ptr});
+	register_extern_c_builtin("__iso_volatile_load32", int_type, {const_volatile_int_ptr});
+	register_extern_c_builtin("__iso_volatile_load64", long_long_type, {const_volatile_long_long_ptr});
+	register_extern_c_builtin("__iso_volatile_store8", void_type, {volatile_char_ptr, char_type});
+	register_extern_c_builtin("__iso_volatile_store16", void_type, {volatile_short_ptr, short_type});
+	register_extern_c_builtin("__iso_volatile_store32", void_type, {volatile_int_ptr, int_type});
+	register_extern_c_builtin("__iso_volatile_store64", void_type, {volatile_long_long_ptr, long_long_type});
+	register_extern_c_builtin("__iso_volatile_store8", void_type, {const_volatile_char_ptr, char_type});
+	register_extern_c_builtin("__iso_volatile_store16", void_type, {const_volatile_short_ptr, short_type});
+	register_extern_c_builtin("__iso_volatile_store32", void_type, {const_volatile_int_ptr, int_type});
+	register_extern_c_builtin("__iso_volatile_store64", void_type, {const_volatile_long_long_ptr, long_long_type});
+
 	// Wide-character memory/string functions needed by char_traits<wchar_t>.
 	// These are declared in <wchar.h>/<cwchar> but char_traits.h may use them
 	// before those headers are explicitly included.

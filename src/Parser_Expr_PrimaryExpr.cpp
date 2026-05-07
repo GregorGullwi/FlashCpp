@@ -7160,23 +7160,29 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				advance(); // consume operator
 
 				// Next is either a simple pack identifier or a complex cast-expression.
+				// Try bare-identifier first as a fast path; if the identifier is followed by
+				// anything other than ')' (e.g. template args: is_same_v<T,Ts>), fall through
+				// to the complex expression path.
+				SaveHandle after_op_pos = save_token_position();
 				if (peek().is_identifier()) {
 					std::string_view pack_name = peek_info().value();
 					advance(); // consume pack name
 
 					if (consume(")"_tok)) {
-						// Valid unary left fold: (... op pack)
+						// Valid unary left fold: (... op bare_pack)
 						discard_saved_token(fold_check_pos);
+						discard_saved_token(after_op_pos);
 						result = emplace_node<ExpressionNode>(
 							FoldExpressionNode(pack_name, fold_op,
 											   FoldExpressionNode::Direction::Left, op_token));
 						is_fold = true;
 					}
-				} else {
-					// Complex pack expression: (... op expr) where expr is not a bare identifier.
-					// e.g. (... && (args > 0)) — valid unary left fold per the C++17/20 standard
-					// ([expr.prim.fold]: cast-expression fold-operator ...).
-					// If parsing or closing ) fails, is_fold stays false and fold_check_pos restores.
+				}
+				// Complex pack expression: (... op expr) where expr is a template call or other
+				// non-bare-identifier expression. e.g. (... || is_same_v<T, Ts>) or (... && (x > 0))
+				// [expr.prim.fold]: valid unary left fold per C++17/20 standard.
+				if (!is_fold) {
+					restore_token_position(after_op_pos);
 					ParseResult complex_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (!complex_result.is_error() && complex_result.node().has_value() && consume(")"_tok)) {
 						discard_saved_token(fold_check_pos);

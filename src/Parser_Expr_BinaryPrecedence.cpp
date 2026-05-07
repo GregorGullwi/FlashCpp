@@ -1703,6 +1703,13 @@ bool Parser::parse_static_member_function(
 		FLASH_LOG(Parser, Debug, "Parsed trailing requires clause for static member function (compile-time evaluation)");
 	}
 
+	// Parse trailing return type if present (-> type)
+	auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
+	if (trailing_return_result.is_error()) {
+		type_and_name_result = trailing_return_result;
+		return true;
+	}
+
 	// Parse function body if present
 	if (peek() == "{"_tok) {
 		// DELAYED PARSING: Save the current position (start of '{')

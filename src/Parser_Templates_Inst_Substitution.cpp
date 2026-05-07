@@ -529,6 +529,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 					TypeIndex{aliasIndex, TypeCategory::TypeAlias};
 				alias_type_info->fallback_size_bits_ = resolved_type_info.sizeInBits().value;
 				alias_type_info->is_type_alias_ = true;
+				alias_type_info->is_incomplete_instantiation_ = false;
 				alias_type_info->base_template_ = QualifiedIdentifier{};
 				alias_type_info->template_args_.clear();
 				alias_type_info->instantiation_context_.reset();
@@ -1173,17 +1174,33 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		}
 		if (!arg.is_dependent && arg.type_index.is_valid()) {
 			if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
-				StringHandle type_name = type_info->name();
-				for (const auto& subst : template_param_substitutions_) {
-					if (subst.is_type_param && subst.param_name == type_name && !subst.substituted_type.is_dependent) {
-						FLASH_LOG(Templates, Debug, "Substituting template parameter '", type_name,
-								  "' with concrete type ", subst.substituted_type.toString());
-						arg = subst.substituted_type;
-						break;
+				// Resolve type aliases to their underlying concrete types so that
+				// e.g. is_same_v<remove_const_t<int>, int> matches the T==T specialization.
+				// Only resolve when the type is a plain alias (no outer pointer/ref/cv added by
+				// the call site) to avoid merging unrelated qualifiers.
+				if (type_info->isTypeAlias() && !arg.is_value && arg.pointer_depth == 0 &&
+					arg.ref_qualifier == ReferenceQualifier::None && arg.cv_qualifier == CVQualifier::None) {
+					ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(arg.type_index);
+					if (resolved_alias.type_index.is_valid() && resolved_alias.type_index != arg.type_index) {
+						TemplateTypeArg resolved = makeTemplateTypeArgFromResolvedAlias(resolved_alias, arg.type_index);
+						FLASH_LOG(Templates, Debug, "Resolved type alias arg from ", arg.type_index, " to ", resolved.type_index);
+						arg = resolved;
+					}
+				}
+				else {
+					StringHandle type_name = type_info->name();
+					for (const auto& subst : template_param_substitutions_) {
+						if (subst.is_type_param && subst.param_name == type_name && !subst.substituted_type.is_dependent) {
+							FLASH_LOG(Templates, Debug, "Substituting template parameter '", type_name,
+									  "' with concrete type ", subst.substituted_type.toString());
+							arg = subst.substituted_type;
+							break;
+						}
 					}
 				}
 			}
 		}
+		
 		resolved_args.push_back(arg);
 	}
 
