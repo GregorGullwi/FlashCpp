@@ -18,6 +18,8 @@ namespace {
 constexpr std::string_view kStatementExecutedWithoutReturn = "Statement executed (not a return)";
 constexpr std::string_view kBreakExecuted = "Break executed";
 constexpr std::string_view kContinueExecuted = "Continue executed";
+constexpr std::string_view kFunctionDidNotReturnValue = "Constexpr function did not return a value";
+constexpr std::string_view kReturnStatementNoExpression = "Constexpr function return statement has no expression";
 
 struct MemberPointerTarget {
 	StringHandle member_name;
@@ -4549,6 +4551,7 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 		return bind_result;
 	}
 	std::vector<std::string_view> pointer_target_writebacks;
+	std::vector<std::pair<std::string_view, EvalResult>> pointer_target_imports;
 	for (const auto& [param_name, param_value] : param_bindings) {
 		(void)param_name;
 		if (!param_value.pointer_to_var.isValid()) {
@@ -4562,8 +4565,11 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 		if (outer_it == outer_bindings.end()) {
 			continue;
 		}
-		param_bindings[target_name] = outer_it->second;
+		pointer_target_imports.push_back({target_name, outer_it->second});
 		pointer_target_writebacks.push_back(target_name);
+	}
+	for (const auto& [target_name, target_value] : pointer_target_imports) {
+		param_bindings[target_name] = target_value;
 	}
 
 	auto saved_template_param_names = context.template_param_names;
@@ -4607,13 +4613,13 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 		local_bindings,
 		context,
 		"Function body is not a block",
-		"Constexpr function did not return a value");
+		std::string(kFunctionDidNotReturnValue));
 
 	context.current_depth--;
 	context.return_type_info = saved_return_type_info;
 	restore_template_bindings();
-	if (!result.success() && (result.error_message == "Constexpr function did not return a value" ||
-							  result.error_message == "Constexpr function return statement has no expression")) {
+	if (!result.success() && (result.error_message == kFunctionDidNotReturnValue ||
+							  result.error_message == kReturnStatementNoExpression)) {
 		const TypeSpecifierNode& ret_spec = func_decl.decl_node().type_specifier_node();
 		if (ret_spec.category() == TypeCategory::Void) {
 			result = EvalResult::from_int(0LL);
@@ -4793,7 +4799,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		const auto& return_expr = ret_stmt.expression();
 
 		if (!return_expr.has_value()) {
-			return EvalResult::error("Constexpr function return statement has no expression");
+			return EvalResult::error(std::string(kReturnStatementNoExpression));
 		}
 
 		// Handle brace-init return: return {x, y, ...} in a struct-returning function.

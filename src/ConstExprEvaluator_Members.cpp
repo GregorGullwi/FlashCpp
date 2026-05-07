@@ -2143,12 +2143,19 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							if (!object_binding) {
 								return EvalResult::error("Arrow assignment: pointer does not refer to a constexpr heap object or local binding");
 							}
-							if (ptr_result.pointer_offset != 0) {
+							EvalResult* object_slot = object_binding;
+							if (object_binding->is_array) {
+								if (ptr_result.pointer_offset < 0 ||
+									static_cast<size_t>(ptr_result.pointer_offset) >= object_binding->array_elements.size()) {
+									return EvalResult::error("Arrow assignment: pointer offset out of bounds for local struct array");
+								}
+								object_slot = &object_binding->array_elements[static_cast<size_t>(ptr_result.pointer_offset)];
+							} else if (ptr_result.pointer_offset != 0) {
 								return EvalResult::error(
 									"Arrow assignment: non-zero pointer offset on non-array local object in constexpr assignment");
 							}
-							auto member_it = object_binding->object_member_bindings.find(ma.member_name());
-							if (member_it == object_binding->object_member_bindings.end()) {
+							auto member_it = object_slot->object_member_bindings.find(ma.member_name());
+							if (member_it == object_slot->object_member_bindings.end()) {
 								return EvalResult::error("Arrow assignment: member not found in local struct: " + std::string(ma.member_name()));
 							}
 							auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
