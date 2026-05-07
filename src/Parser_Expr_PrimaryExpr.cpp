@@ -4843,12 +4843,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
 									return ParseResult::success(*result);
 								}
-								return ParseResult::error("Missing identifier", identifier_token);
+							} else {
+								auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
+								auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+								gSymbolTable.insertGlobal(identifier_token.value(), forward_decl);
+								identifierType = forward_decl;
 							}
-							auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
-							auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
-							gSymbolTable.insertGlobal(identifier_token.value(), forward_decl);
-							identifierType = forward_decl;
 						}
 
 						return unified_resolve_function_call(args);
@@ -4908,16 +4908,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
 							return ParseResult::success(*result);
 						}
-						return ParseResult::error("Missing identifier", identifier_token);
-					}
-					// We'll assume it returns int for now (this is a simplification)
-					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
-					auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+					} else {
+						// We'll assume it returns int for now (this is a simplification)
+						auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
+						auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 
-					// Add to GLOBAL symbol table as a forward declaration
-					// Using insertGlobal ensures it persists after scope exits
-					gSymbolTable.insertGlobal(identifier_token.value(), forward_decl);
-					identifierType = forward_decl;
+						// Add to GLOBAL symbol table as a forward declaration
+						// Using insertGlobal ensures it persists after scope exits
+						gSymbolTable.insertGlobal(identifier_token.value(), forward_decl);
+						identifierType = forward_decl;
+					}
 				}
 
 				// Unified resolution: collect candidates, augment with ADL, resolve overload.
