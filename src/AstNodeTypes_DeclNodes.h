@@ -2779,3 +2779,24 @@ private:
 	Token called_from_;
 	mutable const ConstructorDeclarationNode* resolved_constructor_ = nullptr;
 };
+
+// Returns true if any parameter of `func` still carries an unsubstituted
+// placeholder type (TypeCategory::Auto/DeclTypeAuto with invalid TypeIndex,
+// or a TypeIndex that resolves to a dependent placeholder).
+// Defined here, after FunctionDeclarationNode and DeclarationNode are fully
+// declared, so it can call their member functions.
+// Used by instantiation and codegen paths to decide whether a function node
+// is safe to register for code generation.
+inline bool functionHasUnresolvedPlaceholderParams(const FunctionDeclarationNode& func) {
+	for (const auto& param : func.parameter_nodes()) {
+		if (param.is<DeclarationNode>()) {
+			const auto& type_node = param.as<DeclarationNode>().type_node();
+			if (type_node.is<TypeSpecifierNode>()) {
+				if (typeSpecStillUsesDependentPlaceholder(type_node.as<TypeSpecifierNode>())) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}

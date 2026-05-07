@@ -532,15 +532,7 @@ int main_impl(int argc, char* argv[]) {
 				bool has_placeholder_params = false;
 				if (node_handle.is<FunctionDeclarationNode>()) {
 					node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
-					for (const auto& param : node_handle.as<FunctionDeclarationNode>().parameter_nodes()) {
-						if (param.is<DeclarationNode>()) {
-							const auto& pt = param.as<DeclarationNode>().type_specifier_node();
-							if (typeSpecStillUsesDependentPlaceholder(pt)) {
-								has_placeholder_params = true;
-								break;
-							}
-						}
-					}
+					has_placeholder_params = functionHasUnresolvedPlaceholderParams(node_handle.as<FunctionDeclarationNode>());
 				}
 				if (has_placeholder_params) {
 					FLASH_LOG(Codegen, Warning, "IR error for function '", node_desc,

@@ -2598,20 +2598,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// an unsubstituted placeholder type.  Body-less instantiations are forward
 		// declarations or SFINAE probes; instantiations with Auto parameters were
 		// never fully substituted and will crash the IR/name-mangling layer.
-		const bool explicit_has_unresolved_params = std::invoke([&]() {
-			for (const auto& param : new_func_ref.parameter_nodes()) {
-				if (param.is<DeclarationNode>()) {
-					const auto& type_node = param.as<DeclarationNode>().type_node();
-					if (type_node.is<TypeSpecifierNode>()) {
-						if (typeSpecStillUsesDependentPlaceholder(type_node.as<TypeSpecifierNode>())) {
-							return true;
-						}
-					}
-				}
-			}
-			return false;
-		});
-		if (new_func_ref.is_materialized() && !explicit_has_unresolved_params) {
+		if (new_func_ref.is_materialized() && !functionHasUnresolvedPlaceholderParams(new_func_ref)) {
 			registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
 		}
 
@@ -3959,20 +3946,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	//   1. Bodyless instantiations (forward declarations, SFINAE probes) — no code to emit.
 	//   2. Bodied instantiations where any parameter still carries an explicit dependent
 	//      placeholder TypeInfo after substitution/alias resolution.
-	const bool has_unresolved_params = std::invoke([&]() {
-		for (const auto& param : new_func_ref.parameter_nodes()) {
-			if (param.is<DeclarationNode>()) {
-				const auto& type_node = param.as<DeclarationNode>().type_node();
-				if (type_node.is<TypeSpecifierNode>()) {
-					const auto& pt = type_node.as<TypeSpecifierNode>();
-					if (typeSpecStillUsesDependentPlaceholder(pt)) {
-						return true;
-					}
-				}
-			}
-		}
-		return false;
-	});
+	const bool has_unresolved_params = functionHasUnresolvedPlaceholderParams(new_func_ref);
 	FLASH_LOG_FORMAT(Templates, Debug,
 		"'{}': has_body={}, has_unresolved_params={}, registering={}",
 		template_name, func_definition.has_value(), has_unresolved_params,
