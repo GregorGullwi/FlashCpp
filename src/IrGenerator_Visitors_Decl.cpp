@@ -81,20 +81,22 @@ void requireFunctionTypeReadyForCodegen(
 	std::string_view type_role,
 	const TypeSpecifierNode& type_spec,
 	int resolved_size_bits) {
+
 	if (isPlaceholderAutoType(type_spec.type())) {
 		reportUnresolvedFunctionTypeForCodegen(function_name, type_role, type_spec, "placeholder return/parameter type was not resolved by parser/sema");
 	}
 
-	const bool size_required =
-		type_spec.type() != TypeCategory::Void &&
-		type_spec.pointer_depth() == 0 &&
-		!type_spec.is_reference() &&
-		!type_spec.is_function_pointer() &&
-		!type_spec.has_function_signature();
-	if (size_required &&
-		resolved_size_bits <= 0 &&
-		!type_spec.type_index().is_valid()) {
-		reportUnresolvedFunctionTypeForCodegen(function_name, type_role, type_spec, "type did not resolve to a concrete runtime size");
+	if (resolved_size_bits <= 0) {
+		const bool size_required =
+			type_spec.type() != TypeCategory::Void &&
+			type_spec.pointer_depth() == 0 &&
+			!type_spec.is_reference() &&
+			!type_spec.is_function_pointer() &&
+			!type_spec.has_function_signature();
+		if (size_required &&
+			!type_spec.type_index().is_valid()) {
+			reportUnresolvedFunctionTypeForCodegen(function_name, type_role, type_spec, "type did not resolve to a concrete runtime size");
+		}
 	}
 }
 
