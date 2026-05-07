@@ -61,7 +61,7 @@ bool expressionTypeDeductionIsStillDependent(
 // Helper: Parse template brace initialization: Template<Args>{}
 // Parses the brace initializer, looks up the instantiated type, and creates a ConstructorCallNode
 ParseResult Parser::parse_template_brace_initialization(
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	std::string_view template_name,
 	const Token& identifier_token) {
 
@@ -856,7 +856,7 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 
 // Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
 std::vector<TemplateArgumentNodeInfo> Parser::build_template_arg_infos(
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	const std::vector<ASTNode>& template_arg_nodes) {
 	std::vector<TemplateArgumentNodeInfo> arg_infos;
 	arg_infos.reserve(template_args.size());
@@ -1020,8 +1020,8 @@ ParseResult Parser::validate_and_add_base_class(
 // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
 TypeIndex Parser::substitute_template_parameter(
 	const TypeSpecifierNode& original_type,
-	const InlineVector<ASTNode, 4>& template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
 	TypeCategory current_type = original_type.type();
 	TypeIndex current_type_index = original_type.type_index();
 
@@ -1053,7 +1053,18 @@ TypeIndex Parser::substitute_template_parameter(
 	auto materializePlaceholderArgs = [&](const TypeInfo& placeholder_info) {
 		return materializeTemplateArgs(placeholder_info, template_params, template_args,
 			[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
-				return this->evaluateDependentNTTPExpression(expr, params, args);
+				InlineVector<TemplateParameterNode, 4> typed_params;
+				typed_params.reserve(params.size());
+				for (const ASTNode& param_node : params) {
+					if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+						typed_param != nullptr) {
+						typed_params.push_back(*typed_param);
+					}
+				}
+				return this->evaluateDependentNTTPExpression(
+					expr,
+					std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+					args);
 			});
 	};
 	auto rebindConcretePlaceholderArgsByTypeName = [&](std::vector<TemplateTypeArg>& concrete_args) {
@@ -1249,11 +1260,7 @@ TypeIndex Parser::substitute_template_parameter(
 		const std::string_view placeholder_name = StringTable::getStringView(placeholder_info->name());
 		const std::string_view base_template_name = buildQualifiedNameFromHandle(
 			placeholder_info->sourceNamespace(), StringTable::getStringView(placeholder_info->baseTemplateName()));
-		for (const ASTNode& template_param_node : template_params) {
-			if (!template_param_node.is<TemplateParameterNode>()) {
-				continue;
-			}
-			const TemplateParameterNode& template_param = template_param_node.as<TemplateParameterNode>();
+		for (const TemplateParameterNode& template_param : template_params) {
 			if (template_param.kind() == TemplateParameterKind::Template &&
 				template_param.name() == base_template_name) {
 				return false;
@@ -1454,10 +1461,7 @@ TypeIndex Parser::substitute_template_parameter(
 			if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_info->type_index_)) {
 				const std::string_view alias_target_name = StringTable::getStringView(alias_target_info->name());
 				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-					if (!template_params[i].is<TemplateParameterNode>()) {
-						continue;
-					}
-					const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
+					const TemplateParameterNode& template_param = template_params[i];
 					if (template_param.name() == alias_target_name) {
 						const TemplateTypeArg& template_arg = template_args[i];
 						current_type = template_arg.typeEnum();
@@ -1478,11 +1482,7 @@ TypeIndex Parser::substitute_template_parameter(
 			const std::string_view base_template_name = buildQualifiedNameFromHandle(
 				placeholder_info->sourceNamespace(), StringTable::getStringView(placeholder_info->baseTemplateName()));
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-				if (!template_params[i].is<TemplateParameterNode>()) {
-					continue;
-				}
-
-				const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
+				const TemplateParameterNode& template_param = template_params[i];
 				if (template_param.kind() != TemplateParameterKind::Template ||
 					template_param.name() != base_template_name) {
 					continue;
@@ -1519,15 +1519,7 @@ TypeIndex Parser::substitute_template_parameter(
 	return current_type_index.withCategory(current_type);
 }
 
-TypeIndex Parser::substitute_template_parameter(
-	const TypeSpecifierNode& original_type,
-	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args) {
-	return substitute_template_parameter(
-		original_type,
-		cloneTemplateParameterNodes(template_params),
-		template_args);
-}
+
 
 // Lookup symbol with template parameter checking
 std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle identifier) {

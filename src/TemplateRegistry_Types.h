@@ -709,7 +709,7 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
  */
 inline TemplateInstantiationKey makeInstantiationKey(
 	StringHandle template_name,
-	const std::vector<TemplateTypeArg>& args) {
+	std::span<const TemplateTypeArg> args) {
 
 	TemplateInstantiationKey key(template_name);
 	key.type_args.reserve(args.size());
@@ -742,7 +742,7 @@ inline TemplateInstantiationKey makeInstantiationKey(
  */
 inline std::string_view generateInstantiatedNameFromArgs(
 	std::string_view template_name,
-	const std::vector<TemplateTypeArg>& args) {
+	std::span<const TemplateTypeArg> args) {
 
 	auto key = makeInstantiationKey(
 		StringTable::getOrInternStringHandle(template_name), args);

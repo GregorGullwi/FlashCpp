@@ -766,7 +766,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			if (!auto_params.empty()) {
 				// Create synthetic template parameters for each auto parameter
 				// Each auto becomes a unique template type parameter: _T0, _T1, etc.
-				std::vector<ASTNode> template_params;
+				InlineVector<TemplateParameterNode, 4> template_params;
 				InlineVector<StringHandle, 4> template_param_names;
 
 				for (size_t i = 0; i < auto_params.size(); ++i) {
@@ -786,7 +786,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 						param_node.as<TemplateParameterNode>().set_concept_constraint(auto_params[i].concept_name);
 					}
 
-					template_params.push_back(param_node);
+					template_params.push_back(param_node.as<TemplateParameterNode>());
 					template_param_names.push_back(param_name);
 				}
 

@@ -119,6 +119,21 @@ enum class ParserError {
 	NotImplemented
 };
 
+enum class SubstitutedDefaultArgumentPolicy {
+	None,
+	SubstituteTemplateParameters,
+	ExpressionSubstitutor
+};
+
+struct SubstitutedMemberFunctionShell {
+	ASTNode declaration_node;
+	DeclarationNode* declaration;
+	ASTNode function_node;
+	FunctionDeclarationNode* function;
+	TypeSpecifierNode return_type;
+	StringHandle effective_name;
+};
+
 static std::string_view get_parser_error_string(ParserError e) {
 	switch (e) {
 	case ParserError::None:
@@ -1213,7 +1228,7 @@ private:
 	// so this helper is intentionally non-const.
 	std::optional<AliasTemplateMaterializationResult> tryResolveCurrentInstantiationTemplateOwner(
 		std::string_view primary_template_name,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const TemplateTypeArg> template_args);
 
 	// Helper function to parse cv-qualifiers (const/volatile) from token stream
 	// Returns combined CVQualifier flags (None, Const, Volatile, or ConstVolatile)
@@ -1294,7 +1309,6 @@ private:
 	TemplateParameterMetadata registerTemplateParametersInScope(
 		InlineVector<TemplateParameterNode, 4>& template_params,
 		FlashCpp::TemplateParameterScope& template_scope);
-	InlineVector<ASTNode, 4> cloneTemplateParameterNodes(const InlineVector<TemplateParameterNode, 4>& template_params);
 	bool parseDeferredAliasTargetTemplateId(
 		StringHandle& out_target_template_name,
 		std::vector<ASTNode>& out_target_template_arg_nodes,
@@ -1369,7 +1383,7 @@ private:
 		}
 	};
 
-	ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
+	ParseResult parse_template_template_parameter_forms(InlineVector<TemplateParameterNode, 4>& out_params);  // NEW: Parse template<template<typename> class T> forms
 	ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
 	std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes = nullptr);  // NEW: Parse explicit template arguments like <int, float>
 	TemplateTypeArgParsingResult parse_explicit_template_arguments_as_result(TokenDestroyPattern destroy_pattern);	// NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
@@ -1430,12 +1444,7 @@ private:
 		int recursion_depth);
 	bool tryAppendDefaultTemplateArg(
 		const TemplateParameterNode& param,
-		const InlineVector<TemplateParameterNode, 4>& template_params,
-		InlineVector<TemplateTypeArg, 4>& template_args,
-		NamespaceHandle source_namespace);
-	bool tryAppendDefaultTemplateArg(
-		const TemplateParameterNode& param,
-		const std::vector<ASTNode>& template_params,
+		std::span<const TemplateParameterNode> template_params,
 		InlineVector<TemplateTypeArg, 4>& template_args,
 		NamespaceHandle source_namespace);
 	bool tryAppendMemberDefaultTemplateArg(
@@ -1497,14 +1506,8 @@ private:
 	void reparse_template_function_body(
 		FunctionDeclarationNode& new_func_ref,
 		const FunctionDeclarationNode& func_decl,
-		const InlineVector<ASTNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args,
-		bool preserve_ref_qualifier = false);
-	void reparse_template_function_body(
-		FunctionDeclarationNode& new_func_ref,
-		const FunctionDeclarationNode& func_decl,
-		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
 		bool preserve_ref_qualifier);
 	// Populate template_param_substitutions_ from parallel (name, arg) pairs for
 	// body-reparse paths so non-type params (e.g. int N → 4) are resolved in parse_block().
@@ -1513,15 +1516,11 @@ private:
 	void populateTemplateParamSubstitutions(
 		InlineVector<TemplateParamSubstitution, 4>& subs,
 		const InlineVector<StringHandle, 4>& param_names,
-		const std::vector<TemplateTypeArg>& type_args);
+		std::span<const TemplateTypeArg> type_args);
 	void populateTemplateParamSubstitutions(
 		InlineVector<TemplateParamSubstitution, 4>& subs,
-		const std::vector<ASTNode>& template_params,
-		const std::vector<TemplateTypeArg>& template_args);
-	void populateTemplateParamSubstitutions(
-		InlineVector<TemplateParamSubstitution, 4>& subs,
-		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
 	// Build outer-template binding data from the AST template parameter list so
 	// parameter names and args stay index-aligned even if the parameter list
 	// ever stops being a pure TemplateParameterNode sequence.
@@ -1621,6 +1620,38 @@ private:
 			node.set_outer_template_bindings(outer_template_param_names, filtered_template_args);
 		}
 	}
+	static StringHandle computeInstantiatedLookupName(
+		StringHandle original_name,
+		OverloadableOperator op_kind,
+		const TypeSpecifierNode& substituted_return_type);
+	SubstitutedMemberFunctionShell createSubstitutedMemberFunctionShell(
+		const FunctionDeclarationNode& original_func,
+		const ASTNode& original_return_type_node,
+		const Token& fallback_return_token,
+		StringHandle parent_struct_name,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
+		const StructDeclarationNode* owner_decl,
+		TypeIndex instantiated_owner_type_index, // Rewrite self-references (e.g. W<T>& -> W<int>&)
+		TypeIndex override_return_type_index,	  // Force return TypeIndex when caller already resolved aliases
+		OverloadableOperator operator_kind,
+		StringHandle effective_name_override,	   // Use precomputed lookup name instead of recomputing
+		StringHandle partial_pattern_owner_name,  // Enable partial-pattern pointer-depth clamp when valid
+		bool apply_bound_metadata_to_full_substitution, // Apply bound arg pointer/ref metadata on substituted node
+		bool apply_resolved_index_to_full_substitution); // Force substituted TypeIndex onto full AST substitutions
+	void substituteAndCopyMemberFunctionParameters(
+		const std::vector<ASTNode>& original_params,
+		FunctionDeclarationNode& target_node,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
+		const StructDeclarationNode* owner_decl,
+		TypeIndex instantiated_owner_type_index, // Rewrite self-referential parameter type indices
+		TypeIndex self_type_from_index,		   // Optional explicit self-type rewrite source (invalid = disabled)
+		TypeIndex self_type_to_index,			   // Optional explicit self-type rewrite target
+		SubstitutedDefaultArgumentPolicy default_argument_policy, // Default-arg substitution strategy
+		bool preserve_parameter_cv_qualifier, // Keep declared cv qualifier; false reproduces decl-only legacy behavior
+		bool apply_bound_metadata_to_full_substitution, // Apply bound arg pointer/ref metadata on substituted node
+		bool apply_resolved_index_to_full_substitution); // Force substituted TypeIndex onto full AST substitutions
 	template <typename TemplateParamsContainer, typename TemplateArgsContainer>
 	StringHandle resolveBaseInitializerNameForTemplateArgs(
 		StringHandle base_name,
@@ -1652,7 +1683,18 @@ private:
 				std::vector<TemplateTypeArg> concrete_base_args =
 					materializeTemplateArgs(*base_type_info, template_params, template_args,
 						[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
-							return this->evaluateDependentNTTPExpression(expr, params, args);
+							InlineVector<TemplateParameterNode, 4> typed_params;
+							typed_params.reserve(params.size());
+							for (const ASTNode& param_node : params) {
+								if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+									typed_param != nullptr) {
+									typed_params.push_back(*typed_param);
+								}
+							}
+							return this->evaluateDependentNTTPExpression(
+								expr,
+								std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+								args);
 						});
 				auto instantiated_base = try_instantiate_class_template(base_template_name, concrete_base_args);
 				if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
@@ -1737,7 +1779,18 @@ private:
 			concrete_args.push_back(
 				materializeTemplateArg(arg_info, template_params, template_args,
 					[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
-						return this->evaluateDependentNTTPExpression(expr, params, args);
+						InlineVector<TemplateParameterNode, 4> typed_params;
+						typed_params.reserve(params.size());
+						for (const ASTNode& param_node : params) {
+							if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+								typed_param != nullptr) {
+								typed_params.push_back(*typed_param);
+							}
+						}
+						return this->evaluateDependentNTTPExpression(
+							expr,
+							std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+							args);
 					}));
 		}
 
@@ -1761,7 +1814,18 @@ private:
 			std::vector<TemplateTypeArg> nested_args =
 				materializeTemplateArgs(*base_info, template_params, template_args,
 					[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
-						return this->evaluateDependentNTTPExpression(expr, params, args);
+						InlineVector<TemplateParameterNode, 4> typed_params;
+						typed_params.reserve(params.size());
+						for (const ASTNode& param_node : params) {
+							if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+								typed_param != nullptr) {
+								typed_params.push_back(*typed_param);
+							}
+						}
+						return this->evaluateDependentNTTPExpression(
+							expr,
+							std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+							args);
 					});
 			try_instantiate_class_template(nested_template_name, nested_args);
 			std::string_view instantiated_nested_name =
@@ -1821,7 +1885,18 @@ private:
 					std::vector<TemplateTypeArg> exact_args =
 						materializeTemplateArgs(*concrete_type_info, template_params, template_args,
 							[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
-								return this->evaluateDependentNTTPExpression(expr, params, args);
+								InlineVector<TemplateParameterNode, 4> typed_params;
+								typed_params.reserve(params.size());
+								for (const ASTNode& param_node : params) {
+									if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+										typed_param != nullptr) {
+										typed_params.push_back(*typed_param);
+									}
+								}
+								return this->evaluateDependentNTTPExpression(
+									expr,
+									std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+									args);
 							});
 					auto specialization_ast =
 						gTemplateRegistry.lookupExactSpecialization(base_template_name, exact_args);
@@ -1953,24 +2028,24 @@ private:
 		return substituted_arg;
 	}
 	bool isReachableVirtualBaseInitializer(const StructTypeInfo* struct_info, std::string_view candidate_name) const;
-	std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);	// NEW: Instantiate class template
-	std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
-	std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);	 // NEW: Instantiate variable template
-	std::optional<TemplateTypeArg> materializeDeferredAliasTemplateArg(
-		const ASTNode& arg_node,
-		const InlineVector<ASTNode, 4>& template_parameters,
-		const InlineVector<StringHandle, 4>& param_names,
-		const std::vector<TemplateTypeArg>& template_args,
-		const TemplateParameterNode* target_template_param);
+	std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args, bool force_eager = false);	// NEW: Instantiate class template
+	std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args, ASTNode& spec_node);  // Instantiate full specialization
+	std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args);	 // NEW: Instantiate variable template
 	std::optional<TemplateTypeArg> materializeDeferredAliasTemplateArg(
 		const ASTNode& arg_node,
 		const InlineVector<TemplateParameterNode, 4>& template_parameters,
 		const InlineVector<StringHandle, 4>& param_names,
-		const std::vector<TemplateTypeArg>& template_args,
+		std::span<const TemplateTypeArg> template_args,
+		const TemplateParameterNode* target_template_param);
+	std::optional<TemplateTypeArg> materializeDeferredAliasTemplateArg(
+		const ASTNode& arg_node,
+		const InlineVector<ASTNode, 4>& template_parameters,
+		const InlineVector<StringHandle, 4>& param_names,
+		std::span<const TemplateTypeArg> template_args,
 		const TemplateParameterNode* target_template_param);
 	std::optional<std::vector<TemplateTypeArg>> materializeDeferredAliasTemplateArgs(
 		const TemplateAliasNode& alias_node,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const TemplateTypeArg> template_args);
 	StringHandle getAliasTargetNameHandle(const TypeSpecifierNode& alias_target) const;
 	std::optional<size_t> findAliasTargetTemplateParamIndex(
 		const TemplateAliasNode& alias_node,
@@ -1996,7 +2071,7 @@ private:
 // Returns the evaluated value and its category, or nullopt if evaluation fails.
 	std::optional<TemplateTypeArg> evaluateDependentNTTPExpression(
 		const ASTNode& dependent_expr,
-		std::span<const ASTNode> template_params,
+		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
 	std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Instantiate member function template
 	std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, const std::vector<TemplateTypeArg>& template_type_args);  // NEW: Instantiate member function template with explicit args
@@ -2007,17 +2082,17 @@ private:
 		std::string_view struct_name, std::string_view member_name,
 		StringHandle qualified_name,
 		const ASTNode& template_node,
-		const std::vector<TemplateTypeArg>& template_args,
+		std::span<const TemplateTypeArg> template_args,
 		const FlashCpp::TemplateInstantiationKey& key,
 		const std::vector<TypeSpecifierNode>& call_arg_types);
 	bool buildSubstitutionForPackElement(
 		StringHandle pack_param_name,
 		size_t pack_element_offset,
 		const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
-		const InlineVector<ASTNode, 4>& template_params,
+		std::span<const TemplateParameterNode> template_params,
 		const std::vector<size_t>& template_param_arg_starts,
 		const std::vector<size_t>& template_param_arg_counts,
-		const std::vector<TemplateTypeArg>& template_args,
+		std::span<const TemplateTypeArg> template_args,
 		InlineVector<ASTNode, 4>& subst_params,
 		InlineVector<TemplateTypeArg, 4>& subst_args);
 	ASTNode buildMaterializedParamType(
@@ -2325,43 +2400,39 @@ private:
 		const TypeInfo* resolved_type_info = nullptr;
 		std::optional<ASTNode> instantiated_struct_node{};  // Set when try_instantiate_class_template returns a StructDeclarationNode
 	};
-	std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);	 // NEW: Get mangled name for instantiated class
-	std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, const std::vector<TemplateTypeArg>& template_args);  // Helper: Instantiate base class template and add to AST
+	std::string_view get_instantiated_class_name(std::string_view template_name, std::span<const TemplateTypeArg> template_args);	 // NEW: Get mangled name for instantiated class
+	std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, std::span<const TemplateTypeArg> template_args);  // Helper: Instantiate base class template and add to AST
 	AliasTemplateMaterializationResult materializeTemplateInstantiationForLookup(
 		std::string_view template_name,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const TemplateTypeArg> template_args);
 	AliasTemplateMaterializationResult materializePrimaryTemplateOwnerForLookup(
 		std::string_view primary_template_name,
 		std::string_view fallback_template_name,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const TemplateTypeArg> template_args);
 	AliasTemplateMaterializationResult materializePrimaryTemplateOwnerForConstructorLookup(
 		std::string_view primary_template_name,
 		std::string_view fallback_template_name,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const TemplateTypeArg> template_args);
 	ParseResult parseMaterializedTemplateFunctionalCast(
 		const AliasTemplateMaterializationResult& materialized_owner,
 		const Token& source_token);
 	const TypeInfo* materializeInstantiatedMemberAliasTarget(
 		const TypeSpecifierNode& alias_type_spec,
-		const InlineVector<ASTNode, 4>& template_params,
-		const std::vector<TemplateTypeArg>& template_args);
-	const TypeInfo* materializeInstantiatedMemberAliasTarget(
-		const TypeSpecifierNode& alias_type_spec,
-		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
 	AliasTemplateMaterializationResult materializeAliasTemplateInstantiation(
 		std::string_view alias_template_name,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const TemplateTypeArg> template_args);
 	void normalizeDependentNonTypeTemplateArgs(
-		const InlineVector<ASTNode, 4>& template_parameters,
+		std::span<const TemplateParameterNode> template_parameters,
 		std::vector<TemplateTypeArg>& template_args);
 	void normalizeDependentNonTypeTemplateArgs(
-		const InlineVector<TemplateParameterNode, 4>& template_parameters,
+		const InlineVector<ASTNode, 4>& template_parameters,
 		std::vector<TemplateTypeArg>& template_args);
 	bool resolveAliasTemplateInstantiation(
 		TypeSpecifierNode& type_spec,
 		std::string_view alias_template_name,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const TemplateTypeArg> template_args);
 	bool resolveAliasTemplateInstantiation(TypeSpecifierNode& type_spec);
 	// Shared alias-target capture helper: parses the template-id that forms the
 	// right-hand side of an alias declaration from the current token position.
@@ -2386,8 +2457,8 @@ private:
 		// Template instantiation helper methods (extracted from try_instantiate_class_template)
 	std::optional<ASTNode> substitute_nontype_template_param(
 		std::string_view param_name,
-		const std::vector<TemplateTypeArg>& args,
-		const std::vector<ASTNode>& params);	 // Substitute non-type template parameter in initializer
+		std::span<const TemplateTypeArg> args,
+		std::span<const TemplateParameterNode> params);	 // Substitute non-type template parameter in initializer
 
 	std::optional<bool> try_parse_out_of_line_template_member(const InlineVector<TemplateParameterNode, 4>& template_params, const InlineVector<StringHandle, 4>& template_param_names, const InlineVector<TemplateParameterNode, 4>& inner_template_params, const InlineVector<StringHandle, 4>& inner_template_param_names);	 // NEW: Parse out-of-line template member function
 	bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
@@ -2402,7 +2473,7 @@ private:
 																const std::unordered_map<std::string_view, const TemplateParameterNode*>& template_params) const;
 	bool types_equivalent(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) const;
 	bool instantiate_deduced_template(std::string_view class_name,
-									  const std::vector<TemplateTypeArg>& template_args,
+									  std::span<const TemplateTypeArg> template_args,
 									  TypeSpecifierNode& type_specifier);
 
 public:	// Public methods for template instantiation
@@ -2418,12 +2489,8 @@ public:	// Public methods for template instantiation
 	// Substitute template parameters in an AST node with concrete types/values
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
-		const InlineVector<ASTNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args);
-	ASTNode substituteTemplateParameters(
-		const ASTNode& node,
-		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args);
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
 
 	// Helper to extract type from an expression for overload resolution.
 	// Public so codegen/constexpr consumers can reuse the parser's type deduction.
@@ -2556,22 +2623,14 @@ private:	 // Resume private methods
 	// legitimately contribute zero arguments.
 	bool expandPackExpansionArgs(
 		const PackExpansionExprNode& pack_expansion,
-		const InlineVector<ASTNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args,
-		ChunkedVector<ASTNode>& out_args);
-	bool expandPackExpansionArgs(
-		const PackExpansionExprNode& pack_expansion,
-		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
 		ChunkedVector<ASTNode>& out_args);
 
-		// Substitute a single argument, expanding PackExpansionExprNode into
-		// multiple arguments when present.  Falls back to substituteTemplateParameters
-		// for non-pack arguments.  Appends result(s) to `out`.
 	void substituteArgWithPackExpansion(
 		const ASTNode& arg,
-		const InlineVector<ASTNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
 		ChunkedVector<ASTNode>& out);
 
 		// Phase 3: Expression context tracking for template disambiguation
@@ -2631,7 +2690,7 @@ private:	 // Resume private methods
 	// Helper to parse template brace initialization: Template<Args>{}
 	// Returns ParseResult with ConstructorCallNode on success
 	ParseResult parse_template_brace_initialization(
-		const std::vector<TemplateTypeArg>& template_args,
+		std::span<const TemplateTypeArg> template_args,
 		std::string_view template_name,
 		const Token& identifier_token);
 
@@ -2736,7 +2795,7 @@ private:	 // Resume private methods
 	// Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
 	// Shared across all base class deferral sites.
 	static std::vector<TemplateArgumentNodeInfo> build_template_arg_infos(
-		const std::vector<TemplateTypeArg>& template_args,
+		std::span<const TemplateTypeArg> template_args,
 		const std::vector<ASTNode>& template_arg_nodes);
 
 	// Helper: Parse base class list for a member struct template (already consumed ':').
@@ -2798,12 +2857,8 @@ private:	 // Resume private methods
 	// Handles complex transformations like const T& -> const int&, T* -> int*, etc.
 	TypeIndex substitute_template_parameter(
 		const TypeSpecifierNode& original_type,
-		const InlineVector<ASTNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args);
-	TypeIndex substitute_template_parameter(
-		const TypeSpecifierNode& original_type,
-		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args);
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
 
 	enum class DependentAliasResolutionStatus {
 		NotApplicable,
@@ -2812,20 +2867,8 @@ private:	 // Resume private methods
 	};
 	DependentAliasResolutionStatus resolveDependentMemberAlias(
 		ASTNode& type_node,
-		const InlineVector<ASTNode, 4>& template_params,
-		const std::vector<TemplateTypeArg>& template_args);
-	DependentAliasResolutionStatus resolveDependentMemberAlias(
-		ASTNode& type_node,
-		const InlineVector<ASTNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args);
-	DependentAliasResolutionStatus resolveDependentMemberAlias(
-		ASTNode& type_node,
-		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const std::vector<TemplateTypeArg>& template_args);
-	DependentAliasResolutionStatus resolveDependentMemberAlias(
-		ASTNode& type_node,
-		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args);
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
 
 	// Lookup symbol with template parameter checking
 	std::optional<ASTNode> lookup_symbol_with_template_check(StringHandle identifier);
@@ -2942,7 +2985,7 @@ private:	 // Resume private methods
 	bool isTemplateTemplateParameter(StringHandle template_name_handle) const;
 
 	// Build an interned placeholder name for TTP instantiation.
-	StringHandle buildTTPPlaceholderName(std::string_view ttp_name, const std::vector<TemplateTypeArg>& template_args);
+	StringHandle buildTTPPlaceholderName(std::string_view ttp_name, std::span<const TemplateTypeArg> template_args);
 
 	// Create a QualifiedIdentifierNode for a TTP-qualified expression like W<int>::id
 	ParseResult buildTTPQualifiedIdentifier(StringHandle ttp_placeholder_name);

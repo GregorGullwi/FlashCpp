@@ -432,8 +432,8 @@ struct EvaluationContext {
 
 	// Template parameter names and arguments for evaluating template-dependent expressions
 	// (e.g., sizeof(T) inside a template member function)
-	std::vector<std::string_view> template_param_names;
-	std::vector<TemplateTypeArg> template_args;
+	InlineVector<std::string_view, 4> template_param_names;
+	InlineVector<TemplateTypeArg, 4> template_args;
 
 	// Parser pointer for template instantiation (optional)
 	Parser* parser = nullptr;

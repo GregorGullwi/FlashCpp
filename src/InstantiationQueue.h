@@ -209,7 +209,7 @@ public:
 	// Build an InstantiationKey from template name and TemplateTypeArg vector
 	// This consolidates the conversion logic that was duplicated in call sites
 	static InstantiationKey makeKey(std::string_view template_name,
-									const std::vector<TemplateTypeArg>& template_args) {
+									std::span<const TemplateTypeArg> template_args) {
 		InstantiationKey key;
 		key.template_name = StringTable::getOrInternStringHandle(template_name);
 		key.arguments.reserve(template_args.size());

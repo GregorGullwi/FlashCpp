@@ -79,8 +79,7 @@ public:
 		return *this;
 	}
 
-	// Implicit conversion to std::vector (enables seamless migration)
-	operator std::vector<T>() const {
+	[[nodiscard]] std::vector<T> toVector() const {
 		if (!using_inline_storage_) {
 			return heap_data_;
 		}
@@ -167,6 +166,13 @@ public:
 
 	void clear() noexcept(noexcept(std::declval<T&>() = T{})) {
 		resetStorage();
+	}
+
+	template <typename InputIt>
+	void assign(InputIt first, InputIt last) {
+		clear();
+		for (InputIt it = first; it != last; ++it)
+			push_back(*it);
 	}
 
 	void reserve(size_t capacity) {

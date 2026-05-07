@@ -112,9 +112,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 					size_t pack_size = 0;
 					bool found_pack = false;
 					for (size_t i = 0; i < lazy_info.template_params.size(); ++i) {
-						if (!lazy_info.template_params[i].is<TemplateParameterNode>())
-							continue;
-						const TemplateParameterNode& tparam = lazy_info.template_params[i].as<TemplateParameterNode>();
+						const TemplateParameterNode& tparam = lazy_info.template_params[i];
 						if (!tparam.is_variadic()) {
 							non_variadic++;
 							continue;
@@ -285,9 +283,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			InlineVector<StringHandle, 4> param_names;
 			param_names.reserve(lazy_info.template_params.size());
 			for (const auto& tparam_node : lazy_info.template_params) {
-				if (tparam_node.is<TemplateParameterNode>()) {
-					param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
-				}
+				param_names.push_back(tparam_node.nameHandle());
 			}
 			registerTypeParamsInScope(param_names, lazy_info.template_args, template_scope, true);
 
@@ -442,11 +438,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			ctx.parser = this;
 			ctx.sema = getActiveSemanticAnalysis();
 			ctx.template_args = converted_template_args;
-			for (const ASTNode& template_param : lazy_info.template_params) {
-				if (const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_param);
-					tparam != nullptr) {
-					ctx.template_param_names.push_back(tparam->name());
-				}
+			for (const TemplateParameterNode& tparam : lazy_info.template_params) {
+				ctx.template_param_names.push_back(tparam.name());
 			}
 			auto owner_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
 			if (owner_it != getTypesByNameMap().end() && owner_it->second) {
@@ -503,190 +496,45 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		it != getTypesByNameMap().end()) {
 		instantiated_owner_type_index = it->second->type_index_;
 	}
-	auto resolve_self_type = [&](TypeIndex& type_index) {
-		if (instantiated_owner_type_index.is_valid()) {
-			type_index = resolveSelfRefParamIndex(type_index, instantiated_owner_type_index);
-		}
-	};
-
-	const TypeSpecifierNode& return_type_spec = decl.type_specifier_node();
-	TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
-		return_type_spec,
-		decl.type_node(),
-		return_type_spec.token(),
-		lazy_info.template_params,
-		lazy_info.template_args,
-		[this](const ASTNode& node, const auto& params, const auto& args) {
-			return substituteTemplateParameters(node, params, args);
-		},
-		[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
-			return substitute_template_parameter(type_spec, params, args);
-		},
-		owner_struct_decl,
-		instantiated_owner_type_index,
-		TypeIndex{},
-		false,
-		true);
-
-	auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
-
 	// Invariant: fn_identifier_token.handle() == effectiveLookupName(lazy_info.identity).
 	// This is asserted below after finalization (Slice 5).
 	// Slice 4: use the canonical instantiated lookup name (from identity) as the
 	// function identifier token so the emitted body matches the stub's registered name.
 	StringHandle fn_name_handle = effectiveLookupName(lazy_info.identity);
-	Token fn_identifier_token(Token::Type::Identifier,
-							  StringTable::getStringView(fn_name_handle),
-							  decl.identifier_token().line(), decl.identifier_token().column(),
-							  decl.identifier_token().file_index());
-	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
-		substituted_return_node, fn_identifier_token);
-	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-		new_func_decl_ref, lazy_info.identity.instantiated_owner_name);
-	setOuterTemplateBindingsFromParams(new_func_ref, lazy_info.template_params, lazy_info.template_args);
+	SubstitutedMemberFunctionShell shell = createSubstitutedMemberFunctionShell(
+		func_decl,
+		decl.type_node(),
+		decl.type_specifier_node().token(),
+		lazy_info.identity.instantiated_owner_name,
+		lazy_info.template_params,
+		lazy_info.template_args,
+		owner_struct_decl,
+		instantiated_owner_type_index,
+		TypeIndex{}, // No pre-resolved return TypeIndex override
+		lazy_info.identity.operator_kind,
+		fn_name_handle, // Keep registry canonical lookup name stable across replay
+		StringHandle{}, // No partial-pattern pointer-depth clamp in lazy replay path
+		false,		   // Do not re-apply bound metadata to full substitution
+		true);		   // Force resolved TypeIndex onto full AST substitutions
+	ASTNode new_func_node = shell.function_node;
+	FunctionDeclarationNode& new_func_ref = *shell.function;
 
 	// Substitute and copy parameters, expanding variadic pack parameters into N individual
 	// parameters (args_0, args_1, ...) and populating pack_param_info_ for body expansion.
 	size_t saved_pack_info = pack_param_info_.size();
-	for (const auto& param : func_decl.parameter_nodes()) {
-		if (param.is<DeclarationNode>()) {
-			const DeclarationNode& param_decl = param.as<DeclarationNode>();
-			const TypeSpecifierNode& param_type_spec = param_decl.type_specifier_node();
-
-			// Expand variadic pack parameters (e.g. "Args... args") into N params.
-			bool handled_as_pack = false;
-			if (param_decl.is_parameter_pack() && (param_type_spec.category() == TypeCategory::UserDefined || param_type_spec.category() == TypeCategory::TypeAlias || param_type_spec.category() == TypeCategory::Template)) {
-				std::string_view type_name = param_type_spec.token().value();
-				size_t non_variadic = 0;
-				size_t pack_size = 0;
-				bool found_pack = false;
-				for (size_t i = 0; i < lazy_info.template_params.size(); ++i) {
-					if (!lazy_info.template_params[i].is<TemplateParameterNode>())
-						continue;
-					const TemplateParameterNode& tparam = lazy_info.template_params[i].as<TemplateParameterNode>();
-					if (!tparam.is_variadic()) {
-						non_variadic++;
-						continue;
-					}
-					if (tparam.name() == type_name) {
-						pack_size = lazy_info.template_args.size() > non_variadic
-										? lazy_info.template_args.size() - non_variadic
-										: 0;
-						found_pack = true;
-						break;
-					}
-				}
-				if (found_pack) {
-					if (pack_size == 0) {
-						handled_as_pack = true;
-					} // empty pack, skip
-					else {
-						std::string_view orig_name = param_decl.identifier_token().value();
-						for (size_t pi = 0; pi < pack_size; ++pi) {
-							const TemplateTypeArg& elem = lazy_info.template_args[non_variadic + pi];
-							TypeCategory elem_type = elem.typeEnum();
-							TypeIndex elem_type_index = elem.type_index;
-							TypeSpecifierNode sub_type(
-								elem_type, param_type_spec.qualifier(),
-								get_type_size_bits(elem_type),
-								param_decl.identifier_token(), param_type_spec.cv_qualifier());
-							sub_type.set_type_index(elem_type_index);
-							for (const auto& pl : param_type_spec.pointer_levels())
-								sub_type.add_pointer_level(pl.cv_qualifier);
-							sub_type.set_reference_qualifier(param_type_spec.reference_qualifier());
-							if (elem.function_signature.has_value()) {
-								sub_type.set_function_signature(*elem.function_signature);
-							}
-							normalizeSubstitutedTypeSpec(sub_type);
-							StringBuilder name_builder;
-							name_builder.append(orig_name).append('_').append(pi);
-							Token elem_token(Token::Type::Identifier, name_builder.commit(),
-											 param_decl.identifier_token().line(),
-											 param_decl.identifier_token().column(),
-											 param_decl.identifier_token().file_index());
-							new_func_ref.add_parameter_node(emplace_node<DeclarationNode>(
-								emplace_node<TypeSpecifierNode>(sub_type), elem_token));
-						}
-						pack_param_info_.push_back({orig_name, 0, pack_size});
-						handled_as_pack = true;
-					}
-				}
-			}
-			if (handled_as_pack)
-				continue;
-
-			// Substitute parameter type
-			TypeIndex param_type_index = substitute_template_parameter(
-				param_type_spec, lazy_info.template_params, lazy_info.template_args);
-			if (owner_struct_decl) {
-				param_type_index = resolveOwnerAliasTypeIndex(
-					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
-						return substitute_template_parameter(type_spec, params, args);
-					},
-					*owner_struct_decl,
-					param_type_spec,
-					lazy_info.template_params,
-					lazy_info.template_args,
-					param_type_index);
-			}
-
-			// Resolve self-referential class types (same as return type)
-			resolve_self_type(param_type_index);
-
-			// Use substituteTemplateParameters as the primary substitution to correctly
-			// propagate pointer depth from template args (e.g. I→int* gives ptr_depth=1).
-			// The TypeIndex from substitute_template_parameter+resolve_self_type is then
-			// applied on top to handle self-referential types.
-			ASTNode full_substituted_param_node = substituteTemplateParameters(
-				param_decl.type_node(), lazy_info.template_params, lazy_info.template_args);
-			TypeSpecifierNode substituted_param_type = full_substituted_param_node.is<TypeSpecifierNode>()
-				? full_substituted_param_node.as<TypeSpecifierNode>()
-				: TypeSpecifierNode(
-					  param_type_index.category(),
-					  param_type_spec.qualifier(),
-					  get_type_size_bits(param_type_index.category()),
-					  param_decl.identifier_token(),
-					  param_type_spec.cv_qualifier());
-			// Apply the self-type-resolved TypeIndex.
-			if (param_type_index.is_valid()) {
-				substituted_param_type.set_type_index(param_type_index);
-			}
-			if (!full_substituted_param_node.is<TypeSpecifierNode>()) {
-				// Fallback: copy pointer levels and reference qualifiers from original.
-				for (const auto& ptr_level : param_type_spec.pointer_levels()) {
-					substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
-				}
-				substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
-			}
-			if (param_type_spec.has_function_signature()) {
-				substituted_param_type.set_function_signature(param_type_spec.function_signature());
-			} else if (param_type_index.category() == TypeCategory::FunctionPointer ||
-					   param_type_index.category() == TypeCategory::MemberFunctionPointer) {
-				// The original param_type_spec is a dependent placeholder (e.g. "F")
-				// that has no function_signature.  Look up the concrete TemplateTypeArg.
-				if (const auto* arg = findTemplateArgByName(param_type_spec.token().value(),
-															lazy_info.template_params, lazy_info.template_args)) {
-					if (arg->function_signature.has_value())
-						substituted_param_type.set_function_signature(*arg->function_signature);
-				}
-			}
-			normalizeSubstitutedTypeSpec(substituted_param_type);
-
-			auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
-			auto substituted_param_decl = emplace_node<DeclarationNode>(
-				substituted_param_type_node, param_decl.identifier_token());
-			// Copy default value if present
-			if (param_decl.has_default_value()) {
-				ASTNode substituted_default = substituteTemplateParameters(
-					param_decl.default_value(), lazy_info.template_params, lazy_info.template_args);
-				substituted_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
-			}
-			new_func_ref.add_parameter_node(substituted_param_decl);
-		} else {
-			// Non-declaration parameter, copy as-is
-			new_func_ref.add_parameter_node(param);
-		}
-	}
+	substituteAndCopyMemberFunctionParameters(
+		func_decl.parameter_nodes(),
+		new_func_ref,
+		lazy_info.template_params,
+		lazy_info.template_args,
+		owner_struct_decl,
+		instantiated_owner_type_index,
+		TypeIndex{},
+		TypeIndex{},
+		SubstitutedDefaultArgumentPolicy::SubstituteTemplateParameters,
+		true,  // Preserve declared parameter cv-qualifier in this path
+		false, // Do not re-apply bound metadata to full substitution
+		true); // Force resolved TypeIndex onto full AST substitutions
 
 	// Get the function body - either from definition or by re-parsing from saved position
 	std::optional<ASTNode> body_to_substitute;
@@ -709,9 +557,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		InlineVector<StringHandle, 4> param_names;
 		param_names.reserve(lazy_info.template_params.size());
 		for (const auto& tparam_node : lazy_info.template_params) {
-			if (tparam_node.is<TemplateParameterNode>()) {
-				param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
-			}
+			param_names.push_back(tparam_node.nameHandle());
 		}
 
 		registerTypeParamsInScope(param_names, lazy_info.template_args, template_scope, true);
@@ -926,6 +772,8 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	}
 
 	const LazyStaticMemberInfo& lazy_info = *lazy_info_ptr;
+	const InlineVector<TemplateParameterNode, 4>& lazy_template_params_inline =
+		lazy_info.template_params;
 
 	// Find the struct_info to add the member to
 	auto type_it = getTypesByNameMap().find(instantiated_class_name);
@@ -953,14 +801,12 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		}
 
 		FlashCpp::TemplateParameterScope template_scope;
-		registerTypeParamsInScope(lazy_info.template_params, lazy_info.template_args, template_scope, true);
+		registerTypeParamsInScope(lazy_template_params_inline, lazy_info.template_args, template_scope, true);
 
 		InlineVector<StringHandle, 4> param_names;
 		param_names.reserve(lazy_info.template_params.size());
 		for (const auto& tparam_node : lazy_info.template_params) {
-			if (tparam_node.is<TemplateParameterNode>()) {
-				param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
-			}
+			param_names.push_back(tparam_node.nameHandle());
 		}
 
 		SaveHandle current_pos = save_token_position();
@@ -1033,19 +879,17 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		!initializer_replayed &&
 		lazy_info.initializer->is<ExpressionNode>()) {
 		const ExpressionNode& expr = lazy_info.initializer->as<ExpressionNode>();
-		const auto& template_params = lazy_info.template_params;
+		const auto& template_params = lazy_template_params_inline;
 		const auto& template_args = lazy_info.template_args;
 
 		// Helper to calculate pack size for substitution
 		auto calculate_pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {
 			for (size_t i = 0; i < template_params.size(); ++i) {
-				if (!template_params[i].is<TemplateParameterNode>())
-					continue;
-				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				const TemplateParameterNode& tparam = template_params[i];
 				if (tparam.name() == pack_name && tparam.is_variadic()) {
 					size_t non_variadic_count = 0;
 					for (const auto& param : template_params) {
-						if (param.is<TemplateParameterNode>() && !param.as<TemplateParameterNode>().is_variadic()) {
+						if (!param.is_variadic()) {
 							non_variadic_count++;
 						}
 					}
@@ -1079,9 +923,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			// Find the parameter pack
 			std::optional<size_t> pack_param_idx;
 			for (size_t p = 0; p < template_params.size(); ++p) {
-				if (!template_params[p].is<TemplateParameterNode>())
-					continue;
-				const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+				const TemplateParameterNode& tparam = template_params[p];
 				if (tparam.name() == pack_name && tparam.is_variadic()) {
 					pack_param_idx = p;
 					break;
@@ -1095,7 +937,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 				size_t non_variadic_count = 0;
 				for (const auto& param : template_params) {
-					if (param.is<TemplateParameterNode>() && !param.as<TemplateParameterNode>().is_variadic()) {
+					if (!param.is_variadic()) {
 						non_variadic_count++;
 					}
 				}
@@ -1130,7 +972,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 			if (auto subst = substitute_nontype_template_param(
-					tparam_ref.param_name().view(), template_args, template_params)) {
+					tparam_ref.param_name().view(), template_args, lazy_info.template_params)) {
 				substituted_initializer = subst;
 			}
 		}
@@ -1138,7 +980,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		else if (std::holds_alternative<IdentifierNode>(expr)) {
 			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 			if (auto subst = substitute_nontype_template_param(
-					id_node.name(), template_args, template_params)) {
+					id_node.name(), template_args, lazy_info.template_params)) {
 				substituted_initializer = subst;
 			}
 		}
@@ -1202,10 +1044,8 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			eval_ctx.struct_info = struct_info;
 			// Provide template args so sizeof(T) etc. resolve correctly.
 			for (size_t i = 0; i < lazy_info.template_params.size() && i < lazy_info.template_args.size(); ++i) {
-				if (lazy_info.template_params[i].is<TemplateParameterNode>()) {
-					eval_ctx.template_param_names.push_back(lazy_info.template_params[i].as<TemplateParameterNode>().name());
-					eval_ctx.template_args.push_back(lazy_info.template_args[i]);
-				}
+				eval_ctx.template_param_names.push_back(lazy_info.template_params[i].name());
+				eval_ctx.template_args.push_back(lazy_info.template_args[i]);
 			}
 			auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
 			if (eval_result.success()) {
@@ -1237,7 +1077,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	original_type_spec.set_type_index(lazy_info.type_index);
 
 	TypeIndex substituted_type_index = substitute_template_parameter(
-		original_type_spec, lazy_info.template_params, lazy_info.template_args);
+		original_type_spec, lazy_template_params_inline, lazy_info.template_args);
 
 	size_t substituted_size = get_type_size_bits(substituted_type_index.category()) / 8;
 	if (lazy_info.is_array) {
@@ -1400,8 +1240,10 @@ std::optional<TypeIndex> Parser::evaluateLazyTypeAlias(
 	const TypeSpecifierNode& target_type = lazy_info->unevaluated_target.as<TypeSpecifierNode>();
 
 	// Perform template parameter substitution
+	const InlineVector<TemplateParameterNode, 4>& lazy_template_params_inline =
+		lazy_info->template_params;
 	TypeIndex substituted_type_index = substitute_template_parameter(
-		target_type, lazy_info->template_params, lazy_info->template_args);
+		target_type, lazy_template_params_inline, lazy_info->template_args);
 
 	// Cache the result
 	registry.markEvaluated(instantiated_class_name, member_name, substituted_type_index);
@@ -1472,13 +1314,15 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	auto nested_struct_info = std::make_unique<StructTypeInfo>(lazy_info->qualified_name, nested_struct.default_access(), nested_struct.is_union(), decl_ns);
 
 	// Process members with template parameter substitution
+	const InlineVector<TemplateParameterNode, 4>& parent_template_params_inline =
+		lazy_info->parent_template_params;
 	for (const auto& member_decl : nested_struct.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 		// Substitute template parameters using parent's template args
 		TypeIndex substituted_type_index = substitute_template_parameter(
-			type_spec, lazy_info->parent_template_params, lazy_info->parent_template_args);
+			type_spec, parent_template_params_inline, lazy_info->parent_template_args);
 
 		// Get size and alignment for the member
 		size_t member_size = get_type_size_bits(substituted_type_index.category()) / 8;

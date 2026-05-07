@@ -536,9 +536,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 					ctx.template_args = lazy_class_info->template_args;
 					ctx.template_param_names.reserve(lazy_class_info->template_params.size());
 					for (const auto& template_param : lazy_class_info->template_params) {
-						if (template_param.is<TemplateParameterNode>()) {
-							ctx.template_param_names.push_back(template_param.as<TemplateParameterNode>().name());
-						}
+						ctx.template_param_names.push_back(template_param.name());
 					}
 				}
 			}

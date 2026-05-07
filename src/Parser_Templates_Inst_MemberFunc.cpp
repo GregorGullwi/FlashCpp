@@ -86,9 +86,18 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 		combined_template_args.push_back(current_arg);
 	}
 
+	InlineVector<TemplateParameterNode, 4> typed_combined_params;
+	typed_combined_params.reserve(combined_template_params.size());
+	for (const ASTNode& param_node : combined_template_params) {
+		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+			typed_param != nullptr) {
+			typed_combined_params.push_back(*typed_param);
+		}
+	}
+
 	ASTNode substituted_default = substituteTemplateParameters(
 		param.default_value(),
-		combined_template_params,
+		typed_combined_params,
 		combined_template_args);
 	if (param.kind() == TemplateParameterKind::Type && substituted_default.is<TypeSpecifierNode>()) {
 		current_template_args.push_back(TemplateTypeArg(substituted_default.as<TypeSpecifierNode>()));
@@ -308,7 +317,7 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 
 	for (StringHandle outer_name : ctor_decl.outer_template_param_names()) {
 		Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_name), 0, 0, 0);
-		lazy_info.template_params.push_back(emplace_node<TemplateParameterNode>(outer_name, outer_token));
+		lazy_info.template_params.push_back(TemplateParameterNode(outer_name, outer_token));
 	}
 	for (const auto& outer_arg : ctor_decl.outer_template_args()) {
 		const std::vector<ASTNode> no_params;
@@ -320,7 +329,7 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 			nullptr));
 	}
 	for (const auto& template_param : template_params) {
-		lazy_info.template_params.push_back(ASTNode::emplace_node<TemplateParameterNode>(template_param));
+		lazy_info.template_params.push_back(template_param);
 	}
 	for (const auto& template_arg : ctor_template_args) {
 		lazy_info.template_args.push_back(template_arg);
@@ -831,18 +840,15 @@ bool Parser::buildSubstitutionForPackElement(
 	StringHandle pack_param_name,
 	size_t pack_element_offset,
 	const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
-	const InlineVector<ASTNode, 4>& template_params,
+	std::span<const TemplateParameterNode> template_params,
 	const std::vector<size_t>& template_param_arg_starts,
 	const std::vector<size_t>& template_param_arg_counts,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	InlineVector<ASTNode, 4>& subst_params,
 	InlineVector<TemplateTypeArg, 4>& subst_args) {
 	std::optional<std::pair<size_t, size_t>> pack_binding;
 	for (size_t i = 0; i < template_params.size(); ++i) {
-		const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
-		if (tparam == nullptr) {
-			continue;
-		}
+		const TemplateParameterNode* tparam = &template_params[i];
 		if (tparam->is_variadic() && tparam->nameHandle() == pack_param_name) {
 			pack_binding = std::pair<size_t, size_t>{
 				template_param_arg_starts[i],
@@ -854,10 +860,7 @@ bool Parser::buildSubstitutionForPackElement(
 		return false;
 	}
 	for (size_t i = 0; i < template_params.size(); ++i) {
-		const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
-		if (tparam == nullptr) {
-			continue;
-		}
+		const TemplateParameterNode* tparam = &template_params[i];
 		if (tparam->is_variadic()) {
 			const bool is_primary = (tparam->nameHandle() == pack_param_name);
 			const bool is_co_pack = !is_primary &&
@@ -875,7 +878,7 @@ bool Parser::buildSubstitutionForPackElement(
 		if (template_param_arg_starts[i] == SIZE_MAX || template_param_arg_starts[i] >= template_args.size()) {
 			continue;
 		}
-		subst_params.push_back(template_params[i]);
+		subst_params.push_back(ASTNode::emplace_node<TemplateParameterNode>(*tparam));
 		subst_args.push_back(template_args[template_param_arg_starts[i]]);
 	}
 	return true;
@@ -885,8 +888,19 @@ ASTNode Parser::buildMaterializedParamType(
 	const TypeSpecifierNode& original_param_type,
 	const InlineVector<ASTNode, 4>& materialized_template_params,
 	const InlineVector<TemplateTypeArg, 4>& materialized_template_args) {
+	InlineVector<TemplateParameterNode, 4> typed_params;
+	typed_params.reserve(materialized_template_params.size());
+	for (const ASTNode& param_node : materialized_template_params) {
+		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+			typed_param != nullptr) {
+			typed_params.push_back(*typed_param);
+		}
+	}
+
 	TypeIndex substituted_type_index = substitute_template_parameter(
-		original_param_type, materialized_template_params, materialized_template_args);
+		original_param_type,
+		typed_params,
+		materialized_template_args);
 	ASTNode param_type = emplace_node<TypeSpecifierNode>(
 		substituted_type_index,
 		get_type_size_bits(substituted_type_index.category()),
@@ -918,7 +932,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	std::string_view struct_name, std::string_view member_name,
 	StringHandle qualified_name,
 	const ASTNode& template_node,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	const FlashCpp::TemplateInstantiationKey& key,
 	const std::vector<TypeSpecifierNode>& call_arg_types) {
 
@@ -951,9 +965,13 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const auto& template_params = template_func.template_parameters();
-	const InlineVector<ASTNode, 4> template_params_ast = cloneTemplateParameterNodes(template_params);
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
+	InlineVector<TemplateTypeArg, 4> inline_template_args;
+	inline_template_args.reserve(template_args.size());
+	for (const TemplateTypeArg& template_arg : template_args) {
+		inline_template_args.push_back(template_arg);
+	}
 	auto deduction_info = buildDeductionMapFromCallArgs(
 		template_params,
 		func_decl,
@@ -1364,7 +1382,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 								primary_pack_name,
 								pi,
 								dependent_pack_names,
-								template_params_ast,
+								std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
 								template_param_arg_starts,
 								template_param_arg_counts,
 								template_args,
@@ -1438,7 +1456,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	if (!func_decl.has_template_body_position()) {
 		if (orig_body.has_value()) {
 			new_func_ref.set_definition(
-				substituteTemplateParameters(*orig_body, template_params, template_args));
+				substituteTemplateParameters(*orig_body, template_params, inline_template_args));
 			finalize_function_after_definition(new_func_ref);
 		} else {
 			compute_and_set_mangled_name(new_func_ref);
@@ -1557,14 +1575,22 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				ASTNode substituted_body = substituteTemplateParameters(
 					*block_result.node(),
 					template_params,
-					template_args);
+					inline_template_args);
 				if (outer_binding && (!outer_binding->params.empty() || !outer_binding->param_names.empty())) {
 					InlineVector<ASTNode, 4> outer_params;
 					InlineVector<TemplateTypeArg, 4> outer_args;
 					appendOuterBindingSubstitutionInputs(*outer_binding, outer_params, outer_args);
+					InlineVector<TemplateParameterNode, 4> typed_outer_params;
+					typed_outer_params.reserve(outer_params.size());
+					for (const ASTNode& param_node : outer_params) {
+						if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+							typed_param != nullptr) {
+							typed_outer_params.push_back(*typed_param);
+						}
+					}
 					substituted_body = substituteTemplateParameters(
 						substituted_body,
-						outer_params,
+						typed_outer_params,
 						outer_args);
 				}
 				new_func_ref.set_definition(substituted_body);

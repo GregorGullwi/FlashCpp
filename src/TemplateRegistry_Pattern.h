@@ -72,7 +72,7 @@ struct OuterTemplateBinding {
 
 // Out-of-line template static member variable definition
 struct OutOfLineMemberVariable {
-	InlineVector<ASTNode, 4> template_params; // Template parameters (e.g., <typename T>)
+	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters (e.g., <typename T>)
 	StringHandle member_name; // Name of the static member variable
 	ASTNode type_node; // Type of the variable (TypeSpecifierNode)
 	std::optional<ASTNode> initializer; // Initializer expression
@@ -84,7 +84,7 @@ struct OutOfLineMemberVariable {
 //   template<typename T> struct Outer<T>::Inner { ... };     (partial — applies to all instantiations)
 //   template<> struct Wrapper<int>::Nested { int x; };       (full — applies only when args match)
 struct OutOfLineNestedClass {
-	InlineVector<ASTNode, 4> template_params; // Outer template parameters (e.g., <typename T>)
+	InlineVector<TemplateParameterNode, 4> template_params; // Outer template parameters (e.g., <typename T>)
 	StringHandle nested_class_name; // Name of the nested class (e.g., "Inner")
 	SaveHandle body_start; // Saved position at the struct/class keyword for re-parsing via parse_struct_declaration()
 	InlineVector<StringHandle, 4> template_param_names; // Names of template parameters
@@ -105,14 +105,14 @@ struct SfinaeCondition {
 
 // Template specialization pattern - represents a pattern like T&, T*, const T, etc.
 struct TemplatePattern {
-	InlineVector<ASTNode, 4> template_params; // Template parameters (e.g., typename T)
+	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters (e.g., typename T)
 	InlineVector<TemplateTypeArg, 4> pattern_args; // Pattern like T&, T*, etc.
 	ASTNode specialized_node; // The AST node for the specialized template
 	std::optional<SfinaeCondition> sfinae_condition; // Optional SFINAE check for void_t patterns
 
 	// Constructor to avoid aggregate initialization issues with mutable cache fields
 	TemplatePattern() = default;
-	TemplatePattern(InlineVector<ASTNode, 4> tp, InlineVector<TemplateTypeArg, 4> pa,
+	TemplatePattern(InlineVector<TemplateParameterNode, 4> tp, InlineVector<TemplateTypeArg, 4> pa,
 					ASTNode sn, std::optional<SfinaeCondition> sc)
 		: template_params(std::move(tp)), pattern_args(std::move(pa)),
 		  specialized_node(std::move(sn)), sfinae_condition(std::move(sc)) {}
@@ -127,9 +127,7 @@ struct TemplatePattern {
 			cached_template_param_names_.clear();
 			cached_template_param_names_.reserve(template_params.size());
 			for (const auto& tp : template_params) {
-				if (tp.is<TemplateParameterNode>()) {
-					cached_template_param_names_.insert(tp.as<TemplateParameterNode>().nameHandle());
-				}
+				cached_template_param_names_.insert(tp.nameHandle());
 			}
 			template_param_names_valid_ = true;
 		}
@@ -351,13 +349,11 @@ struct TemplatePattern {
 		bool has_variadic_pack = false;
 		[[maybe_unused]] size_t pack_param_index = 0;
 		for (size_t i = 0; i < template_params.size(); ++i) {
-			if (template_params[i].is<TemplateParameterNode>()) {
-				const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-				if (param.is_variadic()) {
-					has_variadic_pack = true;
-					pack_param_index = i;
-					break;
-				}
+			const TemplateParameterNode& param = template_params[i];
+			if (param.is_variadic()) {
+				has_variadic_pack = true;
+				pack_param_index = i;
+				break;
 			}
 		}
 
@@ -395,8 +391,8 @@ struct TemplatePattern {
 			if (i >= concrete_args.size()) {
 				// This should only happen for the variadic pack parameter
 				// Check if this pattern position corresponds to a variadic pack
-				if (param_index < template_params.size() && template_params[param_index].is<TemplateParameterNode>()) {
-					const TemplateParameterNode& param = template_params[param_index].as<TemplateParameterNode>();
+				if (param_index < template_params.size()) {
+					const TemplateParameterNode& param = template_params[param_index];
 					if (param.is_variadic()) {
 						// Empty pack is valid - continue without error
 						continue;
@@ -515,12 +511,7 @@ struct TemplatePattern {
 								  " >= template_params.size() ", template_params.size());
 						return false;
 					}
-					if (!template_params[param_index].is<TemplateParameterNode>()) {
-						FLASH_LOG(Templates, Trace, "  FAILED: dependent value template parameter at param_index ",
-								  param_index, " is not a TemplateParameterNode");
-						return false;
-					}
-					param_name = template_params[param_index].as<TemplateParameterNode>().nameHandle();
+					param_name = template_params[param_index].nameHandle();
 				}
 				if (!recordDeduction(param_name, concrete_arg, param_substitutions)) {
 					return false;
@@ -648,16 +639,9 @@ struct TemplatePattern {
 					return false; // More template params needed than available - invalid pattern
 				}
 
-				if (template_params[param_index].is<TemplateParameterNode>()) {
-					const TemplateParameterNode& template_param = template_params[param_index].as<TemplateParameterNode>();
-					param_name = template_param.nameHandle();
-					found_param = true;
-				}
-
-				if (!found_param) {
-					FLASH_LOG(Templates, Trace, "  FAILED: Template parameter at param_index ", param_index, " is not a TemplateParameterNode");
-					return false; // Template parameter at position param_index is not a TemplateParameterNode
-				}
+				const TemplateParameterNode& template_param = template_params[param_index];
+				param_name = template_param.nameHandle();
+				found_param = true;
 			}
 
 			// Check if we've already seen this parameter
