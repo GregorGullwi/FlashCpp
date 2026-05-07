@@ -88,8 +88,8 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 
 	ASTNode substituted_default = substituteTemplateParameters(
 		param.default_value(),
-		combined_template_params,
-		combined_template_args);
+		std::span<const ASTNode>(combined_template_params.data(), combined_template_params.size()),
+		std::span<const TemplateTypeArg>(combined_template_args.data(), combined_template_args.size()));
 	if (param.kind() == TemplateParameterKind::Type && substituted_default.is<TypeSpecifierNode>()) {
 		current_template_args.push_back(TemplateTypeArg(substituted_default.as<TypeSpecifierNode>()));
 		return true;
@@ -834,7 +834,7 @@ bool Parser::buildSubstitutionForPackElement(
 	std::span<const TemplateParameterNode> template_params,
 	const std::vector<size_t>& template_param_arg_starts,
 	const std::vector<size_t>& template_param_arg_counts,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	InlineVector<ASTNode, 4>& subst_params,
 	InlineVector<TemplateTypeArg, 4>& subst_args) {
 	std::optional<std::pair<size_t, size_t>> pack_binding;
@@ -880,7 +880,9 @@ ASTNode Parser::buildMaterializedParamType(
 	const InlineVector<ASTNode, 4>& materialized_template_params,
 	const InlineVector<TemplateTypeArg, 4>& materialized_template_args) {
 	TypeIndex substituted_type_index = substitute_template_parameter(
-		original_param_type, materialized_template_params, materialized_template_args);
+		original_param_type,
+		std::span<const ASTNode>(materialized_template_params.data(), materialized_template_params.size()),
+		std::span<const TemplateTypeArg>(materialized_template_args.data(), materialized_template_args.size()));
 	ASTNode param_type = emplace_node<TypeSpecifierNode>(
 		substituted_type_index,
 		get_type_size_bits(substituted_type_index.category()),
@@ -912,7 +914,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	std::string_view struct_name, std::string_view member_name,
 	StringHandle qualified_name,
 	const ASTNode& template_node,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	const FlashCpp::TemplateInstantiationKey& key,
 	const std::vector<TypeSpecifierNode>& call_arg_types) {
 
@@ -947,6 +949,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	const auto& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
+	InlineVector<TemplateTypeArg, 4> inline_template_args;
+	inline_template_args.reserve(template_args.size());
+	for (const TemplateTypeArg& template_arg : template_args) {
+		inline_template_args.push_back(template_arg);
+	}
 	auto deduction_info = buildDeductionMapFromCallArgs(
 		template_params,
 		func_decl,
@@ -1431,7 +1438,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	if (!func_decl.has_template_body_position()) {
 		if (orig_body.has_value()) {
 			new_func_ref.set_definition(
-				substituteTemplateParameters(*orig_body, template_params, template_args));
+				substituteTemplateParameters(*orig_body, template_params, inline_template_args));
 			finalize_function_after_definition(new_func_ref);
 		} else {
 			compute_and_set_mangled_name(new_func_ref);
@@ -1550,15 +1557,15 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				ASTNode substituted_body = substituteTemplateParameters(
 					*block_result.node(),
 					template_params,
-					template_args);
+					inline_template_args);
 				if (outer_binding && (!outer_binding->params.empty() || !outer_binding->param_names.empty())) {
 					InlineVector<ASTNode, 4> outer_params;
 					InlineVector<TemplateTypeArg, 4> outer_args;
 					appendOuterBindingSubstitutionInputs(*outer_binding, outer_params, outer_args);
 					substituted_body = substituteTemplateParameters(
 						substituted_body,
-						outer_params,
-						outer_args);
+						std::span<const ASTNode>(outer_params.data(), outer_params.size()),
+						std::span<const TemplateTypeArg>(outer_args.data(), outer_args.size()));
 				}
 				new_func_ref.set_definition(substituted_body);
 			}

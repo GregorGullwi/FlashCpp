@@ -283,7 +283,7 @@ bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
 ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
 	std::span<const TemplateParameterNode> template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	// Helper function to get type name as string
 	auto get_type_name = [](TypeCategory type) -> std::string_view {
 		switch (type) {
@@ -792,7 +792,7 @@ ASTNode Parser::substituteTemplateParameters(
 					if (!func_pack_name.empty() && expanded_pack_expr.has_value()) {
 						expanded_pack_expr = replacePackIdentifierInExpr(expanded_pack_expr, func_pack_name, i);
 					}
-					ASTNode substituted = substituteTemplateParameters(expanded_pack_expr, subst_params, subst_args);
+					ASTNode substituted = substituteTemplateParameters(expanded_pack_expr, std::span<const ASTNode>(subst_params.data(), subst_params.size()), std::span<const TemplateTypeArg>(subst_args.data(), subst_args.size()));
 					pack_values.push_back(substituted);
 				}
 			} else {
@@ -1627,34 +1627,6 @@ ASTNode Parser::substituteTemplateParameters(
 	return node;
 }
 
-ASTNode Parser::substituteTemplateParameters(
-	const ASTNode& node,
-	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args) {
-	return substituteTemplateParameters(
-		node,
-		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
-		template_args);
-}
-
-ASTNode Parser::substituteTemplateParameters(
-	const ASTNode& node,
-	std::span<const ASTNode> template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args) {
-	InlineVector<TemplateParameterNode, 4> typed_params;
-	typed_params.reserve(template_params.size());
-	for (const ASTNode& template_param : template_params) {
-		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
-			typed_param != nullptr) {
-			typed_params.push_back(*typed_param);
-		}
-	}
-	return substituteTemplateParameters(
-		node,
-		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-		template_args);
-}
-
 // Extract base template name from a mangled template instantiation name
 // Supports underscore-based naming: "enable_if_void_int" -> "enable_if"
 // Future: Will support hash-based naming: "enable_if$abc123" -> "enable_if"
@@ -1803,13 +1775,31 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 	return nullptr;
 }
 
+ASTNode Parser::substituteTemplateParameters(
+	const ASTNode& node,
+	std::span<const ASTNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	InlineVector<TemplateParameterNode, 4> typed_params;
+	typed_params.reserve(template_params.size());
+	for (const ASTNode& template_param : template_params) {
+		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
+			typed_param != nullptr) {
+			typed_params.push_back(*typed_param);
+		}
+	}
+	return substituteTemplateParameters(
+		node,
+		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+		template_args);
+}
+
 // Expand a PackExpansionExprNode into multiple substituted arguments for function calls.
 // For each pack element, the pattern expression is cloned with the pack identifier replaced,
 // then template parameters are substituted.
 bool Parser::expandPackExpansionArgs(
 	const PackExpansionExprNode& pack_expansion,
 	std::span<const TemplateParameterNode> template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	ChunkedVector<ASTNode>& out_args) {
 
 	const ASTNode& pattern = pack_expansion.pattern();
@@ -1872,7 +1862,7 @@ bool Parser::expandPackExpansionArgs(
 		// Replace the function parameter pack identifier (e.g., "args") with
 		// the expanded element name (e.g., "args_0") in the pattern before substitution
 		ASTNode expanded_pattern = replacePackIdentifierInExpr(pattern, func_pack_name, pi);
-		ASTNode substituted = substituteTemplateParameters(expanded_pattern, subst_params, subst_args);
+		ASTNode substituted = substituteTemplateParameters(expanded_pattern, std::span<const TemplateParameterNode>(subst_params.data(), subst_params.size()), std::span<const TemplateTypeArg>(subst_args.data(), subst_args.size()));
 		out_args.push_back(substituted);
 	}
 	return true;
@@ -1880,20 +1870,8 @@ bool Parser::expandPackExpansionArgs(
 
 bool Parser::expandPackExpansionArgs(
 	const PackExpansionExprNode& pack_expansion,
-	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
-	ChunkedVector<ASTNode>& out_args) {
-	return expandPackExpansionArgs(
-		pack_expansion,
-		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
-		template_args,
-		out_args);
-}
-
-bool Parser::expandPackExpansionArgs(
-	const PackExpansionExprNode& pack_expansion,
 	std::span<const ASTNode> template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	ChunkedVector<ASTNode>& out_args) {
 	InlineVector<TemplateParameterNode, 4> typed_params;
 	typed_params.reserve(template_params.size());
@@ -1916,7 +1894,7 @@ bool Parser::expandPackExpansionArgs(
 void Parser::substituteArgWithPackExpansion(
 	const ASTNode& arg,
 	std::span<const TemplateParameterNode> template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	ChunkedVector<ASTNode>& out) {
 	if (arg.is<ExpressionNode>()) {
 		const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
@@ -1932,7 +1910,7 @@ void Parser::substituteArgWithPackExpansion(
 void Parser::substituteArgWithPackExpansion(
 	const ASTNode& arg,
 	std::span<const ASTNode> template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	ChunkedVector<ASTNode>& out) {
 	InlineVector<TemplateParameterNode, 4> typed_params;
 	typed_params.reserve(template_params.size());

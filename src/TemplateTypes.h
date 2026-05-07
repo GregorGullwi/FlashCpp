@@ -531,7 +531,7 @@ inline std::string_view generateInstantiatedName(std::string_view template_name,
 //
 // Available functions:
 //   - FlashCpp::makeTypeIndexArg(const TemplateTypeArg& arg) -> TypeIndexArg
-//   - FlashCpp::makeInstantiationKey(StringHandle, const std::vector<TemplateTypeArg>&) -> TemplateInstantiationKey
+//   - FlashCpp::makeInstantiationKey(StringHandle, std::span<const TemplateTypeArg>) -> TemplateInstantiationKey
 
 } // namespace FlashCpp
 

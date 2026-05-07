@@ -1538,19 +1538,19 @@ private:
 	void populateTemplateParamSubstitutions(
 		InlineVector<TemplateParamSubstitution, 4>& subs,
 		const InlineVector<StringHandle, 4>& param_names,
-		const std::vector<TemplateTypeArg>& type_args);
+		std::span<const TemplateTypeArg> type_args);
 	void populateTemplateParamSubstitutions(
 		InlineVector<TemplateParamSubstitution, 4>& subs,
 		std::span<const TemplateParameterNode> template_params,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const TemplateTypeArg> template_args);
 	void populateTemplateParamSubstitutions(
 		InlineVector<TemplateParamSubstitution, 4>& subs,
 		std::span<const ASTNode> template_params,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const TemplateTypeArg> template_args);
 	void populateTemplateParamSubstitutions(
 		InlineVector<TemplateParamSubstitution, 4>& subs,
 		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const TemplateTypeArg> template_args);
 	// Build outer-template binding data from the AST template parameter list so
 	// parameter names and args stay index-aligned even if the parameter list
 	// ever stops being a pure TemplateParameterNode sequence.
@@ -2112,7 +2112,7 @@ private:
 		std::string_view struct_name, std::string_view member_name,
 		StringHandle qualified_name,
 		const ASTNode& template_node,
-		const std::vector<TemplateTypeArg>& template_args,
+		std::span<const TemplateTypeArg> template_args,
 		const FlashCpp::TemplateInstantiationKey& key,
 		const std::vector<TypeSpecifierNode>& call_arg_types);
 	bool buildSubstitutionForPackElement(
@@ -2122,7 +2122,7 @@ private:
 		std::span<const TemplateParameterNode> template_params,
 		const std::vector<size_t>& template_param_arg_starts,
 		const std::vector<size_t>& template_param_arg_counts,
-		const std::vector<TemplateTypeArg>& template_args,
+		std::span<const TemplateTypeArg> template_args,
 		InlineVector<ASTNode, 4>& subst_params,
 		InlineVector<TemplateTypeArg, 4>& subst_args);
 	ASTNode buildMaterializedParamType(
@@ -2528,15 +2528,12 @@ public:	// Public methods for template instantiation
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
 		std::span<const TemplateParameterNode> template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args);
+		std::span<const TemplateTypeArg> template_args);
+
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
 		std::span<const ASTNode> template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args);
-	ASTNode substituteTemplateParameters(
-		const ASTNode& node,
-		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args);
+		std::span<const TemplateTypeArg> template_args);
 
 	// Helper to extract type from an expression for overload resolution.
 	// Public so codegen/constexpr consumers can reuse the parser's type deduction.
@@ -2670,17 +2667,13 @@ private:	 // Resume private methods
 	bool expandPackExpansionArgs(
 		const PackExpansionExprNode& pack_expansion,
 		std::span<const TemplateParameterNode> template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args,
+		std::span<const TemplateTypeArg> template_args,
 		ChunkedVector<ASTNode>& out_args);
+
 	bool expandPackExpansionArgs(
 		const PackExpansionExprNode& pack_expansion,
 		std::span<const ASTNode> template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args,
-		ChunkedVector<ASTNode>& out_args);
-	bool expandPackExpansionArgs(
-		const PackExpansionExprNode& pack_expansion,
-		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args,
+		std::span<const TemplateTypeArg> template_args,
 		ChunkedVector<ASTNode>& out_args);
 
 		// Substitute a single argument, expanding PackExpansionExprNode into
@@ -2689,12 +2682,13 @@ private:	 // Resume private methods
 	void substituteArgWithPackExpansion(
 		const ASTNode& arg,
 		std::span<const TemplateParameterNode> template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args,
+		std::span<const TemplateTypeArg> template_args,
 		ChunkedVector<ASTNode>& out);
+
 	void substituteArgWithPackExpansion(
 		const ASTNode& arg,
 		std::span<const ASTNode> template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args,
+		std::span<const TemplateTypeArg> template_args,
 		ChunkedVector<ASTNode>& out);
 
 		// Phase 3: Expression context tracking for template disambiguation
@@ -2922,11 +2916,13 @@ private:	 // Resume private methods
 	TypeIndex substitute_template_parameter(
 		const TypeSpecifierNode& original_type,
 		std::span<const TemplateParameterNode> template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args);
+		std::span<const TemplateTypeArg> template_args);
+
 	TypeIndex substitute_template_parameter(
 		const TypeSpecifierNode& original_type,
 		std::span<const ASTNode> template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args);
+		std::span<const TemplateTypeArg> template_args);
+
 	TypeIndex substitute_template_parameter(
 		const TypeSpecifierNode& original_type,
 		const InlineVector<TemplateParameterNode, 4>& template_params,

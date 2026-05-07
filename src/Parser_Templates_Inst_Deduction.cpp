@@ -1009,7 +1009,7 @@ void registerTypeParamsInScope(
 // ─────────────────────────────────────────────────────────────────────────────
 void registerTypeParamsInScope(
 	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier) {
 	forEachNonPackTemplateParamArgBinding(
@@ -1026,7 +1026,7 @@ void registerTypeParamsInScope(
 
 void registerTypeParamsInScope(
 	const InlineVector<ASTNode, 4>& template_param_nodes,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier) {
 	forEachNonPackTemplateParamArgBinding(
@@ -1043,7 +1043,7 @@ void registerTypeParamsInScope(
 
 void registerTypeParamsInScope(
 	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map) {
 	forEachNonPackTemplateParamArgBinding(
@@ -1062,7 +1062,7 @@ void registerTypeParamsInScope(
 
 void registerTypeParamsInScope(
 	const InlineVector<ASTNode, 4>& template_param_nodes,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map) {
 	forEachNonPackTemplateParamArgBinding(
@@ -1131,7 +1131,7 @@ void registerOuterBindingInScope(
 void Parser::populateTemplateParamSubstitutions(
 	InlineVector<TemplateParamSubstitution, 4>& subs,
 	const InlineVector<StringHandle, 4>& param_names,
-	const std::vector<TemplateTypeArg>& type_args) {
+	std::span<const TemplateTypeArg> type_args) {
 	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
 		const TemplateTypeArg& arg = type_args[i];
 		if (arg.is_template_template_arg) {
@@ -1163,7 +1163,7 @@ void Parser::populateTemplateParamSubstitutions(
 void Parser::populateTemplateParamSubstitutions(
 	InlineVector<TemplateParamSubstitution, 4>& subs,
 	std::span<const TemplateParameterNode> template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	forEachNonPackTemplateParamArgBinding(
 		template_params,
 		template_args,
@@ -1194,7 +1194,7 @@ void Parser::populateTemplateParamSubstitutions(
 void Parser::populateTemplateParamSubstitutions(
 	InlineVector<TemplateParamSubstitution, 4>& subs,
 	std::span<const ASTNode> template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	InlineVector<TemplateParameterNode, 4> typed_params;
 	typed_params.reserve(template_params.size());
 	for (const ASTNode& template_param : template_params) {
@@ -1212,7 +1212,7 @@ void Parser::populateTemplateParamSubstitutions(
 void Parser::populateTemplateParamSubstitutions(
 	InlineVector<TemplateParamSubstitution, 4>& subs,
 	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	forEachNonPackTemplateParamArgBinding(
 		template_params,
 		template_args,

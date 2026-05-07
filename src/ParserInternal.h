@@ -2,6 +2,7 @@
 
 #include <string_view>
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -55,25 +56,25 @@ void registerTypeParamsInScope(
 
 void registerTypeParamsInScope(
 	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier);
 
 void registerTypeParamsInScope(
 	const InlineVector<ASTNode, 4>& template_param_nodes,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier);
 
 void registerTypeParamsInScope(
 	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map);
 
 void registerTypeParamsInScope(
 	const InlineVector<ASTNode, 4>& template_param_nodes,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map);
 

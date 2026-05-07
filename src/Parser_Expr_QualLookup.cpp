@@ -1021,7 +1021,7 @@ ParseResult Parser::validate_and_add_base_class(
 TypeIndex Parser::substitute_template_parameter(
 	const TypeSpecifierNode& original_type,
 	std::span<const TemplateParameterNode> template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	TypeCategory current_type = original_type.type();
 	TypeIndex current_type_index = original_type.type_index();
 
@@ -1526,13 +1526,13 @@ TypeIndex Parser::substitute_template_parameter(
 	return substitute_template_parameter(
 		original_type,
 		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
-		template_args);
+		std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
 }
 
 TypeIndex Parser::substitute_template_parameter(
 	const TypeSpecifierNode& original_type,
 	std::span<const ASTNode> template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	InlineVector<TemplateParameterNode, 4> typed_params;
 	typed_params.reserve(template_params.size());
 	for (const ASTNode& template_param : template_params) {

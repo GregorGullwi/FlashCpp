@@ -1047,7 +1047,7 @@ struct ConstraintEvaluationResult {
 // isIntegralType and isFloatingPointType moved to AstNodeTypes_TypeSystem.h
 
 // Helper function to evaluate type traits like std::is_integral_v<T>
-inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<TemplateTypeArg>& type_args) {
+inline bool evaluateTypeTrait(std::string_view trait_name, std::span<const TemplateTypeArg> type_args) {
 	if (type_args.empty()) {
 		return false;  // Type traits need at least one argument
 	}
@@ -1098,8 +1098,8 @@ inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<Tem
 // Used for evaluating comparisons in requires clauses like: requires sizeof(T) < 8
 inline std::optional<long long> evaluateConstraintExpression(
 	const ASTNode& expr,
-	const std::vector<TemplateTypeArg>& template_args,
-	const std::vector<std::string_view>& template_param_names) {
+	std::span<const TemplateTypeArg> template_args,
+	std::span<const std::string_view> template_param_names) {
 
 	// Handle ExpressionNode wrapper
 	if (expr.is<ExpressionNode>()) {

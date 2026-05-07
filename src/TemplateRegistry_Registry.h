@@ -437,7 +437,7 @@ public:
 	// Example: max<int> -> max$a1b2c3d4, max<int, 5> -> max$e5f6g7h8
 	// Build a unique hash-based name for a template instantiation and register it.
 	// This avoids collisions from underscore-based naming (e.g., type names with underscores)
-	std::string_view mangleTemplateName(std::string_view base_name, const std::vector<TemplateTypeArg>& args) {
+	std::string_view mangleTemplateName(std::string_view base_name, std::span<const TemplateTypeArg> args) {
 		auto result = FlashCpp::generateInstantiatedNameFromArgs(base_name, args);
 		return result;
 	}
@@ -717,8 +717,9 @@ public:
 	}
 
 	// Look up an exact template specialization (no pattern matching)
-	std::optional<ASTNode> lookupExactSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) const {
-		SpecializationKey key{std::string(template_name), canonicalizeTemplateArgsForExactSpecialization(template_args)};
+	std::optional<ASTNode> lookupExactSpecialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args) const {
+		std::vector<TemplateTypeArg> owned_template_args(template_args.begin(), template_args.end());
+		SpecializationKey key{std::string(template_name), canonicalizeTemplateArgsForExactSpecialization(owned_template_args)};
 
 		FLASH_LOG(Templates, Debug, "lookupExactSpecialization: '", template_name, "' with ", template_args.size(), " args");
 
@@ -730,11 +731,12 @@ public:
 	}
 
 	// Look up a template specialization (exact match first, then pattern match)
-	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) const {
+	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args) const {
+		std::vector<TemplateTypeArg> owned_template_args(template_args.begin(), template_args.end());
 		FLASH_LOG(Templates, Debug, "lookupSpecialization: template_name='", template_name, "', num_args=", template_args.size());
 
 		// First, try exact match
-		auto exact = lookupExactSpecialization(template_name, template_args);
+		auto exact = lookupExactSpecialization(template_name, owned_template_args);
 		if (exact.has_value()) {
 			FLASH_LOG(Templates, Debug, "  Found exact specialization match");
 			return exact;
@@ -742,7 +744,7 @@ public:
 
 		// No exact match - try pattern matching
 		FLASH_LOG(Templates, Debug, "  No exact match, trying pattern matching...");
-		auto pattern_result = matchSpecializationPattern(template_name, template_args);
+		auto pattern_result = matchSpecializationPattern(template_name, owned_template_args);
 		if (pattern_result.has_value()) {
 			FLASH_LOG(Templates, Debug, "  Found pattern match!");
 		} else {
@@ -753,7 +755,7 @@ public:
 
 	// Look up a template specialization using QualifiedIdentifier.
 	// Tries qualified name first, then falls back to unqualified.
-	std::optional<ASTNode> lookupSpecialization(QualifiedIdentifier qi, const std::vector<TemplateTypeArg>& template_args) const {
+	std::optional<ASTNode> lookupSpecialization(QualifiedIdentifier qi, std::span<const TemplateTypeArg> template_args) const {
 		if (qi.hasNamespace()) {
 			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
 				qi.namespace_handle, qi.identifier_handle);

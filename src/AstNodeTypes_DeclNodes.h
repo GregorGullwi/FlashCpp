@@ -1,5 +1,6 @@
 #pragma once
 #include <cassert>
+#include <span>
 #include "AstNodeTypes_TypeSystem.h"
 #include "SizeTypes.h"
 #include "VariantUtils.h"
@@ -1505,10 +1506,10 @@ public:
 		has_unsized_outer_array_dimension_ = false;
 		array_dimensions_.push_back(size);
 	}
-	void set_array_dimensions(const std::vector<size_t>& dims) {
+	void set_array_dimensions(std::span<const size_t> dims) {
 		is_array_ = !dims.empty();
 		has_unsized_outer_array_dimension_ = false;
-		array_dimensions_ = dims;
+		array_dimensions_.assign(dims.begin(), dims.end());
 	}
 	bool has_unsized_outer_array_dimension() const { return has_unsized_outer_array_dimension_; }
 	void set_unsized_outer_array_dimension(bool has_unsized_outer_array_dimension) {

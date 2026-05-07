@@ -191,12 +191,10 @@ ParseResult Parser::parse_template_parameter() {
 		}
 
 		// Create template template parameter node
-		std::vector<TemplateParameterNode> nested_params_vec;
-		nested_params_vec.reserve(nested_params.size());
-		for (const TemplateParameterNode& nested_param : nested_params) {
-			nested_params_vec.push_back(nested_param);
-		}
-		auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), std::move(nested_params_vec), param_name_token);
+		auto param_node = emplace_node<TemplateParameterNode>(
+			StringTable::getOrInternStringHandle(param_name),
+			std::span<const TemplateParameterNode>(nested_params.data(), nested_params.size()),
+			param_name_token);
 
 		// Handle default arguments (e.g., template<typename> class Container = std::vector)
 		if (peek() == "="_tok) {

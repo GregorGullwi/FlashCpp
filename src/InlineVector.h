@@ -79,8 +79,7 @@ public:
 		return *this;
 	}
 
-	// Implicit conversion to std::vector (enables seamless migration)
-	operator std::vector<T>() const {
+	[[nodiscard]] std::vector<T> toVector() const {
 		if (!using_inline_storage_) {
 			return heap_data_;
 		}

@@ -23,6 +23,13 @@ public:
 		: kind_(TemplateParameterKind::NonType), name_(name), type_node_(type_node), token_(token) {}
 
 	// Template template parameter: template<template<typename> class Container>
+	TemplateParameterNode(StringHandle name, std::span<const TemplateParameterNode> nested_params, Token token)
+		: kind_(TemplateParameterKind::Template), name_(name), token_(token) {
+		nested_params_.reserve(nested_params.size());
+		for (const TemplateParameterNode& nested_param : nested_params) {
+			nested_params_.push_back(nested_param);
+		}
+	}
 	TemplateParameterNode(StringHandle name, std::vector<TemplateParameterNode> nested_params, Token token)
 		: kind_(TemplateParameterKind::Template), name_(name), nested_params_(std::move(nested_params)), token_(token) {}
 	TemplateParameterNode(StringHandle name, std::vector<ASTNode> nested_params, Token token)
@@ -48,7 +55,7 @@ public:
 	const TypeSpecifierNode& type_specifier_node() const { return type_node_.value(); }
 
 	// For template template parameters
-	const std::vector<TemplateParameterNode>& nested_parameters() const { return nested_params_; }
+	std::span<const TemplateParameterNode> nested_parameters() const { return nested_params_; }
 
 	// For default arguments
 	bool has_default() const { return default_value_.has_value(); }
