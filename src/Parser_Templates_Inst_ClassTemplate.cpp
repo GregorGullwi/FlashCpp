@@ -987,10 +987,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	} nesting_guard;
 	if (s_instantiation_nesting_depth > MAX_INSTANTIATION_NESTING_DEPTH) {
+		std::string error_msg = std::string(StringBuilder()
+			.append("Max template instantiation depth (")
+			.append(static_cast<uint64_t>(MAX_INSTANTIATION_NESTING_DEPTH))
+			.append(") exceeded for '")
+			.append(template_name)
+			.append("'. Possible recursive template instantiation.")
+			.commit());
 		if (!s_instantiation_depth_warned) {
-			FLASH_LOG(Templates, Error, "Max template instantiation depth (", MAX_INSTANTIATION_NESTING_DEPTH,
-					  ") exceeded for '", template_name, "'. Possible recursive template instantiation.");
+			FLASH_LOG(Templates, Error, error_msg);
 			s_instantiation_depth_warned = true;
+		}
+		if (force_eager) {
+			throw CompileError(error_msg);
 		}
 		return std::nullopt;
 	}
@@ -1000,13 +1009,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// the rest of this parse() call; it is only reset by resetTemplateInstantiationCounters()
 	// at the start of the next parse() call.
 	if (g_template_inst_iteration_limit_tripped) {
+		if (force_eager) {
+			throw CompileError("Template instantiation iteration limit was already exceeded earlier in this translation unit");
+		}
 		return std::nullopt;
 	}
 	g_template_inst_iteration_count++;
 	if (g_template_inst_iteration_count > g_template_inst_max_iterations) {
-		FLASH_LOG(Templates, Error, "Template instantiation iteration limit exceeded (", g_template_inst_max_iterations, ")! Possible infinite loop.");
-		FLASH_LOG(Templates, Error, "Last template: '", template_name, "' with ", template_args.size(), " args");
+		std::string error_msg = std::string(StringBuilder()
+			.append("Template instantiation iteration limit exceeded (")
+			.append(static_cast<int64_t>(g_template_inst_max_iterations))
+			.append("). Last template: '")
+			.append(template_name)
+			.append("' with ")
+			.append(static_cast<uint64_t>(template_args.size()))
+			.append(" args. Possible infinite loop.")
+			.commit());
+		FLASH_LOG(Templates, Error, error_msg);
 		g_template_inst_iteration_limit_tripped = true;
+		if (force_eager) {
+			throw CompileError(error_msg);
+		}
 		return std::nullopt;
 	}
 
