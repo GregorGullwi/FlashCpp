@@ -138,8 +138,16 @@ public:
 												const std::vector<TemplateTypeArg>& pattern_args,
 												ASTNode specialized_node) {
 		StringHandle key = StringTable::getOrInternStringHandle(base_name);
+		InlineVector<TemplateParameterNode, 4> typed_template_params;
+		typed_template_params.reserve(template_params.size());
+		for (const ASTNode& param : template_params) {
+			if (!param.is<TemplateParameterNode>()) {
+				continue;
+			}
+			typed_template_params.push_back(param.as<TemplateParameterNode>());
+		}
 		variable_template_specializations_[key].push_back(
-			TemplatePattern{template_params, pattern_args, specialized_node, std::nullopt});
+			TemplatePattern{std::move(typed_template_params), pattern_args, specialized_node, std::nullopt});
 	}
 	void registerVariableTemplateSpecialization(std::string_view base_name,
 												const InlineVector<TemplateParameterNode, 4>& template_params,
@@ -604,8 +612,20 @@ public:
 					  ", is_TemplateParameterNode=", template_params[i].is<TemplateParameterNode>());
 		}
 
+		InlineVector<TemplateParameterNode, 4> typed_template_params;
+		typed_template_params.reserve(template_params.size());
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			const ASTNode& template_param = template_params[i];
+			if (!template_param.is<TemplateParameterNode>()) {
+				FLASH_LOG(Templates, Error, "registerSpecializationPattern: template_param[", i,
+						  "] is not a TemplateParameterNode");
+				continue;
+			}
+			typed_template_params.push_back(template_param.as<TemplateParameterNode>());
+		}
+
 		TemplatePattern pattern;
-		pattern.template_params = template_params;
+		pattern.template_params = std::move(typed_template_params);
 		pattern.pattern_args = pattern_args;
 		pattern.specialized_node = specialized_node;
 		pattern.sfinae_condition = sfinae_cond;

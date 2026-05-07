@@ -25,6 +25,26 @@ namespace {
 		.commit()));
 }
 
+InlineVector<TemplateParameterNode, 4> toInlineTemplateParams(
+	const std::vector<TemplateParameterNode>& template_params) {
+	InlineVector<TemplateParameterNode, 4> result;
+	result.reserve(template_params.size());
+	for (const TemplateParameterNode& param : template_params) {
+		result.push_back(param);
+	}
+	return result;
+}
+
+std::vector<ASTNode> toAstTemplateParams(
+	const std::vector<TemplateParameterNode>& template_params) {
+	std::vector<ASTNode> result;
+	result.reserve(template_params.size());
+	for (const TemplateParameterNode& param : template_params) {
+		result.push_back(ASTNode::emplace_node<TemplateParameterNode>(param));
+	}
+	return result;
+}
+
 } // namespace
 
 std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey& member_key) {
@@ -112,9 +132,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 					size_t pack_size = 0;
 					bool found_pack = false;
 					for (size_t i = 0; i < lazy_info.template_params.size(); ++i) {
-						if (!lazy_info.template_params[i].is<TemplateParameterNode>())
-							continue;
-						const TemplateParameterNode& tparam = lazy_info.template_params[i].as<TemplateParameterNode>();
+						const TemplateParameterNode& tparam = lazy_info.template_params[i];
 						if (!tparam.is_variadic()) {
 							non_variadic++;
 							continue;
@@ -285,9 +303,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			InlineVector<StringHandle, 4> param_names;
 			param_names.reserve(lazy_info.template_params.size());
 			for (const auto& tparam_node : lazy_info.template_params) {
-				if (tparam_node.is<TemplateParameterNode>()) {
-					param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
-				}
+				param_names.push_back(tparam_node.nameHandle());
 			}
 			registerTypeParamsInScope(param_names, lazy_info.template_args, template_scope, true);
 
@@ -442,11 +458,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			ctx.parser = this;
 			ctx.sema = getActiveSemanticAnalysis();
 			ctx.template_args = converted_template_args;
-			for (const ASTNode& template_param : lazy_info.template_params) {
-				if (const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_param);
-					tparam != nullptr) {
-					ctx.template_param_names.push_back(tparam->name());
-				}
+			for (const TemplateParameterNode& tparam : lazy_info.template_params) {
+				ctx.template_param_names.push_back(tparam.name());
 			}
 			auto owner_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
 			if (owner_it != getTypesByNameMap().end() && owner_it->second) {
@@ -508,12 +521,14 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// Slice 4: use the canonical instantiated lookup name (from identity) as the
 	// function identifier token so the emitted body matches the stub's registered name.
 	StringHandle fn_name_handle = effectiveLookupName(lazy_info.identity);
+	const InlineVector<ASTNode, 4> lazy_template_params_ast =
+		cloneTemplateParameterNodes(lazy_info.template_params);
 	SubstitutedMemberFunctionShell shell = createSubstitutedMemberFunctionShell(
 		func_decl,
 		decl.type_node(),
 		decl.type_specifier_node().token(),
 		lazy_info.identity.instantiated_owner_name,
-		lazy_info.template_params,
+		lazy_template_params_ast,
 		lazy_info.template_args,
 		owner_struct_decl,
 		instantiated_owner_type_index,
@@ -532,7 +547,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	substituteAndCopyMemberFunctionParameters(
 		func_decl.parameter_nodes(),
 		new_func_ref,
-		lazy_info.template_params,
+		lazy_template_params_ast,
 		lazy_info.template_args,
 		owner_struct_decl,
 		instantiated_owner_type_index,
@@ -564,9 +579,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		InlineVector<StringHandle, 4> param_names;
 		param_names.reserve(lazy_info.template_params.size());
 		for (const auto& tparam_node : lazy_info.template_params) {
-			if (tparam_node.is<TemplateParameterNode>()) {
-				param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
-			}
+			param_names.push_back(tparam_node.nameHandle());
 		}
 
 		registerTypeParamsInScope(param_names, lazy_info.template_args, template_scope, true);
@@ -781,6 +794,10 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	}
 
 	const LazyStaticMemberInfo& lazy_info = *lazy_info_ptr;
+	const InlineVector<TemplateParameterNode, 4> lazy_template_params_inline =
+		toInlineTemplateParams(lazy_info.template_params);
+	const std::vector<ASTNode> lazy_template_params_ast =
+		toAstTemplateParams(lazy_info.template_params);
 
 	// Find the struct_info to add the member to
 	auto type_it = getTypesByNameMap().find(instantiated_class_name);
@@ -808,14 +825,12 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		}
 
 		FlashCpp::TemplateParameterScope template_scope;
-		registerTypeParamsInScope(lazy_info.template_params, lazy_info.template_args, template_scope, true);
+		registerTypeParamsInScope(lazy_template_params_inline, lazy_info.template_args, template_scope, true);
 
 		InlineVector<StringHandle, 4> param_names;
 		param_names.reserve(lazy_info.template_params.size());
 		for (const auto& tparam_node : lazy_info.template_params) {
-			if (tparam_node.is<TemplateParameterNode>()) {
-				param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
-			}
+			param_names.push_back(tparam_node.nameHandle());
 		}
 
 		SaveHandle current_pos = save_token_position();
@@ -888,19 +903,17 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		!initializer_replayed &&
 		lazy_info.initializer->is<ExpressionNode>()) {
 		const ExpressionNode& expr = lazy_info.initializer->as<ExpressionNode>();
-		const auto& template_params = lazy_info.template_params;
+		const auto& template_params = lazy_template_params_inline;
 		const auto& template_args = lazy_info.template_args;
 
 		// Helper to calculate pack size for substitution
 		auto calculate_pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {
 			for (size_t i = 0; i < template_params.size(); ++i) {
-				if (!template_params[i].is<TemplateParameterNode>())
-					continue;
-				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				const TemplateParameterNode& tparam = template_params[i];
 				if (tparam.name() == pack_name && tparam.is_variadic()) {
 					size_t non_variadic_count = 0;
 					for (const auto& param : template_params) {
-						if (param.is<TemplateParameterNode>() && !param.as<TemplateParameterNode>().is_variadic()) {
+						if (!param.is_variadic()) {
 							non_variadic_count++;
 						}
 					}
@@ -934,9 +947,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			// Find the parameter pack
 			std::optional<size_t> pack_param_idx;
 			for (size_t p = 0; p < template_params.size(); ++p) {
-				if (!template_params[p].is<TemplateParameterNode>())
-					continue;
-				const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+				const TemplateParameterNode& tparam = template_params[p];
 				if (tparam.name() == pack_name && tparam.is_variadic()) {
 					pack_param_idx = p;
 					break;
@@ -950,7 +961,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 				size_t non_variadic_count = 0;
 				for (const auto& param : template_params) {
-					if (param.is<TemplateParameterNode>() && !param.as<TemplateParameterNode>().is_variadic()) {
+					if (!param.is_variadic()) {
 						non_variadic_count++;
 					}
 				}
@@ -985,7 +996,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 			if (auto subst = substitute_nontype_template_param(
-					tparam_ref.param_name().view(), template_args, template_params)) {
+					tparam_ref.param_name().view(), template_args, lazy_template_params_ast)) {
 				substituted_initializer = subst;
 			}
 		}
@@ -993,7 +1004,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		else if (std::holds_alternative<IdentifierNode>(expr)) {
 			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 			if (auto subst = substitute_nontype_template_param(
-					id_node.name(), template_args, template_params)) {
+					id_node.name(), template_args, lazy_template_params_ast)) {
 				substituted_initializer = subst;
 			}
 		}
@@ -1057,10 +1068,8 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			eval_ctx.struct_info = struct_info;
 			// Provide template args so sizeof(T) etc. resolve correctly.
 			for (size_t i = 0; i < lazy_info.template_params.size() && i < lazy_info.template_args.size(); ++i) {
-				if (lazy_info.template_params[i].is<TemplateParameterNode>()) {
-					eval_ctx.template_param_names.push_back(lazy_info.template_params[i].as<TemplateParameterNode>().name());
-					eval_ctx.template_args.push_back(lazy_info.template_args[i]);
-				}
+				eval_ctx.template_param_names.push_back(lazy_info.template_params[i].name());
+				eval_ctx.template_args.push_back(lazy_info.template_args[i]);
 			}
 			auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
 			if (eval_result.success()) {
@@ -1092,7 +1101,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	original_type_spec.set_type_index(lazy_info.type_index);
 
 	TypeIndex substituted_type_index = substitute_template_parameter(
-		original_type_spec, lazy_info.template_params, lazy_info.template_args);
+		original_type_spec, lazy_template_params_inline, lazy_info.template_args);
 
 	size_t substituted_size = get_type_size_bits(substituted_type_index.category()) / 8;
 	if (lazy_info.is_array) {
@@ -1255,8 +1264,10 @@ std::optional<TypeIndex> Parser::evaluateLazyTypeAlias(
 	const TypeSpecifierNode& target_type = lazy_info->unevaluated_target.as<TypeSpecifierNode>();
 
 	// Perform template parameter substitution
+	const InlineVector<TemplateParameterNode, 4> lazy_template_params_inline =
+		toInlineTemplateParams(lazy_info->template_params);
 	TypeIndex substituted_type_index = substitute_template_parameter(
-		target_type, lazy_info->template_params, lazy_info->template_args);
+		target_type, lazy_template_params_inline, lazy_info->template_args);
 
 	// Cache the result
 	registry.markEvaluated(instantiated_class_name, member_name, substituted_type_index);
@@ -1327,13 +1338,15 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	auto nested_struct_info = std::make_unique<StructTypeInfo>(lazy_info->qualified_name, nested_struct.default_access(), nested_struct.is_union(), decl_ns);
 
 	// Process members with template parameter substitution
+	const InlineVector<TemplateParameterNode, 4> parent_template_params_inline =
+		toInlineTemplateParams(lazy_info->parent_template_params);
 	for (const auto& member_decl : nested_struct.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 		// Substitute template parameters using parent's template args
 		TypeIndex substituted_type_index = substitute_template_parameter(
-			type_spec, lazy_info->parent_template_params, lazy_info->parent_template_args);
+			type_spec, parent_template_params_inline, lazy_info->parent_template_args);
 
 		// Get size and alignment for the member
 		size_t member_size = get_type_size_bits(substituted_type_index.category()) / 8;

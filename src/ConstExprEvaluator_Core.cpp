@@ -4457,9 +4457,7 @@ bool Evaluator::try_load_current_struct_template_bindings(EvaluationContext& con
 		context.template_args = lazy_class_info->template_args;
 		context.template_param_names.reserve(lazy_class_info->template_params.size());
 		for (const auto& template_param : lazy_class_info->template_params) {
-			if (template_param.is<TemplateParameterNode>()) {
-				context.template_param_names.push_back(template_param.as<TemplateParameterNode>().name());
-			}
+			context.template_param_names.push_back(template_param.name());
 		}
 		return true;
 	}

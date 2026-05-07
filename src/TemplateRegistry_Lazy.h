@@ -14,7 +14,7 @@ static StringHandle normalizeClassName(StringHandle handle) {
 
 struct LazyMemberFunctionInfo {
 	DeferredMemberIdentity identity;
-	InlineVector<ASTNode, 4> template_params;		  // Template parameters from class template
+	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters from class template
 	InlineVector<TemplateTypeArg, 4> template_args; // Concrete template arguments used for instantiation
 	AccessSpecifier access;						// Access specifier (public/private/protected)
 	bool is_virtual = false;					 // Virtual function flag
@@ -403,7 +403,7 @@ struct LazyStaticMemberInfo {
 	bool is_array = false;
 	std::vector<size_t> array_dimensions;
 	int pointer_depth = 0;					   // Pointer depth (e.g., 1 for int*, 2 for int**)
-	std::vector<ASTNode> template_params;	  // Template parameters from class template
+	std::vector<TemplateParameterNode> template_params; // Template parameters from class template
 	std::vector<TemplateTypeArg> template_args; // Concrete template arguments
 	bool needs_substitution;					 // True if initializer contains template parameters
 
@@ -501,7 +501,7 @@ struct LazyClassInstantiationInfo {
 	StringHandle template_name;					// Original template name (e.g., "vector")
 	StringHandle instantiated_name;				// Instantiated class name (e.g., "vector_int")
 	std::vector<TemplateTypeArg> template_args;	// Concrete template arguments
-	std::vector<ASTNode> template_params;		  // Template parameters from class template
+	std::vector<TemplateParameterNode> template_params; // Template parameters from class template
 	ASTNode template_declaration;				  // Reference to primary template declaration
 	ClassInstantiationPhase current_phase = ClassInstantiationPhase::None;
 	// Flags for tracking what needs to be instantiated in Full phase
@@ -620,7 +620,7 @@ struct LazyTypeAliasInfo {
 	StringHandle instantiated_class_name;		  // Instantiated class name (e.g., "remove_const_int")
 	StringHandle member_name;					  // Member alias name (e.g., "type")
 	ASTNode unevaluated_target;					// Unevaluated target type expression
-	std::vector<ASTNode> template_params;		  // Template parameters from class template
+	std::vector<TemplateParameterNode> template_params; // Template parameters from class template
 	std::vector<TemplateTypeArg> template_args;	// Concrete template arguments
 	bool needs_substitution = true;				// True if target contains template parameters
 	bool is_evaluated = false;					   // True once evaluation has been performed
@@ -753,7 +753,7 @@ struct LazyNestedTypeInfo {
 	StringHandle nested_type_name;				   // Nested type name (e.g., "inner")
 	StringHandle qualified_name;					 // Fully qualified name (e.g., "outer_int::inner")
 	ASTNode nested_type_declaration;				 // The nested struct/class declaration AST node
-	std::vector<ASTNode> parent_template_params;	 // Template parameters from parent class
+	std::vector<TemplateParameterNode> parent_template_params; // Template parameters from parent class
 	std::vector<TemplateTypeArg> parent_template_args; // Concrete template arguments for parent
 };
 

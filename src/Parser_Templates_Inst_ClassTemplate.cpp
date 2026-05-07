@@ -2692,7 +2692,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						spec_struct_ptr = &pattern.specialized_node.as<TemplateClassDeclarationNode>().class_decl_node();
 					}
 					if (spec_struct_ptr && spec_struct_ptr == &pattern_struct) {
-						pattern_template_params = pattern.template_params;
+						pattern_template_params.clear();
+						pattern_template_params.reserve(pattern.template_params.size());
+						for (const auto& param : pattern.template_params) {
+							pattern_template_params.push_back(ASTNode::emplace_node<TemplateParameterNode>(param));
+						}
 						break;
 					}
 				}
@@ -4597,6 +4601,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	const std::vector<ASTNode> template_params_ast(
 		template_params_inline_ast.begin(),
 		template_params_inline_ast.end());
+	const std::vector<TemplateParameterNode> template_params_typed(
+		template_params.begin(),
+		template_params.end());
 	const StructDeclarationNode& class_decl = template_class.class_decl_node();
 
 	// Count non-variadic parameters
@@ -6548,7 +6555,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.is_array = static_member.is_array;
 				lazy_info.array_dimensions = static_member.array_dimensions;
 				lazy_info.pointer_depth = static_member.pointer_depth;
-				lazy_info.template_params = template_params_ast;
+				lazy_info.template_params = template_params_typed;
 				lazy_info.template_args = template_args_to_use;
 				lazy_info.needs_substitution = true;
 
@@ -7424,7 +7431,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					id.cv_qualifier = mem_func.cv_qualifier;
 					id.kind = DeferredMemberIdentity::Kind::Function;
 				}
-				lazy_info.template_params = template_params_inline_ast;
+				lazy_info.template_params = template_params;
 				lazy_info.template_args = template_args_to_use;
 				lazy_info.access = mem_func.access;
 				lazy_info.is_virtual = mem_func.is_virtual;

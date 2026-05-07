@@ -1292,8 +1292,16 @@ ParseResult Parser::parse_template_declaration() {
 					// can re-parse "struct Wrapper<T>::Nested { ... }" during instantiation.
 					// For full specializations (template<>), store the concrete template_args so the
 					// nested class is only applied when instantiation arguments match.
+					InlineVector<TemplateParameterNode, 4> out_of_line_template_params;
+					out_of_line_template_params.reserve(template_params.size());
+					for (const ASTNode& template_param : template_params) {
+						if (!template_param.is<TemplateParameterNode>()) {
+							continue;
+						}
+						out_of_line_template_params.push_back(template_param.as<TemplateParameterNode>());
+					}
 					gTemplateRegistry.registerOutOfLineNestedClass(template_name, OutOfLineNestedClass{
-																					  template_params,
+																					  out_of_line_template_params,
 																					  StringTable::getOrInternStringHandle(member_class_name),
 																					  struct_keyword_pos, template_param_names, is_class,
 																					  context_.getCurrentPackAlignment(),
@@ -2703,8 +2711,16 @@ ParseResult Parser::parse_template_declaration() {
 					// struct_keyword_pos points at the struct/class keyword so parse_struct_declaration()
 					// can re-parse "struct Wrapper<T>::Nested { ... }" during instantiation.
 					// Partial specializations leave specialization_args empty — applies to all instantiations.
+					InlineVector<TemplateParameterNode, 4> out_of_line_template_params;
+					out_of_line_template_params.reserve(template_params.size());
+					for (const ASTNode& template_param : template_params) {
+						if (!template_param.is<TemplateParameterNode>()) {
+							continue;
+						}
+						out_of_line_template_params.push_back(template_param.as<TemplateParameterNode>());
+					}
 					gTemplateRegistry.registerOutOfLineNestedClass(template_name, OutOfLineNestedClass{
-																					  template_params,
+																					  out_of_line_template_params,
 																					  StringTable::getOrInternStringHandle(member_class_name),
 																					  struct_keyword_pos,
 																					  template_param_names,

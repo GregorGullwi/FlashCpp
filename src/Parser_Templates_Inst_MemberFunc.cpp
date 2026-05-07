@@ -308,7 +308,7 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 
 	for (StringHandle outer_name : ctor_decl.outer_template_param_names()) {
 		Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_name), 0, 0, 0);
-		lazy_info.template_params.push_back(emplace_node<TemplateParameterNode>(outer_name, outer_token));
+		lazy_info.template_params.push_back(TemplateParameterNode(outer_name, outer_token));
 	}
 	for (const auto& outer_arg : ctor_decl.outer_template_args()) {
 		const std::vector<ASTNode> no_params;
@@ -320,7 +320,7 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 			nullptr));
 	}
 	for (const auto& template_param : template_params) {
-		lazy_info.template_params.push_back(ASTNode::emplace_node<TemplateParameterNode>(template_param));
+		lazy_info.template_params.push_back(template_param);
 	}
 	for (const auto& template_arg : ctor_template_args) {
 		lazy_info.template_args.push_back(template_arg);
