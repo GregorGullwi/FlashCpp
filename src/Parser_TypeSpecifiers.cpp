@@ -2466,14 +2466,15 @@ ParseResult Parser::parse_decltype_specifier() {
 			return false;
 		}
 
+		const auto& param_names = currentTemplateParamNames();
+		auto isInParamNames = [&](StringHandle h) {
+			return std::find(param_names.begin(), param_names.end(), h) != param_names.end();
+		};
+
 		auto typeSpecDependsOnActiveTemplateParam = [&](const TypeSpecifierNode& type_spec) {
-			if (std::find(
-					currentTemplateParamNames().begin(),
-					currentTemplateParamNames().end(),
-					type_spec.token().handle()) != currentTemplateParamNames().end()) {
+			if (isInParamNames(type_spec.token().handle())) {
 				return true;
 			}
-
 			const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
 			if (!type_info) {
 				return false;
@@ -2484,16 +2485,19 @@ ParseResult Parser::parse_decltype_specifier() {
 				return true;
 			}
 			const TypeSpecifierNode* alias_type_spec = type_info->aliasTypeSpecifier();
-			return alias_type_spec &&
-				   std::find(
-					   currentTemplateParamNames().begin(),
-					   currentTemplateParamNames().end(),
-					   alias_type_spec->token().handle()) != currentTemplateParamNames().end();
+			return alias_type_spec && isInParamNames(alias_type_spec->token().handle());
 		};
 
-		auto identifierMentionsDependentDeclaration = [&](const Token& token) {
+		// Returns true if the token is, or depends on, an active template parameter.
+		// Covers both direct template-param names (e.g. `T`) and local symbols whose
+		// declared type traces back to one (e.g. a function parameter of type `_Refwrap`
+		// where `_Refwrap` is a template parameter).
+		auto tokenDependsOnActiveTemplateParam = [&](const Token& token) {
 			if (token.type() != Token::Type::Identifier) {
 				return false;
+			}
+			if (isInParamNames(token.handle())) {
+				return true;
 			}
 			std::optional<ASTNode> symbol = lookup_symbol(token.handle());
 			const DeclarationNode* decl = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
@@ -2506,15 +2510,7 @@ ParseResult Parser::parse_decltype_specifier() {
 		bool mentions_active_template_param = false;
 		while (!peek().is_eof() && paren_depth > 0) {
 			const Token token = peek_info();
-			if (token.type() == Token::Type::Identifier &&
-				std::find(
-					currentTemplateParamNames().begin(),
-					currentTemplateParamNames().end(),
-					token.handle()) != currentTemplateParamNames().end()) {
-				mentions_active_template_param = true;
-				break;
-			}
-			if (identifierMentionsDependentDeclaration(token)) {
+			if (tokenDependsOnActiveTemplateParam(token)) {
 				mentions_active_template_param = true;
 				break;
 			}

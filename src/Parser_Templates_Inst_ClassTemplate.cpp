@@ -7712,6 +7712,46 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					finalize_function_after_definition(new_func_ref);
 				}
 
+				// Resolve auto trailing return type for declaration-only member functions.
+				// Functions with bodies get their return type resolved via deduce_and_update_auto_return_type,
+				// but declaration-only functions never execute that path. Re-parse the trailing return type
+				// with concrete template arguments so decltype(StructTemplate<T>::func()) resolves correctly.
+				if (new_func_ref.has_trailing_return_type_position() &&
+					isPlaceholderAutoType(new_func_ref.decl_node().type_specifier_node().type())) {
+					FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
+					FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
+					FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
+					ScopedParserInstantiationContext guard_inst_mode(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
+					parsing_template_depth_ = 0;
+					clearCurrentTemplateParameters();
+					sfinae_type_map_.clear();
+
+					SaveHandle saved_pos = save_token_position();
+					restore_lexer_position_only(new_func_ref.trailing_return_type_position());
+					advance();  // consume '->'
+
+					FlashCpp::SymbolTableScope param_scope(ScopeType::Function);
+					register_parameters_in_scope(new_func_ref.parameter_nodes());
+
+					FlashCpp::TemplateParameterScope template_scope;
+					registerTypeParamsInScope(template_params, template_args_to_use, template_scope, &sfinae_type_map_);
+
+					auto return_type_result = parse_type_specifier();
+					gSymbolTable.exit_scope();
+					param_scope.dismiss();  // prevent double exit in destructor
+					restore_lexer_position_only(saved_pos);
+
+					if (!return_type_result.is_error() &&
+						return_type_result.node().has_value() &&
+						return_type_result.node()->is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& resolved_type = return_type_result.node()->as<TypeSpecifierNode>();
+						new_func_ref.decl_node().set_type_node(resolved_type);
+						FLASH_LOG_FORMAT(Templates, Debug,
+							"Resolved auto trailing return type for declaration-only member function '{}'",
+							new_func_ref.decl_node().identifier_token().value());
+					}
+				}
+
 				// Add the substituted function to the instantiated struct
 				if (mem_func.operator_kind != OverloadableOperator::None) {
 					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_func_node, mem_func.access);
