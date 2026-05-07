@@ -25,7 +25,7 @@ std::optional<EvalResult> tryMaterializeMultidimArrayRow(
 	const InitializerListNode& init_list,
 	size_t index,
 	ConstExpr::EvaluationContext& context);
-EvalResult make_constructor_member_default_init(const StructMember& member, EvaluationContext& context);
+EvalResult makeConstructorMemberDefaultInit(const StructMember& member, EvaluationContext& context);
 
 struct ShiftEvaluationInfo {
 	int width_bits = kDefaultShiftWidthBits;
@@ -55,7 +55,7 @@ const StructMember* findMemberInfoRecursive(const StructTypeInfo* struct_info, S
 	return nullptr;
 }
 
-TypeSpecifierNode make_member_type_spec_for_default_init(const StructMember& member) {
+TypeSpecifierNode makeMemberTypeSpecForDefaultInit(const StructMember& member) {
 	TypeSpecifierNode type_spec(
 		member.type_index,
 		TypeQualifier::None,
@@ -71,7 +71,18 @@ TypeSpecifierNode make_member_type_spec_for_default_init(const StructMember& mem
 	return type_spec;
 }
 
-EvalResult make_constructor_default_init_from_type(const TypeSpecifierNode& type_spec, EvaluationContext& context) {
+TypeSpecifierNode makeTypeSpecForDefaultInit(TypeIndex type_index) {
+	const TypeInfo* type_info = tryGetTypeInfo(type_index);
+	const SizeInBits size_in_bits = type_info ? type_info->sizeInBits() : SizeInBits{0};
+	return TypeSpecifierNode(
+		type_index,
+		TypeQualifier::None,
+		size_in_bits,
+		Token{},
+		CVQualifier::None);
+}
+
+EvalResult makeConstructorDefaultInitFromType(const TypeSpecifierNode& type_spec, EvaluationContext& context) {
 	if (type_spec.is_array()) {
 		const std::vector<size_t>& dims = type_spec.array_dimensions();
 		if (dims.empty()) {
@@ -93,7 +104,7 @@ EvalResult make_constructor_default_init_from_type(const TypeSpecifierNode& type
 
 		array_result.array_elements.reserve(dims[0]);
 		for (size_t i = 0; i < dims[0]; ++i) {
-			EvalResult element_result = make_constructor_default_init_from_type(element_type, context);
+			EvalResult element_result = makeConstructorDefaultInitFromType(element_type, context);
 			if (!element_result.success()) {
 				return element_result;
 			}
@@ -129,16 +140,38 @@ EvalResult make_constructor_default_init_from_type(const TypeSpecifierNode& type
 			return *ctor_result;
 		}
 
+		std::unordered_map<std::string_view, EvalResult> base_bindings;
+		bool base_is_indeterminate = false;
+		for (const auto& base : struct_info->base_classes) {
+			EvalResult base_result = makeConstructorDefaultInitFromType(makeTypeSpecForDefaultInit(base.type_index), context);
+			if (!base_result.success()) {
+				return base_result;
+			}
+			for (const auto& [base_member_name, base_member_value] : base_result.object_member_bindings) {
+				if (base_bindings.find(base_member_name) == base_bindings.end()) {
+					base_bindings[base_member_name] = base_member_value;
+				}
+			}
+			base_is_indeterminate = base_is_indeterminate || base_result.is_indeterminate;
+		}
+
 		InitializerListNode empty_init_list;
 		EvalResult object_result = Evaluator::materialize_aggregate_object_value(
 			struct_info,
 			type_spec.type_index(),
 			empty_init_list,
-			context);
+			context,
+			base_bindings.empty() ? nullptr : &base_bindings);
 		if (!object_result.success()) {
 			return object_result;
 		}
-		object_result.is_indeterminate = false;
+		object_result.is_indeterminate = base_is_indeterminate;
+
+		for (const auto& [base_member_name, base_member_value] : base_bindings) {
+			if (object_result.object_member_bindings.find(base_member_name) == object_result.object_member_bindings.end()) {
+				object_result.object_member_bindings[base_member_name] = base_member_value;
+			}
+		}
 
 		for (const auto& nested_member : struct_info->members) {
 			std::string_view nested_name = StringTable::getStringView(nested_member.getName());
@@ -147,7 +180,7 @@ EvalResult make_constructor_default_init_from_type(const TypeSpecifierNode& type
 					object_result.is_indeterminate || object_result.object_member_bindings[nested_name].is_indeterminate;
 				continue;
 			}
-			EvalResult nested_result = make_constructor_member_default_init(nested_member, context);
+			EvalResult nested_result = makeConstructorMemberDefaultInit(nested_member, context);
 			if (!nested_result.success()) {
 				return nested_result;
 			}
@@ -162,8 +195,8 @@ EvalResult make_constructor_default_init_from_type(const TypeSpecifierNode& type
 	return result;
 }
 
-EvalResult make_constructor_member_default_init(const StructMember& member, EvaluationContext& context) {
-	return make_constructor_default_init_from_type(make_member_type_spec_for_default_init(member), context);
+EvalResult makeConstructorMemberDefaultInit(const StructMember& member, EvaluationContext& context) {
+	return makeConstructorDefaultInitFromType(makeMemberTypeSpecForDefaultInit(member), context);
 }
 
 std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult& value) {
@@ -888,6 +921,23 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 			if (object_id && object_id->name() == "this") {
 				if (EvalResult* binding = findMutableBindingValue(member_access->member_name(), bindings, context)) {
 					return BoundWriteTarget{binding, member_access->member_name()};
+				}
+			}
+
+			EvalResult pointer_result = evaluate_index_expression(member_access->object(), bindings, context);
+			if (!pointer_result.success()) {
+				resolve_error = pointer_result;
+				return std::nullopt;
+			}
+			if (!pointer_result.pointer_to_var.isValid() || pointer_result.pointer_offset != 0) {
+				return std::nullopt;
+			}
+
+			std::string_view pointed_name = StringTable::getStringView(pointer_result.pointer_to_var);
+			if (EvalResult* binding = findMutableBindingValue(pointed_name, bindings, context)) {
+				auto member_it = binding->object_member_bindings.find(member_access->member_name());
+				if (member_it != binding->object_member_bindings.end()) {
+					return BoundWriteTarget{&member_it->second, pointed_name};
 				}
 			}
 			return std::nullopt;
@@ -6357,12 +6407,13 @@ EvalResult materialize_member_initializer_value(
 	const StructMember& member_info,
 	const ASTNode& initializer,
 	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* evaluation_bindings,
 	bool enforce_list_narrowing) {
 	if (initializer.is<InitializerListNode>()) {
 		const InitializerListNode& init_list = initializer.as<InitializerListNode>();
 
 		if (member_info.is_array) {
-			return Evaluator::materialize_array_value(member_info.type_index, init_list, context, nullptr);
+			return Evaluator::materialize_array_value(member_info.type_index, init_list, context, evaluation_bindings);
 		}
 
 		if (is_struct_type(member_info.type_index.category())) {
@@ -6378,7 +6429,7 @@ EvalResult materialize_member_initializer_value(
 						ctor_args,
 						context,
 						false,
-						nullptr,
+						evaluation_bindings,
 						nullptr,
 						false)) {
 					return std::move(*ctor_result);
@@ -6387,7 +6438,8 @@ EvalResult materialize_member_initializer_value(
 					member_struct_info,
 					member_info.type_index,
 					init_list,
-					context);
+					context,
+					evaluation_bindings);
 			}
 		}
 	}
@@ -6486,6 +6538,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 					*member_info,
 					initializer,
 					context,
+					nullptr,
 					init_list.is_brace_init());
 			}
 			if (!val.success())
@@ -6513,20 +6566,21 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 		if (bindings.find(mname) == bindings.end() && member.default_initializer.has_value()) {
 			EvalResult default_result;
 			const ASTNode& default_initializer = member.default_initializer.value();
+			std::unordered_map<std::string_view, EvalResult> default_bindings;
+			if (evaluation_bindings) {
+				default_bindings = *evaluation_bindings;
+			}
+			for (const auto& [name, value] : bindings) {
+				default_bindings[name] = value;
+			}
 			if (default_initializer.is<InitializerListNode>()) {
 				default_result = materialize_member_initializer_value(
 					member,
 					default_initializer,
 					context,
+					&default_bindings,
 					false);
 			} else {
-				std::unordered_map<std::string_view, EvalResult> default_bindings;
-				if (evaluation_bindings) {
-					default_bindings = *evaluation_bindings;
-				}
-				for (const auto& [name, value] : bindings) {
-					default_bindings[name] = value;
-				}
 				default_result = Evaluator::evaluate_expression_with_bindings_const(
 					default_initializer,
 					default_bindings,
@@ -6759,6 +6813,30 @@ EvalResult Evaluator::materialize_members_from_constructor(
 		return base_bind_result;
 	}
 
+	for (const auto& base : struct_info->base_classes) {
+		bool has_explicit_base_initializer = false;
+		StringHandle base_name = StringTable::getOrInternStringHandle(base.name);
+		for (const auto& base_init : ctor_decl.base_initializers()) {
+			if (base_name == base_init.getBaseClassName()) {
+				has_explicit_base_initializer = true;
+				break;
+			}
+		}
+		if (has_explicit_base_initializer) {
+			continue;
+		}
+
+		EvalResult base_result = makeConstructorDefaultInitFromType(makeTypeSpecForDefaultInit(base.type_index), context);
+		if (!base_result.success()) {
+			return base_result;
+		}
+		for (const auto& [base_member_name, base_member_value] : base_result.object_member_bindings) {
+			if (member_bindings.find(base_member_name) == member_bindings.end()) {
+				member_bindings[base_member_name] = base_member_value;
+			}
+		}
+	}
+
 	context.local_bindings = &ctor_param_bindings;
 	auto member_bind_result = bind_members_from_constructor_initializers(
 		struct_info,
@@ -6778,7 +6856,7 @@ EvalResult Evaluator::materialize_members_from_constructor(
 			continue;
 		}
 
-		EvalResult default_result = make_constructor_member_default_init(member, context);
+		EvalResult default_result = makeConstructorMemberDefaultInit(member, context);
 		if (!default_result.success()) {
 			return default_result;
 		}
