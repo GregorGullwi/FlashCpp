@@ -2649,6 +2649,11 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 	// Enter function scope
 	symbol_table.enter_scope(ScopeType::Function);
+	auto restore_template_instantiation_state = ScopeGuard([&]() {
+		symbol_table.exit_scope();
+		current_struct_name_ = saved_struct_name;
+		current_namespace_stack_ = saved_namespace_stack;
+	});
 
 	// Get struct type info for member functions
 	const TypeInfo* struct_type_info = nullptr;
@@ -2708,12 +2713,6 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 			}
 		}
 	}
-
-	auto restore_template_instantiation_state = ScopeGuard([&]() {
-		symbol_table.exit_scope();
-		current_struct_name_ = saved_struct_name;
-		current_namespace_stack_ = saved_namespace_stack;
-	});
 
 	// Parse the template body with concrete types
 	// Pass the struct name and type index so the parser can set up member function context

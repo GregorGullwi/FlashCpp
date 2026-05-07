@@ -704,11 +704,11 @@ private:
 		}
 
 		void padNonTypeCategoriesToNameCount() {
+			if (non_type_categories.size() > names.size()) {
+				throw InternalError("ActiveTemplateParameterState category slots out of sync");
+			}
 			while (non_type_categories.size() < names.size()) {
 				non_type_categories.push_back(TypeCategory::Invalid);
-			}
-			while (non_type_categories.size() > names.size()) {
-				non_type_categories.pop_back();
 			}
 		}
 
@@ -759,6 +759,10 @@ private:
 		}
 
 		void pushName(StringHandle param_name) {
+			if (!kinds.empty() && kinds.size() != names.size()) {
+				throw InternalError("ActiveTemplateParameterState kind slots out of sync");
+			}
+			padNonTypeCategoriesToNameCount();
 			names.push_back(param_name);
 			non_type_categories.push_back(TypeCategory::Invalid);
 		}
@@ -767,6 +771,15 @@ private:
 			StringHandle param_name,
 			TemplateParameterKind param_kind,
 			TypeCategory non_type_category) {
+			if (kinds.empty() && !names.empty()) {
+				kinds.reserve(names.size() + 1);
+				for (size_t i = 0; i < names.size(); ++i) {
+					kinds.push_back(TemplateParameterKind::Type);
+				}
+			}
+			if (!kinds.empty() && kinds.size() != names.size()) {
+				throw InternalError("ActiveTemplateParameterState kind slots out of sync");
+			}
 			padNonTypeCategoriesToNameCount();
 			names.push_back(param_name);
 			kinds.push_back(param_kind);
