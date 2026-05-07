@@ -578,6 +578,15 @@ TypedValue AstToIr::buildReferenceCallArgumentFromResult(
 	return toTypedValue(argument_result);
 }
 
+bool AstToIr::canUseDirectIdentifierCallArgument(
+	const DeclarationNode* decl_node,
+	CVReferenceQualifier param_ref_qualifier,
+	const CallArgReferenceBindingInfo* sema_ref_binding) const {
+	return decl_node &&
+		   param_ref_qualifier != CVReferenceQualifier::None &&
+		   (!sema_ref_binding || !sema_ref_binding->is_valid() || sema_ref_binding->binds_directly());
+}
+
 TypedValue AstToIr::buildDirectIdentifierCallArgument(
 	const DeclarationNode& arg_decl_node,
 	StringHandle identifier_name,

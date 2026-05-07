@@ -1212,6 +1212,7 @@ private:
 	TypedValue buildOrdinaryCallArgument(const ASTNode& argument, const TypeSpecifierNode* param_type, const std::optional<ExprResult>& evaluated_arg, const Token& token);
 	TypedValue buildReferenceCallArgumentFromDeclaration(const DeclarationNode& decl_node, StringHandle identifier_name);
 	TypedValue buildReferenceCallArgumentFromResult(const ExprResult& argument_result, const Token& token, bool reuse_address_valued_temp);
+	bool canUseDirectIdentifierCallArgument(const DeclarationNode* decl_node, CVReferenceQualifier param_ref_qualifier, const CallArgReferenceBindingInfo* sema_ref_binding) const;
 	TypedValue buildDirectIdentifierCallArgument(const DeclarationNode& arg_decl_node, StringHandle identifier_name, CVReferenceQualifier param_ref_qualifier, const ASTNode& argument, const Token& token);
 	TypedValue buildConstructorArgumentValue(const ExprResult& argument_result,
 											 const ASTNode& argument,
