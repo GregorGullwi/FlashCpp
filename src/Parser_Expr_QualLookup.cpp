@@ -2388,6 +2388,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	const ASTNode& body = *body_opt;
 	std::optional<TypeSpecifierNode> deduced_type;
 	std::vector<std::pair<TypeSpecifierNode, Token>> all_return_types;  // Track all return types for validation
+	bool has_still_dependent_return = false;
 
 	auto make_void_return_type = [&]() {
 		TypeSpecifierNode void_type(TypeCategory::Void, TypeQualifier::None, 0, decl_node.identifier_token(), CVQualifier::None);
@@ -2405,14 +2406,21 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 					// Store this return type for validation
 					TypeSpecifierNode normalized_type =
 						finalizePlaceholderTypeDeduction(return_type.type(), *expr_type_opt);
-					all_return_types.emplace_back(normalized_type, decl_node.identifier_token());
+					if (isPlaceholderAutoType(normalized_type.type())) {
+						has_still_dependent_return = true;
+					} else {
+						all_return_types.emplace_back(normalized_type, decl_node.identifier_token());
 
-					// Set deduced type from first return
-					if (!deduced_type.has_value()) {
-						deduced_type = normalized_type;
-						FLASH_LOG(Parser, Debug, "  Found return statement, deduced type: ",
-								  (int)deduced_type->type(), " size: ", (int)deduced_type->size_in_bits());
+						// Set deduced type from first return
+						if (!deduced_type.has_value()) {
+							deduced_type = normalized_type;
+							FLASH_LOG(Parser, Debug, "  Found return statement, deduced type: ",
+									  (int)deduced_type->type(), " size: ", (int)deduced_type->size_in_bits());
+						}
 					}
+				} else if (isDependentTemplateContext() &&
+						   expressionTypeDeductionIsStillDependent(*ret.expression(), currentTemplateParamNames())) {
+					has_still_dependent_return = true;
 				}
 			} else {
 				TypeSpecifierNode void_type = make_void_return_type();
@@ -2504,6 +2512,11 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 					.commit()));
 			}
 		}
+	}
+
+	if (has_still_dependent_return && isDependentTemplateContext()) {
+		FLASH_LOG(Parser, Debug, "  Keeping auto return type unresolved in dependent template context");
+		return;
 	}
 
 	if (!deduced_type.has_value()) {
