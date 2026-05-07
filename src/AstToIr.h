@@ -362,9 +362,11 @@ private:
 	bool isVaListPointerType(const ASTNode& arg, const ExprResult& ir_result) const;
 	ExprResult generateVaArgIntrinsic(const CallExprNode& callExprNode);
 	ExprResult generateVaStartIntrinsic(const CallExprNode& callExprNode);
+	ExprResult generateBuiltinNoOpIntrinsic(const CallExprNode& callExprNode, std::string_view func_name);
 	ExprResult generateBuiltinUnreachableIntrinsic(const CallExprNode& callExprNode);
 	ExprResult generateBuiltinAssumeIntrinsic(const CallExprNode& callExprNode);
 	ExprResult generateBuiltinExpectIntrinsic(const CallExprNode& callExprNode);
+	ExprResult generateBuiltinIdentityIntrinsic(const CallExprNode& callExprNode, std::string_view func_name);
 	ExprResult generateBuiltinLaunderIntrinsic(const CallExprNode& callExprNode);
 	ExprResult generateGetExceptionCodeIntrinsic(const CallExprNode& callExprNode);
 	ExprResult generateAbnormalTerminationIntrinsic(const CallExprNode& callExprNode);

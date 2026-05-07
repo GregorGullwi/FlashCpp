@@ -933,6 +933,8 @@ long FileReader::evaluate_expression(std::string_view sv) {
 						"__builtin_addressof", "__builtin_unreachable", "__builtin_assume",
 						"__builtin_expect", "__builtin_launder", "__builtin_memcmp", "__builtin_memcpy",
 						"__builtin_alloca", "__builtin_alloca_with_align",
+						"__builtin_bswap16", "__builtin_bswap32", "__builtin_bswap64",
+						"__builtin_ia32_pause",
 						"__atomic_store", "__atomic_store_n", "__atomic_load", "__atomic_load_n",
 						"__atomic_exchange", "__atomic_exchange_n",
 						"__atomic_compare_exchange", "__atomic_compare_exchange_n",
