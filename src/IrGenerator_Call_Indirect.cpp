@@ -1843,32 +1843,19 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		}
 
 		callExprNode.arguments().visit([&](ASTNode argument) {
-			// Get the parameter type from the function declaration to check if it's a reference
-			// For generic lambdas, use the deduced types from param_types instead of the original auto types
-			const TypeSpecifierNode* param_type = nullptr;
-			std::optional<TypeSpecifierNode> deduced_param_type;
-			if (arg_index < param_types.size()) {
-				// Use deduced type from param_types (handles generic lambdas correctly)
-				deduced_param_type = param_types[arg_index];
-				param_type = &(*deduced_param_type);
-			} else if (arg_index < actual_func_decl->parameter_nodes().size()) {
-				const ASTNode& param_node = actual_func_decl->parameter_nodes()[arg_index];
-				if (param_node.is<DeclarationNode>()) {
-					const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-					param_type = &param_decl.type_specifier_node();
-				} else if (param_node.is<VariableDeclarationNode>()) {
-					const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
-					const DeclarationNode& param_decl = var_decl.declaration();
-					param_type = &param_decl.type_specifier_node();
-				}
-			}
+			CallParamView param_view = resolveCallParamView(
+				actual_func_decl->parameter_nodes(),
+				arg_index,
+				&param_types,
+				nullptr);
+			const TypeSpecifierNode* param_type = param_view.type();
 			const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
 			if (param_type && sema_) {
 				sema_ref_binding = sema_->getCallRefBinding(
 					sema_call_key,
 					arg_index);
 			}
-			const CVReferenceQualifier param_ref_qualifier = callParameterRefQualifier(param_type);
+			const CVReferenceQualifier param_ref_qualifier = param_view.ref_qualifier;
 
 			// Evaluate the argument expression once when sema ref-binding is active so that
 			// the result can be reused in the fallback path without double evaluation.

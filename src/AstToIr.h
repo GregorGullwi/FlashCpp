@@ -1192,6 +1192,19 @@ private:
 	};
 	// Cache parameter reference info by mangled function name to aid call-site lowering
 	std::unordered_map<StringHandle, std::vector<CachedParamInfo>> function_param_cache_;
+	struct CallParamView {
+		const DeclarationNode* declaration = nullptr;
+		const CachedParamInfo* cached = nullptr;
+		std::optional<TypeSpecifierNode> deduced_type;
+		CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
+		bool is_parameter_pack = false;
+
+		const TypeSpecifierNode* type() const;
+	};
+	CallParamView resolveCallParamView(const std::vector<ASTNode>& param_nodes,
+									   size_t arg_index,
+									   const std::vector<TypeSpecifierNode>* deduced_param_types,
+									   const std::vector<CachedParamInfo>* cached_params) const;
 	CVReferenceQualifier callParameterRefQualifier(const TypeSpecifierNode* param_type) const;
 	void applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& type_node);
 	void applyCallParameterBindingMetadata(TypedValue& value, const TypeSpecifierNode& param_type);

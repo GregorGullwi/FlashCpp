@@ -1302,35 +1302,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	}
 
 	callExprNode.arguments().visit([&](ASTNode argument) {
-		// Get the parameter type for this argument (if it exists)
-		const TypeSpecifierNode* param_type = nullptr;
-		const DeclarationNode* param_decl = nullptr;
-		if (arg_index < param_nodes.size() && param_nodes[arg_index].is<DeclarationNode>()) {
-			param_decl = &param_nodes[arg_index].as<DeclarationNode>();
-		} else if (!param_nodes.empty() && param_nodes.back().is<DeclarationNode>()) {
-			const auto& last_param = param_nodes.back().as<DeclarationNode>();
-			if (last_param.is_parameter_pack()) {
-				param_decl = &last_param;
-			}
-		}
-		if (param_decl)
-			param_type = &param_decl->type_specifier_node();
-
-		const CachedParamInfo* cached_param = nullptr;
-		if (cached_param_list && !cached_param_list->empty()) {
-			if (arg_index < cached_param_list->size()) {
-				cached_param = &(*cached_param_list)[arg_index];
-			} else if (cached_param_list->back().is_parameter_pack) {
-				cached_param = &cached_param_list->back();
-			}
-		}
-
-		CVReferenceQualifier param_ref_qualifier = callParameterRefQualifier(param_type);
-		[[maybe_unused]] bool param_is_pack = param_decl && param_decl->is_parameter_pack();
-		if (!param_type && cached_param) {
-			param_ref_qualifier = cached_param->ref_qualifier;
-			param_is_pack = cached_param->is_parameter_pack;
-		}
+		CallParamView param_view = resolveCallParamView(param_nodes, arg_index, nullptr, cached_param_list);
+		const TypeSpecifierNode* param_type = param_view.type();
+		CVReferenceQualifier param_ref_qualifier = param_view.ref_qualifier;
+		[[maybe_unused]] bool param_is_pack = param_view.is_parameter_pack;
 		const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
 		if (param_type && sema_) {
 			sema_ref_binding = sema_->getCallRefBinding(

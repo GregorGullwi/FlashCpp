@@ -375,6 +375,70 @@ CVReferenceQualifier AstToIr::callParameterRefQualifier(const TypeSpecifierNode*
 	return CVReferenceQualifier::None;
 }
 
+const TypeSpecifierNode* AstToIr::CallParamView::type() const {
+	if (deduced_type.has_value()) {
+		return &*deduced_type;
+	}
+	if (declaration) {
+		return &declaration->type_specifier_node();
+	}
+	if (cached && cached->type_node.is<TypeSpecifierNode>()) {
+		return &cached->type_node.as<TypeSpecifierNode>();
+	}
+	return nullptr;
+}
+
+AstToIr::CallParamView AstToIr::resolveCallParamView(
+	const std::vector<ASTNode>& param_nodes,
+	size_t arg_index,
+	const std::vector<TypeSpecifierNode>* deduced_param_types,
+	const std::vector<CachedParamInfo>* cached_params) const {
+	CallParamView view;
+
+	if (deduced_param_types && arg_index < deduced_param_types->size()) {
+		view.deduced_type = (*deduced_param_types)[arg_index];
+		view.ref_qualifier = callParameterRefQualifier(view.type());
+		return view;
+	}
+
+	auto trySetDeclaration = [&](const ASTNode& param_node) {
+		if (param_node.is<DeclarationNode>()) {
+			view.declaration = &param_node.as<DeclarationNode>();
+		} else if (param_node.is<VariableDeclarationNode>()) {
+			view.declaration = &param_node.as<VariableDeclarationNode>().declaration();
+		}
+	};
+
+	if (arg_index < param_nodes.size()) {
+		trySetDeclaration(param_nodes[arg_index]);
+	} else if (!param_nodes.empty()) {
+		trySetDeclaration(param_nodes.back());
+		if (view.declaration && !view.declaration->is_parameter_pack()) {
+			view.declaration = nullptr;
+		}
+	}
+
+	if (view.declaration) {
+		view.is_parameter_pack = view.declaration->is_parameter_pack();
+		view.ref_qualifier = callParameterRefQualifier(view.type());
+		return view;
+	}
+
+	if (cached_params && !cached_params->empty()) {
+		if (arg_index < cached_params->size()) {
+			view.cached = &(*cached_params)[arg_index];
+		} else if (cached_params->back().is_parameter_pack) {
+			view.cached = &cached_params->back();
+		}
+	}
+	if (view.cached) {
+		view.is_parameter_pack = view.cached->is_parameter_pack;
+		view.ref_qualifier = view.cached->ref_qualifier;
+	}
+
+	return view;
+}
+
 std::optional<TypedValue> AstToIr::tryBuildSemaBoundCallArgument(
 	ExprResult argument_result,
 	const ASTNode& argument,
