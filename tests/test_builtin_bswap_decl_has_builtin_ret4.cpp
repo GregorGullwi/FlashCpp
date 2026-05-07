@@ -22,17 +22,9 @@ constexpr int has_pause = 1;
 constexpr int has_pause = 0;
 #endif
 
-unsigned short use16(unsigned short x) {
-	return __builtin_bswap16(x);
-}
-
-unsigned int use32(unsigned int x) {
-	return __builtin_bswap32(x);
-}
-
-unsigned long long use64(unsigned long long x) {
-	return __builtin_bswap64(x);
-}
+using Bswap16Type = decltype(__builtin_bswap16((unsigned short)0));
+using Bswap32Type = decltype(__builtin_bswap32((unsigned int)0));
+using Bswap64Type = decltype(__builtin_bswap64((unsigned long long)0));
 
 int main() {
 	return has_bswap16 + has_bswap32 + has_bswap64 + has_pause;

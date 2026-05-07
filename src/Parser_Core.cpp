@@ -1504,8 +1504,15 @@ void Parser::register_builtin_functions() {
 	const ASTNode void_type = make_builtin_type(TypeCategory::Void, CVQualifier::None, 0);
 	const ASTNode bool_type = make_builtin_type(TypeCategory::Bool, CVQualifier::None, 0);
 	const ASTNode int_type = make_builtin_type(TypeCategory::Int, CVQualifier::None, 0);
+	const ASTNode float_type = make_builtin_type(TypeCategory::Float, CVQualifier::None, 0);
+	const ASTNode double_type = make_builtin_type(TypeCategory::Double, CVQualifier::None, 0);
+	const ASTNode long_double_type = make_builtin_type(TypeCategory::LongDouble, CVQualifier::None, 0);
 	const ASTNode unsigned_short_type = make_builtin_type(TypeCategory::UnsignedShort, CVQualifier::None, 0);
 	const ASTNode unsigned_int_type = make_builtin_type(TypeCategory::UnsignedInt, CVQualifier::None, 0);
+	const ASTNode int_ptr = make_builtin_type(TypeCategory::Int, CVQualifier::None, 1);
+	const ASTNode float_ptr = make_builtin_type(TypeCategory::Float, CVQualifier::None, 1);
+	const ASTNode double_ptr = make_builtin_type(TypeCategory::Double, CVQualifier::None, 1);
+	const ASTNode long_double_ptr = make_builtin_type(TypeCategory::LongDouble, CVQualifier::None, 1);
 	const ASTNode void_ptr = make_builtin_type(TypeCategory::Void, CVQualifier::None, 1);
 	const ASTNode const_void_ptr = make_builtin_type(TypeCategory::Void, CVQualifier::Const, 1);
 	const ASTNode volatile_void_ptr = make_builtin_type(TypeCategory::Void, CVQualifier::Volatile, 1);
@@ -1580,6 +1587,71 @@ void Parser::register_builtin_functions() {
 	register_extern_c_builtin("__builtin_bswap32", unsigned_int_type, {unsigned_int_type});
 	register_extern_c_builtin("__builtin_bswap64", generic_atomic_value_type, {generic_atomic_value_type});
 	register_extern_c_builtin("__builtin_ia32_pause", void_type, {});
+
+	auto register_binary_float_builtins = [&](std::initializer_list<std::string_view> names, const ASTNode& type) {
+		for (std::string_view name : names) {
+			register_extern_c_builtin(name, type, {type, type});
+		}
+	};
+	auto register_int_predicate_builtins = [&](std::initializer_list<std::string_view> names, const ASTNode& type) {
+		for (std::string_view name : names) {
+			register_extern_c_builtin(name, int_type, {type});
+		}
+	};
+	auto register_int_binary_predicate_builtins = [&](std::initializer_list<std::string_view> names, const ASTNode& type) {
+		for (std::string_view name : names) {
+			register_extern_c_builtin(name, int_type, {type, type});
+		}
+	};
+	const std::initializer_list<std::string_view> unary_math_base = {
+		"__builtin_acosf", "__builtin_asinf", "__builtin_atanf", "__builtin_ceilf",
+		"__builtin_cosf", "__builtin_coshf", "__builtin_expf", "__builtin_fabsf",
+		"__builtin_floorf", "__builtin_logf", "__builtin_log10f", "__builtin_sinf",
+		"__builtin_sinhf", "__builtin_sqrtf", "__builtin_tanf", "__builtin_tanhf"
+	};
+	for (std::string_view name : unary_math_base) {
+		register_extern_c_builtin(name, float_type, {float_type});
+	}
+	for (std::string_view name : {
+		"__builtin_acos", "__builtin_asin", "__builtin_atan", "__builtin_ceil",
+		"__builtin_cos", "__builtin_cosh", "__builtin_exp", "__builtin_fabs",
+		"__builtin_floor", "__builtin_log", "__builtin_log10", "__builtin_sin",
+		"__builtin_sinh", "__builtin_sqrt", "__builtin_tan", "__builtin_tanh"
+	}) {
+		register_extern_c_builtin(name, double_type, {double_type});
+	}
+	for (std::string_view name : {
+		"__builtin_acosl", "__builtin_asinl", "__builtin_atanl", "__builtin_ceill",
+		"__builtin_cosl", "__builtin_coshl", "__builtin_expl", "__builtin_fabsl",
+		"__builtin_floorl", "__builtin_logl", "__builtin_log10l", "__builtin_sinl",
+		"__builtin_sinhl", "__builtin_sqrtl", "__builtin_tanl", "__builtin_tanhl"
+	}) {
+		register_extern_c_builtin(name, long_double_type, {long_double_type});
+	}
+	register_binary_float_builtins({"__builtin_atan2f", "__builtin_fmodf", "__builtin_powf"}, float_type);
+	register_binary_float_builtins({"__builtin_atan2", "__builtin_fmod", "__builtin_pow"}, double_type);
+	register_binary_float_builtins({"__builtin_atan2l", "__builtin_fmodl", "__builtin_powl"}, long_double_type);
+	register_extern_c_builtin("__builtin_frexpf", float_type, {float_type, int_ptr});
+	register_extern_c_builtin("__builtin_frexp", double_type, {double_type, int_ptr});
+	register_extern_c_builtin("__builtin_frexpl", long_double_type, {long_double_type, int_ptr});
+	register_extern_c_builtin("__builtin_ldexpf", float_type, {float_type, int_type});
+	register_extern_c_builtin("__builtin_ldexp", double_type, {double_type, int_type});
+	register_extern_c_builtin("__builtin_ldexpl", long_double_type, {long_double_type, int_type});
+	register_extern_c_builtin("__builtin_modff", float_type, {float_type, float_ptr});
+	register_extern_c_builtin("__builtin_modf", double_type, {double_type, double_ptr});
+	register_extern_c_builtin("__builtin_modfl", long_double_type, {long_double_type, long_double_ptr});
+	register_extern_c_builtin("__builtin_powif", float_type, {float_type, int_type});
+	register_extern_c_builtin("__builtin_powi", double_type, {double_type, int_type});
+	register_extern_c_builtin("__builtin_powil", long_double_type, {long_double_type, int_type});
+	register_int_predicate_builtins({"__builtin_isfinite", "__builtin_isinf", "__builtin_isnan", "__builtin_isnormal", "__builtin_signbit"}, float_type);
+	register_int_predicate_builtins({"__builtin_isfinite", "__builtin_isinf", "__builtin_isnan", "__builtin_isnormal", "__builtin_signbit"}, double_type);
+	register_int_predicate_builtins({"__builtin_isfinite", "__builtin_isinf", "__builtin_isnan", "__builtin_isnormal", "__builtin_signbit"}, long_double_type);
+	register_int_binary_predicate_builtins({"__builtin_isgreater", "__builtin_isgreaterequal", "__builtin_isless", "__builtin_islessequal", "__builtin_islessgreater", "__builtin_isunordered"}, float_type);
+	register_int_binary_predicate_builtins({"__builtin_isgreater", "__builtin_isgreaterequal", "__builtin_isless", "__builtin_islessequal", "__builtin_islessgreater", "__builtin_isunordered"}, double_type);
+	register_int_binary_predicate_builtins({"__builtin_isgreater", "__builtin_isgreaterequal", "__builtin_isless", "__builtin_islessequal", "__builtin_islessgreater", "__builtin_isunordered"}, long_double_type);
+	register_extern_c_builtin("__builtin_fpclassify", int_type, {int_type, int_type, int_type, int_type, int_type, float_type});
+	register_extern_c_builtin("__builtin_fpclassify", int_type, {int_type, int_type, int_type, int_type, int_type, double_type});
+	register_extern_c_builtin("__builtin_fpclassify", int_type, {int_type, int_type, int_type, int_type, int_type, long_double_type});
 
 	// MSVC atomic headers rely on several barrier/interlocked intrinsics via macros
 	// (for example _Compiler_barrier() -> _ReadWriteBarrier()).

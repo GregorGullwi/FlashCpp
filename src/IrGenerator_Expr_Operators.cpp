@@ -3810,9 +3810,6 @@ std::optional<ExprResult> AstToIr::tryGenerateIntrinsicIr(std::string_view func_
 	if (func_name == "__builtin_expect") {
 		return generateBuiltinExpectIntrinsic(callExprNode);
 	}
-	if (func_name == "__builtin_bswap16" || func_name == "__builtin_bswap32" || func_name == "__builtin_bswap64") {
-		return generateBuiltinIdentityIntrinsic(callExprNode, func_name);
-	}
 	if (func_name == "__builtin_launder") {
 		return generateBuiltinLaunderIntrinsic(callExprNode);
 	}
