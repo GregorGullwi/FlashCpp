@@ -75,7 +75,7 @@ EvalResult make_constructor_default_init_from_type(const TypeSpecifierNode& type
 	if (type_spec.is_array()) {
 		const std::vector<size_t>& dims = type_spec.array_dimensions();
 		if (dims.empty()) {
-			return EvalResult::error("Default-initialized constructor member array is missing dimensions in constexpr evaluation");
+			return EvalResult::error("Missing dimensions for default-initialized array member");
 		}
 
 		EvalResult array_result = EvalResult::from_int(0LL);
@@ -89,6 +89,7 @@ EvalResult make_constructor_default_init_from_type(const TypeSpecifierNode& type
 		} else {
 			element_type.set_array_dimensions(std::vector<size_t>(dims.begin() + 1, dims.end()));
 		}
+		element_type.set_size_in_bits(getTypeSpecSizeBits(element_type));
 
 		array_result.array_elements.reserve(dims[0]);
 		for (size_t i = 0; i < dims[0]; ++i) {
@@ -106,7 +107,7 @@ EvalResult make_constructor_default_init_from_type(const TypeSpecifierNode& type
 		const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		if (!struct_info) {
-			return EvalResult::error("Struct type info not found for default-initialized constructor member");
+			return EvalResult::error("Struct type info not found for default-initialized member");
 		}
 
 		if (struct_info->hasUserDefinedConstructor()) {
@@ -123,25 +124,30 @@ EvalResult make_constructor_default_init_from_type(const TypeSpecifierNode& type
 			if (!ctor_result.has_value()) {
 				return EvalResult::error(
 					"No matching default constructor for '" +
-					std::string(StringTable::getStringView(struct_info->getName())) +
-					"' in constexpr constructor member initialization");
+					std::string(StringTable::getStringView(struct_info->getName())) + "'");
 			}
 			return *ctor_result;
 		}
 
-		EvalResult object_result = EvalResult::from_int(0LL);
-		object_result.object_type_index = type_spec.type_index();
+		InitializerListNode empty_init_list;
+		EvalResult object_result = Evaluator::materialize_aggregate_object_value(
+			struct_info,
+			type_spec.type_index(),
+			empty_init_list,
+			context);
+		if (!object_result.success()) {
+			return object_result;
+		}
 		object_result.is_indeterminate = false;
-		object_result.set_exact_type(type_spec);
 
 		for (const auto& nested_member : struct_info->members) {
 			std::string_view nested_name = StringTable::getStringView(nested_member.getName());
-			EvalResult nested_result;
-			if (nested_member.default_initializer.has_value()) {
-				nested_result = Evaluator::evaluate(*nested_member.default_initializer, context);
-			} else {
-				nested_result = make_constructor_member_default_init(nested_member, context);
+			if (object_result.object_member_bindings.find(nested_name) != object_result.object_member_bindings.end()) {
+				object_result.is_indeterminate =
+					object_result.is_indeterminate || object_result.object_member_bindings[nested_name].is_indeterminate;
+				continue;
 			}
+			EvalResult nested_result = make_constructor_member_default_init(nested_member, context);
 			if (!nested_result.success()) {
 				return nested_result;
 			}
@@ -6505,11 +6511,33 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 		const auto& member = struct_info->members[mi];
 		std::string_view mname = StringTable::getStringView(member.getName());
 		if (bindings.find(mname) == bindings.end() && member.default_initializer.has_value()) {
-			auto default_result = materialize_member_initializer_value(
-				member,
-				member.default_initializer.value(),
-				context,
-				false);
+			EvalResult default_result;
+			const ASTNode& default_initializer = member.default_initializer.value();
+			if (default_initializer.is<InitializerListNode>()) {
+				default_result = materialize_member_initializer_value(
+					member,
+					default_initializer,
+					context,
+					false);
+			} else {
+				std::unordered_map<std::string_view, EvalResult> default_bindings;
+				if (evaluation_bindings) {
+					default_bindings = *evaluation_bindings;
+				}
+				for (const auto& [name, value] : bindings) {
+					default_bindings[name] = value;
+				}
+				default_result = Evaluator::evaluate_expression_with_bindings_const(
+					default_initializer,
+					default_bindings,
+					context);
+			}
+			if (default_result.success() && !default_initializer.is<InitializerListNode>()) {
+				default_result = applyAggregateMemberScalarInitialization(
+					member,
+					std::move(default_result),
+					false);
+			}
 			if (!default_result.success())
 				return default_result;
 			bindings[mname] = default_result;

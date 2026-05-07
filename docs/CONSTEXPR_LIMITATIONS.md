@@ -413,13 +413,13 @@ constexpr helper calls that take the member address:
 
 ```cpp
 struct Pair { int value; };
-constexpr void set_pair(Pair* p, int v) { p->value = v; }
+constexpr void setPair(Pair* p, int v) { p->value = v; }
 
 struct Box {
     Pair pair;
     constexpr Box(int v) {
         pair.value = 0;
-        set_pair(&pair, v);
+        setPair(&pair, v);
     }
 };
 
