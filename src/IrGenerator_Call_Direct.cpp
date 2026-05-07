@@ -1669,22 +1669,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	size_t arg_idx = 0;
 	for (TypedValue arg : call_arguments) {
-		const TypeSpecifierNode* param_type_spec = nullptr;
-		if (matched_func_decl && arg_idx < param_nodes.size() && param_nodes[arg_idx].is<DeclarationNode>()) {
-			param_type_spec = &param_nodes[arg_idx].as<DeclarationNode>().type_specifier_node();
-		} else if (cached_param_list && !cached_param_list->empty()) {
-			if (arg_idx < cached_param_list->size()) {
-				const auto& cached = (*cached_param_list)[arg_idx];
-				if (cached.type_node.is<TypeSpecifierNode>()) {
-					param_type_spec = &cached.type_node.as<TypeSpecifierNode>();
-				}
-			} else if (cached_param_list->back().is_parameter_pack) {
-				const auto& cached = cached_param_list->back();
-				if (cached.type_node.is<TypeSpecifierNode>()) {
-					param_type_spec = &cached.type_node.as<TypeSpecifierNode>();
-				}
-			}
-		}
+		CallParamView param_view = resolveCallParamView(param_nodes, arg_idx, nullptr, cached_param_list);
+		const TypeSpecifierNode* param_type_spec = param_view.type();
 		if (param_type_spec) {
 			// Preserve the lowered argument's type identity and pointer depth.
 			// They describe the runtime value being passed; copying them from the
