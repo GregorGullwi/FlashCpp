@@ -1192,6 +1192,7 @@ private:
 	};
 	// Cache parameter reference info by mangled function name to aid call-site lowering
 	std::unordered_map<StringHandle, std::vector<CachedParamInfo>> function_param_cache_;
+	CVReferenceQualifier callParameterRefQualifier(const TypeSpecifierNode* param_type) const;
 	void applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& type_node);
 	void applyCallParameterBindingMetadata(TypedValue& value, const TypeSpecifierNode& param_type);
 	std::optional<TypedValue> tryBuildSemaBoundCallArgument(ExprResult argument_result, const ASTNode& argument, const TypeSpecifierNode& param_type, const CallArgReferenceBindingInfo* sema_ref_binding, const Token& token);

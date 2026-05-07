@@ -362,6 +362,19 @@ void AstToIr::applyCallParameterBindingMetadata(TypedValue& value, const TypeSpe
 	}
 }
 
+CVReferenceQualifier AstToIr::callParameterRefQualifier(const TypeSpecifierNode* param_type) const {
+	if (!param_type) {
+		return CVReferenceQualifier::None;
+	}
+	if (param_type->is_rvalue_reference()) {
+		return CVReferenceQualifier::RValueReference;
+	}
+	if (param_type->is_reference()) {
+		return CVReferenceQualifier::LValueReference;
+	}
+	return CVReferenceQualifier::None;
+}
+
 std::optional<TypedValue> AstToIr::tryBuildSemaBoundCallArgument(
 	ExprResult argument_result,
 	const ASTNode& argument,
@@ -579,7 +592,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 	const TypeSpecifierNode* param_type,
 	const Token& token) {
 	TypedValue value;
-	bool param_is_ref = param_type && (param_type->is_reference() || param_type->is_rvalue_reference());
+	bool param_is_ref = callParameterRefQualifier(param_type) != CVReferenceQualifier::None;
 
 	auto makeReferenceAddressValue = [&](TempVar address_temp) {
 		value.setType(argument_result.category());

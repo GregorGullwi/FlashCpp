@@ -1868,11 +1868,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					sema_call_key,
 					arg_index);
 			}
+			const CVReferenceQualifier param_ref_qualifier = callParameterRefQualifier(param_type);
 
 			// Evaluate the argument expression once when sema ref-binding is active so that
 			// the result can be reused in the fallback path without double evaluation.
 			std::optional<ExprResult> sema_evaluated_arg;
-			bool sema_ref_binding_applied = false;
 			if (param_type && sema_ref_binding && sema_ref_binding->is_valid()) {
 				ExpressionContext arg_context = sema_ref_binding->binds_directly()
 													? ExpressionContext::LValueAddress
@@ -1882,7 +1882,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						*sema_evaluated_arg, argument, *param_type, sema_ref_binding, callExprNode.called_from())) {
 					call_op.args.push_back(std::move(*sema_bound_arg));
 					arg_index++;
-					sema_ref_binding_applied = true;
 					return;
 				}
 			}
@@ -1915,10 +1914,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(func_addr_var)));
 				} else if (symbol.has_value()) {
 					const DeclarationNode* decl_node = get_decl_from_symbol(*symbol);
-					// Check if parameter expects a reference
-					if (decl_node && !sema_ref_binding_applied &&
-						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						call_op.args.push_back(buildReferenceCallArgumentFromDeclaration(*decl_node, identifier_name));
+					if (decl_node) {
+						call_op.args.push_back(buildDirectIdentifierCallArgument(
+							*decl_node,
+							identifier_name,
+							param_ref_qualifier,
+							argument,
+							callExprNode.called_from()));
 					} else {
 						call_op.args.push_back(buildOrdinaryCallArgument(argument, param_type, sema_evaluated_arg, callExprNode.called_from()));
 					}
@@ -1933,8 +1935,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 												 : visitExpressionNode(argument.as<ExpressionNode>());
 
 				// Check if parameter expects a reference and argument is a literal
-				if (!sema_ref_binding_applied &&
-					param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+				if (param_ref_qualifier != CVReferenceQualifier::None) {
 					// Parameter expects a reference, but argument is not an identifier
 					// We need to materialize the value into a temporary and pass its address
 					call_op.args.push_back(buildReferenceCallArgumentFromResult(

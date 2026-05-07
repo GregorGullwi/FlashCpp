@@ -1325,13 +1325,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 
-		CVReferenceQualifier param_ref_qualifier = CVReferenceQualifier::None;
+		CVReferenceQualifier param_ref_qualifier = callParameterRefQualifier(param_type);
 		[[maybe_unused]] bool param_is_pack = param_decl && param_decl->is_parameter_pack();
-		if (param_type) {
-			param_ref_qualifier = param_type->is_rvalue_reference()
-									  ? CVReferenceQualifier::RValueReference
-									  : (param_type->is_reference() ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None);
-		} else if (cached_param) {
+		if (!param_type && cached_param) {
 			param_ref_qualifier = cached_param->ref_qualifier;
 			param_is_pack = cached_param->is_parameter_pack;
 		}
