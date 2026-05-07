@@ -594,21 +594,24 @@ public:
 									   const std::vector<TemplateTypeArg>& pattern_args,
 									   ASTNode specialized_node,
 									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
-		FLASH_LOG(Templates, Debug, "registerSpecializationPattern: template_name='", StringTable::getStringView(template_name),
-				  "', num_template_params=", template_params.size(), ", num_pattern_args=", pattern_args.size());
 
-		// Debug: log each pattern arg
-		for (size_t i = 0; i < pattern_args.size(); ++i) {
-			const auto& arg = pattern_args[i];
-			std::string_view dep_name_view = arg.dependent_name.isValid() ? StringTable::getStringView(arg.dependent_name) : "";
-			FLASH_LOG(Templates, Debug, "  pattern_arg[", i, "]: base_type=", static_cast<int>(arg.category()),
-					  ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent,
-					  ", is_value=", arg.is_value, ", dependent_name='", dep_name_view, "'");
-		}
+		if (FLASH_LOG_ENABLED(Templates, Debug)) {
+			FLASH_LOG(Templates, Debug, "registerSpecializationPattern: template_name='", StringTable::getStringView(template_name),
+					  "', num_template_params=", template_params.size(), ", num_pattern_args=", pattern_args.size());
 
-		// Debug: log each template param type
-		for (size_t i = 0; i < template_params.size(); ++i) {
-			FLASH_LOG(Templates, Debug, "  template_param[", i, "]: name=", template_params[i].name());
+			// Debug: log each pattern arg
+			for (size_t i = 0; i < pattern_args.size(); ++i) {
+				const auto& arg = pattern_args[i];
+				std::string_view dep_name_view = arg.dependent_name.isValid() ? StringTable::getStringView(arg.dependent_name) : "";
+				FLASH_LOG(Templates, Debug, "  pattern_arg[", i, "]: base_type=", static_cast<int>(arg.category()),
+						  ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent,
+						  ", is_value=", arg.is_value, ", dependent_name='", dep_name_view, "'");
+			}
+
+			// Debug: log each template param type
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				FLASH_LOG(Templates, Debug, "  template_param[", i, "]: name=", template_params[i].name());
+			}
 		}
 
 		TemplatePattern pattern;
