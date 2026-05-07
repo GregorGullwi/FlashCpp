@@ -269,8 +269,15 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	// Set up template parameter names for the body parsing phase
 	// This is needed for decltype expressions and other template-dependent constructs
 	FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
-	for (StringHandle param_name : template_param_metadata.names) {
-		pushCurrentTemplateParamName(param_name);
+	for (size_t i = 0; i < template_param_metadata.names.size(); ++i) {
+		pushCurrentTemplateParameter(
+			template_param_metadata.names[i],
+			i < template_param_metadata.kinds.size()
+				? template_param_metadata.kinds[i]
+				: TemplateParameterKind::Type,
+			i < template_param_metadata.non_type_categories.size()
+				? template_param_metadata.non_type_categories[i]
+				: TypeCategory::Invalid);
 	}
 
 	// Check for requires clause after template parameters

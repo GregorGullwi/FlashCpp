@@ -6758,8 +6758,6 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 		return std::nullopt;
 	}
 
-	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
-
 	// Resolve a matching lazy-member entry. When the caller is indifferent to
 	// const-ness, fall back to the "Any" variant so both const and non-const
 	// candidates are considered. getLazyMemberInfo / getLazyMemberInfoAny already
@@ -6768,21 +6766,11 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	LazyMemberKey query_key = is_const_member.has_value()
 		? LazyMemberKey::exact(struct_name, member_name, *is_const_member)
 		: LazyMemberKey::anyConst(struct_name, member_name);
-	auto lazy_info_opt = lazy_registry.getLazyMemberInfo(query_key);
-	if (!lazy_info_opt.has_value()) {
+	auto instantiated = parser_.instantiateLazyMemberIfNeeded(query_key);
+	if (!instantiated.has_value()) {
 		return std::nullopt;
 	}
-
-	auto instantiated = parser_.instantiateLazyMemberFunction(*lazy_info_opt);
 	parser_.normalizePendingSemanticRootsIfAvailable();
-	// Mark using the const-ness of the actual lazy entry we resolved, so the
-	// specific-const and any-const call patterns stay consistent with what
-	// parser_.instantiateLazyMemberFunction() just materialized.
-	lazy_registry.markInstantiated(
-		LazyMemberKey::exact(
-			struct_name,
-			member_name,
-			lazy_info_opt->identity.is_const_method));
 	return instantiated;
 }
 

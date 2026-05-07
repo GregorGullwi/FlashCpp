@@ -3,6 +3,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "ParserTemplateClassShared.h"
 #include "TemplateRegistry_Pattern.h"
 #include "TypeTraitEvaluator.h"
 
@@ -2316,32 +2317,24 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 			return_type = emplace_node<TypeSpecifierNode>(reparsed_return_type);
 		} else {
-			TypeIndex substituted_return_type_index = substitute_template_parameter(
-				orig_return_type, template_params, template_args);
-
-			// Create return type with substituted type, preserving qualifiers
-			return_type = emplace_node<TypeSpecifierNode>(
-				substituted_return_type_index,
-				get_type_size_bits(substituted_return_type_index.category()),
-				orig_return_type.token(),
-				orig_return_type.cv_qualifier(),
-				ReferenceQualifier::None);
-
-			// Apply pointer levels and references from original type
-			TypeSpecifierNode& return_type_ref = return_type.as<TypeSpecifierNode>();
-			return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
-			applyTemplateArgIndirection(return_type_ref, orig_return_type, template_params, template_args,
-										/*propagate_reference_qualifier=*/true);
-			for (const auto& ptr_level : orig_return_type.pointer_levels()) {
-				return_type_ref.add_pointer_level(ptr_level.cv_qualifier);
-			}
-			propagateFunctionSignatureFromTemplateArg(
-				return_type_ref,
+			TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
 				orig_return_type,
-				substituted_return_type_index,
+				orig_decl.type_node(),
+				orig_decl.identifier_token(),
 				template_params,
-				template_args);
-			apply_resolved_alias_metadata_local(return_type_ref);
+				template_args,
+				[this](const ASTNode& node, const auto& params, const auto& args) {
+					return substituteTemplateParameters(node, params, args);
+				},
+				[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+					return substitute_template_parameter(type_spec, params, args);
+				},
+				nullptr,
+				TypeIndex{},
+				TypeIndex{},
+				false,
+				true);
+			return_type = emplace_node<TypeSpecifierNode>(substituted_return_type);
 		}
 
 		auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
@@ -2467,41 +2460,30 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				return true;
 			};
 		auto buildMaterializedParamType =
-			[&](const TypeSpecifierNode& original_param_type,
+			[&](const DeclarationNode& original_param_decl,
 				const InlineVector<ASTNode, 4>& materialized_template_params,
 				const InlineVector<TemplateTypeArg, 4>& materialized_template_args) {
-				TypeIndex substituted_type_index = substitute_template_parameter(
-					original_param_type, materialized_template_params, materialized_template_args);
-				ASTNode param_type = emplace_node<TypeSpecifierNode>(
-					substituted_type_index,
-					get_type_size_bits(substituted_type_index.category()),
-					original_param_type.token(),
-					original_param_type.cv_qualifier(),
-					ReferenceQualifier::None);
-				resolveDependentMemberAlias(param_type, materialized_template_params, materialized_template_args);
-
-				TypeSpecifierNode& param_type_ref = param_type.as<TypeSpecifierNode>();
-				int resolved_param_size_bits = getTypeSpecSizeBits(param_type_ref);
-				if (resolved_param_size_bits > 0) {
-					param_type_ref.set_size_in_bits(resolved_param_size_bits);
-				}
-				param_type_ref.set_reference_qualifier(original_param_type.reference_qualifier());
-				applyTemplateArgIndirection(
-					param_type_ref,
+				const TypeSpecifierNode& original_param_type = original_param_decl.type_specifier_node();
+				TypeSpecifierNode substituted_param_type = buildSubstitutedTypeSpecifier(
 					original_param_type,
+					original_param_decl.type_node(),
+					original_param_decl.identifier_token(),
 					materialized_template_params,
 					materialized_template_args,
-					/*propagate_reference_qualifier=*/true);
-				for (const auto& ptr_level : original_param_type.pointer_levels()) {
-					param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
-				}
-				propagateFunctionSignatureFromTemplateArg(
-					param_type_ref,
-					original_param_type,
-					substituted_type_index,
-					materialized_template_params,
-					materialized_template_args);
-				apply_resolved_alias_metadata_local(param_type_ref);
+					[this](const ASTNode& node, const auto& params, const auto& args) {
+						return substituteTemplateParameters(node, params, args);
+					},
+					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+						return substitute_template_parameter(type_spec, params, args);
+					},
+					nullptr,
+					TypeIndex{},
+					TypeIndex{},
+					false,
+					true);
+				ASTNode param_type = emplace_node<TypeSpecifierNode>(substituted_param_type);
+				resolveDependentMemberAlias(param_type, materialized_template_params, materialized_template_args);
+				normalizeSubstitutedTypeSpec(param_type.as<TypeSpecifierNode>());
 				return param_type;
 			};
 
@@ -2525,7 +2507,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 								continue;
 							}
 
-							ASTNode param_type = buildMaterializedParamType(orig_param_type, subst_params, subst_args);
+							ASTNode param_type = buildMaterializedParamType(param_decl, subst_params, subst_args);
 
 							std::string_view param_name = buildPackElementParamName(param_decl, pack_element_offset);
 
@@ -2546,37 +2528,26 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				}
 
 				// Substitute template parameters in the type
-				TypeIndex substituted_type_index = substitute_template_parameter(
-					orig_param_type, template_params, template_args);
-
-				// Create new type specifier with substituted type
-				ASTNode param_type = emplace_node<TypeSpecifierNode>(
-					substituted_type_index,
-					get_type_size_bits(substituted_type_index.category()),
-					orig_param_type.token(),
-					orig_param_type.cv_qualifier(),
-					ReferenceQualifier::None);
-				resolveDependentMemberAlias(param_type, template_params, template_args);
-
-				// Apply pointer levels and references from original type
-				TypeSpecifierNode& param_type_ref = param_type.as<TypeSpecifierNode>();
-				int resolved_param_size_bits = getTypeSpecSizeBits(param_type_ref);
-				if (resolved_param_size_bits > 0) {
-					param_type_ref.set_size_in_bits(resolved_param_size_bits);
-				}
-				param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
-				applyTemplateArgIndirection(param_type_ref, orig_param_type, template_params, template_args,
-											/*propagate_reference_qualifier=*/true);
-				for (const auto& ptr_level : orig_param_type.pointer_levels()) {
-					param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
-				}
-				propagateFunctionSignatureFromTemplateArg(
-					param_type_ref,
+				TypeSpecifierNode substituted_param_type = buildSubstitutedTypeSpecifier(
 					orig_param_type,
-					substituted_type_index,
+					param_decl.type_node(),
+					param_decl.identifier_token(),
 					template_params,
-					template_args);
-				apply_resolved_alias_metadata_local(param_type_ref);
+					template_args,
+					[this](const ASTNode& node, const auto& params, const auto& args) {
+						return substituteTemplateParameters(node, params, args);
+					},
+					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+						return substitute_template_parameter(type_spec, params, args);
+					},
+					nullptr,
+					TypeIndex{},
+					TypeIndex{},
+					false,
+					true);
+				ASTNode param_type = emplace_node<TypeSpecifierNode>(substituted_param_type);
+				resolveDependentMemberAlias(param_type, template_params, template_args);
+				normalizeSubstitutedTypeSpec(param_type.as<TypeSpecifierNode>());
 
 				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 				// Preserve default argument value from the original template declaration

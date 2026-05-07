@@ -1025,14 +1025,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			// Try to trigger lazy member function instantiation for the target
 			StringHandle inst_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
 			StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
-			auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
 			LazyMemberKey member_key = LazyMemberKey::anyConst(inst_name_handle, member_handle);
-			if (lazy_registry.needsInstantiation(member_key)) {
-				auto lazy_info = lazy_registry.getLazyMemberInfo(member_key);
-				if (lazy_info.has_value()) {
-					parser_.instantiateLazyMemberFunction(*lazy_info);
+			if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
+				if (parser_.instantiateLazyMemberIfNeeded(member_key).has_value()) {
 					normalizePendingSemanticRoots();
-					lazy_registry.markInstantiated(inst_name_handle, member_handle, lazy_info->identity.is_const_method);
 				}
 			}
 
@@ -1675,41 +1671,11 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			const TemplateTypeArg& subst = it->second;
 			FLASH_LOG(Templates, Debug, "  Substituting template parameter: ", type_name,
 					  " -> base_type=", (int)subst.typeEnum(), ", type_index=", subst.type_index);
-
-			// Create a TypeSpecifierNode from the substitution
-			// Determine the correct size_in_bits based on the type
-			int size_in_bits = get_type_size_bits(subst.category());
-			if (size_in_bits == 0) {
-				switch (subst.category()) {
-				case TypeCategory::Struct:
-				case TypeCategory::UserDefined:
-				case TypeCategory::TypeAlias:
-						// For struct types, we need to look up the size from TypeInfo
-					if (const TypeInfo* ti = tryGetTypeInfo(subst.type_index)) {
-						if (ti->isStruct()) {
-							const StructTypeInfo* si = ti->getStructInfo();
-							if (si) {
-								size_in_bits = si->sizeInBits().value;
-							}
-						}
-					}
-					break;
-				default:
-					size_in_bits = 64; // Default to 64 bits if unknown
-					break;
-				}
+			if (subst.is_value) {
+				throw CompileError("Template argument used in a type position did not resolve to a type");
 			}
 
-			TypeSpecifierNode substituted_type(
-				subst.type_index.withCategory(subst.typeEnum()),
-				size_in_bits,
-				Token{},
-				subst.cv_qualifier,
-				subst.reference_qualifier());
-
-			substituted_type.add_pointer_levels(subst.pointer_depth);
-
-			return substituted_type;
+			return makeTypeSpecifierFromTemplateTypeArg(subst, type.token());
 		}
 
 		if (!type_name.empty()) {

@@ -317,15 +317,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		FLASH_LOG(Templates, Debug, "Checking lazy instantiation for: ", instantiated_class_name, "::", member_name);
 		if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
 			FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for qualified call: ", instantiated_class_name, "::", member_name);
-			auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(member_key);
-			if (lazy_info_opt.has_value()) {
-				instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
-				LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-					LazyMemberKey::exact(
-						class_name_handle,
-						member_name_handle,
-						lazy_info_opt->identity.is_const_method));
-			}
+			instantiated_func = instantiateLazyMemberIfNeeded(member_key);
 		}
 		// If the hash-based name didn't match (dependent vs concrete hash mismatch),
 		// try to find the correct instantiation by looking up getTypesByNameMap() for a matching
@@ -343,14 +335,8 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 						if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(alt_member_key)) {
 							FLASH_LOG(Templates, Debug, "Lazy instantiation triggered via base template match: ",
 									  StringTable::getStringView(alt_class_handle), "::", member_name);
-							auto lazy_info_opt2 = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(alt_member_key);
-							if (lazy_info_opt2.has_value()) {
-								instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt2);
-								LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-									LazyMemberKey::exact(
-										alt_class_handle,
-										member_name_handle,
-										lazy_info_opt2->identity.is_const_method));
+							instantiated_func = instantiateLazyMemberIfNeeded(alt_member_key);
+							if (instantiated_func.has_value()) {
 								// Update instantiated_class_name to the correct one for mangling
 								instantiated_class_name = StringTable::getStringView(alt_class_handle);
 								break;

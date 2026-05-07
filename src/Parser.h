@@ -684,6 +684,7 @@ private:
 	struct ActiveTemplateParameterState {
 		InlineVector<StringHandle, 4> names;	 // Names of current template parameters - from Token storage
 		InlineVector<TemplateParameterKind, 4> kinds;
+		InlineVector<TypeCategory, 4> non_type_categories;
 
 		bool empty() const { return names.empty(); }
 		size_t size() const { return names.size(); }
@@ -691,32 +692,98 @@ private:
 		void clear() {
 			names.clear();
 			kinds.clear();
+			non_type_categories.clear();
+		}
+
+		void resetNonTypeCategories(size_t count) {
+			non_type_categories.clear();
+			non_type_categories.reserve(count);
+			for (size_t i = 0; i < count; ++i) {
+				non_type_categories.push_back(TypeCategory::Invalid);
+			}
+		}
+
+		void padNonTypeCategoriesToNameCount() {
+			if (non_type_categories.size() > names.size()) {
+				throw InternalError("ActiveTemplateParameterState category slots out of sync");
+			}
+			while (non_type_categories.size() < names.size()) {
+				non_type_categories.push_back(TypeCategory::Invalid);
+			}
 		}
 
 		void setNames(const InlineVector<StringHandle, 4>& param_names) {
 			names = param_names;
 			kinds.clear();
+			resetNonTypeCategories(names.size());
 		}
 
 		void setNames(InlineVector<StringHandle, 4>&& param_names) {
 			names = std::move(param_names);
 			kinds.clear();
+			resetNonTypeCategories(names.size());
 		}
 
 		void setNamesAndKinds(const InlineVector<StringHandle, 4>& param_names,
 							  const InlineVector<TemplateParameterKind, 4>& param_kinds) {
 			names = param_names;
 			kinds = param_kinds;
+			resetNonTypeCategories(names.size());
 		}
 
 		void setNamesAndKinds(InlineVector<StringHandle, 4>&& param_names,
 							  InlineVector<TemplateParameterKind, 4>&& param_kinds) {
 			names = std::move(param_names);
 			kinds = std::move(param_kinds);
+			resetNonTypeCategories(names.size());
+		}
+
+		void setNamesKindsAndCategories(
+			const InlineVector<StringHandle, 4>& param_names,
+			const InlineVector<TemplateParameterKind, 4>& param_kinds,
+			const InlineVector<TypeCategory, 4>& param_categories) {
+			names = param_names;
+			kinds = param_kinds;
+			non_type_categories = param_categories;
+			padNonTypeCategoriesToNameCount();
+		}
+
+		void setNamesKindsAndCategories(
+			InlineVector<StringHandle, 4>&& param_names,
+			InlineVector<TemplateParameterKind, 4>&& param_kinds,
+			InlineVector<TypeCategory, 4>&& param_categories) {
+			names = std::move(param_names);
+			kinds = std::move(param_kinds);
+			non_type_categories = std::move(param_categories);
+			padNonTypeCategoriesToNameCount();
 		}
 
 		void pushName(StringHandle param_name) {
+			if (!kinds.empty() && kinds.size() != names.size()) {
+				throw InternalError("ActiveTemplateParameterState kind slots out of sync");
+			}
+			padNonTypeCategoriesToNameCount();
 			names.push_back(param_name);
+			non_type_categories.push_back(TypeCategory::Invalid);
+		}
+
+		void pushParameter(
+			StringHandle param_name,
+			TemplateParameterKind param_kind,
+			TypeCategory non_type_category) {
+			if (kinds.empty() && !names.empty()) {
+				kinds.reserve(names.size() + 1);
+				for (size_t i = 0; i < names.size(); ++i) {
+					kinds.push_back(TemplateParameterKind::Type);
+				}
+			}
+			if (!kinds.empty() && kinds.size() != names.size()) {
+				throw InternalError("ActiveTemplateParameterState kind slots out of sync");
+			}
+			padNonTypeCategoriesToNameCount();
+			names.push_back(param_name);
+			kinds.push_back(param_kind);
+			non_type_categories.push_back(non_type_category);
 		}
 
 		std::optional<TemplateParameterKind> kindOf(StringHandle param_name) const {
@@ -726,6 +793,22 @@ private:
 				}
 				if (i < kinds.size()) {
 					return kinds[i];
+				}
+				break;
+			}
+			return std::nullopt;
+		}
+
+		std::optional<TypeCategory> nonTypeCategoryOf(StringHandle param_name) const {
+			for (size_t i = 0; i < names.size(); ++i) {
+				if (names[i] != param_name) {
+					continue;
+				}
+				if (i < kinds.size() &&
+					kinds[i] == TemplateParameterKind::NonType &&
+					i < non_type_categories.size() &&
+					non_type_categories[i] != TypeCategory::Invalid) {
+					return non_type_categories[i];
 				}
 				break;
 			}
@@ -1202,6 +1285,7 @@ private:
 	struct TemplateParameterMetadata {
 		InlineVector<StringHandle, 4> names;
 		InlineVector<TemplateParameterKind, 4> kinds;
+		InlineVector<TypeCategory, 4> non_type_categories;
 		bool has_packs = false;
 	};
 	ParseResult parse_template_parameter_list(InlineVector<TemplateParameterNode, 4>& out_params);	 // NEW: Parse template parameter list
@@ -1876,12 +1960,14 @@ private:
 		const ASTNode& arg_node,
 		const InlineVector<ASTNode, 4>& template_parameters,
 		const InlineVector<StringHandle, 4>& param_names,
-		const std::vector<TemplateTypeArg>& template_args);
+		const std::vector<TemplateTypeArg>& template_args,
+		const TemplateParameterNode* target_template_param);
 	std::optional<TemplateTypeArg> materializeDeferredAliasTemplateArg(
 		const ASTNode& arg_node,
 		const InlineVector<TemplateParameterNode, 4>& template_parameters,
 		const InlineVector<StringHandle, 4>& param_names,
-		const std::vector<TemplateTypeArg>& template_args);
+		const std::vector<TemplateTypeArg>& template_args,
+		const TemplateParameterNode* target_template_param);
 	std::optional<std::vector<TemplateTypeArg>> materializeDeferredAliasTemplateArgs(
 		const TemplateAliasNode& alias_node,
 		const std::vector<TemplateTypeArg>& template_args);
@@ -2221,6 +2307,7 @@ public:
 		}
 	}
 	std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
+	std::optional<ASTNode> instantiateLazyMemberIfNeeded(const LazyMemberKey& member_key);
 	std::optional<ASTNode> try_instantiate_constructor_template(StringHandle instantiated_struct_name, const ConstructorDeclarationNode& ctor_decl, const std::vector<TypeSpecifierNode>& arg_types);
 	const ConstructorDeclarationNode* materializeMatchingConstructorTemplate(
 		StringHandle instantiated_struct_name,
@@ -2775,6 +2862,10 @@ private:	 // Resume private methods
 		return current_template_params_.kindOf(param_name);
 	}
 
+	std::optional<TypeCategory> currentTemplateParamNonTypeCategory(StringHandle param_name) const {
+		return current_template_params_.nonTypeCategoryOf(param_name);
+	}
+
 	void setCurrentTemplateParamNames(const InlineVector<StringHandle, 4>& param_names) {
 		current_template_params_.setNames(param_names);
 	}
@@ -2793,12 +2884,36 @@ private:	 // Resume private methods
 		current_template_params_.setNamesAndKinds(std::move(param_names), std::move(param_kinds));
 	}
 
+	void setCurrentTemplateParameters(
+		const InlineVector<StringHandle, 4>& param_names,
+		const InlineVector<TemplateParameterKind, 4>& param_kinds,
+		const InlineVector<TypeCategory, 4>& non_type_categories) {
+		current_template_params_.setNamesKindsAndCategories(param_names, param_kinds, non_type_categories);
+	}
+
+	void setCurrentTemplateParameters(
+		InlineVector<StringHandle, 4>&& param_names,
+		InlineVector<TemplateParameterKind, 4>&& param_kinds,
+		InlineVector<TypeCategory, 4>&& non_type_categories) {
+		current_template_params_.setNamesKindsAndCategories(
+			std::move(param_names),
+			std::move(param_kinds),
+			std::move(non_type_categories));
+	}
+
 	void clearCurrentTemplateParameters() {
 		current_template_params_.clear();
 	}
 
 	void pushCurrentTemplateParamName(StringHandle param_name) {
 		current_template_params_.pushName(param_name);
+	}
+
+	void pushCurrentTemplateParameter(
+		StringHandle param_name,
+		TemplateParameterKind param_kind,
+		TypeCategory non_type_category) {
+		current_template_params_.pushParameter(param_name, param_kind, non_type_category);
 	}
 
 	ActiveTemplateParameterState& currentTemplateParamState() {

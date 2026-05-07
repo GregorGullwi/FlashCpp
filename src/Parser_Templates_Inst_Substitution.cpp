@@ -24,6 +24,60 @@ TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_
 
 namespace {
 
+	InlineVector<TemplateParameterNode, 4> getTargetTemplateParameters(StringHandle target_template_name) {
+		if (!target_template_name.isValid()) {
+			return {};
+		}
+		if (auto alias_template_opt = gTemplateRegistry.lookup_alias_template(target_template_name);
+			alias_template_opt.has_value()) {
+			return alias_template_opt->as<TemplateAliasNode>().template_parameters();
+		}
+		if (auto class_or_function_template_opt = gTemplateRegistry.lookupTemplate(target_template_name);
+			class_or_function_template_opt.has_value()) {
+			if (class_or_function_template_opt->is<TemplateClassDeclarationNode>()) {
+				return class_or_function_template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+			}
+			if (class_or_function_template_opt->is<TemplateFunctionDeclarationNode>()) {
+				return class_or_function_template_opt->as<TemplateFunctionDeclarationNode>().template_parameters();
+			}
+		}
+		if (auto variable_template_opt = gTemplateRegistry.lookupVariableTemplate(target_template_name);
+			variable_template_opt.has_value()) {
+			return variable_template_opt->as<TemplateVariableDeclarationNode>().template_parameters();
+		}
+		return {};
+	}
+
+	StringHandle getQualifiedIdentifierHandle(const QualifiedIdentifierNode& qual_id) {
+		if (!qual_id.namespace_handle().isValid() || qual_id.namespace_handle().isGlobal()) {
+			return qual_id.nameHandle();
+		}
+		return gNamespaceRegistry.buildQualifiedIdentifier(qual_id.namespace_handle(), qual_id.nameHandle());
+	}
+
+	std::optional<TemplateTypeArg> classifyDeferredQualifiedIdentifier(
+		const QualifiedIdentifierNode& qual_id,
+		const TemplateParameterNode* target_template_param) {
+		if (target_template_param == nullptr) {
+			return std::nullopt;
+		}
+		const StringHandle qualified_name = getQualifiedIdentifierHandle(qual_id);
+		switch (target_template_param->kind()) {
+		case TemplateParameterKind::NonType:
+			if (!target_template_param->has_type()) {
+				throw InternalError("Non-type target template parameter is missing a declared type");
+			}
+			return TemplateTypeArg::makeDependentValue(
+				qualified_name,
+				target_template_param->type_specifier_node().type());
+		case TemplateParameterKind::Template:
+			return TemplateTypeArg::makeTemplate(qualified_name);
+		case TemplateParameterKind::Type:
+			return std::nullopt;
+		}
+		return std::nullopt;
+	}
+
 	ASTNode substituteNonTypeDefaultExpressionImpl(
 		Parser& parser,
 		const ASTNode& default_node,
@@ -111,7 +165,8 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	const ASTNode& arg_node,
 	const InlineVector<ASTNode, 4>& template_parameters,
 	const InlineVector<StringHandle, 4>& param_names,
-	const std::vector<TemplateTypeArg>& template_args) {
+	const std::vector<TemplateTypeArg>& template_args,
+	const TemplateParameterNode* target_template_param) {
 	const auto find_param_index = [&](StringHandle param_name) -> std::optional<size_t> {
 		for (size_t i = 0; i < param_names.size(); ++i) {
 			if (param_names[i] == param_name) {
@@ -221,9 +276,7 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	}
 
 	if (const auto* qual_id = std::get_if<QualifiedIdentifierNode>(&arg_expr)) {
-		return TemplateTypeArg::makeDependentValue(
-			StringTable::getOrInternStringHandle(qual_id->full_name()),
-			TypeCategory::Bool);
+		return classifyDeferredQualifiedIdentifier(*qual_id, target_template_param);
 	}
 
 	return std::nullopt;
@@ -233,12 +286,14 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	const ASTNode& arg_node,
 	const InlineVector<TemplateParameterNode, 4>& template_parameters,
 	const InlineVector<StringHandle, 4>& param_names,
-	const std::vector<TemplateTypeArg>& template_args) {
+	const std::vector<TemplateTypeArg>& template_args,
+	const TemplateParameterNode* target_template_param) {
 	return materializeDeferredAliasTemplateArg(
 		arg_node,
 		cloneTemplateParameterNodes(template_parameters),
 		param_names,
-		template_args);
+		template_args,
+		target_template_param);
 }
 
 std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasTemplateArgs(
@@ -247,14 +302,28 @@ std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasTemp
 	std::vector<TemplateTypeArg> substituted_args;
 	const auto& param_names = alias_node.template_param_names();
 	const auto& target_template_args = alias_node.target_template_args();
+	const auto target_template_params =
+		getTargetTemplateParameters(StringTable::getOrInternStringHandle(alias_node.target_template_name()));
 	substituted_args.reserve(target_template_args.size());
 
-	for (const auto& arg_node : target_template_args) {
+	auto getTargetTemplateParam = [&](size_t index) -> const TemplateParameterNode* {
+		if (index < target_template_params.size()) {
+			return &target_template_params[index];
+		}
+		if (!target_template_params.empty() && target_template_params.back().is_variadic()) {
+			return &target_template_params.back();
+		}
+		return nullptr;
+	};
+
+	for (size_t i = 0; i < target_template_args.size(); ++i) {
+		const TemplateParameterNode* target_template_param = getTargetTemplateParam(i);
 		auto materialized_arg = materializeDeferredAliasTemplateArg(
-			arg_node,
+			target_template_args[i],
 			alias_node.template_parameters(),
 			param_names,
-			template_args);
+			template_args,
+			target_template_param);
 		if (!materialized_arg.has_value()) {
 			return std::nullopt;
 		}

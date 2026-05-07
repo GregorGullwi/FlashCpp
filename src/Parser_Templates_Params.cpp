@@ -60,7 +60,11 @@ ParseResult Parser::parse_template_parameter_list(InlineVector<TemplateParameter
 			// Add this parameter's name so subsequent parameters can reference it in
 			// their default values, e.g. template<typename T, bool = is_arithmetic<T>::value>.
 			auto& tparam = out_params.back();
-			pushCurrentTemplateParamName(tparam.nameHandle());
+			const TypeCategory non_type_category =
+				tparam.kind() == TemplateParameterKind::NonType && tparam.has_type()
+				? tparam.type_specifier_node().type()
+				: TypeCategory::Invalid;
+			pushCurrentTemplateParameter(tparam.nameHandle(), tparam.kind(), non_type_category);
 			if (tparam.kind() == TemplateParameterKind::Type ||
 				tparam.kind() == TemplateParameterKind::Template) {
 				ensureTemplateParameterTypeRegistration(tparam);
@@ -112,6 +116,10 @@ Parser::TemplateParameterMetadata Parser::registerTemplateParametersInScope(
 	for (TemplateParameterNode& tparam : template_params) {
 		metadata.names.push_back(tparam.nameHandle());
 		metadata.kinds.push_back(tparam.kind());
+		metadata.non_type_categories.push_back(
+			tparam.kind() == TemplateParameterKind::NonType && tparam.has_type()
+			? tparam.type_specifier_node().type()
+			: TypeCategory::Invalid);
 		metadata.has_packs |= tparam.is_variadic();
 		if (tparam.kind() == TemplateParameterKind::Type ||
 			tparam.kind() == TemplateParameterKind::Template) {
@@ -845,6 +853,83 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		return SimpleTemplateArgKind::NotSimple;
 	};
 
+	auto dependentIdentifierValueCategory = [&](StringHandle name_handle) -> std::optional<TypeCategory> {
+		for (const auto& subst : template_param_substitutions_) {
+			if (subst.param_name == name_handle && subst.is_value_param) {
+				return subst.value_type;
+			}
+		}
+
+		if (auto current_param_category = currentTemplateParamNonTypeCategory(name_handle);
+			current_param_category.has_value()) {
+			return current_param_category;
+		}
+
+		if (auto symbol_lookup = lookup_symbol_with_template_check(name_handle);
+			symbol_lookup.has_value()) {
+			if (symbol_lookup->is<VariableDeclarationNode>()) {
+				return symbol_lookup->as<VariableDeclarationNode>().declaration().type_specifier_node().type();
+			}
+			if (symbol_lookup->is<ExpressionNode>()) {
+				const ExpressionNode& lookup_expr = symbol_lookup->as<ExpressionNode>();
+				if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&lookup_expr)) {
+					return currentTemplateParamNonTypeCategory(tparam_ref->param_name());
+				}
+			}
+		}
+
+		return std::nullopt;
+	};
+
+	auto dependentExpressionValueCategory =
+		[&](const ExpressionNode& expr, std::optional<StringHandle> dependent_name = std::nullopt) {
+			if (dependent_name.has_value()) {
+				if (auto category = dependentIdentifierValueCategory(*dependent_name);
+					category.has_value()) {
+					return *category;
+				}
+			}
+
+			if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+				const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+				if (auto category = dependentIdentifierValueCategory(tparam_ref.param_name());
+					category.has_value()) {
+					return *category;
+				}
+			}
+
+			if (std::holds_alternative<IdentifierNode>(expr)) {
+				const auto& id = std::get<IdentifierNode>(expr);
+				if (auto category = dependentIdentifierValueCategory(
+						StringTable::getOrInternStringHandle(id.name()));
+					category.has_value()) {
+					return *category;
+				}
+			}
+
+			if (std::holds_alternative<SizeofExprNode>(expr) ||
+				std::holds_alternative<AlignofExprNode>(expr)) {
+				return TypeCategory::UnsignedLongLong;
+			}
+
+			if (std::holds_alternative<NoexceptExprNode>(expr) ||
+				std::holds_alternative<TypeTraitExprNode>(expr)) {
+				return TypeCategory::Bool;
+			}
+
+			if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+				const auto& binary = std::get<BinaryOperatorNode>(expr);
+				if (binary.op() == "==" || binary.op() == "!=" ||
+					binary.op() == "<" || binary.op() == "<=" ||
+					binary.op() == ">" || binary.op() == ">=" ||
+					binary.op() == "&&" || binary.op() == "||") {
+					return TypeCategory::Bool;
+				}
+			}
+
+			return TypeCategory::Int;
+		};
+
 	while (true) {
 		// Save position in case type parsing fails
 		SaveHandle arg_saved_pos = save_token_position();
@@ -877,12 +962,9 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					TemplateTypeArg simple_arg = prebuilt_arg.value_or(
 						TemplateTypeArg::makeDependentValue(
 							identifier_handle,
-							// Deferred bare identifier NTTPs do not yet carry an authoritative
-							// value type here. Use Int as the same neutral placeholder category
-							// already used elsewhere for dependent NTTP identities; template
-							// instantiation later re-evaluates the stored expression and replaces
-							// this placeholder with the concrete value/category.
-							TypeCategory::Int,
+							dependentExpressionValueCategory(
+								ExpressionNode(IdentifierNode(identifier_token)),
+								identifier_handle),
 							0,
 							ASTNode::emplace_node<ExpressionNode>(IdentifierNode(identifier_token))));
 
@@ -1131,12 +1213,11 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						FLASH_LOG(Templates, Debug, "Accepting dependent compile-time expression as template argument");
 						// Create a dependent template argument
 						auto makeDependentCompileTimeArg = [&](StringHandle dependent_name, std::optional<ASTNode> dep_expr) {
-							TypeCategory value_category = TypeCategory::Bool;
-							if (std::holds_alternative<SizeofExprNode>(expr) ||
-								std::holds_alternative<AlignofExprNode>(expr)) {
-								// sizeof/alignof have type size_t (modeled as UnsignedLongLong on 64-bit).
-								value_category = TypeCategory::UnsignedLongLong;
-							}
+							TypeCategory value_category = dependentExpressionValueCategory(
+								expr,
+								dependent_name.isValid()
+								? std::optional<StringHandle>(dependent_name)
+								: std::nullopt);
 							return TemplateTypeArg::makeDependentValue(dependent_name, value_category, 0, std::move(dep_expr));
 						};
 
@@ -1486,12 +1567,6 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								std::holds_alternative<BinaryOperatorNode>(expr) ||
 								simple_identifier_kind == SimpleTemplateArgKind::ValueLike;
 							if (is_value_like_dependent_expr) {
-								// For sizeof/alignof expressions, use UnsignedLongLong (size_t) as the type
-								TypeCategory value_category = TypeCategory::Bool;
-								if (std::holds_alternative<SizeofExprNode>(expr) ||
-									std::holds_alternative<AlignofExprNode>(expr)) {
-									value_category = TypeCategory::UnsignedLongLong;
-								}
 								// Store the original AST expression for dependent NTTP expressions
 								// so it can be re-evaluated during template instantiation
 								std::optional<ASTNode> stored_expr = std::nullopt;
@@ -1507,7 +1582,11 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 									stored_expr = *expr_result.node();
 									FLASH_LOG(Templates, Debug, "Storing dependent NTTP expression (sizeof/alignof/etc) for re-evaluation");
 								}
-								dependent_arg = TemplateTypeArg::makeDependentValue(StringHandle{}, value_category, 0, std::move(stored_expr));
+								dependent_arg = TemplateTypeArg::makeDependentValue(
+									StringHandle{},
+									dependentExpressionValueCategory(expr),
+									0,
+									std::move(stored_expr));
 							} else {
 								dependent_arg.type_index = nativeTypeIndex(TypeCategory::UserDefined);  // Template parameter is a user-defined type placeholder; will try to look up
 								dependent_arg.is_value = false;	// This is a TYPE parameter, not a value

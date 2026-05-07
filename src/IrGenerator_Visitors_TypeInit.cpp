@@ -2649,6 +2649,11 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 	// Enter function scope
 	symbol_table.enter_scope(ScopeType::Function);
+	auto restore_template_instantiation_state = ScopeGuard([&]() {
+		symbol_table.exit_scope();
+		current_struct_name_ = saved_struct_name;
+		current_namespace_stack_ = saved_namespace_stack;
+	});
 
 	// Get struct type info for member functions
 	const TypeInfo* struct_type_info = nullptr;
@@ -2730,7 +2735,11 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 			}
 		}
 	} else {
-		std::cerr << "Warning: Template body does NOT have value!\n";
+		throw InternalError(std::string(StringBuilder()
+			.append("Template instantiation for '")
+			.append(StringTable::getStringView(inst_info.qualified_template_name))
+			.append("' reached legacy IR generation without a parsed template body")
+			.commit()));
 	}
 
 	// Add implicit return for void functions
@@ -2739,19 +2748,12 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 		ReturnOp ret_op; // No return value for void
 		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), mangled_token));
 	}
-
-	// Exit function scope
-	symbol_table.exit_scope();
-	current_struct_name_ = saved_struct_name;
-	current_namespace_stack_ = saved_namespace_stack;
 }
 
 ExprResult AstToIr::generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode) {
-	// This should not happen during normal code generation - template parameters should be substituted
-	// during template instantiation. If we get here, it means template instantiation failed.
-	std::string param_name = std::string(templateParamRefNode.param_name().view());
-	std::cerr << "Error: Template parameter '" << param_name << "' was not substituted during template instantiation\n";
-	std::cerr << "This indicates a bug in template instantiation - template parameters should be replaced with concrete types/values\n";
-	assert(false && "Template parameter reference found during code generation - should have been substituted");
-	return ExprResult{};
+	throw InternalError(std::string(StringBuilder()
+		.append("Template parameter '")
+		.append(templateParamRefNode.param_name().view())
+		.append("' reached IR generation without being substituted")
+		.commit()));
 }

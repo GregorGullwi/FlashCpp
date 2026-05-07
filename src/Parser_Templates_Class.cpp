@@ -114,8 +114,11 @@ ParseResult Parser::parse_template_declaration() {
 					registerAndNormalizeLateMaterializedTopLevelNode(*instantiated);
 					FLASH_LOG(Templates, Debug, "Successfully explicitly instantiated: ", name_token.value());
 				} else {
-					// Template not found or instantiation failed
-					FLASH_LOG(Templates, Warning, "Could not explicitly instantiate template: ", name_token.value());
+					throw CompileError(std::string(StringBuilder()
+						.append("Could not explicitly instantiate template '")
+						.append(name_token.value())
+						.append("'")
+						.commit()));
 				}
 			} else if (is_extern) {
 				// extern template - suppresses implicit instantiation
@@ -202,7 +205,10 @@ ParseResult Parser::parse_template_declaration() {
 	// Set template parameter context EARLY, before any code that might call parse_type_specifier()
 	// This includes variable template detection below which needs to recognize template params
 	// like _Int in return types: typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&
-	setCurrentTemplateParameters(template_param_metadata.names, template_param_metadata.kinds);
+	setCurrentTemplateParameters(
+		template_param_metadata.names,
+		template_param_metadata.kinds,
+		template_param_metadata.non_type_categories);
 	FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
 
 	// Check if this is a nested template (member function template of a class template)
@@ -3979,7 +3985,10 @@ ParseResult Parser::parse_template_declaration() {
 		}
 
 		// Set template parameter context for current_template_param_names_
-		setCurrentTemplateParameters(template_param_metadata.names, template_param_metadata.kinds);
+		setCurrentTemplateParameters(
+			template_param_metadata.names,
+			template_param_metadata.kinds,
+			template_param_metadata.non_type_categories);
 
 		// Parse class template
 		// Save scope/stack state before try block so we can restore on exception

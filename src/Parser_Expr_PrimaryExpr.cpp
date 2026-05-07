@@ -2763,19 +2763,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										member_is_const);
 									if (template_instantiation_mode_ == TemplateInstantiationMode::HardUse &&
 										LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
-										auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(member_key);
-										if (lazy_info_opt.has_value()) {
-											auto instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
-											if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-												member_lookup = instantiated_func;
-												decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
-												LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-													LazyMemberKey::exact(
-														class_name_handle,
-														member_name_handle,
-														lazy_info_opt->identity.is_const_method));
-											}
+										auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);
+										if (!instantiated_func.has_value() || !instantiated_func->is<FunctionDeclarationNode>()) {
+											return ParseResult::error(
+												"Failed to materialize lazy member function '" + std::string(member_token.value()) + "'",
+												member_token);
 										}
+										member_lookup = instantiated_func;
+										decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
 									}
 								}
 							}
@@ -3727,18 +3722,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								member_is_const);
 							if (template_instantiation_mode_ == TemplateInstantiationMode::HardUse &&
 								LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
-								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(member_key);
-								if (lazy_info_opt.has_value()) {
-									auto instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
-									if (instantiated_func.has_value()) {
-										identifierType = *instantiated_func;
-										LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-											LazyMemberKey::exact(
-												class_name_handle,
-												member_name_handle,
-												lazy_info_opt->identity.is_const_method));
-									}
+								auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);
+								if (!instantiated_func.has_value() || !instantiated_func->is<FunctionDeclarationNode>()) {
+									return ParseResult::error(
+										"Failed to materialize lazy member function '" + std::string(final_identifier.value()) + "'",
+										final_identifier);
 								}
+								identifierType = *instantiated_func;
 							}
 						}
 					}
@@ -4788,6 +4778,42 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// Skip template lookup if we already found this as a member function in the class context
 				// to avoid namespace-scope template functions shadowing class member function overloads
 				std::optional<ASTNode> template_func_inst;
+				auto make_dependent_decltype_call = [&](ChunkedVector<ASTNode>&& call_args) -> ParseResult {
+					FLASH_LOG(Templates, Debug, "Creating dependent call expression for decltype call to '", identifier_token.value(), "'");
+					auto type_node = emplace_node<TypeSpecifierNode>(
+						TypeCategory::Bool,
+						TypeQualifier::None,
+						get_type_size_bits(TypeCategory::Bool),
+						identifier_token,
+						CVQualifier::None);
+					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+					result = emplace_node<ExpressionNode>(
+						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(call_args), identifier_token));
+					return ParseResult::success(*result);
+				};
+				auto create_unresolved_call_decl_if_deferred = [&]() {
+					const bool should_defer_unresolved_call =
+						parsing_template_depth_ > 0 ||
+						hasActiveTemplateParameters() ||
+						!struct_parsing_context_stack_.empty() ||
+						template_instantiation_mode_ != TemplateInstantiationMode::HardUse ||
+						context == ExpressionContext::TemplateTypeArg ||
+						context == ExpressionContext::RequiresClause ||
+						context == ExpressionContext::ConceptDefinition;
+					if (!should_defer_unresolved_call) {
+						return;
+					}
+
+					auto unresolved_type = emplace_node<TypeSpecifierNode>(
+						TypeIndex{}.withCategory(TypeCategory::Auto),
+						0,
+						identifier_token,
+						CVQualifier::None,
+						ReferenceQualifier::None);
+					auto unresolved_decl = emplace_node<DeclarationNode>(unresolved_type, identifier_token);
+					(void)gSymbolTable.insert(identifier_token.value(), unresolved_decl);
+					identifierType = unresolved_decl;
+				};
 				if (!found_member_function_in_context && gTemplateRegistry.lookupTemplate(identifier_token.value()).has_value()) {
 					// Parse arguments to deduce template parameters
 					if (peek().is_eof())
@@ -4820,6 +4846,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return ParseResult::error("Expected ')' after function call arguments", current_token_);
 					}
 
+					const bool has_dependent_call_args =
+						argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+						argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
+
 					// Try to instantiate the template function (skip in extern "C" contexts - C has no templates)
 					if (current_linkage_ != Linkage::C) {
 						template_func_inst = try_instantiate_template(identifier_token.value(), arg_types);
@@ -4840,10 +4870,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 						if (!found_member_function_in_context && !identifierType.has_value() &&
 							!lookupTypeInCurrentContext(identifier_token.handle())) {
-							auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
-							auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
-							gSymbolTable.insertGlobal(identifier_token.value(), forward_decl);
-							identifierType = forward_decl;
+							if (context == ExpressionContext::Decltype) {
+								if (has_dependent_call_args) {
+									return make_dependent_decltype_call(std::move(args));
+								}
+							} else {
+								create_unresolved_call_decl_if_deferred();
+							}
 						}
 
 						return unified_resolve_function_call(args);
@@ -4858,27 +4891,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// bogus forward declaration that would confuse Phase 1 two-phase lookup.
 				if (!found_member_function_in_context && !identifierType.has_value() &&
 					!lookupTypeInCurrentContext(identifier_token.handle())) {
-					// We'll assume it returns int for now (this is a simplification)
-					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
-					auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
-
-					// Add to GLOBAL symbol table as a forward declaration
-					// Using insertGlobal ensures it persists after scope exits
-					gSymbolTable.insertGlobal(identifier_token.value(), forward_decl);
-					identifierType = forward_decl;
 				}
 
 				if (peek().is_eof())
 					return ParseResult::error(ParserError::NotImplemented, identifier_token);
 
 				ChunkedVector<ASTNode> args;
+				std::vector<TypeSpecifierNode> arg_types;
 				while (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
 					ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (argResult.is_error()) {
 						return argResult;
 					}
 
-					if (auto append_error = append_function_call_argument(argResult, args, nullptr); append_error.has_value()) {
+					if (auto append_error = append_function_call_argument(argResult, args, &arg_types); append_error.has_value()) {
 						return *append_error;
 					}
 
@@ -4894,6 +4920,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);
+				}
+
+				if (!found_member_function_in_context && !identifierType.has_value() &&
+					!lookupTypeInCurrentContext(identifier_token.handle())) {
+					if (context == ExpressionContext::Decltype) {
+						const bool has_dependent_call_args =
+							argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+							argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
+						if (has_dependent_call_args) {
+							return make_dependent_decltype_call(std::move(args));
+						}
+					} else {
+						create_unresolved_call_decl_if_deferred();
+					}
 				}
 
 				// Unified resolution: collect candidates, augment with ADL, resolve overload.

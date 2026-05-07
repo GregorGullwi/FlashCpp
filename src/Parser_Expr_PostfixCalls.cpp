@@ -109,9 +109,13 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 			member_name,
 			{});
 	}
-	// Reaching this point means the call was syntactically non-empty, so an empty
-	// collected-type list means deduction still has to wait for instantiation-time typing.
-	if (has_dependent_call_args || call_arg_types.empty()) {
+	if (has_dependent_call_args) {
+		return std::nullopt;
+	}
+	if (call_arg_types.empty()) {
+		FLASH_LOG(Templates, Debug,
+			"Deferring member template instantiation for ", struct_name, "::", member_name,
+			" because no concrete argument types were collected at this parse point");
 		return std::nullopt;
 	}
 	return try_instantiate_member_function_template(
@@ -337,17 +341,14 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 				LazyMemberKey member_key = LazyMemberKey::anyConst(class_name_handle, func_name_handle);
 				if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
 					FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for: ", *object_struct_name, "::", func_name);
-					auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(member_key);
-					if (lazy_info_opt.has_value()) {
-						const LazyMemberFunctionInfo& lazy_info = *lazy_info_opt;
+					if (!instantiated_func.has_value()) {
 						instantiating_lazy_member_ = true;
-						instantiated_func = instantiateLazyMemberFunction(lazy_info);
-						instantiating_lazy_member_ = false;
-						LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-							LazyMemberKey::exact(
-								class_name_handle,
-								func_name_handle,
-								lazy_info.identity.is_const_method));
+						auto restore_lazy_instantiation = ScopeGuard([&]() {
+							instantiating_lazy_member_ = false;
+						});
+						instantiated_func = instantiateLazyMemberIfNeeded(member_key);
+					}
+					if (instantiated_func.has_value()) {
 						FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
 					}
 				}
@@ -972,19 +973,16 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						if (class_type_it != getTypesByNameMap().end() && class_type_it->second->isTemplateInstantiation()) {
 							StringHandle member_name_handle = final_identifier.handle();
 							LazyMemberKey member_key = LazyMemberKey::anyConst(class_name_handle, member_name_handle);
-							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
-								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(member_key);
-								if (lazy_info_opt.has_value()) {
-									auto instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
-									if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-										qualified_symbol = instantiated_func;
-										decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
-										LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-											LazyMemberKey::exact(
-												class_name_handle,
-												member_name_handle,
-												lazy_info_opt->identity.is_const_method));
-									}
+							if (!instantiating_lazy_member_ &&
+								LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
+								instantiating_lazy_member_ = true;
+								auto restore_lazy_instantiation = ScopeGuard([&]() {
+									instantiating_lazy_member_ = false;
+								});
+								auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);
+								if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+									qualified_symbol = instantiated_func;
+									decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
 								}
 							}
 						}
