@@ -136,6 +136,42 @@ Validation snapshot (`x64\Sharded\FlashCppMSVC.exe`, Windows/MSVC 14.44.35207):
 | `<string_view>` | ❌ Compile Error | 6128ms | The old dependent decltype stop is fixed. Current first hard error is MSVC `<utility>:458` `Call to deleted function 'swap'`. |
 | `<version>` | ❌ Link Error | 2537ms | Compilation succeeds, but the Windows link step still reports duplicate `__security_cookie` (`LNK2005` / `LNK1169`). |
 
+### 2026-05-07 Windows/MSVC atomic anonymous-union + intrinsic follow-up
+
+This pass rebuilt `x64\Sharded\FlashCppMSVC.exe` with MSBuild and retested
+targeted `tests/std/test_std_*.cpp` files against MSVC 14.44.35207 headers.
+
+Fixes landed:
+
+- **Anonymous-union member parsing now accepts in-class member initializers in
+  the anonymous-union fast path.** MSVC `__msvc_threads_core.hpp` declares
+  members like `_Stl_critical_section _Critical_section{};` inside anonymous
+  unions. The dedicated anonymous-union parser path now consumes both direct
+  brace-init and `=` initializers instead of hard-stopping with `Expected ';'
+  after anonymous union member`.
+- **MSVC intrinsic/builtin bootstrap for `<atomic>` was extended so semantic
+  lookup no longer stops first on missing intrinsic declarations** (`_ReadWriteBarrier`,
+  `_mm_pause`, `_InterlockedCompareExchange128`, and `__iso_volatile_*` load/store
+  family declarations added to parser builtin registration).
+
+Regression tests:
+
+- `tests/test_anonymous_union_member_brace_init_ret0.cpp`
+- `tests/test_msvc_readwritebarrier_builtin_ret0.cpp`
+
+Validation snapshot (`x64\Sharded\FlashCppMSVC.exe`, Windows/MSVC 14.44.35207):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_anonymous_union_member_brace_init_ret0.cpp` | ✅ Pass | n/a | New regression passes (compile/link/run). |
+| `test_msvc_readwritebarrier_builtin_ret0.cpp` | ✅ Pass | n/a | New regression passes (compile/link/run). |
+| `<atomic>` | ❌ Compile Error | 1975ms | Previous `xatomic_wait.h` anonymous-union parse stop and the earlier missing-intrinsic stops are fixed. Current first hard error is MSVC `<atomic>:1635` `Missing semicolon(;)` at `const_cast<_Atomic_integral_facade*>(this)->_Base::fetch_add(_Operand);`. |
+| `<latch>` | ❌ Compile Error | 1959ms | Same new first hard stop as `<atomic>` (`<atomic>:1635` `Missing semicolon(;)`). |
+| `<optional>` | ❌ Compile Error | 2381ms | First hard error remains MSVC `<utility>:458` `Call to deleted function 'swap'`. |
+| `<string_view>` | ❌ Compile Error | 3868ms | First hard error remains MSVC `<utility>:458` `Call to deleted function 'swap'`. |
+| `<utility>` | ❌ Compile Error | 1346ms | First hard error remains MSVC `<utility>:458` `Call to deleted function 'swap'`. |
+| `<type_traits>` | ❌ Compile Error | 985ms | Still fails at `tests/std/test_std_type_traits.cpp:6` (`static_assert(std::is_integral<int>::value)`), i.e. the existing variable-template/base-argument semantic blocker. |
+
 ### 2026-05-06 Substituted free operator template semantic annotation
 
 This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested every

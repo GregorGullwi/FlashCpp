@@ -1624,13 +1624,43 @@ ParseResult Parser::parse_typedef_declaration() {
 						}
 
 						// Create member declaration
+						std::optional<ASTNode> anon_default_initializer;
+						if (peek() == "{"_tok) {
+							ParseResult init_result = parse_brace_initializer(anon_member_type_spec);
+							if (init_result.is_error()) {
+								return init_result;
+							}
+							if (init_result.node().has_value()) {
+								anon_default_initializer = *init_result.node();
+							}
+						} else if (peek() == "="_tok) {
+							advance(); // consume '='
+							if (peek() == "{"_tok) {
+								ParseResult init_result = parse_brace_initializer(anon_member_type_spec);
+								if (init_result.is_error()) {
+									return init_result;
+								}
+								if (init_result.node().has_value()) {
+									anon_default_initializer = *init_result.node();
+								}
+							} else {
+								ParseResult init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+								if (init_result.is_error()) {
+									return init_result;
+								}
+								if (init_result.node().has_value()) {
+									anon_default_initializer = *init_result.node();
+								}
+							}
+						}
+
 						ASTNode anon_member_decl_node;
 						if (!anon_array_dimensions.empty()) {
 							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), anon_member_name_token, std::move(anon_array_dimensions));
 						} else {
 							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), anon_member_name_token);
 						}
-						anon_members.push_back({anon_member_decl_node, current_access, std::nullopt, std::nullopt, false});
+						anon_members.push_back({anon_member_decl_node, current_access, anon_default_initializer, std::nullopt, false});
 
 						// Expect semicolon
 						if (!consume(";"_tok)) {

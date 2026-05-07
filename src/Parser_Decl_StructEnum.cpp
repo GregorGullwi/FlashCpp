@@ -1298,13 +1298,43 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 						// Add DeclarationNode to struct_ref for symbol table and AST purposes
 						// During layout phase, these will be skipped (already processed as union members)
+						std::optional<ASTNode> anon_default_initializer;
+						if (peek() == "{"_tok) {
+							ParseResult init_result = parse_brace_initializer(anon_member_type_spec);
+							if (init_result.is_error()) {
+								return init_result;
+							}
+							if (init_result.node().has_value()) {
+								anon_default_initializer = *init_result.node();
+							}
+						} else if (peek() == "="_tok) {
+							advance(); // consume '='
+							if (peek() == "{"_tok) {
+								ParseResult init_result = parse_brace_initializer(anon_member_type_spec);
+								if (init_result.is_error()) {
+									return init_result;
+								}
+								if (init_result.node().has_value()) {
+									anon_default_initializer = *init_result.node();
+								}
+							} else {
+								ParseResult init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+								if (init_result.is_error()) {
+									return init_result;
+								}
+								if (init_result.node().has_value()) {
+									anon_default_initializer = *init_result.node();
+								}
+							}
+						}
+
 						ASTNode anon_member_decl_node;
 						if (!anon_array_dimensions.empty()) {
 							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), anon_member_name_token, std::move(anon_array_dimensions));
 						} else {
 							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), anon_member_name_token);
 						}
-						struct_ref.add_member(anon_member_decl_node, AccessSpecifier::Public, std::nullopt, bitfield_width);
+						struct_ref.add_member(anon_member_decl_node, AccessSpecifier::Public, anon_default_initializer, bitfield_width);
 
 						// Expect semicolon
 						if (!consume(";"_tok)) {
