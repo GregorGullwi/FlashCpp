@@ -587,7 +587,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 
 const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	const TypeSpecifierNode& alias_type_spec,
-	std::span<const ASTNode> template_params,
+	std::span<const TemplateParameterNode> template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
 	const TypeInfo* original_alias_target_info = tryGetTypeInfo(alias_type_spec.type_index());
 	if (!original_alias_target_info) {
@@ -665,12 +665,29 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 
 const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	const TypeSpecifierNode& alias_type_spec,
-	const InlineVector<TemplateParameterNode, 4>& template_params,
+	std::span<const ASTNode> template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
-	InlineVector<ASTNode, 4> cloned_template_params = cloneTemplateParameterNodes(template_params);
+	InlineVector<TemplateParameterNode, 4> typed_params;
+	typed_params.reserve(template_params.size());
+	for (const ASTNode& template_param : template_params) {
+		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
+			typed_param != nullptr) {
+			typed_params.push_back(*typed_param);
+		}
+	}
 	return materializeInstantiatedMemberAliasTarget(
 		alias_type_spec,
-		std::span<const ASTNode>(cloned_template_params),
+		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+		template_args);
+}
+
+const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
+	const TypeSpecifierNode& alias_type_spec,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	return materializeInstantiatedMemberAliasTarget(
+		alias_type_spec,
+		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
 		template_args);
 }
 
@@ -2100,7 +2117,7 @@ std::optional<ASTNode> Parser::substitute_nontype_template_param(
 // Returns the evaluated value and its category if successful, or nullopt if evaluation fails.
 std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 	const ASTNode& dependent_expr,
-	std::span<const ASTNode> template_params,
+	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args) {
 
 	// Build type substitution map from template params to args
@@ -2108,10 +2125,7 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 	// Build non-type substitution map for value parameters
 	std::unordered_map<std::string_view, int64_t> nontype_substitution_map;
 	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-		const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
-		if (param == nullptr) {
-			continue;
-		}
+		const TemplateParameterNode* param = &template_params[i];
 		if (param->kind() == TemplateParameterKind::Type) {
 			// For typename/class parameters, registered_type_index() is the TypeIndex assigned
 			// when the template was parsed (via add_user_type in Parser_Templates_Function.cpp).

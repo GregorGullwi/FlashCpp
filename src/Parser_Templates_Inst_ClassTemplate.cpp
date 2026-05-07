@@ -236,7 +236,7 @@ static void clampPartialPatternTemplateParamIndirectionForOwner(
 	TypeSpecifierNode& substituted_type,
 	const TypeSpecifierNode& pattern_type,
 	StringHandle pattern_struct_name,
-	const InlineVector<ASTNode, 4>& template_params) {
+	std::span<const TemplateParameterNode> template_params) {
 	if (!pattern_struct_name.isValid() ||
 		StringTable::getStringView(pattern_struct_name).find("$pattern_") == std::string_view::npos ||
 		substituted_type.pointer_depth() <= pattern_type.pointer_depth()) {
@@ -248,9 +248,8 @@ static void clampPartialPatternTemplateParamIndirectionForOwner(
 			pattern_type_name = StringTable::getStringView(pattern_type_info->name());
 		}
 	}
-	for (const ASTNode& template_param_node : template_params) {
-		if (template_param_node.is<TemplateParameterNode>() &&
-			template_param_node.as<TemplateParameterNode>().name() == pattern_type_name) {
+	for (const TemplateParameterNode& template_param_node : template_params) {
+		if (template_param_node.name() == pattern_type_name) {
 			substituted_type.limit_pointer_depth(pattern_type.pointer_depth());
 			return;
 		}
@@ -535,7 +534,7 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 	const ASTNode& original_return_type_node,
 	const Token& fallback_return_token,
 	StringHandle parent_struct_name,
-	std::span<const ASTNode> template_params,
+	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	const StructDeclarationNode* owner_decl,
 	TypeIndex instantiated_owner_type_index,
@@ -545,11 +544,6 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 	StringHandle partial_pattern_owner_name,
 	bool apply_bound_metadata_to_full_substitution,
 	bool apply_resolved_index_to_full_substitution) {
-	InlineVector<ASTNode, 4> template_params_inline;
-	template_params_inline.reserve(template_params.size());
-	for (const ASTNode& param : template_params) {
-		template_params_inline.push_back(param);
-	}
 	InlineVector<TemplateTypeArg, 4> template_args_inline;
 	template_args_inline.reserve(template_args.size());
 	for (const TemplateTypeArg& arg : template_args) {
@@ -562,7 +556,7 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 		original_return_type,
 		original_return_type_node,
 		fallback_return_token,
-		template_params_inline,
+		template_params,
 		template_args_inline,
 		[this](const ASTNode& node, const auto& params, const auto& args) {
 			return substituteTemplateParameters(node, params, args);
@@ -580,7 +574,7 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 			substituted_return_type,
 			original_return_type,
 			partial_pattern_owner_name,
-			template_params_inline);
+			template_params);
 	}
 
 	StringHandle effective_name = effective_name_override.isValid()
@@ -603,7 +597,7 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 		new_func_decl_ref,
 		parent_struct_name);
-	setOuterTemplateBindingsFromParams(new_func_ref, template_params_inline, template_args_inline);
+	setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args_inline);
 
 	return {
 		new_func_decl_node,
@@ -614,10 +608,50 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 		effective_name};
 }
 
+SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
+	const FunctionDeclarationNode& original_func,
+	const ASTNode& original_return_type_node,
+	const Token& fallback_return_token,
+	StringHandle parent_struct_name,
+	std::span<const ASTNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	const StructDeclarationNode* owner_decl,
+	TypeIndex instantiated_owner_type_index,
+	TypeIndex override_return_type_index,
+	OverloadableOperator operator_kind,
+	StringHandle effective_name_override,
+	StringHandle partial_pattern_owner_name,
+	bool apply_bound_metadata_to_full_substitution,
+	bool apply_resolved_index_to_full_substitution) {
+	InlineVector<TemplateParameterNode, 4> typed_params;
+	typed_params.reserve(template_params.size());
+	for (const ASTNode& template_param : template_params) {
+		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
+			typed_param != nullptr) {
+			typed_params.push_back(*typed_param);
+		}
+	}
+	return createSubstitutedMemberFunctionShell(
+		original_func,
+		original_return_type_node,
+		fallback_return_token,
+		parent_struct_name,
+		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+		template_args,
+		owner_decl,
+		instantiated_owner_type_index,
+		override_return_type_index,
+		operator_kind,
+		effective_name_override,
+		partial_pattern_owner_name,
+		apply_bound_metadata_to_full_substitution,
+		apply_resolved_index_to_full_substitution);
+}
+
 void Parser::substituteAndCopyMemberFunctionParameters(
 	const std::vector<ASTNode>& original_params,
 	FunctionDeclarationNode& target_node,
-	std::span<const ASTNode> template_params,
+	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	const StructDeclarationNode* owner_decl,
 	TypeIndex instantiated_owner_type_index,
@@ -629,11 +663,6 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 	bool apply_resolved_index_to_full_substitution) {
 	if (self_type_from_index.is_valid() != self_type_to_index.is_valid()) {
 		throw InternalError("substituteAndCopyMemberFunctionParameters requires both self rewrite indices or neither.");
-	}
-	InlineVector<ASTNode, 4> template_params_inline;
-	template_params_inline.reserve(template_params.size());
-	for (const ASTNode& param : template_params) {
-		template_params_inline.push_back(param);
 	}
 	InlineVector<TemplateTypeArg, 4> template_args_inline;
 	template_args_inline.reserve(template_args.size());
@@ -650,7 +679,7 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			return;
 		}
 		buildTemplateArgSubstitutionMaps(
-			template_params_inline,
+			template_params,
 			template_args_inline,
 			[](const TemplateParameterNode&, const TemplateTypeArg& arg) {
 				return arg;
@@ -679,11 +708,8 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			size_t non_variadic = 0;
 			size_t pack_size = 0;
 			bool found_pack = false;
-			for (size_t i = 0; i < template_params_inline.size(); ++i) {
-				const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params_inline[i]);
-				if (tparam == nullptr) {
-					continue;
-				}
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				const TemplateParameterNode* tparam = &template_params[i];
 				if (!tparam->is_variadic()) {
 					non_variadic++;
 					continue;
@@ -743,7 +769,7 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			param_type_spec,
 			param_decl.type_node(),
 			param_decl.identifier_token(),
-			template_params_inline,
+			template_params,
 			template_args_inline,
 			[this](const ASTNode& node, const auto& params, const auto& args) {
 				return substituteTemplateParameters(node, params, args);
@@ -778,7 +804,7 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			if (default_argument_policy == SubstitutedDefaultArgumentPolicy::SubstituteTemplateParameters) {
 				ASTNode substituted_default = substituteTemplateParameters(
 					param_decl.default_value(),
-					template_params_inline,
+					template_params,
 					template_args_inline);
 				substituted_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 			} else if (default_argument_policy == SubstitutedDefaultArgumentPolicy::ExpressionSubstitutor) {
@@ -796,6 +822,42 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 		}
 		target_node.add_parameter_node(substituted_param_decl);
 	}
+}
+
+void Parser::substituteAndCopyMemberFunctionParameters(
+	const std::vector<ASTNode>& original_params,
+	FunctionDeclarationNode& target_node,
+	std::span<const ASTNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	const StructDeclarationNode* owner_decl,
+	TypeIndex instantiated_owner_type_index,
+	TypeIndex self_type_from_index,
+	TypeIndex self_type_to_index,
+	SubstitutedDefaultArgumentPolicy default_argument_policy,
+	bool preserve_parameter_cv_qualifier,
+	bool apply_bound_metadata_to_full_substitution,
+	bool apply_resolved_index_to_full_substitution) {
+	InlineVector<TemplateParameterNode, 4> typed_params;
+	typed_params.reserve(template_params.size());
+	for (const ASTNode& template_param : template_params) {
+		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
+			typed_param != nullptr) {
+			typed_params.push_back(*typed_param);
+		}
+	}
+	substituteAndCopyMemberFunctionParameters(
+		original_params,
+		target_node,
+		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+		template_args,
+		owner_decl,
+		instantiated_owner_type_index,
+		self_type_from_index,
+		self_type_to_index,
+		default_argument_policy,
+		preserve_parameter_cv_qualifier,
+		apply_bound_metadata_to_full_substitution,
+		apply_resolved_index_to_full_substitution);
 }
 
 static int getTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {

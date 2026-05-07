@@ -831,7 +831,7 @@ bool Parser::buildSubstitutionForPackElement(
 	StringHandle pack_param_name,
 	size_t pack_element_offset,
 	const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
-	std::span<const ASTNode> template_params,
+	std::span<const TemplateParameterNode> template_params,
 	const std::vector<size_t>& template_param_arg_starts,
 	const std::vector<size_t>& template_param_arg_counts,
 	const std::vector<TemplateTypeArg>& template_args,
@@ -839,10 +839,7 @@ bool Parser::buildSubstitutionForPackElement(
 	InlineVector<TemplateTypeArg, 4>& subst_args) {
 	std::optional<std::pair<size_t, size_t>> pack_binding;
 	for (size_t i = 0; i < template_params.size(); ++i) {
-		const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
-		if (tparam == nullptr) {
-			continue;
-		}
+		const TemplateParameterNode* tparam = &template_params[i];
 		if (tparam->is_variadic() && tparam->nameHandle() == pack_param_name) {
 			pack_binding = std::pair<size_t, size_t>{
 				template_param_arg_starts[i],
@@ -854,10 +851,7 @@ bool Parser::buildSubstitutionForPackElement(
 		return false;
 	}
 	for (size_t i = 0; i < template_params.size(); ++i) {
-		const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
-		if (tparam == nullptr) {
-			continue;
-		}
+		const TemplateParameterNode* tparam = &template_params[i];
 		if (tparam->is_variadic()) {
 			const bool is_primary = (tparam->nameHandle() == pack_param_name);
 			const bool is_co_pack = !is_primary &&
@@ -875,7 +869,7 @@ bool Parser::buildSubstitutionForPackElement(
 		if (template_param_arg_starts[i] == SIZE_MAX || template_param_arg_starts[i] >= template_args.size()) {
 			continue;
 		}
-		subst_params.push_back(template_params[i]);
+		subst_params.push_back(ASTNode::emplace_node<TemplateParameterNode>(*tparam));
 		subst_args.push_back(template_args[template_param_arg_starts[i]]);
 	}
 	return true;
@@ -951,7 +945,6 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const auto& template_params = template_func.template_parameters();
-	const InlineVector<ASTNode, 4> template_params_ast = cloneTemplateParameterNodes(template_params);
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
 	auto deduction_info = buildDeductionMapFromCallArgs(
@@ -1364,7 +1357,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 								primary_pack_name,
 								pi,
 								dependent_pack_names,
-								template_params_ast,
+								std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
 								template_param_arg_starts,
 								template_param_arg_counts,
 								template_args,

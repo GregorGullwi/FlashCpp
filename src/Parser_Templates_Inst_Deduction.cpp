@@ -197,7 +197,7 @@ static void mergeAliasAndUseSiteTypeSpec(
 
 Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 	ASTNode& type_node,
-	std::span<const ASTNode> template_params,
+	std::span<const TemplateParameterNode> template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
 	if (!type_node.is<TypeSpecifierNode>())
 		return DependentAliasResolutionStatus::NotApplicable;
@@ -437,6 +437,32 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 
 Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 	ASTNode& type_node,
+	std::span<const TemplateParameterNode> template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	std::vector<TemplateTypeArg> vector_args(template_args.begin(), template_args.end());
+	return resolveDependentMemberAlias(type_node, template_params, vector_args);
+}
+
+Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
+	ASTNode& type_node,
+	std::span<const ASTNode> template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	InlineVector<TemplateParameterNode, 4> typed_params;
+	typed_params.reserve(template_params.size());
+	for (const ASTNode& template_param : template_params) {
+		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
+			typed_param != nullptr) {
+			typed_params.push_back(*typed_param);
+		}
+	}
+	return resolveDependentMemberAlias(
+		type_node,
+		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+		template_args);
+}
+
+Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
+	ASTNode& type_node,
 	std::span<const ASTNode> template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args) {
 	std::vector<TemplateTypeArg> vector_args(template_args.begin(), template_args.end());
@@ -447,12 +473,10 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 	ASTNode& type_node,
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
-	InlineVector<ASTNode, 4> ast_params;
-	ast_params.reserve(template_params.size());
-	for (const TemplateParameterNode& param : template_params) {
-		ast_params.push_back(emplace_node<TemplateParameterNode>(param));
-	}
-	return resolveDependentMemberAlias(type_node, ast_params, template_args);
+	return resolveDependentMemberAlias(
+		type_node,
+		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+		template_args);
 }
 
 Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
@@ -878,18 +902,35 @@ bool Parser::tryAppendDefaultTemplateArg(
 
 bool Parser::tryAppendDefaultTemplateArg(
 	const TemplateParameterNode& param,
+	std::span<const TemplateParameterNode> template_params,
+	InlineVector<TemplateTypeArg, 4>& template_args,
+	NamespaceHandle source_namespace) {
+	InlineVector<TemplateParameterNode, 4> copied_template_params;
+	copied_template_params.reserve(template_params.size());
+	for (const TemplateParameterNode& template_param : template_params) {
+		copied_template_params.push_back(template_param);
+	}
+	return tryAppendDefaultTemplateArg(param, copied_template_params, template_args, source_namespace);
+}
+
+bool Parser::tryAppendDefaultTemplateArg(
+	const TemplateParameterNode& param,
 	std::span<const ASTNode> template_params,
 	InlineVector<TemplateTypeArg, 4>& template_args,
 	NamespaceHandle source_namespace) {
-	InlineVector<TemplateParameterNode, 4> typed_template_params;
-	typed_template_params.reserve(template_params.size());
+	InlineVector<TemplateParameterNode, 4> typed_params;
+	typed_params.reserve(template_params.size());
 	for (const ASTNode& template_param : template_params) {
 		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
 			typed_param != nullptr) {
-			typed_template_params.push_back(*typed_param);
+			typed_params.push_back(*typed_param);
 		}
 	}
-	return tryAppendDefaultTemplateArg(param, typed_template_params, template_args, source_namespace);
+	return tryAppendDefaultTemplateArg(
+		param,
+		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+		template_args,
+		source_namespace);
 }
 
 template <typename ParamContainer, typename ArgContainer>
@@ -1121,7 +1162,7 @@ void Parser::populateTemplateParamSubstitutions(
 
 void Parser::populateTemplateParamSubstitutions(
 	InlineVector<TemplateParamSubstitution, 4>& subs,
-	std::span<const ASTNode> template_params,
+	std::span<const TemplateParameterNode> template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
 	forEachNonPackTemplateParamArgBinding(
 		template_params,
@@ -1148,6 +1189,24 @@ void Parser::populateTemplateParamSubstitutions(
 			}
 			subs.push_back(subst);
 		});
+}
+
+void Parser::populateTemplateParamSubstitutions(
+	InlineVector<TemplateParamSubstitution, 4>& subs,
+	std::span<const ASTNode> template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	InlineVector<TemplateParameterNode, 4> typed_params;
+	typed_params.reserve(template_params.size());
+	for (const ASTNode& template_param : template_params) {
+		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
+			typed_param != nullptr) {
+			typed_params.push_back(*typed_param);
+		}
+	}
+	populateTemplateParamSubstitutions(
+		subs,
+		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+		template_args);
 }
 
 void Parser::populateTemplateParamSubstitutions(
@@ -1192,7 +1251,7 @@ void Parser::populateTemplateParamSubstitutions(
 void Parser::reparse_template_function_body(
 	FunctionDeclarationNode& new_func_ref,
 	const FunctionDeclarationNode& func_decl,
-	std::span<const ASTNode> template_params,
+	std::span<const TemplateParameterNode> template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args,
 	bool preserve_ref_qualifier) {
 	// Depth guard: function-template body replay can recursively re-enter via
@@ -1232,18 +1291,14 @@ void Parser::reparse_template_function_body(
 	FlashCpp::TemplateParameterScope template_scope;
 	InlineVector<StringHandle, 4> param_names;
 	param_names.reserve(template_params.size());
-	for (const auto& tparam_node : template_params) {
-		const TemplateParameterNode* template_param = tryGetTemplateParameterNode(tparam_node);
-		if (template_param == nullptr) {
-			continue;
-		}
-		param_names.push_back(template_param->nameHandle());
+	for (const TemplateParameterNode& template_param : template_params) {
+		param_names.push_back(template_param.nameHandle());
 	}
 	// preserve_ref_qualifier=true for the explicit path (user-written T=int& must be
 	// reflected in TypeInfo); false for the deduced path.
-	InlineVector<ASTNode, 4> template_param_nodes;
+	InlineVector<TemplateParameterNode, 4> template_param_nodes;
 	template_param_nodes.reserve(template_params.size());
-	for (const ASTNode& template_param_node : template_params) {
+	for (const TemplateParameterNode& template_param_node : template_params) {
 		template_param_nodes.push_back(template_param_node);
 	}
 	registerTypeParamsInScope(template_param_nodes, template_args, template_scope, preserve_ref_qualifier);
@@ -1319,13 +1374,35 @@ void Parser::reparse_template_function_body(
 void Parser::reparse_template_function_body(
 	FunctionDeclarationNode& new_func_ref,
 	const FunctionDeclarationNode& func_decl,
+	std::span<const ASTNode> template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args,
+	bool preserve_ref_qualifier) {
+	InlineVector<TemplateParameterNode, 4> typed_params;
+	typed_params.reserve(template_params.size());
+	for (const ASTNode& template_param : template_params) {
+		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
+			typed_param != nullptr) {
+			typed_params.push_back(*typed_param);
+		}
+	}
+	reparse_template_function_body(
+		new_func_ref,
+		func_decl,
+		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+		template_args,
+		preserve_ref_qualifier);
+}
+
+void Parser::reparse_template_function_body(
+	FunctionDeclarationNode& new_func_ref,
+	const FunctionDeclarationNode& func_decl,
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args,
 	bool preserve_ref_qualifier) {
 	reparse_template_function_body(
 		new_func_ref,
 		func_decl,
-		cloneTemplateParameterNodes(template_params),
+		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
 		template_args,
 		preserve_ref_qualifier);
 }
