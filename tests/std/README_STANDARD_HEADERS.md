@@ -101,6 +101,43 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+### 2026-05-07 Linux/libstdc++ GCC builtin registration follow-up
+
+This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested targeted
+`tests/std/test_std_*.cpp` files against Linux/libstdc++-14 after an initial
+full regression baseline.
+
+Fixes landed:
+
+- **GCC/Clang x86 pause and byte-swap builtins are now visible to semantic
+  lookup.** libstdc++ `<bits/atomic_wait.h>` uses `__builtin_ia32_pause`, and
+  glibc byteswap helpers use `__builtin_bswap16` / `32` / `64`. These are now
+  registered before header parsing, and `__has_builtin` reports them as
+  supported.
+- **Common libstdc++ `<cmath>` builtin declarations are now predeclared.** The
+  header's inline overloads can now resolve the early `__builtin_acos*` family
+  instead of stopping at the first missing math builtin.
+- **Existing intrinsic code was reused to keep the change smaller.** The
+  `__builtin_launder` lowering now shares a generic identity-intrinsic helper
+  instead of maintaining a separate copy of the same "evaluate and return first
+  argument" logic.
+
+Regression tests:
+
+- `tests/test_builtin_bswap_decl_has_builtin_ret4.cpp`
+- `tests/test_builtin_ia32_pause_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| Full regression baseline before edits | ✅ Pass | n/a | `bash tests/run_all_tests.sh`: 2237 pass / 0 fail, 170 `_fail` correct. |
+| `test_builtin_bswap_decl_has_builtin_ret4.cpp` | ✅ Pass | n/a | New regression verifies `__has_builtin` and semantic lookup for the byte-swap builtin declarations. |
+| `test_builtin_ia32_pause_ret0.cpp` | ✅ Pass | n/a | New regression verifies the x86 pause builtin parses, lowers as a no-op, links, and returns 0. |
+| `<atomic>` | ❌ Compile Error | 852ms | Previous `__builtin_ia32_pause` lookup stop is fixed. Current first hard error is `/usr/include/c++/14/atomic:92` `No matching member function for call to 'load'`. |
+| `<latch>` | ❌ Compile Error | 891ms | Previous `__builtin_ia32_pause` lookup stop is fixed. Current first hard error is unresolved `auto` mangling in `std::__is_complete_or_unbounded`. |
+| `<cmath>` | ❌ Compile Error | 568ms | Previous glibc `__builtin_bswap16` and early libstdc++ `__builtin_acosf` lookup stops are fixed. Current first hard error is `/usr/include/c++/14/cmath:369` `No matching function for call to '__builtin_modfl'`. |
+
 ### 2026-05-07 Windows/MSVC dependent `decltype` member-pointer follow-up
 
 This pass rebuilt `x64\Sharded\FlashCppMSVC.exe` with MSBuild and retested
