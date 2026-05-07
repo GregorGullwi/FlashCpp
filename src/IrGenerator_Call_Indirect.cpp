@@ -1901,7 +1901,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(func_addr_var)));
 				} else if (symbol.has_value()) {
 					const DeclarationNode* decl_node = get_decl_from_symbol(*symbol);
-					if (decl_node && param_ref_qualifier != CVReferenceQualifier::None) {
+					const bool can_use_direct_identifier_arg =
+						decl_node &&
+						param_ref_qualifier != CVReferenceQualifier::None &&
+						(!sema_ref_binding || !sema_ref_binding->is_valid() || sema_ref_binding->binds_directly());
+					if (can_use_direct_identifier_arg) {
 						call_op.args.push_back(buildDirectIdentifierCallArgument(
 							*decl_node,
 							identifier_name,
