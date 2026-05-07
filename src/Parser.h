@@ -119,6 +119,21 @@ enum class ParserError {
 	NotImplemented
 };
 
+enum class SubstitutedDefaultArgumentPolicy {
+	None,
+	SubstituteTemplateParameters,
+	ExpressionSubstitutor
+};
+
+struct SubstitutedMemberFunctionShell {
+	ASTNode declaration_node;
+	DeclarationNode* declaration;
+	ASTNode function_node;
+	FunctionDeclarationNode* function;
+	TypeSpecifierNode return_type;
+	StringHandle effective_name;
+};
+
 static std::string_view get_parser_error_string(ParserError e) {
 	switch (e) {
 	case ParserError::None:
@@ -1621,6 +1636,38 @@ private:
 			node.set_outer_template_bindings(outer_template_param_names, filtered_template_args);
 		}
 	}
+	static StringHandle computeInstantiatedLookupName(
+		StringHandle original_name,
+		OverloadableOperator op_kind,
+		const TypeSpecifierNode& substituted_return_type);
+	SubstitutedMemberFunctionShell createSubstitutedMemberFunctionShell(
+		const FunctionDeclarationNode& original_func,
+		const ASTNode& original_return_type_node,
+		const Token& fallback_return_token,
+		StringHandle parent_struct_name,
+		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args,
+		const StructDeclarationNode* owner_decl,
+		TypeIndex instantiated_owner_type_index, // Rewrite self-references (e.g. W<T>& -> W<int>&)
+		TypeIndex override_return_type_index,	  // Force return TypeIndex when caller already resolved aliases
+		OverloadableOperator operator_kind,
+		StringHandle effective_name_override,	   // Use precomputed lookup name instead of recomputing
+		StringHandle partial_pattern_owner_name,  // Enable partial-pattern pointer-depth clamp when valid
+		bool apply_bound_metadata_to_full_substitution, // Apply bound arg pointer/ref metadata on substituted node
+		bool apply_resolved_index_to_full_substitution); // Force substituted TypeIndex onto full AST substitutions
+	void substituteAndCopyMemberFunctionParameters(
+		const std::vector<ASTNode>& original_params,
+		FunctionDeclarationNode& target_node,
+		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args,
+		const StructDeclarationNode* owner_decl,
+		TypeIndex instantiated_owner_type_index, // Rewrite self-referential parameter type indices
+		TypeIndex self_type_from_index,		   // Optional explicit self-type rewrite source (invalid = disabled)
+		TypeIndex self_type_to_index,			   // Optional explicit self-type rewrite target
+		SubstitutedDefaultArgumentPolicy default_argument_policy, // Default-arg substitution strategy
+		bool preserve_parameter_cv_qualifier, // Keep declared cv qualifier; false reproduces decl-only legacy behavior
+		bool apply_bound_metadata_to_full_substitution, // Apply bound arg pointer/ref metadata on substituted node
+		bool apply_resolved_index_to_full_substitution); // Force substituted TypeIndex onto full AST substitutions
 	template <typename TemplateParamsContainer, typename TemplateArgsContainer>
 	StringHandle resolveBaseInitializerNameForTemplateArgs(
 		StringHandle base_name,
