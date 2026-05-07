@@ -3,7 +3,7 @@
 // This is a _fail test — compilation should fail because the
 // for-loop init calls a non-constexpr function.
 
-int runtime_value() { return 0; }
+int runtime_value() { return 1; }
 
 constexpr int bad_for_init() {
 	int sum = 0;

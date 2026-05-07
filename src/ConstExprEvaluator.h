@@ -785,7 +785,8 @@ private:
 		const FunctionDeclarationNode& func_decl,
 		const ChunkedVector<ASTNode>& arguments,
 		const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
-		EvaluationContext& context);
+		EvaluationContext& context,
+		std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings);
 	static EvalResult bind_evaluated_arguments(
 		const std::vector<ASTNode>& parameters,
 		const ChunkedVector<ASTNode>& arguments,

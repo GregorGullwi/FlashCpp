@@ -942,13 +942,19 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 				*current_struct_match.function,
 				call_expr.arguments(),
 				bindings,
-				context);
+				context,
+				mutable_bindings);
 		}
 	}
 
 	if (const FunctionDeclarationNode* resolved_function = call_expr.callee().function_declaration_or_null()) {
 		if (resolved_function->is_static() || !context.struct_info) {
-			return evaluate_resolved_function_call(*resolved_function, call_expr.arguments(), context, &bindings);
+			return evaluate_function_call_with_bindings(
+				*resolved_function,
+				call_expr.arguments(),
+				bindings,
+				context,
+				mutable_bindings);
 		}
 	}
 
@@ -1013,7 +1019,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		return evaluate_member_function_call(member_call, context);
 	}
 
-	return evaluate_function_call_with_bindings(func_decl, call_expr.arguments(), bindings, context);
+	return evaluate_function_call_with_bindings(func_decl, call_expr.arguments(), bindings, context, mutable_bindings);
 }
 
 std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
@@ -2132,7 +2138,27 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						StringHandle heap_key = ptr_result.pointer_to_var;
 						auto heap_it = context.constexpr_heap.find(heap_key);
 						if (heap_it == context.constexpr_heap.end()) {
-							return EvalResult::error("Arrow assignment: pointer does not refer to a constexpr heap object");
+							std::string_view pointed_name = heap_key.view();
+							EvalResult* object_binding = findMutableBindingValue(pointed_name, bindings, context);
+							if (!object_binding) {
+								return EvalResult::error("Arrow assignment: pointer does not refer to a constexpr heap object or local binding");
+							}
+							if (ptr_result.pointer_offset != 0) {
+								return EvalResult::error(
+									"Arrow assignment: non-zero pointer offset on non-array local object in constexpr assignment");
+							}
+							auto member_it = object_binding->object_member_bindings.find(ma.member_name());
+							if (member_it == object_binding->object_member_bindings.end()) {
+								return EvalResult::error("Arrow assignment: member not found in local struct: " + std::string(ma.member_name()));
+							}
+							auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+							if (!rhs_result.success())
+								return rhs_result;
+							auto assign_result = apply_op_to(member_it->second, rhs_result);
+							if (assign_result.success()) {
+								refreshPointerSnapshotsForBinding(pointed_name, *object_binding, bindings, context);
+							}
+							return assign_result;
 						}
 						if (heap_it->second.freed) {
 							return EvalResult::error("Arrow assignment: use after free in constant expression");
