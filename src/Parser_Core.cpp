@@ -1603,6 +1603,16 @@ void Parser::register_builtin_functions() {
 			register_extern_c_builtin(name, int_type, {type, type});
 		}
 	};
+	auto register_all_float_predicate_builtins = [&](std::initializer_list<std::string_view> names) {
+		register_int_predicate_builtins(names, float_type);
+		register_int_predicate_builtins(names, double_type);
+		register_int_predicate_builtins(names, long_double_type);
+	};
+	auto register_all_float_binary_predicate_builtins = [&](std::initializer_list<std::string_view> names) {
+		register_int_binary_predicate_builtins(names, float_type);
+		register_int_binary_predicate_builtins(names, double_type);
+		register_int_binary_predicate_builtins(names, long_double_type);
+	};
 	const std::initializer_list<std::string_view> unary_math_base = {
 		"__builtin_acosf", "__builtin_asinf", "__builtin_atanf", "__builtin_ceilf",
 		"__builtin_cosf", "__builtin_coshf", "__builtin_expf", "__builtin_fabsf",
@@ -1643,12 +1653,8 @@ void Parser::register_builtin_functions() {
 	register_extern_c_builtin("__builtin_powif", float_type, {float_type, int_type});
 	register_extern_c_builtin("__builtin_powi", double_type, {double_type, int_type});
 	register_extern_c_builtin("__builtin_powil", long_double_type, {long_double_type, int_type});
-	register_int_predicate_builtins({"__builtin_isfinite", "__builtin_isinf", "__builtin_isnan", "__builtin_isnormal", "__builtin_signbit"}, float_type);
-	register_int_predicate_builtins({"__builtin_isfinite", "__builtin_isinf", "__builtin_isnan", "__builtin_isnormal", "__builtin_signbit"}, double_type);
-	register_int_predicate_builtins({"__builtin_isfinite", "__builtin_isinf", "__builtin_isnan", "__builtin_isnormal", "__builtin_signbit"}, long_double_type);
-	register_int_binary_predicate_builtins({"__builtin_isgreater", "__builtin_isgreaterequal", "__builtin_isless", "__builtin_islessequal", "__builtin_islessgreater", "__builtin_isunordered"}, float_type);
-	register_int_binary_predicate_builtins({"__builtin_isgreater", "__builtin_isgreaterequal", "__builtin_isless", "__builtin_islessequal", "__builtin_islessgreater", "__builtin_isunordered"}, double_type);
-	register_int_binary_predicate_builtins({"__builtin_isgreater", "__builtin_isgreaterequal", "__builtin_isless", "__builtin_islessequal", "__builtin_islessgreater", "__builtin_isunordered"}, long_double_type);
+	register_all_float_predicate_builtins({"__builtin_isfinite", "__builtin_isinf", "__builtin_isnan", "__builtin_isnormal", "__builtin_signbit"});
+	register_all_float_binary_predicate_builtins({"__builtin_isgreater", "__builtin_isgreaterequal", "__builtin_isless", "__builtin_islessequal", "__builtin_islessgreater", "__builtin_isunordered"});
 	register_extern_c_builtin("__builtin_fpclassify", int_type, {int_type, int_type, int_type, int_type, int_type, float_type});
 	register_extern_c_builtin("__builtin_fpclassify", int_type, {int_type, int_type, int_type, int_type, int_type, double_type});
 	register_extern_c_builtin("__builtin_fpclassify", int_type, {int_type, int_type, int_type, int_type, int_type, long_double_type});

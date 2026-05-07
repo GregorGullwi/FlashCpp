@@ -4820,7 +4820,7 @@ ExprResult AstToIr::generateBuiltinUnreachableIntrinsic(const CallExprNode& call
 
 ExprResult AstToIr::generateBuiltinNoOpIntrinsic(const CallExprNode& callExprNode, std::string_view func_name) {
 	if (!callExprNode.arguments().empty()) {
-		FLASH_LOG_FORMAT(Codegen, Warning, "{} should not have arguments (ignoring)", func_name);
+		throw CompileError(std::string(func_name) + " does not accept arguments");
 	}
 
 	FLASH_LOG_FORMAT(Codegen, Debug, "{} encountered - no code emitted", func_name);
