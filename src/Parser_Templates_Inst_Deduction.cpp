@@ -198,7 +198,7 @@ static void mergeAliasAndUseSiteTypeSpec(
 Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 	ASTNode& type_node,
 	std::span<const TemplateParameterNode> template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	if (!type_node.is<TypeSpecifierNode>())
 		return DependentAliasResolutionStatus::NotApplicable;
 	auto& ts = type_node.as<TypeSpecifierNode>();
@@ -435,32 +435,6 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 	return status;
 }
 
-Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
-	ASTNode& type_node,
-	std::span<const TemplateParameterNode> template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args) {
-	std::vector<TemplateTypeArg> vector_args(template_args.begin(), template_args.end());
-	return resolveDependentMemberAlias(type_node, template_params, vector_args);
-}
-
-Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
-	ASTNode& type_node,
-	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
-	return resolveDependentMemberAlias(
-		type_node,
-		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
-		template_args);
-}
-
-Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
-	ASTNode& type_node,
-	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args) {
-	std::vector<TemplateTypeArg> vector_args(template_args.begin(), template_args.end());
-	return resolveDependentMemberAlias(type_node, template_params, vector_args);
-}
-
 static bool hasUsableTemplateFunctionDefinition(const FunctionDeclarationNode& func_decl) {
 	return func_decl.has_template_body_position() ||
 		   func_decl.is_materialized() ||
@@ -679,7 +653,7 @@ static int computeTemplateFunctionSpecificity(const TemplateFunctionDeclarationN
 
 bool Parser::tryAppendDefaultTemplateArg(
 	const TemplateParameterNode& param,
-	const InlineVector<TemplateParameterNode, 4>& template_params,
+	std::span<const TemplateParameterNode> template_params,
 	InlineVector<TemplateTypeArg, 4>& template_args,
 	NamespaceHandle source_namespace) {
 	FLASH_LOG_FORMAT(Templates, Debug,
@@ -874,19 +848,6 @@ bool Parser::tryAppendDefaultTemplateArg(
 	return false;
 }
 
-bool Parser::tryAppendDefaultTemplateArg(
-	const TemplateParameterNode& param,
-	std::span<const TemplateParameterNode> template_params,
-	InlineVector<TemplateTypeArg, 4>& template_args,
-	NamespaceHandle source_namespace) {
-	InlineVector<TemplateParameterNode, 4> copied_template_params;
-	copied_template_params.reserve(template_params.size());
-	for (const TemplateParameterNode& template_param : template_params) {
-		copied_template_params.push_back(template_param);
-	}
-	return tryAppendDefaultTemplateArg(param, copied_template_params, template_args, source_namespace);
-}
-
 template <typename ParamContainer, typename ArgContainer>
 static void applyTemplateArgIndirection(
 	TypeSpecifierNode& substituted_type,
@@ -1033,6 +994,42 @@ void registerTypeParamsInScope(
 		});
 }
 
+void registerTypeParamsInScope(
+	std::span<const TemplateParameterNode> template_param_nodes,
+	std::span<const TemplateTypeArg> template_args,
+	FlashCpp::TemplateParameterScope& scope,
+	bool preserve_ref_qualifier) {
+	forEachNonPackTemplateParamArgBinding(
+		template_param_nodes,
+		template_args,
+		[&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t) {
+			if (arg.is_value || arg.is_template_template_arg)
+				return;
+			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
+			applyRegisteredTypeBindingMetadata(type_info, arg, preserve_ref_qualifier);
+			scope.addParameter(&type_info);
+		});
+}
+
+void registerTypeParamsInScope(
+	std::span<const TemplateParameterNode> template_param_nodes,
+	std::span<const TemplateTypeArg> template_args,
+	FlashCpp::TemplateParameterScope& scope,
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map) {
+	forEachNonPackTemplateParamArgBinding(
+		template_param_nodes,
+		template_args,
+		[&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t) {
+			if (arg.is_value || arg.is_template_template_arg)
+				return;
+			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
+			applyRegisteredTypeBindingMetadata(type_info, arg, true);
+			scope.addParameter(&type_info);
+			if (sfinae_map)
+				(*sfinae_map)[type_info.name()] = arg.type_index;
+		});
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // registerOuterBindingInScope
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1144,37 +1141,6 @@ void Parser::populateTemplateParamSubstitutions(
 			subs.push_back(subst);
 		});
 }
-
-void Parser::populateTemplateParamSubstitutions(
-	InlineVector<TemplateParamSubstitution, 4>& subs,
-	const InlineVector<TemplateParameterNode, 4>& template_params,
-	std::span<const TemplateTypeArg> template_args) {
-	forEachNonPackTemplateParamArgBinding(
-		template_params,
-		template_args,
-		[&](const TemplateParameterNode& template_param, const TemplateTypeArg& arg, size_t) {
-			if (arg.is_template_template_arg) {
-				TemplateParamSubstitution subst;
-				subst.param_name = template_param.nameHandle();
-				subst.is_template_template_param = true;
-				subst.concrete_template_name = arg.template_name_handle;
-				subs.push_back(subst);
-				return;
-			}
-			TemplateParamSubstitution subst;
-			subst.param_name = template_param.nameHandle();
-			if (arg.is_value) {
-				subst.is_value_param = true;
-				subst.value = arg.value;
-				subst.value_type = arg.typeEnum();
-			} else {
-				subst.is_value_param = false;
-				subst.is_type_param = true;
-				subst.substituted_type = arg;
-			}
-			subs.push_back(subst);
-		});
-}
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helper: re-parse a template function body with concrete argument
 // substitution and set the result as new_func_ref's definition.
@@ -1188,7 +1154,7 @@ void Parser::reparse_template_function_body(
 	FunctionDeclarationNode& new_func_ref,
 	const FunctionDeclarationNode& func_decl,
 	std::span<const TemplateParameterNode> template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	bool preserve_ref_qualifier) {
 	// Depth guard: function-template body replay can recursively re-enter via
 	// expressions inside the body that instantiate further templates.  libstdc++
@@ -1305,20 +1271,6 @@ void Parser::reparse_template_function_body(
 			std::string("non-dependent name '").append(tok.value()).append("' was not declared before the template definition (C++20 [temp.res]/9)"));
 	}
 	// template_scope RAII guard removes TypeInfo entries automatically.
-}
-
-void Parser::reparse_template_function_body(
-	FunctionDeclarationNode& new_func_ref,
-	const FunctionDeclarationNode& func_decl,
-	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
-	bool preserve_ref_qualifier) {
-	reparse_template_function_body(
-		new_func_ref,
-		func_decl,
-		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
-		template_args,
-		preserve_ref_qualifier);
 }
 
 namespace {

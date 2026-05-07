@@ -61,7 +61,7 @@ bool expressionTypeDeductionIsStillDependent(
 // Helper: Parse template brace initialization: Template<Args>{}
 // Parses the brace initializer, looks up the instantiated type, and creates a ConstructorCallNode
 ParseResult Parser::parse_template_brace_initialization(
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	std::string_view template_name,
 	const Token& identifier_token) {
 
@@ -856,7 +856,7 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 
 // Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
 std::vector<TemplateArgumentNodeInfo> Parser::build_template_arg_infos(
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	const std::vector<ASTNode>& template_arg_nodes) {
 	std::vector<TemplateArgumentNodeInfo> arg_infos;
 	arg_infos.reserve(template_args.size());
@@ -1519,15 +1519,7 @@ TypeIndex Parser::substitute_template_parameter(
 	return current_type_index.withCategory(current_type);
 }
 
-TypeIndex Parser::substitute_template_parameter(
-	const TypeSpecifierNode& original_type,
-	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args) {
-	return substitute_template_parameter(
-		original_type,
-		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
-		std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
-}
+
 
 // Lookup symbol with template parameter checking
 std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle identifier) {

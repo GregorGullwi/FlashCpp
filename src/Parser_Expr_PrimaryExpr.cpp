@@ -101,7 +101,7 @@ bool Parser::templateArgMatchesCurrentInstantiationSlot(
 
 std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurrentInstantiationTemplateOwner(
 	std::string_view primary_template_name,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	if (member_function_context_stack_.empty()) {
 		return std::nullopt;
 	}
@@ -208,7 +208,7 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurr
 //   p<handle>       -> template-template template argument
 StringHandle Parser::buildTTPPlaceholderName(
 	std::string_view ttp_name,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	StringBuilder placeholder_name;
 	placeholder_name.append(ttp_name);
 	placeholder_name.append("$"sv);
@@ -1048,7 +1048,7 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token, co
 Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwnerForLookup(
 	std::string_view primary_template_name,
 	std::string_view fallback_template_name,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	if (auto current_instantiation =
 			tryResolveCurrentInstantiationTemplateOwner(primary_template_name, template_args);
 		current_instantiation.has_value()) {
@@ -1071,7 +1071,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 		}
 
 		AliasTemplateMaterializationResult result;
-		std::vector<TemplateTypeArg> completed_args = template_args;
+		std::vector<TemplateTypeArg> completed_args(template_args.begin(), template_args.end());
 		const auto& template_params =
 			template_entry->as<TemplateClassDeclarationNode>().template_parameters();
 		const std::vector<std::string_view> template_param_names =
@@ -1148,7 +1148,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwnerForConstructorLookup(
 	std::string_view primary_template_name,
 	std::string_view fallback_template_name,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	if (auto current_instantiation =
 			tryResolveCurrentInstantiationTemplateOwner(primary_template_name, template_args);
 		current_instantiation.has_value()) {

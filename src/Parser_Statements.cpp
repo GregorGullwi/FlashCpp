@@ -2635,7 +2635,7 @@ bool Parser::types_equivalent(const TypeSpecifierNode& lhs, const TypeSpecifierN
 }
 
 bool Parser::instantiate_deduced_template(std::string_view class_name,
-										  const std::vector<TemplateTypeArg>& template_args,
+										  std::span<const TemplateTypeArg> template_args,
 										  TypeSpecifierNode& type_specifier) {
 	if (template_args.empty()) {
 		return false;

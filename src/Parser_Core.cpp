@@ -182,7 +182,7 @@ InlineVector<TemplateTypeArg, 4> toInlineTemplateArgs(const std::vector<Template
 
 // Helper to convert TemplateTypeArg vector to TypeInfo::TemplateArgInfo vector
 // This enables storing template instantiation metadata in TypeInfo for O(1) lookup
-InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const std::vector<TemplateTypeArg>& template_args) {
+InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(std::span<const TemplateTypeArg> template_args) {
 	InlineVector<TypeInfo::TemplateArgInfo, 4> result;
 	for (const auto& arg : template_args) {
 		TypeInfo::TemplateArgInfo info;

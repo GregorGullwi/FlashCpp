@@ -323,7 +323,7 @@ public:
 
 	// Convenience method: lookup instantiation using template name and TemplateTypeArg args
 	std::optional<ASTNode> getInstantiation(StringHandle template_name,
-											const std::vector<TemplateTypeArg>& args) const {
+											std::span<const TemplateTypeArg> args) const {
 		auto key = FlashCpp::makeInstantiationKey(template_name, args);
 		return getInstantiation(key);
 	}

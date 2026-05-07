@@ -1243,7 +1243,7 @@ static std::optional<StringHandle> findUnresolvedHardUseTypeSpecifier(const ASTN
 	return unresolved_name;
 }
 
-std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
+std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 
 	// Push a parser-level instantiation context for provenance tracking and backtraces.
@@ -1588,7 +1588,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Helper lambda delegates to extracted member function for non-type template parameter substitution
 	auto substitute_template_param_in_initializer = [this](
 														std::string_view param_name,
-														const std::vector<TemplateTypeArg>& args,
+														std::span<const TemplateTypeArg> args,
 														const auto& params) -> std::optional<ASTNode> {
 		InlineVector<TemplateParameterNode, 4> typed_params;
 		typed_params.reserve(params.size());
@@ -1606,7 +1606,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// and nested template-dependent expressions are handled uniformly.
 	auto substitute_default_initializer = [&](
 											  const std::optional<ASTNode>& default_init,
-											  const std::vector<TemplateTypeArg>& args,
+											  std::span<const TemplateTypeArg> args,
 											  const auto& params) -> std::optional<ASTNode> {
 		if (!default_init.has_value()) {
 			return std::nullopt;
@@ -1620,7 +1620,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		eval_ctx.parser = this;
 		eval_ctx.sema = getActiveSemanticAnalysis();
-		eval_ctx.template_args = args;
+		eval_ctx.template_args = std::vector<TemplateTypeArg>(args.begin(), args.end());
 		eval_ctx.template_param_names.reserve(params.size());
 		for (const auto& param : params) {
 			if (const TemplateParameterNode* template_param = tryGetTemplateParameterNode(param);
@@ -2073,7 +2073,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	auto resolve_bitfield_width = [&](
 									  const StructMemberDecl& member_decl,
 									  const auto& params,
-									  const std::vector<TemplateTypeArg>& args) -> std::optional<size_t> {
+									  std::span<const TemplateTypeArg> args) -> std::optional<size_t> {
 		if (member_decl.bitfield_width.has_value())
 			return member_decl.bitfield_width;
 		if (!member_decl.bitfield_width_expr.has_value())
@@ -2099,7 +2099,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	auto resolve_array_dimensions = [&](
 										const DeclarationNode& decl,
 										const auto& params,
-										const std::vector<TemplateTypeArg>& args) -> std::vector<size_t> {
+										std::span<const TemplateTypeArg> args) -> std::vector<size_t> {
 		std::vector<size_t> resolved_dims;
 		if (!decl.is_array()) {
 			return resolved_dims;
@@ -2359,7 +2359,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// This is critical for patterns like: template<typename T, typename = void> struct has_type;
 	// with specialization: template<typename T> struct has_type<T, void_t<typename T::type>>;
 	// When has_type<WithType> is instantiated, we need to fill in the default (void) before pattern matching.
-	std::vector<TemplateTypeArg> filled_args_for_pattern_match = template_args;
+	std::vector<TemplateTypeArg> filled_args_for_pattern_match(template_args.begin(), template_args.end());
 	{
 		auto primary_template_opt = gTemplateRegistry.lookupTemplate(template_name);
 		if (primary_template_opt.has_value() && primary_template_opt->is<TemplateClassDeclarationNode>()) {
@@ -2782,8 +2782,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_param_slot++;
 				}
 			}
-			const std::vector<TemplateTypeArg>& template_args_for_member_copy =
-				template_args_for_member_copy_storage.empty() ? template_args : template_args_for_member_copy_storage;
+			std::span<const TemplateTypeArg> template_args_for_member_copy =
+				template_args_for_member_copy_storage.empty() ? template_args : std::span<const TemplateTypeArg>(template_args_for_member_copy_storage);
 			auto clampPartialPatternTemplateParamIndirection = [&](TypeSpecifierNode& substituted_type, const TypeSpecifierNode& pattern_type) {
 				if (StringTable::getStringView(pattern_struct.name()).find("$pattern_") == std::string_view::npos ||
 					substituted_type.pointer_depth() <= pattern_type.pointer_depth()) {
@@ -3966,8 +3966,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_param_slot++;
 				}
 			}
-			const std::vector<TemplateTypeArg>& template_args_for_pattern =
-				template_args_for_pattern_storage.empty() ? template_args : template_args_for_pattern_storage;
+			std::span<const TemplateTypeArg> template_args_for_pattern =
+				template_args_for_pattern_storage.empty() ? template_args : std::span<const TemplateTypeArg>(template_args_for_pattern_storage);
 			const StructTypeInfo* instantiated_struct_info = struct_type_info.getStructInfo();
 
 			for (const auto& type_alias : pattern_struct.type_aliases()) {
