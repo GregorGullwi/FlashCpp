@@ -2514,7 +2514,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 		}
 	}
 
-	if (has_still_dependent_return && isDependentTemplateContext()) {
+	if (has_still_dependent_return && func_decl.is_template_pattern()) {
 		FLASH_LOG(Parser, Debug, "  Keeping auto return type unresolved in dependent template context");
 		return;
 	}
