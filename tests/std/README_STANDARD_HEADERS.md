@@ -101,6 +101,37 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+### 2026-05-07 Linux/libstdc++ dependent `auto` return deduction follow-up
+
+This pass targeted parser/sema handling of placeholder `auto` return deduction
+when template return expressions are still dependent.
+
+Fixes landed:
+
+- **Parser auto-return deduction now defers template-pattern updates when return
+  expressions remain dependent** instead of hard-failing with an early
+  inconsistent-deduction diagnostic.
+- **Sema placeholder return deduction now tolerates unresolved return
+  expressions while still deducing from resolvable returns in the same body**
+  (instead of immediately aborting deduction).
+
+Regression test:
+
+- `tests/test_template_auto_return_dependent_member_call_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_template_auto_return_dependent_member_call_ret0.cpp` | ✅ Pass | n/a | New regression validates deferred dependent member-call return deduction in template `auto` returns. |
+| `<type_traits>` | ❌ Compile Error | 390ms | `std::__is_complete_or_unbounded` still reaches `Itanium name mangling: unresolved 'auto' type reached mangling`. |
+| `<utility>` | ❌ Compile Error | 710ms | Same unresolved `auto` mangling stop via `std::__is_complete_or_unbounded`. |
+| `<optional>` | ❌ Compile Error | 1060ms | Same unresolved `auto` mangling stop; then existing `std::partial_ordering` constructor-resolution/codegen blocker. |
+| `<string_view>` | ❌ Compile Error | 2370ms | Prior parser stop (`inconsistent deduced auto return types` in `__begin`) is gone; current first hard stop is unresolved `auto` mangling in `std::__is_complete_or_unbounded` / `__begin`. |
+| `<algorithm>` | ❌ Compile Error | 2230ms | Prior parser stop (`inconsistent deduced auto return types` in `__begin`) is gone; current first hard stop is unresolved `auto` mangling in `std::__is_complete_or_unbounded` / `__begin`. |
+| `<numeric>` | ❌ Compile Error | 2200ms | Same unresolved `auto` mangling stops in `std::__is_complete_or_unbounded` and `__begin`. |
+| `<stdexcept>` | ❌ Compile Error | 3870ms | First hard stop is now `_Head_base` non-type template default evaluation (`Could not evaluate non-type template default for parameter 2`). |
+
 ### 2026-05-07 Linux/libstdc++ GCC builtin registration follow-up
 
 This pass rebuilt `x64/Sharded/FlashCpp` with clang++ and retested targeted

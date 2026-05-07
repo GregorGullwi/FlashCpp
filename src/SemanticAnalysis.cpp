@@ -1955,6 +1955,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 	}
 
 	std::optional<TypeSpecifierNode> deduced_type;
+	bool has_unresolved_return_expression = false;
 
 	auto get_expression_type_for_return = [&](const ASTNode& expr_node) -> std::optional<TypeSpecifierNode> {
 		// Prefer semantic inference so callable-object return deduction uses the
@@ -1981,7 +1982,11 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			if (ret.expression().has_value()) {
 				auto expr_type = get_expression_type_for_return(*ret.expression());
 				if (!expr_type.has_value()) {
-					return false;
+					// Keep scanning: mixed return sets can still yield a concrete
+					// deduced type from other returns even when one branch is not yet
+					// inferable in the current context.
+					has_unresolved_return_expression = true;
+					return true;
 				}
 				current_type = finalizePlaceholderDeduction(placeholder_type, *expr_type);
 			}
@@ -2118,6 +2123,10 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 	};
 
 	if (!visit_returns(body)) {
+		return std::nullopt;
+	}
+
+	if (has_unresolved_return_expression && !deduced_type.has_value()) {
 		return std::nullopt;
 	}
 
