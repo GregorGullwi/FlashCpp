@@ -1305,7 +1305,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		CallParamView param_view = resolveCallParamView(param_nodes, arg_index, nullptr, cached_param_list);
 		const TypeSpecifierNode* param_type = param_view.type();
 		CVReferenceQualifier param_ref_qualifier = param_view.ref_qualifier;
-		[[maybe_unused]] bool param_is_pack = param_view.is_parameter_pack;
 		const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
 		if (param_type && sema_) {
 			sema_ref_binding = sema_->getCallRefBinding(
