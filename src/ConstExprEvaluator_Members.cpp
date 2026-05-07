@@ -25,6 +25,7 @@ std::optional<EvalResult> tryMaterializeMultidimArrayRow(
 	const InitializerListNode& init_list,
 	size_t index,
 	ConstExpr::EvaluationContext& context);
+EvalResult make_constructor_member_default_init(const StructMember& member, EvaluationContext& context);
 
 struct ShiftEvaluationInfo {
 	int width_bits = kDefaultShiftWidthBits;
@@ -52,6 +53,111 @@ const StructMember* findMemberInfoRecursive(const StructTypeInfo* struct_info, S
 	}
 
 	return nullptr;
+}
+
+TypeSpecifierNode make_member_type_spec_for_default_init(const StructMember& member) {
+	TypeSpecifierNode type_spec(
+		member.type_index,
+		TypeQualifier::None,
+		SizeInBits{static_cast<int>(member.size * 8)},
+		Token{},
+		CVQualifier::None);
+	type_spec.set_reference_qualifier(member.reference_qualifier);
+	type_spec.add_pointer_levels(member.pointer_depth);
+	type_spec.set_array_dimensions(member.array_dimensions);
+	if (member.function_signature.has_value()) {
+		type_spec.set_function_signature(*member.function_signature);
+	}
+	return type_spec;
+}
+
+EvalResult make_constructor_default_init_from_type(const TypeSpecifierNode& type_spec, EvaluationContext& context) {
+	if (type_spec.is_array()) {
+		const std::vector<size_t>& dims = type_spec.array_dimensions();
+		if (dims.empty()) {
+			return EvalResult::error("Default-initialized constructor member array is missing dimensions in constexpr evaluation");
+		}
+
+		EvalResult array_result = EvalResult::from_int(0LL);
+		array_result.is_array = true;
+		array_result.is_indeterminate = false;
+		array_result.set_exact_type(type_spec);
+
+		TypeSpecifierNode element_type = type_spec;
+		if (dims.size() <= 1) {
+			element_type.set_array_dimensions({});
+		} else {
+			element_type.set_array_dimensions(std::vector<size_t>(dims.begin() + 1, dims.end()));
+		}
+
+		array_result.array_elements.reserve(dims[0]);
+		for (size_t i = 0; i < dims[0]; ++i) {
+			EvalResult element_result = make_constructor_default_init_from_type(element_type, context);
+			if (!element_result.success()) {
+				return element_result;
+			}
+			array_result.is_indeterminate = array_result.is_indeterminate || element_result.is_indeterminate;
+			array_result.array_elements.push_back(std::move(element_result));
+		}
+		return array_result;
+	}
+
+	if (is_struct_type(type_spec.category())) {
+		const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+		if (!struct_info) {
+			return EvalResult::error("Struct type info not found for default-initialized constructor member");
+		}
+
+		if (struct_info->hasUserDefinedConstructor()) {
+			ChunkedVector<ASTNode> empty_args;
+			auto ctor_result = Evaluator::try_materialize_struct_from_ctor_args(
+				struct_info,
+				type_spec.type_index(),
+				empty_args,
+				context,
+				true,
+				nullptr,
+				nullptr,
+				false);
+			if (!ctor_result.has_value()) {
+				return EvalResult::error(
+					"No matching default constructor for '" +
+					std::string(StringTable::getStringView(struct_info->getName())) +
+					"' in constexpr constructor member initialization");
+			}
+			return *ctor_result;
+		}
+
+		EvalResult object_result = EvalResult::from_int(0LL);
+		object_result.object_type_index = type_spec.type_index();
+		object_result.is_indeterminate = false;
+		object_result.set_exact_type(type_spec);
+
+		for (const auto& nested_member : struct_info->members) {
+			std::string_view nested_name = StringTable::getStringView(nested_member.getName());
+			EvalResult nested_result;
+			if (nested_member.default_initializer.has_value()) {
+				nested_result = Evaluator::evaluate(*nested_member.default_initializer, context);
+			} else {
+				nested_result = make_constructor_member_default_init(nested_member, context);
+			}
+			if (!nested_result.success()) {
+				return nested_result;
+			}
+			object_result.is_indeterminate = object_result.is_indeterminate || nested_result.is_indeterminate;
+			object_result.object_member_bindings[nested_name] = std::move(nested_result);
+		}
+		return object_result;
+	}
+
+	EvalResult result = EvalResult::indeterminate();
+	result.set_exact_type(type_spec);
+	return result;
+}
+
+EvalResult make_constructor_member_default_init(const StructMember& member, EvaluationContext& context) {
+	return make_constructor_default_init_from_type(make_member_type_spec_for_default_init(member), context);
 }
 
 std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult& value) {
@@ -1998,6 +2104,30 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			};
 			// Get the left-hand side variable name
 			const ASTNode& lhs = bin_op.get_lhs();
+			if (const auto* member_lhs = tryGetNode<MemberAccessNode>(lhs)) {
+				const IdentifierNode* direct_object_id = tryGetIdentifier(member_lhs->object());
+				if (!direct_object_id || direct_object_id->name() != "this") {
+					std::optional<EvalResult> resolve_error;
+					if (std::optional<BoundWriteTarget> target = resolveBoundWriteTarget(
+							lhs, bindings, context, evaluate_expression_with_bindings_const, resolve_error);
+						target.has_value() && target->slot != nullptr) {
+						auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+						if (!rhs_result.success()) {
+							return rhs_result;
+						}
+						auto assign_result = apply_op_to(*target->slot, rhs_result);
+						if (assign_result.success() && !target->root_name.empty()) {
+							if (EvalResult* root_binding = findMutableBindingValue(target->root_name, bindings, context)) {
+								refreshPointerSnapshotsForBinding(target->root_name, *root_binding, bindings, context);
+							}
+						}
+						return assign_result;
+					}
+					if (resolve_error.has_value()) {
+						return *resolve_error;
+					}
+				}
+			}
 			if (lhs.is<ExpressionNode>()) {
 				const ExpressionNode& lhs_expr = lhs.as<ExpressionNode>();
 
@@ -6612,6 +6742,19 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	context.local_bindings = saved_local_bindings;
 	if (!member_bind_result.success()) {
 		return member_bind_result;
+	}
+
+	for (const auto& member : struct_info->members) {
+		std::string_view member_name = StringTable::getStringView(member.getName());
+		if (member_bindings.find(member_name) != member_bindings.end()) {
+			continue;
+		}
+
+		EvalResult default_result = make_constructor_member_default_init(member, context);
+		if (!default_result.success()) {
+			return default_result;
+		}
+		member_bindings[member_name] = std::move(default_result);
 	}
 
 	const auto& ctor_definition = ctor_decl.get_definition();
