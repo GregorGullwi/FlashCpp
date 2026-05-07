@@ -757,7 +757,7 @@ ASTNode Parser::substituteTemplateParameters(
 				// (mirroring buildSubstitutionForPackElement) so each pack reads from its own slice.
 				for (size_t i = 0; i < num_pack_elements; ++i) {
 					// Also include the non-variadic parameters so they get substituted too
-					std::vector<ASTNode> subst_params;
+					std::vector<TemplateParameterNode> subst_params;
 					std::vector<TemplateTypeArg> subst_args;
 					size_t template_arg_index = 0;
 					for (size_t p = 0; p < template_params.size(); ++p) {
@@ -775,13 +775,13 @@ ASTNode Parser::substituteTemplateParameters(
 								// Create a non-variadic version of this parameter for single substitution
 								TemplateParameterNode single_tparam(tparam.nameHandle(), tparam.token());
 								// Don't set variadic - we're substituting one element at a time
-								subst_params.push_back(emplace_node<TemplateParameterNode>(single_tparam));
+								subst_params.push_back(single_tparam);
 								subst_args.push_back(template_args[template_arg_index + i]);
 							}
 							template_arg_index += pack_size;
 						} else {
 							if (template_arg_index < template_args.size()) {
-								subst_params.push_back(ASTNode::emplace_node<TemplateParameterNode>(template_params[p]));
+								subst_params.push_back(template_params[p]);
 								subst_args.push_back(template_args[template_arg_index]);
 							}
 							++template_arg_index;
@@ -792,7 +792,7 @@ ASTNode Parser::substituteTemplateParameters(
 					if (!func_pack_name.empty() && expanded_pack_expr.has_value()) {
 						expanded_pack_expr = replacePackIdentifierInExpr(expanded_pack_expr, func_pack_name, i);
 					}
-					ASTNode substituted = substituteTemplateParameters(expanded_pack_expr, std::span<const ASTNode>(subst_params.data(), subst_params.size()), std::span<const TemplateTypeArg>(subst_args.data(), subst_args.size()));
+					ASTNode substituted = substituteTemplateParameters(expanded_pack_expr, subst_params, subst_args);
 					pack_values.push_back(substituted);
 				}
 			} else {
@@ -1775,24 +1775,6 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 	return nullptr;
 }
 
-ASTNode Parser::substituteTemplateParameters(
-	const ASTNode& node,
-	std::span<const ASTNode> template_params,
-	std::span<const TemplateTypeArg> template_args) {
-	InlineVector<TemplateParameterNode, 4> typed_params;
-	typed_params.reserve(template_params.size());
-	for (const ASTNode& template_param : template_params) {
-		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
-			typed_param != nullptr) {
-			typed_params.push_back(*typed_param);
-		}
-	}
-	return substituteTemplateParameters(
-		node,
-		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-		template_args);
-}
-
 // Expand a PackExpansionExprNode into multiple substituted arguments for function calls.
 // For each pack element, the pattern expression is cloned with the pack identifier replaced,
 // then template parameters are substituted.
@@ -1868,26 +1850,6 @@ bool Parser::expandPackExpansionArgs(
 	return true;
 }
 
-bool Parser::expandPackExpansionArgs(
-	const PackExpansionExprNode& pack_expansion,
-	std::span<const ASTNode> template_params,
-	std::span<const TemplateTypeArg> template_args,
-	ChunkedVector<ASTNode>& out_args) {
-	InlineVector<TemplateParameterNode, 4> typed_params;
-	typed_params.reserve(template_params.size());
-	for (const ASTNode& template_param : template_params) {
-		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
-			typed_param != nullptr) {
-			typed_params.push_back(*typed_param);
-		}
-	}
-	return expandPackExpansionArgs(
-		pack_expansion,
-		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-		template_args,
-		out_args);
-}
-
 // Substitute a single argument, expanding PackExpansionExprNode when present.
 // Consolidates the repeated check-expand-or-substitute pattern used in
 // ordinary call-expression, constructor-call, and member-call handlers.
@@ -1905,26 +1867,6 @@ void Parser::substituteArgWithPackExpansion(
 		}
 	}
 	out.push_back(substituteTemplateParameters(arg, template_params, template_args));
-}
-
-void Parser::substituteArgWithPackExpansion(
-	const ASTNode& arg,
-	std::span<const ASTNode> template_params,
-	std::span<const TemplateTypeArg> template_args,
-	ChunkedVector<ASTNode>& out) {
-	InlineVector<TemplateParameterNode, 4> typed_params;
-	typed_params.reserve(template_params.size());
-	for (const ASTNode& template_param : template_params) {
-		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
-			typed_param != nullptr) {
-			typed_params.push_back(*typed_param);
-		}
-	}
-	substituteArgWithPackExpansion(
-		arg,
-		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-		template_args,
-		out);
 }
 
 // Replace a pack parameter identifier in an expression pattern with its expanded element name.

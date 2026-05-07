@@ -673,24 +673,6 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 
 const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	const TypeSpecifierNode& alias_type_spec,
-	std::span<const ASTNode> template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
-	InlineVector<TemplateParameterNode, 4> typed_params;
-	typed_params.reserve(template_params.size());
-	for (const ASTNode& template_param : template_params) {
-		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
-			typed_param != nullptr) {
-			typed_params.push_back(*typed_param);
-		}
-	}
-	return materializeInstantiatedMemberAliasTarget(
-		alias_type_spec,
-		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-		template_args);
-}
-
-const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
-	const TypeSpecifierNode& alias_type_spec,
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
 	return materializeInstantiatedMemberAliasTarget(
@@ -1612,7 +1594,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	}
 
 	StructDeclarationNode& spec_struct = spec_node.as<StructDeclarationNode>();
-	InlineVector<ASTNode, 4> no_template_params;
+	InlineVector<TemplateParameterNode, 4> no_template_params;
 
 	// Helper lambda to register type aliases with qualified names
 	auto register_type_aliases = [&]() {

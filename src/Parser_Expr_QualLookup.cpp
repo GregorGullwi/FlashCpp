@@ -1529,24 +1529,6 @@ TypeIndex Parser::substitute_template_parameter(
 		std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
 }
 
-TypeIndex Parser::substitute_template_parameter(
-	const TypeSpecifierNode& original_type,
-	std::span<const ASTNode> template_params,
-	std::span<const TemplateTypeArg> template_args) {
-	InlineVector<TemplateParameterNode, 4> typed_params;
-	typed_params.reserve(template_params.size());
-	for (const ASTNode& template_param : template_params) {
-		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
-			typed_param != nullptr) {
-			typed_params.push_back(*typed_param);
-		}
-	}
-	return substitute_template_parameter(
-		original_type,
-		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-		template_args);
-}
-
 // Lookup symbol with template parameter checking
 std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle identifier) {
 	// First check if it's a template parameter using the new method

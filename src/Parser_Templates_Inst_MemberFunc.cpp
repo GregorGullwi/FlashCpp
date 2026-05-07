@@ -86,10 +86,19 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 		combined_template_args.push_back(current_arg);
 	}
 
+	InlineVector<TemplateParameterNode, 4> typed_combined_params;
+	typed_combined_params.reserve(combined_template_params.size());
+	for (const ASTNode& param_node : combined_template_params) {
+		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+			typed_param != nullptr) {
+			typed_combined_params.push_back(*typed_param);
+		}
+	}
+
 	ASTNode substituted_default = substituteTemplateParameters(
 		param.default_value(),
-		std::span<const ASTNode>(combined_template_params.data(), combined_template_params.size()),
-		std::span<const TemplateTypeArg>(combined_template_args.data(), combined_template_args.size()));
+		typed_combined_params,
+		combined_template_args);
 	if (param.kind() == TemplateParameterKind::Type && substituted_default.is<TypeSpecifierNode>()) {
 		current_template_args.push_back(TemplateTypeArg(substituted_default.as<TypeSpecifierNode>()));
 		return true;
@@ -879,10 +888,19 @@ ASTNode Parser::buildMaterializedParamType(
 	const TypeSpecifierNode& original_param_type,
 	const InlineVector<ASTNode, 4>& materialized_template_params,
 	const InlineVector<TemplateTypeArg, 4>& materialized_template_args) {
+	InlineVector<TemplateParameterNode, 4> typed_params;
+	typed_params.reserve(materialized_template_params.size());
+	for (const ASTNode& param_node : materialized_template_params) {
+		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+			typed_param != nullptr) {
+			typed_params.push_back(*typed_param);
+		}
+	}
+
 	TypeIndex substituted_type_index = substitute_template_parameter(
 		original_param_type,
-		std::span<const ASTNode>(materialized_template_params.data(), materialized_template_params.size()),
-		std::span<const TemplateTypeArg>(materialized_template_args.data(), materialized_template_args.size()));
+		typed_params,
+		materialized_template_args);
 	ASTNode param_type = emplace_node<TypeSpecifierNode>(
 		substituted_type_index,
 		get_type_size_bits(substituted_type_index.category()),
@@ -1562,10 +1580,18 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					InlineVector<ASTNode, 4> outer_params;
 					InlineVector<TemplateTypeArg, 4> outer_args;
 					appendOuterBindingSubstitutionInputs(*outer_binding, outer_params, outer_args);
+					InlineVector<TemplateParameterNode, 4> typed_outer_params;
+					typed_outer_params.reserve(outer_params.size());
+					for (const ASTNode& param_node : outer_params) {
+						if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+							typed_param != nullptr) {
+							typed_outer_params.push_back(*typed_param);
+						}
+					}
 					substituted_body = substituteTemplateParameters(
 						substituted_body,
-						std::span<const ASTNode>(outer_params.data(), outer_params.size()),
-						std::span<const TemplateTypeArg>(outer_args.data(), outer_args.size()));
+						typed_outer_params,
+						outer_args);
 				}
 				new_func_ref.set_definition(substituted_body);
 			}
