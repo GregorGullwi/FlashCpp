@@ -1845,6 +1845,13 @@ inline bool templateArgInfoContainsDependentPlaceholder(const TypeInfo::Template
 }
 
 inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_spec) {
+	// TypeCategory::Auto or DeclTypeAuto with an invalid TypeIndex means the abbreviated-
+	// template auto parameter (e.g. `void f(auto x)`) was never substituted.
+	// typeIndexContainsDependentPlaceholder() returns false for an invalid TypeIndex, so
+	// we must detect this case explicitly before delegating.
+	if (isPlaceholderAutoType(type_spec.type()) && !type_spec.type_index().is_valid()) {
+		return true;
+	}
 	return typeIndexContainsDependentPlaceholder(type_spec.type_index());
 }
 

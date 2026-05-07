@@ -524,17 +524,35 @@ int main_impl(int argc, char* argv[]) {
 			try {
 				converter.visit(node_handle);
 			} catch (const CompileError& e) {
-				// Semantic errors (explicit ctor violations, etc.) - these are real compilation failures
+				// Semantic errors (explicit ctor violations, etc.) - these are real compilation failures.
+				// Exception: if the function still has unsubstituted placeholder (auto) parameter
+				// types it was never meant to be code-generated; downgrade to a warning so that
+				// valid user code is not incorrectly rejected.
 				std::string node_desc = node_handle.type_name();
+				bool has_placeholder_params = false;
 				if (node_handle.is<FunctionDeclarationNode>()) {
 					node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+					for (const auto& param : node_handle.as<FunctionDeclarationNode>().parameter_nodes()) {
+						if (param.is<DeclarationNode>()) {
+							const auto& pt = param.as<DeclarationNode>().type_specifier_node();
+							if (typeSpecStillUsesDependentPlaceholder(pt)) {
+								has_placeholder_params = true;
+								break;
+							}
+						}
+					}
 				}
-				FLASH_LOG(General, Error, "Compile error in '", node_desc, "': ", e.what());
-				// Clear any stale parse-phase instantiation notes here without printing them.
-				// These notes describe parse-time template context that is unrelated to this
-				// codegen-phase error, so attaching them would be misleading.
-				g_parser_instantiation_notes.clear();
-				has_compile_errors = true;
+				if (has_placeholder_params) {
+					FLASH_LOG(Codegen, Warning, "IR error for function '", node_desc,
+							  "' with unsubstituted placeholder parameter types: ", e.what());
+				} else {
+					FLASH_LOG(General, Error, "Compile error in '", node_desc, "': ", e.what());
+					// Clear any stale parse-phase instantiation notes here without printing them.
+					// These notes describe parse-time template context that is unrelated to this
+					// codegen-phase error, so attaching them would be misleading.
+					g_parser_instantiation_notes.clear();
+					has_compile_errors = true;
+				}
 			} catch (const std::bad_any_cast& e) {
 				// Log and skip nodes that cause bad_any_cast during IR conversion
 				// This allows compilation to continue past problematic template instantiations

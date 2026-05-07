@@ -2592,8 +2592,28 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// (from compute_and_set_mangled_name above) is used for code generation and linking
 		gSymbolTable.insertGlobal(mangled_token.value(), new_func_node);
 
-		// Add to top-level AST so it gets visited by the code generator
-		registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
+		// Add to top-level AST so it gets visited by the code generator.
+		// Mirror the guard used in try_instantiate_single_template: only register
+		// functions that (a) have a body and (b) have no parameter that still carries
+		// an unsubstituted placeholder type.  Body-less instantiations are forward
+		// declarations or SFINAE probes; instantiations with Auto parameters were
+		// never fully substituted and will crash the IR/name-mangling layer.
+		const bool explicit_has_unresolved_params = std::invoke([&]() {
+			for (const auto& param : new_func_ref.parameter_nodes()) {
+				if (param.is<DeclarationNode>()) {
+					const auto& type_node = param.as<DeclarationNode>().type_node();
+					if (type_node.is<TypeSpecifierNode>()) {
+						if (typeSpecStillUsesDependentPlaceholder(type_node.as<TypeSpecifierNode>())) {
+							return true;
+						}
+					}
+				}
+			}
+			return false;
+		});
+		if (new_func_ref.is_materialized() && !explicit_has_unresolved_params) {
+			registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
+		}
 
 		return new_func_node;
 	} // end of overload loop
