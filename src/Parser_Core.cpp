@@ -1509,6 +1509,7 @@ void Parser::register_builtin_functions() {
 	const ASTNode long_double_type = make_builtin_type(TypeCategory::LongDouble, CVQualifier::None, 0);
 	const ASTNode unsigned_short_type = make_builtin_type(TypeCategory::UnsignedShort, CVQualifier::None, 0);
 	const ASTNode unsigned_int_type = make_builtin_type(TypeCategory::UnsignedInt, CVQualifier::None, 0);
+	const ASTNode unsigned_long_long_type = make_builtin_type(TypeCategory::UnsignedLongLong, CVQualifier::None, 0);
 	const ASTNode int_ptr = make_builtin_type(TypeCategory::Int, CVQualifier::None, 1);
 	const ASTNode float_ptr = make_builtin_type(TypeCategory::Float, CVQualifier::None, 1);
 	const ASTNode double_ptr = make_builtin_type(TypeCategory::Double, CVQualifier::None, 1);
@@ -1523,7 +1524,7 @@ void Parser::register_builtin_functions() {
 	// most unqualified builtin-name binding succeed in libstdc++ headers. Pointer-
 	// typed operations still need proper generic signature modeling, which is why
 	// <atomic>/<latch> now fail later on __atomic_add_fetch rather than at name lookup.
-	const ASTNode generic_atomic_value_type = make_builtin_type(TypeCategory::UnsignedLongLong, CVQualifier::None, 0);
+	const ASTNode generic_atomic_value_type = unsigned_long_long_type;
 
 	// __builtin_strlen(const char*) - returns length of string
 	register_extern_c_builtin(
@@ -1585,7 +1586,7 @@ void Parser::register_builtin_functions() {
 	register_extern_c_builtin("__atomic_signal_fence", void_type, {int_type});
 	register_extern_c_builtin("__builtin_bswap16", unsigned_short_type, {unsigned_short_type});
 	register_extern_c_builtin("__builtin_bswap32", unsigned_int_type, {unsigned_int_type});
-	register_extern_c_builtin("__builtin_bswap64", generic_atomic_value_type, {generic_atomic_value_type});
+	register_extern_c_builtin("__builtin_bswap64", unsigned_long_long_type, {unsigned_long_long_type});
 	register_extern_c_builtin("__builtin_ia32_pause", void_type, {});
 
 	auto register_binary_float_builtins = [&](std::initializer_list<std::string_view> names, const ASTNode& type) {
@@ -1612,6 +1613,11 @@ void Parser::register_builtin_functions() {
 		register_int_binary_predicate_builtins(names, float_type);
 		register_int_binary_predicate_builtins(names, double_type);
 		register_int_binary_predicate_builtins(names, long_double_type);
+	};
+	auto register_fpclassify_builtins = [&]() {
+		register_extern_c_builtin("__builtin_fpclassify", int_type, {int_type, int_type, int_type, int_type, int_type, float_type});
+		register_extern_c_builtin("__builtin_fpclassify", int_type, {int_type, int_type, int_type, int_type, int_type, double_type});
+		register_extern_c_builtin("__builtin_fpclassify", int_type, {int_type, int_type, int_type, int_type, int_type, long_double_type});
 	};
 	const std::initializer_list<std::string_view> unary_math_base = {
 		"__builtin_acosf", "__builtin_asinf", "__builtin_atanf", "__builtin_ceilf",
@@ -1655,9 +1661,7 @@ void Parser::register_builtin_functions() {
 	register_extern_c_builtin("__builtin_powil", long_double_type, {long_double_type, int_type});
 	register_all_float_predicate_builtins({"__builtin_isfinite", "__builtin_isinf", "__builtin_isnan", "__builtin_isnormal", "__builtin_signbit"});
 	register_all_float_binary_predicate_builtins({"__builtin_isgreater", "__builtin_isgreaterequal", "__builtin_isless", "__builtin_islessequal", "__builtin_islessgreater", "__builtin_isunordered"});
-	register_extern_c_builtin("__builtin_fpclassify", int_type, {int_type, int_type, int_type, int_type, int_type, float_type});
-	register_extern_c_builtin("__builtin_fpclassify", int_type, {int_type, int_type, int_type, int_type, int_type, double_type});
-	register_extern_c_builtin("__builtin_fpclassify", int_type, {int_type, int_type, int_type, int_type, int_type, long_double_type});
+	register_fpclassify_builtins();
 
 	// MSVC atomic headers rely on several barrier/interlocked intrinsics via macros
 	// (for example _Compiler_barrier() -> _ReadWriteBarrier()).

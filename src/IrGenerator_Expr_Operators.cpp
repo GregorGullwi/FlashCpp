@@ -4879,8 +4879,7 @@ ExprResult AstToIr::generateBuiltinExpectIntrinsic(const CallExprNode& callExprN
 
 ExprResult AstToIr::generateBuiltinIdentityIntrinsic(const CallExprNode& callExprNode, std::string_view func_name) {
 	if (callExprNode.arguments().size() != 1) {
-		FLASH_LOG_FORMAT(Codegen, Error, "{} requires exactly 1 argument", func_name);
-		return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
+		throw CompileError(std::string(func_name) + " requires exactly 1 argument");
 	}
 
 	ASTNode arg = callExprNode.arguments()[0];
