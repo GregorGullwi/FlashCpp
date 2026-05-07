@@ -9,6 +9,7 @@
 #include "TypeTraitEvaluator.h"
 #include "InstantiationQueue.h"
 #include "ParserTemplateClassShared.h"
+#include "AstTraversal.h"
 
 static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
@@ -911,6 +912,43 @@ static void retryNormalizeTemplateStaticMembersAfterDeferredBodies(
 		static_member.initializer = std::move(initializer);
 		static_member.normalized_init = std::move(normalized_initializer);
 	}
+}
+
+static std::optional<StringHandle> findUnresolvedHardUseTypeSpecifier(const ASTNode& root) {
+	std::optional<StringHandle> unresolved_name;
+
+	auto check_type_spec = [&](const TypeSpecifierNode& type_spec) {
+		const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+		if (typeSpecStillUsesDependentPlaceholder(type_spec)) {
+			unresolved_name = type_info ? type_info->name() : type_spec.token().handle();
+			return;
+		}
+
+		std::string_view type_name = type_info
+			? StringTable::getStringView(type_info->name())
+			: type_spec.token().value();
+		if (type_spec.type() == TypeCategory::UserDefined &&
+			type_name.find("::") != std::string_view::npos &&
+			(type_info == nullptr ||
+			 (!type_info->getStructInfo() && !type_info->getEnumInfo() && !type_info->isTypeAlias()))) {
+			unresolved_name = type_info ? type_info->name() : type_spec.token().handle();
+		}
+	};
+
+	AstTraversal::visitAST(root, [&](const ASTNode& current) {
+		if (current.is<TypeSpecifierNode>()) {
+			check_type_spec(current.as<TypeSpecifierNode>());
+		} else if (current.is<DeclarationNode>()) {
+			check_type_spec(current.as<DeclarationNode>().type_specifier_node());
+		} else if (current.is<VariableDeclarationNode>()) {
+			check_type_spec(current.as<VariableDeclarationNode>().declaration().type_specifier_node());
+		}
+		return unresolved_name.has_value()
+			? AstTraversal::VisitDecision::Stop
+			: AstTraversal::VisitDecision::Continue;
+	});
+
+	return unresolved_name;
 }
 
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
@@ -7455,6 +7493,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*body_to_substitute,
 							template_params,
 							template_args_to_use);
+						if (force_eager) {
+							if (std::optional<StringHandle> unresolved_type =
+									findUnresolvedHardUseTypeSpecifier(substituted_body);
+								unresolved_type.has_value()) {
+								throw CompileError(std::string(StringBuilder()
+									.append("Explicit instantiation left unresolved dependent type '")
+									.append(unresolved_type->isValid()
+										? StringTable::getStringView(*unresolved_type)
+										: std::string_view("<unknown>"))
+									.append("' in member function '")
+									.append(decl.identifier_token().value())
+									.append("'")
+									.commit()));
+							}
+						}
 						new_func_ref.set_definition(substituted_body);
 						FLASH_LOG(Templates, Debug, "Successfully substituted function body");
 					} catch (const std::exception& e) {
@@ -8738,8 +8791,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			if (!target_func && !target_ctor && !target_dtor) {
-				FLASH_LOG(Templates, Error, "Could not find member function ", deferred.identity.original_lookup_name,
-						  " in instantiated struct ", instantiated_name);
+				std::string error_msg = std::string(StringBuilder()
+					.append("Could not find member function ")
+					.append(deferred.identity.original_lookup_name)
+					.append(" in instantiated struct ")
+					.append(instantiated_name)
+					.commit());
+				if (force_eager) {
+					throw InternalError(error_msg);
+				}
+				FLASH_LOG(Templates, Error, error_msg);
 				continue;
 			}
 
@@ -8815,8 +8876,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			template_param_substitutions_.clear(); // Clear substitutions after parsing
 
 			if (result.is_error()) {
-				FLASH_LOG(Templates, Error, "Failed to parse deferred template body: ", result.error_message());
-				// Continue with other bodies instead of failing entirely
+				std::string error_msg = std::string(StringBuilder()
+					.append("Failed to parse deferred template body for ")
+					.append(deferred.identity.original_lookup_name)
+					.append(": ")
+					.append(result.error_message())
+					.commit());
+				if (force_eager) {
+					throw CompileError(error_msg);
+				}
+				FLASH_LOG(Templates, Error, error_msg);
 				continue;
 			}
 
