@@ -947,10 +947,30 @@ constexpr int g() {
 static_assert(g() == 10);  // ✅ Works
 ```
 
-**Limitation:** Write-through-pointer in a *different* call frame (i.e., passing `&local`
-to a separate constexpr function that writes via the pointer parameter) is not yet
-supported.  This requires inter-frame binding mutation, which needs architectural changes
-to the evaluator.  Same-frame writes work fully.
+Write-through-pointer in a different constexpr call frame is now supported for
+straightforward local scalar and local struct-object targets. Passing `&local` to a
+separate constexpr function can update the caller's object through `*p = value`,
+compound assignments such as `*p += value`, and direct member writes such as
+`p->member = value`.
+
+```cpp
+struct Pair { int value; };
+
+constexpr void set_int(int* p, int value) { *p = value; }
+constexpr void set_pair(Pair* p, int value) { p->value = value; }
+
+constexpr int f() {
+	int x = 1;
+	Pair pair{2};
+	set_int(&x, 7);
+	set_pair(&pair, 11);
+	return x + pair.value;
+}
+
+static_assert(f() == 18);  // ✅ Works
+```
+
+This is covered by `tests/test_constexpr_pointer_param_write_ret0.cpp`.
 
 Covered by `tests/test_constexpr_deref_assign_local_ret5.cpp`.
 
@@ -1314,6 +1334,7 @@ Potential areas for enhancement (in order of complexity):
   - straightforward returned closure-object state transfer
   - straightforward returned `[*this]` member closures from local aggregate objects
   - straightforward nested lambdas over enclosing state
+- ✅ Straightforward write-through-pointer across constexpr function frames for local scalar and struct-object targets
 - ❌ `throw` expressions in constexpr evaluation
 - ❌ Complex member initialization chains
 

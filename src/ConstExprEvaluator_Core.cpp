@@ -18,6 +18,8 @@ namespace {
 constexpr std::string_view kStatementExecutedWithoutReturn = "Statement executed (not a return)";
 constexpr std::string_view kBreakExecuted = "Break executed";
 constexpr std::string_view kContinueExecuted = "Continue executed";
+constexpr std::string_view kFunctionDidNotReturnValue = "Constexpr function did not return a value";
+constexpr std::string_view kReturnStatementNoExpression = "Constexpr function return statement has no expression";
 
 struct MemberPointerTarget {
 	StringHandle member_name;
@@ -2007,7 +2009,7 @@ EvalResult Evaluator::evaluate_resolved_function_call(
 	}
 
 	if (outer_bindings) {
-		return evaluate_function_call_with_bindings(func_decl, arguments, *outer_bindings, context);
+		return evaluate_function_call_with_bindings(func_decl, arguments, *outer_bindings, context, nullptr);
 	}
 
 	std::unordered_map<std::string_view, EvalResult> empty_bindings;
@@ -4364,7 +4366,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 					arguments.size() <= parameter_count) {
 					// Found a potential match - try to evaluate it
 					std::unordered_map<std::string_view, EvalResult> empty_bindings;
-					return evaluate_function_call_with_bindings(candidate, arguments, empty_bindings, context);
+					return evaluate_function_call_with_bindings(candidate, arguments, empty_bindings, context, nullptr);
 				}
 			}
 		}
@@ -4496,7 +4498,7 @@ EvalResult Evaluator::evaluate_function_call_with_template_context(
 		load_template_bindings_from_type(fallback_template_type, context);
 	}
 
-	EvalResult result = evaluate_function_call_with_bindings(func_decl, arguments, outer_bindings, context);
+	EvalResult result = evaluate_function_call_with_bindings(func_decl, arguments, outer_bindings, context, nullptr);
 	restore_template_bindings();
 	return result;
 }
@@ -4505,11 +4507,19 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	const FunctionDeclarationNode& func_decl,
 	const ChunkedVector<ASTNode>& arguments,
 	const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings) {
 
 	// Check recursion depth
 	if (context.current_depth >= context.max_recursion_depth) {
 		return EvalResult::error("Constexpr recursion depth limit exceeded");
+	}
+	std::string_view func_name = func_decl.decl_node().identifier_token().value();
+	if (!func_decl.is_constexpr() && !func_decl.is_consteval() &&
+		context.storage_duration != ConstExpr::StorageDuration::Static) {
+		return EvalResult::error(
+			"Function in constant expression must be constexpr or consteval: " + std::string(func_name),
+			EvalErrorType::NotConstantExpression);
 	}
 
 	// Get the function body
@@ -4539,6 +4549,27 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 		&outer_bindings);
 	if (!bind_result.success()) {
 		return bind_result;
+	}
+	std::vector<std::string_view> pointer_target_writebacks;
+	std::vector<std::pair<std::string_view, EvalResult>> pointer_target_imports;
+	for (const auto& [param_name, param_value] : param_bindings) {
+		(void)param_name;
+		if (!param_value.pointer_to_var.isValid()) {
+			continue;
+		}
+		std::string_view target_name = StringTable::getStringView(param_value.pointer_to_var);
+		if (param_bindings.find(target_name) != param_bindings.end()) {
+			continue;
+		}
+		auto outer_it = outer_bindings.find(target_name);
+		if (outer_it == outer_bindings.end()) {
+			continue;
+		}
+		pointer_target_imports.push_back({target_name, outer_it->second});
+		pointer_target_writebacks.push_back(target_name);
+	}
+	for (const auto& [target_name, target_value] : pointer_target_imports) {
+		param_bindings[target_name] = target_value;
 	}
 
 	auto saved_template_param_names = context.template_param_names;
@@ -4582,11 +4613,27 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 		local_bindings,
 		context,
 		"Function body is not a block",
-		"Constexpr function did not return a value");
+		std::string(kFunctionDidNotReturnValue));
 
 	context.current_depth--;
 	context.return_type_info = saved_return_type_info;
 	restore_template_bindings();
+	if (!result.success() && (result.error_message == kFunctionDidNotReturnValue ||
+							  result.error_message == kReturnStatementNoExpression)) {
+		const TypeSpecifierNode& ret_spec = func_decl.decl_node().type_specifier_node();
+		if (ret_spec.category() == TypeCategory::Void) {
+			result = EvalResult::from_int(0LL);
+		}
+	}
+	if (result.success() && mutable_outer_bindings) {
+		for (std::string_view target_name : pointer_target_writebacks) {
+			auto local_it = local_bindings.find(target_name);
+			if (local_it == local_bindings.end()) {
+				continue;
+			}
+			(*mutable_outer_bindings)[target_name] = local_it->second;
+		}
+	}
 	// Per C++20 [expr.const]/p5, any allocation made with `new` during a
 	// constant expression must be freed before the constant expression ends.
 	// Check this at the outermost function call (depth returning to 0).
@@ -4752,7 +4799,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		const auto& return_expr = ret_stmt.expression();
 
 		if (!return_expr.has_value()) {
-			return EvalResult::error("Constexpr function return statement has no expression");
+			return EvalResult::error(std::string(kReturnStatementNoExpression));
 		}
 
 		// Handle brace-init return: return {x, y, ...} in a struct-returning function.
