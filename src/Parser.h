@@ -1670,21 +1670,6 @@ private:
 		StringHandle partial_pattern_owner_name,  // Enable partial-pattern pointer-depth clamp when valid
 		bool apply_bound_metadata_to_full_substitution, // Apply bound arg pointer/ref metadata on substituted node
 		bool apply_resolved_index_to_full_substitution); // Force substituted TypeIndex onto full AST substitutions
-	SubstitutedMemberFunctionShell createSubstitutedMemberFunctionShell(
-		const FunctionDeclarationNode& original_func,
-		const ASTNode& original_return_type_node,
-		const Token& fallback_return_token,
-		StringHandle parent_struct_name,
-		std::span<const ASTNode> template_params,
-		std::span<const TemplateTypeArg> template_args,
-		const StructDeclarationNode* owner_decl,
-		TypeIndex instantiated_owner_type_index,
-		TypeIndex override_return_type_index,
-		OverloadableOperator operator_kind,
-		StringHandle effective_name_override,
-		StringHandle partial_pattern_owner_name,
-		bool apply_bound_metadata_to_full_substitution,
-		bool apply_resolved_index_to_full_substitution);
 	void substituteAndCopyMemberFunctionParameters(
 		const std::vector<ASTNode>& original_params,
 		FunctionDeclarationNode& target_node,
@@ -1698,19 +1683,6 @@ private:
 		bool preserve_parameter_cv_qualifier, // Keep declared cv qualifier; false reproduces decl-only legacy behavior
 		bool apply_bound_metadata_to_full_substitution, // Apply bound arg pointer/ref metadata on substituted node
 		bool apply_resolved_index_to_full_substitution); // Force substituted TypeIndex onto full AST substitutions
-	void substituteAndCopyMemberFunctionParameters(
-		const std::vector<ASTNode>& original_params,
-		FunctionDeclarationNode& target_node,
-		std::span<const ASTNode> template_params,
-		std::span<const TemplateTypeArg> template_args,
-		const StructDeclarationNode* owner_decl,
-		TypeIndex instantiated_owner_type_index,
-		TypeIndex self_type_from_index,
-		TypeIndex self_type_to_index,
-		SubstitutedDefaultArgumentPolicy default_argument_policy,
-		bool preserve_parameter_cv_qualifier,
-		bool apply_bound_metadata_to_full_substitution,
-		bool apply_resolved_index_to_full_substitution);
 	template <typename TemplateParamsContainer, typename TemplateArgsContainer>
 	StringHandle resolveBaseInitializerNameForTemplateArgs(
 		StringHandle base_name,
@@ -2092,13 +2064,13 @@ private:
 	std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);	 // NEW: Instantiate variable template
 	std::optional<TemplateTypeArg> materializeDeferredAliasTemplateArg(
 		const ASTNode& arg_node,
-		const InlineVector<ASTNode, 4>& template_parameters,
+		const InlineVector<TemplateParameterNode, 4>& template_parameters,
 		const InlineVector<StringHandle, 4>& param_names,
 		const std::vector<TemplateTypeArg>& template_args,
 		const TemplateParameterNode* target_template_param);
 	std::optional<TemplateTypeArg> materializeDeferredAliasTemplateArg(
 		const ASTNode& arg_node,
-		const InlineVector<TemplateParameterNode, 4>& template_parameters,
+		const InlineVector<ASTNode, 4>& template_parameters,
 		const InlineVector<StringHandle, 4>& param_names,
 		const std::vector<TemplateTypeArg>& template_args,
 		const TemplateParameterNode* target_template_param);
@@ -2491,10 +2463,10 @@ private:
 		std::string_view alias_template_name,
 		const std::vector<TemplateTypeArg>& template_args);
 	void normalizeDependentNonTypeTemplateArgs(
-		const InlineVector<ASTNode, 4>& template_parameters,
+		const InlineVector<TemplateParameterNode, 4>& template_parameters,
 		std::vector<TemplateTypeArg>& template_args);
 	void normalizeDependentNonTypeTemplateArgs(
-		const InlineVector<TemplateParameterNode, 4>& template_parameters,
+		const InlineVector<ASTNode, 4>& template_parameters,
 		std::vector<TemplateTypeArg>& template_args);
 	bool resolveAliasTemplateInstantiation(
 		TypeSpecifierNode& type_spec,

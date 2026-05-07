@@ -155,7 +155,6 @@ ParseResult Parser::parse_template_declaration() {
 	// Parse template parameter list (unless it's a specialization)
 	InlineVector<TemplateParameterNode, 4> template_param_nodes;
 	TemplateParameterMetadata template_param_metadata;
-	InlineVector<ASTNode, 4> template_params;
 	if (!is_specialization) {
 		auto param_list_result = parse_template_parameter_list(template_param_nodes);
 		if (param_list_result.is_error()) {
@@ -192,10 +191,6 @@ ParseResult Parser::parse_template_declaration() {
 	// This allows them to be used in the function body or class members
 	FlashCpp::TemplateParameterScope template_scope;
 	template_param_metadata = registerTemplateParametersInScope(template_param_nodes, template_scope);
-	template_params.clear();
-	for (const auto& param : template_param_nodes) {
-		template_params.push_back(emplace_node<TemplateParameterNode>(param));
-	}
 	const InlineVector<StringHandle, 4>& template_param_names = template_param_metadata.names;
 
 	// Set the flag to enable fold expression parsing if we have parameter packs
@@ -535,7 +530,7 @@ ParseResult Parser::parse_template_declaration() {
 
 				FLASH_LOG(Templates, Debug, "Registered nested template out-of-line member: ",
 						  nested_qualified_class_name, "::", nested_func_name_token.value(),
-						  " (outer params: ", template_params.size(),
+						  " (outer params: ", template_param_nodes.size(),
 						  ", inner params: ", inner_template_params.size(), ")");
 
 				cleanup_template_state();
@@ -752,13 +747,7 @@ ParseResult Parser::parse_template_declaration() {
 			return ParseResult::error("Expected ';' after concept definition", current_token_);
 		}
 
-		// Convert template_params (ASTNode vector) to TemplateParameterNode vector
-		InlineVector<TemplateParameterNode, 4> concept_template_param_nodes;
-		for (const auto& param : template_params) {
-			if (param.is<TemplateParameterNode>()) {
-				concept_template_param_nodes.push_back(param.as<TemplateParameterNode>());
-			}
-		}
+		InlineVector<TemplateParameterNode, 4> concept_template_param_nodes = template_param_nodes;
 
 		// Create the ConceptDeclarationNode with template parameters
 		auto concept_node = emplace_node<ConceptDeclarationNode>(
@@ -1091,7 +1080,7 @@ ParseResult Parser::parse_template_declaration() {
 					arg.is_array = is_array;
 					// Mark as dependent only for partial specializations
 					// For full specializations (template<>), the types are concrete, not dependent
-					arg.is_dependent = !template_params.empty();
+					arg.is_dependent = !template_param_nodes.empty();
 
 					// Store the type name for pattern matching
 					// For template instantiations like ratio<_Num, _Den>, this will be "ratio"
@@ -1193,7 +1182,7 @@ ParseResult Parser::parse_template_declaration() {
 		// Pattern: template<typename T> struct Name<T&> { ... }
 		// After struct/class keyword and name, if we see '<', it's a specialization
 		bool is_partial_specialization = false;
-		if (!is_specialization && !template_params.empty()) {
+		if (!is_specialization && !template_param_nodes.empty()) {
 			// Save position to peek ahead
 			auto peek_pos = save_token_position();
 
@@ -1293,12 +1282,9 @@ ParseResult Parser::parse_template_declaration() {
 					// For full specializations (template<>), store the concrete template_args so the
 					// nested class is only applied when instantiation arguments match.
 					InlineVector<TemplateParameterNode, 4> out_of_line_template_params;
-					out_of_line_template_params.reserve(template_params.size());
-					for (const ASTNode& template_param : template_params) {
-						if (!template_param.is<TemplateParameterNode>()) {
-							continue;
-						}
-						out_of_line_template_params.push_back(template_param.as<TemplateParameterNode>());
+					out_of_line_template_params.reserve(template_param_nodes.size());
+					for (const TemplateParameterNode& template_param : template_param_nodes) {
+						out_of_line_template_params.push_back(template_param);
 					}
 					gTemplateRegistry.registerOutOfLineNestedClass(template_name, OutOfLineNestedClass{
 																					  out_of_line_template_params,
@@ -2627,12 +2613,12 @@ ParseResult Parser::parse_template_declaration() {
 			//     via registerSpecialization().
 			//   - Otherwise, treat as partial specialization pattern and register via
 			//     registerSpecializationPattern().
-			if (template_params.empty()) {
+			if (template_param_nodes.empty()) {
 				// Full specialization: exact match on concrete arguments
 				gTemplateRegistry.registerSpecialization(template_name, template_args, struct_node);
 			} else {
 				// Partial specialization: register as a pattern for matching
-				gTemplateRegistry.registerSpecializationPattern(template_name, template_params, template_args, struct_node);
+				gTemplateRegistry.registerSpecializationPattern(template_name, template_param_nodes, template_args, struct_node);
 			}
 
 			// Reset parsing context flags
@@ -2686,10 +2672,10 @@ ParseResult Parser::parse_template_declaration() {
 				advance(); // consume '::'
 				if (peek().is_identifier()) {
 					discard_saved_token(scope_check);
-					std::string_view member_class_name = peek_info().value();
+					StringHandle member_class_name_handle = peek_info().handle();
 					advance(); // consume member class name
 					FLASH_LOG_FORMAT(Templates, Debug, "Out-of-line member class definition: {}::{}",
-									 template_name, member_class_name);
+									 template_name, member_class_name_handle.view());
 
 					// Skip base class list if present
 					if (peek() == ":"_tok) {
@@ -2712,16 +2698,13 @@ ParseResult Parser::parse_template_declaration() {
 					// can re-parse "struct Wrapper<T>::Nested { ... }" during instantiation.
 					// Partial specializations leave specialization_args empty — applies to all instantiations.
 					InlineVector<TemplateParameterNode, 4> out_of_line_template_params;
-					out_of_line_template_params.reserve(template_params.size());
-					for (const ASTNode& template_param : template_params) {
-						if (!template_param.is<TemplateParameterNode>()) {
-							continue;
-						}
-						out_of_line_template_params.push_back(template_param.as<TemplateParameterNode>());
+					out_of_line_template_params.reserve(template_param_nodes.size());
+					for (const TemplateParameterNode& template_param : template_param_nodes) {
+						out_of_line_template_params.push_back(template_param);
 					}
 					gTemplateRegistry.registerOutOfLineNestedClass(template_name, OutOfLineNestedClass{
 																					  out_of_line_template_params,
-																					  StringTable::getOrInternStringHandle(member_class_name),
+																					  member_class_name_handle,
 																					  struct_keyword_pos,
 																					  template_param_names,
 																					  is_class,
@@ -2729,7 +2712,7 @@ ParseResult Parser::parse_template_declaration() {
 																					  {}	 // no specialization args — applies to all instantiations
 																				  });
 					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class: {}::{}",
-									 template_name, member_class_name);
+									 template_name, member_class_name_handle.view());
 
 					// Clean up template parameter context
 					clearCurrentTemplateParameters();
@@ -2941,7 +2924,7 @@ ParseResult Parser::parse_template_declaration() {
 					param_names_view.push_back(StringTable::getStringView(name));
 				}
 				auto template_class_node = emplace_node<TemplateClassDeclarationNode>(
-					template_params,
+					template_param_nodes,
 					std::move(param_names_view),
 					struct_node);
 
@@ -2984,7 +2967,7 @@ ParseResult Parser::parse_template_declaration() {
 					param_names_view2.push_back(StringTable::getStringView(name));
 				}
 				auto template_class_node = emplace_node<TemplateClassDeclarationNode>(
-					template_params,
+					template_param_nodes,
 					std::move(param_names_view2),
 					struct_node);
 
@@ -3984,7 +3967,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Register the specialization PATTERN (not exact match)
 			// This allows pattern matching during instantiation
-			gTemplateRegistry.registerSpecializationPattern(template_name, template_params, pattern_args, struct_node);
+			gTemplateRegistry.registerSpecializationPattern(template_name, template_param_nodes, pattern_args, struct_node);
 
 			// Clean up template parameter context before returning
 			clearCurrentTemplateParameters();
@@ -4675,7 +4658,6 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 	// Parse template parameter list
 	InlineVector<TemplateParameterNode, 4> template_param_nodes;
-	InlineVector<ASTNode, 4> template_params;
 
 	auto param_list_result = parse_template_parameter_list(template_param_nodes);
 	if (param_list_result.is_error()) {
@@ -4825,10 +4807,6 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	template_param_names.reserve(template_param_metadata.names.size());
 	for (StringHandle param_name : template_param_metadata.names) {
 		template_param_names.push_back(StringTable::getStringView(param_name));
-	}
-	template_params.clear();
-	for (const auto& param : template_param_nodes) {
-		template_params.push_back(emplace_node<TemplateParameterNode>(param));
 	}
 
 	// Skip requires clause if present (for partial specializations with constraints)
@@ -5419,7 +5397,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Register pattern under qualified name (MakeUnsigned::List)
 		gTemplateRegistry.registerSpecializationPattern(
 			StringTable::getStringView(qualified_simple_name),
-			template_params,
+			template_param_nodes,
 			pattern_args,
 			template_struct_node);
 
@@ -5427,7 +5405,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// This ensures patterns are found regardless of whether qualified or simple name is used
 		gTemplateRegistry.registerSpecializationPattern(
 			struct_name,
-			template_params,
+			template_param_nodes,
 			pattern_args,
 			template_struct_node);
 

@@ -163,7 +163,7 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 
 std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	const ASTNode& arg_node,
-	const InlineVector<ASTNode, 4>& template_parameters,
+	const InlineVector<TemplateParameterNode, 4>& template_parameters,
 	const InlineVector<StringHandle, 4>& param_names,
 	const std::vector<TemplateTypeArg>& template_args,
 	const TemplateParameterNode* target_template_param) {
@@ -178,12 +178,12 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	const auto normalize_alias_param_arg = [&](size_t alias_param_idx, const TemplateTypeArg& source_arg) {
 		TemplateTypeArg normalized = source_arg;
 		if (alias_param_idx < template_parameters.size()) {
-			const TemplateParameterNode* alias_param = tryGetTemplateParameterNode(template_parameters[alias_param_idx]);
-			if (alias_param != nullptr && alias_param->kind() == TemplateParameterKind::NonType && !normalized.is_value) {
+			const TemplateParameterNode& alias_param = template_parameters[alias_param_idx];
+			if (alias_param.kind() == TemplateParameterKind::NonType && !normalized.is_value) {
 				normalized.is_value = true;
 				normalized.is_dependent = normalized.is_dependent || normalized.dependent_name.isValid();
-				if (alias_param->has_type()) {
-					const auto& param_type = alias_param->type_specifier_node();
+				if (alias_param.has_type()) {
+					const auto& param_type = alias_param.type_specifier_node();
 					normalized.type_index = param_type.type_index();
 					normalized.setCategory(param_type.type());
 				} else if (!normalized.type_index.is_valid()) {
@@ -198,16 +198,16 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		if (!alias_param_idx.has_value() || *alias_param_idx >= template_parameters.size()) {
 			return std::nullopt;
 		}
-		const TemplateParameterNode* alias_param = tryGetTemplateParameterNode(template_parameters[*alias_param_idx]);
-		if (alias_param == nullptr || alias_param->kind() != TemplateParameterKind::NonType) {
+		const TemplateParameterNode& alias_param = template_parameters[*alias_param_idx];
+		if (alias_param.kind() != TemplateParameterKind::NonType) {
 			return std::nullopt;
 		}
-		if (!alias_param->has_type()) {
+		if (!alias_param.has_type()) {
 			throw InternalError("Non-type alias template parameter is missing a declared type");
 		}
 		return TemplateTypeArg::makeDependentValue(
 			param_name,
-			alias_param->type_specifier_node().type());
+			alias_param.type_specifier_node().type());
 	};
 
 	if (arg_node.is<TypeSpecifierNode>()) {
@@ -259,12 +259,8 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 
 	InlineVector<TemplateParameterNode, 4> typed_template_parameters;
 	typed_template_parameters.reserve(template_parameters.size());
-	for (const ASTNode& template_param : template_parameters) {
-		const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
-		if (typed_param == nullptr) {
-			return std::nullopt;
-		}
-		typed_template_parameters.push_back(*typed_param);
+	for (const TemplateParameterNode& template_param : template_parameters) {
+		typed_template_parameters.push_back(template_param);
 	}
 
 	if (auto substituted_eval = substituteAndEvaluateNonTypeDefault(
@@ -284,13 +280,22 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 
 std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	const ASTNode& arg_node,
-	const InlineVector<TemplateParameterNode, 4>& template_parameters,
+	const InlineVector<ASTNode, 4>& template_parameters,
 	const InlineVector<StringHandle, 4>& param_names,
 	const std::vector<TemplateTypeArg>& template_args,
 	const TemplateParameterNode* target_template_param) {
+	InlineVector<TemplateParameterNode, 4> typed_template_parameters;
+	typed_template_parameters.reserve(template_parameters.size());
+	for (const ASTNode& template_param : template_parameters) {
+		const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
+		if (typed_param == nullptr) {
+			return std::nullopt;
+		}
+		typed_template_parameters.push_back(*typed_param);
+	}
 	return materializeDeferredAliasTemplateArg(
 		arg_node,
-		cloneTemplateParameterNodes(template_parameters),
+		typed_template_parameters,
 		param_names,
 		template_args,
 		target_template_param);
@@ -376,18 +381,13 @@ std::optional<TemplateTypeArg> Parser::tryRebindAliasTargetTemplateArg(
 
 
 void Parser::normalizeDependentNonTypeTemplateArgs(
-	const InlineVector<ASTNode, 4>& template_parameters,
+	const InlineVector<TemplateParameterNode, 4>& template_parameters,
 	std::vector<TemplateTypeArg>& template_args) {
 	size_t arg_index = 0;
 	for (size_t param_index = 0;
 		 param_index < template_parameters.size() && arg_index < template_args.size();
 		 ++param_index) {
-		if (!template_parameters[param_index].is<TemplateParameterNode>()) {
-			continue;
-		}
-
-		const TemplateParameterNode& template_param =
-			template_parameters[param_index].as<TemplateParameterNode>();
+		const TemplateParameterNode& template_param = template_parameters[param_index];
 		if (template_param.is_variadic()) {
 			break;
 		}
@@ -413,10 +413,18 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 }
 
 void Parser::normalizeDependentNonTypeTemplateArgs(
-	const InlineVector<TemplateParameterNode, 4>& template_parameters,
+	const InlineVector<ASTNode, 4>& template_parameters,
 	std::vector<TemplateTypeArg>& template_args) {
+	InlineVector<TemplateParameterNode, 4> typed_template_parameters;
+	typed_template_parameters.reserve(template_parameters.size());
+	for (const ASTNode& template_param : template_parameters) {
+		if (!template_param.is<TemplateParameterNode>()) {
+			continue;
+		}
+		typed_template_parameters.push_back(template_param.as<TemplateParameterNode>());
+	}
 	normalizeDependentNonTypeTemplateArgs(
-		cloneTemplateParameterNodes(template_parameters),
+		typed_template_parameters,
 		template_args);
 }
 

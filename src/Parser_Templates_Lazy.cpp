@@ -521,14 +521,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// Slice 4: use the canonical instantiated lookup name (from identity) as the
 	// function identifier token so the emitted body matches the stub's registered name.
 	StringHandle fn_name_handle = effectiveLookupName(lazy_info.identity);
-	const InlineVector<ASTNode, 4> lazy_template_params_ast =
-		cloneTemplateParameterNodes(lazy_info.template_params);
 	SubstitutedMemberFunctionShell shell = createSubstitutedMemberFunctionShell(
 		func_decl,
 		decl.type_node(),
 		decl.type_specifier_node().token(),
 		lazy_info.identity.instantiated_owner_name,
-		lazy_template_params_ast,
+		lazy_info.template_params,
 		lazy_info.template_args,
 		owner_struct_decl,
 		instantiated_owner_type_index,
@@ -547,7 +545,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	substituteAndCopyMemberFunctionParameters(
 		func_decl.parameter_nodes(),
 		new_func_ref,
-		lazy_template_params_ast,
+		lazy_info.template_params,
 		lazy_info.template_args,
 		owner_struct_decl,
 		instantiated_owner_type_index,

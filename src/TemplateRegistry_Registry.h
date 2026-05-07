@@ -590,7 +590,7 @@ public:
 
 	// Register a template specialization pattern (StringHandle overload)
 	void registerSpecializationPattern(StringHandle template_name,
-									   const std::vector<ASTNode>& template_params,
+									   const InlineVector<TemplateParameterNode, 4>& template_params,
 									   const std::vector<TemplateTypeArg>& pattern_args,
 									   ASTNode specialized_node,
 									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
@@ -608,24 +608,11 @@ public:
 
 		// Debug: log each template param type
 		for (size_t i = 0; i < template_params.size(); ++i) {
-			FLASH_LOG(Templates, Debug, "  template_param[", i, "]: type_name=", template_params[i].type_name(),
-					  ", is_TemplateParameterNode=", template_params[i].is<TemplateParameterNode>());
-		}
-
-		InlineVector<TemplateParameterNode, 4> typed_template_params;
-		typed_template_params.reserve(template_params.size());
-		for (size_t i = 0; i < template_params.size(); ++i) {
-			const ASTNode& template_param = template_params[i];
-			if (!template_param.is<TemplateParameterNode>()) {
-				FLASH_LOG(Templates, Error, "registerSpecializationPattern: template_param[", i,
-						  "] is not a TemplateParameterNode");
-				continue;
-			}
-			typed_template_params.push_back(template_param.as<TemplateParameterNode>());
+			FLASH_LOG(Templates, Debug, "  template_param[", i, "]: name=", template_params[i].name());
 		}
 
 		TemplatePattern pattern;
-		pattern.template_params = std::move(typed_template_params);
+		pattern.template_params = template_params;
 		pattern.pattern_args = pattern_args;
 		pattern.specialized_node = specialized_node;
 		pattern.sfinae_condition = sfinae_cond;
@@ -691,8 +678,31 @@ public:
 					  "]::", StringTable::getStringView(stored_pattern.sfinae_condition->member_name));
 		}
 	}
+	void registerSpecializationPattern(StringHandle template_name,
+									   const std::vector<ASTNode>& template_params,
+									   const std::vector<TemplateTypeArg>& pattern_args,
+									   ASTNode specialized_node,
+									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+		InlineVector<TemplateParameterNode, 4> typed_template_params;
+		typed_template_params.reserve(template_params.size());
+		for (const ASTNode& template_param : template_params) {
+			if (!template_param.is<TemplateParameterNode>()) {
+				continue;
+			}
+			typed_template_params.push_back(template_param.as<TemplateParameterNode>());
+		}
+		registerSpecializationPattern(template_name, typed_template_params, pattern_args, specialized_node, sfinae_cond);
+	}
 
 	// Register a template specialization pattern (string_view overload)
+	void registerSpecializationPattern(std::string_view template_name,
+									   const InlineVector<TemplateParameterNode, 4>& template_params,
+									   const std::vector<TemplateTypeArg>& pattern_args,
+									   ASTNode specialized_node,
+									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+		StringHandle key = StringTable::getOrInternStringHandle(template_name);
+		registerSpecializationPattern(key, template_params, pattern_args, specialized_node, sfinae_cond);
+	}
 	void registerSpecializationPattern(std::string_view template_name,
 									   const std::vector<ASTNode>& template_params,
 									   const std::vector<TemplateTypeArg>& pattern_args,
@@ -703,6 +713,15 @@ public:
 	}
 
 	// Register a template specialization pattern using QualifiedIdentifier.
+	void registerSpecializationPattern(QualifiedIdentifier qi,
+									   const InlineVector<TemplateParameterNode, 4>& template_params,
+									   const std::vector<TemplateTypeArg>& pattern_args,
+									   ASTNode specialized_node,
+									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+		forEachQualifiedName(qi, [&](std::string_view name) {
+			registerSpecializationPattern(name, template_params, pattern_args, specialized_node, sfinae_cond);
+		});
+	}
 	void registerSpecializationPattern(QualifiedIdentifier qi,
 									   const std::vector<ASTNode>& template_params,
 									   const std::vector<TemplateTypeArg>& pattern_args,
