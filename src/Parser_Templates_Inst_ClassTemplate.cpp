@@ -9,6 +9,7 @@
 #include "TypeTraitEvaluator.h"
 #include "InstantiationQueue.h"
 #include "ParserTemplateClassShared.h"
+#include "AstTraversal.h"
 
 static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
@@ -913,6 +914,53 @@ static void retryNormalizeTemplateStaticMembersAfterDeferredBodies(
 	}
 }
 
+static std::optional<StringHandle> findUnresolvedHardUseTypeSpecifier(const ASTNode& root) {
+	std::optional<StringHandle> unresolved_name;
+
+	auto check_type_spec = [&](const TypeSpecifierNode& type_spec) {
+		if (unresolved_name.has_value()) {
+			return;
+		}
+
+		const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+		if (typeSpecStillUsesDependentPlaceholder(type_spec)) {
+			unresolved_name = type_info ? type_info->name() : type_spec.token().handle();
+			return;
+		}
+
+		std::string_view type_name = type_info
+			? StringTable::getStringView(type_info->name())
+			: type_spec.token().value();
+		if (type_spec.type() == TypeCategory::UserDefined &&
+			type_name.find("::") != std::string_view::npos &&
+			(type_info == nullptr ||
+			 (!type_info->getStructInfo() && !type_info->getEnumInfo() && !type_info->isTypeAlias()))) {
+			unresolved_name = type_info ? type_info->name() : type_spec.token().handle();
+		}
+	};
+
+	AstTraversal::visitASTWithDecisions(root, [&](const ASTNode& current) {
+		if (current.is<TypeSpecifierNode>()) {
+			check_type_spec(current.as<TypeSpecifierNode>());
+		} else if (current.is<DeclarationNode>()) {
+			const DeclarationNode& decl = current.as<DeclarationNode>();
+			if (decl.type_node().is<TypeSpecifierNode>()) {
+				check_type_spec(decl.type_specifier_node());
+			}
+		} else if (current.is<VariableDeclarationNode>()) {
+			const DeclarationNode& decl = current.as<VariableDeclarationNode>().declaration();
+			if (decl.type_node().is<TypeSpecifierNode>()) {
+				check_type_spec(decl.type_specifier_node());
+			}
+		}
+		return unresolved_name.has_value()
+			? AstTraversal::VisitDecision::Stop
+			: AstTraversal::VisitDecision::Continue;
+	});
+
+	return unresolved_name;
+}
+
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 
@@ -949,10 +997,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	} nesting_guard;
 	if (s_instantiation_nesting_depth > MAX_INSTANTIATION_NESTING_DEPTH) {
+		std::string error_msg = std::string(StringBuilder()
+			.append("Max template instantiation depth (")
+			.append(static_cast<uint64_t>(MAX_INSTANTIATION_NESTING_DEPTH))
+			.append(") exceeded for '")
+			.append(template_name)
+			.append("'. Possible recursive template instantiation.")
+			.commit());
 		if (!s_instantiation_depth_warned) {
-			FLASH_LOG(Templates, Error, "Max template instantiation depth (", MAX_INSTANTIATION_NESTING_DEPTH,
-					  ") exceeded for '", template_name, "'. Possible recursive template instantiation.");
+			FLASH_LOG(Templates, Error, error_msg);
 			s_instantiation_depth_warned = true;
+		}
+		if (force_eager) {
+			throw CompileError(error_msg);
 		}
 		return std::nullopt;
 	}
@@ -962,13 +1019,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// the rest of this parse() call; it is only reset by resetTemplateInstantiationCounters()
 	// at the start of the next parse() call.
 	if (g_template_inst_iteration_limit_tripped) {
+		if (force_eager) {
+			throw CompileError("Template instantiation iteration limit was already exceeded earlier in this translation unit");
+		}
 		return std::nullopt;
 	}
 	g_template_inst_iteration_count++;
 	if (g_template_inst_iteration_count > g_template_inst_max_iterations) {
-		FLASH_LOG(Templates, Error, "Template instantiation iteration limit exceeded (", g_template_inst_max_iterations, ")! Possible infinite loop.");
-		FLASH_LOG(Templates, Error, "Last template: '", template_name, "' with ", template_args.size(), " args");
+		std::string error_msg = std::string(StringBuilder()
+			.append("Template instantiation iteration limit exceeded (")
+			.append(static_cast<int64_t>(g_template_inst_max_iterations))
+			.append("). Last template: '")
+			.append(template_name)
+			.append("' with ")
+			.append(static_cast<uint64_t>(template_args.size()))
+			.append(" args. Possible infinite loop.")
+			.commit());
+		FLASH_LOG(Templates, Error, error_msg);
 		g_template_inst_iteration_limit_tripped = true;
+		if (force_eager) {
+			throw CompileError(error_msg);
+		}
 		return std::nullopt;
 	}
 
@@ -4217,14 +4288,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 			}
-			FLASH_LOG(Templates, Error, "No primary template found for '", template_name, "', returning nullopt");
+			std::string error_msg = std::string(StringBuilder()
+				.append("No primary class template found for '")
+				.append(template_name)
+				.append("'")
+				.commit());
+			if (force_eager) {
+				throw CompileError(error_msg);
+			}
+			FLASH_LOG(Templates, Error, error_msg);
 			return std::nullopt; // No template with this name
 		}
 		template_node = *template_opt;
 	}
 
 	if (!template_node.is<TemplateClassDeclarationNode>()) {
-		FLASH_LOG(Templates, Error, "Template node is not a TemplateClassDeclarationNode for '", template_name, "', returning nullopt");
+		std::string error_msg = std::string(StringBuilder()
+			.append("Template '")
+			.append(template_name)
+			.append("' is not a class template")
+			.commit());
+		if (force_eager) {
+			throw CompileError(error_msg);
+		}
+		FLASH_LOG(Templates, Error, error_msg);
 		return std::nullopt; // Not a class template
 	}
 
@@ -7455,6 +7542,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*body_to_substitute,
 							template_params,
 							template_args_to_use);
+						if (force_eager) {
+							if (std::optional<StringHandle> unresolved_type =
+									findUnresolvedHardUseTypeSpecifier(substituted_body);
+								unresolved_type.has_value()) {
+								throw CompileError(std::string(StringBuilder()
+									.append("Explicit instantiation left unresolved dependent type '")
+									.append(unresolved_type->isValid()
+										? StringTable::getStringView(*unresolved_type)
+										: std::string_view("<unknown>"))
+									.append("' in member function '")
+									.append(decl.identifier_token().value())
+									.append("'")
+									.commit()));
+							}
+						}
 						new_func_ref.set_definition(substituted_body);
 						FLASH_LOG(Templates, Debug, "Successfully substituted function body");
 					} catch (const std::exception& e) {
@@ -8738,8 +8840,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			if (!target_func && !target_ctor && !target_dtor) {
-				FLASH_LOG(Templates, Error, "Could not find member function ", deferred.identity.original_lookup_name,
-						  " in instantiated struct ", instantiated_name);
+				std::string error_msg = std::string(StringBuilder()
+					.append("Could not find member function ")
+					.append(deferred.identity.original_lookup_name)
+					.append(" in instantiated struct ")
+					.append(instantiated_name)
+					.commit());
+				if (force_eager) {
+					throw InternalError(error_msg);
+				}
+				FLASH_LOG(Templates, Error, error_msg);
 				continue;
 			}
 
@@ -8815,8 +8925,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			template_param_substitutions_.clear(); // Clear substitutions after parsing
 
 			if (result.is_error()) {
-				FLASH_LOG(Templates, Error, "Failed to parse deferred template body: ", result.error_message());
-				// Continue with other bodies instead of failing entirely
+				std::string error_msg = std::string(StringBuilder()
+					.append("Failed to parse deferred template body for ")
+					.append(deferred.identity.original_lookup_name)
+					.append(": ")
+					.append(result.error_message())
+					.commit());
+				if (force_eager) {
+					throw CompileError(error_msg);
+				}
+				FLASH_LOG(Templates, Error, error_msg);
 				continue;
 			}
 
