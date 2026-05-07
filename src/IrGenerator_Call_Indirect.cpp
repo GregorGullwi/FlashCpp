@@ -1843,36 +1843,23 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		}
 
 		callExprNode.arguments().visit([&](ASTNode argument) {
-			// Get the parameter type from the function declaration to check if it's a reference
-			// For generic lambdas, use the deduced types from param_types instead of the original auto types
-			const TypeSpecifierNode* param_type = nullptr;
-			std::optional<TypeSpecifierNode> deduced_param_type;
-			if (arg_index < param_types.size()) {
-				// Use deduced type from param_types (handles generic lambdas correctly)
-				deduced_param_type = param_types[arg_index];
-				param_type = &(*deduced_param_type);
-			} else if (arg_index < actual_func_decl->parameter_nodes().size()) {
-				const ASTNode& param_node = actual_func_decl->parameter_nodes()[arg_index];
-				if (param_node.is<DeclarationNode>()) {
-					const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-					param_type = &param_decl.type_specifier_node();
-				} else if (param_node.is<VariableDeclarationNode>()) {
-					const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
-					const DeclarationNode& param_decl = var_decl.declaration();
-					param_type = &param_decl.type_specifier_node();
-				}
-			}
+			CallParamView param_view = resolveCallParamView(
+				actual_func_decl->parameter_nodes(),
+				arg_index,
+				&param_types,
+				nullptr);
+			const TypeSpecifierNode* param_type = param_view.type();
 			const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
 			if (param_type && sema_) {
 				sema_ref_binding = sema_->getCallRefBinding(
 					sema_call_key,
 					arg_index);
 			}
+			const CVReferenceQualifier param_ref_qualifier = param_view.ref_qualifier;
 
 			// Evaluate the argument expression once when sema ref-binding is active so that
 			// the result can be reused in the fallback path without double evaluation.
 			std::optional<ExprResult> sema_evaluated_arg;
-			bool sema_ref_binding_applied = false;
 			if (param_type && sema_ref_binding && sema_ref_binding->is_valid()) {
 				ExpressionContext arg_context = sema_ref_binding->binds_directly()
 													? ExpressionContext::LValueAddress
@@ -1882,7 +1869,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						*sema_evaluated_arg, argument, *param_type, sema_ref_binding, callExprNode.called_from())) {
 					call_op.args.push_back(std::move(*sema_bound_arg));
 					arg_index++;
-					sema_ref_binding_applied = true;
 					return;
 				}
 			}
@@ -1915,10 +1901,17 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(func_addr_var)));
 				} else if (symbol.has_value()) {
 					const DeclarationNode* decl_node = get_decl_from_symbol(*symbol);
-					// Check if parameter expects a reference
-					if (decl_node && !sema_ref_binding_applied &&
-						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						call_op.args.push_back(buildReferenceCallArgumentFromDeclaration(*decl_node, identifier_name));
+					const bool can_use_direct_identifier_arg =
+						decl_node &&
+						param_ref_qualifier != CVReferenceQualifier::None &&
+						(!sema_ref_binding || !sema_ref_binding->is_valid() || sema_ref_binding->binds_directly());
+					if (can_use_direct_identifier_arg) {
+						call_op.args.push_back(buildDirectIdentifierCallArgument(
+							*decl_node,
+							identifier_name,
+							param_ref_qualifier,
+							argument,
+							callExprNode.called_from()));
 					} else {
 						call_op.args.push_back(buildOrdinaryCallArgument(argument, param_type, sema_evaluated_arg, callExprNode.called_from()));
 					}
@@ -1933,8 +1926,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 												 : visitExpressionNode(argument.as<ExpressionNode>());
 
 				// Check if parameter expects a reference and argument is a literal
-				if (!sema_ref_binding_applied &&
-					param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+				if (param_ref_qualifier != CVReferenceQualifier::None) {
 					// Parameter expects a reference, but argument is not an identifier
 					// We need to materialize the value into a temporary and pass its address
 					call_op.args.push_back(buildReferenceCallArgumentFromResult(
