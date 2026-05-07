@@ -1,5 +1,6 @@
 #pragma once
 #include "TemplateRegistry_Pattern.h"
+#include <span>
 
 class TemplateRegistry {
 public:
@@ -134,32 +135,18 @@ public:
 
 	// Register a variable template partial specialization with its pattern args
 	void registerVariableTemplateSpecialization(std::string_view base_name,
-												const std::vector<ASTNode>& template_params,
+												std::span<const TemplateParameterNode> template_params,
 												const std::vector<TemplateTypeArg>& pattern_args,
 												ASTNode specialized_node) {
 		StringHandle key = StringTable::getOrInternStringHandle(base_name);
 		InlineVector<TemplateParameterNode, 4> typed_template_params;
 		typed_template_params.reserve(template_params.size());
-		for (const ASTNode& param : template_params) {
-			if (!param.is<TemplateParameterNode>()) {
-				continue;
-			}
-			typed_template_params.push_back(param.as<TemplateParameterNode>());
+		for (const TemplateParameterNode& template_param : template_params) {
+			typed_template_params.push_back(template_param);
 		}
 		variable_template_specializations_[key].push_back(
 			TemplatePattern{std::move(typed_template_params), pattern_args, specialized_node, std::nullopt});
 	}
-	void registerVariableTemplateSpecialization(std::string_view base_name,
-												const InlineVector<TemplateParameterNode, 4>& template_params,
-												const std::vector<TemplateTypeArg>& pattern_args,
-												ASTNode specialized_node) {
-		InlineVector<ASTNode, 4> ast_params;
-		for (const auto& param : template_params) {
-			ast_params.push_back(ASTNode::emplace_node<TemplateParameterNode>(param));
-		}
-		registerVariableTemplateSpecialization(base_name, std::vector<ASTNode>(ast_params.begin(), ast_params.end()), pattern_args, specialized_node);
-	}
-
 	// Find the best matching variable template partial specialization for concrete args.
 	// Returns the specialized ASTNode and the deduced parameter substitutions.
 	struct VarTemplateSpecMatch {
@@ -682,32 +669,21 @@ public:
 		}
 	}
 	void registerSpecializationPattern(StringHandle template_name,
-									   const std::vector<ASTNode>& template_params,
+									   std::span<const TemplateParameterNode> template_params,
 									   const std::vector<TemplateTypeArg>& pattern_args,
 									   ASTNode specialized_node,
 									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
 		InlineVector<TemplateParameterNode, 4> typed_template_params;
 		typed_template_params.reserve(template_params.size());
-		for (const ASTNode& template_param : template_params) {
-			if (!template_param.is<TemplateParameterNode>()) {
-				continue;
-			}
-			typed_template_params.push_back(template_param.as<TemplateParameterNode>());
+		for (const TemplateParameterNode& template_param : template_params) {
+			typed_template_params.push_back(template_param);
 		}
 		registerSpecializationPattern(template_name, typed_template_params, pattern_args, specialized_node, sfinae_cond);
 	}
 
 	// Register a template specialization pattern (string_view overload)
 	void registerSpecializationPattern(std::string_view template_name,
-									   const InlineVector<TemplateParameterNode, 4>& template_params,
-									   const std::vector<TemplateTypeArg>& pattern_args,
-									   ASTNode specialized_node,
-									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
-		StringHandle key = StringTable::getOrInternStringHandle(template_name);
-		registerSpecializationPattern(key, template_params, pattern_args, specialized_node, sfinae_cond);
-	}
-	void registerSpecializationPattern(std::string_view template_name,
-									   const std::vector<ASTNode>& template_params,
+									   std::span<const TemplateParameterNode> template_params,
 									   const std::vector<TemplateTypeArg>& pattern_args,
 									   ASTNode specialized_node,
 									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
@@ -717,16 +693,7 @@ public:
 
 	// Register a template specialization pattern using QualifiedIdentifier.
 	void registerSpecializationPattern(QualifiedIdentifier qi,
-									   const InlineVector<TemplateParameterNode, 4>& template_params,
-									   const std::vector<TemplateTypeArg>& pattern_args,
-									   ASTNode specialized_node,
-									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
-		forEachQualifiedName(qi, [&](std::string_view name) {
-			registerSpecializationPattern(name, template_params, pattern_args, specialized_node, sfinae_cond);
-		});
-	}
-	void registerSpecializationPattern(QualifiedIdentifier qi,
-									   const std::vector<ASTNode>& template_params,
+									   std::span<const TemplateParameterNode> template_params,
 									   const std::vector<TemplateTypeArg>& pattern_args,
 									   ASTNode specialized_node,
 									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {

@@ -23,8 +23,17 @@ public:
 		: kind_(TemplateParameterKind::NonType), name_(name), type_node_(type_node), token_(token) {}
 
 	// Template template parameter: template<template<typename> class Container>
-	TemplateParameterNode(StringHandle name, std::vector<ASTNode> nested_params, Token token)
+	TemplateParameterNode(StringHandle name, std::vector<TemplateParameterNode> nested_params, Token token)
 		: kind_(TemplateParameterKind::Template), name_(name), nested_params_(std::move(nested_params)), token_(token) {}
+	TemplateParameterNode(StringHandle name, std::vector<ASTNode> nested_params, Token token)
+		: kind_(TemplateParameterKind::Template), name_(name), token_(token) {
+		nested_params_.reserve(nested_params.size());
+		for (const ASTNode& nested_param : nested_params) {
+			if (nested_param.is<TemplateParameterNode>()) {
+				nested_params_.push_back(nested_param.as<TemplateParameterNode>());
+			}
+		}
+	}
 
 	TemplateParameterKind kind() const { return kind_; }
 	std::string_view name() const { return name_.view(); }
@@ -39,7 +48,7 @@ public:
 	const TypeSpecifierNode& type_specifier_node() const { return type_node_.value(); }
 
 	// For template template parameters
-	const std::vector<ASTNode>& nested_parameters() const { return nested_params_; }
+	const std::vector<TemplateParameterNode>& nested_parameters() const { return nested_params_; }
 
 	// For default arguments
 	bool has_default() const { return default_value_.has_value(); }
@@ -69,7 +78,7 @@ private:
 	TemplateParameterKind kind_;
 	StringHandle name_;	// Points directly into source text from lexer token
 	std::optional<TypeSpecifierNode> type_node_;  // For non-type parameters (e.g., int N)
-	std::vector<ASTNode> nested_params_;	 // For template template parameters (nested template parameters)
+	std::vector<TemplateParameterNode> nested_params_;	 // For template template parameters (nested template parameters)
 	std::optional<ASTNode> default_value_;  // Default argument (e.g., typename T = int)
 	std::optional<SaveHandle> default_value_position_;  // Lexer position for SFINAE re-parse of dependent defaults
 	Token token_;  // For error reporting
@@ -88,18 +97,6 @@ public:
 		: template_parameters_(std::move(template_params)),
 		  function_declaration_(function_decl),
 		  requires_clause_(requires_clause) {}
-	TemplateFunctionDeclarationNode(InlineVector<ASTNode, 4> template_params, ASTNode function_decl,
-									std::optional<ASTNode> requires_clause)
-		: function_declaration_(function_decl),
-		  requires_clause_(requires_clause) {
-		template_parameters_.reserve(template_params.size());
-		for (const ASTNode& template_param : template_params) {
-			if (template_param.is<TemplateParameterNode>()) {
-				template_parameters_.push_back(template_param.as<TemplateParameterNode>());
-			}
-		}
-	}
-
 	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
 	const ASTNode& function_declaration() const { return function_declaration_; }
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
@@ -1289,18 +1286,6 @@ public:
 								 InlineVector<std::string_view, 4> param_names,
 								 ASTNode class_decl)
 		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), class_declaration_(class_decl) {}
-	TemplateClassDeclarationNode(InlineVector<ASTNode, 4> template_params,
-								 InlineVector<std::string_view, 4> param_names,
-								 ASTNode class_decl)
-		: template_param_names_(std::move(param_names)), class_declaration_(class_decl) {
-		template_parameters_.reserve(template_params.size());
-		for (const ASTNode& template_param : template_params) {
-			if (template_param.is<TemplateParameterNode>()) {
-				template_parameters_.push_back(template_param.as<TemplateParameterNode>());
-			}
-		}
-	}
-
 	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
 	InlineVector<TemplateParameterNode, 4>& template_parameters() { return template_parameters_; }
 	const InlineVector<std::string_view, 4>& template_param_names() const { return template_param_names_; }

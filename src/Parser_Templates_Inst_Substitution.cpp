@@ -2090,13 +2090,10 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 std::optional<ASTNode> Parser::substitute_nontype_template_param(
 	std::string_view param_name,
 	const std::vector<TemplateTypeArg>& args,
-	const std::vector<ASTNode>& params) {
+	std::span<const TemplateParameterNode> params) {
 	for (size_t i = 0; i < params.size(); ++i) {
-		const TemplateParameterNode* tparam = tryGetTemplateParameterNode(params[i]);
-		if (tparam == nullptr) {
-			continue;
-		}
-		if (tparam->name() == param_name && tparam->kind() == TemplateParameterKind::NonType) {
+		const TemplateParameterNode& tparam = params[i];
+		if (tparam.name() == param_name && tparam.kind() == TemplateParameterKind::NonType) {
 			if (i < args.size() && args[i].is_value) {
 				int64_t val = args[i].value;
 				TypeCategory val_type = args[i].typeEnum();

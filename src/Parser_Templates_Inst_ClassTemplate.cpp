@@ -1590,15 +1590,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 														std::string_view param_name,
 														const std::vector<TemplateTypeArg>& args,
 														const auto& params) -> std::optional<ASTNode> {
-		std::vector<ASTNode> params_ast;
-		params_ast.reserve(params.size());
+		InlineVector<TemplateParameterNode, 4> typed_params;
+		typed_params.reserve(params.size());
 		for (const auto& param : params) {
 			if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param);
 				typed_param != nullptr) {
-				params_ast.push_back(ASTNode::emplace_node<TemplateParameterNode>(*typed_param));
+				typed_params.push_back(*typed_param);
 			}
 		}
-		return substitute_nontype_template_param(param_name, args, params_ast);
+		return substitute_nontype_template_param(param_name, args, std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()));
 	};
 
 	// Helper lambda to substitute template parameters in member default initializers.
@@ -4564,14 +4564,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	const TemplateClassDeclarationNode& template_class = template_node.as<TemplateClassDeclarationNode>();
 	const auto& template_params = template_class.template_parameters();
-	std::vector<ASTNode> template_params_ast;
-	template_params_ast.reserve(template_params.size());
+	InlineVector<TemplateParameterNode, 4> template_params_typed;
+	template_params_typed.reserve(template_params.size());
 	for (const TemplateParameterNode& template_param : template_params) {
-		template_params_ast.push_back(ASTNode::emplace_node<TemplateParameterNode>(template_param));
+		template_params_typed.push_back(template_param);
 	}
-	const std::vector<TemplateParameterNode> template_params_typed(
-		template_params.begin(),
-		template_params.end());
 	const StructDeclarationNode& class_decl = template_class.class_decl_node();
 
 	// Count non-variadic parameters
@@ -8690,7 +8687,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 
 						// Use shared helper lambda defined at function scope
-						if (auto subst = substitute_template_param_in_initializer(param_name, template_args_to_use, template_params_ast)) {
+						if (auto subst = substitute_template_param_in_initializer(param_name, template_args_to_use, template_params_typed)) {
 							substituted_initializer = subst;
 							FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", param_name, "'");
 						}

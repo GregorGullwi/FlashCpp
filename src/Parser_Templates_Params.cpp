@@ -130,15 +130,6 @@ Parser::TemplateParameterMetadata Parser::registerTemplateParametersInScope(
 	return metadata;
 }
 
-InlineVector<ASTNode, 4> Parser::cloneTemplateParameterNodes(const InlineVector<TemplateParameterNode, 4>& template_params) {
-	InlineVector<ASTNode, 4> ast_nodes;
-	ast_nodes.reserve(template_params.size());
-	for (const TemplateParameterNode& template_param : template_params) {
-		ast_nodes.push_back(ASTNode::emplace_node<TemplateParameterNode>(template_param));
-	}
-	return ast_nodes;
-}
-
 // Parse a single template parameter: typename T, class T, int N, etc.
 ParseResult Parser::parse_template_parameter() {
 	ScopedTokenPosition saved_position(*this);
@@ -157,7 +148,7 @@ ParseResult Parser::parse_template_parameter() {
 		advance(); // consume '<'
 
 		// Parse nested template parameter forms (just type specifiers, no names)
-		std::vector<ASTNode> nested_params;
+		InlineVector<TemplateParameterNode, 4> nested_params;
 		auto param_list_result = parse_template_template_parameter_forms(nested_params);
 		if (param_list_result.is_error()) {
 			FLASH_LOG(Parser, Error, "parse_template_template_parameter_forms failed");
@@ -200,7 +191,12 @@ ParseResult Parser::parse_template_parameter() {
 		}
 
 		// Create template template parameter node
-		auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), std::move(nested_params), param_name_token);
+		std::vector<TemplateParameterNode> nested_params_vec;
+		nested_params_vec.reserve(nested_params.size());
+		for (const TemplateParameterNode& nested_param : nested_params) {
+			nested_params_vec.push_back(nested_param);
+		}
+		auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), std::move(nested_params_vec), param_name_token);
 
 		// Handle default arguments (e.g., template<typename> class Container = std::vector)
 		if (peek() == "="_tok) {
@@ -527,7 +523,7 @@ ParseResult Parser::parse_template_parameter() {
 
 // Parse template template parameter forms (just type specifiers without names)
 // Used for template<template<typename> class Container> syntax
-ParseResult Parser::parse_template_template_parameter_forms(std::vector<ASTNode>& out_params) {
+ParseResult Parser::parse_template_template_parameter_forms(InlineVector<TemplateParameterNode, 4>& out_params) {
 	// Parse first parameter form
 	auto param_result = parse_template_template_parameter_form();
 	if (param_result.is_error()) {
@@ -535,7 +531,10 @@ ParseResult Parser::parse_template_template_parameter_forms(std::vector<ASTNode>
 	}
 
 	if (param_result.node().has_value()) {
-		out_params.push_back(*param_result.node());
+		if (!param_result.node()->is<TemplateParameterNode>()) {
+			return ParseResult::error("Expected template parameter node", current_token_);
+		}
+		out_params.push_back(param_result.node()->as<TemplateParameterNode>());
 	}
 
 	// Parse additional parameter forms separated by commas
@@ -548,7 +547,10 @@ ParseResult Parser::parse_template_template_parameter_forms(std::vector<ASTNode>
 		}
 
 		if (param_result.node().has_value()) {
-			out_params.push_back(*param_result.node());
+			if (!param_result.node()->is<TemplateParameterNode>()) {
+				return ParseResult::error("Expected template parameter node", current_token_);
+			}
+			out_params.push_back(param_result.node()->as<TemplateParameterNode>());
 		}
 	}
 

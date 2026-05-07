@@ -1309,7 +1309,6 @@ private:
 	TemplateParameterMetadata registerTemplateParametersInScope(
 		InlineVector<TemplateParameterNode, 4>& template_params,
 		FlashCpp::TemplateParameterScope& template_scope);
-	InlineVector<ASTNode, 4> cloneTemplateParameterNodes(const InlineVector<TemplateParameterNode, 4>& template_params);
 	bool parseDeferredAliasTargetTemplateId(
 		StringHandle& out_target_template_name,
 		std::vector<ASTNode>& out_target_template_arg_nodes,
@@ -1384,7 +1383,7 @@ private:
 		}
 	};
 
-	ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
+	ParseResult parse_template_template_parameter_forms(InlineVector<TemplateParameterNode, 4>& out_params);  // NEW: Parse template<template<typename> class T> forms
 	ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
 	std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes = nullptr);  // NEW: Parse explicit template arguments like <int, float>
 	TemplateTypeArgParsingResult parse_explicit_template_arguments_as_result(TokenDestroyPattern destroy_pattern);	// NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
@@ -2497,7 +2496,7 @@ private:
 	std::optional<ASTNode> substitute_nontype_template_param(
 		std::string_view param_name,
 		const std::vector<TemplateTypeArg>& args,
-		const std::vector<ASTNode>& params);	 // Substitute non-type template parameter in initializer
+		std::span<const TemplateParameterNode> params);	 // Substitute non-type template parameter in initializer
 
 	std::optional<bool> try_parse_out_of_line_template_member(const InlineVector<TemplateParameterNode, 4>& template_params, const InlineVector<StringHandle, 4>& template_param_names, const InlineVector<TemplateParameterNode, 4>& inner_template_params, const InlineVector<StringHandle, 4>& inner_template_param_names);	 // NEW: Parse out-of-line template member function
 	bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
