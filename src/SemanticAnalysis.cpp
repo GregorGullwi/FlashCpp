@@ -1982,6 +1982,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			if (ret.expression().has_value()) {
 				auto expr_type = get_expression_type_for_return(*ret.expression());
 				if (!expr_type.has_value()) {
+					// Keep scanning: mixed return sets can still yield a concrete
+					// deduced type from other returns even when one branch is not yet
+					// inferable in the current context.
 					has_unresolved_return_expression = true;
 					return true;
 				}

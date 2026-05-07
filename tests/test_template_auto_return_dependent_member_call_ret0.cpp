@@ -3,7 +3,7 @@ struct LateValueProvider;
 
 template <typename T>
 auto getLateValue() {
-	if constexpr (sizeof(T) == 0) {
+	if constexpr (sizeof(T) == 1) {
 		return 0;
 	}
 	return LateValueProvider<T>::value();

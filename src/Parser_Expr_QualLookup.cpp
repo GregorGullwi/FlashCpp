@@ -2407,6 +2407,8 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 					TypeSpecifierNode normalized_type =
 						finalizePlaceholderTypeDeduction(return_type.type(), *expr_type_opt);
 					if (isPlaceholderAutoType(normalized_type.type())) {
+						// Expression type could be formed but remains dependent at this
+						// stage; defer hard deduction/consistency checks for now.
 						has_still_dependent_return = true;
 					} else {
 						all_return_types.emplace_back(normalized_type, decl_node.identifier_token());
