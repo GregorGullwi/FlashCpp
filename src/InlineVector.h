@@ -168,6 +168,13 @@ public:
 		resetStorage();
 	}
 
+	template <typename InputIt>
+	void assign(InputIt first, InputIt last) {
+		clear();
+		for (InputIt it = first; it != last; ++it)
+			push_back(*it);
+	}
+
 	void reserve(size_t capacity) {
 		if (using_inline_storage_) {
 			if (capacity > N) {

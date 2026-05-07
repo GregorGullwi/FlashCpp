@@ -1620,7 +1620,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		eval_ctx.parser = this;
 		eval_ctx.sema = getActiveSemanticAnalysis();
-		eval_ctx.template_args = std::vector<TemplateTypeArg>(args.begin(), args.end());
+		eval_ctx.template_args.assign(args.begin(), args.end());
 		eval_ctx.template_param_names.reserve(params.size());
 		for (const auto& param : params) {
 			if (const TemplateParameterNode* template_param = tryGetTemplateParameterNode(param);
