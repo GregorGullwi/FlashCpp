@@ -1645,8 +1645,8 @@ private:
 		const ASTNode& original_return_type_node,
 		const Token& fallback_return_token,
 		StringHandle parent_struct_name,
-		const InlineVector<ASTNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args,
+		std::span<const ASTNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
 		const StructDeclarationNode* owner_decl,
 		TypeIndex instantiated_owner_type_index, // Rewrite self-references (e.g. W<T>& -> W<int>&)
 		TypeIndex override_return_type_index,	  // Force return TypeIndex when caller already resolved aliases
@@ -1658,8 +1658,8 @@ private:
 	void substituteAndCopyMemberFunctionParameters(
 		const std::vector<ASTNode>& original_params,
 		FunctionDeclarationNode& target_node,
-		const InlineVector<ASTNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args,
+		std::span<const ASTNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
 		const StructDeclarationNode* owner_decl,
 		TypeIndex instantiated_owner_type_index, // Rewrite self-referential parameter type indices
 		TypeIndex self_type_from_index,		   // Optional explicit self-type rewrite source (invalid = disabled)

@@ -535,8 +535,8 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 	const ASTNode& original_return_type_node,
 	const Token& fallback_return_token,
 	StringHandle parent_struct_name,
-	const InlineVector<ASTNode, 4>& template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
+	std::span<const ASTNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
 	const StructDeclarationNode* owner_decl,
 	TypeIndex instantiated_owner_type_index,
 	TypeIndex override_return_type_index,
@@ -545,14 +545,25 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 	StringHandle partial_pattern_owner_name,
 	bool apply_bound_metadata_to_full_substitution,
 	bool apply_resolved_index_to_full_substitution) {
+	InlineVector<ASTNode, 4> template_params_inline;
+	template_params_inline.reserve(template_params.size());
+	for (const ASTNode& param : template_params) {
+		template_params_inline.push_back(param);
+	}
+	InlineVector<TemplateTypeArg, 4> template_args_inline;
+	template_args_inline.reserve(template_args.size());
+	for (const TemplateTypeArg& arg : template_args) {
+		template_args_inline.push_back(arg);
+	}
+
 	const DeclarationNode& original_decl = original_func.decl_node();
 	const TypeSpecifierNode& original_return_type = original_decl.type_specifier_node();
 	TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
 		original_return_type,
 		original_return_type_node,
 		fallback_return_token,
-		template_params,
-		template_args,
+		template_params_inline,
+		template_args_inline,
 		[this](const ASTNode& node, const auto& params, const auto& args) {
 			return substituteTemplateParameters(node, params, args);
 		},
@@ -569,7 +580,7 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 			substituted_return_type,
 			original_return_type,
 			partial_pattern_owner_name,
-			template_params);
+			template_params_inline);
 	}
 
 	StringHandle effective_name = effective_name_override.isValid()
@@ -592,7 +603,7 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 		new_func_decl_ref,
 		parent_struct_name);
-	setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args);
+	setOuterTemplateBindingsFromParams(new_func_ref, template_params_inline, template_args_inline);
 
 	return {
 		new_func_decl_node,
@@ -606,8 +617,8 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 void Parser::substituteAndCopyMemberFunctionParameters(
 	const std::vector<ASTNode>& original_params,
 	FunctionDeclarationNode& target_node,
-	const InlineVector<ASTNode, 4>& template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
+	std::span<const ASTNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
 	const StructDeclarationNode* owner_decl,
 	TypeIndex instantiated_owner_type_index,
 	TypeIndex self_type_from_index,
@@ -616,6 +627,20 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 	bool preserve_parameter_cv_qualifier,
 	bool apply_bound_metadata_to_full_substitution,
 	bool apply_resolved_index_to_full_substitution) {
+	if (self_type_from_index.is_valid() != self_type_to_index.is_valid()) {
+		throw InternalError("substituteAndCopyMemberFunctionParameters requires both self rewrite indices or neither.");
+	}
+	InlineVector<ASTNode, 4> template_params_inline;
+	template_params_inline.reserve(template_params.size());
+	for (const ASTNode& param : template_params) {
+		template_params_inline.push_back(param);
+	}
+	InlineVector<TemplateTypeArg, 4> template_args_inline;
+	template_args_inline.reserve(template_args.size());
+	for (const TemplateTypeArg& arg : template_args) {
+		template_args_inline.push_back(arg);
+	}
+
 	TemplateArgSubstitutionMap name_substitution_map;
 	TemplateArgPackSubstitutionMap pack_substitution_map;
 	std::vector<std::string_view> template_param_order;
@@ -625,8 +650,8 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			return;
 		}
 		buildTemplateArgSubstitutionMaps(
-			template_params,
-			template_args,
+			template_params_inline,
+			template_args_inline,
 			[](const TemplateParameterNode&, const TemplateTypeArg& arg) {
 				return arg;
 			},
@@ -654,8 +679,8 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			size_t non_variadic = 0;
 			size_t pack_size = 0;
 			bool found_pack = false;
-			for (size_t i = 0; i < template_params.size(); ++i) {
-				const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+			for (size_t i = 0; i < template_params_inline.size(); ++i) {
+				const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params_inline[i]);
 				if (tparam == nullptr) {
 					continue;
 				}
@@ -664,8 +689,8 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 					continue;
 				}
 				if (tparam->name() == type_name) {
-					pack_size = template_args.size() > non_variadic
-						? template_args.size() - non_variadic
+					pack_size = template_args_inline.size() > non_variadic
+						? template_args_inline.size() - non_variadic
 						: 0;
 					found_pack = true;
 					break;
@@ -675,7 +700,7 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 				if (pack_size != 0) {
 					std::string_view original_name = param_decl.identifier_token().value();
 					for (size_t pi = 0; pi < pack_size; ++pi) {
-						const TemplateTypeArg& elem = template_args[non_variadic + pi];
+						const TemplateTypeArg& elem = template_args_inline[non_variadic + pi];
 						TypeCategory elem_type = elem.typeEnum();
 						TypeIndex elem_type_index = elem.type_index;
 						TypeSpecifierNode substituted_type(
@@ -718,8 +743,8 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			param_type_spec,
 			param_decl.type_node(),
 			param_decl.identifier_token(),
-			template_params,
-			template_args,
+			template_params_inline,
+			template_args_inline,
 			[this](const ASTNode& node, const auto& params, const auto& args) {
 				return substituteTemplateParameters(node, params, args);
 			},
@@ -753,8 +778,8 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			if (default_argument_policy == SubstitutedDefaultArgumentPolicy::SubstituteTemplateParameters) {
 				ASTNode substituted_default = substituteTemplateParameters(
 					param_decl.default_value(),
-					template_params,
-					template_args);
+					template_params_inline,
+					template_args_inline);
 				substituted_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 			} else if (default_argument_policy == SubstitutedDefaultArgumentPolicy::ExpressionSubstitutor) {
 				ensure_default_substitution_maps();
@@ -3330,23 +3355,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
 					const DeclarationNode& orig_decl = orig_func.decl_node();
 
-					InlineVector<ASTNode, 4> member_copy_template_params;
-					member_copy_template_params.reserve(template_params.size());
-					for (const ASTNode& template_param : template_params) {
-						member_copy_template_params.push_back(template_param);
-					}
-					InlineVector<TemplateTypeArg, 4> member_copy_template_args;
-					member_copy_template_args.reserve(template_args_for_member_copy.size());
-					for (const TemplateTypeArg& template_arg : template_args_for_member_copy) {
-						member_copy_template_args.push_back(template_arg);
-					}
 					SubstitutedMemberFunctionShell shell = createSubstitutedMemberFunctionShell(
 						orig_func,
 						orig_decl.type_node(),
 						orig_decl.identifier_token(),
 						instantiated_name,
-						member_copy_template_params,
-						member_copy_template_args,
+						template_params,
+						template_args_for_member_copy,
 						nullptr,
 						TypeIndex{}, // No self-owner rewrite for this specialization member-copy path
 						TypeIndex{}, // No pre-resolved return TypeIndex override
@@ -3362,8 +3377,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituteAndCopyMemberFunctionParameters(
 						orig_func.parameter_nodes(),
 						new_func_ref,
-						member_copy_template_params,
-						member_copy_template_args,
+						template_params,
+						template_args_for_member_copy,
 						nullptr,
 						TypeIndex{},
 						TypeIndex{},
@@ -4316,23 +4331,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						template_args_for_pattern,
 						return_type_index);
 
-					InlineVector<ASTNode, 4> pattern_template_params_inline;
-					pattern_template_params_inline.reserve(template_params.size());
-					for (const ASTNode& template_param : template_params) {
-						pattern_template_params_inline.push_back(template_param);
-					}
-					InlineVector<TemplateTypeArg, 4> pattern_template_args_inline;
-					pattern_template_args_inline.reserve(template_args_for_pattern.size());
-					for (const TemplateTypeArg& template_arg : template_args_for_pattern) {
-						pattern_template_args_inline.push_back(template_arg);
-					}
 					SubstitutedMemberFunctionShell shell = createSubstitutedMemberFunctionShell(
 						orig_func,
 						ASTNode(&orig_return_type),
 						orig_decl.identifier_token(),
 						instantiated_name,
-						pattern_template_params_inline,
-						pattern_template_args_inline,
+						template_params,
+						template_args_for_pattern,
 						&pattern_struct,
 						TypeIndex{},		 // No self-owner rewrite for this path
 						return_type_index,	 // Return TypeIndex already alias-resolved above
@@ -4349,8 +4354,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituteAndCopyMemberFunctionParameters(
 						orig_func.parameter_nodes(),
 						new_func,
-						pattern_template_params_inline,
-						pattern_template_args_inline,
+						template_params,
+						template_args_for_pattern,
 						&pattern_struct,
 						TypeIndex{},
 						TypeIndex{},
@@ -4982,11 +4987,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Use the filled template args for the rest of the function
 	const std::vector<TemplateTypeArg>& template_args_to_use = filled_template_args;
-	InlineVector<TemplateTypeArg, 4> template_args_to_use_inline;
-	template_args_to_use_inline.reserve(template_args_to_use.size());
-	for (const TemplateTypeArg& arg : template_args_to_use) {
-		template_args_to_use_inline.push_back(arg);
-	}
 	auto normalized_cache_key = FlashCpp::makeInstantiationKey(template_name_handle, template_args_to_use);
 	cache_key = normalized_cache_key;
 	if (!can_use_raw_cache_key) {
@@ -7440,8 +7440,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					decl.type_node(),
 					decl.identifier_token(),
 					instantiated_name,
-					template_params_inline_ast,
-					template_args_to_use_inline,
+					template_params_ast,
+					template_args_to_use,
 					&class_decl,
 					instantiated_member_owner_type_index,
 					TypeIndex{},
@@ -7472,8 +7472,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituteAndCopyMemberFunctionParameters(
 					func_decl.parameter_nodes(),
 					new_func_ref,
-					template_params_inline_ast,
-					template_args_to_use_inline,
+					template_params_ast,
+					template_args_to_use,
 					&class_decl,
 					instantiated_member_owner_type_index,
 					TypeIndex{},
@@ -7540,8 +7540,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					decl.type_node(),
 					decl.identifier_token(),
 					instantiated_name,
-					template_params_inline_ast,
-					template_args_to_use_inline,
+					template_params_ast,
+					template_args_to_use,
 					&class_decl,
 					instantiated_member_owner_type_index,
 					TypeIndex{},
@@ -7558,8 +7558,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituteAndCopyMemberFunctionParameters(
 					func_decl.parameter_nodes(),
 					new_func_ref,
-					template_params_inline_ast,
-					template_args_to_use_inline,
+					template_params_ast,
+					template_args_to_use,
 					&class_decl,
 					instantiated_member_owner_type_index,
 					TypeIndex{},
@@ -7725,8 +7725,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					decl.type_node(),
 					decl.identifier_token(),
 					instantiated_name,
-					template_params_inline_ast,
-					template_args_to_use_inline,
+					template_params_ast,
+					template_args_to_use,
 					&class_decl,
 					instantiated_member_owner_type_index,
 					TypeIndex{},
@@ -7743,8 +7743,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituteAndCopyMemberFunctionParameters(
 					func_decl.parameter_nodes(),
 					new_func_ref,
-					template_params_inline_ast,
-					template_args_to_use_inline,
+					template_params_ast,
+					template_args_to_use,
 					&class_decl,
 					instantiated_member_owner_type_index,
 					TypeIndex{},
