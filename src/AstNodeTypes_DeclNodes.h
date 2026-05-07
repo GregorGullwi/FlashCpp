@@ -2803,7 +2803,3 @@ inline bool functionHasUnresolvedPlaceholderSignature(const FunctionDeclarationN
 	}
 	return false;
 }
-
-inline bool functionHasUnresolvedPlaceholderParams(const FunctionDeclarationNode& func) {
-	return functionHasUnresolvedPlaceholderSignature(func);
-}

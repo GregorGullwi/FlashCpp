@@ -9,22 +9,22 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1418ms (retested 2026-05-04, Linux/libstdc++-14); wchar_t/char32_t Phase 15 blocker fixed. See latest dated section. |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~351ms (retested 2026-05-04, Linux/libstdc++-14). Member type aliases now preserve substituted template-argument pointer/reference/cv modifiers, so `std::is_pointer<int*>::value` succeeds. Regression: `tests/test_template_member_alias_preserves_pointer_ret0.cpp`. See latest dated section. |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~400ms (retested 2026-05-07, Linux/libstdc++-14). No longer stops at unresolved `auto` mangling in `std::__is_complete_or_unbounded`; targeted trait assertions compile end-to-end again. Regression coverage includes `tests/std/test_std_is_complete_or_unbounded_resolved.cpp` and `tests/std/test_std_utility_is_complete_or_unbounded_ret0.cpp`. |
 | `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | ~609ms (retested 2026-04-11). Targeted test still compiles, but bare `#include <compare>` now fails with "Ambiguous constructor call" during codegen of a namespace-level node. |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~639ms. The header still compiles, but `std::ratio_less` remains blocked because non-type default template arguments that depend on qualified constexpr members (for example `__ratio_less_impl`'s bool defaults) are still not fully instantiated/evaluated. |
-| `<optional>` | `test_std_optional.cpp` | ❌ Compile Error | ~1248ms (retested 2026-05-04, Linux/libstdc++-14). The earlier MSVC `<utility>:82` parse stop and `Cannot use copy initialization with explicit constructor` diagnostic are both fixed; current first hard error is `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Compile Error | ~1070ms (retested 2026-05-07, Linux/libstdc++-14). The unresolved-`auto` mangling stop is gone; current blockers are later IR failures around unresolved semantic type category 25 and missing `_Optional_payload<...>::_M_engaged` reconstruction. |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~587ms (retested 2026-04-28, Linux/libstdc++-14). The dependent `decltype` alias target in `__do_common_type_impl::__cond_t` is no longer collapsed to concrete `auto`, so the full targeted header compiles. Regression: `tests/test_dependent_decltype_alias_template_ret0.cpp`. |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~2585ms (retested 2026-05-04, Linux/libstdc++-14). The explicit-ctor copy-init diagnostic for `std::ranges::__detail::__max_size_type` is fixed; current first hard error is `cannot initialize a variable of type 'struct' with an lvalue of type 'const char[N]'` deeper in the header. |
-| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~8484ms (retested 2026-05-04, Linux/libstdc++-14). Same explicit-ctor unblock as `<string_view>`; current first error is `cannot initialize a variable of type 'struct' with an lvalue of type 'const char[N]'`. |
+| `<string_view>` | `test_std_string_view.cpp` | 💥 Crash | ~2380ms (retested 2026-05-07, Linux/libstdc++-14). Progresses well past prior unresolved-`auto` stops, then aborts in codegen with `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
+| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~3860ms (retested 2026-05-07, Linux/libstdc++-14). No unresolved-`auto` mangling stop; current first hard error is `Could not evaluate non-type template default for parameter 2 of '_Head_base'` (tuple/default-NTTP path). |
 | `<array>` | `test_std_array.cpp` | ❌ Codegen Error | Focused retest 2026-05-04 after injected-class-name fix. The `Cannot use copy initialization with explicit constructor` diagnostic for `std::reverse_iterator` is fixed; the header now progresses into existing IR/codegen gaps around unresolved `std::reverse_iterator` constructor/placeholder lowering. |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2758ms (retested 2026-05-04, Linux/libstdc++-14). Same explicit-ctor unblock as `<array>`; current first error is `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
+| `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~2320ms (retested 2026-05-07, Linux/libstdc++-14). Unresolved-`auto` mangling stop is gone; current crash is late codegen `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~2262ms (retested 2026-04-24, Linux/libstdc++). Previous `tuple:399` `_M_tail` blocker resolved by the member-function overload registration fix; now first-order error is `unsupported PackExpansionExprNode reached semantic analysis` deeper in tuple's pack expansion machinery. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2062ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Itanium name mangling: unknown type — cannot generate valid symbol` after several deferred/incomplete `reverse_iterator` instantiations. |
@@ -47,7 +47,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | ~9408ms (retested 2026-05-04, Linux/libstdc++-14). No longer crashes; the `Cannot use copy initialization with explicit constructor` diagnostic is also fixed; current first hard error is `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
 | `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ✅ Compiled | ~46ms (retested 2026-04-30, Linux/libstdc++-14). Sema now models pointer arithmetic (`T* + integral`, `T* - integral`, `T* - T*`) so the ternary in `type_info::name()` (`__name[0] == '*' ? __name + 1 : __name`) gets a sema-owned exact result type and codegen no longer throws. Regression: `tests/test_ternary_pointer_arithmetic_branches_ret0.cpp`. |
 | `<typeindex>` | N/A | ❌ Codegen Error | ~640ms (retested 2026-04-11). "Cannot use copy initialization with explicit constructor". |
-| `<numeric>` | `test_std_numeric.cpp` | ❌ Compile Error | ~2411ms (retested 2026-05-04, Linux/libstdc++-14). The `Cannot use copy initialization with explicit constructor` diagnostic is fixed; current first error is `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
+| `<numeric>` | `test_std_numeric.cpp` | ❌ Compile Error | ~2210ms (retested 2026-05-07, Linux/libstdc++-14). Unresolved-`auto` mangling stop is gone; current blockers are IR failures in `numeric_limits` members (`infinity` / `quiet_NaN` / `signaling_NaN`) due unresolved semantic type category 25. |
 | `<iterator>` | `test_std_iterator.cpp` | ❌ Compile Error | ~2481ms (retested 2026-04-11). Call to deleted function 'swap'. |
 | `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~736ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `_Variadic_union` arithmetic non-type template argument (`_Np-1`) inside a member initializer is now resolved. |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
@@ -60,7 +60,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~47ms (C++23) |
 | `<barrier>` | N/A | 💥 Crash | ~5458ms. Stack overflow during template instantiation |
 | `<coroutine>` | N/A | ❌ Parse Error | ~36ms. Requires `-fcoroutines` flag |
-| `<latch>` | `test_std_latch.cpp` | ✅ Compiled | ~832ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** Prior "sema missed return conversion (int → long)" errors in latch member functions are resolved. |
+| `<latch>` | `test_std_latch.cpp` | ❌ Compile Error | ~1060ms (retested 2026-05-07, Linux/libstdc++-14). Regressed from earlier success; now fails in codegen with unresolved constructor call for `std::__mutex_base` plus return/argument conversion gaps (`int` → `long`). |
 | `<shared_mutex>` | `test_std_shared_mutex.cpp` | ❌ Codegen Error | ~2733ms (retested 2026-04-11). "Ambiguous constructor call for 'std::chrono::time_point'". |
 | `<cstdlib>` | N/A | ✅ Compiled | ~120ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~70ms |
@@ -100,6 +100,40 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-07 Linux/libstdc++ unresolved-placeholder-signature follow-up
+
+This pass validated the unresolved-placeholder-signature guard changes and retested
+the most impacted std-header files.
+
+Fix/result highlights:
+
+- `<type_traits>` now compiles again (no unresolved-`auto` mangling abort in
+  `std::__is_complete_or_unbounded`).
+- `<utility>` still compiles and now has explicit regression coverage for the
+  same helper path.
+- The prior unresolved-`auto` mangling stop is no longer the first hard error
+  in `<algorithm>`, `<optional>`, `<numeric>`, `<string>`, or `<string_view>`;
+  those now fail later in existing semantic/codegen paths.
+
+Added regression test:
+
+- `tests/std/test_std_utility_is_complete_or_unbounded_ret0.cpp`
+
+Focused retest summary (`./x64/Sharded/FlashCpp -o /tmp/<name>.o tests/std/<name>.cpp`):
+
+| Header / Target | Status | Time | First hard stop |
+|---|---|---:|---|
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Compiled | 0.40s | — |
+| `<utility>` (`test_std_utility.cpp`) | ✅ Compiled | 0.73s | — |
+| `<is_complete_or_unbounded_resolved>` (`test_std_is_complete_or_unbounded_resolved.cpp`) | ✅ Compiled | 0.42s | — |
+| `<utility_is_complete_or_unbounded_ret0>` (`test_std_utility_is_complete_or_unbounded_ret0.cpp`) | ✅ Compiled | 0.73s | — |
+| `<optional>` (`test_std_optional.cpp`) | ❌ Compile Error | 1.07s | `_Optional_payload...::_M_engaged` reconstruction / unresolved semantic type category 25 during IR |
+| `<numeric>` (`test_std_numeric.cpp`) | ❌ Compile Error | 2.21s | `numeric_limits` members hit unresolved semantic type category 25 during IR |
+| `<latch>` (`test_std_latch.cpp`) | ❌ Compile Error | 1.06s | missing resolved constructor for `std::__mutex_base` + `int`→`long` conversion gaps |
+| `<algorithm>` (`test_std_algorithm.cpp`) | 💥 Crash | 2.32s | `InternalError: Unresolved semantic type reached IR type conversion: category 25` |
+| `<string_view>` (`test_std_string_view.cpp`) | 💥 Crash | 2.38s | `InternalError: Unresolved semantic type reached IR type conversion: category 25` |
+| `<string>` (`test_std_string.cpp`) | ❌ Compile Error | 3.86s | `Could not evaluate non-type template default for parameter 2 of '_Head_base'` |
 
 ### 2026-05-07 Linux/libstdc++ dependent `auto` return deduction follow-up
 
