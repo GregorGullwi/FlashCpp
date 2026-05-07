@@ -35,6 +35,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey
 	}
 
 	auto instantiated = instantiateLazyMemberFunction(*lazy_info_opt);
+	if (!instantiated.has_value()) {
+		return std::nullopt;
+	}
 	lazy_registry.markInstantiated(
 		LazyMemberKey::exact(
 			lazy_info_opt->identity.instantiated_owner_name,

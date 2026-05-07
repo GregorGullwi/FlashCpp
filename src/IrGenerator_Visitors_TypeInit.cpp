@@ -2709,6 +2709,12 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 		}
 	}
 
+	auto restore_template_instantiation_state = ScopeGuard([&]() {
+		symbol_table.exit_scope();
+		current_struct_name_ = saved_struct_name;
+		current_namespace_stack_ = saved_namespace_stack;
+	});
+
 	// Parse the template body with concrete types
 	// Pass the struct name and type index so the parser can set up member function context
 	auto body_node_opt = parser_->parseTemplateBody(
@@ -2743,11 +2749,6 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 		ReturnOp ret_op; // No return value for void
 		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), mangled_token));
 	}
-
-	// Exit function scope
-	symbol_table.exit_scope();
-	current_struct_name_ = saved_struct_name;
-	current_namespace_stack_ = saved_namespace_stack;
 }
 
 ExprResult AstToIr::generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode) {
