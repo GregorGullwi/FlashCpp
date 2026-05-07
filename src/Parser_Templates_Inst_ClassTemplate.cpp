@@ -4255,14 +4255,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 			}
-			FLASH_LOG(Templates, Error, "No primary template found for '", template_name, "', returning nullopt");
+			std::string error_msg = std::string(StringBuilder()
+				.append("No primary class template found for '")
+				.append(template_name)
+				.append("'")
+				.commit());
+			if (force_eager) {
+				throw CompileError(error_msg);
+			}
+			FLASH_LOG(Templates, Error, error_msg);
 			return std::nullopt; // No template with this name
 		}
 		template_node = *template_opt;
 	}
 
 	if (!template_node.is<TemplateClassDeclarationNode>()) {
-		FLASH_LOG(Templates, Error, "Template node is not a TemplateClassDeclarationNode for '", template_name, "', returning nullopt");
+		std::string error_msg = std::string(StringBuilder()
+			.append("Template '")
+			.append(template_name)
+			.append("' is not a class template")
+			.commit());
+		if (force_eager) {
+			throw CompileError(error_msg);
+		}
+		FLASH_LOG(Templates, Error, error_msg);
 		return std::nullopt; // Not a class template
 	}
 
