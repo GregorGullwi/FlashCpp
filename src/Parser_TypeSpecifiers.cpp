@@ -571,8 +571,9 @@ ParseResult Parser::parse_type_specifier() {
 		}
 
 		if (long_count == 1) {
-			if (type_cat == TypeCategory::Float) {
-				type_size = sizeof(long double);
+			if (type_cat == TypeCategory::Double) {
+				type_cat = TypeCategory::LongDouble;
+				type_size = get_type_size_bits(TypeCategory::LongDouble);
 			} else if (type_cat == TypeCategory::Int) {
 				// "long int" -> long
 				type_cat = TypeCategory::Long;
