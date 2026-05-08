@@ -27,6 +27,25 @@ std::optional<EvalResult> tryMaterializeMultidimArrayRow(
 	ConstExpr::EvaluationContext& context);
 EvalResult makeConstructorMemberDefaultInit(const StructMember& member, EvaluationContext& context);
 
+// Look up an enum member by name and return its constexpr value with an exact
+// enum TypeSpecifierNode. Returns nullopt when the requested name is not an
+// enumerator of the provided enum.
+std::optional<EvalResult> tryEvaluateEnumConstant(
+	const EnumTypeInfo& enum_info,
+	TypeIndex enum_type_index,
+	StringHandle enumerator_name) {
+	const Enumerator* enumerator = enum_info.findEnumerator(enumerator_name);
+	if (!enumerator) {
+		return std::nullopt;
+	}
+
+	TypeSpecifierNode enum_type(TypeCategory::Enum, TypeQualifier::None, enum_info.sizeInBits(), Token{}, CVQualifier::None);
+	enum_type.set_type_index(enum_type_index);
+	EvalResult result = EvalResult::from_int(static_cast<long long>(enumerator->value));
+	result.set_exact_type(enum_type);
+	return result;
+}
+
 struct ShiftEvaluationInfo {
 	int width_bits = kDefaultShiftWidthBits;
 	std::optional<TypeSpecifierNode> promoted_type;
@@ -3922,6 +3941,17 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							  ", owner: ", (owner_struct != nullptr));
 				}
 
+				for (TypeIndex nested_enum_index : struct_info->getNestedEnumIndices()) {
+					const TypeInfo* nested_enum_type = tryGetTypeInfo(nested_enum_index);
+					const EnumTypeInfo* nested_enum_info = nested_enum_type ? nested_enum_type->getEnumInfo() : nullptr;
+					if (!nested_enum_info) {
+						continue;
+					}
+					if (auto enum_result = tryEvaluateEnumConstant(*nested_enum_info, nested_enum_index, member_handle)) {
+						return *enum_result;
+					}
+				}
+
 				auto evaluate_specialization_static_member = [&](StringHandle lookup_member_handle) -> std::optional<EvalResult> {
 					if (!resolved_type_info || !resolved_type_info->isTemplateInstantiation()) {
 						return std::nullopt;
@@ -4082,7 +4112,22 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		return evaluate(initializer.value(), context);
 	}
 
-	// Could be other types like enum constants - add support as needed
+	if (symbol_node.is<DeclarationNode>()) {
+		const DeclarationNode& decl = symbol_node.as<DeclarationNode>();
+		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+		if (type_spec.category() == TypeCategory::Enum) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+				if (const EnumTypeInfo* enum_info = type_info->getEnumInfo()) {
+					if (auto enum_result = tryEvaluateEnumConstant(*enum_info, type_spec.type_index(), qualified_id.nameHandle())) {
+						return *enum_result;
+					}
+				}
+			}
+			return EvalResult::error("Enum constant value not found: " + qualified_id.full_name());
+		}
+	}
+
+	// Could be other types like non-enum constants - add support as needed
 	return EvalResult::error("Qualified identifier is not a constant expression: " + qualified_id.full_name());
 }
 
