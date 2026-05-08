@@ -27,6 +27,9 @@ std::optional<EvalResult> tryMaterializeMultidimArrayRow(
 	ConstExpr::EvaluationContext& context);
 EvalResult makeConstructorMemberDefaultInit(const StructMember& member, EvaluationContext& context);
 
+// Look up an enum member by name and return its constexpr value with an exact
+// enum TypeSpecifierNode. Returns nullopt when the requested name is not an
+// enumerator of the provided enum.
 std::optional<EvalResult> tryEvaluateEnumConstant(
 	const EnumTypeInfo& enum_info,
 	TypeIndex enum_type_index,

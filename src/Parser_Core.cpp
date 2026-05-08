@@ -1504,9 +1504,9 @@ void Parser::register_builtin_functions() {
 	const ASTNode void_type = make_builtin_type(TypeCategory::Void, CVQualifier::None, 0);
 	const ASTNode bool_type = make_builtin_type(TypeCategory::Bool, CVQualifier::None, 0);
 	const ASTNode int_type = make_builtin_type(TypeCategory::Int, CVQualifier::None, 0);
-	// Keep these in the shared builtin-registration scope: the C++ math builtins
-	// below and the later _Interlocked*/__iso_volatile* intrinsic declarations
-	// both need the same canonical nodes.
+	// Keep these in the shared builtin-registration scope so math builtins and
+	// later _Interlocked*/__iso_volatile* intrinsics use identical TypeSpecifier
+	// nodes for long and long long signatures.
 	const ASTNode long_type = make_builtin_type(TypeCategory::Long, CVQualifier::None, 0);
 	const ASTNode long_long_type = make_builtin_type(TypeCategory::LongLong, CVQualifier::None, 0);
 	const ASTNode float_type = make_builtin_type(TypeCategory::Float, CVQualifier::None, 0);
