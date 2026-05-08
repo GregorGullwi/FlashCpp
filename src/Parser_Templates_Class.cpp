@@ -28,6 +28,9 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 	}
 
 	const size_t enum_size = toSizeT(enum_info->sizeInBytes());
+	// Enum alignment follows the underlying integral type size in the current
+	// layout model, matching how nested enum TypeInfo reports its storage size.
+	const size_t enum_alignment = enum_size;
 	for (const ASTNode& enumerator_node : enum_decl.enumerators()) {
 		if (!enumerator_node.is<EnumeratorNode>()) {
 			continue;
@@ -36,7 +39,6 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 		const EnumeratorNode& enumerator = enumerator_node.as<EnumeratorNode>();
 		const StringHandle enumerator_name = enumerator.name_token().handle();
 		const TypeIndex enum_type_index = enum_decl.type_index();
-		const size_t enum_alignment = enum_size;
 		std::optional<ASTNode> initializer = enumerator.value();
 
 		struct_ref.add_static_member(
