@@ -392,16 +392,27 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 	}
 
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+	auto tryParserFallbackForType = [&](std::optional<TypeSpecifierNode> type_opt, const ASTNode& fallback_expr) {
+		if (!type_opt.has_value() && context.parser) {
+			type_opt = context.parser->get_expression_type(fallback_expr);
+		}
+		return type_opt;
+	};
+	auto tryGetTypeWithFallback = [&](const ASTNode& source_expr) {
+		return tryParserFallbackForType(
+			tryGetConstexprBoundExpressionType(source_expr, context),
+			source_expr);
+	};
+
 	if (std::holds_alternative<IdentifierNode>(expr)) {
-		if (!context.local_bindings) {
-			return std::nullopt;
-		}
 		const IdentifierNode& identifier = std::get<IdentifierNode>(expr);
-		auto binding_it = context.local_bindings->find(identifier.name());
-		if (binding_it != context.local_bindings->end() && binding_it->second.exact_type.has_value()) {
-			return binding_it->second.exact_type;
+		if (context.local_bindings) {
+			auto binding_it = context.local_bindings->find(identifier.name());
+			if (binding_it != context.local_bindings->end() && binding_it->second.exact_type.has_value()) {
+				return binding_it->second.exact_type;
+			}
 		}
-		return std::nullopt;
+		return tryParserFallbackForType(std::nullopt, expr_node);
 	}
 
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
@@ -414,8 +425,8 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 			return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
 		}
 
-		auto lhs_type_opt = tryGetConstexprBoundExpressionType(binary.get_lhs(), context);
-		auto rhs_type_opt = tryGetConstexprBoundExpressionType(binary.get_rhs(), context);
+		auto lhs_type_opt = tryGetTypeWithFallback(binary.get_lhs());
+		auto rhs_type_opt = tryGetTypeWithFallback(binary.get_rhs());
 		if (lhs_type_opt.has_value() && rhs_type_opt.has_value() && lhs_type_opt->type() == rhs_type_opt->type()) {
 			return *lhs_type_opt;
 		}
@@ -448,10 +459,7 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 
 	if (std::holds_alternative<MemberAccessNode>(expr)) {
 		const auto& member_access = std::get<MemberAccessNode>(expr);
-		auto object_type_opt = tryGetConstexprBoundExpressionType(member_access.object(), context);
-		if (!object_type_opt.has_value() && context.parser) {
-			object_type_opt = context.parser->get_expression_type(member_access.object());
-		}
+		auto object_type_opt = tryGetTypeWithFallback(member_access.object());
 		if (!object_type_opt.has_value() || !is_struct_type(object_type_opt->category())) {
 			return std::nullopt;
 		}
@@ -495,10 +503,7 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 
 	if (std::holds_alternative<ArraySubscriptNode>(expr)) {
 		const auto& array_subscript = std::get<ArraySubscriptNode>(expr);
-		auto base_type_opt = tryGetConstexprBoundExpressionType(array_subscript.array_expr(), context);
-		if (!base_type_opt.has_value() && context.parser) {
-			base_type_opt = context.parser->get_expression_type(array_subscript.array_expr());
-		}
+		auto base_type_opt = tryGetTypeWithFallback(array_subscript.array_expr());
 		if (!base_type_opt.has_value()) {
 			return std::nullopt;
 		}
