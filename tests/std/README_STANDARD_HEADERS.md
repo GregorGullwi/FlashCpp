@@ -22,7 +22,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | 💥 Crash | ~2380ms (retested 2026-05-07, Linux/libstdc++-14). Progresses well past prior unresolved-`auto` stops, then aborts in codegen with `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
-| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~2570ms (retested 2026-05-08, Linux/libstdc++-14). The recursive `basic_string::find` member-template instantiation stop is fixed; current first hard error is again `Could not evaluate non-type template default for parameter 2 of '_Head_base'` (tuple/default-NTTP path). |
+| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~2620ms (retested 2026-05-08, Linux/libstdc++-14). The recursive `basic_string::find` member-template instantiation stop is fixed; current first hard error is again `Could not evaluate non-type template default for parameter 2 of '_Head_base'` (tuple/default-NTTP path). |
 | `<array>` | `test_std_array.cpp` | ❌ Codegen Error | Focused retest 2026-05-04 after injected-class-name fix. The `Cannot use copy initialization with explicit constructor` diagnostic for `std::reverse_iterator` is fixed; the header now progresses into existing IR/codegen gaps around unresolved `std::reverse_iterator` constructor/placeholder lowering. |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~2320ms (retested 2026-05-07, Linux/libstdc++-14). Unresolved-`auto` mangling stop is gone; current crash is late codegen `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
@@ -124,8 +124,9 @@ Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
 
 | Header/Test | Status | Time | First-order stop / note |
 |-------------|--------|------|-------------------------|
+| Full regression suite after edits | ✅ Pass | n/a | `bash tests/run_all_tests.sh`: 2243 pass / 0 fail, 170 `_fail` correct. |
 | `test_string_member_template_arity_prefers_nontemplate_ret0.cpp` | ✅ Compiled | 0.01s | New regression verifies a non-template three-argument member overload is selected from inside a same-name member template body. |
-| `<string>` (`test_std_string.cpp`) | ❌ Compile Error | 2.57s | Previous recursive `basic_string::find` member-template depth stop is fixed. Current stop is the existing tuple/default-NTTP path: `Could not evaluate non-type template default for parameter 2 of '_Head_base'`. |
+| `<string>` (`test_std_string.cpp`) | ❌ Compile Error | 2.62s | Previous recursive `basic_string::find` member-template depth stop is fixed. Current stop is the existing tuple/default-NTTP path: `Could not evaluate non-type template default for parameter 2 of '_Head_base'`. |
 
 ### 2026-05-08 Linux/libstdc++ qualified-enum and cmath-builtin follow-up
 

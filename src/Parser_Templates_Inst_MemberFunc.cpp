@@ -170,11 +170,18 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			break;
 		}
 	}
+	bool has_variadic_template_param = false;
+	for (const TemplateParameterNode& template_param : template_params) {
+		if (template_param.is_variadic()) {
+			has_variadic_template_param = true;
+			break;
+		}
+	}
 	const size_t min_required_args = countMinRequiredArgs(func_decl);
 	if (arg_types.size() < min_required_args) {
 		return std::nullopt;
 	}
-	if (!has_function_parameter_pack && arg_types.size() > func_decl.parameter_nodes().size()) {
+	if (!has_function_parameter_pack && !has_variadic_template_param && arg_types.size() > func_decl.parameter_nodes().size()) {
 		return std::nullopt;
 	}
 
