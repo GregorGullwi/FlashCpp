@@ -471,7 +471,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	const TemplateAliasNode* alias_node = nullptr;
 	if (auto alias_entry = gTemplateRegistry.lookup_alias_template(alias_template_name);
 		alias_entry.has_value() && alias_entry->is<TemplateAliasNode>()) {
-			alias_node = &alias_entry->as<TemplateAliasNode>();
+		alias_node = &alias_entry->as<TemplateAliasNode>();
 	}
 	auto tryResolveDirectAliasTarget = [&]() -> bool {
 		if (alias_node == nullptr) {
