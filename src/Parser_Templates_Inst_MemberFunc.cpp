@@ -163,6 +163,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	if (arg_types.empty()) {
 		return std::nullopt;	 // Can't deduce without arguments
 	}
+	if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
+		return std::nullopt;
+	}
 
 	std::vector<TemplateTypeArg> template_args;
 	auto deduction_info = buildDeductionMapFromCallArgs(

@@ -1488,6 +1488,13 @@ private:
 		const FunctionDeclarationNode& func_decl,
 		const std::vector<TypeSpecifierNode>& arg_types,
 		int recursion_depth);
+	bool isTemplateFunctionParameterPack(
+		std::span<const TemplateParameterNode> template_params,
+		const DeclarationNode& func_param_decl);
+	bool functionTemplateAcceptsCallArgumentCount(
+		std::span<const TemplateParameterNode> template_params,
+		const FunctionDeclarationNode& func_decl,
+		size_t argument_count);
 	bool tryCollectFunctionCallArgTypes(
 		const ChunkedVector<ASTNode>& arguments,
 		std::vector<TypeSpecifierNode>& arg_types_out);
