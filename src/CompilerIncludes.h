@@ -107,6 +107,7 @@
 #include "Parser_Templates_Concepts.cpp"			 // Concepts and requires expressions
 #include "Parser_Templates_Inst_Deduction.cpp"	   // Template deduction
 #include "Parser_Templates_Inst_Substitution.cpp"	  // Template substitution
+#include "Parser_Templates_Inst_Failure.cpp"		  // Template instantiation failure helpers
 #include "Parser_Templates_Inst_ClassTemplate.cpp"  // Class template instantiation
 #include "Parser_Templates_Inst_MemberFunc.cpp"		// Member function template instantiation
 #include "Parser_Templates_Lazy.cpp"				 // Lazy template flows

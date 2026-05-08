@@ -192,7 +192,7 @@ const FunctionDeclarationNode* Parser::tryInstantiateOperatorTemplateForBinary(
 					tmpl.as<TemplateFunctionDeclarationNode>().function_decl_node();
 				NamespaceHandle tmpl_ns = fdecl.namespace_handle();
 				if (tmpl_ns.isValid() && !eligible_ns.count(tmpl_ns)) continue;
-				ScopedParserInstantiationContext inst_guard(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
+				ScopedParserInstantiationContext inst_guard(*this, TemplateInstantiationMode::SoftProbe, StringHandle{});
 				int depth = initial_template_instantiation_depth;
 				if (auto instantiated = try_instantiate_single_template(tmpl, op_name, arg_types, depth)) {
 					if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
@@ -216,7 +216,7 @@ const FunctionDeclarationNode* Parser::tryInstantiateOperatorTemplateForBinary(
 			continue;
 		}
 
-		ScopedParserInstantiationContext guard_instantiation_mode_phase2(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
+		ScopedParserInstantiationContext guard_instantiation_mode_phase2(*this, TemplateInstantiationMode::SoftProbe, StringHandle{});
 		std::optional<ASTNode> instantiated = try_instantiate_single_template(
 			candidate,
 			op_name,
@@ -328,7 +328,7 @@ void Parser::annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_o
 			*right_type_spec,
 			op_kind,
 			gSymbolTable);
-		if (template_instantiation_mode_ == TemplateInstantiationMode::HardUse) {
+		if (isHardUseLikeInstantiationMode()) {
 			if (const FunctionDeclarationNode* instantiated_overload =
 					tryInstantiateOperatorTemplateForBinary(binary_operator_node.op(), *left_type_spec, *right_type_spec)) {
 				if (!overload_result.has_match ||
@@ -698,7 +698,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				// When in SFINAE context (e.g., decltype(a + b)), check that the
 				// operator is actually defined for the operand types. For struct types,
 				// this means checking member operator overloads and free operator functions.
-				if (template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe &&
+				if (template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe &&
 					!sfinae_type_map_.empty()) {
 					auto resolve_operand_type_index = [&](const ASTNode& operand) -> TypeIndex {
 						if (!operand.is<ExpressionNode>())
@@ -838,7 +838,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 								*right_type_spec,
 								op_kind,
 								gSymbolTable);
-							if (template_instantiation_mode_ == TemplateInstantiationMode::HardUse) {
+							if (isHardUseLikeInstantiationMode()) {
 								if (const FunctionDeclarationNode* instantiated_overload =
 										tryInstantiateOperatorTemplateForBinary(operator_token.value(), *left_type_spec, *right_type_spec)) {
 								if (!overload_result.has_match ||

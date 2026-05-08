@@ -2761,7 +2761,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										class_name_handle,
 										member_name_handle,
 										member_is_const);
-									if (template_instantiation_mode_ == TemplateInstantiationMode::HardUse &&
+									if (isHardUseLikeInstantiationMode() &&
 										LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
 										auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);
 										if (!instantiated_func.has_value() || !instantiated_func->is<FunctionDeclarationNode>()) {
@@ -3720,7 +3720,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								class_name_handle,
 								member_name_handle,
 								member_is_const);
-							if (template_instantiation_mode_ == TemplateInstantiationMode::HardUse &&
+							if (isHardUseLikeInstantiationMode() &&
 								LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
 								auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);
 								if (!instantiated_func.has_value() || !instantiated_func->is<FunctionDeclarationNode>()) {
@@ -4160,7 +4160,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// Template instantiation failure is an expected substitution failure in
 				// SFINAE contexts (e.g. decltype(...) inside a default template arg).
 				// Let the caller reject the overload without emitting a hard parser error.
-				if (template_instantiation_mode_ != TemplateInstantiationMode::HardUse) {
+				if (!isHardUseLikeInstantiationMode()) {
 					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: template instantiation failed for call to '{}'", identifier_token.value());
 				} else {
 					FLASH_LOG(Parser, Error, "Template instantiation failed");
@@ -4609,7 +4609,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 																		  "accessible via argument-dependent lookup when an argument of the associated class type is provided",
 							identifier_token);
 					}
-					if (template_instantiation_mode_ != TemplateInstantiationMode::HardUse) {
+					if (!isHardUseLikeInstantiationMode()) {
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						return ParseResult::success(*result);
 					}
@@ -4672,7 +4672,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							"no matching function for call to '" + std::string(identifier_token.value()) + "\'",
 							identifier_token);
 					}
-					if (template_instantiation_mode_ != TemplateInstantiationMode::HardUse) {
+					if (!isHardUseLikeInstantiationMode()) {
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						return ParseResult::success(*result);
 					}
@@ -4796,7 +4796,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						parsing_template_depth_ > 0 ||
 						hasActiveTemplateParameters() ||
 						!struct_parsing_context_stack_.empty() ||
-						template_instantiation_mode_ != TemplateInstantiationMode::HardUse ||
+						!isHardUseLikeInstantiationMode() ||
 						context == ExpressionContext::TemplateTypeArg ||
 						context == ExpressionContext::RequiresClause ||
 						context == ExpressionContext::ConceptDefinition;
@@ -6751,7 +6751,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										}
 										// In SFINAE context (e.g., requires expression), function lookup failure
 										// means the constraint is not satisfied - not an error
-										if (template_instantiation_mode_ != TemplateInstantiationMode::HardUse) {
+										if (!isHardUseLikeInstantiationMode()) {
 											// Create a placeholder node to indicate failed lookup
 												// The requires expression will treat this as "constraint not satisfied"
 												result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
@@ -6814,7 +6814,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											}
 											// In SFINAE context (e.g., requires expression), function lookup failure
 											// means the constraint is not satisfied - not an error
-											if (template_instantiation_mode_ != TemplateInstantiationMode::HardUse) {
+											if (!isHardUseLikeInstantiationMode()) {
 												// Create a placeholder node to indicate failed lookup
 													result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 												} else {

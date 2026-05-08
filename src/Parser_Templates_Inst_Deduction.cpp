@@ -735,7 +735,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 		FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-		ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
+		ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SoftProbe, StringHandle{});
 		parsing_template_depth_ = 0;
 		clearCurrentTemplateParameters();
 		sfinae_type_map_.clear();
@@ -766,7 +766,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-			ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
+			ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SoftProbe, StringHandle{});
 			parsing_template_depth_ = 0;
 			clearCurrentTemplateParameters();
 			sfinae_type_map_.clear();
@@ -2177,7 +2177,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-			ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
+			ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SoftProbe, StringHandle{});
 			parsing_template_depth_ = 0;	 // suppress template body context during SFINAE
 			clearCurrentTemplateParameters();  // No dependent names during SFINAE
 			sfinae_type_map_.clear();
@@ -2702,7 +2702,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// Try each template overload in order.
 	// For SFINAE: collect all viable matches and return the most specific one.
 	// For non-SFINAE: return the first successful non-deferred match.
-	bool outer_sfinae_context = template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe;
+	bool outer_sfinae_context = template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe;
 
 	struct SfinaeCandidateEntry {
 		ASTNode result;
@@ -2748,7 +2748,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 						 recursion_depth, overload_idx, template_name);
 
 		// Enter the mode appropriate for this instantiation attempt.
-		ScopedParserInstantiationContext guard_instantiation_mode(*this, selectTemplateInstantiationMode(outer_sfinae_context), StringHandle{});
+		ScopedParserInstantiationContext guard_instantiation_mode(*this, selectTemplateCandidateProbeMode(), StringHandle{});
 
 		// Try to instantiate this specific template
 		std::optional<ASTNode> result = try_instantiate_single_template(
@@ -3227,9 +3227,14 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// entry fast-path instead of re-evaluating the requires-clause.
 			// The failure is deterministic in those keys: the requires-clause
 			// is a pure predicate over the deduced template arguments.
-			gTemplateRegistry.markFailedInstantiation(key, overload_id);
-
-			return std::nullopt;
+			return failTemplateInstantiation(
+				StringBuilder()
+					.append("constraint not satisfied for template function '")
+					.append(template_name)
+					.append("'")
+					.commit(),
+				&key,
+				overload_id);
 		}
 	}
 
@@ -3270,8 +3275,14 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// this same (template_name, args, overload) tuple will fail
 			// identically.  Short-circuiting at the entry fast-path avoids
 			// redoing concept evaluation on every SFINAE retry.
-			gTemplateRegistry.markFailedInstantiation(key, overload_id);
-			return std::nullopt;
+			return failTemplateInstantiation(
+				StringBuilder()
+					.append("concept constraint not satisfied for template function '")
+					.append(template_name)
+					.append("'")
+					.commit(),
+				&key,
+				overload_id);
 		}
 	}
 
@@ -3301,7 +3312,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			Templates,
 			Debug,
 			"Re-parsing function declaration for SFINAE validation, sfinae_probe={}",
-			template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe);
+			template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe);
 
 		// Cycle detection for trailing return type re-parsing: when evaluating a
 		// function's decltype trailing return type, encountering the same function
@@ -3359,14 +3370,19 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// not been emplaced yet (that happens further down after the return
 			// type is known).  The registry-side memo is the failure record.
 			FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type parsing failed: {}", return_type_result.error_message());
-			gTemplateRegistry.markFailedInstantiation(key, overload_id);
-			return std::nullopt;	 // Substitution failure - try next overload
+			return failTemplateInstantiation(return_type_result.error_message(), &key, overload_id);
 		}
 
 		if (!return_type_result.node().has_value()) {
 			FLASH_LOG(Templates, Debug, "SFINAE: Return type parsing returned no node");
-			gTemplateRegistry.markFailedInstantiation(key, overload_id);
-			return std::nullopt;
+			return failTemplateInstantiation(
+				StringBuilder()
+					.append("template function '")
+					.append(template_name)
+					.append("' return type parsing returned no node")
+					.commit(),
+				&key,
+				overload_id);
 		}
 
 		return_type = *return_type_result.node();
@@ -3825,8 +3841,14 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// preserve_ref_qualifier=false: deduced args carry call-site lvalue-ness which must
 		// NOT be propagated to TypeInfo (see registerTypeParamsInScope comment).
 		const auto& func_template_params = template_func.template_parameters();
-		reparse_template_function_body(new_func_ref, func_decl, func_template_params, template_args,
-									   /*preserve_ref_qualifier=*/false);
+		if (template_instantiation_mode_ == TemplateInstantiationMode::HardUseCandidateProbe) {
+			ScopedParserInstantiationContext body_instantiation_mode(*this, TemplateInstantiationMode::HardUse, StringHandle{});
+			reparse_template_function_body(new_func_ref, func_decl, func_template_params, template_args,
+										   /*preserve_ref_qualifier=*/false);
+		} else {
+			reparse_template_function_body(new_func_ref, func_decl, func_template_params, template_args,
+										   /*preserve_ref_qualifier=*/false);
+		}
 		if (!new_func_ref.is_materialized()) {
 			StringBuilder reason_builder;
 			StringHandle body_reparse_failure_reason = StringTable::getOrInternStringHandle(
@@ -3835,7 +3857,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					.append(saved_mangled_name)
 					.commit());
 			new_func_ref.mark_failed_substitution(body_reparse_failure_reason);
-			gTemplateRegistry.markFailedInstantiation(key, overload_id);
+			failTemplateInstantiation(
+				StringTable::getStringView(body_reparse_failure_reason),
+				&key,
+				overload_id);
 			body_reparse_failed = true;
 			FLASH_LOG(Templates, Debug, "Marked template instantiation as failed substitution after body reparse: ",
 					  StringTable::getStringView(body_reparse_failure_reason));

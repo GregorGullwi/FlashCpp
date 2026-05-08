@@ -113,10 +113,15 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 		return std::nullopt;
 	}
 	if (call_arg_types.empty()) {
-		FLASH_LOG(Templates, Debug,
-			"Deferring member template instantiation for ", struct_name, "::", member_name,
-			" because no concrete argument types were collected at this parse point");
-		return std::nullopt;
+		std::string_view failure_reason = StringBuilder()
+			.append("cannot instantiate member function template '")
+			.append(struct_name)
+			.append("::")
+			.append(member_name)
+			.append("' because no concrete call argument types were collected")
+			.commit();
+		FLASH_LOG(Templates, Debug, failure_reason);
+		return failTemplateInstantiation(failure_reason, nullptr, std::nullopt);
 	}
 	return try_instantiate_member_function_template(
 		struct_name,
@@ -270,7 +275,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			}
 		}
 
-		if (template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe &&
+		if (template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe &&
 			object_struct_name.has_value() && !sfinae_type_map_.empty()) {
 			StringHandle obj_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
 			auto subst_it = sfinae_type_map_.find(obj_name_handle);
@@ -333,7 +338,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 		}
 
 		if (object_struct_name.has_value() && !instantiating_lazy_member_ &&
-			template_instantiation_mode_ == TemplateInstantiationMode::HardUse) {
+			isHardUseLikeInstantiationMode()) {
 			std::string_view func_name = member_name_token.value();
 			if (!func_name.empty()) {
 				StringHandle class_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
@@ -356,7 +361,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 		}
 
 		if (object_struct_name.has_value() &&
-			template_instantiation_mode_ == TemplateInstantiationMode::HardUse &&
+			isHardUseLikeInstantiationMode() &&
 			!known_member_func && !instantiated_func.has_value()) {
 			auto checkHasMemberTemplate = [&]() {
 				StringBuilder qualified_name_sb;
@@ -403,7 +408,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 		// the argument count, the call is ill-formed.
 		if (!known_member_func && !instantiated_func.has_value() &&
 			!explicit_template_args && object_struct_name.has_value() &&
-			template_instantiation_mode_ == TemplateInstantiationMode::HardUse) {
+			isHardUseLikeInstantiationMode()) {
 			if (auto type_opt = get_expression_type(*result); type_opt.has_value() &&
 														  is_struct_type(type_opt->category())) {
 				TypeIndex type_idx = type_opt->type_index();
