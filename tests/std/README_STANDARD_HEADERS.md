@@ -26,7 +26,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<array>` | `test_std_array.cpp` | ❌ Codegen Error | Focused retest 2026-05-04 after injected-class-name fix. The `Cannot use copy initialization with explicit constructor` diagnostic for `std::reverse_iterator` is fixed; the header now progresses into existing IR/codegen gaps around unresolved `std::reverse_iterator` constructor/placeholder lowering. |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~2320ms (retested 2026-05-07, Linux/libstdc++-14). Unresolved-`auto` mangling stop is gone; current crash is late codegen `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~2262ms (retested 2026-04-24, Linux/libstdc++). Previous `tuple:399` `_M_tail` blocker resolved by the member-function overload registration fix; now first-order error is `unsupported PackExpansionExprNode reached semantic analysis` deeper in tuple's pack expansion machinery. |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~2110ms (retested 2026-05-08, Linux/libstdc++-14). Partial-specialization member-alias substitution in the `_Head_base` default-NTTP path improved, but the targeted header still stops at `Could not evaluate non-type template default for parameter 2 of '_Head_base'`. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2062ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Itanium name mangling: unknown type — cannot generate valid symbol` after several deferred/incomplete `reverse_iterator` instantiations. |
 | `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
 | `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2999ms (retested 2026-04-24, Linux/libstdc++). `_M_tail` blocker resolved by the member-function overload fix; now first-order error is `unsupported PackExpansionExprNode reached semantic analysis` deeper in shared tuple pack-expansion code. |
@@ -100,6 +100,41 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-08 Linux/libstdc++ partial-specialization alias/default-NTTP follow-up
+
+This pass retested tuple-heavy standard headers and fixed a high-layer
+template/constexpr issue exposed by libstdc++'s `_Head_base` default argument
+machinery.
+
+Fixes landed:
+
+- **Partial-specialization member type aliases now bind by the dependent
+  parameter name from the matched pattern** before falling back to positional
+  dependent-parameter counting. This keeps `Conditional<false, T, F>::type`
+  selecting `F` instead of the primary-template alias target.
+- **Constexpr qualified static-member lookup can rebound through a materialized
+  nested `::type` alias** when an alias-template target like
+  `ConditionalT<...>::value` was parsed through the intermediate class-template
+  instantiation. The rebound path materializes the target with available
+  template bindings before evaluating the requested member.
+
+Regression test:
+
+- `tests/test_conditional_alias_partial_default_nttp_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| Full regression suite after edits | ✅ Pass | n/a | `bash tests/run_all_tests.sh`: 2244 pass / 0 fail, 170 `_fail` correct. |
+| `test_conditional_alias_partial_default_nttp_ret0.cpp` | ✅ Pass | 0.02s | New regression verifies a conditional alias template selected through a partial specialization can feed a dependent bool default template argument. |
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Compiled | 0.49s | Existing targeted standard-header regression still compiles. |
+| `<utility>` (`test_std_utility.cpp`) | ✅ Compiled | 0.84s | Existing targeted standard-header regression still compiles. |
+| `<tuple>` (`test_std_tuple.cpp`) | ❌ Compile Error | 2.11s | Partial-specialization alias/default-NTTP regression is fixed in isolation, but the full header still reaches `Could not evaluate non-type template default for parameter 2 of '_Head_base'` through a more complex tuple path. |
+| `<list>` (`test_std_list.cpp`) | ❌ Compile Error | 2.72s | Still stops at the shared `_Head_base` default-NTTP path. |
+| `<string>` (`test_std_string.cpp`) | ❌ Compile Error | 4.59s | Still stops at the shared `_Head_base` default-NTTP path. |
+| `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | 3.28s | Still stops at the shared `_Head_base` default-NTTP path after earlier recoverable `__is_complete_or_unbounded` static-assert diagnostics. |
 
 ### 2026-05-08 Linux/libstdc++ member-template arity follow-up
 
