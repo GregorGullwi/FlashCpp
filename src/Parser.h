@@ -874,10 +874,13 @@ private:
 	enum class TemplateInstantiationMode {
 		// Ordinary instantiation request: commit cache, symbol-table, and AST/lazy-member side effects.
 		HardUse,
-		// SFINAE-driven probe: substitution failures are soft and the caller may try another overload.
-		// Unlike ShapeOnly, substitution errors in SfinaeProbe cause the probe to soft-fail and the
-		// caller may select an alternative overload.  Commit-time side effects are also suppressed.
-		SfinaeProbe,
+		// SFINAE-driven probe: substitution failures are soft and SFINAE-only
+		// expression validation is enabled.
+		SoftProbe,
+		// Speculative overload viability check started by a hard-use request.
+		// Substitution failures are soft so overload resolution can continue, but
+		// SFINAE-only expression validation remains disabled.
+		HardUseCandidateProbe,
 		// Declaration-time shape probe: used when parsing default template arguments and computing
 		// type/signature shapes that do not yet require a full, committed instantiation.
 		//
@@ -885,7 +888,7 @@ private:
 		//   - Compute types and member signatures (layout, return types, overload sets) as normal.
 		//   - Suppress ALL commit-time side effects: type-map commits, symbol-table entries,
 		//     AST registration, and lazy-member side-effect callbacks.
-		//   - Unlike SfinaeProbe, substitution failures are NOT soft-failures: an error in
+		//   - Unlike SoftProbe, substitution failures are NOT soft-failures: an error in
 		//     ShapeOnly mode is still an error.  The mode only controls the commit phase.
 		//   - ShapeOnly is STICKY: selectTemplateInstantiationMode() propagates ShapeOnly
 		//     downward into nested instantiations so an entire shape-probe subtree stays in
@@ -2128,6 +2131,12 @@ private:
 	bool shouldCommitTemplateInstantiationArtifacts() const {
 		return template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly;
 	}
+	bool isHardUseLikeInstantiationMode() const;
+	bool isTemplateInstantiationFailureProbeMode() const;
+	std::optional<ASTNode> failTemplateInstantiation(
+		std::string_view reason,
+		const FlashCpp::TemplateInstantiationKey* key,
+		std::optional<uintptr_t> overload_id);
 	// Select the instantiation mode to use for a nested instantiation triggered from
 	// the current context.
 	//
@@ -2137,16 +2146,25 @@ private:
 	// (e.g. default-template-argument parsing) never commits artifacts to global state.
 	//
 	// Outside of ShapeOnly mode, the mode is determined by the caller's SFINAE context:
-	// outer_sfinae_context == true  → SfinaeProbe (soft substitution failures)
+	// outer_sfinae_context == true  → SoftProbe (soft substitution failures)
 	// outer_sfinae_context == false → HardUse (full commit)
 	TemplateInstantiationMode selectTemplateInstantiationMode(bool outer_sfinae_context) const {
 		if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
 			return TemplateInstantiationMode::ShapeOnly;
 		}
 		if (outer_sfinae_context) {
-			return TemplateInstantiationMode::SfinaeProbe;
+			return TemplateInstantiationMode::SoftProbe;
 		}
 		return TemplateInstantiationMode::HardUse;
+	}
+	TemplateInstantiationMode selectTemplateCandidateProbeMode() const {
+		if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
+			return TemplateInstantiationMode::ShapeOnly;
+		}
+		if (template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe) {
+			return TemplateInstantiationMode::SoftProbe;
+		}
+		return TemplateInstantiationMode::HardUseCandidateProbe;
 	}
 	std::optional<ASTNode> lookupLateMaterializedOwningStructRoot(StringHandle struct_name) const {
 		std::string_view struct_name_view = StringTable::getStringView(struct_name);

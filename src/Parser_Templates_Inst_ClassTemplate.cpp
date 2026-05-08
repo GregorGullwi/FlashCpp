@@ -1279,21 +1279,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	} nesting_guard;
 	if (s_instantiation_nesting_depth > MAX_INSTANTIATION_NESTING_DEPTH) {
-		std::string error_msg = std::string(StringBuilder()
+		std::string_view error_msg = StringBuilder()
 			.append("Max template instantiation depth (")
 			.append(static_cast<uint64_t>(MAX_INSTANTIATION_NESTING_DEPTH))
 			.append(") exceeded for '")
 			.append(template_name)
 			.append("'. Possible recursive template instantiation.")
-			.commit());
+			.commit();
 		if (!s_instantiation_depth_warned) {
 			FLASH_LOG(Templates, Error, error_msg);
 			s_instantiation_depth_warned = true;
 		}
 		if (force_eager) {
-			throw CompileError(error_msg);
+			throw CompileError(std::string(error_msg));
 		}
-		return std::nullopt;
+		return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 	}
 
 	// Iteration guard: prevents retry storms for the entire compilation.
@@ -1304,11 +1304,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (force_eager) {
 			throw CompileError("Template instantiation iteration limit was already exceeded earlier in this translation unit");
 		}
-		return std::nullopt;
+		return failTemplateInstantiation(
+			"Template instantiation iteration limit was already exceeded earlier in this translation unit",
+			nullptr,
+			std::nullopt);
 	}
 	g_template_inst_iteration_count++;
 	if (g_template_inst_iteration_count > g_template_inst_max_iterations) {
-		std::string error_msg = std::string(StringBuilder()
+		std::string_view error_msg = StringBuilder()
 			.append("Template instantiation iteration limit exceeded (")
 			.append(static_cast<int64_t>(g_template_inst_max_iterations))
 			.append("). Last template: '")
@@ -1316,13 +1319,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			.append("' with ")
 			.append(static_cast<uint64_t>(template_args.size()))
 			.append(" args. Possible infinite loop.")
-			.commit());
+			.commit();
 		FLASH_LOG(Templates, Error, error_msg);
 		g_template_inst_iteration_limit_tripped = true;
 		if (force_eager) {
-			throw CompileError(error_msg);
+			throw CompileError(std::string(error_msg));
 		}
-		return std::nullopt;
+		return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 	}
 
 	// Log entry to help debug which call sites are causing issues
@@ -1543,7 +1546,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		auto cached = gTemplateRegistry.getInstantiation(cache_key);
 		if (cached.has_value()) {
 			// If the cached entry was produced under ShapeOnly mode but the current
-			// request is a full materialization (HardUse or SfinaeProbe), treat the
+			// request is a full materialization (HardUse or SoftProbe), treat the
 			// cache as a miss so we re-enter instantiation and fully materialise the
 			// struct.  This is safe because ShapeOnly entries are always committed to
 			// the cache, so a concurrent ShapeOnly path will still hit them.
@@ -4468,7 +4471,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Tag the struct with its materialization level before caching.
 			// Commit point: state transition NotMaterialized|ShapeOnly -> ShapeOnly|Materialized.
 			// ShapeOnly   -> mode is ShapeOnly (shape probe, no commit side effects).
-			// Materialized -> mode is HardUse or SfinaeProbe (full commit, all artifacts registered).
+			// Materialized -> mode is HardUse or SoftProbe (full commit, all artifacts registered).
 			if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
 				instantiated_struct.as<StructDeclarationNode>().mark_shape_only();
 			} else {
@@ -7724,7 +7727,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 					FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 					FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-					ScopedParserInstantiationContext guard_inst_mode(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
+					ScopedParserInstantiationContext guard_inst_mode(*this, TemplateInstantiationMode::SoftProbe, StringHandle{});
 					parsing_template_depth_ = 0;
 					clearCurrentTemplateParameters();
 					sfinae_type_map_.clear();
@@ -9110,7 +9113,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Tag the struct with its materialization level before caching.
 	// Commit point: state transition NotMaterialized|ShapeOnly -> ShapeOnly|Materialized.
 	// ShapeOnly   -> mode is ShapeOnly (shape probe, no commit side effects).
-	// Materialized -> mode is HardUse or SfinaeProbe (full commit, all artifacts registered).
+	// Materialized -> mode is HardUse or SoftProbe (full commit, all artifacts registered).
 	if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
 		instantiated_struct.as<StructDeclarationNode>().mark_shape_only();
 	} else {

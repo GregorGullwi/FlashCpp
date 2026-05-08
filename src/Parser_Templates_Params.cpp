@@ -1,4 +1,4 @@
-﻿#include "Parser.h"
+#include "Parser.h"
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
@@ -682,7 +682,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		Templates,
 		Debug,
 		"parse_explicit_template_arguments called, sfinae_probe={}",
-		template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe);
+		template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe);
 
 	// Save position in case this isn't template arguments
 	auto saved_pos = save_token_position();
@@ -1117,13 +1117,13 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// 2. When NOT parsing a template body (e.g., global scope type alias like `using X = holder<1 ? 2 : 3>`)
 			// Only skip evaluation during template DECLARATION when template parameters are not yet instantiated
 			bool should_try_constant_eval =
-				template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe || parsing_template_depth_ == 0;
+				template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe || parsing_template_depth_ == 0;
 			if (should_try_constant_eval) {
 				FLASH_LOG(
 					Templates,
 					Debug,
 					"Trying to evaluate non-literal expression as constant (sfinae_probe=",
-					template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe,
+					template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe,
 					", parsing_template_body=",
 					parsing_template_depth_ > 0,
 					")");
@@ -2060,7 +2060,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			"Checking dependency for template argument: type={}, type_index={}, sfinae_probe={}",
 			static_cast<int>(type_node.type()),
 			type_node.type_index(),
-			template_instantiation_mode_ == TemplateInstantiationMode::SfinaeProbe);
+			template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe);
 		if (!arg.is_value &&
 			(type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias || type_node.category() == TypeCategory::Template)) {
 			// Prefer the source token spelling when it exists, but fall back to the
@@ -2104,7 +2104,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// During SFINAE context (re-parsing), template parameters are substituted with concrete types
 				// so we should NOT mark them as dependent
 				bool is_template_param = false;
-				if (template_instantiation_mode_ != TemplateInstantiationMode::SfinaeProbe) {
+				if (template_instantiation_mode_ != TemplateInstantiationMode::SoftProbe) {
 					for (const auto& param_name : currentTemplateParamNames()) {
 						std::string_view param_sv = StringTable::getStringView(param_name);
 						if (type_name == param_sv || matches_identifier(type_name, param_sv)) {
@@ -2118,7 +2118,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					arg.is_dependent = true;
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
-				} else if (template_instantiation_mode_ != TemplateInstantiationMode::SfinaeProbe) {
+				} else if (template_instantiation_mode_ != TemplateInstantiationMode::SoftProbe) {
 					// Also check the full type name from gTypeInfo for composite/qualified types
 					std::string_view check_name = !full_type_name.empty() ? full_type_name : type_name;
 
@@ -2189,7 +2189,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		if (!arg.is_dependent &&
 			type_node.category() == TypeCategory::Struct &&
 			parsing_template_depth_ > 0 &&
-			template_instantiation_mode_ != TemplateInstantiationMode::SfinaeProbe) {
+			template_instantiation_mode_ != TemplateInstantiationMode::SoftProbe) {
 			TypeIndex idx = type_node.type_index();
 			if (const TypeInfo* type_info = tryGetTypeInfo(idx)) {
 				std::string_view type_name = StringTable::getStringView(type_info->name());

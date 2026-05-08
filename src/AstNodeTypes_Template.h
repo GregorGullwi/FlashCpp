@@ -1172,7 +1172,7 @@ public:
 	//   NotMaterialized   — freshly constructed; not yet instantiated.
 	//   ShapeOnly         — type layout/signatures computed under ShapeOnly mode;
 	//                       member function bodies have NOT been materialised.
-	//   Materialized      — full instantiation committed (HardUse / SfinaeProbe path).
+	//   Materialized      — full instantiation committed (HardUse / SoftProbe path).
 	//   FailedSubstitution — substitution failed; node must not be re-probed.
 	enum class StructBodyStateTag : uint8_t {
 		NotMaterialized = 0,

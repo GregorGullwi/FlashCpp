@@ -718,7 +718,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
-			ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
+			ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SoftProbe, StringHandle{});
 			parsing_template_depth_ = 0;	 // suppress template body context during SFINAE
 			clearCurrentTemplateParameters();  // No dependent names during SFINAE
 			sfinae_type_map_.clear();
@@ -954,13 +954,18 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 	} depth_guard;
 	if (s_member_inst_depth > MAX_MEMBER_INST_DEPTH) {
+		std::string_view failure_reason = StringBuilder()
+			.append("Max member function template instantiation depth (")
+			.append(static_cast<uint64_t>(MAX_MEMBER_INST_DEPTH))
+			.append(") exceeded for '")
+			.append(qualified_name)
+			.append("'. Possible recursive template instantiation.")
+			.commit();
 		if (!s_member_inst_depth_warned) {
-			FLASH_LOG(Templates, Error, "Max member function template instantiation depth (",
-					  MAX_MEMBER_INST_DEPTH, ") exceeded for '", StringTable::getStringView(qualified_name),
-					  "'. Possible recursive template instantiation.");
+			FLASH_LOG(Templates, Error, failure_reason);
 			s_member_inst_depth_warned = true;
 		}
-		return std::nullopt;
+		return failTemplateInstantiation(failure_reason, &key, reinterpret_cast<uintptr_t>(&template_node));
 	}
 
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();

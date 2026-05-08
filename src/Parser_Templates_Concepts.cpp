@@ -233,10 +233,10 @@ ParseResult Parser::parse_requires_expression() {
 		return ParseResult::error("Expected '{' to begin requires expression body", current_token_);
 	}
 
-	// Enter SfinaeProbe mode for the requires expression body.
+	// Enter SoftProbe mode for the requires expression body.
 	// In requires expressions, function lookup failures and type errors should not produce errors -
 	// they indicate that the constraint is not satisfied (the expression is invalid)
-	ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SfinaeProbe, StringHandle{});
+	ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SoftProbe, StringHandle{});
 
 	// Parse requirements (expressions that must be valid)
 	std::vector<ASTNode> requirements;

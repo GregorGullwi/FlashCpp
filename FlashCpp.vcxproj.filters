@@ -177,6 +177,9 @@
     <ClCompile Include="src\Parser_Templates_Inst_Deduction.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Parser_Templates_Inst_Failure.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\Parser_Templates_Inst_MemberFunc.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
