@@ -1609,26 +1609,26 @@ ASTNode ExpressionSubstitutor::substituteSizeofExpr(const SizeofExprNode& sizeof
 ASTNode ExpressionSubstitutor::substituteTypeTraitExpr(const TypeTraitExprNode& trait_expr) {
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing type trait expression");
 
+	auto substitute_trait_type = [this](const ASTNode& type_node) {
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return type_node;
+		}
+
+		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+			substituteInType(type_node.as<TypeSpecifierNode>()));
+		return ASTNode(&new_type);
+	};
+
 	if (trait_expr.is_no_arg_trait()) {
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
 			TypeTraitExprNode(trait_expr.kind(), trait_expr.trait_token()));
 		return ASTNode(&new_expr);
 	}
 
-	ASTNode substituted_type = trait_expr.type_node();
-	if (substituted_type.is<TypeSpecifierNode>()) {
-		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-			substituteInType(substituted_type.as<TypeSpecifierNode>()));
-		substituted_type = ASTNode(&new_type);
-	}
+	ASTNode substituted_type = substitute_trait_type(trait_expr.type_node());
 
 	if (trait_expr.has_second_type()) {
-		ASTNode substituted_second_type = trait_expr.second_type_node();
-		if (substituted_second_type.is<TypeSpecifierNode>()) {
-			TypeSpecifierNode& new_second_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-				substituteInType(substituted_second_type.as<TypeSpecifierNode>()));
-			substituted_second_type = ASTNode(&new_second_type);
-		}
+		ASTNode substituted_second_type = substitute_trait_type(trait_expr.second_type_node());
 
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
 			TypeTraitExprNode(trait_expr.kind(), substituted_type, substituted_second_type, trait_expr.trait_token()));
@@ -1639,13 +1639,7 @@ ASTNode ExpressionSubstitutor::substituteTypeTraitExpr(const TypeTraitExprNode& 
 		std::vector<ASTNode> substituted_additional_types;
 		substituted_additional_types.reserve(trait_expr.additional_type_nodes().size());
 		for (const ASTNode& additional_type : trait_expr.additional_type_nodes()) {
-			if (additional_type.is<TypeSpecifierNode>()) {
-				TypeSpecifierNode& new_additional_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-					substituteInType(additional_type.as<TypeSpecifierNode>()));
-				substituted_additional_types.push_back(ASTNode(&new_additional_type));
-			} else {
-				substituted_additional_types.push_back(additional_type);
-			}
+			substituted_additional_types.push_back(substitute_trait_type(additional_type));
 		}
 
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
