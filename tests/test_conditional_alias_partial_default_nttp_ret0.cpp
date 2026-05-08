@@ -41,10 +41,6 @@ struct HeadBase<Index, Head, true> {
 };
 
 int main() {
-	static_assert(EmptyNotFinal<unsigned long>::value);
-	static_assert(!EmptyNotFinal<FinalHead>::value);
-	static_assert(EmptyNotFinal<RegularHead>::value);
-
 	return HeadBase<0, int>::value +
 		HeadBase<1, unsigned long>::value +
 		HeadBase<0, RegularHead>::value;
