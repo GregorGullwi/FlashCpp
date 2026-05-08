@@ -267,7 +267,16 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		for (const TemplateTypeArg& arg : template_args) {
 			if (arg.is_dependent && arg.dependent_name.isValid()) {
 				FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: arg is dependent, returning dependent bool placeholder");
-				return TemplateTypeArg::makeDependentValue(arg.dependent_name, TypeCategory::Bool, 0, arg_node);
+				// Pre-substitute the alias template parameters (e.g. 'Type' in __is_final(Type))
+				// into the outer dependent parameter (e.g. 'Head') so that when the outer
+				// template is later instantiated, materializeStoredTemplateArgs can find
+				// the outer parameter's name in param_map_ and evaluate correctly.
+				ASTNode pre_substituted = substituteNonTypeDefaultExpressionImpl(
+					*this,
+					arg_node,
+					template_parameters,
+					std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
+				return TemplateTypeArg::makeDependentValue(arg.dependent_name, TypeCategory::Bool, 0, pre_substituted);
 			}
 		}
 	} else {

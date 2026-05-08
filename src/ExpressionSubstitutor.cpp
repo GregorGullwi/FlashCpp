@@ -354,9 +354,31 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 			std::string_view dependent_name = StringTable::getStringView(materialized_arg.dependent_name);
 			auto dep_subst_it = param_map_.find(dependent_name);
 			if (dep_subst_it != param_map_.end()) {
-				materialized_arg = rebindDependentTemplateTypeArg(dep_subst_it->second, materialized_arg);
-				result.had_substitution = true;
-				substituted = true;
+				// When the dependent arg stores a TypeTraitExprNode (e.g. __is_final(H)) the
+				// right thing is to substitute the concrete type into the trait expression and
+				// evaluate it to a bool, rather than copying the concrete struct type verbatim
+				// into what is actually a bool-typed NTTP slot.
+				// Note: use arg.dependent_expr (from TypeInfo::TemplateArgInfo) since toTemplateTypeArg
+				// does not copy dependent_expr into materialized_arg.
+				if (materialized_arg.is_value && arg.dependent_expr.has_value()) {
+					const ASTNode& stored_expr = *arg.dependent_expr;
+					ASTNode substituted_expr = substitute(stored_expr);
+					if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
+						materialized_arg.is_value = true;
+						materialized_arg.value = eval_result->value;
+						materialized_arg.type_index = nativeTypeIndex(eval_result->type);
+						materialized_arg.dependent_name = {};
+						materialized_arg.is_dependent = false;
+						result.had_substitution = true;
+						substituted = true;
+						FLASH_LOG(Templates, Debug, "materializeStoredTemplateArgs: evaluated dependent TypeTraitExpr -> ", eval_result->value);
+					}
+				}
+				if (!substituted) {
+					materialized_arg = rebindDependentTemplateTypeArg(dep_subst_it->second, materialized_arg);
+					result.had_substitution = true;
+					substituted = true;
+				}
 			} else if (evaluate_dependent_member_values && materialized_arg.is_value) {
 				size_t scope_pos = dependent_name.rfind("::");
 				if (scope_pos != std::string_view::npos) {
