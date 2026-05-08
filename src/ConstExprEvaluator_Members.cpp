@@ -4044,6 +4044,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 										// already rebound it to a different parameter name (for example `Head`).
 										// For a single-argument alias target, the only viable type binding in the
 										// current default-argument context is the aliased type argument.
+										FLASH_LOG(ConstExpr, Debug, "Rebinding single-argument nested alias target by first non-value context argument");
 										for (const TemplateTypeArg& context_arg : context.template_args) {
 											if (!context_arg.is_value) {
 												nested_arg = context_arg;

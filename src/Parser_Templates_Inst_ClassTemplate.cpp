@@ -3988,6 +3988,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						alias_target_name = alias_target_info->name();
 					}
 					StringHandle alias_token_name = alias_type_spec.token().handle();
+					auto applyTemplateArgAliasSubstitution = [&](size_t pattern_idx, std::string_view parameter_name) {
+						const TemplateTypeArg& concrete_arg = template_args[pattern_idx];
+						substituted_type = concrete_arg.typeEnum();
+						substituted_type_index = concrete_arg.type_index;
+						if (!is_struct_type(substituted_type)) {
+							substituted_size = get_type_size_bits(substituted_type);
+						} else {
+							substituted_size = 0;
+							if (const TypeInfo* sub_ti = tryGetTypeInfo(substituted_type_index)) {
+								substituted_size = toSizeT(sub_ti->sizeInBytes());
+							}
+						}
+						FLASH_LOG(Templates, Debug, "Substituted template parameter '",
+								  parameter_name,
+								  "' at pattern position ", pattern_idx, " with type=", static_cast<int>(substituted_type));
+					};
 					for (const TemplateParameterNode& template_param_node : template_params) {
 						StringHandle param_name = template_param_node.nameHandle();
 						if (param_name == alias_token_name || param_name == alias_target_name) {
@@ -4017,20 +4033,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (!pattern_arg.is_value && pattern_arg.is_dependent && pattern_arg.dependent_name.isValid()) {
 							StringHandle pattern_param_name = pattern_arg.dependent_name;
 							if (pattern_param_name == alias_token_name || pattern_param_name == alias_target_name) {
-								const TemplateTypeArg& concrete_arg = template_args[pattern_idx];
-								substituted_type = concrete_arg.typeEnum();
-								substituted_type_index = concrete_arg.type_index;
-								if (!is_struct_type(substituted_type)) {
-									substituted_size = get_type_size_bits(substituted_type);
-								} else {
-									substituted_size = 0;
-									if (const TypeInfo* sub_ti = tryGetTypeInfo(substituted_type_index)) {
-										substituted_size = toSizeT(sub_ti->sizeInBytes());
-									}
-								}
-								FLASH_LOG(Templates, Debug, "Substituted template parameter '",
-										  StringTable::getStringView(pattern_param_name),
-										  "' at pattern position ", pattern_idx, " with type=", static_cast<int>(substituted_type));
+								applyTemplateArgAliasSubstitution(
+									pattern_idx,
+									StringTable::getStringView(pattern_param_name));
 								goto substitution_done;
 							}
 						}
@@ -4055,22 +4060,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 								if (dependent_param_index == param_idx) {
 									// Found it! Substitute with template_args[pattern_idx]
-									const TemplateTypeArg& concrete_arg = template_args[pattern_idx];
-									substituted_type = concrete_arg.typeEnum();
-									substituted_type_index = concrete_arg.type_index;
-									// Only call get_type_size_bits for basic types
-									if (!is_struct_type(substituted_type)) {
-										substituted_size =get_type_size_bits(substituted_type);
-									} else {
-										// For UserDefined types, look up the size from the type registry
-										substituted_size = 0;
-										if (const TypeInfo* sub_ti = tryGetTypeInfo(substituted_type_index)) {
-											substituted_size = toSizeT(sub_ti->sizeInBytes());
-										}
-									}
-									FLASH_LOG(Templates, Debug, "Substituted template parameter '",
-												template_params[param_idx].name(),
-												"' at pattern position ", pattern_idx, " with type=", static_cast<int>(substituted_type));
+									applyTemplateArgAliasSubstitution(
+										pattern_idx,
+										template_params[param_idx].name());
 									goto substitution_done;
 								}
 							}
