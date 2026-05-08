@@ -7751,6 +7751,26 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			return EvalResult::error("Failed to evaluate __is_complete_or_unbounded");
 		}
 
+	case TypeTraitKind::IsFinal:
+	case TypeTraitKind::IsPolymorphic:
+	case TypeTraitKind::IsAbstract:
+	case TypeTraitKind::IsEmpty:
+	case TypeTraitKind::IsStandardLayout:
+	case TypeTraitKind::IsTriviallyCopyable:
+	case TypeTraitKind::IsTrivial:
+	case TypeTraitKind::IsPod:
+		{
+			const StructTypeInfo* struct_info = nullptr;
+			if (type_spec.type_index().is_valid() && is_struct_type(type_cat)) {
+				struct_info = getTypeInfo(type_spec.type_index()).getStructInfo();
+			}
+			TypeTraitResult trait_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
+			if (trait_result.success) {
+				return EvalResult::from_bool(trait_result.value);
+			}
+			return EvalResult::error("Failed to evaluate type trait");
+		}
+
 		// Add more type traits as needed
 		// For now, other type traits return false during constexpr evaluation
 	default:

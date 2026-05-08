@@ -2717,19 +2717,9 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		break;
 
 	case TypeTraitKind::IsFinal:
-		// A final class cannot be derived from
-		// Note: This requires tracking 'final' keyword on classes
-		// For now, check if any member function is marked final
+		// A final class cannot be derived from; check the class-level 'final' specifier
 		if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
-			if (struct_info) {
-				// Check if any virtual function is marked final
-				for (const auto& func : struct_info->member_functions) {
-					if (func.is_final) {
-						result = true;
-						break;
-					}
-				}
-			}
+			result = struct_info->is_final;
 		}
 		break;
 
