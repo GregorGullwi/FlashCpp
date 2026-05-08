@@ -221,34 +221,6 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 				return normalize_alias_param_arg(*alias_param_idx, template_args[*alias_param_idx]);
 			}
 		}
-		if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg_type.type_index());
-			arg_type_info != nullptr && arg_type_info->isTemplateInstantiation()) {
-			std::vector<TemplateTypeArg> materialized_args =
-				materializeTemplateArgs(*arg_type_info, template_parameters, template_args);
-			StringHandle qualified_base_template_name =
-				gNamespaceRegistry.buildQualifiedIdentifier(
-					arg_type_info->sourceNamespace(),
-					arg_type_info->baseTemplateName());
-			AliasTemplateMaterializationResult materialized_type =
-				materializeTemplateInstantiationForLookup(
-					StringTable::getStringView(qualified_base_template_name),
-					materialized_args);
-			if (materialized_type.instantiated_name.empty() &&
-				qualified_base_template_name != arg_type_info->baseTemplateName()) {
-				materialized_type = materializeTemplateInstantiationForLookup(
-					StringTable::getStringView(arg_type_info->baseTemplateName()),
-					materialized_args);
-			}
-			if (materialized_type.resolved_type_info != nullptr) {
-				return resolveTypeInfoToTemplateArg(*materialized_type.resolved_type_info, arg_type);
-			}
-			if (!materialized_type.instantiated_name.empty()) {
-				if (const TypeInfo* materialized_type_info = findTypeByName(
-						StringTable::getOrInternStringHandle(materialized_type.instantiated_name))) {
-					return resolveTypeInfoToTemplateArg(*materialized_type_info, arg_type);
-				}
-			}
-		}
 		return TemplateTypeArg(arg_type);
 	}
 
