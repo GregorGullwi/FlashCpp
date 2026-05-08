@@ -473,9 +473,36 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		alias_entry.has_value() && alias_entry->is<TemplateAliasNode>()) {
 		alias_node = &alias_entry->as<TemplateAliasNode>();
 	}
+	auto tryResolveDirectAliasTarget = [&]() -> bool {
+		if (alias_node == nullptr) {
+			return false;
+		}
+		std::optional<TemplateTypeArg> rebound_arg =
+			tryRebindAliasTargetTemplateArg(*alias_node, template_args);
+		if (!rebound_arg.has_value() || rebound_arg->is_value) {
+			return false;
+		}
+		const TypeInfo* rebound_type_info = tryGetTypeInfo(rebound_arg->type_index);
+		if (rebound_type_info == nullptr) {
+			return false;
+		}
+		ResolvedAliasTypeInfo resolved_rebound_alias = resolveAliasTypeInfo(
+			rebound_type_info->registeredTypeIndex().withCategory(
+				rebound_type_info->typeEnum()));
+		if (resolved_rebound_alias.terminal_type_info != nullptr) {
+			rebound_type_info = resolved_rebound_alias.terminal_type_info;
+		}
+		result.resolved_type_info = rebound_type_info;
+		result.instantiated_name = StringTable::getStringView(rebound_type_info->name());
+		return true;
+	};
 	std::string_view resolved_name = alias_template_name;
 	result.instantiated_name = instantiate_and_register_base_template(resolved_name, template_args);
 	if (result.instantiated_name.empty()) {
+		// Direct parameter aliases such as `template<class T> using id = T`
+		// do not produce an instantiated helper type name; resolve them by
+		// rebinding the alias target parameter to the caller's concrete argument.
+		tryResolveDirectAliasTarget();
 		return result;
 	}
 
@@ -508,6 +535,11 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	}
 	if (alias_node != nullptr &&
 		result.resolved_type_info != nullptr) {
+		// Prefer a direct alias target over the helper instantiation itself.
+		// Member-alias targets are checked after this because an alias target like
+		// `Owner<B>::template type<T, F>` must first select `Owner<B>` and then
+		// instantiate the selected member alias with its own `<T, F>` arguments.
+		tryResolveDirectAliasTarget();
 		if (const TypeInfo* concrete_member_alias =
 				materializeInstantiatedMemberAliasTarget(
 					alias_node->target_type_node(),
@@ -650,6 +682,10 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		original_alias_target_name.substr(0, member_sep);
 	std::string_view dependent_member_name =
 		original_alias_target_name.substr(member_sep + 2);
+	if (size_t template_pos = dependent_member_name.find('<');
+		template_pos != std::string_view::npos) {
+		dependent_member_name = dependent_member_name.substr(0, template_pos);
+	}
 	const TypeInfo* dependent_base_info = findTypeByName(
 		StringTable::getOrInternStringHandle(dependent_base_name));
 	if (!dependent_base_info || !dependent_base_info->isTemplateInstantiation()) {
@@ -688,6 +724,28 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	}
 	if (materialized_alias_base.instantiated_name.empty()) {
 		return nullptr;
+	}
+
+	StringHandle member_alias_handle =
+		StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(materialized_alias_base.instantiated_name)
+				.append("::")
+				.append(dependent_member_name)
+				.commit());
+	if (gTemplateRegistry.lookup_alias_template(member_alias_handle).has_value()) {
+		std::vector<TemplateTypeArg> concrete_member_template_args;
+		if (original_alias_target_info->isTemplateInstantiation()) {
+			concrete_member_template_args =
+				materializeTemplateArgs(*original_alias_target_info, template_params, template_args);
+		}
+		AliasTemplateMaterializationResult materialized_member_alias =
+			materializeAliasTemplateInstantiation(
+				StringTable::getStringView(member_alias_handle),
+				concrete_member_template_args);
+		if (materialized_member_alias.resolved_type_info != nullptr) {
+			return materialized_member_alias.resolved_type_info;
+		}
 	}
 
 	StringHandle concrete_member_handle =
