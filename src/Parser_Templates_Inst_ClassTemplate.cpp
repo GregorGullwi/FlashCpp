@@ -3960,7 +3960,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						} else {
 							substituted_size = 0;
 							if (const TypeInfo* sub_ti = tryGetTypeInfo(substituted_type_index)) {
-								substituted_size = toSizeT(sub_ti->sizeInBytes());
+								substituted_size = sub_ti->sizeInBits().value;
 							}
 						}
 						FLASH_LOG(Templates, Debug, "Substituted template parameter '",

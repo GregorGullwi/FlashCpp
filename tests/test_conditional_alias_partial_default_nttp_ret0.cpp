@@ -19,6 +19,12 @@ struct TrueType {
 	static constexpr bool value = true;
 };
 
+struct FinalHead final {
+};
+
+struct RegularHead {
+};
+
 template<typename Type>
 struct IsEmptyNonTuple : TrueType {
 };
@@ -35,5 +41,11 @@ struct HeadBase<Index, Head, true> {
 };
 
 int main() {
-	return HeadBase<0, int>::value;
+	static_assert(EmptyNotFinal<unsigned long>::value);
+	static_assert(!EmptyNotFinal<FinalHead>::value);
+	static_assert(EmptyNotFinal<RegularHead>::value);
+
+	return HeadBase<0, int>::value +
+		HeadBase<1, unsigned long>::value +
+		HeadBase<0, RegularHead>::value;
 }

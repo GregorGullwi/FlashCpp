@@ -4001,15 +4001,31 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				}
 
 				if (!static_member && qualified_id.name() != kNestedTypeAliasName) {
-					StringHandle nested_type_alias_handle = StringTable::getOrInternStringHandle(
-						StringBuilder()
-							.append(struct_handle)
-							.append("::")
-							.append(kNestedTypeAliasName)
-							.commit());
-					auto nested_type_alias_it = getTypesByNameMap().find(nested_type_alias_handle);
-					if (nested_type_alias_it != getTypesByNameMap().end() &&
-						nested_type_alias_it->second != nullptr) {
+					StringHandle nested_type_alias_handle{};
+					auto nested_type_alias_it = getTypesByNameMap().end();
+					auto try_nested_alias_lookup_for_owner = [&](StringHandle owner_name) -> bool {
+						nested_type_alias_handle = StringTable::getOrInternStringHandle(
+							StringBuilder()
+								.append(owner_name)
+								.append("::")
+								.append(kNestedTypeAliasName)
+								.commit());
+						nested_type_alias_it = getTypesByNameMap().find(nested_type_alias_handle);
+						return nested_type_alias_it != getTypesByNameMap().end() &&
+							nested_type_alias_it->second != nullptr;
+					};
+
+					bool has_nested_alias = false;
+					if (resolved_type_info != nullptr &&
+						resolved_type_info->name().isValid() &&
+						resolved_type_info->name() != struct_handle) {
+						has_nested_alias = try_nested_alias_lookup_for_owner(resolved_type_info->name());
+					}
+					if (!has_nested_alias) {
+						has_nested_alias = try_nested_alias_lookup_for_owner(struct_handle);
+					}
+
+					if (has_nested_alias) {
 						const TypeInfo* nested_alias_info = nested_type_alias_it->second;
 						ResolvedAliasTypeInfo resolved_nested_alias = resolveAliasTypeInfo(
 							nested_alias_info->registeredTypeIndex().withCategory(
@@ -4053,14 +4069,16 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 												++non_value_context_args;
 											}
 										}
-										if (non_value_context_args > 1) {
-											FLASH_LOG(ConstExpr, Warning, "Single-argument nested alias fallback saw multiple non-value context arguments");
-										}
-										for (const TemplateTypeArg& context_arg : context.template_args) {
-											if (!context_arg.is_value) {
-												nested_arg = context_arg;
-												break;
+										if (non_value_context_args == 1) {
+											for (const TemplateTypeArg& context_arg : context.template_args) {
+												if (!context_arg.is_value) {
+													nested_arg = context_arg;
+													rebound_nested_arg = true;
+													break;
+												}
 											}
+										} else if (non_value_context_args > 1) {
+											FLASH_LOG(ConstExpr, Warning, "Single-argument nested alias fallback skipped due to ambiguous non-value context arguments");
 										}
 									}
 								}
