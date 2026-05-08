@@ -2484,27 +2484,40 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					continue;
 				}
 
-				// Substitute template parameters in the type
-				TypeSpecifierNode substituted_param_type = buildSubstitutedTypeSpecifier(
-					orig_param_type,
-					param_decl.type_node(),
-					param_decl.identifier_token(),
-					template_params,
-					template_args,
-					[this](const ASTNode& node, const auto& params, const auto& args) {
-						return substituteTemplateParameters(node, params, args);
-					},
-					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
-						return substitute_template_parameter(type_spec, params, args);
-					},
-					nullptr,
-					TypeIndex{},
-					TypeIndex{},
-					false,
-					true);
-				ASTNode param_type = emplace_node<TypeSpecifierNode>(substituted_param_type);
-				resolveDependentMemberAlias(param_type, template_params, template_args);
-				normalizeSubstitutedTypeSpec(param_type.as<TypeSpecifierNode>());
+				// Substitute template parameters in the type.
+				// Build a flat (non-variadic) substitution context using
+				// template_param_arg_starts/counts so that a variadic pack Ts...
+				// preceding a defaulted param Tail correctly maps Tail to its arg
+				// rather than the pack consuming it greedily.
+				InlineVector<ASTNode, 4> flat_subst_params;
+				InlineVector<TemplateTypeArg, 4> flat_subst_args;
+				{
+					size_t flat_arg_idx = 0;
+					for (size_t j = 0; j < template_params.size(); ++j) {
+						const TemplateParameterNode* tp = tryGetTemplateParameterNode(template_params[j]);
+						if (!tp) continue;
+						const size_t count = template_param_arg_counts[j];
+						if (tp->is_variadic()) {
+							// Expand each pack element as a non-variadic entry so that
+							// forEachNonPackTemplateParamArgBinding can bind them one-to-one.
+							for (size_t k = 0; k < count; ++k) {
+								if (flat_arg_idx + k < template_args.size()) {
+									flat_subst_params.push_back(emplace_node<TemplateParameterNode>(
+										cloneNonVariadicTemplateParam(*tp)));
+									flat_subst_args.push_back(template_args[flat_arg_idx + k]);
+								}
+							}
+							flat_arg_idx += count;
+							continue;
+						}
+						if (flat_arg_idx < template_args.size()) {
+							flat_subst_params.push_back(emplace_node<TemplateParameterNode>(*tp));
+							flat_subst_args.push_back(template_args[flat_arg_idx]);
+						}
+						++flat_arg_idx;
+					}
+				}
+				ASTNode param_type = buildMaterializedParamType(param_decl, flat_subst_params, flat_subst_args);
 
 				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 				// Preserve default argument value from the original template declaration
@@ -2592,8 +2605,15 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// (from compute_and_set_mangled_name above) is used for code generation and linking
 		gSymbolTable.insertGlobal(mangled_token.value(), new_func_node);
 
-		// Add to top-level AST so it gets visited by the code generator
-		registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
+		// Add to top-level AST so it gets visited by the code generator.
+		// Mirror the guard used in try_instantiate_single_template: only register
+		// functions that (a) have a body and (b) have no parameter that still carries
+		// an unsubstituted placeholder type.  Body-less instantiations are forward
+		// declarations or SFINAE probes; instantiations with Auto parameters were
+		// never fully substituted and will crash the IR/name-mangling layer.
+		if (new_func_ref.is_materialized() && !functionHasUnresolvedPlaceholderSignature(new_func_ref)) {
+			registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
+		}
 
 		return new_func_node;
 	} // end of overload loop
@@ -3939,25 +3959,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	//   1. Bodyless instantiations (forward declarations, SFINAE probes) — no code to emit.
 	//   2. Bodied instantiations where any parameter still carries an explicit dependent
 	//      placeholder TypeInfo after substitution/alias resolution.
-	const bool has_unresolved_params = std::invoke([&]() {
-		for (const auto& param : new_func_ref.parameter_nodes()) {
-			if (param.is<DeclarationNode>()) {
-				const auto& type_node = param.as<DeclarationNode>().type_node();
-				if (type_node.is<TypeSpecifierNode>()) {
-					const auto& pt = type_node.as<TypeSpecifierNode>();
-					if (typeSpecStillUsesDependentPlaceholder(pt)) {
-						return true;
-					}
-				}
-			}
-		}
-		return false;
-	});
+	const bool has_unresolved_signature = functionHasUnresolvedPlaceholderSignature(new_func_ref);
 	FLASH_LOG_FORMAT(Templates, Debug,
-		"'{}': has_body={}, has_unresolved_params={}, registering={}",
-		template_name, func_definition.has_value(), has_unresolved_params,
-		func_definition.has_value() && !has_unresolved_params && commit_instantiation);
-	if (func_definition.has_value() && !has_unresolved_params && commit_instantiation) {
+		"'{}': has_body={}, has_unresolved_signature={}, registering={}",
+		template_name, func_definition.has_value(), has_unresolved_signature,
+		func_definition.has_value() && !has_unresolved_signature && commit_instantiation);
+	if (func_definition.has_value() && !has_unresolved_signature && commit_instantiation) {
 		registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
 	}
 

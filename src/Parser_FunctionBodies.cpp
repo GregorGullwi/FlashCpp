@@ -610,34 +610,6 @@ void Parser::finalize_function_after_definition(FunctionDeclarationNode& func_no
 	compute_and_set_mangled_name(func_node, force_recompute_mangled_name);
 }
 
-namespace {
-bool functionSignatureHasUnresolvedPlaceholder(const FunctionDeclarationNode& func_node) {
-	const DeclarationNode& decl_node = func_node.decl_node();
-	if (isPlaceholderAutoType(decl_node.type_specifier_node().type())) {
-		return true;
-	}
-
-	for (const auto& param_node : func_node.parameter_nodes()) {
-		const DeclarationNode* param_decl = nullptr;
-		if (param_node.is<DeclarationNode>()) {
-			param_decl = &param_node.as<DeclarationNode>();
-		} else if (param_node.is<VariableDeclarationNode>()) {
-			param_decl = &param_node.as<VariableDeclarationNode>().declaration();
-		}
-
-		if (!param_decl) {
-			continue;
-		}
-
-		if (isPlaceholderAutoType(param_decl->type_specifier_node().type())) {
-			return true;
-		}
-	}
-
-	return false;
-}
-} // namespace
-
 // Generate and set mangled name on a FunctionDeclarationNode
 // This should be called after all function properties are set (parameters, variadic flag, etc.)
 // Note: The mangled name is stored as a string_view pointing to ChunkedStringAllocator storage
@@ -648,7 +620,7 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bo
 		return;
 	}
 
-	if (functionSignatureHasUnresolvedPlaceholder(func_node)) {
+	if (functionHasUnresolvedPlaceholderSignature(func_node)) {
 		// Placeholder auto normalization now completes after parsing on some paths
 		// (for example, function-try-block bodies and generic-lambda instantiations).
 		// Defer mangling until the full signature is concrete.

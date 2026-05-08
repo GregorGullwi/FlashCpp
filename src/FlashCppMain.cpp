@@ -524,17 +524,27 @@ int main_impl(int argc, char* argv[]) {
 			try {
 				converter.visit(node_handle);
 			} catch (const CompileError& e) {
-				// Semantic errors (explicit ctor violations, etc.) - these are real compilation failures
+				// Semantic errors (explicit ctor violations, etc.) - these are real compilation failures.
+				// Exception: if the function still has unsubstituted placeholder (auto) parameter
+				// types it was never meant to be code-generated; downgrade to a warning so that
+				// valid user code is not incorrectly rejected.
 				std::string node_desc = node_handle.type_name();
+				bool has_unresolved_placeholder_signature = false;
 				if (node_handle.is<FunctionDeclarationNode>()) {
 					node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+					has_unresolved_placeholder_signature = functionHasUnresolvedPlaceholderSignature(node_handle.as<FunctionDeclarationNode>());
 				}
-				FLASH_LOG(General, Error, "Compile error in '", node_desc, "': ", e.what());
-				// Clear any stale parse-phase instantiation notes here without printing them.
-				// These notes describe parse-time template context that is unrelated to this
-				// codegen-phase error, so attaching them would be misleading.
-				g_parser_instantiation_notes.clear();
-				has_compile_errors = true;
+				if (has_unresolved_placeholder_signature) {
+					FLASH_LOG(Codegen, Warning, "IR error for function '", node_desc,
+							  "' with unsubstituted placeholder signature types: ", e.what());
+				} else {
+					FLASH_LOG(General, Error, "Compile error in '", node_desc, "': ", e.what());
+					// Clear any stale parse-phase instantiation notes here without printing them.
+					// These notes describe parse-time template context that is unrelated to this
+					// codegen-phase error, so attaching them would be misleading.
+					g_parser_instantiation_notes.clear();
+					has_compile_errors = true;
+				}
 			} catch (const std::bad_any_cast& e) {
 				// Log and skip nodes that cause bad_any_cast during IR conversion
 				// This allows compilation to continue past problematic template instantiations
@@ -553,21 +563,13 @@ int main_impl(int argc, char* argv[]) {
 				// functions instantiated during decltype evaluation for SFINAE probes)
 				// may legitimately fail codegen.  Log diagnostically but still count
 				// as errors so that genuinely broken code is not silently accepted.
-				bool has_dependent_params = false;
+				bool has_dependent_signature = false;
 				if (node_handle.is<FunctionDeclarationNode>()) {
-					for (const auto& param : node_handle.as<FunctionDeclarationNode>().parameter_nodes()) {
-						if (param.is<DeclarationNode>()) {
-							const auto& pt = param.as<DeclarationNode>().type_specifier_node();
-							if (typeSpecStillUsesDependentPlaceholder(pt) && pt.pointer_depth() == 0) {
-								has_dependent_params = true;
-								break;
-							}
-						}
-					}
+					has_dependent_signature = functionHasUnresolvedPlaceholderSignature(node_handle.as<FunctionDeclarationNode>());
 				}
-				if (has_dependent_params) {
+				if (has_dependent_signature) {
 					FLASH_LOG(Codegen, Warning, "IR error for function '", node_desc,
-							  "' with unsubstituted dependent parameter types: ", e.what());
+							  "' with unsubstituted dependent signature types: ", e.what());
 				} else {
 					FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
 				}

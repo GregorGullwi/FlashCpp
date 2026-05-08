@@ -1845,6 +1845,13 @@ inline bool templateArgInfoContainsDependentPlaceholder(const TypeInfo::Template
 }
 
 inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_spec) {
+	// TypeCategory::Auto or DeclTypeAuto with an invalid TypeIndex means the abbreviated-
+	// template auto parameter (e.g. `void f(auto x)`) was never substituted.
+	// typeIndexContainsDependentPlaceholder() returns false for an invalid TypeIndex, so
+	// we must detect this case explicitly before delegating.
+	if (isPlaceholderAutoType(type_spec.type()) && !type_spec.type_index().is_valid()) {
+		return true;
+	}
 	return typeIndexContainsDependentPlaceholder(type_spec.type_index());
 }
 
@@ -2772,3 +2779,27 @@ private:
 	Token called_from_;
 	mutable const ConstructorDeclarationNode* resolved_constructor_ = nullptr;
 };
+
+// Returns true if any parameter of `func` still carries an unsubstituted
+// placeholder type (TypeCategory::Auto/DeclTypeAuto with invalid TypeIndex,
+// or a TypeIndex that resolves to a dependent placeholder).
+// Defined here, after FunctionDeclarationNode and DeclarationNode are fully
+// declared, so it can call their member functions.
+// Used by instantiation and codegen paths to decide whether a function node
+// is safe to register for code generation.
+inline bool functionHasUnresolvedPlaceholderSignature(const FunctionDeclarationNode& func) {
+	if (typeSpecStillUsesDependentPlaceholder(func.decl_node().type_specifier_node())) {
+		return true;
+	}
+	for (const auto& param : func.parameter_nodes()) {
+		if (param.is<DeclarationNode>()) {
+			const auto& type_node = param.as<DeclarationNode>().type_node();
+			if (type_node.is<TypeSpecifierNode>()) {
+				if (typeSpecStillUsesDependentPlaceholder(type_node.as<TypeSpecifierNode>())) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
