@@ -86,6 +86,58 @@ static ReferenceQualifier collapseTemplateArgumentReferenceQualifier(
 	return ReferenceQualifier::RValueReference;
 }
 
+bool Parser::isTemplateFunctionParameterPack(
+	std::span<const TemplateParameterNode> template_params,
+	const DeclarationNode& func_param_decl) {
+	if (func_param_decl.is_parameter_pack()) {
+		return true;
+	}
+
+	std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual> tparam_nodes_by_name;
+	for (const TemplateParameterNode& template_param : template_params) {
+		tparam_nodes_by_name.emplace(template_param.nameHandle(), &template_param);
+	}
+
+	const TypeSpecifierNode& fp_ts = func_param_decl.type_specifier_node();
+	if (fp_ts.category() != TypeCategory::UserDefined &&
+		fp_ts.category() != TypeCategory::TypeAlias &&
+		fp_ts.category() != TypeCategory::Template) {
+		return false;
+	}
+
+	StringHandle fp_type_name;
+	if (const TypeInfo* ti = tryGetTypeInfo(fp_ts.type_index())) {
+		fp_type_name = ti->name();
+	}
+	if (!fp_type_name.isValid()) {
+		fp_type_name = fp_ts.token().handle();
+	}
+	if (!fp_type_name.isValid()) {
+		return false;
+	}
+
+	auto it = tparam_nodes_by_name.find(fp_type_name);
+	if (it != tparam_nodes_by_name.end() && it->second->is_variadic()) {
+		return true;
+	}
+
+	std::unordered_set<StringHandle, StringHash, StringEqual> dependent_param_names;
+	StringHandle primary_name;
+	collectDependentTemplateParamNamesFromType(
+		fp_ts.type_index(),
+		tparam_nodes_by_name,
+		primary_name,
+		dependent_param_names);
+	for (StringHandle dep_name : dependent_param_names) {
+		auto dep_it = tparam_nodes_by_name.find(dep_name);
+		if (dep_it != tparam_nodes_by_name.end() && dep_it->second->is_variadic()) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static void applyRegisteredTypeBindingMetadata(
 	TypeInfo& type_info,
 	const TemplateTypeArg& arg,
@@ -1622,42 +1674,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		// whether the parameter type names a variadic template parameter of the
 		// enclosing template, mirroring the pattern used in
 		// instantiate_member_function_template_core.
-		bool is_pack = func_param_decl.is_parameter_pack();
-		if (!is_pack) {
-			const TypeSpecifierNode& fp_ts = func_param_decl.type_specifier_node();
-			if (fp_ts.category() == TypeCategory::UserDefined ||
-				fp_ts.category() == TypeCategory::TypeAlias ||
-				fp_ts.category() == TypeCategory::Template) {
-				StringHandle fp_type_name;
-				if (const TypeInfo* ti = tryGetTypeInfo(fp_ts.type_index())) {
-					fp_type_name = ti->name();
-				}
-				if (!fp_type_name.isValid()) {
-					fp_type_name = fp_ts.token().handle();
-				}
-				if (fp_type_name.isValid()) {
-					auto it = tparam_nodes_by_name.find(fp_type_name);
-					if (it != tparam_nodes_by_name.end() && it->second->is_variadic()) {
-						is_pack = true;
-					} else if (!is_pack) {
-						std::unordered_set<StringHandle, StringHash, StringEqual> dependent_param_names;
-						StringHandle primary_name;
-						collectDependentTemplateParamNamesFromType(
-							fp_ts.type_index(),
-							tparam_nodes_by_name,
-							primary_name,
-							dependent_param_names);
-						for (StringHandle dep_name : dependent_param_names) {
-							auto dep_it = tparam_nodes_by_name.find(dep_name);
-							if (dep_it != tparam_nodes_by_name.end() && dep_it->second->is_variadic()) {
-								is_pack = true;
-								break;
-							}
-						}
-					}
-				}
-			}
-		}
+		bool is_pack = isTemplateFunctionParameterPack(template_params, func_param_decl);
 		if (is_pack) {
 			size_t required_after = countRequiredFunctionArgsAfter(i + 1);
 			deduction_info.function_pack_call_arg_start = call_arg_index;
@@ -1857,6 +1874,30 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		recursion_depth);
 }
 
+bool Parser::functionTemplateAcceptsCallArgumentCount(
+	std::span<const TemplateParameterNode> template_params,
+	const FunctionDeclarationNode& func_decl,
+	size_t argument_count) {
+	const size_t min_required_args = countMinRequiredArgs(func_decl);
+	if (argument_count < min_required_args) {
+		return false;
+	}
+	if (func_decl.is_variadic()) {
+		return true;
+	}
+
+	for (const auto& param_node : func_decl.parameter_nodes()) {
+		if (!param_node.is<DeclarationNode>()) {
+			continue;
+		}
+		if (isTemplateFunctionParameterPack(template_params, param_node.as<DeclarationNode>())) {
+			return true;
+		}
+	}
+
+	return argument_count <= func_decl.parameter_nodes().size();
+}
+
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count) {
 	static int recursion_depth = 0;
 	recursion_depth++;
@@ -1894,22 +1935,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			func_decl.namespace_handle().isValid()
 				? gNamespaceRegistry.getQualifiedName(func_decl.namespace_handle())
 				: "(invalid)");
-		bool has_variadic_func_pack = false;
-
-		// Filter by call argument count if known (SIZE_MAX means unknown)
-		// Only reject if caller provides MORE args than the function has params
-		// (fewer args might use defaults, so we allow call_arg_count <= func_param_count)
-		if (call_arg_count != SIZE_MAX && !func_decl.is_variadic()) {
-			size_t func_param_count = func_decl.parameter_nodes().size();
-			for (const auto& p : func_decl.parameter_nodes()) {
-				if (p.is<DeclarationNode>() && p.as<DeclarationNode>().is_parameter_pack()) {
-					has_variadic_func_pack = true;
-					continue;
-				}
-			}
-			if (!has_variadic_func_pack && call_arg_count > func_param_count) {
-				continue;  // Too many arguments for this overload
-			}
+		if (call_arg_count != SIZE_MAX &&
+			!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, call_arg_count)) {
+			continue;
 		}
 
 		// Check if template has a variadic parameter pack
@@ -3040,37 +3068,24 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		return std::nullopt;	 // No arguments to deduce from
 	}
 
-	// SFINAE: Check function parameter count against call argument count.
-	// Use the actual function parameter list here rather than template-parameter
-	// variadicity: a variadic template does not necessarily have a function
-	// parameter pack, and a trailing function parameter pack may follow a
-	// defaulted parameter.
-	size_t func_param_count = func_decl.parameter_nodes().size();
+	if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
+		size_t required_params = countMinRequiredArgs(func_decl);
+		if (arg_types.size() < required_params) {
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} < required parameter count {} for template '{}'",
+							 recursion_depth, arg_types.size(), required_params, template_name);
+		} else {
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} > parameter count {} for template '{}'",
+							 recursion_depth, arg_types.size(), func_decl.parameter_nodes().size(), template_name);
+		}
+		return std::nullopt;
+	}
+
 	bool has_function_parameter_pack = false;
 	for (const auto& param : func_decl.parameter_nodes()) {
-		if (param.is<DeclarationNode>() && param.as<DeclarationNode>().is_parameter_pack()) {
+		if (param.is<DeclarationNode>() &&
+			isTemplateFunctionParameterPack(template_params, param.as<DeclarationNode>())) {
 			has_function_parameter_pack = true;
 			break;
-		}
-	}
-	if (!has_function_parameter_pack) {
-		if (arg_types.size() > func_param_count) {
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} > parameter count {} for non-variadic template '{}'",
-							 recursion_depth, arg_types.size(), func_param_count, template_name);
-			return std::nullopt;
-		}
-		size_t required_params = countMinRequiredArgs(func_decl);
-		if (arg_types.size() < required_params) {
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} < required parameter count {} for non-variadic template '{}'",
-							 recursion_depth, arg_types.size(), required_params, template_name);
-			return std::nullopt;
-		}
-	} else {
-		size_t required_params = countMinRequiredArgs(func_decl);
-		if (arg_types.size() < required_params) {
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} < required parameter count {} for variadic template '{}'",
-							 recursion_depth, arg_types.size(), required_params, template_name);
-			return std::nullopt;
 		}
 	}
 

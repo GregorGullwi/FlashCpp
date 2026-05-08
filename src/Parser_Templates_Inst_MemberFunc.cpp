@@ -163,25 +163,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	if (arg_types.empty()) {
 		return std::nullopt;	 // Can't deduce without arguments
 	}
-	bool has_function_parameter_pack = false;
-	for (const auto& param_node : func_decl.parameter_nodes()) {
-		if (param_node.is<DeclarationNode>() && param_node.as<DeclarationNode>().is_parameter_pack()) {
-			has_function_parameter_pack = true;
-			break;
-		}
-	}
-	bool has_variadic_template_param = false;
-	for (const TemplateParameterNode& template_param : template_params) {
-		if (template_param.is_variadic()) {
-			has_variadic_template_param = true;
-			break;
-		}
-	}
-	const size_t min_required_args = countMinRequiredArgs(func_decl);
-	if (arg_types.size() < min_required_args) {
-		return std::nullopt;
-	}
-	if (!has_function_parameter_pack && !has_variadic_template_param && arg_types.size() > func_decl.parameter_nodes().size()) {
+	if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
 		return std::nullopt;
 	}
 
