@@ -28,13 +28,16 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 		}
 
 		const EnumeratorNode& enumerator = enumerator_node.as<EnumeratorNode>();
+		const StringHandle enumerator_name = enumerator.name_token().handle();
+		const TypeIndex enum_type_index = enum_decl.type_index();
+		const size_t enum_alignment = enum_size;
 		std::optional<ASTNode> initializer = enumerator.value();
 
 		struct_ref.add_static_member(
-			enumerator.name_token().handle(),
-			enum_decl.type_index(),
+			enumerator_name,
+			enum_type_index,
 			enum_size,
-			enum_size,
+			enum_alignment,
 			access,
 			initializer,
 			CVQualifier::None,
@@ -42,10 +45,10 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 			0);
 		if (struct_info != nullptr) {
 			struct_info->addStaticMember(
-				enumerator.name_token().handle(),
-				enum_decl.type_index(),
+				enumerator_name,
+				enum_type_index,
 				enum_size,
-				enum_size,
+				enum_alignment,
 				access,
 				initializer,
 				CVQualifier::None,

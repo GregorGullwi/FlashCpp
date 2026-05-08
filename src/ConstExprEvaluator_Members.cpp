@@ -27,6 +27,22 @@ std::optional<EvalResult> tryMaterializeMultidimArrayRow(
 	ConstExpr::EvaluationContext& context);
 EvalResult makeConstructorMemberDefaultInit(const StructMember& member, EvaluationContext& context);
 
+std::optional<EvalResult> tryEvaluateEnumConstant(
+	const EnumTypeInfo& enum_info,
+	TypeIndex enum_type_index,
+	StringHandle enumerator_name) {
+	const Enumerator* enumerator = enum_info.findEnumerator(enumerator_name);
+	if (!enumerator) {
+		return std::nullopt;
+	}
+
+	TypeSpecifierNode enum_type(TypeCategory::Enum, TypeQualifier::None, enum_info.sizeInBits(), Token{}, CVQualifier::None);
+	enum_type.set_type_index(enum_type_index);
+	EvalResult result = EvalResult::from_int(static_cast<long long>(enumerator->value));
+	result.set_exact_type(enum_type);
+	return result;
+}
+
 struct ShiftEvaluationInfo {
 	int width_bits = kDefaultShiftWidthBits;
 	std::optional<TypeSpecifierNode> promoted_type;
@@ -3928,16 +3944,9 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					if (!nested_enum_info) {
 						continue;
 					}
-					const Enumerator* enumerator = nested_enum_info->findEnumerator(member_handle);
-					if (!enumerator) {
-						continue;
+					if (auto enum_result = tryEvaluateEnumConstant(*nested_enum_info, nested_enum_index, member_handle)) {
+						return *enum_result;
 					}
-
-					TypeSpecifierNode enum_type(TypeCategory::Enum, TypeQualifier::None, nested_enum_info->sizeInBits(), Token{}, CVQualifier::None);
-					enum_type.set_type_index(nested_enum_index);
-					EvalResult result = EvalResult::from_int(static_cast<long long>(enumerator->value));
-					result.set_exact_type(enum_type);
-					return result;
 				}
 
 				auto evaluate_specialization_static_member = [&](StringHandle lookup_member_handle) -> std::optional<EvalResult> {
@@ -4106,11 +4115,8 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		if (type_spec.category() == TypeCategory::Enum) {
 			if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 				if (const EnumTypeInfo* enum_info = type_info->getEnumInfo()) {
-					const Enumerator* enumerator = enum_info->findEnumerator(qualified_id.nameHandle());
-					if (enumerator) {
-						EvalResult result = EvalResult::from_int(static_cast<long long>(enumerator->value));
-						result.set_exact_type(type_spec);
-						return result;
+					if (auto enum_result = tryEvaluateEnumConstant(*enum_info, type_spec.type_index(), qualified_id.nameHandle())) {
+						return *enum_result;
 					}
 				}
 			}
