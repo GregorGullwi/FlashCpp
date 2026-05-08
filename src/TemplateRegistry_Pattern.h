@@ -24,8 +24,9 @@ inline TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 		: std::vector<size_t>{};
 	ta.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
 	ta.dependent_name = arg.dependent_name;
+	ta.dependent_expr = arg.dependent_expr;
 	ta.function_signature = arg.function_signature;
-	ta.is_dependent = arg.dependent_name.isValid();
+	ta.is_dependent = arg.dependent_name.isValid() || arg.dependent_expr.has_value();
 	if (arg.is_value) {
 		ta.value = arg.intValue();
 	}

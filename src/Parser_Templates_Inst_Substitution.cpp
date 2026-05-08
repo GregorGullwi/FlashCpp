@@ -1088,6 +1088,57 @@ ASTNode Parser::substitute_template_params_in_expression(
 		return emplace_node<ExpressionNode>(new_ctor);
 	}
 
+	// Handle TypeTraitExprNode (e.g. __is_final(T), __is_empty(T))
+	// Substitute the template parameter in the type argument so that
+	// evaluateDependentNTTPExpression / ConstExpr::Evaluator can produce the
+	// correct bool result against the concrete type.
+	if (std::holds_alternative<TypeTraitExprNode>(expr_variant)) {
+		const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr_variant);
+		if (trait_expr.has_type() && trait_expr.type_node().is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_node = trait_expr.type_node().as<TypeSpecifierNode>();
+
+			// Try to find the type by its TypeIndex first (most common path)
+			auto it = type_substitution_map.find(type_node.type_index());
+			if (it == type_substitution_map.end()) {
+				// Fallback: match by name when TypeIndex registration differs across templates
+				if (type_node.category() == TypeCategory::UserDefined ||
+					type_node.category() == TypeCategory::TypeAlias ||
+					type_node.category() == TypeCategory::Template) {
+					std::string_view type_name = type_node.token().value();
+					if (type_name.empty()) {
+						if (const TypeInfo* ti = tryGetTypeInfo(type_node.type_index())) {
+							type_name = StringTable::getStringView(ti->name());
+						}
+					}
+					for (const auto& [key_type_index, arg] : type_substitution_map) {
+						if (const TypeInfo* ki = tryGetTypeInfo(key_type_index)) {
+							if (StringTable::getStringView(ki->name()) == type_name) {
+								it = type_substitution_map.find(key_type_index);
+								break;
+							}
+						}
+					}
+				}
+			}
+			if (it != type_substitution_map.end()) {
+				const TemplateTypeArg& arg = it->second;
+				TypeSpecifierNode new_type(
+					arg.typeEnum(),
+					TypeQualifier::None,
+					get_type_size_bits(arg.category()),
+					type_node.token(), CVQualifier::None);
+				new_type.set_type_index(arg.type_index);
+				new_type.set_reference_qualifier(arg.ref_qualifier);
+				for (size_t p = 0; p < arg.pointer_depth; ++p) {
+					new_type.add_pointer_level(CVQualifier::None);
+				}
+				ASTNode new_type_node = emplace_node<TypeSpecifierNode>(new_type);
+				TypeTraitExprNode new_trait(trait_expr.kind(), new_type_node, trait_expr.trait_token());
+				return emplace_node<ExpressionNode>(new_trait);
+			}
+		}
+	}
+
 	// Handle binary operators - recursively substitute in both operands
 	if (std::holds_alternative<BinaryOperatorNode>(expr_variant)) {
 		const BinaryOperatorNode& binop = std::get<BinaryOperatorNode>(expr_variant);

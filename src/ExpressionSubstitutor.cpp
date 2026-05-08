@@ -358,10 +358,8 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 				// right thing is to substitute the concrete type into the trait expression and
 				// evaluate it to a bool, rather than copying the concrete struct type verbatim
 				// into what is actually a bool-typed NTTP slot.
-				// Note: use arg.dependent_expr (from TypeInfo::TemplateArgInfo) since toTemplateTypeArg
-				// does not copy dependent_expr into materialized_arg.
-				if (materialized_arg.is_value && arg.dependent_expr.has_value()) {
-					const ASTNode& stored_expr = *arg.dependent_expr;
+				if (materialized_arg.is_value && materialized_arg.dependent_expr.has_value()) {
+					const ASTNode& stored_expr = *materialized_arg.dependent_expr;
 					ASTNode substituted_expr = substitute(stored_expr);
 					if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
 						materialized_arg.is_value = true;
