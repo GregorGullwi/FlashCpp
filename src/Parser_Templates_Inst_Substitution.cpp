@@ -382,12 +382,12 @@ StringHandle Parser::getDeferredMemberAliasHandle(
 			StringBuilder()
 				.append(instantiated_name)
 				.append("::")
-				.append(alias_node.target_member_template_name())
+				.append(alias_node.targetMemberTemplateName())
 				.commit());
 	if (gTemplateRegistry.lookup_alias_template(member_alias_handle).has_value()) {
 		return member_alias_handle;
 	}
-	return alias_node.target_member_template_name_handle();
+	return StringHandle{};
 }
 
 std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasMemberTemplateArgs(
@@ -396,9 +396,9 @@ std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasMemb
 	StringHandle member_alias_handle) {
 	const auto member_template_params = getTargetTemplateParameters(member_alias_handle);
 	std::vector<TemplateTypeArg> member_args;
-	member_args.reserve(alias_node.target_member_template_args().size());
+	member_args.reserve(alias_node.targetMemberTemplateArgs().size());
 
-	for (size_t i = 0; i < alias_node.target_member_template_args().size(); ++i) {
+	for (size_t i = 0; i < alias_node.targetMemberTemplateArgs().size(); ++i) {
 		const TemplateParameterNode* target_template_param = nullptr;
 		if (i < member_template_params.size()) {
 			target_template_param = &member_template_params[i];
@@ -407,7 +407,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasMemb
 		}
 
 		auto materialized_member_arg = materializeDeferredAliasTemplateArg(
-			alias_node.target_member_template_args()[i],
+			alias_node.targetMemberTemplateArgs()[i],
 			alias_node.template_parameters(),
 			alias_node.template_param_names(),
 			template_args,
@@ -581,8 +581,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		}
 	}
 	if (alias_node != nullptr &&
-		alias_node->has_deferred_member_target() &&
-		!alias_node->target_member_template_args().empty() &&
+		alias_node->hasDeferredMemberTarget() &&
 		!result.instantiated_name.empty()) {
 		StringHandle member_alias_handle =
 			getDeferredMemberAliasHandle(*alias_node, result.instantiated_name);
@@ -902,8 +901,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 			std::string_view target_name(alias_node.target_template_name());
 			std::string_view instantiated_name = instantiate_and_register_base_template(target_name, substituted_args);
 			if (!instantiated_name.empty()) {
-				if (alias_node.has_deferred_member_target() &&
-					!alias_node.target_member_template_args().empty()) {
+				if (alias_node.hasDeferredMemberTarget()) {
 					StringHandle member_alias_handle =
 						getDeferredMemberAliasHandle(alias_node, instantiated_name);
 					auto member_alias_entry = gTemplateRegistry.lookup_alias_template(member_alias_handle);
@@ -933,14 +931,24 @@ std::string_view Parser::instantiate_and_register_base_template(
 							dependent_base_info->isTemplateInstantiation()) {
 							StringHandle placeholder_handle =
 								StringTable::getOrInternStringHandle(
-									StringBuilder()
-										.append(instantiated_name)
-										.append("::")
-										.append(alias_node.target_member_template_name())
-										.append("<")
-										.append(member_args->size())
-										.append(" args>")
-										.commit());
+									[&]() {
+										StringBuilder placeholder_name_builder;
+										placeholder_name_builder
+											.append(instantiated_name)
+											.append("::")
+											.append(alias_node.targetMemberTemplateName())
+											.append("<");
+										for (size_t i = 0; i < member_args->size(); ++i) {
+											if (i != 0) {
+												placeholder_name_builder.append(",");
+											}
+											std::string member_arg_text = (*member_args)[i].toString();
+											placeholder_name_builder.append(member_arg_text);
+										}
+										placeholder_name_builder.append(">");
+										return StringTable::getOrInternStringHandle(
+											placeholder_name_builder.commit());
+									}());
 							TypeInfo& placeholder_info = add_empty_type_entry();
 							placeholder_info.fallback_size_bits_ = 0;
 							placeholder_info.name_ = placeholder_handle;
@@ -951,7 +959,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 									StringBuilder()
 										.append(dependent_base_info->baseTemplateName())
 										.append("::")
-										.append(alias_node.target_member_template_name())
+										.append(alias_node.targetMemberTemplateName())
 										.commit());
 							placeholder_info.setTemplateInstantiationInfo(
 								QualifiedIdentifier::fromQualifiedName(

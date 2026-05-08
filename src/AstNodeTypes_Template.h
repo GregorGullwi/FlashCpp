@@ -220,10 +220,10 @@ public:
 	bool is_deferred() const { return is_deferred_; }
 	std::string_view target_template_name() const { return target_template_name_.view(); }
 	const std::vector<ASTNode>& target_template_args() const { return target_template_args_; }
-	bool has_deferred_member_target() const { return target_member_template_name_.isValid(); }
-	StringHandle target_member_template_name_handle() const { return target_member_template_name_; }
-	std::string_view target_member_template_name() const { return target_member_template_name_.view(); }
-	const std::vector<ASTNode>& target_member_template_args() const { return target_member_template_args_; }
+	bool hasDeferredMemberTarget() const { return target_member_template_name_.isValid(); }
+	StringHandle targetMemberTemplateNameHandle() const { return target_member_template_name_; }
+	std::string_view targetMemberTemplateName() const { return target_member_template_name_.view(); }
+	const std::vector<ASTNode>& targetMemberTemplateArgs() const { return target_member_template_args_; }
 
 	// Get the underlying TypeSpecifierNode
 	TypeSpecifierNode& target_type_node() { return target_type_; }

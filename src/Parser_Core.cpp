@@ -320,6 +320,9 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 
 	if (consume_dependent_member_suffix) {
 		while (peek() == "::"_tok) {
+			if (out_target_member_template_name.isValid()) {
+				return restore_on_failure();
+			}
 			advance();
 			if (peek() == "template"_tok) {
 				advance();
@@ -334,7 +337,7 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 				std::vector<ASTNode> member_arg_nodes;
 				auto member_args = parse_explicit_template_arguments(&member_arg_nodes);
 				if (!member_args.has_value()) {
-					break;
+					return restore_on_failure();
 				}
 				out_target_member_template_arg_nodes = std::move(member_arg_nodes);
 			} else {
