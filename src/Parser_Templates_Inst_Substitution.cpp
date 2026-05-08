@@ -471,11 +471,35 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	const TemplateAliasNode* alias_node = nullptr;
 	if (auto alias_entry = gTemplateRegistry.lookup_alias_template(alias_template_name);
 		alias_entry.has_value() && alias_entry->is<TemplateAliasNode>()) {
-		alias_node = &alias_entry->as<TemplateAliasNode>();
+			alias_node = &alias_entry->as<TemplateAliasNode>();
 	}
+	auto tryResolveDirectAliasTarget = [&]() -> bool {
+		if (alias_node == nullptr) {
+			return false;
+		}
+		std::optional<TemplateTypeArg> rebound_arg =
+			tryRebindAliasTargetTemplateArg(*alias_node, template_args);
+		if (!rebound_arg.has_value() || rebound_arg->is_value) {
+			return false;
+		}
+		const TypeInfo* rebound_type_info = tryGetTypeInfo(rebound_arg->type_index);
+		if (rebound_type_info == nullptr) {
+			return false;
+		}
+		ResolvedAliasTypeInfo resolved_rebound_alias = resolveAliasTypeInfo(
+			rebound_type_info->registeredTypeIndex().withCategory(
+				rebound_type_info->typeEnum()));
+		if (resolved_rebound_alias.terminal_type_info != nullptr) {
+			rebound_type_info = resolved_rebound_alias.terminal_type_info;
+		}
+		result.resolved_type_info = rebound_type_info;
+		result.instantiated_name = StringTable::getStringView(rebound_type_info->name());
+		return true;
+	};
 	std::string_view resolved_name = alias_template_name;
 	result.instantiated_name = instantiate_and_register_base_template(resolved_name, template_args);
 	if (result.instantiated_name.empty()) {
+		tryResolveDirectAliasTarget();
 		return result;
 	}
 
@@ -486,9 +510,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		alias_template_member_sep != std::string_view::npos;
 	if (alias_node != nullptr &&
 		alias_node->is_deferred() &&
-		is_qualified_alias_template &&
-		// Qualified member aliases can target another alias template (e.g.
-		// `Checker::cond_t<T> = ::enable_if_t<...>`). Same-name aliases are
+		// Alias templates can target another alias template (e.g.
+		// `__empty_not_final<T> = __conditional_t<...>`). Same-name aliases are
 		// deliberately left on the ordinary member-target path to avoid
 		// recursive self-materialization.
 		alias_node->target_template_name() != alias_template_name &&
@@ -508,6 +531,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	}
 	if (alias_node != nullptr &&
 		result.resolved_type_info != nullptr) {
+		tryResolveDirectAliasTarget();
 		if (const TypeInfo* concrete_member_alias =
 				materializeInstantiatedMemberAliasTarget(
 					alias_node->target_type_node(),
@@ -650,6 +674,10 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		original_alias_target_name.substr(0, member_sep);
 	std::string_view dependent_member_name =
 		original_alias_target_name.substr(member_sep + 2);
+	if (size_t template_arg_hint_pos = dependent_member_name.find('<');
+		template_arg_hint_pos != std::string_view::npos) {
+		dependent_member_name = dependent_member_name.substr(0, template_arg_hint_pos);
+	}
 	const TypeInfo* dependent_base_info = findTypeByName(
 		StringTable::getOrInternStringHandle(dependent_base_name));
 	if (!dependent_base_info || !dependent_base_info->isTemplateInstantiation()) {
@@ -688,6 +716,27 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	}
 	if (materialized_alias_base.instantiated_name.empty()) {
 		return nullptr;
+	}
+
+	StringHandle concrete_member_alias_template_handle =
+		StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(materialized_alias_base.instantiated_name)
+				.append("::")
+				.append(dependent_member_name)
+				.commit());
+	if (gTemplateRegistry.lookup_alias_template(concrete_member_alias_template_handle).has_value()) {
+		std::vector<TemplateTypeArg> concrete_member_template_args =
+			original_alias_target_info->isTemplateInstantiation()
+				? materializeTemplateArgs(*original_alias_target_info, template_params, template_args)
+				: std::vector<TemplateTypeArg>{};
+		AliasTemplateMaterializationResult materialized_member_alias =
+			materializeAliasTemplateInstantiation(
+				StringTable::getStringView(concrete_member_alias_template_handle),
+				concrete_member_template_args);
+		if (materialized_member_alias.resolved_type_info != nullptr) {
+			return materialized_member_alias.resolved_type_info;
+		}
 	}
 
 	StringHandle concrete_member_handle =
@@ -773,6 +822,15 @@ std::string_view Parser::instantiate_and_register_base_template(
 			std::string_view target_name(alias_node.target_template_name());
 			std::string_view instantiated_name = instantiate_and_register_base_template(target_name, substituted_args);
 			if (!instantiated_name.empty()) {
+				if (const TypeInfo* concrete_member_alias =
+						materializeInstantiatedMemberAliasTarget(
+							alias_node.target_type_node(),
+							alias_node.template_parameters(),
+							template_args);
+					concrete_member_alias != nullptr) {
+					base_class_name = StringTable::getStringView(concrete_member_alias->name());
+					return base_class_name;
+				}
 				base_class_name = instantiated_name;
 				return instantiated_name;
 			}
