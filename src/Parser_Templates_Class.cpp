@@ -4,6 +4,46 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+namespace {
+
+void addUnscopedEnumEnumeratorsAsStaticMembers(
+	StructDeclarationNode& struct_ref,
+	const EnumDeclarationNode& enum_decl,
+	AccessSpecifier access) {
+	if (enum_decl.is_scoped()) {
+		return;
+	}
+
+	const TypeInfo* enum_type = tryGetTypeInfo(enum_decl.type_index());
+	const EnumTypeInfo* enum_info = enum_type ? enum_type->getEnumInfo() : nullptr;
+	if (!enum_info) {
+		return;
+	}
+
+	const size_t enum_size = toSizeT(enum_info->sizeInBytes());
+	for (const ASTNode& enumerator_node : enum_decl.enumerators()) {
+		if (!enumerator_node.is<EnumeratorNode>()) {
+			continue;
+		}
+
+		const EnumeratorNode& enumerator = enumerator_node.as<EnumeratorNode>();
+		std::optional<ASTNode> initializer = enumerator.value();
+
+		struct_ref.add_static_member(
+			enumerator.name_token().handle(),
+			enum_decl.type_index(),
+			enum_size,
+			enum_size,
+			access,
+			initializer,
+			CVQualifier::None,
+			ReferenceQualifier::None,
+			0);
+	}
+}
+
+} // namespace
+
 ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width, std::optional<ASTNode>* out_expr) {
 	if (peek() != ":"_tok) {
 		return ParseResult::success();
@@ -1586,9 +1626,9 @@ ParseResult Parser::parse_template_declaration() {
 						if (enum_result.is_error()) {
 							return enum_result;
 						}
-						// Note: nested_enum_indices_ tracking is not done here for template class bodies.
-						// Enums are registered globally by parse_enum_declaration, and enumerators are
-						// typically resolved via the global symbol table before the struct-scoped fallback.
+						if (auto enum_node = enum_result.node(); enum_node.has_value() && enum_node->is<EnumDeclarationNode>()) {
+							addUnscopedEnumEnumeratorsAsStaticMembers(struct_ref, enum_node->as<EnumDeclarationNode>(), current_access);
+						}
 						continue;
 					} else if (peek() == "using"_tok) {
 						// Handle type alias inside class body: using value_type = T;
@@ -3044,9 +3084,9 @@ ParseResult Parser::parse_template_declaration() {
 						if (enum_result.is_error()) {
 							return enum_result;
 						}
-						// Note: nested_enum_indices_ tracking is not done here for template class bodies.
-						// Enums are registered globally by parse_enum_declaration, and enumerators are
-						// typically resolved via the global symbol table before the struct-scoped fallback.
+						if (auto enum_node = enum_result.node(); enum_node.has_value() && enum_node->is<EnumDeclarationNode>()) {
+							addUnscopedEnumEnumeratorsAsStaticMembers(struct_ref, enum_node->as<EnumDeclarationNode>(), current_access);
+						}
 						continue;
 					} else if (peek() == "struct"_tok || peek() == "class"_tok) {
 						// Handle nested struct/class declarations inside partial specialization body
