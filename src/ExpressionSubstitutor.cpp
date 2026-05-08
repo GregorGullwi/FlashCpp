@@ -241,6 +241,8 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 		return substituteMemberAccess(expr.as<MemberAccessNode>());
 	} else if (expr.is<SizeofExprNode>()) {
 		return substituteSizeofExpr(expr.as<SizeofExprNode>());
+	} else if (expr.is<TypeTraitExprNode>()) {
+		return substituteTypeTraitExpr(expr.as<TypeTraitExprNode>());
 	} else if (expr.is<StaticCastNode>()) {
 		return substituteStaticCast(expr.as<StaticCastNode>());
 	} else if (expr.is<NumericLiteralNode>()) {
@@ -1602,6 +1604,58 @@ ASTNode ExpressionSubstitutor::substituteSizeofExpr(const SizeofExprNode& sizeof
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_sizeof_ref);
 		return ASTNode(&new_expr);
 	}
+}
+
+ASTNode ExpressionSubstitutor::substituteTypeTraitExpr(const TypeTraitExprNode& trait_expr) {
+	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing type trait expression");
+
+	if (trait_expr.is_no_arg_trait()) {
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+			TypeTraitExprNode(trait_expr.kind(), trait_expr.trait_token()));
+		return ASTNode(&new_expr);
+	}
+
+	ASTNode substituted_type = trait_expr.type_node();
+	if (substituted_type.is<TypeSpecifierNode>()) {
+		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+			substituteInType(substituted_type.as<TypeSpecifierNode>()));
+		substituted_type = ASTNode(&new_type);
+	}
+
+	if (trait_expr.has_second_type()) {
+		ASTNode substituted_second_type = trait_expr.second_type_node();
+		if (substituted_second_type.is<TypeSpecifierNode>()) {
+			TypeSpecifierNode& new_second_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+				substituteInType(substituted_second_type.as<TypeSpecifierNode>()));
+			substituted_second_type = ASTNode(&new_second_type);
+		}
+
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+			TypeTraitExprNode(trait_expr.kind(), substituted_type, substituted_second_type, trait_expr.trait_token()));
+		return ASTNode(&new_expr);
+	}
+
+	if (trait_expr.is_variadic_trait()) {
+		std::vector<ASTNode> substituted_additional_types;
+		substituted_additional_types.reserve(trait_expr.additional_type_nodes().size());
+		for (const ASTNode& additional_type : trait_expr.additional_type_nodes()) {
+			if (additional_type.is<TypeSpecifierNode>()) {
+				TypeSpecifierNode& new_additional_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+					substituteInType(additional_type.as<TypeSpecifierNode>()));
+				substituted_additional_types.push_back(ASTNode(&new_additional_type));
+			} else {
+				substituted_additional_types.push_back(additional_type);
+			}
+		}
+
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+			TypeTraitExprNode(trait_expr.kind(), substituted_type, std::move(substituted_additional_types), trait_expr.trait_token()));
+		return ASTNode(&new_expr);
+	}
+
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+		TypeTraitExprNode(trait_expr.kind(), substituted_type, trait_expr.trait_token()));
+	return ASTNode(&new_expr);
 }
 
 ASTNode ExpressionSubstitutor::substituteStaticCast(const StaticCastNode& cast_node) {

@@ -5834,13 +5834,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
-				std::string_view outer_instantiated_name = instantiate_and_register_base_template(base_template_name, resolved_args);
-				if (!outer_instantiated_name.empty()) {
-					base_template_name = outer_instantiated_name;
-				}
-
 				std::string_view final_base_name = base_template_name;
 				if (!deferred_base.member_type_chain.empty()) {
+					std::string_view outer_instantiated_name = instantiate_and_register_base_template(base_template_name, resolved_args);
+					if (!outer_instantiated_name.empty()) {
+						base_template_name = outer_instantiated_name;
+					}
+
 					ensure_substitution_maps();
 					ExpressionSubstitutor member_template_arg_substitutor(
 						subst_map,
@@ -5897,6 +5897,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						deferred_base.access,
 						deferred_base.is_virtual);
 					continue;
+				}
+
+				AliasTemplateMaterializationResult materialized_base =
+					materializeTemplateInstantiationForLookup(base_template_name, resolved_args);
+				if (materialized_base.resolved_type_info != nullptr) {
+					final_base_name = StringTable::getStringView(materialized_base.resolved_type_info->name());
+				} else if (!materialized_base.instantiated_name.empty()) {
+					final_base_name = materialized_base.instantiated_name;
 				}
 
 				auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(final_base_name));
