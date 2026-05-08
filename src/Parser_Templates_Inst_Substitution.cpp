@@ -499,6 +499,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	std::string_view resolved_name = alias_template_name;
 	result.instantiated_name = instantiate_and_register_base_template(resolved_name, template_args);
 	if (result.instantiated_name.empty()) {
+		// Some alias templates target one of their own type parameters directly,
+		// so there is no class-template instantiation name to look up.
 		tryResolveDirectAliasTarget();
 		return result;
 	}
@@ -532,6 +534,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	}
 	if (alias_node != nullptr &&
 		result.resolved_type_info != nullptr) {
+		// Prefer a direct alias target over the helper instantiation itself, but
+		// still allow member-alias targets below to resolve more specific results.
 		tryResolveDirectAliasTarget();
 		if (const TypeInfo* concrete_member_alias =
 				materializeInstantiatedMemberAliasTarget(
@@ -719,21 +723,21 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		return nullptr;
 	}
 
-	StringHandle concrete_member_alias_template_handle =
+	StringHandle member_alias_handle =
 		StringTable::getOrInternStringHandle(
 			StringBuilder()
 				.append(materialized_alias_base.instantiated_name)
 				.append("::")
 				.append(dependent_member_name)
 				.commit());
-	if (gTemplateRegistry.lookup_alias_template(concrete_member_alias_template_handle).has_value()) {
+	if (gTemplateRegistry.lookup_alias_template(member_alias_handle).has_value()) {
 		std::vector<TemplateTypeArg> concrete_member_template_args =
 			original_alias_target_info->isTemplateInstantiation()
 				? materializeTemplateArgs(*original_alias_target_info, template_params, template_args)
 				: std::vector<TemplateTypeArg>{};
 		AliasTemplateMaterializationResult materialized_member_alias =
 			materializeAliasTemplateInstantiation(
-				StringTable::getStringView(concrete_member_alias_template_handle),
+				StringTable::getStringView(member_alias_handle),
 				concrete_member_template_args);
 		if (materialized_member_alias.resolved_type_info != nullptr) {
 			return materialized_member_alias.resolved_type_info;
