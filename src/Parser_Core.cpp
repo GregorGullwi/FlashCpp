@@ -1504,6 +1504,7 @@ void Parser::register_builtin_functions() {
 	const ASTNode void_type = make_builtin_type(TypeCategory::Void, CVQualifier::None, 0);
 	const ASTNode bool_type = make_builtin_type(TypeCategory::Bool, CVQualifier::None, 0);
 	const ASTNode int_type = make_builtin_type(TypeCategory::Int, CVQualifier::None, 0);
+	// Used by both the C++ math builtin family and later platform intrinsic declarations.
 	const ASTNode long_type = make_builtin_type(TypeCategory::Long, CVQualifier::None, 0);
 	const ASTNode long_long_type = make_builtin_type(TypeCategory::LongLong, CVQualifier::None, 0);
 	const ASTNode float_type = make_builtin_type(TypeCategory::Float, CVQualifier::None, 0);
@@ -1661,9 +1662,24 @@ void Parser::register_builtin_functions() {
 	}) {
 		register_extern_c_builtin(name, long_double_type, {long_double_type});
 	}
-	register_binary_float_builtins({"__builtin_atan2f", "__builtin_copysignf", "__builtin_fdimf", "__builtin_fmaxf", "__builtin_fminf", "__builtin_fmodf", "__builtin_hypotf", "__builtin_nextafterf", "__builtin_powf", "__builtin_remainderf"}, float_type);
-	register_binary_float_builtins({"__builtin_atan2", "__builtin_copysign", "__builtin_fdim", "__builtin_fmax", "__builtin_fmin", "__builtin_fmod", "__builtin_hypot", "__builtin_nextafter", "__builtin_pow", "__builtin_remainder"}, double_type);
-	register_binary_float_builtins({"__builtin_atan2l", "__builtin_copysignl", "__builtin_fdiml", "__builtin_fmaxl", "__builtin_fminl", "__builtin_fmodl", "__builtin_hypotl", "__builtin_nextafterl", "__builtin_powl", "__builtin_remainderl"}, long_double_type);
+	register_binary_float_builtins({
+		"__builtin_atan2f", "__builtin_copysignf", "__builtin_fdimf",
+		"__builtin_fmaxf", "__builtin_fminf", "__builtin_fmodf",
+		"__builtin_hypotf", "__builtin_nextafterf", "__builtin_powf",
+		"__builtin_remainderf"
+	}, float_type);
+	register_binary_float_builtins({
+		"__builtin_atan2", "__builtin_copysign", "__builtin_fdim",
+		"__builtin_fmax", "__builtin_fmin", "__builtin_fmod",
+		"__builtin_hypot", "__builtin_nextafter", "__builtin_pow",
+		"__builtin_remainder"
+	}, double_type);
+	register_binary_float_builtins({
+		"__builtin_atan2l", "__builtin_copysignl", "__builtin_fdiml",
+		"__builtin_fmaxl", "__builtin_fminl", "__builtin_fmodl",
+		"__builtin_hypotl", "__builtin_nextafterl", "__builtin_powl",
+		"__builtin_remainderl"
+	}, long_double_type);
 	register_extern_c_builtin("__builtin_fmaf", float_type, {float_type, float_type, float_type});
 	register_extern_c_builtin("__builtin_fma", double_type, {double_type, double_type, double_type});
 	register_extern_c_builtin("__builtin_fmal", long_double_type, {long_double_type, long_double_type, long_double_type});
