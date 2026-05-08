@@ -80,7 +80,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ctime>` | N/A | ✅ Compiled | ~58ms |
 | `<climits>` | N/A | ✅ Compiled | ~30ms |
 | `<cfloat>` | N/A | ✅ Compiled | ~32ms |
-| `<cmath>` | `test_std_cmath.cpp` | ❌ Compile Error | ~730ms (retested 2026-05-08, Linux/libstdc++-14). The `__builtin_modfl(long double, long double*)` overload-resolution stop is fixed; current first hard error is `Could not evaluate non-type template default for parameter 1 of '__promote'`. |
+| `<cmath>` | `test_std_cmath.cpp` | 💥 Crash | ~5020ms (retested 2026-05-08, Linux/libstdc++-14). The `__promote` default-NTTP stop is fixed and additional C++11 math builtins are declared; the header now parses to completion and reaches codegen before a fatal `std::get: wrong index for variant` stop while lowering unresolved special-function helpers. |
 | `<system_error>` | N/A | 💥 Crash | ~4400ms (retested 2026-04-11). |
 | `<scoped_allocator>` | N/A | ❌ Compile Error | ~1868ms (retested 2026-04-11). "unsupported PackExpansionExprNode". |
 | `<charconv>` | N/A | ✅ Compiled | ~930ms |
@@ -100,6 +100,38 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-08 Linux/libstdc++ qualified-enum and cmath-builtin follow-up
+
+This pass retested `<cmath>` and fixed the next high-layer blockers after the
+long-double builtin work.
+
+Fixes landed:
+
+- **Template class unscoped enumerators are preserved for semantic lookup during
+  template instantiation.** This lets patterns like
+  `std::__is_integer<T>::__value` evaluate while filling non-type template
+  defaults such as `__gnu_cxx::__promote<T, bool = ...>`.
+- **Qualified constant-expression lookup now checks nested enum members of
+  instantiated classes**, matching the existing codegen-side nested enum lookup.
+- **Parser-created builtin declarations now cover the C++11 `<cmath>` builtin
+  family used by libstdc++**, including `acosh`, `cbrt`, `erf`, `fma`, `ilogb`,
+  `lrint`/`llrint`, `nexttoward`, `remquo`, `scalbn`, `tgamma`, and related
+  `float`/`double`/`long double` variants.
+
+Regression tests:
+
+- `tests/std/test_qualified_enum_default_template_arg_ret0.cpp`
+- `tests/std/test_cmath_additional_builtins_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_qualified_enum_default_template_arg_ret0.cpp` | ✅ Pass | 0.04s | New regression verifies a class-template enum constant can fill a dependent bool default template argument. |
+| `test_cmath_additional_builtins_ret0.cpp` | ✅ Pass | 0.04s | New regression verifies representative additional `<cmath>` builtins are registered in unevaluated contexts. |
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Compiled | 0.36s | Existing targeted standard-header regression still compiles. |
+| `<cmath>` (`test_std_cmath.cpp`) | 💥 Crash | 5.02s | Previous `__promote` default-NTTP and missing `__builtin_acoshf` stops are fixed. Current stop is after parsing completes, during IR/codegen: `Fatal error: std::get: wrong index for variant` after unresolved `std::__detail` special-function helper instantiations. |
 
 ### 2026-05-08 Linux/libstdc++ long-double builtin follow-up
 
