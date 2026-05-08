@@ -43,12 +43,11 @@ struct NonEmpty {
 	int member;
 };
 
+struct FinalHead final {
+};
+
 int main() {
-	if (HeadBase<0, Empty>::value != 0) {
-		return 1;
-	}
-	if (HeadBase<1, NonEmpty>::value != 10) {
-		return 2;
-	}
-	return 0;
+	return HeadBase<0, Empty>::value +
+		HeadBase<1, NonEmpty>::value -
+		HeadBase<2, FinalHead>::value;
 }

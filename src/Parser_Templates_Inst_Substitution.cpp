@@ -121,9 +121,11 @@ namespace {
 
 	auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
 	if (!eval_result.success()) {
+		FLASH_LOG(Templates, Debug, "substituteAndEvaluateNonTypeDefaultImpl: evaluation failed");
 		return std::nullopt;
 	}
 
+	FLASH_LOG(Templates, Debug, "substituteAndEvaluateNonTypeDefaultImpl: succeeded");
 	return templateTypeArgFromEvalResult(eval_result);
 }
 
@@ -245,10 +247,35 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		return make_dependent_value_for_alias_param(id_handle);
 	}
 
-	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-	auto eval_result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
-	if (eval_result.success()) {
-		return templateTypeArgFromEvalResult(eval_result);
+	// TypeTraitExprNode arguments (e.g. __is_final(T), __is_empty(T)) must NOT be
+	// evaluated before template parameter substitution: the placeholder type held
+	// inside them does not carry flags like is_final/is_empty, so an early
+	// unsubstituted evaluation would silently return the wrong value (false) and
+	// prevent the correct substituted evaluation below from running.
+	const bool is_type_trait_expr = std::get_if<TypeTraitExprNode>(&arg_expr) != nullptr;
+	if (is_type_trait_expr) {
+		FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: skipping early eval for TypeTraitExprNode");
+
+		// If the type arguments that feed this TypeTraitExpr are still dependent
+		// (e.g. __is_final(H) where H is an outer template parameter of HeadBase),
+		// evaluating the trait on the placeholder type would silently return false
+		// and poison the cached instantiation. Instead, return a dependent bool
+		// placeholder so the downstream code registers a dependent Cond<dep,...>
+		// rather than a concrete (wrong) one. When the outer template is later
+		// instantiated with a concrete type (e.g. FinalHead), this function will
+		// be called again with non-dependent args and will evaluate correctly.
+		for (const TemplateTypeArg& arg : template_args) {
+			if (arg.is_dependent && arg.dependent_name.isValid()) {
+				FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: arg is dependent, returning dependent bool placeholder");
+				return TemplateTypeArg::makeDependentValue(arg.dependent_name, TypeCategory::Bool, 0, arg_node);
+			}
+		}
+	} else {
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		auto eval_result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
+		if (eval_result.success()) {
+			return templateTypeArgFromEvalResult(eval_result);
+		}
 	}
 
 	std::vector<std::string_view> template_param_names_sv;
