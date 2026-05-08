@@ -679,9 +679,9 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		original_alias_target_name.substr(0, member_sep);
 	std::string_view dependent_member_name =
 		original_alias_target_name.substr(member_sep + 2);
-	if (size_t template_arg_hint_pos = dependent_member_name.find('<');
-		template_arg_hint_pos != std::string_view::npos) {
-		dependent_member_name = dependent_member_name.substr(0, template_arg_hint_pos);
+	if (size_t template_pos = dependent_member_name.find('<');
+		template_pos != std::string_view::npos) {
+		dependent_member_name = dependent_member_name.substr(0, template_pos);
 	}
 	const TypeInfo* dependent_base_info = findTypeByName(
 		StringTable::getOrInternStringHandle(dependent_base_name));
@@ -731,10 +731,11 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 				.append(dependent_member_name)
 				.commit());
 	if (gTemplateRegistry.lookup_alias_template(member_alias_handle).has_value()) {
-		std::vector<TemplateTypeArg> concrete_member_template_args =
-			original_alias_target_info->isTemplateInstantiation()
-				? materializeTemplateArgs(*original_alias_target_info, template_params, template_args)
-				: std::vector<TemplateTypeArg>{};
+		std::vector<TemplateTypeArg> concrete_member_template_args;
+		if (original_alias_target_info->isTemplateInstantiation()) {
+			concrete_member_template_args =
+				materializeTemplateArgs(*original_alias_target_info, template_params, template_args);
+		}
 		AliasTemplateMaterializationResult materialized_member_alias =
 			materializeAliasTemplateInstantiation(
 				StringTable::getStringView(member_alias_handle),
