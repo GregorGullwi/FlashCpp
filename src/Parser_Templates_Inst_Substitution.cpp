@@ -499,8 +499,9 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	std::string_view resolved_name = alias_template_name;
 	result.instantiated_name = instantiate_and_register_base_template(resolved_name, template_args);
 	if (result.instantiated_name.empty()) {
-		// Some alias templates target one of their own type parameters directly,
-		// so there is no class-template instantiation name to look up.
+		// Direct parameter aliases such as `template<class T> using id = T`
+		// do not produce an instantiated helper type name; resolve them by
+		// rebinding the alias target parameter to the caller's concrete argument.
 		tryResolveDirectAliasTarget();
 		return result;
 	}
@@ -534,8 +535,10 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	}
 	if (alias_node != nullptr &&
 		result.resolved_type_info != nullptr) {
-		// Prefer a direct alias target over the helper instantiation itself, but
-		// still allow member-alias targets below to resolve more specific results.
+		// Prefer a direct alias target over the helper instantiation itself.
+		// Member-alias targets are checked after this because an alias target like
+		// `Owner<B>::template type<T, F>` must first select `Owner<B>` and then
+		// instantiate the selected member alias with its own `<T, F>` arguments.
 		tryResolveDirectAliasTarget();
 		if (const TypeInfo* concrete_member_alias =
 				materializeInstantiatedMemberAliasTarget(
