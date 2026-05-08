@@ -185,7 +185,15 @@ public:
 					  std::vector<ASTNode> target_template_args,
 					  StringHandle target_member_template_name,
 					  std::vector<ASTNode> target_member_template_args)
-		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), alias_name_(alias_name), target_type_(target_type), is_deferred_(true), target_template_name_(target_template_name), target_template_args_(std::move(target_template_args)), target_member_template_name_(target_member_template_name), target_member_template_args_(std::move(target_member_template_args)) {}
+		: template_parameters_(std::move(template_params)),
+		  template_param_names_(std::move(param_names)),
+		  alias_name_(alias_name),
+		  target_type_(target_type),
+		  is_deferred_(true),
+		  target_template_name_(target_template_name),
+		  target_template_args_(std::move(target_template_args)),
+		  target_member_template_name_(target_member_template_name),
+		  target_member_template_args_(std::move(target_member_template_args)) {}
 	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
 					  InlineVector<StringHandle, 4> param_names,
 					  StringHandle alias_name,

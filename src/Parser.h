@@ -2058,6 +2058,13 @@ private:
 	std::optional<std::vector<TemplateTypeArg>> materializeDeferredAliasTemplateArgs(
 		const TemplateAliasNode& alias_node,
 		std::span<const TemplateTypeArg> template_args);
+	StringHandle getDeferredMemberAliasHandle(
+		const TemplateAliasNode& alias_node,
+		std::string_view instantiated_name) const;
+	std::optional<std::vector<TemplateTypeArg>> materializeDeferredAliasMemberTemplateArgs(
+		const TemplateAliasNode& alias_node,
+		std::span<const TemplateTypeArg> template_args,
+		StringHandle member_alias_handle);
 	StringHandle getAliasTargetNameHandle(const TypeSpecifierNode& alias_target) const;
 	std::optional<size_t> findAliasTargetTemplateParamIndex(
 		const TemplateAliasNode& alias_node,

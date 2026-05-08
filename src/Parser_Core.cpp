@@ -329,16 +329,15 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 			}
 			StringHandle member_name = peek_info().handle();
 			advance();
+			out_target_member_template_name = member_name;
 			if (peek() == "<"_tok) {
 				std::vector<ASTNode> member_arg_nodes;
 				auto member_args = parse_explicit_template_arguments(&member_arg_nodes);
 				if (!member_args.has_value()) {
 					break;
 				}
-				out_target_member_template_name = member_name;
 				out_target_member_template_arg_nodes = std::move(member_arg_nodes);
 			} else {
-				out_target_member_template_name = member_name;
 				out_target_member_template_arg_nodes.clear();
 			}
 		}
