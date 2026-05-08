@@ -4039,6 +4039,11 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 										}
 									}
 									if (!rebound_nested_arg && nested_target_info->templateArgs().size() == 1) {
+										// Alias-template chains can preserve the alias' local parameter name
+										// (for example `Type`) after the outer default-argument context has
+										// already rebound it to a different parameter name (for example `Head`).
+										// For a single-argument alias target, the only viable type binding in the
+										// current default-argument context is the aliased type argument.
 										for (const TemplateTypeArg& context_arg : context.template_args) {
 											if (!context_arg.is_value) {
 												nested_arg = context_arg;
