@@ -1490,7 +1490,7 @@ void Parser::register_builtin_functions() {
 	};
 
 	auto make_builtin_type = [&](TypeCategory base_type, CVQualifier cv, int pointer_depth) {
-		auto [t, t_ref] = emplace_node_ref<TypeSpecifierNode>(base_type, TypeQualifier::None, get_type_size_bits(base_type), dummy_token, cv);
+		auto [t, t_ref] = emplace_node_ref<TypeSpecifierNode>(nativeTypeIndex(base_type), TypeQualifier::None, get_type_size_bits(base_type), dummy_token, cv);
 		for (int i = 0; i < pointer_depth; ++i) {
 			t_ref.add_pointer_level();
 		}
