@@ -116,6 +116,7 @@ Common non-type operands for `sizeof` and `alignof` now work in constexpr evalua
 - member access such as `obj.member`
 - pointer-to-member access such as `obj.*pm` and `ptr->*pm`
 - array subscripts such as `arr[1]`, `obj.data[2]`, and `matrix[0]`
+- array subscripts through function-returned/temporary member arrays such as `makeBox().data[1]`
 - ternary expressions such as `cond ? a : b`
 - cast expressions such as `static_cast<short>(x)`
 - dereference expressions such as `*ptr`
