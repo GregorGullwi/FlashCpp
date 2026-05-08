@@ -1315,6 +1315,8 @@ private:
 	bool parseDeferredAliasTargetTemplateId(
 		StringHandle& out_target_template_name,
 		std::vector<ASTNode>& out_target_template_arg_nodes,
+		StringHandle& out_target_member_template_name,
+		std::vector<ASTNode>& out_target_member_template_arg_nodes,
 		bool consume_dependent_member_suffix);
 	// Simple struct to hold constant expression evaluation results
 	// Public members are intentional for this lightweight data structure

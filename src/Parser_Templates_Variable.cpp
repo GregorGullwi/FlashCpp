@@ -162,12 +162,16 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	bool has_deferred_target = false;
 	StringHandle target_template_name;
 	std::vector<ASTNode> target_template_arg_nodes;
+	StringHandle target_member_template_name;
+	std::vector<ASTNode> target_member_template_arg_nodes;
 	{
 		SaveHandle after_target_pos = save_token_position();
 		restore_token_position(target_type_start_pos);
 		if (parseDeferredAliasTargetTemplateId(
 				target_template_name,
 				target_template_arg_nodes,
+				target_member_template_name,
+				target_member_template_arg_nodes,
 				false) &&
 			gTemplateRegistry.lookup_alias_template(target_template_name).has_value()) {
 			has_deferred_target = true;

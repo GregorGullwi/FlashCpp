@@ -874,6 +874,8 @@ ParseResult Parser::parse_template_declaration() {
 		bool has_unresolved_params = false;
 		StringHandle target_template_name;
 		std::vector<ASTNode> target_template_arg_nodes;
+		StringHandle target_member_template_name;
+		std::vector<ASTNode> target_member_template_arg_nodes;
 
 		if ((is_struct_type(type_spec.category())) &&
 			type_spec.type_index().index() < getTypeInfoCount()) {
@@ -961,6 +963,8 @@ ParseResult Parser::parse_template_declaration() {
 				if (parseDeferredAliasTargetTemplateId(
 						target_template_name,
 						target_template_arg_nodes,
+						target_member_template_name,
+						target_member_template_arg_nodes,
 						true)) {
 					FLASH_LOG(Parser, Debug, "Captured ", target_template_arg_nodes.size(), " unevaluated template argument nodes for deferred instantiation");
 
@@ -1005,7 +1009,9 @@ ParseResult Parser::parse_template_declaration() {
 				StringTable::getOrInternStringHandle(alias_name),
 				type_result.node().value(),
 				target_template_name,
-				std::move(target_template_arg_nodes));
+				std::move(target_template_arg_nodes),
+				target_member_template_name,
+				std::move(target_member_template_arg_nodes));
 		} else {
 			// Regular (non-deferred) alias
 			alias_node = emplace_node<TemplateAliasNode>(

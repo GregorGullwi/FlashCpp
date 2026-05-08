@@ -250,9 +250,13 @@ std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified
 bool Parser::parseDeferredAliasTargetTemplateId(
 	StringHandle& out_target_template_name,
 	std::vector<ASTNode>& out_target_template_arg_nodes,
+	StringHandle& out_target_member_template_name,
+	std::vector<ASTNode>& out_target_member_template_arg_nodes,
 	bool consume_dependent_member_suffix) {
 	out_target_template_name = StringHandle{};
 	out_target_template_arg_nodes.clear();
+	out_target_member_template_name = StringHandle{};
+	out_target_member_template_arg_nodes.clear();
 
 	SaveHandle start_pos = save_token_position();
 	StringBuilder target_name_builder;
@@ -262,6 +266,8 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 		target_name_builder.reset();
 		out_target_template_name = StringHandle{};
 		out_target_template_arg_nodes.clear();
+		out_target_member_template_name = StringHandle{};
+		out_target_member_template_arg_nodes.clear();
 		return false;
 	};
 
@@ -321,12 +327,19 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 			if (peek_info().type() != Token::Type::Identifier) {
 				break;
 			}
+			StringHandle member_name = peek_info().handle();
 			advance();
 			if (peek() == "<"_tok) {
-				auto ignored_member_args = parse_explicit_template_arguments();
-				if (!ignored_member_args.has_value()) {
+				std::vector<ASTNode> member_arg_nodes;
+				auto member_args = parse_explicit_template_arguments(&member_arg_nodes);
+				if (!member_args.has_value()) {
 					break;
 				}
+				out_target_member_template_name = member_name;
+				out_target_member_template_arg_nodes = std::move(member_arg_nodes);
+			} else {
+				out_target_member_template_name = member_name;
+				out_target_member_template_arg_nodes.clear();
 			}
 		}
 	}
