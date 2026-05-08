@@ -22,14 +22,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | 💥 Crash | ~2380ms (retested 2026-05-07, Linux/libstdc++-14). Progresses well past prior unresolved-`auto` stops, then aborts in codegen with `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
-| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~2620ms (retested 2026-05-08, Linux/libstdc++-14). The recursive `basic_string::find` member-template instantiation stop is fixed; current first hard error is again `Could not evaluate non-type template default for parameter 2 of '_Head_base'` (tuple/default-NTTP path). |
+| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~3010ms (retested 2026-05-08, Linux/libstdc++-14). The recursive `basic_string::find` member-template instantiation stop is fixed; current first hard error remains `Could not evaluate non-type template default for parameter 2 of '_Head_base'` (tuple/default-NTTP path). |
 | `<array>` | `test_std_array.cpp` | ❌ Codegen Error | Focused retest 2026-05-04 after injected-class-name fix. The `Cannot use copy initialization with explicit constructor` diagnostic for `std::reverse_iterator` is fixed; the header now progresses into existing IR/codegen gaps around unresolved `std::reverse_iterator` constructor/placeholder lowering. |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~2320ms (retested 2026-05-07, Linux/libstdc++-14). Unresolved-`auto` mangling stop is gone; current crash is late codegen `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~2110ms (retested 2026-05-08, Linux/libstdc++-14). Partial-specialization member-alias substitution in the `_Head_base` default-NTTP path improved, but the targeted header still stops at `Could not evaluate non-type template default for parameter 2 of '_Head_base'`. |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~1140ms (retested 2026-05-08, Linux/libstdc++-14). Deferred member-alias-template suffix capture now works for the isolated alias-chain/default-NTTP pattern, but the targeted header still stops at `Could not evaluate non-type template default for parameter 2 of '_Head_base'` because the full libstdc++ path still loses a later `__is_empty_non_tuple<_Head>` substitution. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2062ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Itanium name mangling: unknown type — cannot generate valid symbol` after several deferred/incomplete `reverse_iterator` instantiations. |
 | `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2999ms (retested 2026-04-24, Linux/libstdc++). `_M_tail` blocker resolved by the member-function overload fix; now first-order error is `unsupported PackExpansionExprNode reached semantic analysis` deeper in shared tuple pack-expansion code. |
+| `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~1590ms (retested 2026-05-08, Linux/libstdc++-14). Now reaches the shared tuple/default-NTTP blocker: `Could not evaluate non-type template default for parameter 2 of '_Head_base'`. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
 | `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~3067ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `ExpressionSubstitutor missing binding for ordered template parameter '_Head'` in tuple machinery. |
@@ -100,6 +100,25 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-08 Linux/libstdc++ deferred member-alias-template suffix follow-up
+
+This pass preserved dependent member alias-template suffixes captured from alias
+targets such as `typename Conditional<B>::template type<T, F>`.  The isolated
+member-alias-template chain feeding a bool default NTTP now compiles and runs,
+guarded by:
+
+- `tests/test_member_alias_template_chain_default_nttp_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| Full regression suite after edits | ✅ Pass | n/a | `bash tests/run_all_tests.sh`: 2248 pass / 0 fail, 170 `_fail` correct. |
+| `test_member_alias_template_chain_default_nttp_ret0.cpp` | ✅ Pass | 0.02s | New regression verifies `Conditional<B>::template type<T, F>` remains attached to the selected member alias while feeding `EmptyNotFinal<T>::value` into a default NTTP. |
+| `<tuple>` (`test_std_tuple.cpp`) | ❌ Compile Error | 1.14s | Still stops at `Could not evaluate non-type template default for parameter 2 of '_Head_base'`; the current remaining gap is rebinding the later `__is_empty_non_tuple<_Head>` placeholder stored inside the full libstdc++ alias chain. |
+| `<list>` (`test_std_list.cpp`) | ❌ Compile Error | 1.59s | Still stops at the shared `_Head_base` default-NTTP path. |
+| `<string>` (`test_std_string.cpp`) | ❌ Compile Error | 3.01s | Still reaches deferred `basic_string` member-body warnings, then stops at the shared `_Head_base` default-NTTP path. |
 
 ### 2026-05-08 Linux/libstdc++ member-alias-template materialization follow-up
 
