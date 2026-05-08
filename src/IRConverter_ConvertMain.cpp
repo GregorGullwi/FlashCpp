@@ -2600,6 +2600,7 @@ void IrToObjConverter<TWriterClass>::emitMovToFrameSized(SizedRegister source, S
 		} else if (dest.size_in_bits.value <= 32) {
 			opcodes = generateMovToFrame32(source.reg, dest.offset);
 		} else if (is_xmm_source) {
+			// XMM sources must use SSE stores even when the semantic type is wider than 64 bits.
 			opcodes = generateFloatMovToFrame(source.reg, dest.offset, false);
 		} else {
 			opcodes = generatePtrMovToFrame(source.reg, dest.offset);
