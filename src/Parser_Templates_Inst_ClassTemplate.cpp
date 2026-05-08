@@ -6306,6 +6306,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	const StructTypeInfo* template_struct_info = nullptr;
 	if (template_type_it != getTypesByNameMap().end() && template_type_it->second->getStructInfo()) {
 		template_struct_info = template_type_it->second->getStructInfo();
+		for (TypeIndex nested_enum_index : template_struct_info->getNestedEnumIndices()) {
+			struct_info->addNestedEnumIndex(nested_enum_index);
+		}
 	}
 
 	// Process static members from StructTypeInfo (preferred source)

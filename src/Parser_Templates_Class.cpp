@@ -8,6 +8,7 @@ namespace {
 
 void addUnscopedEnumEnumeratorsAsStaticMembers(
 	StructDeclarationNode& struct_ref,
+	StructTypeInfo* struct_info,
 	const EnumDeclarationNode& enum_decl,
 	AccessSpecifier access) {
 	if (enum_decl.is_scoped()) {
@@ -39,6 +40,18 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 			CVQualifier::None,
 			ReferenceQualifier::None,
 			0);
+		if (struct_info != nullptr) {
+			struct_info->addStaticMember(
+				enumerator.name_token().handle(),
+				enum_decl.type_index(),
+				enum_size,
+				enum_size,
+				access,
+				initializer,
+				CVQualifier::None,
+				ReferenceQualifier::None,
+				0);
+		}
 	}
 }
 
@@ -1627,7 +1640,7 @@ ParseResult Parser::parse_template_declaration() {
 							return enum_result;
 						}
 						if (auto enum_node = enum_result.node(); enum_node.has_value() && enum_node->is<EnumDeclarationNode>()) {
-							addUnscopedEnumEnumeratorsAsStaticMembers(struct_ref, enum_node->as<EnumDeclarationNode>(), current_access);
+							addUnscopedEnumEnumeratorsAsStaticMembers(struct_ref, struct_info.get(), enum_node->as<EnumDeclarationNode>(), current_access);
 						}
 						continue;
 					} else if (peek() == "using"_tok) {
@@ -3085,7 +3098,7 @@ ParseResult Parser::parse_template_declaration() {
 							return enum_result;
 						}
 						if (auto enum_node = enum_result.node(); enum_node.has_value() && enum_node->is<EnumDeclarationNode>()) {
-							addUnscopedEnumEnumeratorsAsStaticMembers(struct_ref, enum_node->as<EnumDeclarationNode>(), current_access);
+							addUnscopedEnumEnumeratorsAsStaticMembers(struct_ref, struct_info.get(), enum_node->as<EnumDeclarationNode>(), current_access);
 						}
 						continue;
 					} else if (peek() == "struct"_tok || peek() == "class"_tok) {

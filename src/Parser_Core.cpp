@@ -1504,6 +1504,8 @@ void Parser::register_builtin_functions() {
 	const ASTNode void_type = make_builtin_type(TypeCategory::Void, CVQualifier::None, 0);
 	const ASTNode bool_type = make_builtin_type(TypeCategory::Bool, CVQualifier::None, 0);
 	const ASTNode int_type = make_builtin_type(TypeCategory::Int, CVQualifier::None, 0);
+	const ASTNode long_type = make_builtin_type(TypeCategory::Long, CVQualifier::None, 0);
+	const ASTNode long_long_type = make_builtin_type(TypeCategory::LongLong, CVQualifier::None, 0);
 	const ASTNode float_type = make_builtin_type(TypeCategory::Float, CVQualifier::None, 0);
 	const ASTNode double_type = make_builtin_type(TypeCategory::Double, CVQualifier::None, 0);
 	const ASTNode long_double_type = make_builtin_type(TypeCategory::LongDouble, CVQualifier::None, 0);
@@ -1620,33 +1622,75 @@ void Parser::register_builtin_functions() {
 		register_extern_c_builtin("__builtin_fpclassify", int_type, {int_type, int_type, int_type, int_type, int_type, long_double_type});
 	};
 	const std::initializer_list<std::string_view> unary_math_base = {
-		"__builtin_acosf", "__builtin_asinf", "__builtin_atanf", "__builtin_ceilf",
-		"__builtin_cosf", "__builtin_coshf", "__builtin_expf", "__builtin_fabsf",
-		"__builtin_floorf", "__builtin_logf", "__builtin_log10f", "__builtin_sinf",
-		"__builtin_sinhf", "__builtin_sqrtf", "__builtin_tanf", "__builtin_tanhf"
+		"__builtin_acosf", "__builtin_acoshf", "__builtin_asinf", "__builtin_asinhf",
+		"__builtin_atanf", "__builtin_atanhf", "__builtin_cbrtf", "__builtin_ceilf",
+		"__builtin_cosf", "__builtin_coshf", "__builtin_erff", "__builtin_erfcf",
+		"__builtin_expf", "__builtin_exp2f", "__builtin_expm1f", "__builtin_fabsf",
+		"__builtin_floorf", "__builtin_lgammaf", "__builtin_logf", "__builtin_log10f",
+		"__builtin_log1pf", "__builtin_log2f", "__builtin_logbf", "__builtin_nearbyintf",
+		"__builtin_rintf", "__builtin_roundf", "__builtin_sinf", "__builtin_sinhf",
+		"__builtin_sqrtf", "__builtin_tanf", "__builtin_tanhf", "__builtin_tgammaf",
+		"__builtin_truncf"
 	};
 	for (std::string_view name : unary_math_base) {
 		register_extern_c_builtin(name, float_type, {float_type});
 	}
 	for (std::string_view name : {
-		"__builtin_acos", "__builtin_asin", "__builtin_atan", "__builtin_ceil",
-		"__builtin_cos", "__builtin_cosh", "__builtin_exp", "__builtin_fabs",
-		"__builtin_floor", "__builtin_log", "__builtin_log10", "__builtin_sin",
-		"__builtin_sinh", "__builtin_sqrt", "__builtin_tan", "__builtin_tanh"
+		"__builtin_acos", "__builtin_acosh", "__builtin_asin", "__builtin_asinh",
+		"__builtin_atan", "__builtin_atanh", "__builtin_cbrt", "__builtin_ceil",
+		"__builtin_cos", "__builtin_cosh", "__builtin_erf", "__builtin_erfc",
+		"__builtin_exp", "__builtin_exp2", "__builtin_expm1", "__builtin_fabs",
+		"__builtin_floor", "__builtin_lgamma", "__builtin_log", "__builtin_log10",
+		"__builtin_log1p", "__builtin_log2", "__builtin_logb", "__builtin_nearbyint",
+		"__builtin_rint", "__builtin_round", "__builtin_sin", "__builtin_sinh",
+		"__builtin_sqrt", "__builtin_tan", "__builtin_tanh", "__builtin_tgamma",
+		"__builtin_trunc"
 	}) {
 		register_extern_c_builtin(name, double_type, {double_type});
 	}
 	for (std::string_view name : {
-		"__builtin_acosl", "__builtin_asinl", "__builtin_atanl", "__builtin_ceill",
-		"__builtin_cosl", "__builtin_coshl", "__builtin_expl", "__builtin_fabsl",
-		"__builtin_floorl", "__builtin_logl", "__builtin_log10l", "__builtin_sinl",
-		"__builtin_sinhl", "__builtin_sqrtl", "__builtin_tanl", "__builtin_tanhl"
+		"__builtin_acosl", "__builtin_acoshl", "__builtin_asinl", "__builtin_asinhl",
+		"__builtin_atanl", "__builtin_atanhl", "__builtin_cbrtl", "__builtin_ceill",
+		"__builtin_cosl", "__builtin_coshl", "__builtin_erfl", "__builtin_erfcl",
+		"__builtin_expl", "__builtin_exp2l", "__builtin_expm1l", "__builtin_fabsl",
+		"__builtin_floorl", "__builtin_lgammal", "__builtin_logl", "__builtin_log10l",
+		"__builtin_log1pl", "__builtin_log2l", "__builtin_logbl", "__builtin_nearbyintl",
+		"__builtin_rintl", "__builtin_roundl", "__builtin_sinl", "__builtin_sinhl",
+		"__builtin_sqrtl", "__builtin_tanl", "__builtin_tanhl", "__builtin_tgammal",
+		"__builtin_truncl"
 	}) {
 		register_extern_c_builtin(name, long_double_type, {long_double_type});
 	}
-	register_binary_float_builtins({"__builtin_atan2f", "__builtin_fmodf", "__builtin_powf"}, float_type);
-	register_binary_float_builtins({"__builtin_atan2", "__builtin_fmod", "__builtin_pow"}, double_type);
-	register_binary_float_builtins({"__builtin_atan2l", "__builtin_fmodl", "__builtin_powl"}, long_double_type);
+	register_binary_float_builtins({"__builtin_atan2f", "__builtin_copysignf", "__builtin_fdimf", "__builtin_fmaxf", "__builtin_fminf", "__builtin_fmodf", "__builtin_hypotf", "__builtin_nextafterf", "__builtin_powf", "__builtin_remainderf"}, float_type);
+	register_binary_float_builtins({"__builtin_atan2", "__builtin_copysign", "__builtin_fdim", "__builtin_fmax", "__builtin_fmin", "__builtin_fmod", "__builtin_hypot", "__builtin_nextafter", "__builtin_pow", "__builtin_remainder"}, double_type);
+	register_binary_float_builtins({"__builtin_atan2l", "__builtin_copysignl", "__builtin_fdiml", "__builtin_fmaxl", "__builtin_fminl", "__builtin_fmodl", "__builtin_hypotl", "__builtin_nextafterl", "__builtin_powl", "__builtin_remainderl"}, long_double_type);
+	register_extern_c_builtin("__builtin_fmaf", float_type, {float_type, float_type, float_type});
+	register_extern_c_builtin("__builtin_fma", double_type, {double_type, double_type, double_type});
+	register_extern_c_builtin("__builtin_fmal", long_double_type, {long_double_type, long_double_type, long_double_type});
+	register_extern_c_builtin("__builtin_ilogbf", int_type, {float_type});
+	register_extern_c_builtin("__builtin_ilogb", int_type, {double_type});
+	register_extern_c_builtin("__builtin_ilogbl", int_type, {long_double_type});
+	register_extern_c_builtin("__builtin_lrintf", long_type, {float_type});
+	register_extern_c_builtin("__builtin_lrint", long_type, {double_type});
+	register_extern_c_builtin("__builtin_lrintl", long_type, {long_double_type});
+	register_extern_c_builtin("__builtin_lroundf", long_type, {float_type});
+	register_extern_c_builtin("__builtin_lround", long_type, {double_type});
+	register_extern_c_builtin("__builtin_lroundl", long_type, {long_double_type});
+	register_extern_c_builtin("__builtin_llrintf", long_long_type, {float_type});
+	register_extern_c_builtin("__builtin_llrint", long_long_type, {double_type});
+	register_extern_c_builtin("__builtin_llrintl", long_long_type, {long_double_type});
+	register_extern_c_builtin("__builtin_llroundf", long_long_type, {float_type});
+	register_extern_c_builtin("__builtin_llround", long_long_type, {double_type});
+	register_extern_c_builtin("__builtin_llroundl", long_long_type, {long_double_type});
+	register_extern_c_builtin("__builtin_nexttowardf", float_type, {float_type, long_double_type});
+	register_extern_c_builtin("__builtin_nexttoward", double_type, {double_type, long_double_type});
+	register_extern_c_builtin("__builtin_nexttowardl", long_double_type, {long_double_type, long_double_type});
+	register_extern_c_builtin("__builtin_scalblnf", float_type, {float_type, long_type});
+	register_extern_c_builtin("__builtin_scalbln", double_type, {double_type, long_type});
+	register_extern_c_builtin("__builtin_scalblnl", long_double_type, {long_double_type, long_type});
+	register_extern_c_builtin("__builtin_scalbnf", float_type, {float_type, int_type});
+	register_extern_c_builtin("__builtin_scalbn", double_type, {double_type, int_type});
+	register_extern_c_builtin("__builtin_scalbnl", long_double_type, {long_double_type, int_type});
 	register_extern_c_builtin("__builtin_frexpf", float_type, {float_type, int_ptr});
 	register_extern_c_builtin("__builtin_frexp", double_type, {double_type, int_ptr});
 	register_extern_c_builtin("__builtin_frexpl", long_double_type, {long_double_type, int_ptr});
@@ -1656,6 +1700,9 @@ void Parser::register_builtin_functions() {
 	register_extern_c_builtin("__builtin_modff", float_type, {float_type, float_ptr});
 	register_extern_c_builtin("__builtin_modf", double_type, {double_type, double_ptr});
 	register_extern_c_builtin("__builtin_modfl", long_double_type, {long_double_type, long_double_ptr});
+	register_extern_c_builtin("__builtin_remquof", float_type, {float_type, float_type, int_ptr});
+	register_extern_c_builtin("__builtin_remquo", double_type, {double_type, double_type, int_ptr});
+	register_extern_c_builtin("__builtin_remquol", long_double_type, {long_double_type, long_double_type, int_ptr});
 	register_extern_c_builtin("__builtin_powif", float_type, {float_type, int_type});
 	register_extern_c_builtin("__builtin_powi", double_type, {double_type, int_type});
 	register_extern_c_builtin("__builtin_powil", long_double_type, {long_double_type, int_type});
@@ -1668,7 +1715,6 @@ void Parser::register_builtin_functions() {
 	// Registering them here keeps semantic lookup stable even when intrin wrappers
 	// are skipped by preprocessing or architecture guards.
 	const ASTNode volatile_long_ptr = make_builtin_type(TypeCategory::Long, CVQualifier::Volatile, 1);
-	const ASTNode long_type = make_builtin_type(TypeCategory::Long, CVQualifier::None, 0);
 	const ASTNode const_volatile_short_ptr = make_builtin_type(TypeCategory::Short, CVQualifier::ConstVolatile, 1);
 	const ASTNode const_volatile_int_ptr = make_builtin_type(TypeCategory::Int, CVQualifier::ConstVolatile, 1);
 	const ASTNode const_volatile_long_long_ptr = make_builtin_type(TypeCategory::LongLong, CVQualifier::ConstVolatile, 1);
@@ -1679,7 +1725,6 @@ void Parser::register_builtin_functions() {
 	const ASTNode volatile_char_ptr = make_builtin_type(TypeCategory::Char, CVQualifier::Volatile, 1);
 	const ASTNode short_type = make_builtin_type(TypeCategory::Short, CVQualifier::None, 0);
 	const ASTNode char_type = make_builtin_type(TypeCategory::Char, CVQualifier::None, 0);
-	const ASTNode long_long_type = make_builtin_type(TypeCategory::LongLong, CVQualifier::None, 0);
 	const ASTNode long_long_ptr = make_builtin_type(TypeCategory::LongLong, CVQualifier::None, 1);
 	const ASTNode unsigned_char_type = make_builtin_type(TypeCategory::UnsignedChar, CVQualifier::None, 0);
 	register_extern_c_builtin("_ReadWriteBarrier", void_type, {});
