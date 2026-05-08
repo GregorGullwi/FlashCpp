@@ -2484,27 +2484,38 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					continue;
 				}
 
-				// Substitute template parameters in the type
-				TypeSpecifierNode substituted_param_type = buildSubstitutedTypeSpecifier(
-					orig_param_type,
-					param_decl.type_node(),
-					param_decl.identifier_token(),
-					template_params,
-					template_args,
-					[this](const ASTNode& node, const auto& params, const auto& args) {
-						return substituteTemplateParameters(node, params, args);
-					},
-					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
-						return substitute_template_parameter(type_spec, params, args);
-					},
-					nullptr,
-					TypeIndex{},
-					TypeIndex{},
-					false,
-					true);
-				ASTNode param_type = emplace_node<TypeSpecifierNode>(substituted_param_type);
-				resolveDependentMemberAlias(param_type, template_params, template_args);
-				normalizeSubstitutedTypeSpec(param_type.as<TypeSpecifierNode>());
+				// Substitute template parameters in the type.
+				// Build a flat (non-variadic) substitution context using
+				// template_param_arg_starts/counts so that a variadic pack Ts...
+				// preceding a defaulted param Tail correctly maps Tail to its arg
+				// rather than the pack consuming it greedily.
+				InlineVector<ASTNode, 4> flat_subst_params;
+				InlineVector<TemplateTypeArg, 4> flat_subst_args;
+				{
+					size_t flat_arg_idx = 0;
+					for (size_t j = 0; j < template_params.size(); ++j) {
+						const TemplateParameterNode* tp = tryGetTemplateParameterNode(template_params[j]);
+						if (!tp) continue;
+						const size_t count = template_param_arg_counts[j];
+						if (tp->is_variadic()) {
+							for (size_t k = 0; k < count; ++k) {
+								if (flat_arg_idx + k < template_args.size()) {
+									flat_subst_params.push_back(emplace_node<TemplateParameterNode>(
+										cloneNonVariadicTemplateParam(*tp)));
+									flat_subst_args.push_back(template_args[flat_arg_idx + k]);
+								}
+							}
+							flat_arg_idx += count;
+							continue;
+						}
+						if (flat_arg_idx < template_args.size()) {
+							flat_subst_params.push_back(emplace_node<TemplateParameterNode>(*tp));
+							flat_subst_args.push_back(template_args[flat_arg_idx]);
+						}
+						++flat_arg_idx;
+					}
+				}
+				ASTNode param_type = buildMaterializedParamType(param_decl, flat_subst_params, flat_subst_args);
 
 				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 				// Preserve default argument value from the original template declaration
