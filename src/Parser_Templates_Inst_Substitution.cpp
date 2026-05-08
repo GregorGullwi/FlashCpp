@@ -510,8 +510,9 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		alias_template_member_sep != std::string_view::npos;
 	if (alias_node != nullptr &&
 		alias_node->is_deferred() &&
-		// Alias templates can target another alias template (e.g.
-		// `__empty_not_final<T> = __conditional_t<...>`). Same-name aliases are
+		is_qualified_alias_template &&
+		// Qualified member aliases can target another alias template (e.g.
+		// `Checker::cond_t<T> = ::enable_if_t<...>`). Same-name aliases are
 		// deliberately left on the ordinary member-target path to avoid
 		// recursive self-materialization.
 		alias_node->target_template_name() != alias_template_name &&
@@ -822,15 +823,6 @@ std::string_view Parser::instantiate_and_register_base_template(
 			std::string_view target_name(alias_node.target_template_name());
 			std::string_view instantiated_name = instantiate_and_register_base_template(target_name, substituted_args);
 			if (!instantiated_name.empty()) {
-				if (const TypeInfo* concrete_member_alias =
-						materializeInstantiatedMemberAliasTarget(
-							alias_node.target_type_node(),
-							alias_node.template_parameters(),
-							template_args);
-					concrete_member_alias != nullptr) {
-					base_class_name = StringTable::getStringView(concrete_member_alias->name());
-					return base_class_name;
-				}
 				base_class_name = instantiated_name;
 				return instantiated_name;
 			}

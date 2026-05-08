@@ -101,6 +101,36 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+### 2026-05-08 Linux/libstdc++ member-alias-template materialization follow-up
+
+This pass retested the tuple/default-NTTP blocker and fixed a high-layer alias
+template materialization issue in the isolated pattern. Full libstdc++ tuple
+still has a remaining alias-chain preservation gap.
+
+Fix landed:
+
+- **Member alias templates selected from class-template specializations now
+  materialize their own template arguments before resolving the alias target.**
+  This lets patterns like
+  `Conditional<false>::template type<TrueChoice, FalseChoice>::value` feed a
+  dependent bool default template argument instead of stopping at the owning
+  class specialization.
+
+Regression test:
+
+- `tests/std/test_conditional_member_alias_default_nttp_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| Full regression suite after edits | ✅ Pass | n/a | `bash tests/run_all_tests.sh`: 2247 pass / 0 fail, 170 `_fail` correct. |
+| `test_conditional_member_alias_default_nttp_ret0.cpp` | ✅ Pass | 0.03s | New regression verifies a member alias template from a selected class-template specialization can feed a dependent bool default template argument. |
+| `<tuple>` (`test_std_tuple.cpp`) | ❌ Compile Error | 1.01s | Still stops at `Could not evaluate non-type template default for parameter 2 of '_Head_base'`; the isolated member-alias-template case is fixed, but full libstdc++ still reduces a later `__empty_not_final` path to `__conditional<...>::value` without preserving the alias-member arguments. |
+| `<list>` (`test_std_list.cpp`) | ❌ Compile Error | 1.38s | Still stops at the shared `_Head_base` default-NTTP path. |
+| `<string>` (`test_std_string.cpp`) | ❌ Compile Error | 2.57s | Still reaches deferred `basic_string` member-body warnings, then stops at the shared `_Head_base` default-NTTP path. |
+| `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | 1.54s | Still stops at the shared `_Head_base` default-NTTP path. |
+
 ### 2026-05-08 Linux/libstdc++ alias-template base/member-trait follow-up
 
 This pass retested the shared tuple/default-NTTP blocker and fixed two
