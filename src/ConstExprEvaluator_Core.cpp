@@ -387,12 +387,15 @@ std::optional<TypeSpecifierNode> tryGetConstexprPointerToMemberAccessType(
 // sizeof/alignof working inside bound constexpr function evaluation where the
 // parser may not be able to resolve local variables from the current scope.
 std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNode& expr_node, EvaluationContext& context) {
-	if (!context.local_bindings || !expr_node.is<ExpressionNode>()) {
+	if (!expr_node.is<ExpressionNode>()) {
 		return std::nullopt;
 	}
 
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 	if (std::holds_alternative<IdentifierNode>(expr)) {
+		if (!context.local_bindings) {
+			return std::nullopt;
+		}
 		const IdentifierNode& identifier = std::get<IdentifierNode>(expr);
 		auto binding_it = context.local_bindings->find(identifier.name());
 		if (binding_it != context.local_bindings->end() && binding_it->second.exact_type.has_value()) {
@@ -446,6 +449,9 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 	if (std::holds_alternative<MemberAccessNode>(expr)) {
 		const auto& member_access = std::get<MemberAccessNode>(expr);
 		auto object_type_opt = tryGetConstexprBoundExpressionType(member_access.object(), context);
+		if (!object_type_opt.has_value() && context.parser) {
+			object_type_opt = context.parser->get_expression_type(member_access.object());
+		}
 		if (!object_type_opt.has_value() || !is_struct_type(object_type_opt->category())) {
 			return std::nullopt;
 		}
@@ -490,6 +496,9 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 	if (std::holds_alternative<ArraySubscriptNode>(expr)) {
 		const auto& array_subscript = std::get<ArraySubscriptNode>(expr);
 		auto base_type_opt = tryGetConstexprBoundExpressionType(array_subscript.array_expr(), context);
+		if (!base_type_opt.has_value() && context.parser) {
+			base_type_opt = context.parser->get_expression_type(array_subscript.array_expr());
+		}
 		if (!base_type_opt.has_value()) {
 			return std::nullopt;
 		}
