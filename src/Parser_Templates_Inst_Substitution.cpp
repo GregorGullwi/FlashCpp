@@ -121,9 +121,11 @@ namespace {
 
 	auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
 	if (!eval_result.success()) {
+		FLASH_LOG(Templates, Debug, "substituteAndEvaluateNonTypeDefaultImpl: evaluation failed");
 		return std::nullopt;
 	}
 
+	FLASH_LOG(Templates, Debug, "substituteAndEvaluateNonTypeDefaultImpl: succeeded");
 	return templateTypeArgFromEvalResult(eval_result);
 }
 
@@ -245,10 +247,44 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		return make_dependent_value_for_alias_param(id_handle);
 	}
 
-	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-	auto eval_result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
-	if (eval_result.success()) {
-		return templateTypeArgFromEvalResult(eval_result);
+	// TypeTraitExprNode arguments (e.g. __is_final(T), __is_empty(T)) must NOT be
+	// evaluated before template parameter substitution: the placeholder type held
+	// inside them does not carry flags like is_final/is_empty, so an early
+	// unsubstituted evaluation would silently return the wrong value (false) and
+	// prevent the correct substituted evaluation below from running.
+	const bool is_type_trait_expr = std::get_if<TypeTraitExprNode>(&arg_expr) != nullptr;
+	if (is_type_trait_expr) {
+		FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: skipping early eval for TypeTraitExprNode");
+
+		// If the type arguments that feed this TypeTraitExpr are still dependent
+		// (e.g. __is_final(H) where H is an outer template parameter of HeadBase),
+		// evaluating the trait on the placeholder type would silently return false
+		// and poison the cached instantiation. Instead, return a dependent bool
+		// placeholder so the downstream code registers a dependent Cond<dep,...>
+		// rather than a concrete (wrong) one. When the outer template is later
+		// instantiated with a concrete type (e.g. FinalHead), this function will
+		// be called again with non-dependent args and will evaluate correctly.
+		for (const TemplateTypeArg& arg : template_args) {
+			if (arg.is_dependent && arg.dependent_name.isValid()) {
+				FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: arg is dependent, returning dependent bool placeholder");
+				// Pre-substitute the alias template parameters (e.g. 'Type' in __is_final(Type))
+				// into the outer dependent parameter (e.g. 'Head') so that when the outer
+				// template is later instantiated, materializeStoredTemplateArgs can find
+				// the outer parameter's name in param_map_ and evaluate correctly.
+				ASTNode pre_substituted = substituteNonTypeDefaultExpressionImpl(
+					*this,
+					arg_node,
+					template_parameters,
+					std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
+				return TemplateTypeArg::makeDependentValue(arg.dependent_name, TypeCategory::Bool, 0, pre_substituted);
+			}
+		}
+	} else {
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		auto eval_result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
+		if (eval_result.success()) {
+			return templateTypeArgFromEvalResult(eval_result);
+		}
 	}
 
 	std::vector<std::string_view> template_param_names_sv;
@@ -1050,6 +1086,57 @@ ASTNode Parser::substitute_template_params_in_expression(
 		}
 		ConstructorCallNode new_ctor(ctor.type_node(), std::move(new_args), ctor.called_from());
 		return emplace_node<ExpressionNode>(new_ctor);
+	}
+
+	// Handle TypeTraitExprNode (e.g. __is_final(T), __is_empty(T))
+	// Substitute the template parameter in the type argument so that
+	// evaluateDependentNTTPExpression / ConstExpr::Evaluator can produce the
+	// correct bool result against the concrete type.
+	if (std::holds_alternative<TypeTraitExprNode>(expr_variant)) {
+		const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr_variant);
+		if (trait_expr.has_type() && trait_expr.type_node().is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_node = trait_expr.type_node().as<TypeSpecifierNode>();
+
+			// Try to find the type by its TypeIndex first (most common path)
+			auto it = type_substitution_map.find(type_node.type_index());
+			if (it == type_substitution_map.end()) {
+				// Fallback: match by name when TypeIndex registration differs across templates
+				if (type_node.category() == TypeCategory::UserDefined ||
+					type_node.category() == TypeCategory::TypeAlias ||
+					type_node.category() == TypeCategory::Template) {
+					std::string_view type_name = type_node.token().value();
+					if (type_name.empty()) {
+						if (const TypeInfo* ti = tryGetTypeInfo(type_node.type_index())) {
+							type_name = StringTable::getStringView(ti->name());
+						}
+					}
+					for (const auto& [key_type_index, arg] : type_substitution_map) {
+						if (const TypeInfo* ki = tryGetTypeInfo(key_type_index)) {
+							if (StringTable::getStringView(ki->name()) == type_name) {
+								it = type_substitution_map.find(key_type_index);
+								break;
+							}
+						}
+					}
+				}
+			}
+			if (it != type_substitution_map.end()) {
+				const TemplateTypeArg& arg = it->second;
+				TypeSpecifierNode new_type(
+					arg.typeEnum(),
+					TypeQualifier::None,
+					get_type_size_bits(arg.category()),
+					type_node.token(), CVQualifier::None);
+				new_type.set_type_index(arg.type_index);
+				new_type.set_reference_qualifier(arg.ref_qualifier);
+				for (size_t p = 0; p < arg.pointer_depth; ++p) {
+					new_type.add_pointer_level(CVQualifier::None);
+				}
+				ASTNode new_type_node = emplace_node<TypeSpecifierNode>(new_type);
+				TypeTraitExprNode new_trait(trait_expr.kind(), new_type_node, trait_expr.trait_token());
+				return emplace_node<ExpressionNode>(new_trait);
+			}
+		}
 	}
 
 	// Handle binary operators - recursively substitute in both operands

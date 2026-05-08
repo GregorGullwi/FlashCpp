@@ -241,6 +241,8 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 		return substituteMemberAccess(expr.as<MemberAccessNode>());
 	} else if (expr.is<SizeofExprNode>()) {
 		return substituteSizeofExpr(expr.as<SizeofExprNode>());
+	} else if (expr.is<TypeTraitExprNode>()) {
+		return substituteTypeTraitExpr(expr.as<TypeTraitExprNode>());
 	} else if (expr.is<StaticCastNode>()) {
 		return substituteStaticCast(expr.as<StaticCastNode>());
 	} else if (expr.is<NumericLiteralNode>()) {
@@ -347,14 +349,45 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	for (const auto& arg : stored_args) {
 		TemplateTypeArg materialized_arg = toTemplateTypeArg(arg);
 		bool substituted = false;
+		auto applyEvaluatedValue = [&](const Parser::ConstantValue& value) {
+			materialized_arg.is_value = true;
+			materialized_arg.value = value.value;
+			materialized_arg.type_index = nativeTypeIndex(value.type);
+			materialized_arg.dependent_name = {};
+			materialized_arg.is_dependent = false;
+			result.had_substitution = true;
+			substituted = true;
+		};
 
 		if (materialized_arg.dependent_name.isValid()) {
 			std::string_view dependent_name = StringTable::getStringView(materialized_arg.dependent_name);
 			auto dep_subst_it = param_map_.find(dependent_name);
 			if (dep_subst_it != param_map_.end()) {
-				materialized_arg = rebindDependentTemplateTypeArg(dep_subst_it->second, materialized_arg);
-				result.had_substitution = true;
-				substituted = true;
+				// When the dependent arg stores a TypeTraitExprNode (e.g. __is_final(H)) the
+				// right thing is to substitute the concrete type into the trait expression and
+				// evaluate it to a bool, rather than copying the concrete struct type verbatim
+				// into what is actually a bool-typed NTTP slot.
+				if (materialized_arg.is_value && materialized_arg.dependent_expr.has_value()) {
+					const ASTNode& stored_expr = *materialized_arg.dependent_expr;
+					ASTNode substituted_expr = substitute(stored_expr);
+					if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
+						applyEvaluatedValue(*eval_result);
+						FLASH_LOG(Templates, Debug, "materializeStoredTemplateArgs: evaluated dependent TypeTraitExpr -> ", eval_result->value);
+					} else {
+						// Keep the substituted expression for a later materialization pass.
+						// This avoids rebinding the value placeholder to a type argument when
+						// the trait still depends on other template parameters.
+						materialized_arg.dependent_expr = std::move(substituted_expr);
+						materialized_arg.is_dependent = true;
+						result.had_substitution = true;
+						substituted = true;
+					}
+				}
+				if (!substituted) {
+					materialized_arg = rebindDependentTemplateTypeArg(dep_subst_it->second, materialized_arg);
+					result.had_substitution = true;
+					substituted = true;
+				}
 			} else if (evaluate_dependent_member_values && materialized_arg.is_value) {
 				size_t scope_pos = dependent_name.rfind("::");
 				if (scope_pos != std::string_view::npos) {
@@ -377,13 +410,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 								ExpressionNode& member_expr =
 									gChunkedAnyStorage.emplace_back<ExpressionNode>(member_qual_id);
 								if (auto value = parser_.try_evaluate_constant_expression(ASTNode(&member_expr))) {
-									materialized_arg.is_value = true;
-									materialized_arg.value = value->value;
-									materialized_arg.type_index = nativeTypeIndex(value->type);
-									materialized_arg.dependent_name = {};
-									materialized_arg.is_dependent = false;
-									result.had_substitution = true;
-									substituted = true;
+									applyEvaluatedValue(*value);
 								}
 							}
 						}
@@ -1602,6 +1629,52 @@ ASTNode ExpressionSubstitutor::substituteSizeofExpr(const SizeofExprNode& sizeof
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_sizeof_ref);
 		return ASTNode(&new_expr);
 	}
+}
+
+ASTNode ExpressionSubstitutor::substituteTypeTraitExpr(const TypeTraitExprNode& trait_expr) {
+	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing type trait expression");
+
+	auto substitute_trait_type = [this](const ASTNode& type_node) {
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return type_node;
+		}
+
+		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+			substituteInType(type_node.as<TypeSpecifierNode>()));
+		return ASTNode(&new_type);
+	};
+
+	if (trait_expr.is_no_arg_trait()) {
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+			TypeTraitExprNode(trait_expr.kind(), trait_expr.trait_token()));
+		return ASTNode(&new_expr);
+	}
+
+	ASTNode substituted_type = substitute_trait_type(trait_expr.type_node());
+
+	if (trait_expr.has_second_type()) {
+		ASTNode substituted_second_type = substitute_trait_type(trait_expr.second_type_node());
+
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+			TypeTraitExprNode(trait_expr.kind(), substituted_type, substituted_second_type, trait_expr.trait_token()));
+		return ASTNode(&new_expr);
+	}
+
+	if (trait_expr.is_variadic_trait()) {
+		std::vector<ASTNode> substituted_additional_types;
+		substituted_additional_types.reserve(trait_expr.additional_type_nodes().size());
+		for (const ASTNode& additional_type : trait_expr.additional_type_nodes()) {
+			substituted_additional_types.push_back(substitute_trait_type(additional_type));
+		}
+
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+			TypeTraitExprNode(trait_expr.kind(), substituted_type, std::move(substituted_additional_types), trait_expr.trait_token()));
+		return ASTNode(&new_expr);
+	}
+
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+		TypeTraitExprNode(trait_expr.kind(), substituted_type, trait_expr.trait_token()));
+	return ASTNode(&new_expr);
 }
 
 ASTNode ExpressionSubstitutor::substituteStaticCast(const StaticCastNode& cast_node) {

@@ -101,6 +101,38 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+### 2026-05-08 Linux/libstdc++ alias-template base/member-trait follow-up
+
+This pass retested the shared tuple/default-NTTP blocker and fixed two
+high-layer semantic issues in the isolated pattern, although the full
+libstdc++ tuple path still has a remaining member-alias-template argument
+preservation gap.
+
+Fixes landed:
+
+- **Expression substitution now rewrites `TypeTraitExprNode` type operands**
+  before constexpr/default-NTTP evaluation. This lets trait aliases such as
+  `__is_empty(T)` evaluate after `T` is rebound to a concrete template
+  argument.
+- **Deferred alias-template bases are materialized to their terminal resolved
+  type** when no further member type chain is present. This keeps bases written
+  through alias templates from inheriting the intermediate helper template
+  instead of the alias result.
+
+Regression test:
+
+- `tests/test_type_trait_alias_default_nttp_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| Full regression suite after edits | ✅ Pass | n/a | `bash tests/run_all_tests.sh`: 2247 pass / 0 fail, 170 `_fail` correct. |
+| `test_type_trait_alias_default_nttp_ret0.cpp` | ✅ Pass | n/a | New regression verifies a dependent type-trait alias can feed a default NTTP and an alias-template base resolves to the selected alias result. |
+| `<tuple>` (`test_std_tuple.cpp`) | ❌ Compile Error | 1.70s | Still stops at `Could not evaluate non-type template default for parameter 2 of '_Head_base'`; current investigation shows libstdc++ `__conditional_t` is still reduced to `__conditional<...>::value`, so the member alias template `::template type<If, Else>` arguments are not preserved through the alias chain. |
+| `<list>` (`test_std_list.cpp`) | ❌ Compile Error | 2.22s | Still stops at the shared `_Head_base` default-NTTP path. |
+| `<string>` (`test_std_string.cpp`) | ❌ Compile Error | 3.77s | Still stops at the shared `_Head_base` default-NTTP path. |
+
 ### 2026-05-08 Linux/libstdc++ partial-specialization alias/default-NTTP follow-up
 
 This pass retested tuple-heavy standard headers and fixed a high-layer

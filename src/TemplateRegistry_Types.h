@@ -1025,10 +1025,17 @@ inline TemplateTypeArg materializeTemplateArg(
 				const TemplateTypeArg& substituted_arg = template_args[i];
 				if (!arg_info.is_value && !substituted_arg.is_value) {
 					concrete_arg = rebindDependentTemplateTypeArg(substituted_arg, arg_info);
+					substituted_dependent_name = true;
+				} else if (arg_info.is_value && arg_info.dependent_expr.has_value() && !substituted_arg.is_value) {
+					// NTTP arg (e.g. bool) has a TypeTraitExpr stored in dependent_expr but the
+					// matched template parameter was a type (e.g. Head → Empty).  Copying the
+					// type arg verbatim into the value slot is incorrect.  Instead we leave
+					// substituted_dependent_name=false so the eval_dependent_expr path below
+					// can evaluate the stored expression against the full concrete param/arg list.
 				} else {
 					concrete_arg = substituted_arg;
+					substituted_dependent_name = true;
 				}
-				substituted_dependent_name = true;
 				break;
 			}
 		}
