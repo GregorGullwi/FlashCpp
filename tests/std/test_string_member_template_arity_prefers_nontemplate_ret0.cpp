@@ -15,7 +15,7 @@ struct Holder {
 
 	template<typename T>
 	int find(const T& value, unsigned long pos = 0) const {
-		return find(value.data(), pos, value.size());
+		return this->find(value.data(), pos, value.size());
 	}
 };
 
