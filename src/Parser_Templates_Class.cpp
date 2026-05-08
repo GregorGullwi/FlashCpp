@@ -6,6 +6,12 @@
 
 namespace {
 
+// Unscoped enum enumerators declared in a class are usable through class
+// qualification, e.g. `trait<T>::__value`.  Mirror them into the template AST
+// and, when available, the backing StructTypeInfo so semantic lookup sees them
+// through the same path as static data members.  `struct_info` is null only for
+// callers that are collecting AST shape without an immediately-owned type-info
+// object.
 void addUnscopedEnumEnumeratorsAsStaticMembers(
 	StructDeclarationNode& struct_ref,
 	StructTypeInfo* struct_info,
