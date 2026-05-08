@@ -2498,6 +2498,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						if (!tp) continue;
 						const size_t count = template_param_arg_counts[j];
 						if (tp->is_variadic()) {
+							// Expand each pack element as a non-variadic entry so that
+							// forEachNonPackTemplateParamArgBinding can bind them one-to-one.
 							for (size_t k = 0; k < count; ++k) {
 								if (flat_arg_idx + k < template_args.size()) {
 									flat_subst_params.push_back(emplace_node<TemplateParameterNode>(
