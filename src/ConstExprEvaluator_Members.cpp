@@ -13,6 +13,7 @@ constexpr int kDefaultShiftWidthBits = 64;
 constexpr size_t kSyntheticTokenLine = 0;
 constexpr size_t kSyntheticTokenColumn = 0;
 constexpr size_t kSyntheticTokenFileIndex = 0;
+constexpr std::string_view kNestedTypeAliasName = "type";
 
 TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, const std::vector<size_t>& array_dimensions);
 EvalResult materializeArrayInitializer(
@@ -3996,6 +3997,123 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					if (auto exact_value = evaluate_specialization_static_member(member_handle)) {
 						FLASH_LOG(ConstExpr, Debug, "Evaluated static member from exact specialization AST");
 						return *exact_value;
+					}
+				}
+
+				if (!static_member && qualified_id.name() != kNestedTypeAliasName) {
+					StringHandle nested_type_alias_handle{};
+					auto nested_type_alias_it = getTypesByNameMap().end();
+					auto try_nested_alias_lookup_for_owner = [&](StringHandle owner_name) -> bool {
+						nested_type_alias_handle = StringTable::getOrInternStringHandle(
+							StringBuilder()
+								.append(owner_name)
+								.append("::")
+								.append(kNestedTypeAliasName)
+								.commit());
+						nested_type_alias_it = getTypesByNameMap().find(nested_type_alias_handle);
+						return nested_type_alias_it != getTypesByNameMap().end() &&
+							nested_type_alias_it->second != nullptr;
+					};
+
+					bool has_nested_alias = false;
+					if (resolved_type_info != nullptr &&
+						resolved_type_info->name().isValid() &&
+						resolved_type_info->name() != struct_handle) {
+						has_nested_alias = try_nested_alias_lookup_for_owner(resolved_type_info->name());
+					}
+					if (!has_nested_alias) {
+						has_nested_alias = try_nested_alias_lookup_for_owner(struct_handle);
+					}
+
+					if (has_nested_alias) {
+						const TypeInfo* nested_alias_info = nested_type_alias_it->second;
+						ResolvedAliasTypeInfo resolved_nested_alias = resolveAliasTypeInfo(
+							nested_alias_info->registeredTypeIndex().withCategory(
+								nested_alias_info->typeEnum()));
+						const TypeInfo* nested_target_info = resolved_nested_alias.terminal_type_info;
+						if (!nested_target_info && resolved_nested_alias.type_index.is_valid()) {
+							nested_target_info = tryGetTypeInfo(resolved_nested_alias.type_index);
+						}
+						if (nested_target_info != nullptr &&
+							nested_target_info->isTemplateInstantiation() &&
+							nested_target_info->getStructInfo() == nullptr &&
+							context.parser != nullptr) {
+							std::vector<TemplateTypeArg> nested_template_args;
+							nested_template_args.reserve(nested_target_info->templateArgs().size());
+							for (const auto& arg_info : nested_target_info->templateArgs()) {
+								TemplateTypeArg nested_arg = toTemplateTypeArg(arg_info);
+								if (nested_arg.dependent_name.isValid()) {
+									bool rebound_nested_arg = false;
+									std::string_view nested_arg_name =
+										StringTable::getStringView(nested_arg.dependent_name);
+									for (size_t i = 0;
+										 i < context.template_param_names.size() &&
+										 i < context.template_args.size();
+										 ++i) {
+										if (context.template_param_names[i] == nested_arg_name) {
+											nested_arg = context.template_args[i];
+											rebound_nested_arg = true;
+											break;
+										}
+									}
+									if (!rebound_nested_arg && nested_target_info->templateArgs().size() == 1) {
+										// Alias-template chains can preserve the alias' local parameter name
+										// (for example `Type`) after the outer default-argument context has
+										// already rebound it to a different parameter name (for example `Head`).
+										// For a single-argument alias target, the only viable type binding in the
+										// current default-argument context is the aliased type argument.
+										FLASH_LOG(ConstExpr, Debug, "Rebinding single-argument nested alias target by first non-value context argument");
+										size_t non_value_context_args = 0;
+										for (const TemplateTypeArg& context_arg : context.template_args) {
+											if (!context_arg.is_value) {
+												++non_value_context_args;
+											}
+										}
+										if (non_value_context_args == 1) {
+											for (const TemplateTypeArg& context_arg : context.template_args) {
+												if (!context_arg.is_value) {
+													nested_arg = context_arg;
+													rebound_nested_arg = true;
+													break;
+												}
+											}
+										} else if (non_value_context_args > 1) {
+											FLASH_LOG(ConstExpr, Warning, "Single-argument nested alias fallback skipped due to ambiguous non-value context arguments");
+										}
+									}
+								}
+								nested_template_args.push_back(std::move(nested_arg));
+							}
+							std::string_view nested_base_name =
+								StringTable::getStringView(nested_target_info->baseTemplateName());
+							if (!nested_base_name.empty()) {
+								Parser::AliasTemplateMaterializationResult materialized_target =
+									context.parser->materializeTemplateInstantiationForLookup(
+										nested_base_name,
+										nested_template_args);
+								if (materialized_target.resolved_type_info != nullptr) {
+									nested_target_info = materialized_target.resolved_type_info;
+								} else if (!materialized_target.instantiated_name.empty()) {
+									nested_target_info = findTypeByName(
+										StringTable::getOrInternStringHandle(
+											materialized_target.instantiated_name));
+								}
+							}
+						}
+						if (nested_target_info != nullptr &&
+							nested_target_info->name() != struct_handle) {
+							NamespaceHandle nested_target_ns = gNamespaceRegistry.getOrCreateNamespace(
+								NamespaceRegistry::GLOBAL_NAMESPACE,
+								nested_target_info->name());
+							QualifiedIdentifierNode& rebound_qual_id =
+								gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+									nested_target_ns,
+									qualified_id.identifier_token());
+							ExpressionNode& rebound_expr =
+								gChunkedAnyStorage.emplace_back<ExpressionNode>(rebound_qual_id);
+							FLASH_LOG(ConstExpr, Debug, "Rebound missing static member through nested type alias");
+							return evaluate(ASTNode(&rebound_expr), context);
+						}
 					}
 				}
 

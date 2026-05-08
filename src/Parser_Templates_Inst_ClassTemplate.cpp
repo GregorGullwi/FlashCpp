@@ -2466,56 +2466,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 						const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
 
-						// Handle dependent static member access like is_arithmetic_void::value
 						if (!qual_id.namespace_handle().isGlobal()) {
 							std::string_view type_name = gNamespaceRegistry.getName(qual_id.namespace_handle());
 							std::string_view member_name = qual_id.name();
-
-							// Check for dependent placeholder using TypeInfo-based detection
-							auto [is_dependent_placeholder, template_base_name] = isDependentTemplatePlaceholder(type_name);
-							if (is_dependent_placeholder && !filled_args_for_pattern_match.empty()) {
-								// Build the instantiated template name using hash-based naming
-								std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_args_for_pattern_match[0]});
-
-								FLASH_LOG(Templates, Debug, "Resolving dependent qualified identifier (pattern match): ",
-										  type_name, "::", member_name, " -> ", inst_name, "::", member_name);
-
-								// Try to instantiate the template
-								try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_args_for_pattern_match[0]});
-
-								// Look up the instantiated type
-								auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
-								if (type_it != getTypesByNameMap().end()) {
-									const TypeInfo* type_info = type_it->second;
-									if (type_info->getStructInfo()) {
-										const StructTypeInfo* struct_info = type_info->getStructInfo();
-										// Find the static member
-										for (const auto& static_member : struct_info->static_members) {
-											if (StringTable::getStringView(static_member.getName()) == member_name) {
-												// Evaluate the static member's initializer
-												if (static_member.initializer.has_value()) {
-													const ASTNode& init_node = *static_member.initializer;
-													if (init_node.is<ExpressionNode>()) {
-														const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
-														if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&init_expr)) {
-															bool val = bool_literal->value();
-															TemplateTypeArg arg(val ? 1LL : 0LL, TypeCategory::Bool);
-															filled_args_for_pattern_match.push_back(arg);
-															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
-														} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
-															const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
-															const auto& val = lit.value();
-															if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-																TemplateTypeArg arg(static_cast<int64_t>(*ull_val));
-																filled_args_for_pattern_match.push_back(arg);
-															}
-														}
-													}
-												}
-												break;
-											}
-										}
-									}
+							if (!filled_args_for_pattern_match.empty()) {
+								if (tryAppendStaticMemberValueFromTypeName(
+										filled_args_for_pattern_match,
+										type_name,
+										member_name,
+										primary_params,
+										filled_args_for_pattern_match,
+										"pattern-match non-type default qualified static member")) {
+									FLASH_LOG(Templates, Debug, "Resolved dependent qualified identifier: ",
+											  type_name, "::", member_name);
 								}
 							}
 						}
@@ -3988,6 +3951,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						alias_target_name = alias_target_info->name();
 					}
 					StringHandle alias_token_name = alias_type_spec.token().handle();
+					auto applyTemplateArgAliasSubstitution = [&](size_t pattern_idx, std::string_view parameter_name) {
+						const TemplateTypeArg& concrete_arg = template_args[pattern_idx];
+						substituted_type = concrete_arg.typeEnum();
+						substituted_type_index = concrete_arg.type_index;
+						if (!is_struct_type(substituted_type)) {
+							substituted_size = get_type_size_bits(substituted_type);
+						} else {
+							substituted_size = 0;
+							if (const TypeInfo* sub_ti = tryGetTypeInfo(substituted_type_index)) {
+								substituted_size = sub_ti->sizeInBits().value;
+							}
+						}
+						FLASH_LOG(Templates, Debug, "Substituted template parameter '",
+								  parameter_name,
+								  "' at pattern position ", pattern_idx, " with type=", static_cast<int>(substituted_type));
+					};
 					for (const TemplateParameterNode& template_param_node : template_params) {
 						StringHandle param_name = template_param_node.nameHandle();
 						if (param_name == alias_token_name || param_name == alias_target_name) {
@@ -4012,6 +3991,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// - So we substitute with template_args[1] = int
 
 					// Find which template parameter index this alias type corresponds to
+					for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < template_args.size(); ++pattern_idx) {
+						const TemplateTypeArg& pattern_arg = pattern_args[pattern_idx];
+						if (!pattern_arg.is_value && pattern_arg.is_dependent && pattern_arg.dependent_name.isValid()) {
+							StringHandle pattern_param_name = pattern_arg.dependent_name;
+							if (pattern_param_name == alias_token_name || pattern_param_name == alias_target_name) {
+								applyTemplateArgAliasSubstitution(
+									pattern_idx,
+									StringTable::getStringView(pattern_param_name));
+								goto substitution_done;
+							}
+						}
+					}
+
 					for (size_t param_idx = 0; param_idx < template_params.size(); ++param_idx) {
 						// Find which pattern_arg position this template parameter appears at
 						for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < template_args.size(); ++pattern_idx) {
@@ -4031,22 +4023,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 								if (dependent_param_index == param_idx) {
 									// Found it! Substitute with template_args[pattern_idx]
-									const TemplateTypeArg& concrete_arg = template_args[pattern_idx];
-									substituted_type = concrete_arg.typeEnum();
-									substituted_type_index = concrete_arg.type_index;
-									// Only call get_type_size_bits for basic types
-									if (!is_struct_type(substituted_type)) {
-										substituted_size =get_type_size_bits(substituted_type);
-									} else {
-										// For UserDefined types, look up the size from the type registry
-										substituted_size = 0;
-										if (const TypeInfo* sub_ti = tryGetTypeInfo(substituted_type_index)) {
-											substituted_size = toSizeT(sub_ti->sizeInBytes());
-										}
-									}
-									FLASH_LOG(Templates, Debug, "Substituted template parameter '",
-												template_params[param_idx].name(),
-												"' at pattern position ", pattern_idx, " with type=", static_cast<int>(substituted_type));
+									applyTemplateArgAliasSubstitution(
+										pattern_idx,
+										template_params[param_idx].name());
 									goto substitution_done;
 								}
 							}
