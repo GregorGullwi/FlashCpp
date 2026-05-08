@@ -13,6 +13,7 @@ constexpr int kDefaultShiftWidthBits = 64;
 constexpr size_t kSyntheticTokenLine = 0;
 constexpr size_t kSyntheticTokenColumn = 0;
 constexpr size_t kSyntheticTokenFileIndex = 0;
+constexpr std::string_view kNestedTypeAliasName = "type";
 
 TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, const std::vector<size_t>& array_dimensions);
 EvalResult materializeArrayInitializer(
@@ -3999,11 +4000,12 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					}
 				}
 
-				if (!static_member && qualified_id.name() != "type") {
+				if (!static_member && qualified_id.name() != kNestedTypeAliasName) {
 					StringHandle nested_type_alias_handle = StringTable::getOrInternStringHandle(
 						StringBuilder()
 							.append(struct_handle)
-							.append("::type")
+							.append("::")
+							.append(kNestedTypeAliasName)
 							.commit());
 					auto nested_type_alias_it = getTypesByNameMap().find(nested_type_alias_handle);
 					if (nested_type_alias_it != getTypesByNameMap().end() &&
@@ -4045,6 +4047,15 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 										// For a single-argument alias target, the only viable type binding in the
 										// current default-argument context is the aliased type argument.
 										FLASH_LOG(ConstExpr, Debug, "Rebinding single-argument nested alias target by first non-value context argument");
+										size_t non_value_context_args = 0;
+										for (const TemplateTypeArg& context_arg : context.template_args) {
+											if (!context_arg.is_value) {
+												++non_value_context_args;
+											}
+										}
+										if (non_value_context_args > 1) {
+											FLASH_LOG(ConstExpr, Warning, "Single-argument nested alias fallback saw multiple non-value context arguments");
+										}
 										for (const TemplateTypeArg& context_arg : context.template_args) {
 											if (!context_arg.is_value) {
 												nested_arg = context_arg;
