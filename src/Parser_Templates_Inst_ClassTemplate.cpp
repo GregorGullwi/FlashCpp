@@ -2466,56 +2466,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 						const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
 
-						// Handle dependent static member access like is_arithmetic_void::value
 						if (!qual_id.namespace_handle().isGlobal()) {
 							std::string_view type_name = gNamespaceRegistry.getName(qual_id.namespace_handle());
 							std::string_view member_name = qual_id.name();
-
-							// Check for dependent placeholder using TypeInfo-based detection
-							auto [is_dependent_placeholder, template_base_name] = isDependentTemplatePlaceholder(type_name);
-							if (is_dependent_placeholder && !filled_args_for_pattern_match.empty()) {
-								// Build the instantiated template name using hash-based naming
-								std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_args_for_pattern_match[0]});
-
-								FLASH_LOG(Templates, Debug, "Resolving dependent qualified identifier (pattern match): ",
-										  type_name, "::", member_name, " -> ", inst_name, "::", member_name);
-
-								// Try to instantiate the template
-								try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_args_for_pattern_match[0]});
-
-								// Look up the instantiated type
-								auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
-								if (type_it != getTypesByNameMap().end()) {
-									const TypeInfo* type_info = type_it->second;
-									if (type_info->getStructInfo()) {
-										const StructTypeInfo* struct_info = type_info->getStructInfo();
-										// Find the static member
-										for (const auto& static_member : struct_info->static_members) {
-											if (StringTable::getStringView(static_member.getName()) == member_name) {
-												// Evaluate the static member's initializer
-												if (static_member.initializer.has_value()) {
-													const ASTNode& init_node = *static_member.initializer;
-													if (init_node.is<ExpressionNode>()) {
-														const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
-														if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&init_expr)) {
-															bool val = bool_literal->value();
-															TemplateTypeArg arg(val ? 1LL : 0LL, TypeCategory::Bool);
-															filled_args_for_pattern_match.push_back(arg);
-															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
-														} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
-															const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
-															const auto& val = lit.value();
-															if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-																TemplateTypeArg arg(static_cast<int64_t>(*ull_val));
-																filled_args_for_pattern_match.push_back(arg);
-															}
-														}
-													}
-												}
-												break;
-											}
-										}
-									}
+							if (!filled_args_for_pattern_match.empty()) {
+								if (tryAppendStaticMemberValueFromTypeName(
+										filled_args_for_pattern_match,
+										type_name,
+										member_name,
+										primary_params,
+										filled_args_for_pattern_match,
+										"pattern-match non-type default qualified static member")) {
+									FLASH_LOG(Templates, Debug, "Resolved dependent qualified identifier: ",
+											  type_name, "::", member_name);
 								}
 							}
 						}
