@@ -349,6 +349,15 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	for (const auto& arg : stored_args) {
 		TemplateTypeArg materialized_arg = toTemplateTypeArg(arg);
 		bool substituted = false;
+		auto applyEvaluatedValue = [&](const Parser::ConstantValue& value) {
+			materialized_arg.is_value = true;
+			materialized_arg.value = value.value;
+			materialized_arg.type_index = nativeTypeIndex(value.type);
+			materialized_arg.dependent_name = {};
+			materialized_arg.is_dependent = false;
+			result.had_substitution = true;
+			substituted = true;
+		};
 
 		if (materialized_arg.dependent_name.isValid()) {
 			std::string_view dependent_name = StringTable::getStringView(materialized_arg.dependent_name);
@@ -362,14 +371,16 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 					const ASTNode& stored_expr = *materialized_arg.dependent_expr;
 					ASTNode substituted_expr = substitute(stored_expr);
 					if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
-						materialized_arg.is_value = true;
-						materialized_arg.value = eval_result->value;
-						materialized_arg.type_index = nativeTypeIndex(eval_result->type);
-						materialized_arg.dependent_name = {};
-						materialized_arg.is_dependent = false;
+						applyEvaluatedValue(*eval_result);
+						FLASH_LOG(Templates, Debug, "materializeStoredTemplateArgs: evaluated dependent TypeTraitExpr -> ", eval_result->value);
+					} else {
+						// Keep the substituted expression for a later materialization pass.
+						// This avoids rebinding the value placeholder to a type argument when
+						// the trait still depends on other template parameters.
+						materialized_arg.dependent_expr = std::move(substituted_expr);
+						materialized_arg.is_dependent = true;
 						result.had_substitution = true;
 						substituted = true;
-						FLASH_LOG(Templates, Debug, "materializeStoredTemplateArgs: evaluated dependent TypeTraitExpr -> ", eval_result->value);
 					}
 				}
 				if (!substituted) {
@@ -399,13 +410,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 								ExpressionNode& member_expr =
 									gChunkedAnyStorage.emplace_back<ExpressionNode>(member_qual_id);
 								if (auto value = parser_.try_evaluate_constant_expression(ASTNode(&member_expr))) {
-									materialized_arg.is_value = true;
-									materialized_arg.value = value->value;
-									materialized_arg.type_index = nativeTypeIndex(value->type);
-									materialized_arg.dependent_name = {};
-									materialized_arg.is_dependent = false;
-									result.had_substitution = true;
-									substituted = true;
+									applyEvaluatedValue(*value);
 								}
 							}
 						}
