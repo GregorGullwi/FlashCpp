@@ -80,7 +80,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ctime>` | N/A | ✅ Compiled | ~58ms |
 | `<climits>` | N/A | ✅ Compiled | ~30ms |
 | `<cfloat>` | N/A | ✅ Compiled | ~32ms |
-| `<cmath>` | `test_std_cmath.cpp` | ❌ Compile Error | ~6327ms (retested 2026-04-11). "Operator- not defined for operand types". |
+| `<cmath>` | `test_std_cmath.cpp` | ❌ Compile Error | ~730ms (retested 2026-05-08, Linux/libstdc++-14). The `__builtin_modfl(long double, long double*)` overload-resolution stop is fixed; current first hard error is `Could not evaluate non-type template default for parameter 1 of '__promote'`. |
 | `<system_error>` | N/A | 💥 Crash | ~4400ms (retested 2026-04-11). |
 | `<scoped_allocator>` | N/A | ❌ Compile Error | ~1868ms (retested 2026-04-11). "unsupported PackExpansionExprNode". |
 | `<charconv>` | N/A | ✅ Compiled | ~930ms |
@@ -100,6 +100,46 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-08 Linux/libstdc++ long-double builtin follow-up
+
+This pass retested selected `tests/std/test_std_*.cpp` files against
+Linux/libstdc++-14 and fixed the first `<cmath>` blocker found in the current
+state.
+
+Fixes landed:
+
+- **`long double` type-specifier parsing now produces `TypeCategory::LongDouble`**
+  instead of leaving `long double` as `double` after consuming the leading
+  `long` qualifier.
+- **Parser-created builtin declarations now use canonical native type indices**
+  for primitive parameter and return types. This keeps builtin pointer-parameter
+  signatures consistent with ordinary parsed declarations during overload
+  resolution.
+- **IR stack stores from XMM registers now use floating-point stores in generic
+  sized store paths.** This keeps existing long-double-as-SSE-double lowering
+  from tripping pointer-register assertions while fuller x87/80-bit long double
+  codegen remains future work.
+
+Regression tests:
+
+- `tests/test_long_double_overload_ret2.cpp`
+- `tests/test_builtin_modfl_decltype_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| Full regression baseline before edits | ✅ Pass | n/a | `bash tests/run_all_tests.sh`: 2241 pass / 0 fail, 170 `_fail` correct. |
+| Full regression suite after edits | ✅ Pass | n/a | `bash tests/run_all_tests.sh`: 2243 pass / 0 fail, 170 `_fail` correct. |
+| `test_long_double_overload_ret2.cpp` | ✅ Pass | n/a | New regression verifies `long double*` selects the `long double*` overload instead of the `double*` overload. |
+| `test_builtin_modfl_decltype_ret0.cpp` | ✅ Pass | n/a | New regression verifies the GCC `__builtin_modfl(long double, long double*)` signature resolves in an unevaluated context. |
+| `test_conversion_primitive_promotions_ret0.cpp` / `test_fwd_decl_default_template_args_ret0.cpp` | ✅ Pass | n/a | Existing long-double runtime coverage still compiles, links, and runs after the parser fix. |
+| `<cmath>` (`test_std_cmath.cpp`) | ❌ Compile Error | 0.73s | Previous `__builtin_modfl` no-match stop is fixed. Current first hard error is `Could not evaluate non-type template default for parameter 1 of '__promote'`. |
+| `<latch>` (`test_std_latch.cpp`) | ❌ Compile Error | 1.08s | Still stops on `std::__mutex_base` constructor resolution plus `int`→`long` conversion gaps. |
+| `<numeric>` (`test_std_numeric.cpp`) | ❌ Compile Error | 2.21s | Still stops in `numeric_limits` members with unresolved semantic type category 25 during IR. |
+| `<string_view>` (`test_std_string_view.cpp`) | 💥 Crash | 2.34s | Still crashes after multiple char-traits conversion gaps and unresolved semantic type category 25. |
+| `<optional>` (`test_std_optional.cpp`) | ❌ Compile Error | 1.08s | Still stops on `std::partial_ordering` constructor resolution and `_Optional_payload::_M_engaged` reconstruction. |
 
 ### 2026-05-07 Linux/libstdc++ unresolved-placeholder-signature follow-up
 

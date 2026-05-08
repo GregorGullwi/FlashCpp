@@ -2599,6 +2599,8 @@ void IrToObjConverter<TWriterClass>::emitMovToFrameSized(SizedRegister source, S
 			opcodes = generateMovToFrame16(source.reg, dest.offset);
 		} else if (dest.size_in_bits.value <= 32) {
 			opcodes = generateMovToFrame32(source.reg, dest.offset);
+		} else if (is_xmm_source) {
+			opcodes = generateFloatMovToFrame(source.reg, dest.offset, false);
 		} else {
 			opcodes = generatePtrMovToFrame(source.reg, dest.offset);
 		}
@@ -9905,15 +9907,17 @@ void IrToObjConverter<TWriterClass>::storeUnaryResult(const IrOperand& result_op
 				textSectionData.insert(textSectionData.end(), moveOp.op_codes.begin(), moveOp.op_codes.begin() + moveOp.size_in_bytes);
 			}
 		} else {
-			auto mov_opcodes = generatePtrMovToFrame(result_physical_reg, result_stack_var_addr);
-			textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+			emitMovToFrameSized(
+				SizedRegister{result_physical_reg, size_in_bits, false},
+				SizedStackSlot{result_stack_var_addr, size_in_bits, false});
 		}
 	} else if (std::holds_alternative<StringHandle>(result_operand)) {
 		StringHandle result_var_name = std::get<StringHandle>(result_operand);
 		auto var_id = variable_scopes.back().variables.find(result_var_name);
 		if (var_id != variable_scopes.back().variables.end()) {
-			auto store_opcodes = generatePtrMovToFrame(result_physical_reg, var_id->second.offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			emitMovToFrameSized(
+				SizedRegister{result_physical_reg, size_in_bits, false},
+				SizedStackSlot{var_id->second.offset, size_in_bits, false});
 		}
 	}
 }
