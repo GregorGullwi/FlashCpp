@@ -72,3 +72,15 @@ std::optional<TemplateTypeArg> resolveContextBinding(
 	StringHandle target_name,
 	const TemplateEnvironment& environment);
 
+struct TemplateMaterializationResult {
+	std::optional<ASTNode> instantiated_node;
+	TemplateSubstitutionFailurePolicy applied_policy;
+	bool had_substitution_failures;
+};
+
+struct MaterializedFunctionParameters {
+	std::vector<TypeSpecifierNode> params;
+	TypeSpecifierNode return_type;
+	std::string_view body_source;
+};
+
