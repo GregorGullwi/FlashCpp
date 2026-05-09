@@ -568,8 +568,10 @@ CanonicalTypeDesc canonicalTypeDescFromTemplateArgInfo(const TypeInfo::TemplateA
 								   : CVQualifier::None;
 		desc.pointer_levels.push_back(PointerLevel{level_cv});
 	}
-	if (arg.is_array && arg.array_size.has_value()) {
-		desc.array_dimensions.push_back(*arg.array_size);
+	if (arg.is_array && !arg.array_dimensions.empty()) {
+		for (size_t dim : arg.array_dimensions) {
+			desc.array_dimensions.push_back(dim);
+		}
 	}
 	return desc;
 }

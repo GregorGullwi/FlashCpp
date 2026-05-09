@@ -1016,10 +1016,21 @@ struct TypeInfo {
 		std::variant<int64_t, double, StringHandle> value = int64_t{0};	// For non-type arguments
 		bool is_value = false;		   // true if this is a non-type argument
 		bool is_array = false;
-		std::optional<size_t> array_size = std::nullopt;
+		std::vector<size_t> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
 		StringHandle dependent_name;	 // Name of the dependent template parameter (for inner deduction)
 		std::optional<FunctionSignature> function_signature; // For function pointer template arguments
 		std::optional<ASTNode> dependent_expr;  // Original AST for dependent NTTP expressions (e.g., sizeof(T))
+		bool is_template_template_arg = false;  // true if this is a template template argument
+		StringHandle template_name;  // Name of the template for template-template arguments
+		MemberPointerKind member_pointer_kind = MemberPointerKind::None;  // Distinguish member function vs data pointers
+
+		// Backward-compatible accessor: returns the first (outermost) array dimension if the type
+		// is a 1-D or multi-dimensional array, or nullopt if it is not an array.
+		// NOTE: For multi-dimensional arrays this is intentionally lossy — it returns only the first
+		// dimension and drops the rest.  Callers that need all dimensions must use array_dimensions directly.
+		std::optional<size_t> array_size() const {
+			return array_dimensions.empty() ? std::nullopt : std::optional<size_t>(array_dimensions[0]);
+		}
 
 		// Category accessor (delegates to type_index.category())
 		TypeCategory category() const noexcept { return type_index.category(); }
@@ -2589,11 +2600,9 @@ public:
 			info.value = arg.value;
 			info.is_value = arg.is_value;
 			info.is_array = arg.is_array;
-			// TemplateTypeArg uses array_size() method; TypeInfo::TemplateArgInfo uses array_size field.
-			if constexpr (requires(decltype(arg) a) { a.array_size(); }) {
-				info.array_size = arg.array_size();
-			} else {
-				info.array_size = arg.array_size;
+			// Copy array dimensions from TemplateTypeArg to TemplateArgInfo
+			if constexpr (requires(decltype(arg) a) { a.array_dimensions; }) {
+				info.array_dimensions = arg.array_dimensions;
 			}
 			info.dependent_name = arg.dependent_name;
 			info.function_signature = arg.function_signature;

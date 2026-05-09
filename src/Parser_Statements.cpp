@@ -1444,7 +1444,7 @@ std::optional<TypeSpecifierNode> Parser::get_initializer_list_element_type_spec(
 	}
 	element_type.set_reference_qualifier(element_arg.ref_qualifier);
 	if (element_arg.is_array) {
-		element_type.set_array(true, element_arg.array_size);
+		element_type.set_array(true, element_arg.array_size());
 	}
 	return element_type;
 }

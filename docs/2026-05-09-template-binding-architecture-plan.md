@@ -375,6 +375,16 @@ Tests to add before implementation:
 Complexity: M-L  
 Risk: Medium
 
+Completed notes:
+
+- Extended `TemplateArgInfo` struct with:
+  - `std::vector<size_t> array_dimensions` for multidimensional array support
+  - `bool is_template_template_arg` and `StringHandle template_name` for template-template identity
+  - `MemberPointerKind member_pointer_kind` to distinguish member function vs data pointers
+- Updated `toTemplateArgInfo()` and `toTemplateTypeArg()` conversion functions to handle new fields losslessly
+- Added round-trip test cases for multidimensional arrays, function pointers, member function pointers, and template-template arguments
+- All 2283 tests pass including new lossless round-trip verifications
+
 ### Phase 7: Make `TemplateInstantiationKey` Ordered
 
 Goal: make cache/specialization identity match ordered C++ template argument lists.
