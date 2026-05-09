@@ -745,6 +745,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		FlashCpp::ScopedState guard_current_function(current_function_);
 		current_function_ = &new_func_ref;
 		register_parameters_in_scope(new_func_ref.parameter_nodes());
+		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
+		TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+			std::span<const TemplateParameterNode>(substitution_params.data(), substitution_params.size()),
+			std::span<const TemplateTypeArg>(converted_template_args.data(), converted_template_args.size()),
+			nullptr);
+		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 		ASTNode substituted_body = substituteTemplateParameters(
 			*body_to_substitute,
 			substitution_params,
