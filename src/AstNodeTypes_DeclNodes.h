@@ -954,6 +954,9 @@ enum class DependentPlaceholderKind : uint8_t {
 	DependentMemberType,
 };
 
+// Phase 5: Placeholder for binding storage in InstantiationContext
+// (Will be replaced with actual struct later after TypeInfo is defined)
+
 struct TypeInfo {
 	TypeInfo() = default;
 	TypeInfo(StringHandle name, TypeIndex idx, int fallback_size_bits)
@@ -1035,9 +1038,22 @@ struct TypeInfo {
  // registry-name reconstruction.  For nested types inside a template
  // instantiation, `parent` points to the enclosing type's context.
 	struct InstantiationContext {
+		// Phase 5: Binding-based storage (simplified for now using vectors)
+		// Structure: names, arg_infos, kinds, is_packs are parallel arrays
+		// where binding i = {names[i], {arg_infos[i]}, kinds[i], is_packs[i]}
+		InlineVector<StringHandle, 4> binding_names;
+		InlineVector<TemplateArgInfo, 4> binding_args;
+		std::vector<uint8_t> binding_kinds;  // TemplateParameterKind as uint8
+		std::vector<bool> binding_is_packs;
+		const InstantiationContext* parent = nullptr; // Enclosing type's context (for nesting)
+
+		// Legacy fields for compatibility (populated in parallel during transition)
 		InlineVector<StringHandle, 4> param_names; // Template parameter names (e.g., "T", "U")
 		InlineVector<TemplateArgInfo, 4> param_args; // Concrete template arguments
-		const InstantiationContext* parent = nullptr; // Enclosing type's context (for nesting)
+
+		// Phase 5 accessors
+		bool hasInstantiationContextBindings() const { return !binding_names.empty(); }
+		size_t getInstantiationContextBindingsCount() const { return binding_names.size(); }
 	};
 
 	InlineVector<TemplateArgInfo, 4> template_args_;
@@ -1077,12 +1093,7 @@ struct TypeInfo {
  // Set the type-owned instantiation context for template instantiations.
 	void setInstantiationContext(InlineVector<StringHandle, 4> param_names,
 								 InlineVector<TemplateArgInfo, 4> param_args,
-								 const InstantiationContext* parent) {
-		instantiation_context_ = std::make_unique<InstantiationContext>();
-		instantiation_context_->param_names = std::move(param_names);
-		instantiation_context_->param_args = std::move(param_args);
-		instantiation_context_->parent = parent;
-	}
+								 const InstantiationContext* parent);
 
 	// Returns the TypeCategory embedded in type_index_.
 	TypeCategory category() const {

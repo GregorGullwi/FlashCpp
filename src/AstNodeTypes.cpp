@@ -3,6 +3,7 @@
 #include "StringBuilder.h"
 #include "NameMangling.h"
 #include "Log.h"
+#include "TemplateEnvironment.h"
 #include <sstream>
 #include <set>
 #include <unordered_set>
@@ -894,6 +895,31 @@ void TypeInfo::setStructInfo(std::unique_ptr<StructTypeInfo> info) {
 		}
 	}
 	struct_info_ = std::move(info);
+}
+
+void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names,
+									   InlineVector<TemplateArgInfo, 4> param_args,
+									   const InstantiationContext* parent) {
+	instantiation_context_ = std::make_unique<InstantiationContext>();
+	instantiation_context_->parent = parent;
+	instantiation_context_->param_names = param_names;
+	instantiation_context_->param_args = param_args;
+
+	// Phase 5: Populate binding-based storage alongside legacy fields
+	const size_t pair_count = std::min(param_names.size(), param_args.size());
+	instantiation_context_->binding_names.reserve(pair_count);
+	instantiation_context_->binding_args.reserve(pair_count);
+	instantiation_context_->binding_kinds.reserve(pair_count);
+	instantiation_context_->binding_is_packs.reserve(pair_count);
+	
+	for (size_t i = 0; i < pair_count; ++i) {
+		instantiation_context_->binding_names.push_back(param_names[i]);
+		instantiation_context_->binding_args.push_back(param_args[i]);
+		// Infer kind from the TemplateArgInfo: is_value indicates NonType, otherwise Type
+		uint8_t kind = param_args[i].is_value ? 1 : 0;  // 1=NonType, 0=Type
+		instantiation_context_->binding_kinds.push_back(kind);
+		instantiation_context_->binding_is_packs.push_back(false);  // Individual bindings are never packs
+	}
 }
 
 bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
