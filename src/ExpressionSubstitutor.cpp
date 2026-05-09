@@ -196,6 +196,161 @@ void applyOuterTypeModifiers(TypeSpecifierNode& target, const TypeSpecifierNode&
 
 } // namespace
 
+ExpressionSubstitutor::ExpressionSubstitutor(
+	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
+	Parser& parser)
+	: param_map_(param_map), parser_(parser) {
+	rebuildEnvironmentFromCurrentBindings();
+}
+
+ExpressionSubstitutor::ExpressionSubstitutor(
+	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
+	Parser& parser,
+	const std::vector<std::string_view>& template_param_order)
+	: param_map_(param_map), parser_(parser), template_param_order_(template_param_order) {
+	rebuildEnvironmentFromCurrentBindings();
+}
+
+ExpressionSubstitutor::ExpressionSubstitutor(
+	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
+	const std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>& pack_map,
+	Parser& parser)
+	: param_map_(param_map), pack_map_(pack_map), parser_(parser) {
+	rebuildEnvironmentFromCurrentBindings();
+}
+
+ExpressionSubstitutor::ExpressionSubstitutor(
+	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
+	const std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>& pack_map,
+	Parser& parser,
+	const std::vector<std::string_view>& template_param_order)
+	: param_map_(param_map), pack_map_(pack_map), parser_(parser), template_param_order_(template_param_order) {
+	rebuildEnvironmentFromCurrentBindings();
+}
+
+ExpressionSubstitutor::ExpressionSubstitutor(
+	const TemplateEnvironment& environment,
+	Parser& parser)
+	: parser_(parser) {
+	auto append_environment = [&](auto&& self, const TemplateEnvironment* current) -> void {
+		if (current == nullptr) {
+			return;
+		}
+		self(self, current->parent);
+		for (const TemplateBinding& binding : current->bindings) {
+			if (!binding.name.isValid() || binding.args.empty()) {
+				continue;
+			}
+			std::string_view binding_name = StringTable::getStringView(binding.name);
+			if (binding_name.empty()) {
+				continue;
+			}
+			if (binding.is_pack) {
+				std::vector<TemplateTypeArg>& pack_args = pack_map_[binding.name];
+				pack_args.assign(binding.args.begin(), binding.args.end());
+			} else {
+				TemplateTypeArg normalized_arg = binding.args.front();
+				if (binding.kind == TemplateParameterKind::Template) {
+					normalized_arg.is_template_template_arg = true;
+					if (!normalized_arg.template_name_handle.isValid()) {
+						if (normalized_arg.type_index.is_valid()) {
+							if (const TypeInfo* type_info = tryGetTypeInfo(normalized_arg.type_index)) {
+								normalized_arg.template_name_handle = type_info->name();
+							}
+						}
+						if (!normalized_arg.template_name_handle.isValid() &&
+							normalized_arg.dependent_name.isValid()) {
+							normalized_arg.template_name_handle = normalized_arg.dependent_name;
+						}
+					}
+				}
+				param_map_[binding_name] = normalized_arg;
+			}
+			template_param_order_.push_back(binding_name);
+		}
+	};
+	append_environment(append_environment, &environment);
+	rebuildEnvironmentFromCurrentBindings();
+}
+
+void ExpressionSubstitutor::rebuildEnvironmentFromCurrentBindings() {
+	environment_ = {};
+	environment_.bindings.reserve(param_map_.size() + pack_map_.size());
+	const auto infer_binding_kind = [](const TemplateTypeArg& arg) {
+		if (arg.is_template_template_arg) {
+			return TemplateParameterKind::Template;
+		}
+		return arg.is_value ? TemplateParameterKind::NonType : TemplateParameterKind::Type;
+	};
+	const auto is_in_order = [&](std::string_view name) {
+		for (std::string_view ordered_name : template_param_order_) {
+			if (ordered_name == name) {
+				return true;
+			}
+		}
+		return false;
+	};
+
+	if (!template_param_order_.empty()) {
+		for (std::string_view param_name : template_param_order_) {
+			auto scalar_it = param_map_.find(param_name);
+			auto pack_it = pack_map_.find(StringTable::getOrInternStringHandle(param_name));
+			if (scalar_it != param_map_.end() && pack_it != pack_map_.end()) {
+				// Some legacy substitution map producers keep a scalar alias for a pack
+				// parameter. Prefer the actual pack binding and ignore the scalar alias.
+				scalar_it = param_map_.end();
+			}
+			if (scalar_it != param_map_.end()) {
+				TemplateBinding binding;
+				binding.name = StringTable::getOrInternStringHandle(param_name);
+				binding.kind = infer_binding_kind(scalar_it->second);
+				binding.is_pack = false;
+				binding.args.push_back(scalar_it->second);
+				environment_.bindings.push_back(std::move(binding));
+				continue;
+			}
+			if (pack_it != pack_map_.end()) {
+				TemplateBinding binding;
+				binding.name = pack_it->first;
+				binding.kind = TemplateParameterKind::Type;
+				binding.is_pack = true;
+				binding.args.reserve(pack_it->second.size());
+				for (const TemplateTypeArg& pack_arg : pack_it->second) {
+					binding.args.push_back(pack_arg);
+				}
+				environment_.bindings.push_back(std::move(binding));
+			}
+		}
+	}
+
+	for (const auto& [param_name, bound_arg] : param_map_) {
+		if (is_in_order(param_name)) {
+			continue;
+		}
+		TemplateBinding binding;
+		binding.name = StringTable::getOrInternStringHandle(param_name);
+		binding.kind = infer_binding_kind(bound_arg);
+		binding.is_pack = false;
+		binding.args.push_back(bound_arg);
+		environment_.bindings.push_back(std::move(binding));
+	}
+
+	for (const auto& [pack_name, pack_args] : pack_map_) {
+		if (is_in_order(StringTable::getStringView(pack_name))) {
+			continue;
+		}
+		TemplateBinding binding;
+		binding.name = pack_name;
+		binding.kind = TemplateParameterKind::Type;
+		binding.is_pack = true;
+		binding.args.reserve(pack_args.size());
+		for (const TemplateTypeArg& pack_arg : pack_args) {
+			binding.args.push_back(pack_arg);
+		}
+		environment_.bindings.push_back(std::move(binding));
+	}
+}
+
 ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	if (!expr.has_value()) {
 		return expr;
@@ -301,7 +456,8 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::collectCurrentBoundTemplateA
 			auto scalar_it = param_map_.find(param_name);
 			auto pack_it = pack_map_.find(StringTable::getOrInternStringHandle(param_name));
 			if (scalar_it != param_map_.end() && pack_it != pack_map_.end()) {
-				throw InternalError("ExpressionSubstitutor found both scalar and pack bindings for template parameter '" + std::string(param_name) + "'");
+				// Prefer pack bindings when both are present.
+				scalar_it = param_map_.end();
 			}
 			if (scalar_it != param_map_.end()) {
 				bound_args.push_back(scalar_it->second);
@@ -351,30 +507,8 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 		context_environment = buildTemplateEnvironment(*context);
 	}
 
-	TemplateEnvironment active_environment;
+	TemplateEnvironment active_environment = environment_;
 	active_environment.parent = context_environment.bindings.empty() ? nullptr : &context_environment;
-	active_environment.bindings.reserve(param_map_.size() + pack_map_.size());
-	for (const auto& [param_name, bound_arg] : param_map_) {
-		TemplateBinding binding;
-		binding.name = StringTable::getOrInternStringHandle(param_name);
-		binding.kind = bound_arg.is_template_template_arg
-			? TemplateParameterKind::Template
-			: (bound_arg.is_value ? TemplateParameterKind::NonType : TemplateParameterKind::Type);
-		binding.is_pack = false;
-		binding.args.push_back(bound_arg);
-		active_environment.bindings.push_back(std::move(binding));
-	}
-	for (const auto& [pack_name, pack_args] : pack_map_) {
-		TemplateBinding binding;
-		binding.name = pack_name;
-		binding.kind = TemplateParameterKind::Type;
-		binding.is_pack = true;
-		binding.args.reserve(pack_args.size());
-		for (const TemplateTypeArg& pack_arg : pack_args) {
-			binding.args.push_back(pack_arg);
-		}
-		active_environment.bindings.push_back(std::move(binding));
-	}
 	const TemplateEnvironment& lookup_environment =
 		active_environment.bindings.empty() && active_environment.parent != nullptr
 		? *active_environment.parent

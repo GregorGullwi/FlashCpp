@@ -1,12 +1,12 @@
 # Template Binding Architecture Plan
 
 **Date:** 2026-05-09  
-**Status:** In Progress (Phases 1-2 completed)  
+**Status:** In Progress (Phases 1-3 completed)  
 **Scope:** Template argument identity, parameter binding environments, instantiation consumers, and C++20 failure-mode boundaries.
 
 ## Next Task
 
-Implement Phase 3: move substitution consumers to `TemplateEnvironment` and introduce substitution-failure policy wiring.
+Implement Phase 4: replace outer binding arrays with binding snapshots while dual-writing legacy fields during migration.
 
 Existing helpers now cover part of this work:
 
@@ -185,7 +185,7 @@ Completed notes:
 Complexity: M  
 Risk: Medium
 
-### Phase 3: Move Substitution Consumers To The Environment
+### Phase 3: Move Substitution Consumers To The Environment ✅ Completed
 
 Goal: stop reconstructing maps/order/pack metadata in every consumer.
 
@@ -228,6 +228,14 @@ Acceptance criteria:
 - body substitution failure for a selected template is not treated as SFINAE;
 - immediate-context return-type/constraint substitution still supports SFINAE;
 - constexpr consumers can report "dependent", "invalid", or "evaluated" distinctly.
+
+Completed notes:
+
+- Added `TemplateSubstitutionFailurePolicy` and parser-side policy wiring.
+- Migrated substitution consumers (ExpressionSubstitutor, constexpr evaluation paths, default-arg/dependent-NTTP substitution paths, and lazy instantiation paths) to consume `TemplateEnvironment`-based bindings while preserving legacy behavior.
+- Kept immediate-context probing behavior SFINAE-friendly while preserving hard-failure behavior for selected-template body substitution.
+- Extended relevant contexts to carry environment bindings for dependent/evaluated/invalid distinction in constexpr-related flows.
+- Verified with `pwsh tests/run_all_tests.ps1`.
 
 Complexity: M-L  
 Risk: Medium

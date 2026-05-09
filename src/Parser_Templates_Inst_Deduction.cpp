@@ -717,38 +717,70 @@ bool Parser::tryAppendDefaultTemplateArg(
 	}
 
 	const ASTNode& default_node = param.default_value();
+	const TemplateSubstitutionFailurePolicy failure_policy = currentTemplateSubstitutionFailurePolicy();
+	TemplateEnvironment default_arg_environment = buildTemplateEnvironment(
+		template_params,
+		std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
+		nullptr);
 	auto buildSubstitutionMaps = [&]() {
 		std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
 		std::unordered_map<std::string_view, int64_t> nontype_sub_map;
-		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-			const auto& template_param = template_params[i];
-			if (template_param.kind() == TemplateParameterKind::Type && !template_args[i].is_value) {
-				if (template_param.registered_type_index().is_valid()) {
-					type_sub_map[template_param.registered_type_index()] = template_args[i];
-				} else {
-					auto type_it = getTypesByNameMap().find(template_param.nameHandle());
-					if (type_it != getTypesByNameMap().end()) {
-						type_sub_map[type_it->second->type_index_] = template_args[i];
-					} else {
-						// Use a unique synthetic key only as a local placeholder when the
-						// template parameter was never registered in the global type map.
-						type_sub_map[TypeIndex{getTypeInfoCount() + type_sub_map.size() + 1}] = template_args[i];
-					}
+		auto sub_map = buildSubstitutionParamMap(default_arg_environment);
+		type_sub_map.reserve(sub_map.param_map.size());
+		nontype_sub_map.reserve(sub_map.param_map.size());
+		for (const auto& [param_name, arg] : sub_map.param_map) {
+			if (!arg.is_value) {
+				auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(param_name));
+				if (type_it != getTypesByNameMap().end()) {
+					type_sub_map[type_it->second->type_index_] = arg;
 				}
-			} else if (template_param.kind() == TemplateParameterKind::NonType && template_args[i].is_value) {
-				nontype_sub_map[template_param.name()] = template_args[i].value;
+				continue;
 			}
+			nontype_sub_map[param_name] = arg.value;
 		}
 		return std::pair(std::move(type_sub_map), std::move(nontype_sub_map));
 	};
 	auto appendEvaluatedNonTypeArg = [&](const ASTNode& expr) -> bool {
-		auto default_value = try_evaluate_constant_expression(expr);
-		if (!default_value.has_value()) {
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		eval_ctx.parser = this;
+		eval_ctx.sema = getActiveSemanticAnalysis();
+		eval_ctx.template_environment = default_arg_environment;
+		auto eval_sub_map = buildSubstitutionParamMap(default_arg_environment);
+		eval_ctx.template_param_names.assign(
+			eval_sub_map.param_order.begin(),
+			eval_sub_map.param_order.end());
+		eval_ctx.template_args.reserve(eval_sub_map.param_order.size());
+		for (std::string_view param_name : eval_sub_map.param_order) {
+			auto arg_it = eval_sub_map.param_map.find(param_name);
+			if (arg_it != eval_sub_map.param_map.end()) {
+				eval_ctx.template_args.push_back(arg_it->second);
+			}
+		}
+		auto eval_result = ConstExpr::Evaluator::evaluate(expr, eval_ctx);
+		if (!eval_result.success()) {
+			if (eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression &&
+				failure_policy == TemplateSubstitutionFailurePolicy::ShapeOnly) {
+				if (!param.has_type()) {
+					throw InternalError("ShapeOnly non-type template parameter default requires declared type");
+				}
+				TemplateTypeArg dependent_default = TemplateTypeArg::makeDependentValue(
+					param.nameHandle(),
+					param.type_specifier_node().type());
+				dependent_default.dependent_expr = expr;
+				template_args.push_back(std::move(dependent_default));
+				return true;
+			}
+			if (failure_policy == TemplateSubstitutionFailurePolicy::HardUse &&
+				eval_result.error_type != ConstExpr::EvalErrorType::TemplateDependentExpression) {
+				throw CompileError("Failed to evaluate default non-type template argument for '" + std::string(param.name()) + "': " + eval_result.error_message);
+			}
 			return false;
 		}
-		template_args.push_back(TemplateTypeArg::makeValue(
-			default_value->value,
-			default_value->type));
+		template_args.push_back(templateTypeArgFromEvalResult(eval_result));
+		default_arg_environment = buildTemplateEnvironment(
+			template_params,
+			std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
+			nullptr);
 		return true;
 	};
 
@@ -881,6 +913,21 @@ bool Parser::tryAppendDefaultTemplateArg(
 		}
 
 		if (defaultExpressionReferencesTemplateParams(default_node, template_params)) {
+			if (failure_policy == TemplateSubstitutionFailurePolicy::ShapeOnly) {
+				if (!param.has_type()) {
+					throw InternalError("ShapeOnly non-type template parameter default requires declared type");
+				}
+				TemplateTypeArg dependent_default = TemplateTypeArg::makeDependentValue(
+					param.nameHandle(),
+					param.type_specifier_node().type());
+				dependent_default.dependent_expr = default_node;
+				template_args.push_back(std::move(dependent_default));
+				default_arg_environment = buildTemplateEnvironment(
+					template_params,
+					std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
+					nullptr);
+				return true;
+			}
 			return false;
 		}
 
@@ -1708,6 +1755,17 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		}
 
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		eval_ctx.template_environment.bindings.reserve(param_name_to_arg.size());
+		for (const auto& [deduced_name, deduced_arg] : param_name_to_arg) {
+			TemplateBinding binding;
+			binding.name = deduced_name;
+			binding.kind = deduced_arg.is_template_template_arg
+				? TemplateParameterKind::Template
+				: (deduced_arg.is_value ? TemplateParameterKind::NonType : TemplateParameterKind::Type);
+			binding.is_pack = false;
+			binding.args.push_back(deduced_arg);
+			eval_ctx.template_environment.bindings.push_back(std::move(binding));
+		}
 		auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
 		return eval_result.success() &&
 			   eval_result.as_int() == static_cast<int64_t>(concrete_bound);

@@ -2189,6 +2189,7 @@ private:
 	}
 	bool isHardUseLikeInstantiationMode() const;
 	bool isTemplateInstantiationFailureProbeMode() const;
+	TemplateSubstitutionFailurePolicy currentTemplateSubstitutionFailurePolicy() const;
 	std::optional<ASTNode> failTemplateInstantiation(
 		std::string_view reason,
 		const FlashCpp::TemplateInstantiationKey* key,

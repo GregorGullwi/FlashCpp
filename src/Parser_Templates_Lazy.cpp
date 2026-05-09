@@ -437,6 +437,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			ConstExpr::EvaluationContext ctx(gSymbolTable);
 			ctx.parser = this;
 			ctx.sema = getActiveSemanticAnalysis();
+			ctx.template_environment = buildTemplateEnvironment(
+				std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
+				std::span<const TemplateTypeArg>(converted_template_args.data(), converted_template_args.size()),
+				nullptr);
 			ctx.template_args = converted_template_args;
 			for (const TemplateParameterNode& tparam : lazy_info.template_params) {
 				ctx.template_param_names.push_back(tparam.name());
@@ -628,6 +632,13 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			new_func_ref.mark_failed_substitution(body_reparse_failure_reason);
 			FLASH_LOG(Templates, Debug, "Marked lazy member function as failed substitution after body reparse: ",
 					  StringTable::getStringView(body_reparse_failure_reason));
+			const TemplateSubstitutionFailurePolicy failure_policy = currentTemplateSubstitutionFailurePolicy();
+			if (failure_policy == TemplateSubstitutionFailurePolicy::HardUse) {
+				throw CompileError(std::string(StringTable::getStringView(body_reparse_failure_reason)));
+			}
+			if (failure_policy == TemplateSubstitutionFailurePolicy::SfinaeProbe) {
+				return std::nullopt;
+			}
 		}
 	} else if (has_parsed_body) {
 		// Use the already-parsed definition only when no deferred body position is available.
@@ -999,10 +1010,13 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 		if (!was_substituted) {
 			// Use ExpressionSubstitutor for general template parameter substitution
-			auto sub_map = buildSubstitutionParamMap(template_params, template_args);
-
+			TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+				std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+				std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
+				nullptr);
+			auto sub_map = buildSubstitutionParamMap(substitution_environment);
 			if (!sub_map.empty()) {
-				ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
+				ExpressionSubstitutor substitutor(substitution_environment, *this);
 				substitutor.setCurrentOwnerTypeName(struct_info->getName());
 				substituted_initializer = substitutor.substitute(lazy_info.initializer.value());
 				FLASH_LOG(Templates, Debug, "Applied general template parameter substitution to lazy static member initializer");
@@ -1043,6 +1057,10 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			// Provide struct context so the evaluator prefers same-struct member functions over globals.
 			eval_ctx.struct_info = struct_info;
 			// Provide template args so sizeof(T) etc. resolve correctly.
+			eval_ctx.template_environment = buildTemplateEnvironment(
+				std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
+				std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
+				nullptr);
 			for (size_t i = 0; i < lazy_info.template_params.size() && i < lazy_info.template_args.size(); ++i) {
 				eval_ctx.template_param_names.push_back(lazy_info.template_params[i].name());
 				eval_ctx.template_args.push_back(lazy_info.template_args[i]);

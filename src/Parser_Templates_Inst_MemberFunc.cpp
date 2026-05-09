@@ -85,6 +85,16 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 	for (const auto& current_arg : current_template_args) {
 		combined_template_args.push_back(current_arg);
 	}
+	TemplateEnvironment outer_environment;
+	TemplateEnvironment combined_environment;
+	if (outer_binding != nullptr) {
+		outer_environment = buildTemplateEnvironment(*outer_binding);
+	}
+	combined_environment = buildTemplateEnvironment(
+		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+		std::span<const TemplateTypeArg>(current_template_args.data(), current_template_args.size()),
+		outer_binding != nullptr ? &outer_environment : nullptr);
+	const TemplateSubstitutionFailurePolicy failure_policy = currentTemplateSubstitutionFailurePolicy();
 
 	InlineVector<TemplateParameterNode, 4> typed_combined_params;
 	typed_combined_params.reserve(combined_template_params.size());
@@ -106,10 +116,36 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 	if (param.kind() == TemplateParameterKind::NonType && substituted_default.is<ExpressionNode>()) {
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		eval_ctx.parser = this;
+		eval_ctx.sema = getActiveSemanticAnalysis();
+		eval_ctx.template_environment = combined_environment;
+		auto eval_sub_map = buildSubstitutionParamMap(combined_environment);
+		eval_ctx.template_param_names.assign(
+			eval_sub_map.param_order.begin(),
+			eval_sub_map.param_order.end());
+		eval_ctx.template_args.reserve(eval_sub_map.param_order.size());
+		for (std::string_view param_name : eval_sub_map.param_order) {
+			auto arg_it = eval_sub_map.param_map.find(param_name);
+			if (arg_it != eval_sub_map.param_map.end()) {
+				eval_ctx.template_args.push_back(arg_it->second);
+			}
+		}
 		auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default, eval_ctx);
 		if (eval_result.success()) {
 			current_template_args.push_back(templateTypeArgFromEvalResult(eval_result));
 			return true;
+		}
+		if (eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression &&
+			failure_policy == TemplateSubstitutionFailurePolicy::ShapeOnly &&
+			param.has_type()) {
+			TemplateTypeArg dependent_default = TemplateTypeArg::makeDependentValue(
+				param.nameHandle(),
+				param.type_specifier_node().type());
+			dependent_default.dependent_expr = substituted_default;
+			current_template_args.push_back(std::move(dependent_default));
+			return true;
+		}
+		if (failure_policy == TemplateSubstitutionFailurePolicy::HardUse) {
+			throw CompileError("Failed to evaluate member template default argument for '" + std::string(param.name()) + "': " + eval_result.error_message);
 		}
 	}
 	return false;
@@ -1171,25 +1207,18 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	std::unordered_map<TypeIndex, TemplateTypeArg> default_type_sub_map;
 	std::unordered_map<std::string_view, int64_t> default_nontype_sub_map;
-	std::unordered_map<std::string_view, TemplateTypeArg> default_param_map;
-	std::vector<std::string_view> default_param_order;
+	TemplateEnvironment outer_default_environment;
+	TemplateEnvironment default_environment;
 	if (outer_binding) {
-		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
-			std::string_view param_name = StringTable::getStringView(outer_binding->param_names[i]);
-			default_param_order.push_back(param_name);
-			default_param_map[param_name] = outer_binding->param_args[i];
-			auto type_it = getTypesByNameMap().find(outer_binding->param_names[i]);
-			if (type_it != getTypesByNameMap().end()) {
-				default_type_sub_map[type_it->second->type_index_] = outer_binding->param_args[i];
-			} else {
-				default_type_sub_map[TypeIndex{getTypeInfoCount() + default_type_sub_map.size() + 1}] = outer_binding->param_args[i];
-			}
-		}
+		outer_default_environment = buildTemplateEnvironment(*outer_binding);
 	}
+	default_environment = buildTemplateEnvironment(
+		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+		template_args,
+		outer_binding ? &outer_default_environment : nullptr);
+	auto default_sub_map = buildSubstitutionParamMap(default_environment);
 	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 		const auto& template_param = template_params[i];
-		default_param_order.push_back(template_param.name());
-		default_param_map[template_param.name()] = template_args[i];
 		if (template_param.kind() == TemplateParameterKind::Type && !template_args[i].is_value) {
 			auto type_it = getTypesByNameMap().find(template_param.nameHandle());
 			if (type_it != getTypesByNameMap().end()) {
@@ -1197,8 +1226,16 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			} else {
 				default_type_sub_map[TypeIndex{getTypeInfoCount() + default_type_sub_map.size() + 1}] = template_args[i];
 			}
-		} else if (template_param.kind() == TemplateParameterKind::NonType && template_args[i].is_value) {
-			default_nontype_sub_map[template_param.name()] = template_args[i].value;
+		}
+	}
+	for (const auto& [param_name, default_arg] : default_sub_map.param_map) {
+		if (default_arg.is_value) {
+			default_nontype_sub_map[param_name] = default_arg.value;
+			continue;
+		}
+		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(param_name));
+		if (type_it != getTypesByNameMap().end()) {
+			default_type_sub_map[type_it->second->type_index_] = default_arg;
 		}
 	}
 
@@ -1443,7 +1480,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			// Create the new parameter declaration
 			auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());
 			if (param_decl.has_default_value()) {
-				ExpressionSubstitutor substitutor(default_param_map, *this, default_param_order);
+				ExpressionSubstitutor substitutor(default_environment, *this);
 				ASTNode substituted_default = substitutor.substitute(param_decl.default_value());
 				if (substituted_default.is<ExpressionNode>() &&
 					std::holds_alternative<ConstructorCallNode>(substituted_default.as<ExpressionNode>())) {

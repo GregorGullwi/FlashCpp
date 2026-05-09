@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <span>
+#include <vector>
 
 #include "AstNodeTypes_DeclNodes.h"
 
@@ -9,11 +10,17 @@ enum class TemplateParameterKind;
 class TemplateParameterNode;
 struct OuterTemplateBinding;
 
+enum class TemplateSubstitutionFailurePolicy {
+	SfinaeProbe,
+	HardUse,
+	ShapeOnly
+};
+
 struct TemplateBinding {
 	StringHandle name;
 	TemplateParameterKind kind{};
 	bool is_pack = false;
-	InlineVector<TemplateTypeArg, 1> args;
+	std::vector<TemplateTypeArg> args;
 };
 
 struct TemplateEnvironment {

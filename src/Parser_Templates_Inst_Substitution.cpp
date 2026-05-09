@@ -88,11 +88,16 @@ namespace {
 	}
 
 	auto sub_map = buildSubstitutionParamMap(template_params, template_args);
+	TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+		template_args,
+		nullptr);
+	sub_map = buildSubstitutionParamMap(substitution_environment);
 	if (sub_map.empty()) {
 		return default_node;
 	}
 
-	ExpressionSubstitutor substitutor(sub_map.param_map, parser, sub_map.param_order);
+	ExpressionSubstitutor substitutor(substitution_environment, parser);
 	return substitutor.substitute(default_node);
 }
 
@@ -114,6 +119,10 @@ namespace {
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 	eval_ctx.parser = &parser;
 	eval_ctx.sema = parser.getActiveSemanticAnalysis();
+	eval_ctx.template_environment = buildTemplateEnvironment(
+		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+		template_args,
+		nullptr);
 	eval_ctx.template_args.assign(template_args.begin(), template_args.end());
 	eval_ctx.template_param_names.assign(
 		template_param_names.begin(),

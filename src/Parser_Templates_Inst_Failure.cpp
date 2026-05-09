@@ -10,6 +10,16 @@ bool Parser::isTemplateInstantiationFailureProbeMode() const {
 		   template_instantiation_mode_ == TemplateInstantiationMode::HardUseCandidateProbe;
 }
 
+TemplateSubstitutionFailurePolicy Parser::currentTemplateSubstitutionFailurePolicy() const {
+	if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
+		return TemplateSubstitutionFailurePolicy::ShapeOnly;
+	}
+	if (isTemplateInstantiationFailureProbeMode()) {
+		return TemplateSubstitutionFailurePolicy::SfinaeProbe;
+	}
+	return TemplateSubstitutionFailurePolicy::HardUse;
+}
+
 std::optional<ASTNode> Parser::failTemplateInstantiation(
 	std::string_view reason,
 	const FlashCpp::TemplateInstantiationKey* key,
