@@ -2724,18 +2724,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						 pattern_idx < pattern_args_for_member_copy.size() && pattern_idx < template_args.size();
 						 ++pattern_idx) {
 						const TemplateTypeArg& pattern_arg = pattern_args_for_member_copy[pattern_idx];
-						if (pattern_arg.is_value || !pattern_arg.is_dependent) {
+						if (!pattern_arg.is_dependent) {
 							continue;
 						}
 
 						size_t dependent_param_index = 0;
 						for (size_t i = 0; i < pattern_idx; ++i) {
-							if (!pattern_args_for_member_copy[i].is_value && pattern_args_for_member_copy[i].is_dependent) {
+							if (pattern_args_for_member_copy[i].is_dependent) {
 								dependent_param_index++;
 							}
 						}
 
 						if (dependent_param_index == template_param_slot) {
+							if (template_params[template_param_slot].is_variadic()) {
+								for (size_t pack_idx = pattern_idx; pack_idx < template_args.size(); ++pack_idx) {
+									template_args_for_member_copy_storage.push_back(
+										deduceArgFromPattern(template_args[pack_idx], pattern_arg));
+								}
+								deduced_arg.reset();
+								break;
+							}
 							deduced_arg = deduceArgFromPattern(template_args[pattern_idx], pattern_arg);
 							break;
 						}
@@ -2927,7 +2935,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TemplateArgPackSubstitutionMap spec_pack_subst_map;
 				buildTemplateArgSubstitutionMaps(
 					template_params,
-					template_args,
+					template_args_for_member_copy,
 					[](const TemplateParameterNode&, const TemplateTypeArg& arg) {
 						return arg;
 					},
@@ -3887,18 +3895,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::optional<TemplateTypeArg> deduced_arg;
 					for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < template_args.size(); ++pattern_idx) {
 						const TemplateTypeArg& pattern_arg = pattern_args[pattern_idx];
-						if (pattern_arg.is_value || !pattern_arg.is_dependent) {
+						if (!pattern_arg.is_dependent) {
 							continue;
 						}
 
 						size_t dependent_param_index = 0;
 						for (size_t i = 0; i < pattern_idx; ++i) {
-							if (!pattern_args[i].is_value && pattern_args[i].is_dependent) {
+							if (pattern_args[i].is_dependent) {
 								dependent_param_index++;
 							}
 						}
 
 						if (dependent_param_index == template_param_slot) {
+							if (template_params[template_param_slot].is_variadic()) {
+								for (size_t pack_idx = pattern_idx; pack_idx < template_args.size(); ++pack_idx) {
+									template_args_for_pattern_storage.push_back(
+										deduceArgFromPattern(template_args[pack_idx], pattern_arg));
+								}
+								deduced_arg.reset();
+								break;
+							}
 							deduced_arg = deduceArgFromPattern(template_args[pattern_idx], pattern_arg);
 							break;
 						}
