@@ -5,6 +5,8 @@
 #include "TypeTraitEvaluator.h"
 
 ParseResult Parser::parse_top_level_node() {
+	FLASHCPP_PARSER_RUNTIME_PHASE(TopLevelNode);
+
 	// Save the current token's position to restore later in case of a parsing
 	// error
 	ScopedTokenPosition saved_position(*this);

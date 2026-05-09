@@ -180,6 +180,9 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 }
 
 ParseResult Parser::parse_unary_expression(ExpressionContext context) {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(UnaryExpression);
+#endif
 
 	// Check for 'static_cast' keyword
 	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "static_cast") {

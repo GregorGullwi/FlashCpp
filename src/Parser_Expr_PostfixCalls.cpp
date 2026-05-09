@@ -581,6 +581,9 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 // This function handles postfix operators: ++, --, [], (), ::, ., ->
 // It calls parse_primary_expression and then handles postfix operators in a loop
 ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(PostfixExpression);
+#endif
 	// First, parse the primary expression
 	ParseResult prim_result = parse_primary_expression(context);
 	if (prim_result.is_error()) {

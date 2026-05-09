@@ -169,6 +169,9 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	const InlineVector<StringHandle, 4>& param_names,
 	std::span<const TemplateTypeArg> template_args,
 	const TemplateParameterNode* target_template_param) {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(AliasMaterialization);
+#endif
 	const auto find_param_index = [&](StringHandle param_name) -> std::optional<size_t> {
 		for (size_t i = 0; i < param_names.size(); ++i) {
 			if (param_names[i] == param_name) {

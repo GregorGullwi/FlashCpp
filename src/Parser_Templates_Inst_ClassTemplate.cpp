@@ -1244,6 +1244,9 @@ static std::optional<StringHandle> findUnresolvedHardUseTypeSpecifier(const ASTN
 }
 
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args, bool force_eager) {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(ClassTemplateInstantiation);
+#endif
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 
 	// Push a parser-level instantiation context for provenance tracking and backtraces.
@@ -1560,6 +1563,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_name);
 				// Fall through to re-instantiate
 			} else {
+#if WITH_PARSER_RUNTIME_STATS
+				if (runtime_stats_enabled_) {
+					++runtime_stats_.class_template_instantiation_cache_hits;
+				}
+#endif
 				FLASH_LOG_FORMAT(Templates, Debug, "Cache hit for '{}' with {} args", template_name, template_args.size());
 				if (cached_is_shape_only || cached_failed_substitution) {
 					return cached;

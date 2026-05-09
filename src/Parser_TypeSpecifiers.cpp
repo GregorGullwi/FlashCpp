@@ -230,6 +230,9 @@ ReferenceQualifier Parser::parse_reference_qualifier() {
 }
 
 ParseResult Parser::parse_type_specifier() {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(TypeSpecifier);
+#endif
 	// Add parsing depth check to prevent infinite loops
 	if (++parsing_depth_ > MAX_PARSING_DEPTH) {
 		--parsing_depth_;
@@ -1472,6 +1475,11 @@ ParseResult Parser::parse_type_specifier() {
 				std::optional<ASTNode> instantiated_class;
 				if (is_class_template) {
 					// Only try class template instantiation if this is NOT a variable template
+#if WITH_PARSER_RUNTIME_STATS
+					if (runtime_stats_enabled_) {
+						++runtime_stats_.type_specifier_triggered_template_instantiations;
+					}
+#endif
 					instantiated_class = try_instantiate_class_template(type_name, *template_args);
 				}
 
@@ -1530,6 +1538,11 @@ ParseResult Parser::parse_type_specifier() {
 				// so nested aliases like enable_if<true>::type can be looked up via the normalized
 				// specialization (enable_if<true, void>).
 				if (is_class_template && filled_template_args.size() != template_args->size()) {
+#if WITH_PARSER_RUNTIME_STATS
+					if (runtime_stats_enabled_) {
+						++runtime_stats_.type_specifier_triggered_template_instantiations;
+					}
+#endif
 					auto normalized_instantiated_class = try_instantiate_class_template(type_name, filled_template_args);
 					if (normalized_instantiated_class.has_value() && normalized_instantiated_class->is<StructDeclarationNode>()) {
 						registerLateMaterializedTopLevelNode(*normalized_instantiated_class);

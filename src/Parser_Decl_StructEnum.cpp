@@ -41,6 +41,9 @@ ParseResult Parser::parse_struct_declaration() {
 }
 
 ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline) {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(StructDeclaration);
+#endif
 	ScopedTokenPosition saved_position(*this);
 
 	// Check for alignas specifier before struct/class keyword

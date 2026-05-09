@@ -54,6 +54,9 @@ static const std::unordered_set<std::string_view> kExpressionOnlyAfterLeadingIde
 	"<<=", ">>="};
 
 ParseResult Parser::parse_block() {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(Block);
+#endif
 	if (!consume("{"_tok)) {
 		return ParseResult::error("Expected '{' for block", current_token_);
 	}
@@ -168,6 +171,9 @@ bool Parser::looks_like_elaborated_type_variable_declaration() {
 }
 
 ParseResult Parser::parse_statement_or_declaration() {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(StatementOrDeclaration);
+#endif
 	// Clear any leaked pending template arguments from previous expression parsing.
 	// This prevents template args from one expression leaking into unrelated function calls.
 	pending_explicit_template_args_.reset();

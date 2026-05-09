@@ -122,6 +122,9 @@ void Parser::register_parameters_in_scope(const std::vector<ASTNode>& params) {
 // The guard replaces the former SymbolTableScope + MemberContextCleanup combo,
 // eliminating scattered manual cleanup blocks on every early return.
 ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body) {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(DelayedFunctionBody);
+#endif
 	out_body = std::nullopt;
 
 	const bool has_member_ctx = !delayed.is_free_function;
@@ -364,6 +367,9 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 // In the latter case the result is a BlockNode containing a single TryStatementNode,
 // which is semantically equivalent for non-constructor functions.
 ParseResult Parser::parse_function_body(bool is_ctor_or_dtor) {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(FunctionBody);
+#endif
 	// Normal block
 	if (peek() == "{"_tok) {
 		return parse_block();

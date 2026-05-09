@@ -1231,6 +1231,9 @@ ParseResult Parser::parseMaterializedTemplateFunctionalCast(
 }
 
 ParseResult Parser::parse_primary_expression(ExpressionContext context) {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(PrimaryExpression);
+#endif
 	std::optional<ASTNode> result;
 
 	// Check for 'typename' keyword in expression context: typename T::type{} or typename T::type()

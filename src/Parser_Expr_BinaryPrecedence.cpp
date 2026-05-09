@@ -355,6 +355,9 @@ void Parser::annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_o
 }
 
 ParseResult Parser::parse_expression(int precedence, ExpressionContext context) {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(Expression);
+#endif
 	static thread_local int recursion_depth = 0;
 	// Flat binary chains and simple unary prefixes no longer recurse/iterate artificially,
 	// so this guard only needs to catch genuinely pathological nesting such as very deep

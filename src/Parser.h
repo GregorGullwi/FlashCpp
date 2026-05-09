@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <chrono>
+#include <array>
 #include <exception>
 #include <limits>
 #include <optional>
@@ -38,6 +39,15 @@
 #ifndef WITH_PARSER_RUNTIME_STATS
 #define WITH_PARSER_RUNTIME_STATS 0
 #endif // WITH_PARSER_RUNTIME_STATS
+
+#if WITH_PARSER_RUNTIME_STATS
+#define FLASHCPP_PARSER_RUNTIME_CONCAT_INNER(a, b) a##b
+#define FLASHCPP_PARSER_RUNTIME_CONCAT(a, b) FLASHCPP_PARSER_RUNTIME_CONCAT_INNER(a, b)
+#define FLASHCPP_PARSER_RUNTIME_PHASE(name) \
+	auto FLASHCPP_PARSER_RUNTIME_CONCAT(_flashcpp_parser_runtime_timer_, __LINE__) = makeRuntimePhaseTimer(RuntimePhase::name)
+#else
+#define FLASHCPP_PARSER_RUNTIME_PHASE(name)
+#endif
 
 using namespace std::literals::string_view_literals;
 
@@ -421,6 +431,13 @@ public:
 		gSymbolTable = SymbolTable();
 		register_builtin_functions();
 		ParseResult parseResult;
+#if WITH_PARSER_RUNTIME_STATS
+		if (runtime_stats_enabled_) {
+			runtime_stats_ = RuntimeStats{};
+			runtime_phase_stack_.clear();
+		}
+		FLASHCPP_PARSER_RUNTIME_PHASE(ParseLoop);
+#endif
 #if FLASHCPP_LOG_LEVEL >= 2	// Info level progress logging
 		size_t top_level_count = 0;
 		auto start_time = std::chrono::high_resolution_clock::now();
@@ -633,6 +650,37 @@ private:
 	using SaveHandle = size_t;
 
 #if WITH_PARSER_RUNTIME_STATS
+	enum class RuntimePhase : uint8_t {
+		ParseLoop,
+		TopLevelNode,
+		TypeSpecifier,
+		Expression,
+		UnaryExpression,
+		PostfixExpression,
+		PrimaryExpression,
+		StatementOrDeclaration,
+		Block,
+		StructDeclaration,
+		TemplateDeclaration,
+		DelayedFunctionBody,
+		FunctionBody,
+		ClassTemplateInstantiation,
+		AliasMaterialization,
+		Count
+	};
+
+	struct RuntimePhaseStat {
+		size_t calls = 0;
+		int64_t inclusive_time_us = 0;
+		int64_t self_time_us = 0;
+	};
+
+	struct RuntimePhaseFrame {
+		RuntimePhase phase;
+		std::chrono::high_resolution_clock::time_point start;
+		int64_t child_time_us = 0;
+	};
+
 	struct RuntimeStats {
 		size_t tokens_advanced = 0;
 		size_t lookahead_peeks = 0;
@@ -648,11 +696,92 @@ private:
 		size_t restore_ast_nodes_scanned = 0;
 		size_t restore_ast_nodes_preserved = 0;
 		size_t restore_ast_nodes_discarded = 0;
+		size_t type_specifier_triggered_template_instantiations = 0;
+		size_t class_template_instantiation_cache_hits = 0;
 		int64_t save_time_us = 0;
 		int64_t restore_time_us = 0;
 		int64_t restore_lexer_only_time_us = 0;
 		int64_t discard_time_us = 0;
+		std::array<RuntimePhaseStat, static_cast<size_t>(RuntimePhase::Count)> phase_stats{};
 	};
+
+	class ScopedRuntimePhaseTimer {
+	public:
+		ScopedRuntimePhaseTimer(Parser& parser, RuntimePhase phase)
+			: parser_(&parser), phase_(phase), enabled_(parser.runtime_stats_enabled_) {
+			if (!enabled_) {
+				return;
+			}
+			parser_->runtime_phase_stack_.push_back(RuntimePhaseFrame{
+				phase_,
+				std::chrono::high_resolution_clock::now(),
+				0});
+			++parser_->runtime_stats_.phase_stats[static_cast<size_t>(phase_)].calls;
+		}
+
+		~ScopedRuntimePhaseTimer() {
+			if (!enabled_) {
+				return;
+			}
+			auto end = std::chrono::high_resolution_clock::now();
+			RuntimePhaseFrame frame = parser_->runtime_phase_stack_.back();
+			parser_->runtime_phase_stack_.pop_back();
+			int64_t elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(end - frame.start).count();
+			RuntimePhaseStat& stat = parser_->runtime_stats_.phase_stats[static_cast<size_t>(phase_)];
+			stat.inclusive_time_us += elapsed_us;
+			stat.self_time_us += std::max<int64_t>(int64_t(0), elapsed_us - frame.child_time_us);
+			if (!parser_->runtime_phase_stack_.empty()) {
+				parser_->runtime_phase_stack_.back().child_time_us += elapsed_us;
+			}
+		}
+
+	private:
+		Parser* parser_;
+		RuntimePhase phase_;
+		bool enabled_ = false;
+	};
+
+	ScopedRuntimePhaseTimer makeRuntimePhaseTimer(RuntimePhase phase) {
+		return ScopedRuntimePhaseTimer(*this, phase);
+	}
+
+	static constexpr std::string_view getRuntimePhaseName(RuntimePhase phase) {
+		switch (phase) {
+		case RuntimePhase::ParseLoop:
+			return "parse loop";
+		case RuntimePhase::TopLevelNode:
+			return "top-level node";
+		case RuntimePhase::TypeSpecifier:
+			return "parse_type_specifier";
+		case RuntimePhase::Expression:
+			return "parse_expression";
+		case RuntimePhase::UnaryExpression:
+			return "parse_unary_expression";
+		case RuntimePhase::PostfixExpression:
+			return "parse_postfix_expression";
+		case RuntimePhase::PrimaryExpression:
+			return "parse_primary_expression";
+		case RuntimePhase::StatementOrDeclaration:
+			return "parse_statement_or_declaration";
+		case RuntimePhase::Block:
+			return "parse_block";
+		case RuntimePhase::StructDeclaration:
+			return "parse_struct_declaration";
+		case RuntimePhase::TemplateDeclaration:
+			return "parse_template_declaration";
+		case RuntimePhase::DelayedFunctionBody:
+			return "parse_delayed_function_body";
+		case RuntimePhase::FunctionBody:
+			return "parse_function_body";
+		case RuntimePhase::ClassTemplateInstantiation:
+			return "try_instantiate_class_template";
+		case RuntimePhase::AliasMaterialization:
+			return "alias materialization";
+		case RuntimePhase::Count:
+			break;
+		}
+		return "unknown";
+	}
 #endif
 
 	// Delayed function body parsing for inline member functions
@@ -1158,6 +1287,7 @@ private:
 #if WITH_PARSER_RUNTIME_STATS
 	bool runtime_stats_enabled_ = false;
 	RuntimeStats runtime_stats_;
+	std::vector<RuntimePhaseFrame> runtime_phase_stack_;
 #endif
 
 	Token consume_token();
