@@ -388,6 +388,24 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 					result.had_substitution = true;
 					substituted = true;
 				}
+			} else if (!materialized_arg.is_value) {
+				const TemplateTypeArg* only_type_binding = nullptr;
+				for (const auto& [binding_name, binding_arg] : param_map_) {
+					(void)binding_name;
+					if (binding_arg.is_value || binding_arg.is_template_template_arg) {
+						continue;
+					}
+					if (only_type_binding != nullptr) {
+						only_type_binding = nullptr;
+						break;
+					}
+					only_type_binding = &binding_arg;
+				}
+				if (only_type_binding != nullptr) {
+					materialized_arg = rebindDependentTemplateTypeArg(*only_type_binding, materialized_arg);
+					result.had_substitution = true;
+					substituted = true;
+				}
 			} else if (evaluate_dependent_member_values && materialized_arg.is_value) {
 				size_t scope_pos = dependent_name.rfind("::");
 				if (scope_pos != std::string_view::npos) {
