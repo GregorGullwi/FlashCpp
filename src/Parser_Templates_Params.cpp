@@ -704,7 +704,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 	advance(); // consume '<'
 	last_failed_template_arg_parse_handle_ = SIZE_MAX;  // Clear failure marker - we're making progress
 
-	std::vector<TemplateTypeArg> template_args;
+	InlineVector<TemplateTypeArg, 4> template_args;
 
 	// Check for empty template argument list (e.g., Container<>)
 	// Also handle >> for nested templates: Container<__void_t<>>
@@ -712,7 +712,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		advance(); // consume '>'
 		// Success - discard saved position
 		discard_saved_token(saved_pos);
-		return template_args;  // Return empty vector
+		return template_args.toVector();  // Return empty vector
 	}
 
 	// Handle >> token for empty template arguments in nested context (e.g., __void_t<>>)
@@ -723,7 +723,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		if (peek() == ">"_tok) {
 			advance(); // consume first '>'
 			discard_saved_token(saved_pos);
-			return template_args;  // Return empty vector
+			return template_args.toVector();  // Return empty vector
 		}
 	}
 
@@ -2266,7 +2266,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 	// Success - discard saved position
 	discard_saved_token(saved_pos);
 	last_failed_template_arg_parse_handle_ = SIZE_MAX;  // Clear failure marker on success
-	return template_args;
+	return template_args.toVector();
 }
 
 std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_arguments(
