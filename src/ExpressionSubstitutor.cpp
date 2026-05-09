@@ -398,8 +398,8 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 				// aliases must keep their original dependent binding to avoid
 				// changing cv/ref trait semantics.
 				const TemplateTypeArg* only_type_binding = nullptr;
-				for (const auto& [binding_name, binding_arg] : param_map_) {
-					(void)binding_name;
+				for (const auto& param_entry : param_map_) {
+					const TemplateTypeArg& binding_arg = param_entry.second;
 					if (binding_arg.is_value || binding_arg.is_template_template_arg) {
 						continue;
 					}
