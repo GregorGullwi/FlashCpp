@@ -395,6 +395,9 @@
     <ClCompile Include="src\TypeTraitEvaluator.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="src\TemplateEnvironment.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\main.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'=='Benchmark' Or '$(Configuration)'=='Test' Or '$(Configuration)'=='Modular' Or '$(Configuration)'=='Sharded'">true</ExcludedFromBuild>
     </ClCompile>
@@ -474,6 +477,7 @@
     <ClInclude Include="src\TemplateRegistry_Pattern.h" />
     <ClInclude Include="src\TemplateRegistry_Registry.h" />
     <ClInclude Include="src\TemplateRegistry_Types.h" />
+    <ClInclude Include="src\TemplateEnvironment.h" />
     <ClInclude Include="src\TemplateTypes.h" />
     <ClInclude Include="src\Token.h" />
     <ClInclude Include="src\TokenKind.h" />

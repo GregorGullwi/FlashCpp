@@ -10,6 +10,7 @@
 #include "InstantiationQueue.h"
 #include "ParserTemplateClassShared.h"
 #include "AstTraversal.h"
+#include "TemplateEnvironment.h"
 
 static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
@@ -1430,7 +1431,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					if (alias_info != nullptr) {
-						auto template_args_info = convertToTemplateArgInfo(template_args);
+						auto template_args_info = toTemplateArgInfoList(template_args);
 						alias_info->setTemplateInstantiationInfo(
 							QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
 							template_args_info);
@@ -1485,7 +1486,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				type_info.is_incomplete_instantiation_ = true;
 				type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 				type_info.name_ = inst_handle;
-				auto template_args_info = convertToTemplateArgInfo(template_args);
+				auto template_args_info = toTemplateArgInfoList(template_args);
 				InlineVector<StringHandle, 4> placeholder_param_names;
 				if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 					template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
@@ -2804,7 +2805,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			TypeInfo& struct_type_info = add_struct_type(instantiated_name, spec_decl_ns);
 
 			// Store template instantiation metadata for O(1) lookup (Phase 6)
-			auto template_args_info = convertToTemplateArgInfo(template_args);
+			auto template_args_info = toTemplateArgInfoList(template_args);
 			struct_type_info.setTemplateInstantiationInfo(
 				QualifiedIdentifier::fromQualifiedName(template_name, spec_decl_ns),
 				template_args_info);
@@ -5098,7 +5099,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	// This allows us to check if a type is a template instantiation without parsing the name
 	// QualifiedIdentifier captures both the namespace and unqualified name.
-	auto template_args_info = convertToTemplateArgInfo(template_args_to_use);
+	auto template_args_info = toTemplateArgInfoList(template_args_to_use);
 	struct_type_info.setTemplateInstantiationInfo(
 		QualifiedIdentifier::fromQualifiedName(template_name, decl_ns),
 		template_args_info);
@@ -6835,7 +6836,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // one and needs the enclosing template's bindings for constexpr evaluation.
 			nested_type_info.setInstantiationContext(
 				collectParamNameHandles(template_params, template_args_to_use.size()),
-				convertToTemplateArgInfo(template_args_to_use),
+				toTemplateArgInfoList(template_args_to_use),
 				struct_type_info.instantiationContext());
 
 			struct_info->addNestedClass(nested_type_info.getStructInfo());

@@ -5,6 +5,7 @@
 #include "Lexer.h"  // For TokenPosition
 #include "TemplateTypes.h"  // For TypeIndex-based template keys
 #include "TemplateProfilingStats.h"	// For StringHandleHash
+#include "TemplateEnvironment.h"
 #include <string>
 #include <string_view>
 #include <vector>
@@ -995,23 +996,8 @@ inline TemplateTypeArg materializeTemplateArg(
 	const ParamContainer& template_params,
 	const ArgContainer& template_args,
 	EvalFn&& eval_dependent_expr) {
-	TemplateTypeArg concrete_arg;
+	TemplateTypeArg concrete_arg = toTemplateTypeArg(arg_info);
 	concrete_arg.setCategory(arg_info.category());
-	concrete_arg.type_index = arg_info.type_index;
-	concrete_arg.is_value = arg_info.is_value;
-	concrete_arg.value = arg_info.intValue();
-	concrete_arg.pointer_depth = static_cast<uint8_t>(arg_info.pointer_depth);
-	concrete_arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
-	concrete_arg.ref_qualifier = arg_info.ref_qualifier;
-	concrete_arg.cv_qualifier = arg_info.cv_qualifier;
-	concrete_arg.array_dimensions = arg_info.array_size.has_value()
-		? std::vector<size_t>{*arg_info.array_size}
-		: std::vector<size_t>{};
-	concrete_arg.is_array = arg_info.is_array;
-	concrete_arg.function_signature = arg_info.function_signature;
-	concrete_arg.dependent_name = arg_info.dependent_name;
-	concrete_arg.dependent_expr = arg_info.dependent_expr;
-	concrete_arg.is_dependent = arg_info.dependent_name.isValid() || arg_info.dependent_expr.has_value();
 
 	bool substituted_dependent_name = false;
 	if (arg_info.dependent_name.isValid()) {

@@ -69,6 +69,7 @@
 // Header implementation units kept as separate .cpp files for organization
 #include "IrType.cpp"
 #include "TypeTraitEvaluator.cpp"
+#include "TemplateEnvironment.cpp"
 
 // Library implementations
 #include "AstNodeTypes.cpp"

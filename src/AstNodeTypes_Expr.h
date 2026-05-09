@@ -1,4 +1,5 @@
 #pragma once
+#include <type_traits>
 #include "AstNodeTypes_Template.h"
 
 // Namespace declaration node
@@ -812,24 +813,12 @@ public:
 		}
 
 		for (const auto& arg : template_args) {
-			TypeInfo::TemplateArgInfo info;
-			info.type_index = arg.type_index;
-			info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
-			info.pointer_depth = arg.pointer_depth;
-			info.cv_qualifier = arg.cv_qualifier;
-			info.ref_qualifier = arg.ref_qualifier;
-			info.value = arg.value;
-			info.is_value = arg.is_value;
-			info.is_array = arg.is_array;
-			// TemplateTypeArg uses array_size() method; TypeInfo::TemplateArgInfo uses array_size field.
-			if constexpr (requires(decltype(arg) a) { a.array_size(); }) {
-				info.array_size = arg.array_size();
+			using ArgT = std::remove_cvref_t<decltype(arg)>;
+			if constexpr (std::is_same_v<ArgT, TypeInfo::TemplateArgInfo>) {
+				outer_template_args_.push_back(arg);
 			} else {
-				info.array_size = arg.array_size;
+				outer_template_args_.push_back(toTemplateArgInfo(arg));
 			}
-			info.dependent_name = arg.dependent_name;
-			info.function_signature = arg.function_signature;
-			outer_template_args_.push_back(std::move(info));
 		}
 	}
 

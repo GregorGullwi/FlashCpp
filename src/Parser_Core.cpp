@@ -11,6 +11,7 @@
 #include "InstantiationQueue.h"
 #include "RebindStaticMemberAst.h"
 #include "SemanticAnalysis.h"
+#include "TemplateEnvironment.h"
 #include <atomic> // Include atomic for constrained partial specialization counter
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
@@ -183,24 +184,7 @@ InlineVector<TemplateTypeArg, 4> toInlineTemplateArgs(const std::vector<Template
 // Helper to convert TemplateTypeArg vector to TypeInfo::TemplateArgInfo vector
 // This enables storing template instantiation metadata in TypeInfo for O(1) lookup
 InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(std::span<const TemplateTypeArg> template_args) {
-	InlineVector<TypeInfo::TemplateArgInfo, 4> result;
-	for (const auto& arg : template_args) {
-		TypeInfo::TemplateArgInfo info;
-		info.type_index = arg.type_index;  // carries both index and TypeCategory
-		info.pointer_depth = arg.pointer_depth;
-		info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
-		info.ref_qualifier = arg.ref_qualifier;
-		info.cv_qualifier = arg.cv_qualifier;
-		info.is_array = arg.is_array;
-		info.array_size = arg.array_size();
-		info.value = arg.value;
-		info.is_value = arg.is_value;
-		info.dependent_name = arg.dependent_name;
-		info.function_signature = arg.function_signature;
-		info.dependent_expr = arg.dependent_expr;
-		result.push_back(info);
-	}
-	return result;
+	return toTemplateArgInfoList(template_args);
 }
 
 // Helper to check if a type name is a dependent template placeholder.
