@@ -391,6 +391,12 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 			} else if (!materialized_arg.is_value &&
 					   (StringTable::getStringView(template_instantiation_info.baseTemplateName()) == "__is_empty_non_tuple" ||
 						StringTable::getStringView(template_instantiation_info.baseTemplateName()) == "IsEmptyNonTuple")) {
+				// Empty-trait aliases such as libstdc++ __empty_not_final<T> can store
+				// the selected branch's parameter name (_Tp) after the outer alias
+				// has already rebound it to the consumer's single type parameter
+				// (_Head). Recover only that one-type-parameter case; broader
+				// aliases must keep their original dependent binding to avoid
+				// changing cv/ref trait semantics.
 				const TemplateTypeArg* only_type_binding = nullptr;
 				for (const auto& [binding_name, binding_arg] : param_map_) {
 					(void)binding_name;
