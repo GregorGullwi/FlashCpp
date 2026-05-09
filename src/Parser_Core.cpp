@@ -249,9 +249,9 @@ std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified
 // Returns true only when a full template-id was captured successfully.
 bool Parser::parseDeferredAliasTargetTemplateId(
 	StringHandle& out_target_template_name,
-	std::vector<ASTNode>& out_target_template_arg_nodes,
+	InlineVector<ASTNode, 4>& out_target_template_arg_nodes,
 	StringHandle& out_target_member_template_name,
-	std::vector<ASTNode>& out_target_member_template_arg_nodes,
+	InlineVector<ASTNode, 4>& out_target_member_template_arg_nodes,
 	bool consume_dependent_member_suffix) {
 	out_target_template_name = StringHandle{};
 	out_target_template_arg_nodes.clear();
@@ -334,7 +334,7 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 			advance();
 			out_target_member_template_name = member_name;
 			if (peek() == "<"_tok) {
-				std::vector<ASTNode> member_arg_nodes;
+				InlineVector<ASTNode, 4> member_arg_nodes;
 				auto member_args = parse_explicit_template_arguments(&member_arg_nodes);
 				if (!member_args.has_value()) {
 					return restore_on_failure();

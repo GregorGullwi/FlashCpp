@@ -337,12 +337,12 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		target_template_param);
 }
 
-std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasTemplateArgs(
+std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAliasTemplateArgs(
 	const TemplateAliasNode& alias_node,
 	std::span<const TemplateTypeArg> template_args) {
-	std::vector<TemplateTypeArg> substituted_args;
+	InlineVector<TemplateTypeArg, 4> substituted_args;
 	const auto& param_names = alias_node.template_param_names();
-	const auto& target_template_args = alias_node.target_template_args();
+	const std::span<const ASTNode> target_template_args = alias_node.target_template_args();
 	const auto target_template_params =
 		getTargetTemplateParameters(StringTable::getOrInternStringHandle(alias_node.target_template_name()));
 	substituted_args.reserve(target_template_args.size());
@@ -390,15 +390,16 @@ StringHandle Parser::getDeferredMemberAliasHandle(
 	return alias_node.targetMemberTemplateNameHandle();
 }
 
-std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasMemberTemplateArgs(
+std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAliasMemberTemplateArgs(
 	const TemplateAliasNode& alias_node,
 	std::span<const TemplateTypeArg> template_args,
 	StringHandle member_alias_handle) {
 	const auto member_template_params = getTargetTemplateParameters(member_alias_handle);
-	std::vector<TemplateTypeArg> member_args;
-	member_args.reserve(alias_node.targetMemberTemplateArgs().size());
+	InlineVector<TemplateTypeArg, 4> member_args;
+	const std::span<const ASTNode> member_template_args = alias_node.targetMemberTemplateArgs();
+	member_args.reserve(member_template_args.size());
 
-	for (size_t i = 0; i < alias_node.targetMemberTemplateArgs().size(); ++i) {
+	for (size_t i = 0; i < member_template_args.size(); ++i) {
 		const TemplateParameterNode* target_template_param = nullptr;
 		if (i < member_template_params.size()) {
 			target_template_param = &member_template_params[i];
@@ -407,7 +408,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasMemb
 		}
 
 		auto materialized_member_arg = materializeDeferredAliasTemplateArg(
-			alias_node.targetMemberTemplateArgs()[i],
+			member_template_args[i],
 			alias_node.template_parameters(),
 			alias_node.template_param_names(),
 			template_args,
@@ -895,7 +896,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 			if (!substituted_args_opt.has_value()) {
 				return std::string_view();
 			}
-			std::vector<TemplateTypeArg> substituted_args = std::move(*substituted_args_opt);
+			InlineVector<TemplateTypeArg, 4> substituted_args = std::move(*substituted_args_opt);
 
 			// Now recursively instantiate the target template
 			// The target might itself be a template alias (chain of aliases)

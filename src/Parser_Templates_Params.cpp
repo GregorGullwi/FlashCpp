@@ -661,6 +661,10 @@ ParseResult Parser::parse_template_template_parameter_form() {
 // This eliminates duplication between parse_template_declaration() and parse_member_function_template()
 // Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
 // Template parameters must already be registered in getTypesByNameMap() via TemplateParameterScope
+std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_arguments() {
+	return parse_explicit_template_arguments(static_cast<std::vector<ASTNode>*>(nullptr));
+}
+
 std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes) {
 	// Recursion depth guard to prevent stack overflow on deeply nested template arguments
 	// Stack size increased to 8MB in FlashCppMSVC.vcxproj to handle deep recursion
@@ -2263,6 +2267,22 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 	discard_saved_token(saved_pos);
 	last_failed_template_arg_parse_handle_ = SIZE_MAX;  // Clear failure marker on success
 	return template_args;
+}
+
+std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_arguments(
+	InlineVector<ASTNode, 4>* out_type_nodes) {
+	if (out_type_nodes == nullptr) {
+		return parse_explicit_template_arguments();
+	}
+
+	std::vector<ASTNode> parsed_type_nodes;
+	auto parsed_args = parse_explicit_template_arguments(&parsed_type_nodes);
+	if (!parsed_args.has_value()) {
+		return std::nullopt;
+	}
+
+	*out_type_nodes = std::move(parsed_type_nodes);
+	return parsed_args;
 }
 
 // C++20 Template Argument Disambiguation

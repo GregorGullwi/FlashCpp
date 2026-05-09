@@ -873,9 +873,9 @@ ParseResult Parser::parse_template_declaration() {
 		// The integral_constant<bool, B> gets instantiated with "?" placeholder in the name
 		bool has_unresolved_params = false;
 		StringHandle target_template_name;
-		std::vector<ASTNode> target_template_arg_nodes;
+		InlineVector<ASTNode, 4> target_template_arg_nodes;
 		StringHandle target_member_template_name;
-		std::vector<ASTNode> target_member_template_arg_nodes;
+		InlineVector<ASTNode, 4> target_member_template_arg_nodes;
 
 		if ((is_struct_type(type_spec.category())) &&
 			type_spec.type_index().index() < getTypeInfoCount()) {

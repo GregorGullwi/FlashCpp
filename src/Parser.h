@@ -1314,9 +1314,9 @@ private:
 		FlashCpp::TemplateParameterScope& template_scope);
 	bool parseDeferredAliasTargetTemplateId(
 		StringHandle& out_target_template_name,
-		std::vector<ASTNode>& out_target_template_arg_nodes,
+		InlineVector<ASTNode, 4>& out_target_template_arg_nodes,
 		StringHandle& out_target_member_template_name,
-		std::vector<ASTNode>& out_target_member_template_arg_nodes,
+		InlineVector<ASTNode, 4>& out_target_member_template_arg_nodes,
 		bool consume_dependent_member_suffix);
 	// Simple struct to hold constant expression evaluation results
 	// Public members are intentional for this lightweight data structure
@@ -1390,7 +1390,9 @@ private:
 
 	ParseResult parse_template_template_parameter_forms(InlineVector<TemplateParameterNode, 4>& out_params);  // NEW: Parse template<template<typename> class T> forms
 	ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
-	std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes = nullptr);  // NEW: Parse explicit template arguments like <int, float>
+	std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments();	// NEW: Parse explicit template arguments like <int, float>
+	std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes);
+	std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(InlineVector<ASTNode, 4>* out_type_nodes);
 	TemplateTypeArgParsingResult parse_explicit_template_arguments_as_result(TokenDestroyPattern destroy_pattern);	// NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
 	ConstructorLookaheadResult consume_constructor_or_destructor_prefix(std::string_view class_name);  // Priority 3: Consume ClassName[<...>]::[~] prefix and detect ClassName( pattern (advances token position)
 	ConstructorLookaheadResult lookahead_constructor_or_destructor(std::string_view class_name);	 // Priority 3: Detect ClassName[<...>]::[~]ClassName( pattern with save/restore
@@ -2055,13 +2057,13 @@ private:
 		const InlineVector<StringHandle, 4>& param_names,
 		std::span<const TemplateTypeArg> template_args,
 		const TemplateParameterNode* target_template_param);
-	std::optional<std::vector<TemplateTypeArg>> materializeDeferredAliasTemplateArgs(
+	std::optional<InlineVector<TemplateTypeArg, 4>> materializeDeferredAliasTemplateArgs(
 		const TemplateAliasNode& alias_node,
 		std::span<const TemplateTypeArg> template_args);
 	StringHandle getDeferredMemberAliasHandle(
 		const TemplateAliasNode& alias_node,
 		std::string_view instantiated_name) const;
-	std::optional<std::vector<TemplateTypeArg>> materializeDeferredAliasMemberTemplateArgs(
+	std::optional<InlineVector<TemplateTypeArg, 4>> materializeDeferredAliasMemberTemplateArgs(
 		const TemplateAliasNode& alias_node,
 		std::span<const TemplateTypeArg> template_args,
 		StringHandle member_alias_handle);
