@@ -932,6 +932,27 @@ void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, cons
 	}
 
 	ctor_op.resolved_constructor = &default_ctor->function_decl.as<ConstructorDeclarationNode>();
+
+	// If the resolved default constructor is a deferred lazy stub (has a body position
+	// but has not been materialized yet), trigger materialization now via sema before
+	// codegen references it. This prevents linker errors when implicit constructors
+	// (e.g. for a derived class) call an unmaterialized base-class constructor.
+	if (sema_ &&
+		!ctor_op.resolved_constructor->is_materialized() &&
+		ctor_op.resolved_constructor->has_any_body_source() &&
+		struct_info.name.isValid()) {
+		StringHandle ctor_name = ctor_op.resolved_constructor->name();
+		if (ctor_name.isValid()) {
+			sema_->ensureMemberFunctionMaterialized(struct_info.name, ctor_name, false);
+			// Re-fetch after materialization: the lazy materializer replaces the
+			// function_decl in struct_info in-place, so default_ctor->function_decl
+			// now refers to the materialized node.
+			if (default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+				ctor_op.resolved_constructor = &default_ctor->function_decl.as<ConstructorDeclarationNode>();
+			}
+		}
+	}
+
 	fillInConstructorDefaultArguments(
 		ctor_op,
 		default_ctor->function_decl.as<ConstructorDeclarationNode>(),
