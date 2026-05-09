@@ -345,6 +345,12 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	MaterializedStoredTemplateArgs result;
 	const auto& stored_args = template_instantiation_info.templateArgs();
 	result.args.reserve(stored_args.size());
+	auto isEmptyTraitAlias = [](std::string_view base_template_name) {
+		return base_template_name == "__is_empty_non_tuple" ||
+			   base_template_name == "IsEmptyNonTuple";
+	};
+	const std::string_view base_template_name =
+		StringTable::getStringView(template_instantiation_info.baseTemplateName());
 
 	for (const auto& arg : stored_args) {
 		TemplateTypeArg materialized_arg = toTemplateTypeArg(arg);
@@ -388,9 +394,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 					result.had_substitution = true;
 					substituted = true;
 				}
-			} else if (!materialized_arg.is_value &&
-					   (StringTable::getStringView(template_instantiation_info.baseTemplateName()) == "__is_empty_non_tuple" ||
-						StringTable::getStringView(template_instantiation_info.baseTemplateName()) == "IsEmptyNonTuple")) {
+			} else if (!materialized_arg.is_value && isEmptyTraitAlias(base_template_name)) {
 				// Empty-trait aliases such as libstdc++ __empty_not_final<T> can store
 				// the selected branch's parameter name (_Tp) after the outer alias
 				// has already rebound it to the consumer's single type parameter
