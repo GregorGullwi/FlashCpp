@@ -547,6 +547,15 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		true);		   // Force resolved TypeIndex onto full AST substitutions
 	ASTNode new_func_node = shell.function_node;
 	FunctionDeclarationNode& new_func_ref = *shell.function;
+	if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
+		InlineVector<StringHandle, 4> outer_param_names;
+		InlineVector<TypeInfo::TemplateArgInfo, 4> outer_args;
+		populateTemplateEnvironmentLegacyViews(
+			lazy_info.outer_template_environment_snapshot,
+			outer_param_names,
+			outer_args);
+		new_func_ref.set_outer_template_bindings(outer_param_names, outer_args);
+	}
 
 	// Substitute and copy parameters, expanding variadic pack parameters into N individual
 	// parameters (args_0, args_1, ...) and populating pack_param_info_ for body expansion.
@@ -679,11 +688,44 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// Substitute template parameters in the function body
 	if (body_to_substitute.has_value()) {
 		// Build template argument vector for registration
+		InlineVector<TemplateParameterNode, 4> substitution_params;
 		std::vector<TemplateTypeArg> converted_template_args;
-		converted_template_args.reserve(lazy_info.template_args.size());
-		for (const auto& ttype_arg : lazy_info.template_args) {
-
-			converted_template_args.push_back(ttype_arg);
+		if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
+			InlineVector<StringHandle, 4> snapshot_param_names;
+			InlineVector<TypeInfo::TemplateArgInfo, 4> snapshot_args;
+			populateTemplateEnvironmentLegacyViews(
+				lazy_info.outer_template_environment_snapshot,
+				snapshot_param_names,
+				snapshot_args);
+			substitution_params.reserve(snapshot_param_names.size());
+			converted_template_args.reserve(snapshot_args.size());
+			for (size_t i = 0; i < snapshot_param_names.size() && i < snapshot_args.size(); ++i) {
+				TemplateTypeArg arg = toTemplateTypeArg(snapshot_args[i]);
+				Token param_token(Token::Type::Identifier, StringTable::getStringView(snapshot_param_names[i]), 0, 0, 0);
+				if (arg.is_value) {
+					TypeSpecifierNode type_node(
+						arg.type_index.withCategory(arg.typeEnum()),
+						get_type_size_bits(arg.typeEnum()),
+						param_token,
+						CVQualifier::None,
+						ReferenceQualifier::None);
+					substitution_params.push_back(TemplateParameterNode(snapshot_param_names[i], type_node, param_token));
+				} else {
+					TemplateParameterNode type_param(snapshot_param_names[i], param_token);
+					type_param.set_registered_type_index(arg.type_index.withCategory(arg.typeEnum()));
+					substitution_params.push_back(type_param);
+				}
+				converted_template_args.push_back(arg);
+			}
+		} else {
+			substitution_params.reserve(lazy_info.template_params.size());
+			converted_template_args.reserve(lazy_info.template_args.size());
+			for (const TemplateParameterNode& template_param : lazy_info.template_params) {
+				substitution_params.push_back(template_param);
+			}
+			for (const auto& ttype_arg : lazy_info.template_args) {
+				converted_template_args.push_back(ttype_arg);
+			}
 		}
 
 		// Push struct parsing context so that get_class_template_pack_size can find pack info in the registry
@@ -705,7 +747,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		register_parameters_in_scope(new_func_ref.parameter_nodes());
 		ASTNode substituted_body = substituteTemplateParameters(
 			*body_to_substitute,
-			lazy_info.template_params,
+			substitution_params,
 			converted_template_args);
 		new_func_ref.set_definition(substituted_body);
 	}

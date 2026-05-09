@@ -4935,6 +4935,38 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Use the filled template args for the rest of the function
 	const std::vector<TemplateTypeArg>& template_args_to_use = filled_template_args;
+	InlineVector<TemplateParameterNode, 4> effective_template_params;
+	InlineVector<TemplateTypeArg, 4> effective_template_args;
+	if (const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(template_name)) {
+		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
+			StringHandle outer_name = outer_binding->param_names[i];
+			const TemplateTypeArg& outer_arg = outer_binding->param_args[i];
+			Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_name), 0, 0, 0);
+			if (outer_arg.is_value) {
+				TypeSpecifierNode outer_type(
+					outer_arg.type_index.withCategory(outer_arg.typeEnum()),
+					get_type_size_bits(outer_arg.typeEnum()),
+					outer_token,
+					CVQualifier::None,
+					ReferenceQualifier::None);
+				effective_template_params.push_back(TemplateParameterNode(outer_name, outer_type, outer_token));
+			} else {
+				TemplateParameterNode outer_param(outer_name, outer_token);
+				outer_param.set_registered_type_index(outer_arg.type_index.withCategory(outer_arg.typeEnum()));
+				effective_template_params.push_back(outer_param);
+			}
+			effective_template_args.push_back(outer_arg);
+		}
+	}
+	for (const TemplateParameterNode& template_param : template_params) {
+		effective_template_params.push_back(template_param);
+	}
+	for (const TemplateTypeArg& template_arg : template_args_to_use) {
+		effective_template_args.push_back(template_arg);
+	}
+	std::vector<TemplateTypeArg> effective_template_args_vector(
+		effective_template_args.begin(),
+		effective_template_args.end());
 	auto normalized_cache_key = FlashCpp::makeInstantiationKey(template_name_handle, template_args_to_use);
 	cache_key = normalized_cache_key;
 	if (!can_use_raw_cache_key) {
@@ -6310,6 +6342,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// First, try to get static members from the template's StructTypeInfo
 	auto template_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(template_name));
+	if (template_type_it == getTypesByNameMap().end()) {
+		std::string_view template_name_view = template_name;
+		size_t last_colon = template_name_view.rfind("::");
+		if (last_colon != std::string_view::npos) {
+			template_type_it = getTypesByNameMap().find(
+				StringTable::getOrInternStringHandle(template_name_view.substr(last_colon + 2)));
+		}
+	}
 	const StructTypeInfo* template_struct_info = nullptr;
 	if (template_type_it != getTypesByNameMap().end() && template_type_it->second->getStructInfo()) {
 		template_struct_info = template_type_it->second->getStructInfo();
@@ -6423,11 +6463,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const DeclarationNode& decl = ast_static_member->declaration->as<DeclarationNode>();
 				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 				substituted_type_index = substitute_template_parameter(
-					type_spec, template_params, template_args_to_use);
+					type_spec, effective_template_params, effective_template_args);
 				ensure_instantiated_static_member_type(substituted_type_index);
 				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(substituted_type_index);
 				resolved_array_dimensions = resolve_array_dimensions(
-					decl, template_params, template_args_to_use);
+					decl, effective_template_params, effective_template_args);
 				if (resolved_array_dimensions.empty()) {
 					resolved_array_dimensions = resolved_member_alias.array_dimensions;
 				}
@@ -6467,7 +6507,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
 				original_type_spec.set_type_index(static_member.type_index);
 				substituted_type_index = substitute_template_parameter(
-					original_type_spec, template_params, template_args_to_use);
+					original_type_spec, effective_template_params, effective_template_args);
 				ensure_instantiated_static_member_type(substituted_type_index);
 				substituted_size = get_substituted_type_size_bytes(substituted_type_index);
 				if (is_array_member) {
@@ -6510,8 +6550,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.template_params = template_params_typed;
 				lazy_info.template_args = template_args_to_use;
 				lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
-					template_params_typed,
-					template_args_to_use);
+					effective_template_params,
+					effective_template_args);
 				lazy_info.needs_substitution = true;
 
 				LazyStaticMemberRegistry::getInstance().registerLazyStaticMember(lazy_info);
@@ -6544,8 +6584,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
 				? std::optional<ASTNode>(substituteTemplateParameters(
 					*static_member.initializer,
-					template_params,
-					template_args_to_use))
+					effective_template_params,
+					effective_template_args))
 				: std::nullopt;
 
 			auto [substituted_type_index, substituted_size, substituted_alignment, is_array_member, resolved_array_dimensions] =
@@ -6556,8 +6596,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					gSymbolTable,
 					this,
 					struct_info.get(),
-					template_params,
-					template_args_to_use,
+					effective_template_params,
+					effective_template_args_vector,
 					substituted_type_index,
 					substituted_size,
 					static_member.reference_qualifier,
@@ -6586,6 +6626,39 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					instantiated_static_member->normalized_init = std::move(normalized_initializer);
 				}
 			}
+		}
+	}
+	if (!class_decl.static_members().empty() &&
+		(!template_struct_info || template_struct_info->static_members.empty())) {
+		for (const auto& static_member : class_decl.static_members()) {
+			TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
+			original_type_spec.set_type_index(static_member.type_index);
+			TypeIndex substituted_type_index = substitute_template_parameter(
+				original_type_spec, effective_template_params, effective_template_args);
+			size_t substituted_size = get_substituted_type_size_bytes(substituted_type_index);
+			if (static_member.is_array) {
+				for (size_t dim_size : static_member.array_dimensions) {
+					substituted_size *= dim_size;
+				}
+			}
+			std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
+																 ? std::optional<ASTNode>(substituteTemplateParameters(
+																	   *static_member.initializer, effective_template_params, effective_template_args))
+																 : std::nullopt;
+			struct_info->addStaticMember(
+				static_member.name,
+				substituted_type_index,
+				substituted_size,
+				static_member.alignment,
+				static_member.access,
+				substituted_initializer,
+				static_member.cv_qualifier,
+				static_member.reference_qualifier,
+				static_member.pointer_depth,
+				static_member.is_array,
+				static_member.array_dimensions,
+				static_member.declaration,
+				static_member.initializer_position);
 		}
 	}
 	std::vector<ASTNode> instantiated_nested_class_nodes;
@@ -7389,8 +7462,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.template_params = template_params;
 				lazy_info.template_args = template_args_to_use;
 				lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
-					template_params,
-					template_args_to_use);
+					effective_template_params,
+					effective_template_args);
 				lazy_info.access = mem_func.access;
 				lazy_info.is_virtual = mem_func.is_virtual;
 				lazy_info.is_pure_virtual = mem_func.is_pure_virtual;

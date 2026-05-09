@@ -1910,8 +1910,8 @@ ParseResult Parser::parse_type_specifier() {
 						// Member templates are registered on the primary class template name (e.g., Outer::Inner),
 						// while lookups here use the instantiated name (e.g., Outer$hash::Inner).
 						// Fall back to the primary outer template name when available.
+						auto parent_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
 						if (!member_template_opt.has_value()) {
-							auto parent_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
 							if (parent_type_it != getTypesByNameMap().end() && parent_type_it->second->isTemplateInstantiation()) {
 								StringBuilder template_member_builder;
 								std::string_view template_member_name = template_member_builder.append(parent_type_it->second->baseTemplateName())
@@ -1927,6 +1927,19 @@ ParseResult Parser::parse_type_specifier() {
 							auto member_template_args = parse_explicit_template_arguments();
 							if (!member_template_args.has_value()) {
 								return ParseResult::error("Failed to parse template arguments for member class template", type_name_token);
+							}
+
+							if (parent_type_it != getTypesByNameMap().end() &&
+								parent_type_it->second->hasInstantiationContext()) {
+								const TypeInfo::InstantiationContext* parent_context = parent_type_it->second->instantiationContext();
+								OuterTemplateBinding outer_binding;
+								for (size_t i = 0; i < parent_context->param_names.size() && i < parent_context->param_args.size(); ++i) {
+									outer_binding.param_names.push_back(parent_context->param_names[i]);
+									outer_binding.param_args.push_back(toTemplateTypeArg(parent_context->param_args[i]));
+								}
+								if (!outer_binding.param_names.empty()) {
+									gTemplateRegistry.registerOuterTemplateBinding(member_template_name_handle, std::move(outer_binding));
+								}
 							}
 
 							auto member_instantiated = try_instantiate_class_template(StringTable::getStringView(member_template_name_handle), *member_template_args);
