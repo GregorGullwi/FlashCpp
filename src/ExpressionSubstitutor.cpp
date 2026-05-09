@@ -388,7 +388,9 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 					result.had_substitution = true;
 					substituted = true;
 				}
-			} else if (!materialized_arg.is_value) {
+			} else if (!materialized_arg.is_value &&
+					   (StringTable::getStringView(template_instantiation_info.baseTemplateName()) == "__is_empty_non_tuple" ||
+						StringTable::getStringView(template_instantiation_info.baseTemplateName()) == "IsEmptyNonTuple")) {
 				const TemplateTypeArg* only_type_binding = nullptr;
 				for (const auto& [binding_name, binding_arg] : param_map_) {
 					(void)binding_name;
