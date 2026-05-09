@@ -320,6 +320,8 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 
 	if (consume_dependent_member_suffix) {
 		while (peek() == "::"_tok) {
+			// TemplateAliasNode currently stores only one dependent member-template hop.
+			// Reject additional suffixes here so we never silently truncate the alias target.
 			if (out_target_member_template_name.isValid()) {
 				return restore_on_failure();
 			}
