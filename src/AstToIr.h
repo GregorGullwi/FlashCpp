@@ -513,15 +513,44 @@ private:
 		auto expr_node = ASTNode::emplace_node<ExpressionNode>(node);
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 
-		if (eval_result.success()) {
-			// Return the constant value
-			unsigned long long value = 0;
-			if (const auto* ll_val = std::get_if<long long>(&eval_result.value)) {
-				value = static_cast<unsigned long long>(*ll_val);
-			} else if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
-				value = *ull_val;
+		if (eval_result.success() &&
+			!eval_result.is_array &&
+			!eval_result.object_type_index.is_valid() &&
+			!eval_result.pointer_to_var.isValid()) {
+			// For general expression folding we require exact_type to preserve sema
+			// conversion behavior. For sizeof/alignof, evaluator results are always
+			// size_t-like integer constants, so allow missing exact_type and use ULL/64.
+			constexpr bool allow_untyped_sizeof_alignof =
+				std::is_same_v<NodeType, SizeofExprNode> ||
+				std::is_same_v<NodeType, AlignofExprNode>;
+
+			TypeCategory cat = TypeCategory::UnsignedLongLong;
+			int size_bits = 64;
+			if (eval_result.exact_type.has_value()) {
+				const TypeSpecifierNode& exact = *eval_result.exact_type;
+				cat = exact.category();
+				size_bits = exact.size_in_bits();
+			} else if (!allow_untyped_sizeof_alignof) {
+				return ExprResult{};
 			}
-			return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
+			// Non-primitive types (structs, etc.) cannot be folded to a scalar constant.
+			if (!is_primitive_type(cat) && cat != TypeCategory::Enum) {
+				return ExprResult{};
+			}
+
+			// Build the IrOperand with the correctly typed value
+			IrOperand operand_value{0ULL};
+			if (std::holds_alternative<bool>(eval_result.value)) {
+				operand_value = IrOperand{std::get<bool>(eval_result.value) ? 1ULL : 0ULL};
+			} else if (std::holds_alternative<long long>(eval_result.value)) {
+				operand_value = IrOperand{static_cast<unsigned long long>(std::get<long long>(eval_result.value))};
+			} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
+				operand_value = IrOperand{std::get<unsigned long long>(eval_result.value)};
+			} else if (std::holds_alternative<double>(eval_result.value)) {
+				operand_value = IrOperand{std::get<double>(eval_result.value)};
+			}
+
+			return makeExprResult(nativeTypeIndex(cat), SizeInBits{size_bits}, std::move(operand_value), PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Return default ExprResult if evaluation failed
