@@ -5040,12 +5040,21 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		if (stripped_desc.category() == to_desc.category())
 			return false; // Same category after stripping — no cast needed.
 		const CanonicalTypeAlias from_canonical2 = canonicalize_type_alias(stripped_desc.type_index);
+		const TypeCategory from_resolved_cat2 = from_canonical2.typeEnum();
 		const CanonicalTypeAlias to_canonical2 = canonicalize_type_alias(to_desc.type_index);
-		const ConversionPlan plan2 = buildConversionPlan(from_canonical2.typeEnum(), to_canonical2.typeEnum());
+		const ConversionPlan plan2 = buildConversionPlan(from_resolved_cat2, to_canonical2.typeEnum());
 		if (!plan2.is_valid || plan2.rank == ConversionRank::UserDefined)
 			return false;
+		TypeIndex stripped_resolved_tidx = from_canonical2.resolvedTypeIndex();
+		if (!stripped_resolved_tidx.is_valid())
+			stripped_resolved_tidx = nativeTypeIndex(from_resolved_cat2);
+		CanonicalTypeDesc stripped_resolved_desc;
+		stripped_resolved_desc.type_index = stripped_resolved_tidx;
+		const CanonicalTypeId stripped_resolved_from_id = type_context_.intern(stripped_resolved_desc);
+		if (!stripped_resolved_from_id)
+			return false;
 		ImplicitCastInfo cast_info2;
-		cast_info2.source_type_id = stripped_from_id;
+		cast_info2.source_type_id = stripped_resolved_from_id;
 		cast_info2.target_type_id = target_type_id;
 		cast_info2.cast_kind = plan2.kind;
 		cast_info2.value_category_after = ValueCategory::PRValue;
