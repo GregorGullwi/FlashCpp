@@ -729,7 +729,13 @@ private:
 			int64_t elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(end - frame.start).count();
 			RuntimePhaseStat& stat = parser_->runtime_stats_.phase_stats[static_cast<size_t>(phase_)];
 			stat.inclusive_time_us += elapsed_us;
-			stat.self_time_us += std::max<int64_t>(int64_t(0), elapsed_us - frame.child_time_us);
+			int64_t self_time_us = elapsed_us - frame.child_time_us;
+			if (self_time_us < 0) {
+				FLASH_LOG(Parser, Warning, "Parser runtime phase child time exceeded elapsed time for ",
+						  getRuntimePhaseName(phase_));
+				self_time_us = 0;
+			}
+			stat.self_time_us += self_time_us;
 			if (!parser_->runtime_phase_stack_.empty()) {
 				parser_->runtime_phase_stack_.back().child_time_us += elapsed_us;
 			}
