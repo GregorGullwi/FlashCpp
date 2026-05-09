@@ -123,7 +123,9 @@ struct TemplatePattern {
 			deduced.ref_qualifier = c.ref_qualifier;
 			deduced.pointer_cv_qualifiers = c.pointer_cv_qualifiers;
 			deduced.is_array = c.is_array;
-			deduced.array_dimensions = c.array_dimensions;
+			deduced.array_dimensions.assign(
+				c.array_dimensions.begin(),
+				c.array_dimensions.end());
 			deduced.function_signature = c.function_signature;
 		}
 		return deduced;

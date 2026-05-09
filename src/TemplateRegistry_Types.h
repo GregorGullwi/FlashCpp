@@ -5,7 +5,6 @@
 #include "Lexer.h"  // For TokenPosition
 #include "TemplateTypes.h"  // For TypeIndex-based template keys
 #include "TemplateProfilingStats.h"	// For StringHandleHash
-#include "TemplateEnvironment.h"
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,6 +20,9 @@
 // SaveHandle type for parser save/restore operations
 // Matches Parser::SaveHandle typedef in Parser.h
 using SaveHandle = size_t;
+
+struct TemplateTypeArg;
+TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg);
 
 // Transparent string hash for heterogeneous lookup (C++20)
 // Allows unordered_map with StringHandle keys to lookup with string_view

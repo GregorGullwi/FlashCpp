@@ -284,7 +284,7 @@ TemplateEnvironment buildTemplateEnvironment(const OuterTemplateBinding& binding
 		}
 		params.push_back(param_node.as<TemplateParameterNode>());
 	}
-	if (!params.empty() && params.size() == binding.param_names.size()) {
+	if (!params.empty()) {
 		return buildTemplateEnvironment(
 			std::span<const TemplateParameterNode>(params.data(), params.size()),
 			std::span<const TemplateTypeArg>(binding.all_args.data(), binding.all_args.size()),
@@ -292,14 +292,29 @@ TemplateEnvironment buildTemplateEnvironment(const OuterTemplateBinding& binding
 	}
 
 	TemplateEnvironment environment;
-	const size_t pair_count = std::min(binding.param_names.size(), binding.param_args.size());
+	if (binding.param_names.size() != binding.param_args.size()) {
+		return environment;
+	}
+	if (!binding.all_args.empty() && binding.all_args.size() != binding.param_args.size()) {
+		return environment;
+	}
+
+	const size_t pair_count = binding.param_names.size();
 	environment.bindings.reserve(pair_count);
-	for (size_t i = 0; i < pair_count; ++i) {
+	for (size_t i = 0; i < pair_count;) {
 		TemplateBinding entry;
 		entry.name = binding.param_names[i];
 		entry.kind = inferBindingKind(binding.param_args[i]);
 		entry.args.push_back(binding.param_args[i]);
+
+		size_t next_index = i + 1;
+		while (next_index < pair_count && binding.param_names[next_index] == entry.name) {
+			entry.is_pack = true;
+			entry.args.push_back(binding.param_args[next_index]);
+			++next_index;
+		}
 		environment.bindings.push_back(std::move(entry));
+		i = next_index;
 	}
 	return environment;
 }

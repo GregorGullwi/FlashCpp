@@ -604,17 +604,30 @@ void apply_uint_init_narrowing(EvalResult& result) {
 	result.set_exact_type(type_spec);
 }
 
-const TemplateTypeArg* findTemplateValueParameterBinding(std::string_view param_name, const EvaluationContext& context) {
-	const StringHandle param_name_handle = StringTable::getOrInternStringHandle(param_name);
-	if (const TemplateTypeArg* env_arg = context.template_environment.findOne(param_name_handle)) {
-		return env_arg;
+const TemplateTypeArg* findTemplateValueParameterBindingCompatibility(
+	StringHandle param_name_handle,
+	const EvaluationContext& context) {
+	if (!param_name_handle.isValid()) {
+		return nullptr;
 	}
+
+	const std::string_view param_name = StringTable::getStringView(param_name_handle);
 	for (size_t i = 0; i < context.template_param_names.size() && i < context.template_args.size(); ++i) {
 		if (context.template_param_names[i] == param_name) {
 			return &context.template_args[i];
 		}
 	}
 	return nullptr;
+}
+
+const TemplateTypeArg* findTemplateValueParameterBinding(StringHandle param_name_handle, const EvaluationContext& context) {
+	if (!param_name_handle.isValid()) {
+		return nullptr;
+	}
+	if (const TemplateTypeArg* env_arg = context.template_environment.findOne(param_name_handle)) {
+		return env_arg;
+	}
+	return findTemplateValueParameterBindingCompatibility(param_name_handle, context);
 }
 
 std::optional<EvalResult> tryResolveTemplateValueParameter(const TemplateTypeArg& arg) {
@@ -897,8 +910,9 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// For TemplateParameterReferenceNode (references to template parameters like 'T' or 'N')
 	if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 		const auto& template_param = std::get<TemplateParameterReferenceNode>(expr);
-		std::string_view param_name = StringTable::getStringView(template_param.param_name());
-		if (const TemplateTypeArg* arg = findTemplateValueParameterBinding(param_name, context)) {
+		const StringHandle param_name_handle = template_param.param_name();
+		std::string_view param_name = StringTable::getStringView(param_name_handle);
+		if (const TemplateTypeArg* arg = findTemplateValueParameterBinding(param_name_handle, context)) {
 			if (auto resolved = tryResolveTemplateValueParameter(*arg)) {
 				return *resolved;
 			}
@@ -2960,7 +2974,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	std::string_view var_name = identifier.name();
 	StringHandle name_handle = identifier.getOrInternNameHandle();
 
-	if (const TemplateTypeArg* arg = findTemplateValueParameterBinding(var_name, context)) {
+	if (const TemplateTypeArg* arg = findTemplateValueParameterBinding(name_handle, context)) {
 		if (auto resolved = tryResolveTemplateValueParameter(*arg)) {
 			return *resolved;
 		}

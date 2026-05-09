@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "AstNodeTypes_DeclNodes.h"
+#include "TemplateRegistry_Types.h"
 
 enum class TemplateParameterKind;
 class TemplateParameterNode;
