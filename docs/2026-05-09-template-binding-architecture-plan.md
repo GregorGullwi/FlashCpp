@@ -1,7 +1,7 @@
 # Template Binding Architecture Plan
 
 **Date:** 2026-05-09  
-**Status:** Phase 8 complete; Phase 9 pending
+**Status:** COMPLETE (Phases 1-9 complete)
 
 **Scope:** Template argument identity, parameter binding environments, instantiation consumers, and C++20 failure-mode boundaries.
 
@@ -17,8 +17,10 @@ This reduces accidental fallback paths, makes nested template instantiation more
 
 ## Next Task
 
-Phase 9 next step:
-- Compact and harden binding metadata paths now that Phase 8 integration is complete
+Phase 9 completion:
+- compacted metadata containers on hot binding paths
+- hardened metadata-boundary correctness for instantiation context, environment fallback, and constexpr binding lookup
+- preserved ordered identity semantics with discriminated payload storage
 
 **Phase 8 completion:**
 1. ✅ Extracted post-binding function-template materialization into shared helpers used by both `try_instantiate_template_explicit()` and `try_instantiate_single_template()` in `src/Parser_Templates_Inst_Deduction.cpp`
@@ -525,25 +527,24 @@ Current notes:
 
 Goal: address review feedback from PR #1473 before the binding architecture becomes more widely used. This phase is about correctness at metadata boundaries and memory shape in hot compiler structures.
 
-Next item:
+Completed items:
 
-1. Fix `TypeInfo::setInstantiationContext(...)` in `src/AstNodeTypes.cpp` to stop inferring binding kind from `is_value`.
-2. Replace the `0` / `1` magic numbers with `TemplateParameterKind` casts.
-3. Preserve template-template bindings explicitly when `TemplateArgInfo::is_template_template_arg` is set.
-4. Add a focused test using a class template or alias with a template-template parameter and verify the instantiation context records `TemplateParameterKind::Template`.
+1. ✅ Fixed `TypeInfo::setInstantiationContext(...)` in `src/AstNodeTypes.cpp` to stop inferring binding kind from `is_value`.
+2. ✅ Replaced the `0` / `1` magic numbers with `TemplateParameterKind` casts.
+3. ✅ Preserved template-template bindings explicitly when `TemplateArgInfo::is_template_template_arg` is set.
+4. ✅ Added focused regression coverage for template-template binding kind in instantiation context.
 
-Then do the compactness work:
+Compactness work:
 
-1. Replace `std::vector<size_t> TypeInfo::TemplateArgInfo::array_dimensions` in `src/AstNodeTypes_DeclNodes.h` with a compact representation.
-2. Prefer `InlineVector<size_t, 2>` first. Most valid array template arguments are scalar, one-dimensional, or two-dimensional; this avoids heap allocation without adding pointer ownership complexity.
-3. Verify `array_size()` still returns the first dimension and every conversion helper in `src/TemplateEnvironment.cpp` / `src/TemplateRegistry_Types.h` round-trips all dimensions.
-4. Keep tests:
+1. ✅ Replaced `std::vector<size_t> TypeInfo::TemplateArgInfo::array_dimensions` in `src/AstNodeTypes_DeclNodes.h` with `InlineVector<size_t, 2>`.
+2. ✅ Kept `array_size()` behavior (first dimension) and updated conversion paths to preserve all dimensions.
+3. ✅ Kept tests:
    - `tests/template_arg_roundtrip_multidim_array_ret0.cpp`
    - one additional mixed array/function-pointer/template-template round-trip if the refactor touches shared conversion code.
 
 Variant proposal:
 
-1. Refactor `TemplateArgIdentity` in `src/TemplateTypes.h` so it does not store `type`, `value`, and `template_name` simultaneously.
+1. ✅ Refactored `TemplateArgIdentity` in `src/TemplateTypes.h` to use discriminated payload storage.
 2. Use a discriminated payload, preferably:
 
 ```cpp
@@ -558,9 +559,9 @@ struct TemplateArgIdentity {
 };
 ```
 
-3. Keep typed constructors or factory helpers so call sites cannot build mismatched `(kind, payload)` pairs.
-4. Keep `operator==` and `hash()` behavior byte-for-byte compatible at the semantic level: type args compare by `TypeIndexArg`, value args by `NonTypeValueIdentity`, template-template args by `StringHandle`.
-5. Add or keep coverage for:
+3. ✅ Added typed constructors/factory helpers to prevent mismatched `(kind, payload)` pairs.
+4. ✅ Kept `operator==` and `hash()` semantic behavior compatible by kind.
+5. ✅ Kept coverage for:
    - `tests/test_template_argument_order_ret1.cpp`
    - `tests/test_template_nttp_identity_ret1.cpp`
    - `tests/test_template_ordered_identity_ret1.cpp`
@@ -568,23 +569,23 @@ struct TemplateArgIdentity {
 
 Environment storage:
 
-1. Change `TemplateBinding::args` in `src/TemplateEnvironment.h` from `std::vector<TemplateTypeArg>` to `InlineVector<TemplateTypeArg, 1>`.
-2. Update builders in `src/TemplateEnvironment.cpp` to avoid heap allocation for the common non-pack case while preserving packs.
-3. Check `findOne()` and `findPack()` behavior for zero-length packs and multi-element packs.
+1. ✅ Changed `TemplateBinding::args` in `src/TemplateEnvironment.h` to `InlineVector<TemplateTypeArg, 1>`.
+2. ✅ Updated builders in `src/TemplateEnvironment.cpp` to preserve packs while avoiding lossy fallback reconstruction.
+3. ✅ Verified `findOne()` and `findPack()` behavior through existing and added template regression tests.
 
 Legacy fallback hardening:
 
-1. In `buildTemplateEnvironment(const OuterTemplateBinding&)` in `src/TemplateEnvironment.cpp`, keep the primary path based on `binding.params` and `binding.all_args`.
-2. Replace the fallback that maps only `param_names[i] -> param_args[i]` with one of:
+1. ✅ In `buildTemplateEnvironment(const OuterTemplateBinding&)` in `src/TemplateEnvironment.cpp`, kept the primary path based on `binding.params` and `binding.all_args`.
+2. ✅ Replaced the lossy fallback mapping of `param_names[i] -> param_args[i]` with a pack-aware reconstruction/empty-environment guard.
    - a reconstructable pack-aware fallback when enough metadata exists;
    - a hard error or empty environment when reconstructing would be lossy.
-3. Do not silently collapse variadic packs to their first argument.
+3. ✅ No silent variadic-pack collapse to first argument.
 
 Constexpr lookup cleanup:
 
-1. In `src/ConstExprEvaluator_Core.cpp`, update `findTemplateValueParameterBinding(...)` so `TemplateEnvironment` is the source of truth.
-2. Keep the legacy `template_param_names` / `template_args` fallback only behind a clearly named compatibility helper, or remove it after all callers provide an environment.
-3. Avoid repeated string interning in hot constexpr lookup paths by passing `StringHandle` where the caller already has one, or by caching once per evaluated identifier.
+1. ✅ In `src/ConstExprEvaluator_Core.cpp`, updated `findTemplateValueParameterBinding(...)` to be `TemplateEnvironment`-first.
+2. ✅ Kept legacy `template_param_names` / `template_args` fallback behind a compatibility helper.
+3. ✅ Avoided repeated interning by using `StringHandle` directly in hot lookup paths.
 
 Acceptance criteria:
 
@@ -600,7 +601,7 @@ Risk: Medium
 
 ## Implementation Status
 
-The binding architecture through Phase 8 has been implemented and tested:
+The binding architecture through Phase 9 has been implemented and tested:
 
 1. ✅ Phase 1: Consolidated template argument conversion helpers
 2. ✅ Phase 2: Added TemplateEnvironment as adapter
@@ -610,9 +611,9 @@ The binding architecture through Phase 8 has been implemented and tested:
 6. ✅ Phase 6: Made persistent argument metadata lossless
 7. ✅ Phase 7: Made TemplateInstantiationKey ordered
 8. ✅ Phase 8: Refactor instantiation paths around the environment
-9. ⏳ Phase 9: Compact and harden binding metadata
+9. ✅ Phase 9: Compact and harden binding metadata
 
-**Status: Phase 8 complete; Phase 9 remains**
+**Status: COMPLETE**
 
 Add debug assertions as each phase creates the relevant type:
 
