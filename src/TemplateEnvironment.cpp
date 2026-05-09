@@ -253,6 +253,28 @@ TemplateEnvironment buildTemplateEnvironment(
 	return environment;
 }
 
+TemplateEnvironment buildTemplateEnvironment(const TemplateEnvironmentSnapshot& snapshot) {
+	TemplateEnvironment environment;
+	auto append_snapshot = [&](auto&& self, const TemplateEnvironmentSnapshot& current) -> void {
+		if (current.parent != nullptr) {
+			self(self, *current.parent);
+		}
+		for (const TemplateBindingSnapshot& snapshot_binding : current.bindings) {
+			TemplateBinding binding;
+			binding.name = snapshot_binding.name;
+			binding.kind = snapshot_binding.kind;
+			binding.is_pack = snapshot_binding.is_pack;
+			binding.args.reserve(snapshot_binding.args.size());
+			for (const TypeInfo::TemplateArgInfo& snapshot_arg : snapshot_binding.args) {
+				binding.args.push_back(toTemplateTypeArg(snapshot_arg));
+			}
+			environment.bindings.push_back(std::move(binding));
+		}
+	};
+	append_snapshot(append_snapshot, snapshot);
+	return environment;
+}
+
 TemplateEnvironment buildTemplateEnvironment(const OuterTemplateBinding& binding) {
 	InlineVector<TemplateParameterNode, 4> params;
 	params.reserve(binding.params.size());

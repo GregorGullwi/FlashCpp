@@ -1226,83 +1226,32 @@ void registerOuterBindingInScope(
 // ─────────────────────────────────────────────────────────────────────────────
 // populateTemplateParamSubstitutions
 // ─────────────────────────────────────────────────────────────────────────────
-// Populate a TemplateParamSubstitution vector from parallel (name, arg) pairs
-// for body-reparse paths.  Non-type and template-template entries are converted
-// to is_value_param / is_type_param respectively so parse_block() can resolve
-// references like "return N;" without touching getTypesByNameMap().
-//
-// Overload 1: TemplateTypeArg source (lazy body-reparse: param names are
-//             pre-built string_views; args already in TemplateTypeArg form).
-// Overload 2: TemplateTypeArg source (member-func body-reparse: template_params
-//             are ASTNodes; args are TemplateTypeArg).  Handles the
-//             !is<TemplateParameterNode>() guard internally.
+// Populate a TemplateParamSubstitution vector from a normalized template
+// environment for body-reparse paths. Non-type and template-template entries
+// are converted to value/type/template-template substitutions so parse_block()
+// can resolve references like "return N;" without touching getTypesByNameMap().
 // ─────────────────────────────────────────────────────────────────────────────
 void Parser::populateTemplateParamSubstitutions(
 	InlineVector<TemplateParamSubstitution, 4>& subs,
-	const InlineVector<StringHandle, 4>& param_names,
-	std::span<const TemplateTypeArg> type_args) {
-	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
-		const TemplateTypeArg& arg = type_args[i];
+	const TemplateEnvironment& environment) {
+	auto make_substitution = [](StringHandle param_name, const TemplateTypeArg& arg) {
+		TemplateParamSubstitution subst;
+		subst.param_name = param_name;
 		if (arg.is_template_template_arg) {
-			// Record template template parameter so that instantiation and type specifier
-			// parsing can redirect "Container" -> concrete template (e.g., "MyVec") when
-			// re-parsing the function body.
-			TemplateParamSubstitution subst;
-			subst.param_name = param_names[i];
 			subst.is_template_template_param = true;
 			subst.concrete_template_name = arg.template_name_handle;
-			subs.push_back(subst);
-			continue;
+			return subst;
 		}
-		TemplateParamSubstitution subst;
-		subst.param_name = param_names[i];
 		if (arg.is_value) {
 			subst.is_value_param = true;
 			subst.value = arg.value;
 			subst.value_type = arg.typeEnum();
-		} else {
-			subst.is_value_param = false;
-			subst.is_type_param = true;
-			subst.substituted_type = arg;
+			return subst;
 		}
-		subs.push_back(subst);
-	}
-}
-
-void Parser::populateTemplateParamSubstitutions(
-	InlineVector<TemplateParamSubstitution, 4>& subs,
-	std::span<const TemplateParameterNode> template_params,
-	std::span<const TemplateTypeArg> template_args) {
-	forEachNonPackTemplateParamArgBinding(
-		template_params,
-		template_args,
-		[&](const TemplateParameterNode& template_param, const TemplateTypeArg& arg, size_t) {
-			if (arg.is_template_template_arg) {
-				TemplateParamSubstitution subst;
-				subst.param_name = template_param.nameHandle();
-				subst.is_template_template_param = true;
-				subst.concrete_template_name = arg.template_name_handle;
-				subs.push_back(subst);
-				return;
-			}
-			TemplateParamSubstitution subst;
-			subst.param_name = template_param.nameHandle();
-			if (arg.is_value) {
-				subst.is_value_param = true;
-				subst.value = arg.value;
-				subst.value_type = arg.typeEnum();
-			} else {
-				subst.is_value_param = false;
-				subst.is_type_param = true;
-				subst.substituted_type = arg;
-			}
-			subs.push_back(subst);
-		});
-}
-
-void Parser::populateTemplateParamSubstitutions(
-	InlineVector<TemplateParamSubstitution, 4>& subs,
-	const TemplateEnvironment& environment) {
+		subst.is_type_param = true;
+		subst.substituted_type = arg;
+		return subst;
+	};
 	forEachEnvironmentBinding(
 		environment,
 		[&](const TemplateBinding& binding) {
@@ -1310,26 +1259,7 @@ void Parser::populateTemplateParamSubstitutions(
 				return;
 			}
 			const TemplateTypeArg& arg = binding.args.front();
-			if (arg.is_template_template_arg) {
-				TemplateParamSubstitution subst;
-				subst.param_name = binding.name;
-				subst.is_template_template_param = true;
-				subst.concrete_template_name = arg.template_name_handle;
-				subs.push_back(subst);
-				return;
-			}
-			TemplateParamSubstitution subst;
-			subst.param_name = binding.name;
-			if (arg.is_value) {
-				subst.is_value_param = true;
-				subst.value = arg.value;
-				subst.value_type = arg.typeEnum();
-			} else {
-				subst.is_value_param = false;
-				subst.is_type_param = true;
-				subst.substituted_type = arg;
-			}
-			subs.push_back(subst);
+			subs.push_back(make_substitution(binding.name, arg));
 		});
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1417,7 +1347,11 @@ void Parser::reparse_template_function_body(
 	// template instantiations inside the body.
 	{
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-		populateTemplateParamSubstitutions(template_param_substitutions_, template_params, template_args);
+		TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+			template_params,
+			template_args,
+			nullptr);
+		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 
 		// Phase 1 (C++20 [temp.res]/9): record the template body's opening-brace line so
 		// createBoundIdentifier can detect names that were not visible at definition time.
@@ -2048,6 +1982,846 @@ bool Parser::functionTemplateAcceptsCallArgumentCount(
 	return argument_count <= func_decl.parameter_nodes().size();
 }
 
+bool Parser::materializeTemplateFunctionParameters(
+	FunctionDeclarationNode& new_func_ref,
+	const FunctionTemplateInstantiationContext& instantiation_context,
+	const FunctionTemplateBindingData& binding_data,
+	FunctionTemplateInstantiationFlags instantiation_flags) {
+	const TemplateFunctionDeclarationNode& template_func = instantiation_context.template_func;
+	const FunctionDeclarationNode& func_decl = instantiation_context.func_decl;
+	std::span<const TemplateParameterNode> template_params = instantiation_context.template_params;
+	std::span<const TemplateTypeArg> template_args = instantiation_context.template_args;
+	const std::vector<TypeSpecifierNode>* arg_types = binding_data.arg_types;
+	const std::vector<size_t>* template_param_arg_starts = binding_data.template_param_arg_starts;
+	const std::vector<size_t>* template_param_arg_counts = binding_data.template_param_arg_counts;
+	const std::optional<CallArgDeductionInfo>* deduction_info = binding_data.deduction_info;
+	const int recursion_depth = instantiation_context.recursion_depth;
+	const bool use_explicit_materialization =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::ExplicitMaterialization);
+	size_t arg_type_index = 0;
+	if (use_explicit_materialization) {
+		if (template_param_arg_starts == nullptr || template_param_arg_counts == nullptr) {
+			return false;
+		}
+		struct PackBinding {
+			size_t start_index;
+			size_t count;
+		};
+		auto getPackParameterName = [&](const TypeSpecifierNode& type_spec) -> std::string_view {
+			if (deduction_info != nullptr && deduction_info->has_value() &&
+				(*deduction_info)->function_pack_template_param_name.isValid()) {
+				return StringTable::getStringView((*deduction_info)->function_pack_template_param_name);
+			}
+			if (!type_spec.token().value().empty()) {
+				return type_spec.token().value();
+			}
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+				return StringTable::getStringView(type_info->name());
+			}
+			return {};
+		};
+		auto cloneNonVariadicTemplateParam = [&](const TemplateParameterNode& param) {
+			TemplateParameterNode clone = [&]() {
+				switch (param.kind()) {
+					case TemplateParameterKind::Type:
+						return TemplateParameterNode(param.nameHandle(), param.token());
+					case TemplateParameterKind::NonType:
+						return TemplateParameterNode(param.nameHandle(), param.type_specifier_node(), param.token());
+					case TemplateParameterKind::Template:
+						return TemplateParameterNode(param.nameHandle(), param.nested_parameters(), param.token());
+				}
+				return TemplateParameterNode(param.nameHandle(), param.token());
+			}();
+			if (param.has_concept_constraint()) {
+				clone.set_concept_constraint(param.concept_constraint());
+			}
+			if (param.has_concept_args()) {
+				clone.set_concept_args(param.concept_args());
+			}
+			if (param.has_default()) {
+				clone.set_default_value(param.default_value());
+			}
+			if (param.has_default_value_position()) {
+				clone.set_default_value_position(param.default_value_position());
+			}
+			clone.set_registered_type_index(param.registered_type_index());
+			return clone;
+		};
+		auto getTemplateParamPackBinding = [&](std::string_view pack_param_name) -> std::optional<PackBinding> {
+			for (size_t template_param_index = 0; template_param_index < template_params.size(); ++template_param_index) {
+				const TemplateParameterNode* template_param_ptr = tryGetTemplateParameterNode(template_params[template_param_index]);
+				if (template_param_ptr == nullptr) {
+					continue;
+				}
+				const auto& template_param = *template_param_ptr;
+				if (template_param.is_variadic() && template_param.name() == pack_param_name) {
+					return PackBinding{
+						(*template_param_arg_starts)[template_param_index],
+						(*template_param_arg_counts)[template_param_index]};
+				}
+			}
+			return std::nullopt;
+		};
+		auto buildPackElementParamName = [&](const DeclarationNode& declaration, size_t pack_element_offset) {
+			StringBuilder param_name_builder;
+			param_name_builder.append(declaration.identifier_token().value());
+			param_name_builder.append('_');
+			param_name_builder.append(pack_element_offset);
+			return param_name_builder.commit();
+		};
+		auto buildSubstitutionForPackElement =
+			[&](std::string_view pack_param_name, size_t pack_element_offset,
+				InlineVector<ASTNode, 4>& subst_params,
+				InlineVector<TemplateTypeArg, 4>& subst_args) -> bool {
+				auto pack_binding = getTemplateParamPackBinding(pack_param_name);
+				if (!pack_binding.has_value() || pack_element_offset >= pack_binding->count) {
+					return false;
+				}
+				size_t template_arg_index = 0;
+				for (size_t template_param_index = 0; template_param_index < template_params.size(); ++template_param_index) {
+					const TemplateParameterNode* template_param_ptr = tryGetTemplateParameterNode(template_params[template_param_index]);
+					if (template_param_ptr == nullptr) {
+						continue;
+					}
+					const auto& template_param = *template_param_ptr;
+					if (template_param.is_variadic()) {
+						const bool is_primary = (template_param.name() == pack_param_name);
+						const bool is_co_pack = deduction_info != nullptr && deduction_info->has_value() && !is_primary &&
+							(*deduction_info)->function_pack_dependent_param_names.count(template_param.nameHandle());
+						if (is_primary || is_co_pack) {
+							if (template_arg_index + pack_element_offset < template_args.size()) {
+								subst_params.push_back(emplace_node<TemplateParameterNode>(
+									cloneNonVariadicTemplateParam(template_param)));
+								subst_args.push_back(template_args[template_arg_index + pack_element_offset]);
+							}
+						}
+						template_arg_index += (*template_param_arg_counts)[template_param_index];
+						continue;
+					}
+					if (template_arg_index >= template_args.size()) {
+						break;
+					}
+					subst_params.push_back(emplace_node<TemplateParameterNode>(template_param));
+					subst_args.push_back(template_args[template_arg_index]);
+					++template_arg_index;
+				}
+				return true;
+			};
+		auto buildMaterializedParamType =
+			[&](const DeclarationNode& original_param_decl,
+				const InlineVector<ASTNode, 4>& materialized_template_params,
+				const InlineVector<TemplateTypeArg, 4>& materialized_template_args) {
+				const TypeSpecifierNode& original_param_type = original_param_decl.type_specifier_node();
+				InlineVector<TemplateParameterNode, 4> typed_params;
+				typed_params.reserve(materialized_template_params.size());
+				for (const ASTNode& param_node : materialized_template_params) {
+					if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+						typed_param != nullptr) {
+						typed_params.push_back(*typed_param);
+					}
+				}
+
+				TypeSpecifierNode substituted_param_type = buildSubstitutedTypeSpecifier(
+					original_param_type,
+					original_param_decl.type_node(),
+					original_param_decl.identifier_token(),
+					typed_params,
+					materialized_template_args,
+					[this](const ASTNode& node, const auto& params, const auto& args) {
+						return substituteTemplateParameters(node, params, args);
+					},
+					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+						return substitute_template_parameter(type_spec, params, args);
+					},
+					nullptr,
+					TypeIndex{},
+					TypeIndex{},
+					false,
+					true);
+				ASTNode param_type = emplace_node<TypeSpecifierNode>(substituted_param_type);
+				resolveDependentMemberAlias(param_type, typed_params, materialized_template_args);
+				normalizeSubstitutedTypeSpec(param_type.as<TypeSpecifierNode>());
+				return param_type;
+			};
+
+		for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
+			const auto& param = func_decl.parameter_nodes()[i];
+			if (!param.is<DeclarationNode>()) {
+				continue;
+			}
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			const TypeSpecifierNode& orig_param_type = param_decl.type_specifier_node();
+			if (param_decl.is_parameter_pack()) {
+				size_t pack_start_index = arg_type_index;
+				std::string_view pack_param_name = getPackParameterName(orig_param_type);
+				auto pack_binding = getTemplateParamPackBinding(pack_param_name);
+				if (pack_binding.has_value()) {
+					for (size_t pack_element_offset = 0; pack_element_offset < pack_binding->count; ++pack_element_offset) {
+						InlineVector<ASTNode, 4> subst_params;
+						InlineVector<TemplateTypeArg, 4> subst_args;
+						if (!buildSubstitutionForPackElement(pack_param_name, pack_element_offset, subst_params, subst_args)) {
+							continue;
+						}
+						ASTNode param_type = buildMaterializedParamType(param_decl, subst_params, subst_args);
+						std::string_view param_name = buildPackElementParamName(param_decl, pack_element_offset);
+						Token param_token(Token::Type::Identifier,
+										  param_name,
+										  param_decl.identifier_token().line(),
+										  param_decl.identifier_token().column(),
+										  param_decl.identifier_token().file_index());
+						auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_token);
+						new_func_ref.add_parameter_node(new_param_decl);
+						arg_type_index++;
+					}
+				}
+				size_t pack_size = arg_type_index - pack_start_index;
+				pack_param_info_.push_back({param_decl.identifier_token().value(), pack_start_index, pack_size});
+				continue;
+			}
+
+			InlineVector<ASTNode, 4> flat_subst_params;
+			InlineVector<TemplateTypeArg, 4> flat_subst_args;
+			{
+				size_t flat_arg_idx = 0;
+				for (size_t j = 0; j < template_params.size(); ++j) {
+					const TemplateParameterNode* tp = tryGetTemplateParameterNode(template_params[j]);
+					if (!tp) {
+						continue;
+					}
+					const size_t count = (*template_param_arg_counts)[j];
+					if (tp->is_variadic()) {
+						for (size_t k = 0; k < count; ++k) {
+							if (flat_arg_idx + k < template_args.size()) {
+								flat_subst_params.push_back(emplace_node<TemplateParameterNode>(
+									cloneNonVariadicTemplateParam(*tp)));
+								flat_subst_args.push_back(template_args[flat_arg_idx + k]);
+							}
+						}
+						flat_arg_idx += count;
+						continue;
+					}
+					if (flat_arg_idx < template_args.size()) {
+						flat_subst_params.push_back(emplace_node<TemplateParameterNode>(*tp));
+						flat_subst_args.push_back(template_args[flat_arg_idx]);
+					}
+					++flat_arg_idx;
+				}
+			}
+			ASTNode param_type = buildMaterializedParamType(param_decl, flat_subst_params, flat_subst_args);
+			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
+			if (param_decl.has_default_value()) {
+				new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
+			}
+			new_func_ref.add_parameter_node(new_param_decl);
+			arg_type_index++;
+		}
+		return true;
+	}
+
+	if (arg_types == nullptr) {
+		return false;
+	}
+	for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
+		const auto& param = func_decl.parameter_nodes()[i];
+		if (!param.is<DeclarationNode>()) {
+			continue;
+		}
+		const DeclarationNode& param_decl = param.as<DeclarationNode>();
+		if (param_decl.is_parameter_pack()) {
+			size_t pack_start_index = arg_type_index;
+			const TypeSpecifierNode& orig_param_type = param_decl.type_specifier_node();
+			bool is_forwarding_reference = orig_param_type.is_rvalue_reference();
+			while (arg_type_index < arg_types->size()) {
+				const TypeSpecifierNode& arg_type = (*arg_types)[arg_type_index];
+				ASTNode param_type = emplace_node<TypeSpecifierNode>(
+					arg_type.type(),
+					arg_type.qualifier(),
+					arg_type.size_in_bits(),
+					Token(), CVQualifier::None);
+				param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
+				if (is_forwarding_reference) {
+					if (arg_type.is_lvalue_reference()) {
+						param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
+					} else if (arg_type.is_rvalue_reference()) {
+						param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
+					} else {
+						param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
+					}
+				}
+				for (const auto& ptr_level : arg_type.pointer_levels()) {
+					param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+				}
+				StringBuilder param_name_builder;
+				param_name_builder.append(param_decl.identifier_token().value());
+				param_name_builder.append('_');
+				param_name_builder.append(arg_type_index - pack_start_index);
+				std::string_view param_name = param_name_builder.commit();
+				Token param_token(Token::Type::Identifier,
+								  param_name,
+								  param_decl.identifier_token().line(),
+								  param_decl.identifier_token().column(),
+								  param_decl.identifier_token().file_index());
+				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_token);
+				new_func_ref.add_parameter_node(new_param_decl);
+				arg_type_index++;
+			}
+			size_t pack_size = arg_type_index - pack_start_index;
+			pack_param_info_.push_back({param_decl.identifier_token().value(), pack_start_index, pack_size});
+			continue;
+		}
+
+		const TypeSpecifierNode& orig_param_type = param_decl.type_specifier_node();
+		ASTNode param_type;
+		if (orig_param_type.category() == TypeCategory::Auto && arg_type_index < arg_types->size()) {
+			const TypeSpecifierNode& deduced_arg_type = (*arg_types)[arg_type_index];
+			CVQualifier cv = static_cast<CVQualifier>(
+				static_cast<uint8_t>(deduced_arg_type.cv_qualifier()) |
+				static_cast<uint8_t>(orig_param_type.cv_qualifier()));
+			param_type = emplace_node<TypeSpecifierNode>(
+				deduced_arg_type.type(),
+				TypeQualifier::None,
+				deduced_arg_type.size_in_bits(),
+				orig_param_type.token(),
+				cv);
+			param_type.as<TypeSpecifierNode>().set_type_index(deduced_arg_type.type_index());
+			if (deduced_arg_type.has_function_signature()) {
+				param_type.as<TypeSpecifierNode>().set_function_signature(deduced_arg_type.function_signature());
+			}
+			for (const auto& ptr_level : deduced_arg_type.pointer_levels()) {
+				param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+			}
+			if (orig_param_type.pointer_depth() > deduced_arg_type.pointer_depth()) {
+				const auto& orig_levels = orig_param_type.pointer_levels();
+				for (size_t pl = deduced_arg_type.pointer_depth(); pl < orig_param_type.pointer_depth(); ++pl) {
+					param_type.as<TypeSpecifierNode>().add_pointer_level(orig_levels[pl].cv_qualifier);
+				}
+			}
+		} else {
+			TypeIndex subst_type_index = substitute_template_parameter(
+				orig_param_type, template_params, template_args);
+			if (subst_type_index.category() == TypeCategory::UserDefined &&
+				subst_type_index == orig_param_type.type_index() &&
+				tryGetTypeInfo(subst_type_index) &&
+				tryGetTypeInfo(subst_type_index)->isTemplateInstantiation() &&
+				i < arg_types->size() &&
+				(*arg_types)[i].category() == TypeCategory::Struct) {
+				subst_type_index.setCategory(TypeCategory::Struct);
+				subst_type_index = (*arg_types)[i].type_index();
+				FLASH_LOG_FORMAT(Templates, Debug,
+								 "[depth={}]: Using call-site Struct type_index={} for dependent-placeholder param",
+								 recursion_depth, subst_type_index);
+			}
+			param_type = emplace_node<TypeSpecifierNode>(
+				subst_type_index.category(),
+				TypeQualifier::None,
+				get_type_size_bits(subst_type_index.category()),
+				orig_param_type.token(),
+				orig_param_type.cv_qualifier());
+			param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
+			applyTemplateArgIndirection(param_type.as<TypeSpecifierNode>(), orig_param_type, template_params, template_args,
+										/*propagate_reference_qualifier=*/false);
+			propagateFunctionSignatureFromTemplateArg(
+				param_type.as<TypeSpecifierNode>(),
+				orig_param_type,
+				subst_type_index,
+				template_params,
+				template_args);
+			for (const auto& ptr_level : orig_param_type.pointer_levels()) {
+				param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+			}
+		}
+
+		if (orig_param_type.is_rvalue_reference() && arg_type_index < arg_types->size()) {
+			const TypeSpecifierNode& arg_type = (*arg_types)[arg_type_index];
+			if (arg_type.is_lvalue_reference()) {
+				param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
+			} else if (arg_type.is_rvalue_reference()) {
+				param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
+			} else if (arg_type.is_reference()) {
+				param_type.as<TypeSpecifierNode>().set_reference_qualifier(arg_type.reference_qualifier());
+			} else {
+				param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
+			}
+		} else if (orig_param_type.is_lvalue_reference()) {
+			param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
+		} else if (orig_param_type.is_rvalue_reference()) {
+			param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
+		}
+
+		resolveDependentMemberAlias(param_type, template_params, template_args);
+		TypeSpecifierNode& resolved_param_type = param_type.as<TypeSpecifierNode>();
+		const ResolvedAliasTypeInfo param_alias_info = resolveAliasTypeInfo(resolved_param_type.type_index());
+		if (param_alias_info.type_index.is_valid() && param_alias_info.type_index != resolved_param_type.type_index()) {
+			resolved_param_type.set_type_index(param_alias_info.type_index.withCategory(param_alias_info.typeEnum()));
+		}
+		resolved_param_type.add_pointer_levels(static_cast<int>(param_alias_info.pointer_depth));
+		if (resolved_param_type.reference_qualifier() == ReferenceQualifier::None &&
+			param_alias_info.reference_qualifier != ReferenceQualifier::None) {
+			resolved_param_type.set_reference_qualifier(param_alias_info.reference_qualifier);
+		}
+		if (!resolved_param_type.has_function_signature() && param_alias_info.function_signature.has_value()) {
+			resolved_param_type.set_function_signature(*param_alias_info.function_signature);
+		}
+		if (const int resolved_size_bits = getTypeSpecSizeBits(resolved_param_type); resolved_size_bits > 0) {
+			resolved_param_type.set_size_in_bits(resolved_size_bits);
+		}
+
+		auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
+		if (param_decl.has_default_value()) {
+			new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
+		}
+		new_func_ref.add_parameter_node(new_param_decl);
+		if (arg_type_index < arg_types->size()) {
+			arg_type_index++;
+		}
+	}
+	return true;
+}
+
+std::optional<ASTNode> Parser::finalizeInstantiatedFunction(
+	ASTNode new_func_node,
+	FunctionDeclarationNode& new_func_ref,
+	const FunctionTemplateInstantiationContext& instantiation_context,
+	std::string_view mangled_name,
+	FunctionTemplateInstantiationFlags instantiation_flags) {
+	const FunctionDeclarationNode& func_decl = instantiation_context.func_decl;
+	std::string_view template_name = instantiation_context.template_name;
+	const FlashCpp::TemplateInstantiationKey& key = instantiation_context.key;
+	const uintptr_t overload_id = instantiation_context.overload_id;
+	const bool cacheable_instantiation =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::CacheableInstantiation);
+	const bool commit_instantiation =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::CommitInstantiation);
+	const bool register_instantiation =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::RegisterInstantiation);
+	const bool memoize_body_reparse_failure =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::MemoizeBodyReparseFailure);
+	const bool run_inline_heuristic =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::RunInlineHeuristic);
+	const bool use_explicit_materialization =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::ExplicitMaterialization);
+	copy_function_properties(new_func_ref, func_decl);
+
+	if (run_inline_heuristic) {
+		const auto& func_definition = new_func_ref.get_definition();
+		if (!func_definition.has_value()) {
+			new_func_ref.set_inline_always(true);
+			FLASH_LOG(Templates, Debug, "Marked template instantiation as inline_always (no body): ",
+					  new_func_ref.decl_node().identifier_token().value());
+		} else if (func_definition->is<BlockNode>()) {
+			const BlockNode& block = func_definition->as<BlockNode>();
+			const auto& statements = block.get_statements();
+			const bool is_pure_expr = std::invoke([&statements]() -> bool {
+				bool inner_is_pure_expr = true;
+				bool has_pure_return = false;
+				statements.visit([&](const ASTNode& stmt) {
+					if (stmt.is<TypedefDeclarationNode>()) {
+					} else if (stmt.is<ReturnStatementNode>()) {
+						const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
+						const auto& expr_opt = ret_stmt.expression();
+						if (expr_opt.has_value() && expr_opt->is<ExpressionNode>()) {
+							const ExpressionNode& expr = expr_opt->as<ExpressionNode>();
+							std::visit([&](const auto& e) {
+								using T = std::decay_t<decltype(e)>;
+								if constexpr (std::is_same_v<T, StaticCastNode> ||
+											  std::is_same_v<T, ReinterpretCastNode> ||
+											  std::is_same_v<T, ConstCastNode> ||
+											  std::is_same_v<T, IdentifierNode>) {
+									has_pure_return = true;
+								}
+							},
+									   expr);
+						}
+					} else {
+						inner_is_pure_expr = false;
+					}
+				});
+				inner_is_pure_expr &= static_cast<int>(has_pure_return);
+				return inner_is_pure_expr;
+			});
+			new_func_ref.set_inline_always(is_pure_expr);
+			if (is_pure_expr) {
+				FLASH_LOG(Templates, Debug, "Marked template instantiation as inline_always (pure expression): ",
+						  new_func_ref.decl_node().identifier_token().value());
+			} else {
+				FLASH_LOG(Templates, Debug, "Template instantiation has computation/side effects (not inlining): ",
+						  new_func_ref.decl_node().identifier_token().value());
+			}
+		}
+	}
+
+	if (new_func_ref.is_materialized()) {
+		finalize_function_after_definition(new_func_ref);
+	} else {
+		compute_and_set_mangled_name(new_func_ref);
+	}
+
+	if (register_instantiation) {
+		if (use_explicit_materialization) {
+			gTemplateRegistry.registerInstantiation(key, new_func_node);
+		} else if (cacheable_instantiation && commit_instantiation) {
+			gTemplateRegistry.registerInstantiation(key, new_func_node);
+		}
+	}
+
+	if (commit_instantiation || use_explicit_materialization) {
+		gSymbolTable.insertGlobal(mangled_name, new_func_node);
+	}
+
+	if (use_explicit_materialization) {
+		if (new_func_ref.is_materialized() && !functionHasUnresolvedPlaceholderSignature(new_func_ref)) {
+			registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
+		}
+		return new_func_node;
+	}
+
+	const auto& func_definition = new_func_ref.get_definition();
+	const bool has_unresolved_signature = functionHasUnresolvedPlaceholderSignature(new_func_ref);
+	FLASH_LOG_FORMAT(Templates, Debug,
+		"'{}': has_body={}, has_unresolved_signature={}, registering={}",
+		template_name, func_definition.has_value(), has_unresolved_signature,
+		func_definition.has_value() && !has_unresolved_signature && commit_instantiation);
+	if (func_definition.has_value() && !has_unresolved_signature && commit_instantiation) {
+		registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
+	}
+
+	(void)memoize_body_reparse_failure;
+	(void)overload_id;
+	return new_func_node;
+}
+
+std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
+	const FunctionTemplateInstantiationContext& instantiation_context,
+	const FunctionTemplateBindingData& binding_data,
+	FunctionTemplateInstantiationFlags instantiation_flags) {
+	std::string_view template_name = instantiation_context.template_name;
+	const TemplateFunctionDeclarationNode& template_func = instantiation_context.template_func;
+	const FunctionDeclarationNode& func_decl = instantiation_context.func_decl;
+	std::span<const TemplateParameterNode> template_params = instantiation_context.template_params;
+	std::span<const TemplateTypeArg> template_args = instantiation_context.template_args;
+	const FlashCpp::TemplateInstantiationKey& key = instantiation_context.key;
+	const uintptr_t overload_id = instantiation_context.overload_id;
+	const int recursion_depth = instantiation_context.recursion_depth;
+	const std::vector<TypeSpecifierNode>* arg_types = binding_data.arg_types;
+	const std::vector<size_t>* template_param_arg_starts = binding_data.template_param_arg_starts;
+	const std::vector<size_t>* template_param_arg_counts = binding_data.template_param_arg_counts;
+	const std::optional<CallArgDeductionInfo>* deduction_info = binding_data.deduction_info;
+	const std::optional<TypeSpecifierNode>* reparsed_trailing_return_type = binding_data.reparsed_trailing_return_type;
+	const bool preserve_ref_qualifier =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::PreserveRefQualifier);
+	const bool use_explicit_materialization =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::ExplicitMaterialization);
+	const bool cacheable_instantiation =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::CacheableInstantiation);
+	const bool commit_instantiation =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::CommitInstantiation);
+	const bool register_instantiation =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::RegisterInstantiation);
+	const bool memoize_body_reparse_failure =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::MemoizeBodyReparseFailure);
+	const bool run_inline_heuristic =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::RunInlineHeuristic);
+	const DeclarationNode& orig_decl = func_decl.decl_node();
+	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(template_name, template_args);
+
+	auto apply_resolved_alias_metadata_local = [&](TypeSpecifierNode& type_spec) {
+		if (!type_spec.type_index().is_valid()) {
+			return;
+		}
+		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(type_spec.type_index());
+		if (alias_info.type_index.is_valid() && alias_info.type_index != type_spec.type_index()) {
+			type_spec.set_type_index(alias_info.type_index.withCategory(alias_info.typeEnum()));
+		}
+		type_spec.add_pointer_levels(static_cast<int>(alias_info.pointer_depth));
+		if (type_spec.reference_qualifier() == ReferenceQualifier::None &&
+			alias_info.reference_qualifier != ReferenceQualifier::None) {
+			type_spec.set_reference_qualifier(alias_info.reference_qualifier);
+		}
+		if (!type_spec.has_function_signature() && alias_info.function_signature.has_value()) {
+			type_spec.set_function_signature(*alias_info.function_signature);
+		}
+		const int resolved_size_bits = getTypeSpecSizeBits(type_spec);
+		if (resolved_size_bits > 0) {
+			type_spec.set_size_in_bits(resolved_size_bits);
+		}
+	};
+
+	ASTNode return_type;
+	Token func_name_token = orig_decl.identifier_token();
+	if (use_explicit_materialization) {
+		Token mangled_token(Token::Type::Identifier, mangled_name,
+							orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
+							orig_decl.identifier_token().file_index());
+		func_name_token = mangled_token;
+		const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
+		if (reparsed_trailing_return_type != nullptr && reparsed_trailing_return_type->has_value()) {
+			TypeSpecifierNode reparsed_return_type = **reparsed_trailing_return_type;
+			apply_resolved_alias_metadata_local(reparsed_return_type);
+			const int resolved_size_bits = getTypeSpecSizeBits(reparsed_return_type);
+			if (resolved_size_bits > 0) {
+				reparsed_return_type.set_size_in_bits(resolved_size_bits);
+			}
+			return_type = emplace_node<TypeSpecifierNode>(reparsed_return_type);
+		} else {
+			TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
+				orig_return_type,
+				orig_decl.type_node(),
+				orig_decl.identifier_token(),
+				template_params,
+				template_args,
+				[this](const ASTNode& node, const auto& params, const auto& args) {
+					return substituteTemplateParameters(node, params, args);
+				},
+				[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+					return substitute_template_parameter(type_spec, params, args);
+				},
+				nullptr,
+				TypeIndex{},
+				TypeIndex{},
+				false,
+				true);
+			return_type = emplace_node<TypeSpecifierNode>(substituted_return_type);
+		}
+	} else {
+		const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
+		bool should_reparse = func_decl.has_template_declaration_position();
+		if (should_reparse) {
+			static thread_local std::unordered_set<std::string_view> trailing_return_in_progress;
+			if (trailing_return_in_progress.count(mangled_name)) {
+				FLASH_LOG(Templates, Debug, "Cycle detected in trailing return type for '", template_name, "' (mangled: '", mangled_name, "'), returning auto to break cycle");
+				return std::nullopt;
+			}
+			trailing_return_in_progress.insert(mangled_name);
+			struct TrailingReturnGuard {
+				std::unordered_set<std::string_view>& set;
+				std::string_view key;
+				~TrailingReturnGuard() { set.erase(key); }
+			} trailing_return_guard{trailing_return_in_progress, mangled_name};
+			SaveHandle current_pos = save_token_position();
+			restore_lexer_position_only(func_decl.template_declaration_position());
+			FlashCpp::TemplateParameterScope template_scope;
+			registerTypeParamsInScope(template_params, template_args, template_scope, false);
+			auto return_type_result = parse_type_specifier();
+			if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
+				auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
+				consume_pointer_ref_modifiers(rt);
+			}
+			restore_lexer_position_only(current_pos);
+			if (return_type_result.is_error()) {
+				return failTemplateInstantiation(return_type_result.error_message(), &key, overload_id);
+			}
+			if (!return_type_result.node().has_value()) {
+				return failTemplateInstantiation(
+					StringBuilder()
+						.append("template function '")
+						.append(template_name)
+						.append("' return type parsing returned no node")
+						.commit(),
+					&key,
+					overload_id);
+			}
+			return_type = *return_type_result.node();
+			restore_lexer_position_only(func_decl.template_declaration_position());
+			FlashCpp::TemplateParameterScope template_scope2;
+			registerTypeParamsInScope(template_params, template_args, template_scope2, false);
+			auto type_and_name_result = parse_type_and_name();
+			restore_lexer_position_only(current_pos);
+			if (!type_and_name_result.is_error() &&
+				type_and_name_result.node().has_value() &&
+				type_and_name_result.node()->is<DeclarationNode>()) {
+				func_name_token = type_and_name_result.node()->as<DeclarationNode>().identifier_token();
+			}
+		} else {
+			TypeIndex return_type_index = substitute_template_parameter(
+				orig_return_type, template_params, template_args);
+			TypeSpecifierNode new_return_type(
+				return_type_index.category(),
+				TypeQualifier::None,
+				get_type_size_bits(return_type_index.category()),
+				Token(),
+				orig_return_type.cv_qualifier());
+			new_return_type.set_type_index(return_type_index);
+			new_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
+			propagateFunctionSignatureFromTemplateArg(
+				new_return_type,
+				orig_return_type,
+				return_type_index,
+				template_params,
+				template_args);
+			applyTemplateArgIndirection(new_return_type, orig_return_type, template_params, template_args,
+										/*propagate_reference_qualifier=*/false);
+			for (const auto& ptr_level : orig_return_type.pointer_levels()) {
+				new_return_type.add_pointer_level(ptr_level.cv_qualifier);
+			}
+			apply_resolved_alias_metadata_local(new_return_type);
+			return_type = emplace_node<TypeSpecifierNode>(new_return_type);
+		}
+
+		resolveDependentMemberAlias(return_type, template_params, template_args);
+		if (return_type.is<TypeSpecifierNode>()) {
+			const auto& rt = return_type.as<TypeSpecifierNode>();
+			if ((rt.category() == TypeCategory::UserDefined ||
+				 rt.category() == TypeCategory::TypeAlias ||
+				 rt.category() == TypeCategory::Template) &&
+				rt.type_index().is_valid()) {
+				if (const TypeInfo* rt_info = tryGetTypeInfo(rt.type_index())) {
+					if (rt_info->is_incomplete_instantiation_ && rt_info->isDependentMemberType()) {
+						gTemplateRegistry.markFailedInstantiation(key, overload_id);
+						return std::nullopt;
+					}
+				}
+			}
+		}
+	}
+
+	auto new_decl = emplace_node<DeclarationNode>(return_type, func_name_token);
+	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
+
+	auto saved_outer_pack_param_info = std::move(pack_param_info_);
+	pack_param_info_.clear();
+	ScopeGuard restore_outer_pack_param_info([&]() {
+		pack_param_info_ = std::move(saved_outer_pack_param_info);
+	});
+
+	if (!materializeTemplateFunctionParameters(
+			new_func_ref,
+			instantiation_context,
+			binding_data,
+			instantiation_flags)) {
+		return std::nullopt;
+	}
+
+	auto saved_template_pack_sizes = std::move(template_param_pack_sizes_);
+	ScopeGuard restore_template_pack_sizes([&]() {
+		template_param_pack_sizes_ = std::move(saved_template_pack_sizes);
+	});
+	template_param_pack_sizes_.clear();
+	if (use_explicit_materialization) {
+		if (template_param_arg_starts == nullptr || template_param_arg_counts == nullptr) {
+			return std::nullopt;
+		}
+		for (size_t pi = 0; pi < template_params.size(); ++pi) {
+			const TemplateParameterNode* tparam_ptr = tryGetTemplateParameterNode(template_params[pi]);
+			if (tparam_ptr == nullptr) {
+				continue;
+			}
+			const auto& tparam = *tparam_ptr;
+			if (tparam.is_variadic() && (*template_param_arg_starts)[pi] != SIZE_MAX) {
+				template_param_pack_sizes_.emplace_back(tparam.nameHandle(), (*template_param_arg_counts)[pi]);
+			}
+		}
+	} else if (deduction_info != nullptr && deduction_info->has_value()) {
+		const size_t func_pack_call_arg_count =
+			((*deduction_info)->function_pack_call_arg_end != SIZE_MAX &&
+			 (*deduction_info)->function_pack_call_arg_start != SIZE_MAX &&
+			 (*deduction_info)->function_pack_call_arg_end >= (*deduction_info)->function_pack_call_arg_start)
+				? ((*deduction_info)->function_pack_call_arg_end - (*deduction_info)->function_pack_call_arg_start)
+				: 0;
+		for (const auto& tpnode : template_params) {
+			const TemplateParameterNode* tparam_ptr = tryGetTemplateParameterNode(tpnode);
+			if (tparam_ptr == nullptr || !tparam_ptr->is_variadic()) {
+				continue;
+			}
+			const size_t pack_count =
+				(*deduction_info)->function_pack_dependent_param_names.count(tparam_ptr->nameHandle())
+					? func_pack_call_arg_count
+					: 0;
+			template_param_pack_sizes_.emplace_back(tparam_ptr->nameHandle(), pack_count);
+		}
+	}
+
+	bool body_reparse_failed = false;
+	if (func_decl.has_template_body_position()) {
+		if (use_explicit_materialization) {
+			static thread_local std::unordered_set<StringHandle> body_parse_in_progress;
+			StringHandle cycle_key = StringTable::getOrInternStringHandle(mangled_name);
+			if (body_parse_in_progress.count(cycle_key)) {
+				FLASH_LOG(Templates, Debug, "Cycle detected in function template body parsing for '", template_name, "' (mangled: '", mangled_name, "'), skipping body");
+				return std::nullopt;
+			}
+			body_parse_in_progress.insert(cycle_key);
+			struct BodyParseGuard {
+				std::unordered_set<StringHandle>& set;
+				StringHandle key;
+				~BodyParseGuard() { set.erase(key); }
+			} body_guard{body_parse_in_progress, cycle_key};
+			bool saved_has_parameter_packs = has_parameter_packs_;
+			ScopeGuard restore_has_parameter_packs([&]() {
+				has_parameter_packs_ = saved_has_parameter_packs;
+			});
+			if (!pack_param_info_.empty()) {
+				has_parameter_packs_ = true;
+			}
+			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args, preserve_ref_qualifier);
+		} else {
+			static thread_local std::unordered_set<std::string_view> body_reparse_in_progress;
+			std::string_view cycle_key = mangled_name;
+			if (body_reparse_in_progress.count(cycle_key)) {
+				return ASTNode(&new_func_ref);
+			}
+			body_reparse_in_progress.insert(cycle_key);
+			struct BodyReparseGuard {
+				std::unordered_set<std::string_view>& set;
+				std::string_view key;
+				~BodyReparseGuard() { set.erase(key); }
+			} body_reparse_guard{body_reparse_in_progress, cycle_key};
+			bool saved_has_parameter_packs = has_parameter_packs_;
+			ScopeGuard restore_has_parameter_packs([&]() {
+				has_parameter_packs_ = saved_has_parameter_packs;
+			});
+			if (!pack_param_info_.empty()) {
+				has_parameter_packs_ = true;
+			}
+			if (template_instantiation_mode_ == TemplateInstantiationMode::HardUseCandidateProbe) {
+				ScopedParserInstantiationContext body_instantiation_mode(*this, TemplateInstantiationMode::HardUse, StringHandle{});
+				reparse_template_function_body(new_func_ref, func_decl, template_func.template_parameters(), template_args,
+											   preserve_ref_qualifier);
+			} else {
+				reparse_template_function_body(new_func_ref, func_decl, template_func.template_parameters(), template_args,
+											   preserve_ref_qualifier);
+			}
+			if (!new_func_ref.is_materialized()) {
+				StringBuilder reason_builder;
+				StringHandle body_reparse_failure_reason = StringTable::getOrInternStringHandle(
+					reason_builder
+						.append("failed to reparse template function body for ")
+						.append(mangled_name)
+						.commit());
+				new_func_ref.mark_failed_substitution(body_reparse_failure_reason);
+				failTemplateInstantiation(
+					StringTable::getStringView(body_reparse_failure_reason),
+					&key,
+					overload_id);
+				body_reparse_failed = true;
+			}
+		}
+	} else {
+		auto orig_body = func_decl.get_definition();
+		if (orig_body.has_value()) {
+			if (use_explicit_materialization) {
+				new_func_ref.set_definition(
+					substituteTemplateParameters(*orig_body, template_params, template_args));
+			} else {
+				throw InternalError("Template function definition has no saved body position");
+			}
+		}
+	}
+
+	if (body_reparse_failed) {
+		if (cacheable_instantiation && commit_instantiation && register_instantiation) {
+			gTemplateRegistry.registerInstantiation(key, new_func_node);
+		}
+		return std::nullopt;
+	}
+
+	return finalizeInstantiatedFunction(
+		new_func_node,
+		new_func_ref,
+		instantiation_context,
+		mangled_name,
+		instantiation_flags);
+}
+
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, size_t call_arg_count) {
 	static int recursion_depth = 0;
 	recursion_depth++;
@@ -2388,412 +3162,45 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			reparsed_trailing_return_type = return_type_result.node()->as<TypeSpecifierNode>();
 		}
 
-		// Instantiate the template (same logic as try_instantiate_template)
-		// Generate mangled name first - it now includes reference qualifiers
-		std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(template_name, template_args);
-
-		// Check if we already have this instantiation using structured key
-		// This ensures that int, int&, and int&& are treated as distinct instantiations
 		auto key = FlashCpp::makeInstantiationKey(
 			StringTable::getOrInternStringHandle(template_name), template_args);
-
 		auto existing_inst = gTemplateRegistry.getInstantiation(key);
 		if (existing_inst.has_value()) {
-			return *existing_inst;  // Return existing instantiation
+			return *existing_inst;
 		}
-
-		const DeclarationNode& orig_decl = func_decl.decl_node();
-
-		// Create a token for the mangled name
-		Token mangled_token(Token::Type::Identifier, mangled_name,
-							orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
-							orig_decl.identifier_token().file_index());
-
-		auto apply_resolved_alias_metadata_local = [&](TypeSpecifierNode& type_spec) {
-			if (!type_spec.type_index().is_valid()) {
-				return;
-			}
-			const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(type_spec.type_index());
-			if (alias_info.type_index.is_valid() && alias_info.type_index != type_spec.type_index()) {
-				type_spec.set_type_index(alias_info.type_index.withCategory(alias_info.typeEnum()));
-			}
-			type_spec.add_pointer_levels(static_cast<int>(alias_info.pointer_depth));
-			if (type_spec.reference_qualifier() == ReferenceQualifier::None &&
-				alias_info.reference_qualifier != ReferenceQualifier::None) {
-				type_spec.set_reference_qualifier(alias_info.reference_qualifier);
-			}
-			if (!type_spec.has_function_signature() && alias_info.function_signature.has_value()) {
-				type_spec.set_function_signature(*alias_info.function_signature);
-			}
-			const int resolved_size_bits = getTypeSpecSizeBits(type_spec);
-			if (resolved_size_bits > 0) {
-				type_spec.set_size_in_bits(resolved_size_bits);
-			}
-		};
-
-		// Substitute template parameters in the return type
-		const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
-		ASTNode return_type;
-		if (reparsed_trailing_return_type.has_value()) {
-			TypeSpecifierNode reparsed_return_type = *reparsed_trailing_return_type;
-			apply_resolved_alias_metadata_local(reparsed_return_type);
-			const int resolved_size_bits = getTypeSpecSizeBits(reparsed_return_type);
-			if (resolved_size_bits > 0) {
-				reparsed_return_type.set_size_in_bits(resolved_size_bits);
-			}
-			return_type = emplace_node<TypeSpecifierNode>(reparsed_return_type);
-		} else {
-			TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
-				orig_return_type,
-				orig_decl.type_node(),
-				orig_decl.identifier_token(),
-				template_params,
-				template_args,
-				[this](const ASTNode& node, const auto& params, const auto& args) {
-					return substituteTemplateParameters(node, params, args);
-				},
-				[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
-					return substitute_template_parameter(type_spec, params, args);
-				},
-				nullptr,
-				TypeIndex{},
-				TypeIndex{},
-				false,
-				true);
-			return_type = emplace_node<TypeSpecifierNode>(substituted_return_type);
+		std::optional<CallArgDeductionInfo> helper_deduction_info = deduction_info;
+		FunctionTemplateInstantiationContext instantiation_context{
+			template_name,
+			template_func,
+			func_decl,
+			template_params,
+			template_args,
+			key,
+			0,
+			recursion_depth};
+		FunctionTemplateBindingData binding_data{
+			nullptr,
+			&template_param_arg_starts,
+			&template_param_arg_counts,
+			&helper_deduction_info,
+			&reparsed_trailing_return_type};
+		FunctionTemplateInstantiationFlags instantiation_flags = mergeInstantiationFlags(
+			FunctionTemplateInstantiationFlags::PreserveRefQualifier,
+			FunctionTemplateInstantiationFlags::ExplicitMaterialization);
+		instantiation_flags = mergeInstantiationFlags(
+			instantiation_flags,
+			FunctionTemplateInstantiationFlags::CommitInstantiation);
+		instantiation_flags = mergeInstantiationFlags(
+			instantiation_flags,
+			FunctionTemplateInstantiationFlags::RegisterInstantiation);
+		std::optional<ASTNode> instantiated = instantiateBoundFunctionTemplate(
+			instantiation_context,
+			binding_data,
+			instantiation_flags);
+		if (instantiated.has_value()) {
+			return *instantiated;
 		}
-
-		auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
-		auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
-
-		auto saved_parent_pack_param_info = std::move(pack_param_info_);
-		pack_param_info_.clear();
-		ScopeGuard restore_outer_pack_param_info([&]() {
-			pack_param_info_ = std::move(saved_parent_pack_param_info);
-		});
-		size_t arg_type_index = 0;
-		struct PackBinding {
-			size_t start_index;
-			size_t count;
-		};
-		auto getPackParameterName = [&](const TypeSpecifierNode& type_spec) -> std::string_view {
-			// For template-specialization element types like Pair<Ts,Us>..., the token
-			// value is "Pair" — a template class name, not a template parameter name.
-			// deduction_info->function_pack_template_param_name is already set to the
-			// first actual dependent template parameter name ("Ts"), so prefer it.
-			if (deduction_info.has_value() && deduction_info->function_pack_template_param_name.isValid()) {
-				return StringTable::getStringView(deduction_info->function_pack_template_param_name);
-			}
-			if (!type_spec.token().value().empty()) {
-				return type_spec.token().value();
-			}
-			if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
-				return StringTable::getStringView(type_info->name());
-			}
-			return {};
-		};
-		auto cloneNonVariadicTemplateParam = [&](const TemplateParameterNode& param) {
-			TemplateParameterNode clone = [&]() {
-				switch (param.kind()) {
-					case TemplateParameterKind::Type:
-						return TemplateParameterNode(param.nameHandle(), param.token());
-					case TemplateParameterKind::NonType:
-						return TemplateParameterNode(param.nameHandle(), param.type_specifier_node(), param.token());
-					case TemplateParameterKind::Template:
-						return TemplateParameterNode(param.nameHandle(), param.nested_parameters(), param.token());
-				}
-				return TemplateParameterNode(param.nameHandle(), param.token());
-			}();
-			if (param.has_concept_constraint()) {
-				clone.set_concept_constraint(param.concept_constraint());
-			}
-			if (param.has_concept_args()) {
-				clone.set_concept_args(param.concept_args());
-			}
-			if (param.has_default()) {
-				clone.set_default_value(param.default_value());
-			}
-			if (param.has_default_value_position()) {
-				clone.set_default_value_position(param.default_value_position());
-			}
-			clone.set_registered_type_index(param.registered_type_index());
-			return clone;
-		};
-		auto getTemplateParamPackBinding = [&](std::string_view pack_param_name) -> std::optional<PackBinding> {
-			for (size_t template_param_index = 0; template_param_index < template_params.size(); ++template_param_index) {
-				const TemplateParameterNode* template_param_ptr = tryGetTemplateParameterNode(template_params[template_param_index]);
-				if (template_param_ptr == nullptr) {
-					continue;
-				}
-				const auto& template_param = *template_param_ptr;
-				if (template_param.is_variadic() && template_param.name() == pack_param_name) {
-					return PackBinding{
-						template_param_arg_starts[template_param_index],
-						template_param_arg_counts[template_param_index]};
-				}
-			}
-			return std::nullopt;
-		};
-		auto buildPackElementParamName = [&](const DeclarationNode& declaration, size_t pack_element_offset) {
-			StringBuilder param_name_builder;
-			param_name_builder.append(declaration.identifier_token().value());
-			param_name_builder.append('_');
-			param_name_builder.append(pack_element_offset);
-			return param_name_builder.commit();
-		};
-		auto buildSubstitutionForPackElement =
-			[&](std::string_view pack_param_name, size_t pack_element_offset,
-				InlineVector<ASTNode, 4>& subst_params,
-				InlineVector<TemplateTypeArg, 4>& subst_args) -> bool {
-				auto pack_binding = getTemplateParamPackBinding(pack_param_name);
-				if (!pack_binding.has_value() || pack_element_offset >= pack_binding->count) {
-					return false;
-				}
-				size_t template_arg_index = 0;
-				for (size_t template_param_index = 0; template_param_index < template_params.size(); ++template_param_index) {
-					const TemplateParameterNode* template_param_ptr = tryGetTemplateParameterNode(template_params[template_param_index]);
-					if (template_param_ptr == nullptr) {
-						continue;
-					}
-					const auto& template_param = *template_param_ptr;
-					if (template_param.is_variadic()) {
-						// Substitute at position i when this is the primary pack (pack_param_name)
-						// OR a co-pack in a multi-dependent element type (e.g. the "Us" in
-						// "Pair<Ts,Us>...").  Co-packs share the same parallel expansion count
-						// as the primary pack; all dependent names are in
-						// function_pack_dependent_param_names.
-						const bool is_primary = (template_param.name() == pack_param_name);
-						const bool is_co_pack = !is_primary && deduction_info.has_value() &&
-							deduction_info->function_pack_dependent_param_names.count(
-								template_param.nameHandle());
-						if (is_primary || is_co_pack) {
-							if (template_arg_index + pack_element_offset < template_args.size()) {
-								subst_params.push_back(emplace_node<TemplateParameterNode>(
-									cloneNonVariadicTemplateParam(template_param)));
-								subst_args.push_back(template_args[template_arg_index + pack_element_offset]);
-							}
-						}
-						template_arg_index += template_param_arg_counts[template_param_index];
-						continue;
-					}
-					if (template_arg_index >= template_args.size()) {
-						break;
-					}
-					subst_params.push_back(emplace_node<TemplateParameterNode>(template_param));
-					subst_args.push_back(template_args[template_arg_index]);
-					++template_arg_index;
-				}
-				return true;
-			};
-		auto buildMaterializedParamType =
-			[&](const DeclarationNode& original_param_decl,
-				const InlineVector<ASTNode, 4>& materialized_template_params,
-				const InlineVector<TemplateTypeArg, 4>& materialized_template_args) {
-				const TypeSpecifierNode& original_param_type = original_param_decl.type_specifier_node();
-				InlineVector<TemplateParameterNode, 4> typed_params;
-				typed_params.reserve(materialized_template_params.size());
-				for (const ASTNode& param_node : materialized_template_params) {
-					if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
-						typed_param != nullptr) {
-						typed_params.push_back(*typed_param);
-					}
-				}
-
-				TypeSpecifierNode substituted_param_type = buildSubstitutedTypeSpecifier(
-					original_param_type,
-					original_param_decl.type_node(),
-					original_param_decl.identifier_token(),
-					typed_params,
-					materialized_template_args,
-					[this](const ASTNode& node, const auto& params, const auto& args) {
-						return substituteTemplateParameters(node, params, args);
-					},
-					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
-						return substitute_template_parameter(type_spec, params, args);
-					},
-					nullptr,
-					TypeIndex{},
-					TypeIndex{},
-					false,
-					true);
-				ASTNode param_type = emplace_node<TypeSpecifierNode>(substituted_param_type);
-				resolveDependentMemberAlias(param_type, typed_params, materialized_template_args);
-				normalizeSubstitutedTypeSpec(param_type.as<TypeSpecifierNode>());
-				return param_type;
-			};
-
-		// Add parameters with concrete types
-		for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
-			const auto& param = func_decl.parameter_nodes()[i];
-			if (param.is<DeclarationNode>()) {
-				const DeclarationNode& param_decl = param.as<DeclarationNode>();
-
-				// Get original parameter type
-				const TypeSpecifierNode& orig_param_type = param_decl.type_specifier_node();
-				if (param_decl.is_parameter_pack()) {
-					size_t pack_start_index = arg_type_index;
-					std::string_view pack_param_name = getPackParameterName(orig_param_type);
-					auto pack_binding = getTemplateParamPackBinding(pack_param_name);
-					if (pack_binding.has_value()) {
-						for (size_t pack_element_offset = 0; pack_element_offset < pack_binding->count; ++pack_element_offset) {
-							InlineVector<ASTNode, 4> subst_params;
-							InlineVector<TemplateTypeArg, 4> subst_args;
-							if (!buildSubstitutionForPackElement(pack_param_name, pack_element_offset, subst_params, subst_args)) {
-								continue;
-							}
-
-							ASTNode param_type = buildMaterializedParamType(param_decl, subst_params, subst_args);
-
-							std::string_view param_name = buildPackElementParamName(param_decl, pack_element_offset);
-
-							Token param_token(Token::Type::Identifier,
-											  param_name,
-											  param_decl.identifier_token().line(),
-											  param_decl.identifier_token().column(),
-											  param_decl.identifier_token().file_index());
-
-							auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_token);
-							new_func_ref.add_parameter_node(new_param_decl);
-							arg_type_index++;
-						}
-					}
-					size_t pack_size = arg_type_index - pack_start_index;
-					pack_param_info_.push_back({param_decl.identifier_token().value(), pack_start_index, pack_size});
-					continue;
-				}
-
-				// Substitute template parameters in the type.
-				// Build a flat (non-variadic) substitution context using
-				// template_param_arg_starts/counts so that a variadic pack Ts...
-				// preceding a defaulted param Tail correctly maps Tail to its arg
-				// rather than the pack consuming it greedily.
-				InlineVector<ASTNode, 4> flat_subst_params;
-				InlineVector<TemplateTypeArg, 4> flat_subst_args;
-				{
-					size_t flat_arg_idx = 0;
-					for (size_t j = 0; j < template_params.size(); ++j) {
-						const TemplateParameterNode* tp = tryGetTemplateParameterNode(template_params[j]);
-						if (!tp) continue;
-						const size_t count = template_param_arg_counts[j];
-						if (tp->is_variadic()) {
-							// Expand each pack element as a non-variadic entry so that
-							// forEachNonPackTemplateParamArgBinding can bind them one-to-one.
-							for (size_t k = 0; k < count; ++k) {
-								if (flat_arg_idx + k < template_args.size()) {
-									flat_subst_params.push_back(emplace_node<TemplateParameterNode>(
-										cloneNonVariadicTemplateParam(*tp)));
-									flat_subst_args.push_back(template_args[flat_arg_idx + k]);
-								}
-							}
-							flat_arg_idx += count;
-							continue;
-						}
-						if (flat_arg_idx < template_args.size()) {
-							flat_subst_params.push_back(emplace_node<TemplateParameterNode>(*tp));
-							flat_subst_args.push_back(template_args[flat_arg_idx]);
-						}
-						++flat_arg_idx;
-					}
-				}
-				ASTNode param_type = buildMaterializedParamType(param_decl, flat_subst_params, flat_subst_args);
-
-				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
-				// Preserve default argument value from the original template declaration
-				if (param_decl.has_default_value()) {
-					new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
-				}
-				new_func_ref.add_parameter_node(new_param_decl);
-				arg_type_index++;
-			}
-		}
-
-		// Handle the function body
-		// Check if the template has a body position stored for re-parsing
-		// Populate template_param_pack_sizes_ so substituteTemplateParameters can resolve
-		// sizeof...(P) correctly when multiple variadic packs are present.  Saved/restored
-		// around the body reparse (and the substituteTemplateParameters fallback path) so
-		// nested instantiations that run during body parsing don't see stale data.
-		auto saved_template_pack_sizes = std::move(template_param_pack_sizes_);
-		ScopeGuard restore_template_pack_sizes([&]() {
-			template_param_pack_sizes_ = std::move(saved_template_pack_sizes);
-		});
-		template_param_pack_sizes_.clear();
-		for (size_t pi = 0; pi < template_params.size(); ++pi) {
-			const TemplateParameterNode* tparam_ptr = tryGetTemplateParameterNode(template_params[pi]);
-			if (tparam_ptr == nullptr) continue;
-			const auto& tparam = *tparam_ptr;
-			if (tparam.is_variadic() && template_param_arg_starts[pi] != SIZE_MAX) {
-				template_param_pack_sizes_.emplace_back(tparam.nameHandle(), template_param_arg_counts[pi]);
-			}
-		}
-		if (func_decl.has_template_body_position()) {
-			// Cycle detection: if this exact instantiation (same mangled name = same template
-			// arguments) is already being parsed on this thread, return early to break the cycle.
-			// Using the mangled name instead of the original template declaration pointer ensures
-			// distinct recursive instantiations (e.g. var_sum<int,int,int> from var_sum<int,int,int,int>)
-			// are not blocked.
-			static thread_local std::unordered_set<StringHandle> body_parse_in_progress;
-			StringHandle cycle_key = StringTable::getOrInternStringHandle(mangled_name);
-			if (body_parse_in_progress.count(cycle_key)) {
-			// Already parsing this body — skip body to break the cycle.
-				FLASH_LOG(Templates, Debug, "Cycle detected in function template body parsing for '", template_name, "' (mangled: '", mangled_name, "'), skipping body");
-				return std::nullopt;
-			}
-			body_parse_in_progress.insert(cycle_key);
-			struct BodyParseGuard {
-				std::unordered_set<StringHandle>& set;
-				StringHandle key;
-				~BodyParseGuard() { set.erase(key); }
-			} body_guard{body_parse_in_progress, cycle_key};
-
-			// preserve_ref_qualifier=true: explicit args carry the user-written ref (e.g. T=int&)
-			// and TypeInfo must reflect it so nested template-arg uses resolve the right specialization.
-			bool saved_has_parameter_packs = has_parameter_packs_;
-			ScopeGuard restore_has_parameter_packs([&]() {
-				has_parameter_packs_ = saved_has_parameter_packs;
-			});
-			if (!pack_param_info_.empty()) {
-				has_parameter_packs_ = true;
-			}
-			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
-										   /*preserve_ref_qualifier=*/true);
-		} else {
-			// Copy the function body if it exists (for non-template or already-parsed bodies)
-			auto orig_body = func_decl.get_definition();
-			if (orig_body.has_value()) {
-				new_func_ref.set_definition(
-					substituteTemplateParameters(*orig_body, template_params, template_args));
-			}
-		}
-
-		copy_function_properties(new_func_ref, func_decl);
-
-		if (new_func_ref.is_materialized()) {
-			finalize_function_after_definition(new_func_ref);
-		} else {
-			compute_and_set_mangled_name(new_func_ref);
-		}
-
-		// Register the instantiation
-		gTemplateRegistry.registerInstantiation(key, new_func_node);
-
-		// Add to symbol table at GLOBAL scope using the simple template name (e.g., identity_int)
-		// Template instantiations should be globally visible, not scoped to where they're called
-		// The simple name is used for template-specific lookups, while the computed mangled name
-		// (from compute_and_set_mangled_name above) is used for code generation and linking
-		gSymbolTable.insertGlobal(mangled_token.value(), new_func_node);
-
-		// Add to top-level AST so it gets visited by the code generator.
-		// Mirror the guard used in try_instantiate_single_template: only register
-		// functions that (a) have a body and (b) have no parameter that still carries
-		// an unsubstituted placeholder type.  Body-less instantiations are forward
-		// declarations or SFINAE probes; instantiations with Auto parameters were
-		// never fully substituted and will crash the IR/name-mangling layer.
-		if (new_func_ref.is_materialized() && !functionHasUnresolvedPlaceholderSignature(new_func_ref)) {
-			registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
-		}
-
-		return new_func_node;
+		continue;
 	} // end of overload loop
 
 	return std::nullopt;	 // No overload matched
@@ -3320,26 +3727,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			template_name);
 	}
 
-	// Step 3: Instantiate the template
-	// For Phase 2, we'll create a simplified instantiation
-	// We'll just use the original function with a mangled name
-	// Full AST cloning and substitution will be implemented later
-
-	// Generate mangled name for the instantiation
-	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(template_name, template_args);
-
-	// For now, we'll create a simple wrapper that references the original function
-	// This is a temporary solution - proper instantiation requires:
-	// 1. Cloning the entire AST subtree
-	// 2. Substituting all template parameter references
-	// 3. Type checking the instantiated code
-
-	// Get the original function's declaration
-	const DeclarationNode& orig_decl = func_decl.decl_node();
-
 	// Check for explicit specialization before instantiating the primary template.
-	// This handles cases like: template<> int identity<int>(int val) { return val + 1; }
-	// being called as identity(5) where T=int is deduced from the argument.
 	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, template_args);
 	if (specialization_opt.has_value()) {
 		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Found explicit specialization for deduced args of '", template_name, "'");
@@ -3451,714 +3839,47 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 	}
 
-	// Save the mangled name - we'll set it on the function node after creation
-	// Do NOT use the mangled name as the identifier token!
-	std::string_view saved_mangled_name = mangled_name;
-
-	// Create return type - re-parse declaration if available (for SFINAE)
-	const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
-
-	ASTNode return_type;
-	Token func_name_token = orig_decl.identifier_token();
-
-	// Re-parse whenever declaration source is available. This preserves the
-	// declaration grammar, including abbreviated/constrained forms and pointer or
-	// reference declarators, instead of reconstructing the return type from a
-	// partially-substituted TypeIndex.
-	bool should_reparse = func_decl.has_template_declaration_position();
-
-	FLASH_LOG_FORMAT(Templates, Debug, "Checking re-parse for template function: has_position={}, return_type={}, type_index={}",
-					 should_reparse, static_cast<int>(orig_return_type.type()), orig_return_type.type_index());
-
-	FLASH_LOG_FORMAT(Templates, Debug, "Should re-parse: {}", should_reparse);
-
-	if (should_reparse) {
-		FLASH_LOG_FORMAT(
-			Templates,
-			Debug,
-			"Re-parsing function declaration for SFINAE validation, sfinae_probe={}",
-			template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe);
-
-		// Cycle detection for trailing return type re-parsing: when evaluating a
-		// function's decltype trailing return type, encountering the same function
-		// (by name) again creates infinite recursion (e.g. __niter_base whose return
-		// type contains __niter_base itself).  Track by function name — pointer-based
-		// tracking is unreliable here because the registry vector may grow between
-		// the outer and inner call, subtly shifting addresses.  Returning nullopt
-		// causes the caller to try the next overload (the non-recursive base case).
-		static thread_local std::unordered_set<std::string_view> trailing_return_in_progress;
-		if (trailing_return_in_progress.count(saved_mangled_name)) {
-			FLASH_LOG(Templates, Debug, "Cycle detected in trailing return type for '", template_name, "' (mangled: '", saved_mangled_name, "'), returning auto to break cycle");
-			return std::nullopt;
-		}
-		trailing_return_in_progress.insert(saved_mangled_name);
-		struct TrailingReturnGuard {
-			std::unordered_set<std::string_view>& set;
-			std::string_view key;
-			~TrailingReturnGuard() { set.erase(key); }
-		} trailing_return_guard{trailing_return_in_progress, saved_mangled_name};
-
-		// Save current position
-		SaveHandle current_pos = save_token_position();
-
-		// Restore to the declaration start
-		restore_lexer_position_only(func_decl.template_declaration_position());
-
-		// Add template parameters to the type system temporarily
-		FlashCpp::TemplateParameterScope template_scope;
-		InlineVector<StringHandle, 4> param_names;
-		for (const auto& tparam_node : template_params) {
-			param_names.push_back(tparam_node.nameHandle());
-		}
-
-		registerTypeParamsInScope(template_params, template_args, template_scope, false);
-
-		// Re-parse the return type with template parameters in scope
-		auto return_type_result = parse_type_specifier();
-
-		FLASH_LOG(Parser, Debug, "Template instantiation: parsed return type, is_error=", return_type_result.is_error(), ", has_node=", return_type_result.node().has_value(), ", current_token=", current_token_.value(), ", token_type=", (int)current_token_.type());
-		if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
-			auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
-			consume_pointer_ref_modifiers(rt);
-		}
-
-		// Restore position
-		restore_lexer_position_only(current_pos);
-
-		if (return_type_result.is_error()) {
-			// SFINAE: Return type parsing failed - this is a substitution failure.
-			// Memoize under a per-overload key (template_name + args + overload_id,
-			// where overload_id is the address of the source FunctionDeclarationNode)
-			// so the next probe for this same overload short-circuits at the
-			// entry fast-path instead of reparsing.  We can't call the node-level
-			// `mark_failed_substitution` mutator here because `new_func_ref` has
-			// not been emplaced yet (that happens further down after the return
-			// type is known).  The registry-side memo is the failure record.
-			FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type parsing failed: {}", return_type_result.error_message());
-			return failTemplateInstantiation(return_type_result.error_message(), &key, overload_id);
-		}
-
-		if (!return_type_result.node().has_value()) {
-			FLASH_LOG(Templates, Debug, "SFINAE: Return type parsing returned no node");
-			return failTemplateInstantiation(
-				StringBuilder()
-					.append("template function '")
-					.append(template_name)
-					.append("' return type parsing returned no node")
-					.commit(),
-				&key,
-				overload_id);
-		}
-
-		return_type = *return_type_result.node();
-
-		// SFINAE: Validate that the parsed type actually exists in the type system
-		// This catches cases like "typename enable_if<false>::type" where parsing succeeds
-		// but the type doesn't actually have a ::type member
-		//
-		// NOTE: is_incomplete_instantiation_ on placeholder types is informational —
-		// it indicates the type was created with dependent/unresolved args during
-		// template definition. During SFINAE re-parse with concrete args, the placeholder
-		// may still be referenced even though it was resolved. SFINAE rejection is
-		// handled by parse failures in parse_type_specifier, not by this flag.
-		if (return_type.is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& type_spec = return_type.as<TypeSpecifierNode>();
-
-			if ((type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template)) {
-				if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
-					if (type_info->is_incomplete_instantiation_) {
-						FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type still has incomplete instantiation placeholder: {}", StringTable::getStringView(type_info->name()));
-					}
-				}
-			}
-		}
-
-		// Now we need to re-parse the function name after the return type
-		// Parse type_and_name to get both
-		restore_lexer_position_only(func_decl.template_declaration_position());
-
-		// Add template parameters back
-		FlashCpp::TemplateParameterScope template_scope2;
-		registerTypeParamsInScope(template_params, template_args, template_scope2, false);
-
-		auto type_and_name_result = parse_type_and_name();
-		restore_lexer_position_only(current_pos);
-
-		if (type_and_name_result.is_error() || !type_and_name_result.node().has_value()) {
-			FLASH_LOG(Templates, Debug, "SFINAE: Function name parsing failed, keeping original declaration token");
-		} else if (type_and_name_result.node()->is<DeclarationNode>()) {
-			// Extract the function name token from the parsed result
-			func_name_token = type_and_name_result.node()->as<DeclarationNode>().identifier_token();
-		}
-
-	} else {
-		// Declaration source is unavailable, so synthesize the instantiated
-		// return type from the preserved template signature metadata.
-		TypeIndex return_type_index = substitute_template_parameter(
-			orig_return_type, template_params, template_args);
-
-		FLASH_LOG(Parser, Debug, "substitute_template_parameter returned: type=", (int)return_type_index.category(), ", type_index=", return_type_index);
-		if (const TypeInfo* return_type_info = tryGetTypeInfo(return_type_index)) {
-			FLASH_LOG(Parser, Debug, "  type_index points to: '", StringTable::getStringView(return_type_info->name()), "'");
-		}
-
-		TypeSpecifierNode new_return_type(
-			return_type_index.category(),
-			TypeQualifier::None,
-			get_type_size_bits(return_type_index.category()),
-			Token(),
-			orig_return_type.cv_qualifier()	// Preserve const/volatile qualifiers (CVQualifier)
-		);
-		new_return_type.set_type_index(return_type_index);
-
-		FLASH_LOG(Parser, Debug, "Template signature synthesis: created return type with type=", (int)return_type_index.category(), ", type_index=", return_type_index);
-
-		// Preserve reference qualifiers from original return type
-		new_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
-		propagateFunctionSignatureFromTemplateArg(
-			new_return_type,
-			orig_return_type,
-			return_type_index,
-			template_params,
-			template_args);
-
-		// Preserve pointer levels
-		applyTemplateArgIndirection(new_return_type, orig_return_type, template_params, template_args,
-									/*propagate_reference_qualifier=*/false);
-		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
-			new_return_type.add_pointer_level(ptr_level.cv_qualifier);
-		}
-		const ResolvedAliasTypeInfo return_alias_info = resolveAliasTypeInfo(new_return_type.type_index());
-		if (return_alias_info.type_index.is_valid() && return_alias_info.type_index != new_return_type.type_index()) {
-			new_return_type.set_type_index(return_alias_info.type_index.withCategory(return_alias_info.typeEnum()));
-		}
-		new_return_type.add_pointer_levels(static_cast<int>(return_alias_info.pointer_depth));
-		if (new_return_type.reference_qualifier() == ReferenceQualifier::None &&
-			return_alias_info.reference_qualifier != ReferenceQualifier::None) {
-			new_return_type.set_reference_qualifier(return_alias_info.reference_qualifier);
-		}
-		if (!new_return_type.has_function_signature() && return_alias_info.function_signature.has_value()) {
-			new_return_type.set_function_signature(*return_alias_info.function_signature);
-		}
-		if (const int resolved_size_bits = getTypeSpecSizeBits(new_return_type); resolved_size_bits > 0) {
-			new_return_type.set_size_in_bits(resolved_size_bits);
-		}
-
-		return_type = emplace_node<TypeSpecifierNode>(new_return_type);
-	}
-
-	// Parse the template_name to extract namespace and function name
-	// template_name might be like "ns::sum" or just "sum"
-	std::vector<std::string_view> namespace_path;
-	std::string_view function_name_only;
-
-	size_t last_colon = template_name.rfind("::");
-	if (last_colon != std::string_view::npos) {
-		// Has namespace - split it
-		std::string_view namespace_part = template_name.substr(0, last_colon);
-		function_name_only = template_name.substr(last_colon + 2);
-
-		// Parse namespace parts (could be nested like "a::b::c")
-		size_t start = 0;
-		while (start < namespace_part.size()) {
-			size_t end = namespace_part.find("::", start);
-			if (end == std::string_view::npos) {
-				end = namespace_part.size();
-			}
-			if (end > start) {
-				namespace_path.push_back(namespace_part.substr(start, end - start));
-			}
-			start = (end == namespace_part.size()) ? end : end + 2;
-		}
-	} else {
-		// No namespace
-		function_name_only = template_name;
-	}
-
-	// Resolve dependent qualified aliases like Helper_T::type after substituting template arguments
-	resolveDependentMemberAlias(return_type, template_params, template_args);
-	if (return_type.is<TypeSpecifierNode>()) {
-		const auto& rt = return_type.as<TypeSpecifierNode>();
-		if ((rt.category() == TypeCategory::UserDefined ||
-			 rt.category() == TypeCategory::TypeAlias ||
-			 rt.category() == TypeCategory::Template) &&
-			rt.type_index().is_valid()) {
-			if (const TypeInfo* rt_info = tryGetTypeInfo(rt.type_index())) {
-				if (rt_info->is_incomplete_instantiation_ && rt_info->isDependentMemberType()) {
-					FLASH_LOG(Templates, Debug, "SFINAE: unresolved dependent member alias remains after resolution: ", StringTable::getStringView(rt_info->name()));
-					gTemplateRegistry.markFailedInstantiation(key, overload_id);
-					return std::nullopt;
-				}
-			}
-		}
-	}
-
-	// Use the original function name token for the declaration, not the mangled name
-	auto new_decl = emplace_node<DeclarationNode>(return_type, func_name_token);
-
-	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
-
-	// Add parameters with substituted types
-	// Note: We compute the mangled name AFTER adding parameters, since the mangled name
-	// includes parameter types in its encoding
-	auto saved_outer_pack_param_info = std::move(pack_param_info_);
-	pack_param_info_.clear();
-	size_t arg_type_index = 0;  // Track which argument type we're using
-	for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
-		const auto& param = func_decl.parameter_nodes()[i];
-		if (param.is<DeclarationNode>()) {
-			const DeclarationNode& param_decl = param.as<DeclarationNode>();
-
-			// Check if this is a parameter pack
-			if (param_decl.is_parameter_pack()) {
-				// Track how many elements this pack expands to
-				size_t pack_start_index = arg_type_index;
-
-				// Check if the original parameter type is an rvalue reference (for perfect forwarding)
-				const TypeSpecifierNode& orig_param_type = param_decl.type_specifier_node();
-				bool is_forwarding_reference = orig_param_type.is_rvalue_reference();
-
-				// Expand the parameter pack into multiple parameters
-				// Use all remaining argument types for this pack
-				while (arg_type_index < arg_types.size()) {
-					const TypeSpecifierNode& arg_type = arg_types[arg_type_index];
-
-					// Create a new parameter with the concrete type
-					ASTNode param_type = emplace_node<TypeSpecifierNode>(
-						arg_type.type(),
-						arg_type.qualifier(),
-						arg_type.size_in_bits(),
-						Token(), CVQualifier::None);
-					param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
-
-					// If the original parameter was a forwarding reference (T&&), apply reference collapsing
-					// Reference collapsing rules:
-					//   T& && → T&    (lvalue reference wins)
-					//   T&& && → T&&  (both rvalue → rvalue)
-					//   T && → T&&    (non-reference + && → rvalue reference)
-					if (is_forwarding_reference) {
-						if (arg_type.is_lvalue_reference()) {
-							// Deduced type is lvalue reference (e.g., int&)
-							// Applying && gives int& && which collapses to int&
-							param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
-						} else if (arg_type.is_rvalue_reference()) {
-							// Deduced type is rvalue reference (e.g., int&&)
-							// Applying && gives int&& && which collapses to int&&
-							param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);	 // rvalue reference
-						} else {
-							// Deduced type is non-reference (e.g., int from literal)
-							// Applying && gives int&&
-							param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);	 // rvalue reference
-						}
-					}
-
-					// Copy pointer levels and CV qualifiers
-					for (const auto& ptr_level : arg_type.pointer_levels()) {
-						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
-					}
-
-					// Create parameter name: base_name + pack-relative index (e.g., args_0, args_1, ...)
-					// Use pack-relative index so fold expression expansion can use 0-based indices
-					StringBuilder param_name_builder;
-					param_name_builder.append(param_decl.identifier_token().value());
-					param_name_builder.append('_');
-					param_name_builder.append(arg_type_index - pack_start_index);
-					std::string_view param_name = param_name_builder.commit();
-
-					Token param_token(Token::Type::Identifier,
-									  param_name,
-									  param_decl.identifier_token().line(),
-									  param_decl.identifier_token().column(),
-									  param_decl.identifier_token().file_index());
-
-					auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_token);
-					new_func_ref.add_parameter_node(new_param_decl);
-
-					arg_type_index++;
-				}
-
-				// Record the pack expansion size for use during body re-parsing
-				size_t pack_size = arg_type_index - pack_start_index;
-				// Store pack info for expansion during body re-parsing
-				pack_param_info_.push_back({param_decl.identifier_token().value(), pack_start_index, pack_size});
-
-			} else {
-				// Regular parameter - substitute template parameters in the parameter type
-				const TypeSpecifierNode& orig_param_type = param_decl.type_specifier_node();
-				ASTNode param_type;
-				if (orig_param_type.category() == TypeCategory::Auto && arg_type_index < arg_types.size()) {
-					// Abbreviated function template parameter (concept auto / auto):
-					// use the deduced argument type as the concrete instantiated parameter type.
-					//
-					// For plain `auto value` called with int: deduced type is int, no pointer levels.
-					// For `auto* p` called with int*: orig has 1 pointer level from the declaration,
-					// and deduced_arg_type has 1 pointer level from the argument. The deduced type
-					// already accounts for the full type (int*), so we use its pointer levels.
-					// However, if the original declaration adds EXTRA pointer levels beyond what
-					// deduction provides (e.g., `auto** pp` called with int*), we must preserve
-					// those additional levels from orig_param_type.
-					const TypeSpecifierNode& deduced_arg_type = arg_types[arg_type_index];
-					CVQualifier cv = static_cast<CVQualifier>(
-						static_cast<uint8_t>(deduced_arg_type.cv_qualifier()) |
-						static_cast<uint8_t>(orig_param_type.cv_qualifier()));
-					param_type = emplace_node<TypeSpecifierNode>(
-						deduced_arg_type.type(),
-						TypeQualifier::None,
-						deduced_arg_type.size_in_bits(),
-						orig_param_type.token(),
-						cv);
-					param_type.as<TypeSpecifierNode>().set_type_index(deduced_arg_type.type_index());
-					if (deduced_arg_type.has_function_signature()) {
-						param_type.as<TypeSpecifierNode>().set_function_signature(deduced_arg_type.function_signature());
-					}
-					// Copy pointer levels from the deduced argument type
-					for (const auto& ptr_level : deduced_arg_type.pointer_levels()) {
-						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
-					}
-					// If the original declaration has MORE pointer levels than the deduced type
-					// (e.g., `auto** pp` where deduced type is int*), append the extra levels.
-					// This handles patterns like `concept auto* p` or `auto** pp`.
-					if (orig_param_type.pointer_depth() > deduced_arg_type.pointer_depth()) {
-						const auto& orig_levels = orig_param_type.pointer_levels();
-						for (size_t pl = deduced_arg_type.pointer_depth(); pl < orig_param_type.pointer_depth(); ++pl) {
-							param_type.as<TypeSpecifierNode>().add_pointer_level(orig_levels[pl].cv_qualifier);
-						}
-					}
-				} else {
-					TypeIndex subst_type_index = substitute_template_parameter(
-						orig_param_type, template_params, template_args);
-					// substitute_template_parameter only resolves UserDefined types by name
-					// matching against template parameter names. When the original parameter
-					// type is a UserDefined dependent-placeholder (e.g., the TypeInfo entry
-					// for Array$xxxx created when parsing `Array<T,N>& arr` inside the
-					// template with T and N still dependent), the full mangled name doesn't
-					// match any template param name, so the substitution returns unchanged.
-					// The call-site argument already holds the fully-resolved concrete type
-					// (e.g., Array<Point,3>). Use it when:
-					//   - substitution left a UserDefined type (dependent placeholder)
-					//   - the type_index was unchanged (no substitution happened)
-					//   - the TypeInfo at that index is a template instantiation (placeholder)
-					//   - we have a concrete call-site argument of type Struct
-					//
-					// NOTE: We use 'i' (the function parameter index) to index arg_types,
-					// matching the pre-deduction pass (line ~821) which also assumes 1:1
-					// correspondence between func_params[i] and arg_types[i]. Using
-					// arg_type_index here would be incorrect after a variadic pack
-					// expansion, since arg_type_index advances through multiple arg slots
-					// for a single function parameter, breaking the correspondence.
-					if (subst_type_index.category() == TypeCategory::UserDefined &&
-						subst_type_index == orig_param_type.type_index() &&
-						tryGetTypeInfo(subst_type_index) &&
-						tryGetTypeInfo(subst_type_index)->isTemplateInstantiation() &&
-						i < arg_types.size() &&
-						arg_types[i].category() == TypeCategory::Struct) {
-						subst_type_index.setCategory(TypeCategory::Struct);
-						subst_type_index = arg_types[i].type_index();
-						FLASH_LOG_FORMAT(Templates, Debug,
-										 "[depth={}]: Using call-site Struct type_index={} for dependent-placeholder param",
-										 recursion_depth, subst_type_index);
-					}
-					param_type = emplace_node<TypeSpecifierNode>(
-						subst_type_index.category(),
-						TypeQualifier::None,
-						get_type_size_bits(subst_type_index.category()),
-						orig_param_type.token(),
-						orig_param_type.cv_qualifier());
-					param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
-					applyTemplateArgIndirection(param_type.as<TypeSpecifierNode>(), orig_param_type, template_params, template_args,
-												/*propagate_reference_qualifier=*/false);
-					propagateFunctionSignatureFromTemplateArg(
-						param_type.as<TypeSpecifierNode>(),
-						orig_param_type,
-						subst_type_index,
-						template_params,
-						template_args);
-
-					// Preserve pointer levels from the original declaration
-					for (const auto& ptr_level : orig_param_type.pointer_levels()) {
-						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
-					}
-				}
-
-				// Handle forwarding references using the deduced argument type (if available)
-				if (orig_param_type.is_rvalue_reference() && arg_type_index < arg_types.size()) {
-					const TypeSpecifierNode& arg_type = arg_types[arg_type_index];
-					if (arg_type.is_lvalue_reference()) {
-						param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
-					} else if (arg_type.is_rvalue_reference()) {
-						param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);	 // rvalue reference
-					} else if (arg_type.is_reference()) {
-						param_type.as<TypeSpecifierNode>().set_reference_qualifier(arg_type.reference_qualifier());
-					} else {
-						param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);	 // T && → T&&
-					}
-				} else if (orig_param_type.is_lvalue_reference()) {
-					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
-				} else if (orig_param_type.is_rvalue_reference()) {
-					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
-				}
-
-				resolveDependentMemberAlias(param_type, template_params, template_args);
-				TypeSpecifierNode& resolved_param_type = param_type.as<TypeSpecifierNode>();
-				const ResolvedAliasTypeInfo param_alias_info = resolveAliasTypeInfo(resolved_param_type.type_index());
-				if (param_alias_info.type_index.is_valid() && param_alias_info.type_index != resolved_param_type.type_index()) {
-					resolved_param_type.set_type_index(param_alias_info.type_index.withCategory(param_alias_info.typeEnum()));
-				}
-				resolved_param_type.add_pointer_levels(static_cast<int>(param_alias_info.pointer_depth));
-				if (resolved_param_type.reference_qualifier() == ReferenceQualifier::None &&
-					param_alias_info.reference_qualifier != ReferenceQualifier::None) {
-					resolved_param_type.set_reference_qualifier(param_alias_info.reference_qualifier);
-				}
-				if (!resolved_param_type.has_function_signature() && param_alias_info.function_signature.has_value()) {
-					resolved_param_type.set_function_signature(*param_alias_info.function_signature);
-				}
-				if (const int resolved_size_bits = getTypeSpecSizeBits(resolved_param_type); resolved_size_bits > 0) {
-					resolved_param_type.set_size_in_bits(resolved_size_bits);
-				}
-
-				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
-				if (param_decl.has_default_value()) {
-					new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
-				}
-				new_func_ref.add_parameter_node(new_param_decl);
-
-				if (arg_type_index < arg_types.size()) {
-					arg_type_index++;
-				}
-			}
-		}
-	}
-
-	// Populate template_param_pack_sizes_ so substituteTemplateParameters can
-	// resolve sizeof...(Pack) correctly when multiple variadic packs are present.
-	// Saved/restored around the body reparse so nested instantiations don't see stale data.
-	auto saved_template_pack_sizes = std::move(template_param_pack_sizes_);
-	ScopeGuard restore_template_pack_sizes([&]() {
-		template_param_pack_sizes_ = std::move(saved_template_pack_sizes);
-	});
-	template_param_pack_sizes_.clear();
-	if (deduction_info.has_value()) {
-		// Compute the number of call arguments that map to the function-parameter pack.
-		// For single-pack types (e.g. Ts... or Box<Ts>...) this equals the number of
-		// call arguments consumed by the pack.  For multi-dependent types (e.g.
-		// Pair<Ts,Us>...) ALL packs in function_pack_dependent_param_names get the
-		// same count (parallel expansion), so we use the call-arg range rather than
-		// template_args.size() - non_variadic_count which would overcount.
-		const size_t func_pack_call_arg_count =
-			(deduction_info->function_pack_call_arg_end != SIZE_MAX &&
-			 deduction_info->function_pack_call_arg_start != SIZE_MAX &&
-			 deduction_info->function_pack_call_arg_end >= deduction_info->function_pack_call_arg_start)
-				? (deduction_info->function_pack_call_arg_end - deduction_info->function_pack_call_arg_start)
-				: 0;
-		for (const auto& tpnode : template_params) {
-			const TemplateParameterNode* tparam_ptr = tryGetTemplateParameterNode(tpnode);
-			if (tparam_ptr == nullptr) continue;
-			const auto& tparam = *tparam_ptr;
-			if (!tparam.is_variadic()) continue;
-			const size_t pack_count =
-				deduction_info->function_pack_dependent_param_names.count(tparam.nameHandle())
-					? func_pack_call_arg_count
-					: 0;
-			template_param_pack_sizes_.emplace_back(tparam.nameHandle(), pack_count);
-		}
-	}
-
 	const bool commit_instantiation = shouldCommitTemplateInstantiationArtifacts();
-	bool body_reparse_failed = false;
-
-	// Handle the function body
-	// Check if the template has a body position stored for re-parsing
-	if (func_decl.has_template_body_position()) {
-		FLASH_LOG(Templates, Debug, "Template has body position, re-parsing function body");
-
-		// Cycle detection: if this exact instantiation (same mangled name = same parameter
-		// types) is already being re-parsed on this thread, return early to break the cycle.
-		// Using the mangled name instead of just the template name means legitimately-different
-		// recursive instantiations (e.g. var_sum<int,int,int> called from var_sum<int,int,int,int>)
-		// are NOT blocked — only truly recursive calls to the exact same specialisation are.
-		static thread_local std::unordered_set<std::string_view> body_reparse_in_progress;
-		std::string_view cycle_key = saved_mangled_name;
-		if (body_reparse_in_progress.count(cycle_key)) {
-			FLASH_LOG(Templates, Debug, "Cycle detected in body re-parsing for '", template_name, "' (mangled: '", cycle_key, "'), skipping body to break cycle");
-			pack_param_info_ = std::move(saved_outer_pack_param_info);
-			return ASTNode(&new_func_ref);
-		}
-		body_reparse_in_progress.insert(cycle_key);
-		struct BodyReparseGuard {
-			std::unordered_set<std::string_view>& set;
-			std::string_view key;
-			~BodyReparseGuard() { set.erase(key); }
-		} body_reparse_guard{body_reparse_in_progress, cycle_key};
-
-		// Set up pack parameter info for pack expansion during body re-parsing.
-		// Pack expansion in function calls (rest...) uses pack_param_info_ to expand
-		// the pack name to rest_0, rest_1, etc. without adding the original name to scope
-		// (adding to scope would break fold expressions which need the name unresolved).
-		// pack_param_info_ was built from the expanded parameter list earlier in this
-		// function (the parameter-expansion loop) and is correct for all pack types,
-		// including complex ones like std::pair<Args,int>...
-		bool saved_has_parameter_packs = has_parameter_packs_;
-		if (!pack_param_info_.empty()) {
-			has_parameter_packs_ = true;
-		}
-
-		// Re-parse body, register types, substitute parameters — shared with explicit path.
-		// preserve_ref_qualifier=false: deduced args carry call-site lvalue-ness which must
-		// NOT be propagated to TypeInfo (see registerTypeParamsInScope comment).
-		const auto& func_template_params = template_func.template_parameters();
-		if (template_instantiation_mode_ == TemplateInstantiationMode::HardUseCandidateProbe) {
-			ScopedParserInstantiationContext body_instantiation_mode(*this, TemplateInstantiationMode::HardUse, StringHandle{});
-			reparse_template_function_body(new_func_ref, func_decl, func_template_params, template_args,
-										   /*preserve_ref_qualifier=*/false);
-		} else {
-			reparse_template_function_body(new_func_ref, func_decl, func_template_params, template_args,
-										   /*preserve_ref_qualifier=*/false);
-		}
-		if (!new_func_ref.is_materialized()) {
-			StringBuilder reason_builder;
-			StringHandle body_reparse_failure_reason = StringTable::getOrInternStringHandle(
-				reason_builder
-					.append("failed to reparse template function body for ")
-					.append(saved_mangled_name)
-					.commit());
-			new_func_ref.mark_failed_substitution(body_reparse_failure_reason);
-			failTemplateInstantiation(
-				StringTable::getStringView(body_reparse_failure_reason),
-				&key,
-				overload_id);
-			body_reparse_failed = true;
-			FLASH_LOG(Templates, Debug, "Marked template instantiation as failed substitution after body reparse: ",
-					  StringTable::getStringView(body_reparse_failure_reason));
-		}
-
-		// Restore pack parameter info (after substitution so PackExpansionExprNode can use it).
-		has_parameter_packs_ = saved_has_parameter_packs;
-		pack_param_info_ = std::move(saved_outer_pack_param_info);
-	} else {
-		auto orig_body = func_decl.get_definition();
-		if (orig_body.has_value()) {
-			throw InternalError("Template function definition has no saved body position");
-		}
-
-		// Restore outer pack parameter info (must happen on both branches)
-		pack_param_info_ = std::move(saved_outer_pack_param_info);
+	std::optional<CallArgDeductionInfo> helper_deduction_info = deduction_info;
+	FunctionTemplateInstantiationContext instantiation_context{
+		template_name,
+		template_func,
+		func_decl,
+		template_params,
+		template_args,
+		key,
+		overload_id,
+		recursion_depth};
+	FunctionTemplateBindingData binding_data{
+		&arg_types,
+		nullptr,
+		nullptr,
+		&helper_deduction_info,
+		nullptr};
+	FunctionTemplateInstantiationFlags instantiation_flags = FunctionTemplateInstantiationFlags::None;
+	if (cacheable_instantiation) {
+		instantiation_flags = mergeInstantiationFlags(
+			instantiation_flags,
+			FunctionTemplateInstantiationFlags::CacheableInstantiation);
 	}
-
-	if (body_reparse_failed) {
-		if (cacheable_instantiation && commit_instantiation) {
-			gTemplateRegistry.registerInstantiation(key, new_func_node);
-		}
-		return std::nullopt;
-	}
-
-	copy_function_properties(new_func_ref, func_decl);
-
-	// Analyze the function body to determine if it should be inline-always
-	// This applies to both paths: re-parsed bodies and copied bodies
-	const auto& func_definition = new_func_ref.get_definition();
-
-	// If the function has no body, it MUST be inline-always
-	// This happens when template bodies have unparseable statements that were skipped
-	if (!func_definition.has_value()) {
-		new_func_ref.set_inline_always(true);
-		FLASH_LOG(Templates, Debug, "Marked template instantiation as inline_always (no body): ",
-				  new_func_ref.decl_node().identifier_token().value());
-	} else if (func_definition->is<BlockNode>()) {
-		const BlockNode& block = func_definition->as<BlockNode>();
-		const auto& statements = block.get_statements();
-
-		FLASH_LOG(Templates, Debug, "Analyzing template instantiation '",
-				  new_func_ref.decl_node().identifier_token().value(), "' for pure expression, statements=", statements.size());
-
-		// Check if this is a pure expression function
-		const bool is_pure_expr = std::invoke([&statements]() -> bool {
-			bool inner_is_pure_expr = true; // assume true
-			// Might be more than one statement: using declaration + return for example
-			// This is still a pure expression if the return is a cast
-			bool has_pure_return = false;
-
-			statements.visit([&](const ASTNode& stmt) {
-				if (stmt.is<TypedefDeclarationNode>()) {
-					// Typedef statements are okay
-				} else if (stmt.is<ReturnStatementNode>()) {
-					const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
-					const auto& expr_opt = ret_stmt.expression();
-
-					if (expr_opt.has_value() && expr_opt->is<ExpressionNode>()) {
-						const ExpressionNode& expr = expr_opt->as<ExpressionNode>();
-
-						// Check if the expression is a pure cast or simple identifier
-						std::visit([&](const auto& e) {
-							using T = std::decay_t<decltype(e)>;
-							if constexpr (std::is_same_v<T, StaticCastNode> ||
-										  std::is_same_v<T, ReinterpretCastNode> ||
-										  std::is_same_v<T, ConstCastNode> ||
-										  std::is_same_v<T, IdentifierNode>) {
-								has_pure_return = true;
-							}
-						},
-								   expr);
-					}
-				} else {
-					inner_is_pure_expr = false;
-				}
-			});
-			inner_is_pure_expr &= static_cast<int>(has_pure_return);
-			return inner_is_pure_expr;
-		});
-
-		new_func_ref.set_inline_always(is_pure_expr);
-
-		if (is_pure_expr) {
-			FLASH_LOG(Templates, Debug, "Marked template instantiation as inline_always (pure expression): ",
-					  new_func_ref.decl_node().identifier_token().value());
-		} else {
-			// Function has computation/side effects - should generate normal calls
-			// Explicitly set inline_always to false
-			FLASH_LOG(Templates, Debug, "Template instantiation has computation/side effects (not inlining): ",
-					  new_func_ref.decl_node().identifier_token().value());
-		}
-	}
-
-	if (func_definition.has_value()) {
-		finalize_function_after_definition(new_func_ref);
-	} else {
-		compute_and_set_mangled_name(new_func_ref);
-	}
-
-	// Register the instantiation
-	if (cacheable_instantiation && commit_instantiation) {
-		gTemplateRegistry.registerInstantiation(key, new_func_node);
-	}
-
-	// Add to symbol table at GLOBAL scope (not current scope)
-	// Template instantiations should be globally visible, not scoped to where they're called
-	// Use insertGlobal() to add to global scope without modifying the scope stack
-	// Register with the human-readable template-specific name for template lookups
 	if (commit_instantiation) {
-		gSymbolTable.insertGlobal(saved_mangled_name, new_func_node);
+		instantiation_flags = mergeInstantiationFlags(
+			instantiation_flags,
+			FunctionTemplateInstantiationFlags::CommitInstantiation);
 	}
-
-	// Add to top-level AST so it gets visited by the code generator.
-	// Bodyless instantiations (no function definition) can never be compiled and must
-	// not be registered — they appear as declaration-only forward declarations or as
-	// SFINAE probes with dependent/unresolved parameter types.  Registering them causes
-	// IR errors when codegen encounters parameters that still hold template placeholders.
-	// Add to top-level AST so it gets visited by the code generator.
-	// Skip registration in two cases that produce uncompilable nodes:
-	//   1. Bodyless instantiations (forward declarations, SFINAE probes) — no code to emit.
-	//   2. Bodied instantiations where any parameter still carries an explicit dependent
-	//      placeholder TypeInfo after substitution/alias resolution.
-	const bool has_unresolved_signature = functionHasUnresolvedPlaceholderSignature(new_func_ref);
-	FLASH_LOG_FORMAT(Templates, Debug,
-		"'{}': has_body={}, has_unresolved_signature={}, registering={}",
-		template_name, func_definition.has_value(), has_unresolved_signature,
-		func_definition.has_value() && !has_unresolved_signature && commit_instantiation);
-	if (func_definition.has_value() && !has_unresolved_signature && commit_instantiation) {
-		registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
-	}
-
-	return new_func_node;
+	instantiation_flags = mergeInstantiationFlags(
+		instantiation_flags,
+		FunctionTemplateInstantiationFlags::RegisterInstantiation);
+	instantiation_flags = mergeInstantiationFlags(
+		instantiation_flags,
+		FunctionTemplateInstantiationFlags::MemoizeBodyReparseFailure);
+	instantiation_flags = mergeInstantiationFlags(
+		instantiation_flags,
+		FunctionTemplateInstantiationFlags::RunInlineHeuristic);
+	return instantiateBoundFunctionTemplate(
+		instantiation_context,
+		binding_data,
+		instantiation_flags);
 }
 
 // Get the mangled name for an instantiated class template using hash-based naming

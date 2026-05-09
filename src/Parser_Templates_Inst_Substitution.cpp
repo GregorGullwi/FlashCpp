@@ -827,6 +827,75 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		return nullptr;
 	}
 
+	TemplateEnvironment inherited_environment;
+	const TemplateEnvironment* inherited_environment_ptr = nullptr;
+	if (const TypeInfo::InstantiationContext* dependent_base_context =
+			dependent_base_info->instantiationContext();
+		dependent_base_context != nullptr) {
+		inherited_environment = buildTemplateEnvironment(*dependent_base_context);
+		inherited_environment_ptr = &inherited_environment;
+	}
+	TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+		template_params,
+		template_args,
+		inherited_environment_ptr);
+	auto materialize_template_args_with_environment =
+		[&](
+			const TypeInfo& source_type_info) -> std::vector<TemplateTypeArg> {
+		std::vector<TemplateTypeArg> concrete_args;
+		concrete_args.reserve(source_type_info.templateArgs().size());
+		for (const TypeInfo::TemplateArgInfo& stored_arg : source_type_info.templateArgs()) {
+			TemplateTypeArg concrete_arg = toTemplateTypeArg(stored_arg);
+			concrete_arg.setCategory(stored_arg.category());
+			bool resolved_from_environment = false;
+			if (stored_arg.dependent_name.isValid()) {
+				std::optional<TemplateTypeArg> bound_arg;
+				if (const TemplateTypeArg* direct_bound_arg =
+						substitution_environment.findOne(stored_arg.dependent_name);
+					direct_bound_arg != nullptr) {
+					bound_arg = *direct_bound_arg;
+				} else {
+					bound_arg = resolveContextBinding(
+						stored_arg.dependent_name,
+						substitution_environment);
+				}
+				if (bound_arg.has_value()) {
+					if (!stored_arg.is_value && !bound_arg->is_value) {
+						concrete_arg = rebindDependentTemplateTypeArg(*bound_arg, stored_arg);
+					} else {
+						concrete_arg = *bound_arg;
+					}
+					resolved_from_environment = true;
+				}
+			}
+			if (!resolved_from_environment) {
+				concrete_arg = materializeTemplateArg(
+					stored_arg,
+					template_params,
+					template_args,
+					[this](
+						const ASTNode& expr,
+						std::span<const ASTNode> params,
+						std::span<const TemplateTypeArg> args) {
+						InlineVector<TemplateParameterNode, 4> typed_params;
+						typed_params.reserve(params.size());
+						for (const ASTNode& param_node : params) {
+							if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+								typed_param != nullptr) {
+								typed_params.push_back(*typed_param);
+							}
+						}
+						return this->evaluateDependentNTTPExpression(
+							expr,
+							std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+							args);
+					});
+			}
+			concrete_args.push_back(std::move(concrete_arg));
+		}
+		return concrete_args;
+	};
+
 	StringHandle direct_concrete_member_handle =
 		StringTable::getOrInternStringHandle(
 			StringBuilder()
@@ -846,7 +915,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		dependent_base_info->sourceNamespace(),
 		dependent_base_info->baseTemplateName());
 	std::vector<TemplateTypeArg> concrete_base_args =
-		materializeTemplateArgs(*dependent_base_info, template_params, template_args);
+		materialize_template_args_with_environment(*dependent_base_info);
 	AliasTemplateMaterializationResult materialized_alias_base =
 		materializeTemplateInstantiationForLookup(
 			StringTable::getStringView(base_template_name_handle),
@@ -872,7 +941,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		std::vector<TemplateTypeArg> concrete_member_template_args;
 		if (original_alias_target_info->isTemplateInstantiation()) {
 			concrete_member_template_args =
-				materializeTemplateArgs(*original_alias_target_info, template_params, template_args);
+				materialize_template_args_with_environment(*original_alias_target_info);
 		}
 		AliasTemplateMaterializationResult materialized_member_alias =
 			materializeAliasTemplateInstantiation(

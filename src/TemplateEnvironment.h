@@ -65,6 +65,7 @@ TemplateEnvironment buildTemplateEnvironment(
 	std::span<const TemplateParameterNode> params,
 	std::span<const TemplateTypeArg> args,
 	const TemplateEnvironment* parent);
+TemplateEnvironment buildTemplateEnvironment(const TemplateEnvironmentSnapshot& snapshot);
 TemplateEnvironment buildTemplateEnvironment(const OuterTemplateBinding& binding);
 TemplateEnvironment buildTemplateEnvironment(const TypeInfo::InstantiationContext& context);
 

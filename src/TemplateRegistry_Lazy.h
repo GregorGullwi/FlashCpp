@@ -12,10 +12,38 @@ static StringHandle normalizeClassName(StringHandle handle) {
 	return handle;
 }
 
+template <typename ParamContainer, typename ArgContainer>
+TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshotFromBindings(
+	const ParamContainer& template_params,
+	const ArgContainer& template_args,
+	std::shared_ptr<const TemplateEnvironmentSnapshot> parent = nullptr) {
+	InlineVector<StringHandle, 4> param_names;
+	param_names.reserve(template_params.size());
+	for (const auto& template_param : template_params) {
+		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
+			typed_param != nullptr) {
+			param_names.push_back(typed_param->nameHandle());
+		}
+	}
+
+	InlineVector<TemplateTypeArg, 4> typed_args;
+	typed_args.reserve(template_args.size());
+	for (const auto& template_arg : template_args) {
+		typed_args.push_back(template_arg);
+	}
+	InlineVector<TypeInfo::TemplateArgInfo, 4> arg_infos = toTemplateArgInfoList(
+		std::span<const TemplateTypeArg>(typed_args.data(), typed_args.size()));
+	return buildTemplateEnvironmentSnapshot(
+		std::span<const StringHandle>(param_names.data(), param_names.size()),
+		std::span<const TypeInfo::TemplateArgInfo>(arg_infos.data(), arg_infos.size()),
+		std::move(parent));
+}
+
 struct LazyMemberFunctionInfo {
 	DeferredMemberIdentity identity;
 	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters from class template
 	InlineVector<TemplateTypeArg, 4> template_args; // Concrete template arguments used for instantiation
+	TemplateEnvironmentSnapshot outer_template_environment_snapshot;
 	AccessSpecifier access;						// Access specifier (public/private/protected)
 	bool is_virtual = false;					 // Virtual function flag
 	bool is_pure_virtual = false;				  // Pure virtual flag
@@ -405,6 +433,7 @@ struct LazyStaticMemberInfo {
 	int pointer_depth = 0;					   // Pointer depth (e.g., 1 for int*, 2 for int**)
 	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters from class template
 	std::vector<TemplateTypeArg> template_args; // Concrete template arguments
+	TemplateEnvironmentSnapshot outer_template_environment_snapshot;
 	bool needs_substitution;					 // True if initializer contains template parameters
 
 	TypeCategory memberType() const { return type_index.category(); }

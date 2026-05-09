@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <numeric>
+#include <cstdint>
 #include <string_view>
 #include <source_location>
 #include <functional>
@@ -1566,18 +1567,61 @@ private:
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args,
 		bool preserve_ref_qualifier);
-	// Populate template_param_substitutions_ from parallel (name, arg) pairs for
-	// body-reparse paths so non-type params (e.g. int N → 4) are resolved in parse_block().
-	// Overload 1: TemplateTypeArg source (lazy body-reparse path).
-	// Overload 2: TemplateTypeArg source (member-func body-reparse path).
-	void populateTemplateParamSubstitutions(
-		InlineVector<TemplateParamSubstitution, 4>& subs,
-		const InlineVector<StringHandle, 4>& param_names,
-		std::span<const TemplateTypeArg> type_args);
-	void populateTemplateParamSubstitutions(
-		InlineVector<TemplateParamSubstitution, 4>& subs,
-		std::span<const TemplateParameterNode> template_params,
-		std::span<const TemplateTypeArg> template_args);
+	struct FunctionTemplateInstantiationContext {
+		std::string_view template_name;
+		const TemplateFunctionDeclarationNode& template_func;
+		const FunctionDeclarationNode& func_decl;
+		std::span<const TemplateParameterNode> template_params;
+		std::span<const TemplateTypeArg> template_args;
+		const FlashCpp::TemplateInstantiationKey& key;
+		uintptr_t overload_id;
+		int recursion_depth;
+	};
+	struct FunctionTemplateBindingData {
+		const std::vector<TypeSpecifierNode>* arg_types;
+		const std::vector<size_t>* template_param_arg_starts;
+		const std::vector<size_t>* template_param_arg_counts;
+		const std::optional<CallArgDeductionInfo>* deduction_info;
+		const std::optional<TypeSpecifierNode>* reparsed_trailing_return_type;
+	};
+	enum class FunctionTemplateInstantiationFlags : uint16_t {
+		None = 0,
+		PreserveRefQualifier = 1u << 0,
+		ExplicitMaterialization = 1u << 1,
+		CacheableInstantiation = 1u << 2,
+		CommitInstantiation = 1u << 3,
+		RegisterInstantiation = 1u << 4,
+		MemoizeBodyReparseFailure = 1u << 5,
+		RunInlineHeuristic = 1u << 6
+	};
+	static constexpr FunctionTemplateInstantiationFlags mergeInstantiationFlags(
+		FunctionTemplateInstantiationFlags lhs,
+		FunctionTemplateInstantiationFlags rhs) {
+		return static_cast<FunctionTemplateInstantiationFlags>(
+			static_cast<uint16_t>(lhs) | static_cast<uint16_t>(rhs));
+	}
+	static constexpr bool hasInstantiationFlag(
+		FunctionTemplateInstantiationFlags flags,
+		FunctionTemplateInstantiationFlags flag) {
+		return (static_cast<uint16_t>(flags) & static_cast<uint16_t>(flag)) != 0;
+	}
+	bool materializeTemplateFunctionParameters(
+		FunctionDeclarationNode& new_func_ref,
+		const FunctionTemplateInstantiationContext& instantiation_context,
+		const FunctionTemplateBindingData& binding_data,
+		FunctionTemplateInstantiationFlags instantiation_flags);
+	std::optional<ASTNode> finalizeInstantiatedFunction(
+		ASTNode new_func_node,
+		FunctionDeclarationNode& new_func_ref,
+		const FunctionTemplateInstantiationContext& instantiation_context,
+		std::string_view mangled_name,
+		FunctionTemplateInstantiationFlags instantiation_flags);
+	std::optional<ASTNode> instantiateBoundFunctionTemplate(
+		const FunctionTemplateInstantiationContext& instantiation_context,
+		const FunctionTemplateBindingData& binding_data,
+		FunctionTemplateInstantiationFlags instantiation_flags);
+	// Populate template_param_substitutions_ from a normalized template environment
+	// for body-reparse paths so non-type params (e.g. int N → 4) are resolved in parse_block().
 	void populateTemplateParamSubstitutions(
 		InlineVector<TemplateParamSubstitution, 4>& subs,
 		const TemplateEnvironment& environment);

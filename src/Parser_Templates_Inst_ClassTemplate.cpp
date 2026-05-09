@@ -6509,6 +6509,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.pointer_depth = static_member.pointer_depth;
 				lazy_info.template_params = template_params_typed;
 				lazy_info.template_args = template_args_to_use;
+				lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
+					template_params_typed,
+					template_args_to_use);
 				lazy_info.needs_substitution = true;
 
 				LazyStaticMemberRegistry::getInstance().registerLazyStaticMember(lazy_info);
@@ -7385,6 +7388,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				lazy_info.template_params = template_params;
 				lazy_info.template_args = template_args_to_use;
+				lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
+					template_params,
+					template_args_to_use);
 				lazy_info.access = mem_func.access;
 				lazy_info.is_virtual = mem_func.is_virtual;
 				lazy_info.is_pure_virtual = mem_func.is_pure_virtual;

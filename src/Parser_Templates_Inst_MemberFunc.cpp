@@ -360,6 +360,15 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 		ctor_decl.outer_template_environment_snapshot(),
 		outer_param_names,
 		outer_args);
+	std::shared_ptr<const TemplateEnvironmentSnapshot> outer_parent_snapshot;
+	if (ctor_decl.has_outer_template_bindings()) {
+		outer_parent_snapshot = std::make_shared<const TemplateEnvironmentSnapshot>(
+			ctor_decl.outer_template_environment_snapshot());
+	}
+	lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
+		template_params,
+		ctor_template_args,
+		std::move(outer_parent_snapshot));
 	for (StringHandle outer_name : outer_param_names) {
 		Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_name), 0, 0, 0);
 		lazy_info.template_params.push_back(TemplateParameterNode(outer_name, outer_token));
@@ -1611,7 +1620,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// try_instantiate_template_explicit for free function templates.
 	{
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-		populateTemplateParamSubstitutions(template_param_substitutions_, template_params, template_args);
+		TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+			template_params,
+			template_args,
+			nullptr);
+		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 
 		// Parse the function body
 		{
