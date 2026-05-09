@@ -155,7 +155,7 @@ private:
 	void finalizeConstructorCallOp(
 		ConstructorCallOp& ctor_op,
 		const StructTypeInfo& target_struct_info,
-		const Token& source_token) const;
+		const Token& source_token);
 	// Fill trailing default arguments for a constructor overload that has already
 	// been selected, starting after the explicitly provided arguments.
 	void fillInConstructorDefaultArguments(
@@ -407,6 +407,8 @@ private:
 	bool isScalarType(TypeCategory type, bool is_reference, size_t pointer_depth) const;
 	bool isArithmeticType(TypeCategory type) const;
 	bool isFundamentalType(TypeCategory type) const;
+	bool shouldDeferImplicitConstructorCodegen(const StructTypeInfo& struct_info, const ConstructorDeclarationNode& ctor) const;
+	bool shouldDeferImplicitAssignmentCodegen(const StructTypeInfo& struct_info, const FunctionDeclarationNode& fn) const;
 	ExprResult generateTypeTraitIr(const TypeTraitExprNode& traitNode);
 	ExprResult generateNewExpressionIr(const NewExpressionNode& newExpr);
 	ExprResult generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr);
