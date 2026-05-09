@@ -1317,7 +1317,7 @@ private:
 		InlineVector<ASTNode, 4>& out_target_template_arg_nodes,
 		StringHandle& out_target_member_template_name,
 		InlineVector<ASTNode, 4>& out_target_member_template_arg_nodes,
-		bool consume_dependent_member_suffix);
+		bool consume_dependent_member_suffix);	// Supports one dependent member-template hop; rejects additional hops.
 	// Simple struct to hold constant expression evaluation results
 	// Public members are intentional for this lightweight data structure
 	struct ConstantValue {

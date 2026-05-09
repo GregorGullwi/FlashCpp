@@ -201,7 +201,9 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 			alias_name_handle,
 			type_result.node().value(),
 			target_template_name,
-			std::move(target_template_arg_nodes));
+			std::move(target_template_arg_nodes),
+			target_member_template_name,
+			std::move(target_member_template_arg_nodes));
 	} else {
 		alias_node = emplace_node<TemplateAliasNode>(
 			template_params,

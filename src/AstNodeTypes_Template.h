@@ -1,6 +1,6 @@
 #pragma once
-#include "AstNodeTypes_DeclNodes.h"
 #include <span>
+#include "AstNodeTypes_DeclNodes.h"
 
 // Template parameter kinds
 enum class TemplateParameterKind {
