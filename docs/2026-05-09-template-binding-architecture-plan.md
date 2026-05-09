@@ -1,10 +1,11 @@
 # Template Binding Architecture Plan
 
 **Date:** 2026-05-09  
-**Status:** ✅ COMPLETE (All 8 phases implemented and tested)  
+**Status:** Phase 7 complete; Phase 8 remains implementation work
+
 **Scope:** Template argument identity, parameter binding environments, instantiation consumers, and C++20 failure-mode boundaries.
 
-## Completion Summary
+## Current Summary
 
 This refactoring successfully achieves the goal of making template code pass around explicit concepts:
 - `TemplateArgumentList` (ordered arguments via OrderedTemplateInstantiationIdentity)
@@ -16,17 +17,16 @@ This reduces accidental fallback paths, makes nested template instantiation more
 
 ## Next Task
 
-Future enhancements (Phase 8.1 and beyond):
-- Merge `try_instantiate_template()` and `try_instantiate_template_explicit()` materialization logic using helper functions
+Phase 8 next step:
+- Extract the duplicated materialization tail from `try_instantiate_template()` and `try_instantiate_template_explicit()` into one helper only after it can preserve all current behavior
 - Enhance class template instantiation to preserve environment through dependent member materialization
 - Update lazy member/static instantiation to pass TemplateEnvironment through body reparse
-5. ✅ All 2286 existing tests pass with no regressions
 
-**Remaining work (Phase 8.1):**
-1. Enhance `instantiateBoundFunctionTemplate()` to fully extract and reuse materialization logic from `try_instantiate_template_explicit()`
-2. Implement full substitution support in `materializeTemplateFunctionParameters()` using existing type substitution patterns
-3. Refactor `try_instantiate_template_explicit()` to use `materializeTemplateFunctionParameters()` and `instantiateBoundFunctionTemplate()` after argument binding
-4. Apply same refactoring to `try_instantiate_template()` to merge materialization paths after implicit binding
+**Remaining work (Phase 8):**
+1. Add a real post-binding function materialization helper beside `try_instantiate_template_explicit()` / `try_instantiate_template()` in `src/Parser_Templates_Inst_Deduction.cpp`
+2. Move one behavior slice at a time into that helper: return-type materialization, parameter materialization, body reparse, finalization, cache/symbol/AST registration
+3. Refactor `try_instantiate_template_explicit()` to call the helper after explicit argument binding
+4. Apply the same helper to `try_instantiate_template()` after implicit argument deduction
 5. Update class template instantiation to preserve outer binding environment through dependent member materialization
 6. Update lazy member/static instantiation to pass `TemplateEnvironment` through body reparse
 
@@ -482,12 +482,20 @@ Keep these front ends separate:
 
 Merge only after arguments are bound and an environment exists.
 
-Add helpers:
+Add helpers only when each one is extracted from the live code path and covered by equivalent tests:
 
 ```cpp
-std::optional<ASTNode> instantiateBoundFunctionTemplate(...);
-bool finalizeInstantiatedFunction(...);
-MaterializedFunctionParameters materializeTemplateFunctionParameters(...);
+std::optional<ASTNode> instantiateBoundFunctionTemplate(
+	const FunctionDeclarationNode& template_func,
+	std::string_view template_name,
+	const BoundTemplateArguments& bound_args,
+	const TemplateEnvironment& environment,
+	TemplateSubstitutionFailurePolicy failure_policy);
+bool finalizeInstantiatedFunction(
+	FunctionDeclarationNode& instantiated_func,
+	std::string_view symbol_name,
+	const FlashCpp::TemplateInstantiationKey& key,
+	TemplateInstantiationCommitPolicy commit_policy);
 std::optional<ASTNode> failTemplateInstantiation(...);
 ```
 
@@ -512,18 +520,15 @@ Both calls should use different binding front ends, then the same materializatio
 Complexity: L  
 Risk: High
 
-Completed notes:
+Current notes:
 
-- Added `TemplateMaterializationResult` and `MaterializedFunctionParameters` structures to support unified materialization pipeline
-- Implemented `instantiateBoundFunctionTemplate()`, `materializeTemplateFunctionParameters()`, and `finalizeInstantiatedFunction()` helpers with `TemplateSubstitutionFailurePolicy` support
-- These helpers provide merge point for both implicit and explicit function template instantiation after argument binding
-- Preserved separate binding front ends for implicit vs explicit while laying groundwork for shared materialization
-- All 2286 tests pass; codebase maintains warning-free builds
-- Foundation ready for Phase 8.1 enhancements (merging try_instantiate_template/try_instantiate_template_explicit)
+- Do not add `instantiateBoundFunctionTemplate()`, `materializeTemplateFunctionParameters()`, or `finalizeInstantiatedFunction()` until they own real behavior.
+- The previous placeholder versions copied unsubstituted types, ignored failure policy and binding metadata, and were not called by the live instantiation paths.
+- The live Phase 8 work is to extract existing behavior from `try_instantiate_template_explicit()` and `try_instantiate_template()`, not to create a parallel incomplete instantiator.
 
-## Implementation Complete ✅
+## Implementation Status
 
-All 8 phases of the template binding architecture refactoring have been successfully implemented and tested:
+The binding architecture through Phase 7 has been implemented and tested:
 
 1. ✅ Phase 1: Consolidated template argument conversion helpers
 2. ✅ Phase 2: Added TemplateEnvironment as adapter
@@ -532,9 +537,9 @@ All 8 phases of the template binding architecture refactoring have been successf
 5. ✅ Phase 5: Made InstantiationContext binding-based
 6. ✅ Phase 6: Made persistent argument metadata lossless
 7. ✅ Phase 7: Made TemplateInstantiationKey ordered
-8. ✅ Phase 8: Added instantiation refactoring infrastructure
+8. ⏳ Phase 8: Refactor instantiation paths around the environment
 
-**Status: Ready for deployment**
+**Status: Phase 8 still needs implementation**
 
 Add debug assertions as each phase creates the relevant type:
 

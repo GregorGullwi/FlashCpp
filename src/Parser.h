@@ -1449,23 +1449,6 @@ private:
 	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, size_t call_arg_count = SIZE_MAX);	// NEW: Instantiate with explicit args
 	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, const std::vector<TypeSpecifierNode>& arg_types);
 	
-	// Phase 8: Helper functions for unified template instantiation after argument binding
-	TemplateMaterializationResult instantiateBoundFunctionTemplate(
-		const FunctionDeclarationNode& template_func,
-		std::string_view template_name,
-		const TemplateEnvironment& active_binding_environment,
-		TemplateSubstitutionFailurePolicy failure_policy);
-
-	bool finalizeInstantiatedFunction(
-		ASTNode& instantiated_func_node,
-		StringHandle original_name,
-		const TemplateEnvironment& binding_environment);
-
-	MaterializedFunctionParameters materializeTemplateFunctionParameters(
-		const FunctionDeclarationNode& template_func,
-		const TemplateEnvironment& binding_environment,
-		TemplateSubstitutionFailurePolicy failure_policy);
-	
 	struct CallArgDeductionInfo {
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
 		std::unordered_set<size_t> pre_deduced_arg_indices;
