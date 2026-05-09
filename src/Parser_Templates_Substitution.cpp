@@ -354,6 +354,12 @@ ASTNode Parser::substituteTemplateParameters(
 			return binding;
 		}
 
+		if (auto class_pack_size = get_class_template_pack_size(pack_name)) {
+			binding.found = true;
+			binding.count = *class_pack_size;
+			return binding;
+		}
+
 		if (auto function_pack_size = get_pack_size(pack_name)) {
 			binding.found = true;
 			binding.count = *function_pack_size;

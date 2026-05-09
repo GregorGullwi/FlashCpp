@@ -883,7 +883,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 					stored_arg,
 					template_params,
 					template_args,
-					[this](
+					[this, &substitution_environment](
 						const ASTNode& expr,
 						std::span<const ASTNode> params,
 						std::span<const TemplateTypeArg> args) {
@@ -895,6 +895,8 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 								typed_params.push_back(*typed_param);
 							}
 						}
+						FlashCpp::ScopedState guard_subs(template_param_substitutions_);
+						populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 						return this->evaluateDependentNTTPExpression(
 							expr,
 							std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
@@ -1335,6 +1337,29 @@ ASTNode Parser::substitute_template_params_in_expression(
 								return emplace_node<ExpressionNode>(new_sizeof);
 							}
 						}
+					}
+
+					for (const auto& subst : template_param_substitutions_) {
+						if (!subst.is_type_param || subst.substituted_type.is_value) {
+							continue;
+						}
+						if (StringTable::getStringView(subst.param_name) != type_name) {
+							continue;
+						}
+						const TemplateTypeArg& arg = subst.substituted_type;
+						TypeSpecifierNode new_type(
+							arg.typeEnum(),
+							TypeQualifier::None,
+							get_type_size_bits(arg.category()),
+							sizeof_node.sizeof_token(), CVQualifier::None);
+						new_type.set_type_index(arg.type_index);
+						new_type.set_reference_qualifier(arg.ref_qualifier);
+						for (size_t p = 0; p < arg.pointer_depth; ++p) {
+							new_type.add_pointer_level(CVQualifier::None);
+						}
+						auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
+						SizeofExprNode new_sizeof(new_type_node, sizeof_node.sizeof_token());
+						return emplace_node<ExpressionNode>(new_sizeof);
 					}
 				}
 			}
@@ -2558,27 +2583,18 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 			nontype_substitution_map[param->name()] = template_args[i].value;
 		}
 	}
-
-	// sizeof/alignof over a dependent type should already have a direct type-index mapping
-	// once template parameter registration is complete.
-	auto ensureMappedDependentSizeofType = [&](const TypeSpecifierNode& type_node) {
-		if (type_substitution_map.count(type_node.type_index())) {
-			return;
+	for (const auto& subst : template_param_substitutions_) {
+		if (subst.is_type_param && !subst.substituted_type.is_value && subst.substituted_type.type_index.is_valid()) {
+			auto type_it = getTypesByNameMap().find(subst.param_name);
+			if (type_it != getTypesByNameMap().end() && type_it->second != nullptr) {
+				TypeIndex param_type_index = type_it->second->registeredTypeIndex();
+				if (param_type_index.is_valid()) {
+					type_substitution_map[param_type_index] = subst.substituted_type;
+				}
+			}
 		}
-		throw InternalError("Dependent sizeof/alignof type should already be mapped before evaluation");
-	};
-	if (dependent_expr.is<ExpressionNode>()) {
-		const ExpressionNode& top_variant = dependent_expr.as<ExpressionNode>();
-		if (std::holds_alternative<SizeofExprNode>(top_variant)) {
-			const SizeofExprNode& sn = std::get<SizeofExprNode>(top_variant);
-			if (sn.is_type() && sn.type_or_expr().is<TypeSpecifierNode>()) {
-				ensureMappedDependentSizeofType(sn.type_or_expr().as<TypeSpecifierNode>());
-			}
-		} else if (std::holds_alternative<AlignofExprNode>(top_variant)) {
-			const AlignofExprNode& an = std::get<AlignofExprNode>(top_variant);
-			if (an.is_type() && an.type_or_expr().is<TypeSpecifierNode>()) {
-				ensureMappedDependentSizeofType(an.type_or_expr().as<TypeSpecifierNode>());
-			}
+		if (subst.is_value_param) {
+			nontype_substitution_map[StringTable::getStringView(subst.param_name)] = subst.value;
 		}
 	}
 
