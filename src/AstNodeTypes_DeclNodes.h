@@ -1016,7 +1016,7 @@ struct TypeInfo {
 		std::variant<int64_t, double, StringHandle> value = int64_t{0};	// For non-type arguments
 		bool is_value = false;		   // true if this is a non-type argument
 		bool is_array = false;
-		std::vector<size_t> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
+		InlineVector<size_t, 2> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
 		StringHandle dependent_name;	 // Name of the dependent template parameter (for inner deduction)
 		std::optional<FunctionSignature> function_signature; // For function pointer template arguments
 		std::optional<ASTNode> dependent_expr;  // Original AST for dependent NTTP expressions (e.g., sizeof(T))
@@ -2602,7 +2602,7 @@ public:
 			info.is_array = arg.is_array;
 			// Copy array dimensions from TemplateTypeArg to TemplateArgInfo
 			if constexpr (requires(decltype(arg) a) { a.array_dimensions; }) {
-				info.array_dimensions = arg.array_dimensions;
+				info.array_dimensions.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
 			}
 			info.dependent_name = arg.dependent_name;
 			info.function_signature = arg.function_signature;

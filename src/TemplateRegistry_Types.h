@@ -922,7 +922,7 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	materialized.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
 	materialized.cv_qualifier = arg_info.cv_qualifier;
 	materialized.is_array = arg_info.is_array;
-	materialized.array_dimensions = arg_info.array_dimensions;
+	materialized.array_dimensions.assign(arg_info.array_dimensions.begin(), arg_info.array_dimensions.end());
 	materialized.function_signature = arg_info.function_signature;
 
 	TypeSpecifierNode substituted_spec(
@@ -941,7 +941,7 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 		if (arg_info.array_dimensions.empty() || arg_info.array_dimensions[0] == 0) {
 			substituted_spec.set_array(true, std::nullopt);
 		} else {
-			substituted_spec.set_array(true, arg_info.array_dimensions[0]);
+			substituted_spec.set_array_dimensions(arg_info.array_dimensions);
 		}
 	}
 	if (arg_info.function_signature.has_value()) {
@@ -1000,7 +1000,9 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 	pattern_arg.pointer_cv_qualifiers = dependent_pattern.pointer_cv_qualifiers;
 	pattern_arg.ref_qualifier = dependent_pattern.ref_qualifier;
 	pattern_arg.cv_qualifier = dependent_pattern.cv_qualifier;
-	pattern_arg.array_dimensions = dependent_pattern.array_dimensions;
+	pattern_arg.array_dimensions.assign(
+		dependent_pattern.array_dimensions.begin(),
+		dependent_pattern.array_dimensions.end());
 	pattern_arg.is_array = dependent_pattern.is_array;
 	pattern_arg.function_signature = dependent_pattern.function_signature;
 	pattern_arg.dependent_name = dependent_pattern.dependent_name;
