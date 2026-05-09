@@ -964,7 +964,8 @@ void AstToIr::finalizeConstructorCallOp(
 											.commit()));
 	}
 
-	if (ctor_op.resolved_constructor && ctor_op.resolved_constructor->is_implicit()) {
+	if (ctor_op.resolved_constructor &&
+		shouldDeferImplicitConstructorCodegen(target_struct_info, *ctor_op.resolved_constructor)) {
 		for (const auto& member_func : target_struct_info.member_functions) {
 			if (!member_func.is_constructor ||
 				!member_func.function_decl.is<ConstructorDeclarationNode>()) {
@@ -1913,7 +1914,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			if (overload_result.has_match) {
 				const StructMemberFunction& member_func = *overload_result.member_overload;
 				const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-				if (func_decl.is_implicit() && op == "=") {
+				if (op == "=" &&
+					shouldDeferImplicitAssignmentCodegen(*getTypeInfo(lhs_type_index).getStructInfo(), func_decl)) {
 					StringHandle owner_struct_name = getTypeInfo(lhs_type_index).name();
 					queueDeferredMemberFunctionFromNode(
 						owner_struct_name,
@@ -2381,7 +2383,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 			const StructMemberFunction& member_func = *overload_result.member_overload;
 			const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-			if (func_decl.is_implicit() && op == "=") {
+			if (op == "=" &&
+				shouldDeferImplicitAssignmentCodegen(*getTypeInfo(lhs_type_index).getStructInfo(), func_decl)) {
 				StringHandle owner_struct_name = getTypeInfo(lhs_type_index).name();
 				queueDeferredMemberFunctionFromNode(
 					owner_struct_name,

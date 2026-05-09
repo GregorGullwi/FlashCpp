@@ -1212,7 +1212,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	if (matched_func_decl &&
 		matched_func_decl->is_member_function() &&
-		matched_func_decl->is_implicit() &&
 		matched_func_decl->decl_node().identifier_token().value() == "operator=") {
 		StringHandle owner_struct_name = StringTable::getOrInternStringHandle(matched_func_decl->parent_struct_name());
 		auto owner_type_it = getTypesByNameMap().find(owner_struct_name);
@@ -1220,7 +1219,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			(owner_type_it != getTypesByNameMap().end() && owner_type_it->second)
 				? owner_type_it->second->getStructInfo()
 				: nullptr;
-		if (owner_struct_info) {
+		if (owner_struct_info &&
+			shouldDeferImplicitAssignmentCodegen(*owner_struct_info, *matched_func_decl)) {
 			for (const auto& member_func : owner_struct_info->member_functions) {
 				if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
 					continue;

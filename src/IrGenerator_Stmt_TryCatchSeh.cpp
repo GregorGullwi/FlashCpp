@@ -316,7 +316,7 @@ void AstToIr::visitThrowStatementNode(const ThrowStatementNode& node) {
 							continue;
 						}
 						const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
-						if (!ctor_decl.is_implicit()) {
+						if (!shouldDeferImplicitConstructorCodegen(*exception_struct_info, ctor_decl)) {
 							continue;
 						}
 						queueDeferredMemberFunctionFromNode(

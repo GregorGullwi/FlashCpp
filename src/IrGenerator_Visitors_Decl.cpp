@@ -1326,6 +1326,12 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 		}
 	}
 
+	const StructTypeInfo* current_struct_info = nullptr;
+	if (auto resolved_type_it = getTypesByNameMap().find(current_struct_name_);
+		resolved_type_it != getTypesByNameMap().end() && resolved_type_it->second != nullptr) {
+		current_struct_info = resolved_type_it->second->getStructInfo();
+	}
+
 	// For local structs, collect member functions for deferred generation
 	// For global structs, visit them immediately
 	if (is_local_struct) {
@@ -1349,7 +1355,9 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 					const auto& fn = func_decl.as<FunctionDeclarationNode>();
 					if (fn.is_implicit() &&
 						(member_func.operator_kind == OverloadableOperator::CopyAssign ||
-						 member_func.operator_kind == OverloadableOperator::MoveAssign)) {
+						 member_func.operator_kind == OverloadableOperator::MoveAssign) &&
+						current_struct_info &&
+						shouldDeferImplicitAssignmentCodegen(*current_struct_info, fn)) {
 						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - deferring implicit assignment operator emission until ODR-use");
 						continue;
 					}
@@ -1396,7 +1404,8 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 					}
 				} else if (func_decl.is<ConstructorDeclarationNode>()) {
 					const auto& ctor = func_decl.as<ConstructorDeclarationNode>();
-					if (ctor.is_implicit()) {
+					if (current_struct_info &&
+						shouldDeferImplicitConstructorCodegen(*current_struct_info, ctor)) {
 						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - deferring implicit constructor emission until ODR-use");
 						continue;
 					}
