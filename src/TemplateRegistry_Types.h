@@ -700,6 +700,10 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 
 /**
  * Create a TemplateInstantiationKey from template name and TemplateTypeArg vector
+ * 
+ * This populates both the split fields (type_args, value_args, template_template_args)
+ * for backward compatibility and algorithm use, and the ordered identity (Phase 7)
+ * that preserves source order.
  */
 inline TemplateInstantiationKey makeInstantiationKey(
 	StringHandle template_name,
@@ -707,21 +711,81 @@ inline TemplateInstantiationKey makeInstantiationKey(
 
 	TemplateInstantiationKey key(template_name);
 	key.type_args.reserve(args.size());
+	key.ordered_identity.base_template = template_name;
+	key.ordered_identity.args.reserve(args.size());
 
 	for (const auto& arg : args) {
 		if (arg.is_value) {
 			// Non-type template argument - use the canonical valueIdentity() accessor
 			key.value_args.push_back(arg.valueIdentity());
+			
+			// Add to ordered identity
+			TemplateArgIdentity ordered_arg;
+			ordered_arg.kind = TemplateArgKind::Value;
+			ordered_arg.value = arg.valueIdentity();
+			key.ordered_identity.args.push_back(ordered_arg);
 		} else if (arg.is_template_template_arg) {
 			// Template template argument
 			key.template_template_args.push_back(arg.template_name_handle);
+			
+			// Add to ordered identity
+			TemplateArgIdentity ordered_arg;
+			ordered_arg.kind = TemplateArgKind::Template;
+			ordered_arg.template_name = arg.template_name_handle;
+			key.ordered_identity.args.push_back(ordered_arg);
 		} else {
 			// Type template argument
-			key.type_args.push_back(makeTypeIndexArg(arg));
+			TypeIndexArg type_index_arg = makeTypeIndexArg(arg);
+			key.type_args.push_back(type_index_arg);
+			
+			// Add to ordered identity
+			TemplateArgIdentity ordered_arg;
+			ordered_arg.kind = TemplateArgKind::Type;
+			ordered_arg.type = type_index_arg;
+			key.ordered_identity.args.push_back(ordered_arg);
 		}
 	}
 
 	return key;
+}
+
+/**
+ * Create an OrderedTemplateInstantiationIdentity from template name and arguments
+ * 
+ * Phase 7: Build just the ordered identity for cases where split fields aren't needed.
+ * This preserves template arguments in source order with their parameter kind.
+ */
+inline OrderedTemplateInstantiationIdentity buildOrderedIdentity(
+	StringHandle base_template,
+	std::span<const TemplateTypeArg> args) {
+
+	OrderedTemplateInstantiationIdentity identity;
+	identity.base_template = base_template;
+	identity.args.reserve(args.size());
+
+	for (const auto& arg : args) {
+		if (arg.is_value) {
+			// Non-type template argument
+			TemplateArgIdentity ordered_arg;
+			ordered_arg.kind = TemplateArgKind::Value;
+			ordered_arg.value = arg.valueIdentity();
+			identity.args.push_back(ordered_arg);
+		} else if (arg.is_template_template_arg) {
+			// Template template argument
+			TemplateArgIdentity ordered_arg;
+			ordered_arg.kind = TemplateArgKind::Template;
+			ordered_arg.template_name = arg.template_name_handle;
+			identity.args.push_back(ordered_arg);
+		} else {
+			// Type template argument
+			TemplateArgIdentity ordered_arg;
+			ordered_arg.kind = TemplateArgKind::Type;
+			ordered_arg.type = makeTypeIndexArg(arg);
+			identity.args.push_back(ordered_arg);
+		}
+	}
+
+	return identity;
 }
 
 /**

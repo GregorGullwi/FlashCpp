@@ -323,6 +323,133 @@ struct NonTypeValueIdentity {
 };
 
 // ============================================================================
+// Ordered Template Instantiation Identity - Phase 7
+// ============================================================================
+
+/**
+ * TemplateArgKind - Categorizes template arguments by their parameter kind
+ * 
+ * Phase 7 adds ordered identity tracking to TemplateInstantiationKey.
+ * Template arguments must be distinguished by their parameter type:
+ * - Type parameters bind type arguments
+ * - Non-type parameters bind value arguments
+ * - Template-template parameters bind template names
+ * 
+ * This enum preserves that distinction in the ordered identity.
+ */
+enum class TemplateArgKind : uint8_t {
+	Type,     // Type template parameter
+	Value,    // Non-type template parameter
+	Template  // Template template parameter
+};
+
+/**
+ * TemplateArgIdentity - Single argument in ordered identity
+ * 
+ * This structure preserves one template argument in full detail:
+ * - kind: What kind of parameter this argument binds to
+ * - type: TypeIndexArg for type arguments (when kind == Type)
+ * - value: NonTypeValueIdentity for value arguments (when kind == Value)
+ * - template_name: StringHandle for template arguments (when kind == Template)
+ * 
+ * Only the field corresponding to 'kind' is meaningful; others are default-initialized.
+ */
+struct TemplateArgIdentity {
+	TemplateArgKind kind = TemplateArgKind::Type;
+	TypeIndexArg type;
+	NonTypeValueIdentity value;
+	StringHandle template_name{};
+
+	bool operator==(const TemplateArgIdentity& other) const {
+		if (kind != other.kind)
+			return false;
+		switch (kind) {
+		case TemplateArgKind::Type:
+			return type == other.type;
+		case TemplateArgKind::Value:
+			return value == other.value;
+		case TemplateArgKind::Template:
+			return template_name == other.template_name;
+		}
+		return false;
+	}
+
+	bool operator!=(const TemplateArgIdentity& other) const {
+		return !(*this == other);
+	}
+
+	size_t hash() const {
+		size_t h = std::hash<uint8_t>{}(static_cast<uint8_t>(kind));
+		switch (kind) {
+		case TemplateArgKind::Type:
+			h ^= type.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+			break;
+		case TemplateArgKind::Value:
+			h ^= value.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+			break;
+		case TemplateArgKind::Template:
+			h ^= std::hash<uint32_t>{}(template_name.handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			break;
+		}
+		return h;
+	}
+};
+
+/**
+ * OrderedTemplateInstantiationIdentity - Template arguments in source order
+ * 
+ * Phase 7 goal: Cache/specialization identity should match C++ template
+ * argument source order rather than split type/value/template grouping.
+ * 
+ * This structure preserves the original argument sequence:
+ * - base_template: StringHandle of the template being instantiated
+ * - args: Sequence of TemplateArgIdentity in source order
+ * 
+ * This complements the split TemplateInstantiationKey fields (type_args,
+ * value_args, template_template_args) which remain for algorithms like
+ * partial specialization matching that need grouped arguments.
+ */
+struct OrderedTemplateInstantiationIdentity {
+	StringHandle base_template{};
+	InlineVector<TemplateArgIdentity, 4> args;
+
+	bool operator==(const OrderedTemplateInstantiationIdentity& other) const {
+		return base_template == other.base_template &&
+			   args == other.args;
+	}
+
+	bool operator!=(const OrderedTemplateInstantiationIdentity& other) const {
+		return !(*this == other);
+	}
+
+	size_t hash() const {
+		size_t h = std::hash<uint32_t>{}(base_template.handle);
+		for (const auto& arg : args) {
+			h ^= arg.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		return h;
+	}
+
+	[[nodiscard]] bool empty() const {
+		return base_template.handle == 0;
+	}
+
+	void clear() {
+		base_template = StringHandle{};
+		args.clear();
+	}
+};
+
+/**
+ * Hash function for OrderedTemplateInstantiationIdentity
+ */
+struct OrderedTemplateInstantiationIdentityHash {
+	size_t operator()(const OrderedTemplateInstantiationIdentity& id) const {
+		return id.hash();
+	}
+};
+
+// ============================================================================
 // TemplateInstantiationKey - TypeIndex-based template instantiation key
 // ============================================================================
 
@@ -357,6 +484,7 @@ struct TemplateInstantiationKey {
 	InlineVector<TypeIndexArg, 4> type_args;				 // Type arguments
 	InlineVector<ValueArgKey, 4> value_args;				 // Non-type arguments
 	InlineVector<StringHandle, 2> template_template_args; // Template template args
+	OrderedTemplateInstantiationIdentity ordered_identity; // Phase 7: ordered argument identity
 
 	TemplateInstantiationKey() = default;
 
@@ -367,7 +495,8 @@ struct TemplateInstantiationKey {
 		return base_template == other.base_template &&
 			   type_args == other.type_args &&
 			   value_args == other.value_args &&
-			   template_template_args == other.template_template_args;
+			   template_template_args == other.template_template_args &&
+			   ordered_identity == other.ordered_identity;
 	}
 
 	bool operator!=(const TemplateInstantiationKey& other) const {
@@ -385,6 +514,7 @@ struct TemplateInstantiationKey {
 		type_args.clear();
 		value_args.clear();
 		template_template_args.clear();
+		ordered_identity.clear();
 	}
 };
 
@@ -409,6 +539,9 @@ struct TemplateInstantiationKeyHash {
 		for (const auto& tmpl : key.template_template_args) {
 			h ^= std::hash<uint32_t>{}(tmpl.handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
+
+		// Hash ordered identity (Phase 7)
+		h ^= key.ordered_identity.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
 
 		return h;
 	}

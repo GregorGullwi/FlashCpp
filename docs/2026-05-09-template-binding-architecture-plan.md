@@ -429,6 +429,16 @@ Tests to add before implementation:
 Complexity: L  
 Risk: High
 
+Completed notes:
+
+- Added `TemplateArgKind` enum and `TemplateArgIdentity` struct for preserving individual argument identity with kind metadata
+- Added `OrderedTemplateInstantiationIdentity` struct to preserve complete ordered argument sequences
+- Updated `TemplateInstantiationKey` with `ordered_identity` field alongside existing split fields for backward compatibility
+- Updated `makeInstantiationKey()` to populate both split and ordered identity
+- Added `buildOrderedIdentity()` builder function for cases needing only ordered representation
+- Added three comprehensive test cases validating mixed ordered arguments, order-based cache differentiation, and specialization matching
+- All 2286 tests pass including new Phase 7 verifications
+
 ### Phase 8: Refactor Instantiation Paths Around The Environment
 
 Goal: reduce duplicated function/member template materialization without flattening genuinely different C++ paths.
