@@ -5020,12 +5020,48 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// A reference to a struct type still participates in user-defined conversion
 	// operator selection (e.g. `int x = const_cast<const T&>(obj)` or
 	// `int x = static_cast<T&&>(obj)` where T has `operator int()`).
-	// For all other source reference types, bail out: there is no implicit
-	// primitive-to-primitive or enum-to-primitive conversion from a reference
-	// that is not already handled by lvalue-to-rvalue loading in the expression.
+	// For references to primitive types (e.g. `int x = const_cast<char&>(expr)`),
+	// strip the reference qualifier: lvalue-to-rvalue loading is implicit, and
+	// there may still be a further primitive-to-primitive conversion needed
+	// (e.g. char& → char, then char → int). We annotate the remaining conversion
+	// by treating the source as its underlying non-reference primitive type.
 	if (from_desc.ref_qualifier != ReferenceQualifier::None &&
-		from_desc.category() != TypeCategory::Struct)
-		return false;
+		from_desc.category() != TypeCategory::Struct) {
+		// Re-derive the from type without the reference qualifier so we can
+		// check whether a primitive->primitive conversion annotation is needed.
+		CanonicalTypeDesc from_stripped = from_desc;
+		from_stripped.ref_qualifier = ReferenceQualifier::None;
+		const CanonicalTypeId stripped_from_id = type_context_.intern(from_stripped);
+		if (!stripped_from_id || stripped_from_id == target_type_id)
+			return false; // No conversion needed after stripping reference.
+		// Recurse with the non-reference source type. Use the same key (the
+		// outer ExpressionNode) so codegen finds the slot under the cast node.
+		const CanonicalTypeDesc& stripped_desc = type_context_.get(stripped_from_id);
+		if (stripped_desc.category() == to_desc.category())
+			return false; // Same category after stripping — no cast needed.
+		const CanonicalTypeAlias from_canonical2 = canonicalize_type_alias(stripped_desc.type_index);
+		const CanonicalTypeAlias to_canonical2 = canonicalize_type_alias(to_desc.type_index);
+		const ConversionPlan plan2 = buildConversionPlan(from_canonical2.typeEnum(), to_canonical2.typeEnum());
+		if (!plan2.is_valid || plan2.rank == ConversionRank::UserDefined)
+			return false;
+		ImplicitCastInfo cast_info2;
+		cast_info2.source_type_id = stripped_from_id;
+		cast_info2.target_type_id = target_type_id;
+		cast_info2.cast_kind = plan2.kind;
+		cast_info2.value_category_after = ValueCategory::PRValue;
+		const CastInfoIndex idx2 = allocateCastInfo(cast_info2);
+		SemanticSlot slot2;
+		slot2.type_id = target_type_id;
+		slot2.cast_info_index = idx2;
+		slot2.value_category = ValueCategory::PRValue;
+		const void* key2 = static_cast<const void*>(&expr_node.as<ExpressionNode>());
+		setSlot(key2, slot2);
+		stats_.slots_filled++;
+		FLASH_LOG(General, Debug, "SemanticAnalysis: annotated ref-stripped conversion ",
+				  static_cast<int>(stripped_desc.category()), " -> ",
+				  static_cast<int>(to_desc.category()), " (kind=", static_cast<int>(plan2.kind), ")");
+		return true;
+	}
 
 	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from_desc.type_index);
 	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to_desc.type_index);

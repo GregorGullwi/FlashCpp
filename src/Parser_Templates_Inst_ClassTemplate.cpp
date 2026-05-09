@@ -8960,7 +8960,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// above; reparsing every deferred body here would eagerly instantiate unused
 	// members and incorrectly diagnose dependent bodies such as std::pair::swap
 	// for const keys.
-	const bool skip_deferred_body_replay = is_implicit_instantiation;
+	// Exception: if any deferred body is a constructor or destructor (implicit special
+	// members), replay is required even for implicit instantiations so that the
+	// constructor/destructor bodies are properly materialized.
+	bool has_implicit_special = false;
+	for (const auto& deferred : template_class.deferred_bodies()) {
+		if (deferred.identity.kind == DeferredMemberIdentity::Kind::Constructor ||
+			deferred.identity.kind == DeferredMemberIdentity::Kind::Destructor) {
+			has_implicit_special = true;
+			break;
+		}
+	}
+	const bool skip_deferred_body_replay = is_implicit_instantiation && !has_implicit_special;
 	if (!skip_deferred_body_replay && !template_class.deferred_bodies().empty()) {
 		FLASH_LOG(Templates, Debug, "Parsing ", template_class.deferred_bodies().size(),
 				  " deferred template member function bodies for ", instantiated_name);
