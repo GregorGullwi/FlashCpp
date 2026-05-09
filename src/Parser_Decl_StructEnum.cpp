@@ -3480,12 +3480,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		return ParseResult::error(struct_info->getFinalizationError(), Token());
 	}
 
-	// Check if template class has static members before moving struct_info
-	bool has_static_members = false;
-	if (parsing_template_class_ && struct_info) {
-		has_static_members = !struct_info->static_members.empty();
-	}
-
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));
 	// Update fallback_size_bits_ from the finalized struct's total size
@@ -3506,11 +3500,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// Now parse all delayed inline function bodies
 	// At this point, all members are visible in the complete-class context
 
-	// If we're parsing a template class that has static members, DON'T parse the bodies now
-	// Instead, store them for parsing during template instantiation (two-phase lookup)
-	// This allows static member lookups to work because TypeInfo will exist at instantiation time
-	// For templates without static members, parse bodies normally to preserve template parameter access
-	if (parsing_template_class_ && has_static_members) {
+	// If we're parsing a template class, don't parse member bodies now.
+	// Instead, store them for lazy parsing during template instantiation or odr-use.
+	// This avoids diagnosing dependent member bodies before their template arguments
+	// are known, while still letting explicit instantiations materialize the bodies.
+	if (parsing_template_class_) {
 		// Convert DelayedFunctionBody to DeferredTemplateMemberBody for storage
 		pending_template_deferred_bodies_.clear();
 		for (const auto& delayed : delayed_function_bodies_) {
