@@ -1400,8 +1400,8 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - deferring implicit constructor emission until ODR-use");
 						continue;
 					}
-						// Skip constructors with unresolved auto parameters (member function templates)
-						// These will be instantiated when called with concrete types
+					// Skip constructors with unresolved auto parameters (member function templates)
+					// These will be instantiated when called with concrete types
 					bool ctor_has_auto = false;
 					bool ctor_has_unresolved_param = false;
 					for (const auto& p : ctor.parameter_nodes()) {
