@@ -85,6 +85,16 @@ void registerTypeParamsInScope(
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map);
 
 void registerTypeParamsInScope(
+	const TemplateEnvironment& environment,
+	FlashCpp::TemplateParameterScope& scope,
+	bool preserve_ref_qualifier);
+
+void registerTypeParamsInScope(
+	const TemplateEnvironment& environment,
+	FlashCpp::TemplateParameterScope& scope,
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map);
+
+void registerTypeParamsInScope(
 	const InlineVector<ASTNode, 4>& template_param_nodes,
 	std::span<const TemplateTypeArg> template_args,
 	FlashCpp::TemplateParameterScope& scope,

@@ -345,85 +345,40 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	MaterializedStoredTemplateArgs result;
 	const auto& stored_args = template_instantiation_info.templateArgs();
 	result.args.reserve(stored_args.size());
-	// Alias/template helper instantiations can store arguments in terms of their
-	// own template parameters (for example `_Tp`) while the current
-	// ExpressionSubstitutor only knows the consumer's bindings (for example
-	// `_Head -> NonEmpty`). Resolve those renamed dependent type arguments by
-	// walking the instantiated type's context chain. `resolution_stack` breaks
-	// cycles in malformed/self-referential contexts, and the recursive `self`
-	// parameter lets the lambda re-enter for transitive renames.
-	std::vector<StringHandle> resolution_stack;
-	auto resolveContextBinding =
-		[&](StringHandle target_name,
-			const TypeInfo::InstantiationContext* instantiation_context,
-			auto&& self) -> std::optional<TemplateTypeArg> {
-			if (!target_name.isValid() || instantiation_context == nullptr) {
-				return std::nullopt;
-			}
-			if (std::find(
-					resolution_stack.begin(),
-					resolution_stack.end(),
-					target_name) != resolution_stack.end()) {
-				return std::nullopt;
-			}
+	TemplateEnvironment context_environment;
+	if (const TypeInfo::InstantiationContext* context = template_instantiation_info.instantiationContext();
+		context != nullptr) {
+		context_environment = buildTemplateEnvironment(*context);
+	}
 
-			resolution_stack.push_back(target_name);
-
-			std::string_view target_name_view = StringTable::getStringView(target_name);
-			auto direct_binding_it = param_map_.find(target_name_view);
-			if (direct_binding_it != param_map_.end() &&
-				!direct_binding_it->second.is_value &&
-				!direct_binding_it->second.is_template_template_arg &&
-				!direct_binding_it->second.is_dependent) {
-				TemplateTypeArg direct_binding = direct_binding_it->second;
-				resolution_stack.pop_back();
-				return direct_binding;
-			}
-
-			for (const TypeInfo::InstantiationContext* current_context = instantiation_context;
-				 current_context != nullptr;
-				 current_context = current_context->parent) {
-				const size_t binding_count = std::min(
-					current_context->param_names.size(),
-					current_context->param_args.size());
-				for (size_t binding_index = 0; binding_index < binding_count; ++binding_index) {
-					if (current_context->param_names[binding_index] != target_name) {
-						continue;
-					}
-
-					TemplateTypeArg bound_arg =
-						toTemplateTypeArg(current_context->param_args[binding_index]);
-					if (bound_arg.is_value || bound_arg.is_template_template_arg) {
-						resolution_stack.pop_back();
-						return std::nullopt;
-					}
-					if (!bound_arg.is_dependent) {
-						resolution_stack.pop_back();
-						return bound_arg;
-					}
-					if (!bound_arg.dependent_name.isValid() ||
-						bound_arg.dependent_name == target_name) {
-						resolution_stack.pop_back();
-						return std::nullopt;
-					}
-
-					if (auto rebound_binding =
-							self(bound_arg.dependent_name, instantiation_context, self);
-						rebound_binding.has_value()) {
-						TemplateTypeArg rebound_arg = rebindDependentTemplateTypeArg(
-							*rebound_binding,
-							bound_arg);
-						resolution_stack.pop_back();
-						return rebound_arg;
-					}
-					resolution_stack.pop_back();
-					return std::nullopt;
-				}
-			}
-
-			resolution_stack.pop_back();
-			return std::nullopt;
-		};
+	TemplateEnvironment active_environment;
+	active_environment.parent = context_environment.bindings.empty() ? nullptr : &context_environment;
+	active_environment.bindings.reserve(param_map_.size() + pack_map_.size());
+	for (const auto& [param_name, bound_arg] : param_map_) {
+		TemplateBinding binding;
+		binding.name = StringTable::getOrInternStringHandle(param_name);
+		binding.kind = bound_arg.is_template_template_arg
+			? TemplateParameterKind::Template
+			: (bound_arg.is_value ? TemplateParameterKind::NonType : TemplateParameterKind::Type);
+		binding.is_pack = false;
+		binding.args.push_back(bound_arg);
+		active_environment.bindings.push_back(std::move(binding));
+	}
+	for (const auto& [pack_name, pack_args] : pack_map_) {
+		TemplateBinding binding;
+		binding.name = pack_name;
+		binding.kind = TemplateParameterKind::Type;
+		binding.is_pack = true;
+		binding.args.reserve(pack_args.size());
+		for (const TemplateTypeArg& pack_arg : pack_args) {
+			binding.args.push_back(pack_arg);
+		}
+		active_environment.bindings.push_back(std::move(binding));
+	}
+	const TemplateEnvironment& lookup_environment =
+		active_environment.bindings.empty() && active_environment.parent != nullptr
+		? *active_environment.parent
+		: active_environment;
 
 	for (const auto& arg : stored_args) {
 		TemplateTypeArg materialized_arg = toTemplateTypeArg(arg);
@@ -470,8 +425,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 			} else if (!materialized_arg.is_value) {
 				if (auto context_binding = resolveContextBinding(
 						materialized_arg.dependent_name,
-						template_instantiation_info.instantiationContext(),
-						resolveContextBinding);
+						lookup_environment);
 					context_binding.has_value()) {
 					materialized_arg = rebindDependentTemplateTypeArg(*context_binding, materialized_arg);
 					result.had_substitution = true;

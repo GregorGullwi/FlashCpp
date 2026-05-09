@@ -374,6 +374,48 @@ inline SubstitutionParamMap buildSubstitutionParamMap(
 	return result;
 }
 
+inline SubstitutionParamMap buildSubstitutionParamMap(
+	const TemplateEnvironment& environment) {
+	SubstitutionParamMap result;
+	auto append_environment = [&](auto&& self, const TemplateEnvironment* current) -> void {
+		if (current == nullptr) {
+			return;
+		}
+		self(self, current->parent);
+		for (const TemplateBinding& binding : current->bindings) {
+			if (binding.is_pack || binding.args.empty()) {
+				continue;
+			}
+			if (!binding.name.isValid()) {
+				continue;
+			}
+			TemplateTypeArg arg_to_insert = binding.args.front();
+			if (binding.kind == TemplateParameterKind::Template) {
+				arg_to_insert.is_template_template_arg = true;
+				if (!arg_to_insert.template_name_handle.isValid()) {
+					if (arg_to_insert.type_index.is_valid()) {
+						if (const TypeInfo* ti = tryGetTypeInfo(arg_to_insert.type_index)) {
+							arg_to_insert.template_name_handle = ti->name_;
+						}
+					}
+					if (!arg_to_insert.template_name_handle.isValid() &&
+						arg_to_insert.dependent_name.isValid()) {
+						arg_to_insert.template_name_handle = arg_to_insert.dependent_name;
+					}
+				}
+			}
+			std::string_view name_view = StringTable::getStringView(binding.name);
+			if (name_view.empty()) {
+				continue;
+			}
+			result.param_map[name_view] = arg_to_insert;
+			result.param_order.push_back(name_view);
+		}
+	};
+	append_environment(append_environment, &environment);
+	return result;
+}
+
 template <typename ParamsContainer>
 inline std::vector<std::string_view> buildTemplateParamNames(
 	const ParamsContainer& template_params) {
@@ -1535,6 +1577,9 @@ private:
 		InlineVector<TemplateParamSubstitution, 4>& subs,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
+	void populateTemplateParamSubstitutions(
+		InlineVector<TemplateParamSubstitution, 4>& subs,
+		const TemplateEnvironment& environment);
 	// Build outer-template binding data from the AST template parameter list so
 	// parameter names and args stay index-aligned even if the parameter list
 	// ever stops being a pure TemplateParameterNode sequence.
@@ -1573,52 +1618,45 @@ private:
 		out_binding.params.reserve(template_params.size());
 		out_binding.all_args.reserve(template_args.size());
 
-		size_t arg_index = 0;
+		InlineVector<TemplateParameterNode, 4> normalized_params;
+		normalized_params.reserve(template_params.size());
 		for (size_t i = 0; i < template_params.size(); ++i) {
 			const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
 			if (tparam == nullptr) {
 				continue;
 			}
-			out_binding.param_names.push_back(tparam->nameHandle());
 			if constexpr (std::is_same_v<std::decay_t<decltype(template_params[i])>, ASTNode>) {
 				out_binding.params.push_back(template_params[i]);
 			} else {
 				out_binding.params.push_back(ASTNode::emplace_node<TemplateParameterNode>(*tparam));
 			}
+			normalized_params.push_back(*tparam);
+		}
 
-			if (tparam->is_variadic()) {
-				size_t remaining_args = arg_index < template_args.size()
-										 ? template_args.size() - arg_index
-										 : 0;
-				size_t required_after = countRequiredTemplateArgsAfter(template_params, i + 1);
-				size_t pack_size = remaining_args > required_after
-									 ? remaining_args - required_after
-									 : 0;
-				// Maintain the 1:1 invariant between param_names/params and
-				// param_args that legacy consumers (e.g. the fallback path in
-				// appendOuterBindingSubstitutionInputs) rely on. For an empty
-				// pack, push a placeholder TemplateTypeArg so indices stay
-				// aligned with the variadic parameter entry above.
-				if (pack_size > 0) {
-					out_binding.param_args.push_back(template_args[arg_index]);
+		const TemplateEnvironment environment = buildTemplateEnvironment(
+			std::span<const TemplateParameterNode>(normalized_params.data(), normalized_params.size()),
+			std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
+			nullptr);
+
+		for (const TemplateBinding& binding : environment.bindings) {
+			out_binding.param_names.push_back(binding.name);
+			if (binding.is_pack) {
+				if (!binding.args.empty()) {
+					out_binding.param_args.push_back(binding.args.front());
 				} else {
 					out_binding.param_args.push_back(TemplateTypeArg());
 				}
-				for (size_t pack_index = 0; pack_index < pack_size && (arg_index + pack_index) < template_args.size(); ++pack_index) {
-					out_binding.all_args.push_back(template_args[arg_index + pack_index]);
+				for (const TemplateTypeArg& pack_arg : binding.args) {
+					out_binding.all_args.push_back(pack_arg);
 				}
-				arg_index += pack_size;
 				continue;
 			}
-
-			if (arg_index >= template_args.size()) {
+			if (!binding.args.empty()) {
+				out_binding.param_args.push_back(binding.args.front());
+				out_binding.all_args.push_back(binding.args.front());
+			} else {
 				out_binding.param_args.push_back(TemplateTypeArg());
-				continue;
 			}
-
-			out_binding.param_args.push_back(template_args[arg_index]);
-			out_binding.all_args.push_back(template_args[arg_index]);
-			++arg_index;
 		}
 	}
 	template <typename NodeT, typename ParamContainer, typename ArgContainer>

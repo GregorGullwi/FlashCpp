@@ -1,12 +1,12 @@
 # Template Binding Architecture Plan
 
 **Date:** 2026-05-09  
-**Status:** In Progress (Phase 1 completed)  
+**Status:** In Progress (Phases 1-2 completed)  
 **Scope:** Template argument identity, parameter binding environments, instantiation consumers, and C++20 failure-mode boundaries.
 
 ## Next Task
 
-Implement Phase 2: add `TemplateEnvironment` as an adapter and migrate first call sites while preserving legacy storage paths.
+Implement Phase 3: move substitution consumers to `TemplateEnvironment` and introduce substitution-failure policy wiring.
 
 Existing helpers now cover part of this work:
 
@@ -80,7 +80,7 @@ Completed notes:
 Complexity: S  
 Risk: Low
 
-### Phase 2: Add `TemplateEnvironment` As An Adapter
+### Phase 2: Add `TemplateEnvironment` As An Adapter ✅ Completed
 
 Goal: create one lookup object for "parameter name -> bound argument(s)" while leaving old storage in place.
 
@@ -171,6 +171,16 @@ TupleLike<0, NonEmpty>* ptr = nullptr;
 ```
 
 The environment must be able to resolve stored helper-template parameter names through the active consumer binding, not only by direct name match.
+
+Completed notes:
+
+- Added `TemplateBinding` and `TemplateEnvironment` with `findOne` and `findPack`.
+- Added builders for parameter/argument spans, `OuterTemplateBinding`, and `TypeInfo::InstantiationContext`.
+- Added shared `resolveContextBinding(...)` with cycle-safe transitive rebinding.
+- Replaced local `resolveContextBinding` lambda in `ExpressionSubstitutor::materializeStoredTemplateArgs(...)`.
+- Added environment-based overloads for `registerTypeParamsInScope`, `populateTemplateParamSubstitutions`, and `buildSubstitutionParamMap`.
+- Updated `collectOuterTemplateBinding(...)` to build from `TemplateEnvironment` before writing legacy fields.
+- Verified with `pwsh tests/run_all_tests.ps1`.
 
 Complexity: M  
 Risk: Medium

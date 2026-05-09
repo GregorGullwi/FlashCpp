@@ -966,6 +966,65 @@ void registerTypeParamsInScope(
 	}
 }
 
+namespace {
+
+template <typename RegisterFn>
+void forEachEnvironmentBinding(
+	const TemplateEnvironment& environment,
+	RegisterFn&& register_fn) {
+	if (environment.parent != nullptr) {
+		forEachEnvironmentBinding(*environment.parent, register_fn);
+	}
+	for (const TemplateBinding& binding : environment.bindings) {
+		register_fn(binding);
+	}
+}
+
+} // namespace
+
+void registerTypeParamsInScope(
+	const TemplateEnvironment& environment,
+	FlashCpp::TemplateParameterScope& scope,
+	bool preserve_ref_qualifier) {
+	forEachEnvironmentBinding(
+		environment,
+		[&](const TemplateBinding& binding) {
+			if (binding.is_pack || binding.args.empty()) {
+				return;
+			}
+			const TemplateTypeArg& arg = binding.args.front();
+			if (arg.is_value || arg.is_template_template_arg) {
+				return;
+			}
+			auto& type_info = registerTemplateTypeBinding(binding.name, arg);
+			applyRegisteredTypeBindingMetadata(type_info, arg, preserve_ref_qualifier);
+			scope.addParameter(&type_info);
+		});
+}
+
+void registerTypeParamsInScope(
+	const TemplateEnvironment& environment,
+	FlashCpp::TemplateParameterScope& scope,
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map) {
+	forEachEnvironmentBinding(
+		environment,
+		[&](const TemplateBinding& binding) {
+			if (binding.is_pack || binding.args.empty()) {
+				return;
+			}
+			const TemplateTypeArg& arg = binding.args.front();
+			if (arg.is_value || arg.is_template_template_arg) {
+				return;
+			}
+			auto& type_info = registerTemplateTypeBinding(binding.name, arg);
+			applyRegisteredTypeBindingMetadata(type_info, arg, true);
+			scope.addParameter(&type_info);
+			if (sfinae_map) {
+				(*sfinae_map)[type_info.name()] = arg.type_index;
+			}
+		});
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // registerTypeParamsInScope — ASTNode-based overload for SFINAE trailing-return
 // type re-parse.  Takes the raw template_param_nodes ASTNode vector (handles
@@ -1181,6 +1240,39 @@ void Parser::populateTemplateParamSubstitutions(
 			}
 			TemplateParamSubstitution subst;
 			subst.param_name = template_param.nameHandle();
+			if (arg.is_value) {
+				subst.is_value_param = true;
+				subst.value = arg.value;
+				subst.value_type = arg.typeEnum();
+			} else {
+				subst.is_value_param = false;
+				subst.is_type_param = true;
+				subst.substituted_type = arg;
+			}
+			subs.push_back(subst);
+		});
+}
+
+void Parser::populateTemplateParamSubstitutions(
+	InlineVector<TemplateParamSubstitution, 4>& subs,
+	const TemplateEnvironment& environment) {
+	forEachEnvironmentBinding(
+		environment,
+		[&](const TemplateBinding& binding) {
+			if (binding.is_pack || binding.args.empty()) {
+				return;
+			}
+			const TemplateTypeArg& arg = binding.args.front();
+			if (arg.is_template_template_arg) {
+				TemplateParamSubstitution subst;
+				subst.param_name = binding.name;
+				subst.is_template_template_param = true;
+				subst.concrete_template_name = arg.template_name_handle;
+				subs.push_back(subst);
+				return;
+			}
+			TemplateParamSubstitution subst;
+			subst.param_name = binding.name;
 			if (arg.is_value) {
 				subst.is_value_param = true;
 				subst.value = arg.value;
