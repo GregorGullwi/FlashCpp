@@ -40,6 +40,7 @@
 #include <vector>
 #include <cstdint>
 #include <functional>  // For std::hash
+#include <variant>
 
 namespace FlashCpp {
 
@@ -348,28 +349,63 @@ enum class TemplateArgKind : uint8_t {
  * 
  * This structure preserves one template argument in full detail:
  * - kind: What kind of parameter this argument binds to
- * - type: TypeIndexArg for type arguments (when kind == Type)
- * - value: NonTypeValueIdentity for value arguments (when kind == Value)
- * - template_name: StringHandle for template arguments (when kind == Template)
- * 
- * Only the field corresponding to 'kind' is meaningful; others are default-initialized.
+ * - payload: Exactly one of:
+ *   - TypeIndexArg for type arguments (when kind == Type)
+ *   - NonTypeValueIdentity for value arguments (when kind == Value)
+ *   - StringHandle for template arguments (when kind == Template)
  */
 struct TemplateArgIdentity {
-	TemplateArgKind kind = TemplateArgKind::Type;
-	TypeIndexArg type;
-	NonTypeValueIdentity value;
-	StringHandle template_name{};
+	using Payload = std::variant<TypeIndexArg, NonTypeValueIdentity, StringHandle>;
+
+	TemplateArgKind kind;
+	Payload payload;
+
+	TemplateArgIdentity()
+		: kind(TemplateArgKind::Type), payload(TypeIndexArg{}) {}
+
+	TemplateArgIdentity(const TypeIndexArg& type_in)
+		: kind(TemplateArgKind::Type), payload(type_in) {}
+
+	TemplateArgIdentity(const NonTypeValueIdentity& value_in)
+		: kind(TemplateArgKind::Value), payload(value_in) {}
+
+	TemplateArgIdentity(StringHandle template_name_in)
+		: kind(TemplateArgKind::Template), payload(template_name_in) {}
+
+	static TemplateArgIdentity makeType(const TypeIndexArg& type_in) {
+		return TemplateArgIdentity(type_in);
+	}
+
+	static TemplateArgIdentity makeValue(const NonTypeValueIdentity& value_in) {
+		return TemplateArgIdentity(value_in);
+	}
+
+	static TemplateArgIdentity makeTemplate(StringHandle template_name_in) {
+		return TemplateArgIdentity(template_name_in);
+	}
+
+	const TypeIndexArg& type() const {
+		return std::get<TypeIndexArg>(payload);
+	}
+
+	const NonTypeValueIdentity& value() const {
+		return std::get<NonTypeValueIdentity>(payload);
+	}
+
+	StringHandle templateName() const {
+		return std::get<StringHandle>(payload);
+	}
 
 	bool operator==(const TemplateArgIdentity& other) const {
 		if (kind != other.kind)
 			return false;
 		switch (kind) {
 		case TemplateArgKind::Type:
-			return type == other.type;
+			return type() == other.type();
 		case TemplateArgKind::Value:
-			return value == other.value;
+			return value() == other.value();
 		case TemplateArgKind::Template:
-			return template_name == other.template_name;
+			return templateName() == other.templateName();
 		}
 		return false;
 	}
@@ -382,13 +418,13 @@ struct TemplateArgIdentity {
 		size_t h = std::hash<uint8_t>{}(static_cast<uint8_t>(kind));
 		switch (kind) {
 		case TemplateArgKind::Type:
-			h ^= type.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= type().hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
 			break;
 		case TemplateArgKind::Value:
-			h ^= value.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= value().hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
 			break;
 		case TemplateArgKind::Template:
-			h ^= std::hash<uint32_t>{}(template_name.handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= std::hash<uint32_t>{}(templateName().handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
 			break;
 		}
 		return h;

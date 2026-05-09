@@ -720,29 +720,23 @@ inline TemplateInstantiationKey makeInstantiationKey(
 			key.value_args.push_back(arg.valueIdentity());
 			
 			// Add to ordered identity
-			TemplateArgIdentity ordered_arg;
-			ordered_arg.kind = TemplateArgKind::Value;
-			ordered_arg.value = arg.valueIdentity();
-			key.ordered_identity.args.push_back(ordered_arg);
+			key.ordered_identity.args.push_back(
+				TemplateArgIdentity::makeValue(arg.valueIdentity()));
 		} else if (arg.is_template_template_arg) {
 			// Template template argument
 			key.template_template_args.push_back(arg.template_name_handle);
 			
 			// Add to ordered identity
-			TemplateArgIdentity ordered_arg;
-			ordered_arg.kind = TemplateArgKind::Template;
-			ordered_arg.template_name = arg.template_name_handle;
-			key.ordered_identity.args.push_back(ordered_arg);
+			key.ordered_identity.args.push_back(
+				TemplateArgIdentity::makeTemplate(arg.template_name_handle));
 		} else {
 			// Type template argument
 			TypeIndexArg type_index_arg = makeTypeIndexArg(arg);
 			key.type_args.push_back(type_index_arg);
 			
 			// Add to ordered identity
-			TemplateArgIdentity ordered_arg;
-			ordered_arg.kind = TemplateArgKind::Type;
-			ordered_arg.type = type_index_arg;
-			key.ordered_identity.args.push_back(ordered_arg);
+			key.ordered_identity.args.push_back(
+				TemplateArgIdentity::makeType(type_index_arg));
 		}
 	}
 
@@ -766,22 +760,16 @@ inline OrderedTemplateInstantiationIdentity buildOrderedIdentity(
 	for (const auto& arg : args) {
 		if (arg.is_value) {
 			// Non-type template argument
-			TemplateArgIdentity ordered_arg;
-			ordered_arg.kind = TemplateArgKind::Value;
-			ordered_arg.value = arg.valueIdentity();
-			identity.args.push_back(ordered_arg);
+			identity.args.push_back(
+				TemplateArgIdentity::makeValue(arg.valueIdentity()));
 		} else if (arg.is_template_template_arg) {
 			// Template template argument
-			TemplateArgIdentity ordered_arg;
-			ordered_arg.kind = TemplateArgKind::Template;
-			ordered_arg.template_name = arg.template_name_handle;
-			identity.args.push_back(ordered_arg);
+			identity.args.push_back(
+				TemplateArgIdentity::makeTemplate(arg.template_name_handle));
 		} else {
 			// Type template argument
-			TemplateArgIdentity ordered_arg;
-			ordered_arg.kind = TemplateArgKind::Type;
-			ordered_arg.type = makeTypeIndexArg(arg);
-			identity.args.push_back(ordered_arg);
+			identity.args.push_back(
+				TemplateArgIdentity::makeType(makeTypeIndexArg(arg)));
 		}
 	}
 
