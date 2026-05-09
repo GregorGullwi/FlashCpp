@@ -2927,7 +2927,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TemplateArgPackSubstitutionMap spec_pack_subst_map;
 				buildTemplateArgSubstitutionMaps(
 					template_params,
-					template_args,
+					template_args_for_member_copy,
 					[](const TemplateParameterNode&, const TemplateTypeArg& arg) {
 						return arg;
 					},
