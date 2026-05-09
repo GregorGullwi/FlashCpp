@@ -2,6 +2,64 @@
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
+namespace {
+bool isAssignmentLikeOperator(std::string_view op) {
+	return op == "=" ||
+		   op == "+=" ||
+		   op == "-=" ||
+		   op == "*=" ||
+		   op == "/=" ||
+		   op == "%=" ||
+		   op == "&=" ||
+		   op == "|=" ||
+		   op == "^=" ||
+		   op == "<<=" ||
+		   op == ">>=";
+}
+
+bool isSideEffectFreeConstexprCandidate(const ExpressionNode& expr);
+
+bool isSideEffectFreeConstexprCandidateNode(const ASTNode& node) {
+	if (!node.is<ExpressionNode>()) {
+		return false;
+	}
+	return isSideEffectFreeConstexprCandidate(node.as<ExpressionNode>());
+}
+
+bool isSideEffectFreeConstexprCandidate(const ExpressionNode& expr) {
+	return std::visit([](const auto& node) -> bool {
+		using T = std::decay_t<decltype(node)>;
+		if constexpr (std::is_same_v<T, IdentifierNode> ||
+					  std::is_same_v<T, QualifiedIdentifierNode> ||
+					  std::is_same_v<T, BoolLiteralNode> ||
+					  std::is_same_v<T, NumericLiteralNode> ||
+					  std::is_same_v<T, StringLiteralNode> ||
+					  std::is_same_v<T, SizeofExprNode> ||
+					  std::is_same_v<T, AlignofExprNode> ||
+					  std::is_same_v<T, TypeTraitExprNode>) {
+			return true;
+		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			return isSideEffectFreeConstexprCandidateNode(node.object());
+		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			const std::string_view op = node.op();
+			if (op != "+" && op != "-" && op != "!" && op != "~") {
+				return false;
+			}
+			return isSideEffectFreeConstexprCandidateNode(node.get_operand());
+		} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+			const std::string_view op = node.op();
+			if (op == "," || isAssignmentLikeOperator(op)) {
+				return false;
+			}
+			return isSideEffectFreeConstexprCandidateNode(node.get_lhs()) &&
+				   isSideEffectFreeConstexprCandidateNode(node.get_rhs());
+		}
+		return false;
+	},
+					  expr);
+}
+}
+
 ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 										ExpressionContext context) {
 	return std::visit([this, context](const auto& expr) -> ExprResult {
@@ -38,6 +96,13 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
 			return generateStringLiteralIr(expr);
 		} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+			if (context != ExpressionContext::LValueAddress &&
+				isSideEffectFreeConstexprCandidate(expr)) {
+				auto const_result = tryEvaluateAsConstExpr(expr);
+				if (const_result.effectiveIrType() != IrType::Void) {
+					return const_result;
+				}
+			}
 			ExprResult result = generateBinaryOperatorIr(expr);
 			if (context == ExpressionContext::LValueAddress) {
 				return materializeAddressResult(expr, std::move(result), expr.get_token());
