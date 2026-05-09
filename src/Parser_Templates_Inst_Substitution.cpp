@@ -497,8 +497,56 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 }
 
 void Parser::normalizeDependentNonTypeTemplateArgs(
+	std::span<const TemplateParameterNode> template_parameters,
+	InlineVector<TemplateTypeArg, 4>& template_args) {
+	size_t arg_index = 0;
+	for (size_t param_index = 0;
+		 param_index < template_parameters.size() && arg_index < template_args.size();
+		 ++param_index) {
+		const TemplateParameterNode& template_param = template_parameters[param_index];
+		if (template_param.is_variadic()) {
+			break;
+		}
+
+		TemplateTypeArg& arg = template_args[arg_index];
+		if (template_param.kind() == TemplateParameterKind::NonType &&
+			arg.is_dependent &&
+			!arg.is_value) {
+			arg.is_value = true;
+			arg.value = 0;
+			TypeCategory value_category = TypeCategory::Int;
+			if (template_param.has_type()) {
+				value_category = template_param.type_specifier_node().category();
+			}
+			TypeIndex value_type_index = nativeTypeIndex(value_category);
+			arg.type_index = value_type_index.is_valid()
+				? value_type_index
+				: TypeIndex{0, value_category};
+		}
+
+		++arg_index;
+	}
+}
+
+void Parser::normalizeDependentNonTypeTemplateArgs(
 	const InlineVector<ASTNode, 4>& template_parameters,
 	std::vector<TemplateTypeArg>& template_args) {
+	InlineVector<TemplateParameterNode, 4> typed_template_parameters;
+	typed_template_parameters.reserve(template_parameters.size());
+	for (const ASTNode& template_param : template_parameters) {
+		if (!template_param.is<TemplateParameterNode>()) {
+			continue;
+		}
+		typed_template_parameters.push_back(template_param.as<TemplateParameterNode>());
+	}
+	normalizeDependentNonTypeTemplateArgs(
+		typed_template_parameters,
+		template_args);
+}
+
+void Parser::normalizeDependentNonTypeTemplateArgs(
+	const InlineVector<ASTNode, 4>& template_parameters,
+	InlineVector<TemplateTypeArg, 4>& template_args) {
 	InlineVector<TemplateParameterNode, 4> typed_template_parameters;
 	typed_template_parameters.reserve(template_parameters.size());
 	for (const ASTNode& template_param : template_parameters) {

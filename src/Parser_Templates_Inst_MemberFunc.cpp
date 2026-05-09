@@ -492,7 +492,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit(
 	std::string_view struct_name,
 	std::string_view member_name,
-	const std::vector<TemplateTypeArg>& template_type_args) {
+	std::span<const TemplateTypeArg> template_type_args) {
 
 	// Build the qualified template name using StringBuilder
 	StringBuilder qualified_name_sb;

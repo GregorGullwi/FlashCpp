@@ -11,7 +11,7 @@
 // Returns the instantiated function node if successful, nullopt otherwise.
 std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	const std::optional<ASTNode>& object_expr, std::string_view member_name,
-	const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args,
+	const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args,
 	const std::vector<TypeSpecifierNode>& arg_types) {
 	if (!object_expr.has_value())
 		return std::nullopt;
@@ -88,7 +88,7 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 	std::string_view struct_name,
 	std::string_view member_name,
-	const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args,
+	const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args,
 	const std::vector<TypeSpecifierNode>& call_arg_types,
 	bool has_call_args,
 	bool has_dependent_call_args) {
@@ -322,7 +322,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 
 		std::optional<ASTNode> instantiated_func;
 		if (object_struct_name.has_value()) {
-			std::optional<std::vector<TemplateTypeArg>> member_template_args;
+			std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args;
 			if (explicit_template_args) {
 				member_template_args = explicit_template_args.read_template_type_args();
 			}
@@ -906,7 +906,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			auto qualified_symbol = gSymbolTable.lookup_qualified(namespaces, final_identifier.value());
 
 			// Check if this is followed by template arguments: ns::func<Args>
-			std::optional<std::vector<TemplateTypeArg>> template_args;
+			std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
 			if (peek() == "<"_tok) {
 				template_args = parse_explicit_template_arguments();
 				// If parsing failed, it might be a less-than operator, continue normally

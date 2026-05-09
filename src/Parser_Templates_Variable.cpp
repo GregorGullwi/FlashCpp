@@ -54,7 +54,7 @@ StringHandle Parser::parseRawAliasTargetTemplateId(
 		auto parsed_args = parse_explicit_template_arguments(&out_args);
 		out_has_template_args = parsed_args.has_value();
 		if (parsed_args.has_value()) {
-			out_concrete_args = std::move(*parsed_args);
+			out_concrete_args = std::move(*parsed_args).toVector();
 		}
 	}
 

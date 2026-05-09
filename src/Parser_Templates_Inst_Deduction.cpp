@@ -1898,7 +1898,7 @@ bool Parser::functionTemplateAcceptsCallArgumentCount(
 	return argument_count <= func_decl.parameter_nodes().size();
 }
 
-std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count) {
+std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, size_t call_arg_count) {
 	static int recursion_depth = 0;
 	recursion_depth++;
 	struct DepthGuard { int& d; ~DepthGuard() { d--; } } depth_guard{recursion_depth};
@@ -2651,7 +2651,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(
 	std::string_view template_name,
-	const std::vector<TemplateTypeArg>& explicit_types,
+	std::span<const TemplateTypeArg> explicit_types,
 	const std::vector<TypeSpecifierNode>& arg_types) {
 	FlashCpp::ScopedState guard_explicit_call_arg_types(current_explicit_call_arg_types_);
 	current_explicit_call_arg_types_ = &arg_types;
