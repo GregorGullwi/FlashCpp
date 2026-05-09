@@ -15,7 +15,9 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 				expr.binding() != IdentifierBinding::StaticMember &&
 				expr.binding() != IdentifierBinding::NonStaticMember) {
 				auto sym = lookupSymbol(expr.nameHandle().isValid() ? expr.nameHandle() : StringTable::getOrInternStringHandle(expr.name()));
-				bool is_constexpr_var = sym.has_value() && sym->is<VariableDeclarationNode>() && sym->as<VariableDeclarationNode>().is_constexpr();
+				bool is_constexpr_var = sym.has_value() &&
+									   sym->template is<VariableDeclarationNode>() &&
+									   sym->template as<VariableDeclarationNode>().is_constexpr();
 				if (is_constexpr_var) {
 					auto const_result = tryEvaluateAsConstExpr(expr);
 					if (const_result.effectiveIrType() != IrType::Void)

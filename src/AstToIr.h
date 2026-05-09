@@ -517,31 +517,25 @@ private:
 			!eval_result.is_array &&
 			!eval_result.object_type_index.is_valid() &&
 			!eval_result.pointer_to_var.isValid()) {
-			// Determine TypeCategory and size from exact_type when available,
-			// otherwise infer from the variant discriminant.
+			// For general expression folding we require exact_type to preserve sema
+			// conversion behavior. For sizeof/alignof, evaluator results are always
+			// size_t-like integer constants, so allow missing exact_type and use ULL/64.
+			constexpr bool allow_untyped_sizeof_alignof =
+				std::is_same_v<NodeType, SizeofExprNode> ||
+				std::is_same_v<NodeType, AlignofExprNode>;
+
 			TypeCategory cat = TypeCategory::UnsignedLongLong;
 			int size_bits = 64;
 			if (eval_result.exact_type.has_value()) {
 				const TypeSpecifierNode& exact = *eval_result.exact_type;
 				cat = exact.category();
 				size_bits = exact.size_in_bits();
-				// Non-primitive types (structs, etc.) cannot be folded to a scalar constant.
-				if (!is_primitive_type(cat) && cat != TypeCategory::Enum) {
-					return ExprResult{};
-				}
-			} else {
-				// Infer from variant
-				if (std::holds_alternative<bool>(eval_result.value)) {
-					cat = TypeCategory::Bool;
-					size_bits = 8;
-				} else if (std::holds_alternative<long long>(eval_result.value)) {
-					cat = TypeCategory::LongLong;
-					size_bits = 64;
-				} else if (std::holds_alternative<double>(eval_result.value)) {
-					cat = TypeCategory::Double;
-					size_bits = 64;
-				}
-				// unsigned long long: defaults already set above
+			} else if (!allow_untyped_sizeof_alignof) {
+				return ExprResult{};
+			}
+			// Non-primitive types (structs, etc.) cannot be folded to a scalar constant.
+			if (!is_primitive_type(cat) && cat != TypeCategory::Enum) {
+				return ExprResult{};
 			}
 
 			// Build the IrOperand with the correctly typed value
