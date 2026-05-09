@@ -1214,15 +1214,27 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		matched_func_decl->is_member_function() &&
 		matched_func_decl->is_implicit() &&
 		matched_func_decl->decl_node().identifier_token().value() == "operator=") {
-		StringHandle saved_function_name = current_function_name_;
-		StringHandle saved_function_mangled_name = current_function_mangled_name_;
-		StringHandle saved_struct_name = current_struct_name_;
-		auto saved_namespace_stack = current_namespace_stack_;
-		visitFunctionDeclarationNode(*matched_func_decl);
-		current_function_name_ = saved_function_name;
-		current_function_mangled_name_ = saved_function_mangled_name;
-		current_struct_name_ = saved_struct_name;
-		current_namespace_stack_ = std::move(saved_namespace_stack);
+		StringHandle owner_struct_name = StringTable::getOrInternStringHandle(matched_func_decl->parent_struct_name());
+		auto owner_type_it = getTypesByNameMap().find(owner_struct_name);
+		const StructTypeInfo* owner_struct_info =
+			(owner_type_it != getTypesByNameMap().end() && owner_type_it->second)
+				? owner_type_it->second->getStructInfo()
+				: nullptr;
+		if (owner_struct_info) {
+			for (const auto& member_func : owner_struct_info->member_functions) {
+				if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
+					continue;
+				}
+				const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+				if (&candidate == matched_func_decl) {
+					queueDeferredMemberFunctionFromNode(
+						owner_struct_name,
+						member_func.function_decl,
+						buildNamespaceHandleForStructName(owner_struct_name));
+					break;
+				}
+			}
+		}
 	}
 
 	// consteval enforcement: every call to a consteval function is an immediate invocation and

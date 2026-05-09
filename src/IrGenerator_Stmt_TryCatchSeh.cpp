@@ -307,6 +307,27 @@ void AstToIr::visitThrowStatementNode(const ThrowStatementNode& node) {
 			emitActiveCatchScopeDestructors();
 		}
 
+		if (expr_type == TypeCategory::Struct && exception_type_index.is_valid()) {
+			if (const TypeInfo* exception_type_info = tryGetTypeInfo(exception_type_index)) {
+				if (const StructTypeInfo* exception_struct_info = exception_type_info->getStructInfo()) {
+					for (const auto& member_func : exception_struct_info->member_functions) {
+						if (!member_func.is_constructor ||
+							!member_func.function_decl.is<ConstructorDeclarationNode>()) {
+							continue;
+						}
+						const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
+						if (!ctor_decl.is_implicit()) {
+							continue;
+						}
+						queueDeferredMemberFunctionFromNode(
+							exception_struct_info->name,
+							member_func.function_decl,
+							buildNamespaceHandleForStructName(exception_struct_info->name));
+					}
+				}
+			}
+		}
+
 			// Create ThrowOp with typed data
 		ThrowOp throw_op;
 		throw_op.type_index = exception_type_index.withCategory(expr_type);

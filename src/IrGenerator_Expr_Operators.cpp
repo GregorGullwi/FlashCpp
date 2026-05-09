@@ -965,15 +965,21 @@ void AstToIr::finalizeConstructorCallOp(
 	}
 
 	if (ctor_op.resolved_constructor && ctor_op.resolved_constructor->is_implicit()) {
-		StringHandle saved_function_name = current_function_name_;
-		StringHandle saved_function_mangled_name = current_function_mangled_name_;
-		StringHandle saved_struct_name = current_struct_name_;
-		auto saved_namespace_stack = current_namespace_stack_;
-		visitConstructorDeclarationNode(*ctor_op.resolved_constructor);
-		current_function_name_ = saved_function_name;
-		current_function_mangled_name_ = saved_function_mangled_name;
-		current_struct_name_ = saved_struct_name;
-		current_namespace_stack_ = std::move(saved_namespace_stack);
+		for (const auto& member_func : target_struct_info.member_functions) {
+			if (!member_func.is_constructor ||
+				!member_func.function_decl.is<ConstructorDeclarationNode>()) {
+				continue;
+			}
+
+			const auto& candidate_ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
+			if (&candidate_ctor == ctor_op.resolved_constructor) {
+				queueDeferredMemberFunctionFromNode(
+					target_struct_info.name,
+					member_func.function_decl,
+					buildNamespaceHandleForStructName(target_struct_info.name));
+				break;
+			}
+		}
 	}
 }
 
@@ -1907,6 +1913,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			if (overload_result.has_match) {
 				const StructMemberFunction& member_func = *overload_result.member_overload;
 				const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+				if (func_decl.is_implicit() && op == "=") {
+					StringHandle owner_struct_name = getTypeInfo(lhs_type_index).name();
+					queueDeferredMemberFunctionFromNode(
+						owner_struct_name,
+						member_func.function_decl,
+						buildNamespaceHandleForStructName(owner_struct_name));
+				}
 				if (lhs_type_index.is_valid()) {
 					if (const StructTypeInfo* struct_info = getTypeInfo(lhs_type_index).getStructInfo()) {
 						if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
@@ -2368,6 +2381,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 			const StructMemberFunction& member_func = *overload_result.member_overload;
 			const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (func_decl.is_implicit() && op == "=") {
+				StringHandle owner_struct_name = getTypeInfo(lhs_type_index).name();
+				queueDeferredMemberFunctionFromNode(
+					owner_struct_name,
+					member_func.function_decl,
+					buildNamespaceHandleForStructName(owner_struct_name));
+			}
 			if (op == "=") {
 				if (lhs_type_index.is_valid()) {
 					if (const StructTypeInfo* struct_info = getTypeInfo(lhs_type_index).getStructInfo()) {
