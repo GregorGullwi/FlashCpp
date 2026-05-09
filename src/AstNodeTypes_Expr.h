@@ -820,9 +820,21 @@ public:
 				outer_template_args_.push_back(toTemplateArgInfo(arg));
 			}
 		}
+		outer_template_environment_snapshot_ = buildTemplateEnvironmentSnapshot(
+			std::span<const StringHandle>(outer_template_param_names_.data(), outer_template_param_names_.size()),
+			std::span<const TypeInfo::TemplateArgInfo>(outer_template_args_.data(), outer_template_args_.size()));
 	}
 
-	bool has_outer_template_bindings() const { return !outer_template_args_.empty(); }
+	void set_outer_template_bindings(const TemplateEnvironmentSnapshot& snapshot) {
+		outer_template_environment_snapshot_ = snapshot;
+		populateTemplateEnvironmentLegacyViews(
+			outer_template_environment_snapshot_,
+			outer_template_param_names_,
+			outer_template_args_);
+	}
+
+	bool has_outer_template_bindings() const { return hasTemplateEnvironmentSnapshotBindings(outer_template_environment_snapshot_); }
+	const TemplateEnvironmentSnapshot& outer_template_environment_snapshot() const { return outer_template_environment_snapshot_; }
 	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
 	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
 
@@ -843,6 +855,7 @@ private:
 	bool is_noexcept_;	   // Whether the lambda is noexcept
 	bool is_constexpr_;	// Whether the lambda is constexpr
 	bool is_consteval_;	// Whether the lambda is consteval
+	TemplateEnvironmentSnapshot outer_template_environment_snapshot_;
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 

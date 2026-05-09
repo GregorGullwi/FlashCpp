@@ -354,11 +354,17 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 	lazy_info.identity.kind = DeferredMemberIdentity::Kind::Constructor;
 	lazy_info.identity.is_const_method = false;
 
-	for (StringHandle outer_name : ctor_decl.outer_template_param_names()) {
+	InlineVector<StringHandle, 4> outer_param_names;
+	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_args;
+	populateTemplateEnvironmentLegacyViews(
+		ctor_decl.outer_template_environment_snapshot(),
+		outer_param_names,
+		outer_args);
+	for (StringHandle outer_name : outer_param_names) {
 		Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_name), 0, 0, 0);
 		lazy_info.template_params.push_back(TemplateParameterNode(outer_name, outer_token));
 	}
-	for (const auto& outer_arg : ctor_decl.outer_template_args()) {
+	for (const auto& outer_arg : outer_args) {
 		const std::vector<ASTNode> no_params;
 		const std::vector<TemplateTypeArg> no_args;
 		lazy_info.template_args.push_back(materializeTemplateArg(

@@ -1,12 +1,12 @@
 # Template Binding Architecture Plan
 
 **Date:** 2026-05-09  
-**Status:** In Progress (Phases 1-3 completed)  
+**Status:** In Progress (Phases 1-4 completed)  
 **Scope:** Template argument identity, parameter binding environments, instantiation consumers, and C++20 failure-mode boundaries.
 
 ## Next Task
 
-Implement Phase 4: replace outer binding arrays with binding snapshots while dual-writing legacy fields during migration.
+Implement Phase 5: make `TypeInfo::InstantiationContext` binding-based with compatibility accessors during migration.
 
 Existing helpers now cover part of this work:
 
@@ -240,7 +240,7 @@ Completed notes:
 Complexity: M-L  
 Risk: Medium
 
-### Phase 4: Replace Outer Binding Arrays With Snapshots
+### Phase 4: Replace Outer Binding Arrays With Snapshots ✅ Completed
 
 Goal: remove repeated `outer_template_param_names_` plus `outer_template_args_` storage.
 
@@ -282,6 +282,15 @@ Acceptance criteria:
 - lambda template outer bindings still work;
 - member templates inside class templates still find outer class args;
 - out-of-line member templates still resolve outer args.
+
+Completed notes:
+
+- Added `TemplateBindingSnapshot` and `TemplateEnvironmentSnapshot`.
+- Added snapshot builders plus helper utilities to flatten snapshots back into legacy arrays for compatibility.
+- Added snapshot storage and dual-write population alongside legacy outer binding fields on template-bearing AST nodes.
+- Migrated key readers (lambda IR path, semantic outer-binding registration, selected member-function/lazy copy paths) to source from snapshots while preserving legacy fallback paths.
+- Kept legacy outer array fields in dual-write mode to avoid breaking unmigrated readers.
+- Verified with `pwsh tests/run_all_tests.ps1`.
 
 Complexity: M  
 Risk: Medium

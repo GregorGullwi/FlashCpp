@@ -365,9 +365,7 @@ std::optional<ASTNode> tryRebindNonExpressionNode(
 		rebound_var_ref.set_is_constexpr(var_decl.is_constexpr());
 		rebound_var_ref.set_is_constinit(var_decl.is_constinit());
 		if (var_decl.has_outer_template_bindings()) {
-			rebound_var_ref.set_outer_template_bindings(
-				var_decl.outer_template_param_names(),
-				var_decl.outer_template_args());
+			rebound_var_ref.set_outer_template_bindings(var_decl.outer_template_environment_snapshot());
 		}
 		return rebound_var;
 	}

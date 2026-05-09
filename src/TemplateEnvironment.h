@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <span>
 #include <vector>
@@ -23,6 +24,18 @@ struct TemplateBinding {
 	std::vector<TemplateTypeArg> args;
 };
 
+struct TemplateBindingSnapshot {
+	StringHandle name;
+	TemplateParameterKind kind = TemplateParameterKind::Type;
+	bool is_pack = false;
+	InlineVector<TypeInfo::TemplateArgInfo, 1> args;
+};
+
+struct TemplateEnvironmentSnapshot {
+	InlineVector<TemplateBindingSnapshot, 4> bindings;
+	std::shared_ptr<const TemplateEnvironmentSnapshot> parent;
+};
+
 struct TemplateEnvironment {
 	InlineVector<TemplateBinding, 4> bindings;
 	const TemplateEnvironment* parent = nullptr;
@@ -35,6 +48,18 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg);
 TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg);
 InlineVector<TypeInfo::TemplateArgInfo, 4> toTemplateArgInfoList(std::span<const TemplateTypeArg> args);
 InlineVector<TemplateTypeArg, 4> toTemplateTypeArgList(std::span<const TypeInfo::TemplateArgInfo> args);
+TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
+	std::span<const StringHandle> param_names,
+	std::span<const TypeInfo::TemplateArgInfo> args,
+	std::shared_ptr<const TemplateEnvironmentSnapshot> parent);
+TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
+	std::span<const StringHandle> param_names,
+	std::span<const TypeInfo::TemplateArgInfo> args);
+bool hasTemplateEnvironmentSnapshotBindings(const TemplateEnvironmentSnapshot& snapshot);
+void populateTemplateEnvironmentLegacyViews(
+	const TemplateEnvironmentSnapshot& snapshot,
+	InlineVector<StringHandle, 4>& out_param_names,
+	InlineVector<TypeInfo::TemplateArgInfo, 4>& out_args);
 
 TemplateEnvironment buildTemplateEnvironment(
 	std::span<const TemplateParameterNode> params,
