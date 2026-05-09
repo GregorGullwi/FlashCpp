@@ -15,10 +15,14 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 				expr.binding() != IdentifierBinding::StaticMember &&
 				expr.binding() != IdentifierBinding::NonStaticMember) {
 				auto sym = lookupSymbol(expr.nameHandle().isValid() ? expr.nameHandle() : StringTable::getOrInternStringHandle(expr.name()));
-				bool is_constexpr_var = sym.has_value() &&
-									   sym->template is<VariableDeclarationNode>() &&
-									   sym->template as<VariableDeclarationNode>().is_constexpr();
-				if (is_constexpr_var) {
+				bool is_constexpr_var = false;
+				bool is_enum_typed = false;
+				if (sym.has_value() && sym->template is<VariableDeclarationNode>()) {
+					const auto& var_decl = sym->template as<VariableDeclarationNode>();
+					is_constexpr_var = var_decl.is_constexpr();
+					is_enum_typed = var_decl.declaration().type_specifier_node().category() == TypeCategory::Enum;
+				}
+				if (is_constexpr_var && !is_enum_typed) {
 					auto const_result = tryEvaluateAsConstExpr(expr);
 					if (const_result.effectiveIrType() != IrType::Void)
 						return const_result;
