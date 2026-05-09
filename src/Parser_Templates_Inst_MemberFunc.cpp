@@ -895,8 +895,8 @@ bool Parser::buildSubstitutionForPackElement(
 	size_t pack_element_offset,
 	const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
 	std::span<const TemplateParameterNode> template_params,
-	const std::vector<size_t>& template_param_arg_starts,
-	const std::vector<size_t>& template_param_arg_counts,
+	std::span<const size_t> template_param_arg_starts,
+	std::span<const size_t> template_param_arg_counts,
 	std::span<const TemplateTypeArg> template_args,
 	InlineVector<ASTNode, 4>& subst_params,
 	InlineVector<TemplateTypeArg, 4>& subst_args) {
@@ -1281,8 +1281,14 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		const auto& template_param = template_param_node;
 		tparam_nodes_by_name.emplace(template_param.nameHandle(), &template_param);
 	}
-	std::vector<size_t> template_param_arg_starts(template_params.size(), SIZE_MAX);
-	std::vector<size_t> template_param_arg_counts(template_params.size(), 0);
+	InlineVector<size_t, 8> template_param_arg_starts;
+	InlineVector<size_t, 8> template_param_arg_counts;
+	template_param_arg_starts.reserve(template_params.size());
+	template_param_arg_counts.reserve(template_params.size());
+	for (size_t i = 0; i < template_params.size(); ++i) {
+		template_param_arg_starts.push_back(SIZE_MAX);
+		template_param_arg_counts.push_back(0);
+	}
 	{
 		size_t template_arg_index = 0;
 		for (size_t i = 0; i < template_params.size(); ++i) {

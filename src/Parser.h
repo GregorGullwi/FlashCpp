@@ -1514,6 +1514,10 @@ private:
 	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
 		const ASTNode& default_node,
 		const InlineVector<TemplateParameterNode, 4>& template_params,
+		std::span<const TemplateTypeArg> template_args);
+	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
+		const ASTNode& default_node,
+		const InlineVector<TemplateParameterNode, 4>& template_params,
 		std::span<const TemplateTypeArg> template_args,
 		std::span<const std::string_view> template_param_names);
 	std::optional<InlineVector<TemplateTypeArg, 4>> deduceTemplateArgsFromCall(
@@ -2194,8 +2198,8 @@ private:
 		size_t pack_element_offset,
 		const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
 		std::span<const TemplateParameterNode> template_params,
-		const std::vector<size_t>& template_param_arg_starts,
-		const std::vector<size_t>& template_param_arg_counts,
+		std::span<const size_t> template_param_arg_starts,
+		std::span<const size_t> template_param_arg_counts,
 		std::span<const TemplateTypeArg> template_args,
 		InlineVector<ASTNode, 4>& subst_params,
 		InlineVector<TemplateTypeArg, 4>& subst_args);

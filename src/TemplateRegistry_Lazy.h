@@ -379,8 +379,8 @@ public:
 		StringHandle member_name;
 		bool is_const_method;
 	};
-	std::vector<OdrUsedLazyEntry> snapshotOdrUsedLazyEntries() const {
-		std::vector<OdrUsedLazyEntry> out;
+	InlineVector<OdrUsedLazyEntry, 8> snapshotOdrUsedLazyEntries() const {
+		InlineVector<OdrUsedLazyEntry, 8> out;
 		out.reserve(lazy_members_.size());
 		for (const auto& [key_handle, info] : lazy_members_) {
 			if (odr_used_.find(key_handle) != odr_used_.end()) {
@@ -836,8 +836,8 @@ public:
 	}
 
 	// Get all nested types for a parent class that need instantiation
-	std::vector<const LazyNestedTypeInfo*> getNestedTypesForParent(StringHandle parent_class_name) const {
-		std::vector<const LazyNestedTypeInfo*> result;
+	InlineVector<const LazyNestedTypeInfo*, 4> getNestedTypesForParent(StringHandle parent_class_name) const {
+		InlineVector<const LazyNestedTypeInfo*, 4> result;
 		for (const auto& [key, info] : lazy_nested_types_) {
 			if (info.parent_class_name == parent_class_name) {
 				result.push_back(&info);
@@ -915,8 +915,8 @@ public:
 	}
 
 	// Get all concept names (for debugging)
-	std::vector<std::string> getAllConceptNames() const {
-		std::vector<std::string> names;
+	InlineVector<std::string_view, 8> getAllConceptNames() const {
+		InlineVector<std::string_view, 8> names;
 		names.reserve(concepts_.size());
 		for (const auto& pair : concepts_) {
 			names.push_back(pair.first);
@@ -1197,7 +1197,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 				};
 
 				auto materializeConstraintPlaceholderArgs = [&](const TypeInfo& placeholder_info) {
-					std::vector<TemplateTypeArg> concrete_args;
+					InlineVector<TemplateTypeArg, 4> concrete_args;
 					concrete_args.reserve(placeholder_info.templateArgs().size());
 					for (const auto& arg_info : placeholder_info.templateArgs()) {
 						TemplateTypeArg concrete_arg = toTemplateTypeArg(arg_info);
@@ -1394,7 +1394,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 									if (member_sep != std::string_view::npos) {
 										std::string_view dependent_member_name =
 											qualified_alias_name.substr(member_sep + 2);
-										std::vector<TemplateTypeArg> nested_args;
+										InlineVector<TemplateTypeArg, 4> nested_args;
 										if (alias_type_info->isTemplateInstantiation()) {
 											nested_args = materializeTemplateArgs(
 												*alias_type_info,
@@ -1536,10 +1536,10 @@ inline std::optional<long long> evaluateConstraintExpression(
 							dependent_member_info->isTemplateInstantiation()
 								? StringTable::getStringView(dependent_member_info->baseTemplateName())
 								: std::string_view{};
-						std::vector<TemplateTypeArg> concrete_member_args =
+						InlineVector<TemplateTypeArg, 4> concrete_member_args =
 							dependent_member_info->isTemplateInstantiation()
 								? materializeConstraintPlaceholderArgs(*dependent_member_info)
-								: std::vector<TemplateTypeArg>{};
+								: InlineVector<TemplateTypeArg, 4>{};
 
 						if (!template_name.empty()) {
 							if (std::optional<long long> alias_size =
@@ -1640,6 +1640,10 @@ inline std::optional<long long> evaluateConstraintExpression(
 
 // Enhanced constraint evaluator for C++20 concepts
 // Evaluates constraints and provides detailed error messages when they fail
+inline ConstraintEvaluationResult evaluateConstraint(
+	const ConceptDeclarationNode& concept_node,
+	const InlineVector<TemplateTypeArg, 4>& template_args);
+
 inline ConstraintEvaluationResult evaluateConstraint(
 	const ASTNode& constraint_expr,
 	const InlineVector<TemplateTypeArg, 4>& template_args,
@@ -1772,16 +1776,13 @@ inline ConstraintEvaluationResult evaluateConstraint(
 
 		// Build the template arguments for the concept from the function call's template arguments
 		// Map the concept's template parameters to the actual template arguments
-		std::vector<TemplateTypeArg> concept_args;
-		std::vector<std::string_view> concept_param_names;
+		InlineVector<TemplateTypeArg, 4> concept_args;
 
 		// Get the explicit template arguments from the function call
 		const auto& explicit_args = func_call.template_arguments();
 
 		// Map concept parameters to the arguments
 		for (size_t i = 0; i < concept_params.size(); ++i) {
-			concept_param_names.push_back(concept_params[i].name());
-
 			if (i < explicit_args.size()) {
 				const ASTNode& arg_node = explicit_args[i];
 
@@ -1843,15 +1844,15 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			}
 		}
 
-		FLASH_LOG(Templates, Debug, "CallExprNode concept evaluation: concept='", concept_name, "', concept_args.size()=", concept_args.size(), ", concept_param_names.size()=", concept_param_names.size());
-		for (size_t i = 0; i < concept_param_names.size(); ++i) {
+		FLASH_LOG(Templates, Debug, "CallExprNode concept evaluation: concept='", concept_name, "', concept_args.size()=", concept_args.size(), ", concept_params.size()=", concept_params.size());
+		for (size_t i = 0; i < concept_params.size(); ++i) {
 			if (i < concept_args.size()) {
-				FLASH_LOG(Templates, Debug, "  param[", i, "] name='", concept_param_names[i], "', is_template_template_arg=", concept_args[i].is_template_template_arg, ", base_type=", static_cast<int>(concept_args[i].typeEnum()));
+				FLASH_LOG(Templates, Debug, "  param[", i, "] name='", concept_params[i].name(), "', is_template_template_arg=", concept_args[i].is_template_template_arg, ", base_type=", static_cast<int>(concept_args[i].typeEnum()));
 			}
 		}
 
 		// Evaluate the concept's constraint with the resolved arguments
-		return evaluateConstraint(concept_node.constraint_expr(), concept_args, concept_param_names);
+		return evaluateConstraint(concept_node, concept_args);
 	}
 
 	// For binary operators (&&, ||)
@@ -2003,7 +2004,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 								if (tfdn.has_requires_clause()) {
 									// Build the called function's own template parameter names
 									// and map outer template args to them via positional matching
-									std::vector<std::string_view> callee_param_names;
+									InlineVector<std::string_view, 4> callee_param_names;
 									for (const auto& param_node : tfdn.template_parameters()) {
 										callee_param_names.push_back(param_node.name());
 									}
@@ -2138,4 +2139,18 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	// Default: assume satisfied for unknown expressions
 	// This allows templates to compile even with complex constraints
 	return ConstraintEvaluationResult::success();
+}
+
+inline ConstraintEvaluationResult evaluateConstraint(
+	const ConceptDeclarationNode& concept_node,
+	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	InlineVector<std::string_view, 4> derived_param_names;
+	derived_param_names.reserve(concept_node.template_params().size());
+	for (const TemplateParameterNode& concept_param : concept_node.template_params()) {
+		derived_param_names.push_back(concept_param.name());
+	}
+	return evaluateConstraint(
+		concept_node.constraint_expr(),
+		template_args,
+		derived_param_names);
 }

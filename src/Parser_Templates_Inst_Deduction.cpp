@@ -2903,6 +2903,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			param_name_to_arg = std::move(deduction_info->param_name_to_arg);
 		}
 		bool overload_mismatch = false;
+		const auto recordTemplateParamArgRange = [&](size_t param_index, size_t arg_start_index) {
+			template_param_arg_starts[param_index] = arg_start_index;
+			template_param_arg_counts[param_index] = template_args.size() - arg_start_index;
+		};
 		for (size_t i = 0; i < template_params.size(); ++i) {
 			const TemplateParameterNode& param = template_params[i];
 			size_t arg_start_index = template_args.size();
@@ -2922,8 +2926,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					overload_mismatch = true;
 					break;
 				}
-				template_param_arg_starts[i] = arg_start_index;
-				template_param_arg_counts[i] = template_args.size() - arg_start_index;
+				recordTemplateParamArgRange(i, arg_start_index);
 			} else if (param.is_variadic()) {
 				size_t remaining_args = explicit_idx < explicit_types.size()
 										   ? explicit_types.size() - explicit_idx
@@ -2989,8 +2992,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						}
 					}
 				}
-				template_param_arg_starts[i] = arg_start_index;
-				template_param_arg_counts[i] = template_args.size() - arg_start_index;
+				recordTemplateParamArgRange(i, arg_start_index);
 			} else {
 				if (explicit_idx < explicit_types.size()) {
 					template_args.push_back(explicit_types[explicit_idx]);
@@ -3003,13 +3005,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					auto map_it = param_name_to_arg.find(param_handle);
 					if (map_it != param_name_to_arg.end()) {
 						template_args.push_back(map_it->second);
-						template_param_arg_starts[i] = arg_start_index;
-						template_param_arg_counts[i] = template_args.size() - arg_start_index;
+						recordTemplateParamArgRange(i, arg_start_index);
 						continue;
 					}
 					if (tryAppendDefaultTemplateArg(param, template_params, template_args, func_decl.namespace_handle())) {
-						template_param_arg_starts[i] = arg_start_index;
-						template_param_arg_counts[i] = template_args.size() - arg_start_index;
+						recordTemplateParamArgRange(i, arg_start_index);
 						continue;
 					}
 
@@ -3019,8 +3019,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					overload_mismatch = true;
 					break;
 				}
-				template_param_arg_starts[i] = arg_start_index;
-				template_param_arg_counts[i] = template_args.size() - arg_start_index;
+				recordTemplateParamArgRange(i, arg_start_index);
 			}
 		}
 		if (overload_mismatch)
@@ -3087,17 +3086,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					if (!concept_opt.has_value())
 						return;
 					const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
-					const auto& concept_params = concept_node.template_params();
 					TemplateTypeArg concept_arg = bound_arg;
 					concept_arg.ref_qualifier = ReferenceQualifier::None;
 					InlineVector<TemplateTypeArg, 4> concept_args;
 					concept_args.push_back(concept_arg);
-					InlineVector<std::string_view, 4> concept_param_names;
-					if (!concept_params.empty()) {
-						concept_param_names.push_back(concept_params[0].name());
-					}
 					auto constraint_result = evaluateConstraint(
-						concept_node.constraint_expr(), concept_args, concept_param_names);
+						concept_node, concept_args);
 					if (!constraint_result.satisfied) {
 						FLASH_LOG(Parser, Error, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
 						FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
@@ -3448,6 +3442,14 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 			++arg_index;
 		}
 	};
+	const auto tryAppendPreDeducedArg = [&](StringHandle param_handle) {
+		auto map_it = param_name_to_arg.find(param_handle);
+		if (map_it == param_name_to_arg.end()) {
+			return false;
+		}
+		template_args.push_back(map_it->second);
+		return true;
+	};
 
 	for (const TemplateParameterNode& param : template_params) {
 		if (param.kind() == TemplateParameterKind::Template) {
@@ -3532,9 +3534,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 			}
 
 			StringHandle param_handle = param.nameHandle();
-			auto map_it = param_name_to_arg.find(param_handle);
-			if (map_it != param_name_to_arg.end()) {
-				template_args.push_back(map_it->second);
+			if (tryAppendPreDeducedArg(param_handle)) {
 				continue;
 			}
 			if (next_deduced_type_arg < deduced_type_args.size()) {
@@ -3557,9 +3557,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 		}
 
 		StringHandle param_handle = param.nameHandle();
-		auto map_it = param_name_to_arg.find(param_handle);
-		if (map_it != param_name_to_arg.end()) {
-			template_args.push_back(map_it->second);
+		if (tryAppendPreDeducedArg(param_handle)) {
 			continue;
 		}
 		if (next_deduced_value_arg < deduced_value_args.size()) {
@@ -3797,17 +3795,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				if (!concept_opt.has_value())
 					return;
 				const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
-				const auto& concept_params = concept_node.template_params();
 				TemplateTypeArg concept_arg = bound_arg;
 				concept_arg.ref_qualifier = ReferenceQualifier::None;
 				InlineVector<TemplateTypeArg, 4> concept_args;
 				concept_args.push_back(concept_arg);
-				InlineVector<std::string_view, 4> concept_param_names;
-				if (!concept_params.empty()) {
-					concept_param_names.push_back(concept_params[0].name());
-				}
 				auto constraint_result = evaluateConstraint(
-					concept_node.constraint_expr(), concept_args, concept_param_names);
+					concept_node, concept_args);
 				if (!constraint_result.satisfied) {
 					FLASH_LOG(Parser, Error, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
 					FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
