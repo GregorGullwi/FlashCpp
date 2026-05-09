@@ -750,7 +750,7 @@ private:
 			int64_t self_time_us = elapsed_us - frame.child_time_us;
 			if (self_time_us < 0) {
 				FLASH_LOG(Parser, Warning, "Parser runtime phase child time exceeded elapsed time for ",
-						  getRuntimePhaseName(phase_));
+						  runtimePhaseName(phase_));
 				self_time_us = 0;
 			}
 			stat.self_time_us += self_time_us;
@@ -769,7 +769,7 @@ private:
 		return ScopedRuntimePhaseTimer(*this, phase);
 	}
 
-	static constexpr std::string_view getRuntimePhaseName(RuntimePhase phase) {
+	static std::string_view runtimePhaseName(RuntimePhase phase) {
 		switch (phase) {
 		case RuntimePhase::ParseLoop:
 			return "parse loop";

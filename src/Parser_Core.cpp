@@ -762,6 +762,11 @@ void Parser::printRuntimeStats() const {
 		parse_loop_stat.inclusive_time_us > 0) {
 		total_parse_loop_ms = parse_loop_stat.inclusive_time_us / 1000.0;
 	}
+	if (total_parse_loop_ms <= 0.0) {
+		for (size_t i = 1; i < static_cast<size_t>(RuntimePhase::Count); ++i) {
+			total_parse_loop_ms += stats.phase_stats[i].self_time_us / 1000.0;
+		}
+	}
 	for (size_t i = 0; i < static_cast<size_t>(RuntimePhase::Count); ++i) {
 		const auto phase = static_cast<RuntimePhase>(i);
 		const auto& phase_stat = stats.phase_stats[i];
@@ -776,11 +781,11 @@ void Parser::printRuntimeStats() const {
 		double self_pct = total_parse_loop_ms > 0.0
 			? (self_ms * 100.0 / total_parse_loop_ms)
 			: 0.0;
-		FLASH_LOG(General, Info, "    ", getRuntimePhaseName(phase),
+		FLASH_LOG(General, Info, "    ", runtimePhaseName(phase),
 				  ": calls=", phase_stat.calls,
 				  ", inclusive=", std::fixed, std::setprecision(3), inclusive_ms, " ms",
-				  " (", inclusive_pct, "%)",
-				  ", self=", self_ms, " ms",
+				  " (", std::setprecision(2), inclusive_pct, "%)",
+				  ", self=", std::setprecision(3), self_ms, " ms",
 				  " (", self_pct, "%)");
 	}
 #endif
