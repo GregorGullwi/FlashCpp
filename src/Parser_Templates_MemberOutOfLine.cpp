@@ -454,7 +454,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	if (peek() == "<"_tok) {
 		auto template_args_opt = parse_explicit_template_arguments();
 		if (template_args_opt.has_value()) {
-			function_template_args = *template_args_opt;
+			function_template_args = template_args_opt->toVector();
 		} else {
 			// If we can't parse template arguments, just skip them
 			advance();  // consume '<'
@@ -569,7 +569,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		if (peek() == "<"_tok) {
 			auto template_args_opt = parse_explicit_template_arguments();
 			if (template_args_opt.has_value()) {
-				function_template_args = *template_args_opt;
+				function_template_args = template_args_opt->toVector();
 			} else {
 				advance();  // consume '<'
 				int angle_bracket_depth = 1;

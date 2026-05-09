@@ -202,7 +202,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	FLASH_LOG(Templates, Debug, "try_parse_member_template_function_call called for: ", instantiated_class_name, "::", member_name);
 
 	// Check for member template arguments: Template<T>::member<U>
-	std::optional<std::vector<TemplateTypeArg>> member_template_args;
+	std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args;
 	if (peek() == "<"_tok) {
 		// Before parsing < as template arguments, check if the member is actually a template
 		// This prevents misinterpreting patterns like R1<T>::num < R2<T>::num> where < is comparison
@@ -687,7 +687,7 @@ std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_a
 				return std::nullopt;
 			}
 			member_access.has_template_arguments = true;
-			member_access.template_arguments = std::make_shared<std::vector<TemplateTypeArg>>(std::move(member_template_args).value());
+			member_access.template_arguments = std::make_shared<std::vector<TemplateTypeArg>>(std::move(member_template_args).value().toVector());
 			member_access.template_argument_infos =
 				build_template_arg_infos(*member_access.template_arguments, member_template_arg_nodes);
 		}

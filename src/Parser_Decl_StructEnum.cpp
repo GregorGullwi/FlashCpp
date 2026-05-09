@@ -401,7 +401,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					// Check if there are template arguments
 					if (qualified_result->has_template_arguments) {
 						// We have template arguments - instantiate the template
-						std::vector<TemplateTypeArg> template_args = *qualified_result->template_args;
+						InlineVector<TemplateTypeArg, 4> template_args = *qualified_result->template_args;
 
 						// Consume optional ::member type access and ... pack expansion
 						auto post_info_opt = consume_base_class_qualifiers_after_template_args();
@@ -518,7 +518,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					return ParseResult::error("Failed to parse template arguments for base class", peek_info());
 				}
 
-				std::vector<TemplateTypeArg> template_args = *template_args_opt;
+				InlineVector<TemplateTypeArg, 4> template_args = *template_args_opt;
 
 				// Consume optional ::member type access and ... pack expansion
 				auto post_info_opt = consume_base_class_qualifiers_after_template_args();

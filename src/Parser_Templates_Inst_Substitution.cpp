@@ -337,12 +337,12 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		target_template_param);
 }
 
-std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasTemplateArgs(
+std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAliasTemplateArgs(
 	const TemplateAliasNode& alias_node,
 	std::span<const TemplateTypeArg> template_args) {
-	std::vector<TemplateTypeArg> substituted_args;
+	InlineVector<TemplateTypeArg, 4> substituted_args;
 	const auto& param_names = alias_node.template_param_names();
-	const auto& target_template_args = alias_node.target_template_args();
+	std::span<const ASTNode> target_template_args = alias_node.target_template_args();
 	const auto target_template_params =
 		getTargetTemplateParameters(StringTable::getOrInternStringHandle(alias_node.target_template_name()));
 	substituted_args.reserve(target_template_args.size());
@@ -372,6 +372,54 @@ std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasTemp
 	}
 
 	return substituted_args;
+}
+
+StringHandle Parser::getDeferredMemberAliasHandle(
+	const TemplateAliasNode& alias_node,
+	std::string_view instantiated_name) const {
+	StringHandle member_alias_handle =
+		StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(instantiated_name)
+				.append("::")
+				.append(alias_node.targetMemberTemplateName())
+				.commit());
+	if (gTemplateRegistry.lookup_alias_template(member_alias_handle).has_value()) {
+		return member_alias_handle;
+	}
+	return alias_node.targetMemberTemplateNameHandle();
+}
+
+std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAliasMemberTemplateArgs(
+	const TemplateAliasNode& alias_node,
+	std::span<const TemplateTypeArg> template_args,
+	StringHandle member_alias_handle) {
+	const auto member_template_params = getTargetTemplateParameters(member_alias_handle);
+	InlineVector<TemplateTypeArg, 4> member_args;
+	std::span<const ASTNode> member_template_args = alias_node.targetMemberTemplateArgs();
+	member_args.reserve(member_template_args.size());
+
+	for (size_t i = 0; i < member_template_args.size(); ++i) {
+		const TemplateParameterNode* target_template_param = nullptr;
+		if (i < member_template_params.size()) {
+			target_template_param = &member_template_params[i];
+		} else if (!member_template_params.empty() && member_template_params.back().is_variadic()) {
+			target_template_param = &member_template_params.back();
+		}
+
+		auto materialized_member_arg = materializeDeferredAliasTemplateArg(
+			member_template_args[i],
+			alias_node.template_parameters(),
+			alias_node.template_param_names(),
+			template_args,
+			target_template_param);
+		if (!materialized_member_arg.has_value()) {
+			return std::nullopt;
+		}
+		member_args.push_back(std::move(*materialized_member_arg));
+	}
+
+	return member_args;
 }
 
 StringHandle Parser::getAliasTargetNameHandle(const TypeSpecifierNode& alias_target) const {
@@ -449,8 +497,42 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 }
 
 void Parser::normalizeDependentNonTypeTemplateArgs(
-	const InlineVector<ASTNode, 4>& template_parameters,
-	std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateParameterNode> template_parameters,
+	InlineVector<TemplateTypeArg, 4>& template_args) {
+	size_t arg_index = 0;
+	for (size_t param_index = 0;
+		 param_index < template_parameters.size() && arg_index < template_args.size();
+		 ++param_index) {
+		const TemplateParameterNode& template_param = template_parameters[param_index];
+		if (template_param.is_variadic()) {
+			break;
+		}
+
+		TemplateTypeArg& arg = template_args[arg_index];
+		if (template_param.kind() == TemplateParameterKind::NonType &&
+			arg.is_dependent &&
+			!arg.is_value) {
+			arg.is_value = true;
+			arg.value = 0;
+			TypeCategory value_category = TypeCategory::Int;
+			if (template_param.has_type()) {
+				value_category = template_param.type_specifier_node().category();
+			}
+			TypeIndex value_type_index = nativeTypeIndex(value_category);
+			arg.type_index = value_type_index.is_valid()
+				? value_type_index
+				: TypeIndex{0, value_category};
+		}
+
+		++arg_index;
+	}
+}
+
+namespace {
+
+// Collect only template-parameter nodes from a mixed AST-node parameter list.
+InlineVector<TemplateParameterNode, 4> extractTemplateParameterNodes(
+	const InlineVector<ASTNode, 4>& template_parameters) {
 	InlineVector<TemplateParameterNode, 4> typed_template_parameters;
 	typed_template_parameters.reserve(template_parameters.size());
 	for (const ASTNode& template_param : template_parameters) {
@@ -459,6 +541,26 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 		}
 		typed_template_parameters.push_back(template_param.as<TemplateParameterNode>());
 	}
+	return typed_template_parameters;
+}
+
+}
+
+void Parser::normalizeDependentNonTypeTemplateArgs(
+	const InlineVector<ASTNode, 4>& template_parameters,
+	std::vector<TemplateTypeArg>& template_args) {
+	InlineVector<TemplateParameterNode, 4> typed_template_parameters =
+		extractTemplateParameterNodes(template_parameters);
+	normalizeDependentNonTypeTemplateArgs(
+		typed_template_parameters,
+		template_args);
+}
+
+void Parser::normalizeDependentNonTypeTemplateArgs(
+	const InlineVector<ASTNode, 4>& template_parameters,
+	InlineVector<TemplateTypeArg, 4>& template_args) {
+	InlineVector<TemplateParameterNode, 4> typed_template_parameters =
+		extractTemplateParameterNodes(template_parameters);
 	normalizeDependentNonTypeTemplateArgs(
 		typed_template_parameters,
 		template_args);
@@ -530,6 +632,30 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			if (materialized_target_alias.resolved_type_info != nullptr) {
 				result.instantiated_name = materialized_target_alias.instantiated_name;
 				result.resolved_type_info = materialized_target_alias.resolved_type_info;
+			}
+		}
+	}
+	if (alias_node != nullptr &&
+		alias_node->hasDeferredMemberTarget() &&
+		!alias_node->targetMemberTemplateArgs().empty() &&
+		!result.instantiated_name.empty()) {
+		StringHandle member_alias_handle =
+			getDeferredMemberAliasHandle(*alias_node, result.instantiated_name);
+		auto member_alias_entry = gTemplateRegistry.lookup_alias_template(member_alias_handle);
+		if (member_alias_entry.has_value()) {
+			if (auto concrete_member_args =
+					materializeDeferredAliasMemberTemplateArgs(
+						*alias_node,
+						template_args,
+						member_alias_handle)) {
+				AliasTemplateMaterializationResult materialized_member_alias =
+					materializeAliasTemplateInstantiation(
+						StringTable::getStringView(member_alias_handle),
+						*concrete_member_args);
+				if (materialized_member_alias.resolved_type_info != nullptr) {
+					result.instantiated_name = materialized_member_alias.instantiated_name;
+					result.resolved_type_info = materialized_member_alias.resolved_type_info;
+				}
 			}
 		}
 	}
@@ -824,13 +950,75 @@ std::string_view Parser::instantiate_and_register_base_template(
 			if (!substituted_args_opt.has_value()) {
 				return std::string_view();
 			}
-			std::vector<TemplateTypeArg> substituted_args = std::move(*substituted_args_opt);
+			InlineVector<TemplateTypeArg, 4> substituted_args = std::move(*substituted_args_opt);
 
 			// Now recursively instantiate the target template
 			// The target might itself be a template alias (chain of aliases)
 			std::string_view target_name(alias_node.target_template_name());
 			std::string_view instantiated_name = instantiate_and_register_base_template(target_name, substituted_args);
 			if (!instantiated_name.empty()) {
+				if (alias_node.hasDeferredMemberTarget() &&
+					!alias_node.targetMemberTemplateArgs().empty()) {
+					StringHandle member_alias_handle =
+						getDeferredMemberAliasHandle(alias_node, instantiated_name);
+					auto member_alias_entry = gTemplateRegistry.lookup_alias_template(member_alias_handle);
+					if (auto member_args =
+							materializeDeferredAliasMemberTemplateArgs(
+								alias_node,
+								template_args,
+								member_alias_handle)) {
+						if (member_alias_entry.has_value()) {
+							AliasTemplateMaterializationResult materialized_member =
+								materializeAliasTemplateInstantiation(
+									StringTable::getStringView(member_alias_handle),
+									*member_args);
+							if (!materialized_member.instantiated_name.empty()) {
+								base_class_name = materialized_member.instantiated_name;
+								return materialized_member.instantiated_name;
+							}
+							if (materialized_member.resolved_type_info != nullptr) {
+								base_class_name = StringTable::getStringView(
+									materialized_member.resolved_type_info->name());
+								return base_class_name;
+							}
+						} else if (const TypeInfo* dependent_base_info =
+								findTypeByName(StringTable::getOrInternStringHandle(instantiated_name));
+							dependent_base_info != nullptr &&
+							dependent_base_info->is_incomplete_instantiation_ &&
+							dependent_base_info->isTemplateInstantiation()) {
+							StringHandle placeholder_handle =
+								StringTable::getOrInternStringHandle(
+									StringBuilder()
+										.append(instantiated_name)
+										.append("::")
+										.append(alias_node.targetMemberTemplateName())
+										.append("<")
+										.append(member_args->size())
+										.append(" args>")
+										.commit());
+							TypeInfo& placeholder_info = add_empty_type_entry();
+							placeholder_info.fallback_size_bits_ = 0;
+							placeholder_info.name_ = placeholder_handle;
+							placeholder_info.is_incomplete_instantiation_ = true;
+							placeholder_info.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
+							StringHandle member_template_base =
+								StringTable::getOrInternStringHandle(
+									StringBuilder()
+										.append(dependent_base_info->baseTemplateName())
+										.append("::")
+										.append(alias_node.targetMemberTemplateName())
+										.commit());
+							placeholder_info.setTemplateInstantiationInfo(
+								QualifiedIdentifier::fromQualifiedName(
+									StringTable::getStringView(member_template_base),
+									gSymbolTable.get_current_namespace_handle()),
+								convertToTemplateArgInfo(*member_args));
+							getTypesByNameMap()[placeholder_handle] = &placeholder_info;
+							base_class_name = StringTable::getStringView(placeholder_handle);
+							return base_class_name;
+						}
+					}
+				}
 				base_class_name = instantiated_name;
 				return instantiated_name;
 			}

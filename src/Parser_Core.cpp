@@ -249,10 +249,14 @@ std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified
 // Returns true only when a full template-id was captured successfully.
 bool Parser::parseDeferredAliasTargetTemplateId(
 	StringHandle& out_target_template_name,
-	std::vector<ASTNode>& out_target_template_arg_nodes,
+	InlineVector<ASTNode, 4>& out_target_template_arg_nodes,
+	StringHandle& out_target_member_template_name,
+	InlineVector<ASTNode, 4>& out_target_member_template_arg_nodes,
 	bool consume_dependent_member_suffix) {
 	out_target_template_name = StringHandle{};
 	out_target_template_arg_nodes.clear();
+	out_target_member_template_name = StringHandle{};
+	out_target_member_template_arg_nodes.clear();
 
 	SaveHandle start_pos = save_token_position();
 	StringBuilder target_name_builder;
@@ -262,6 +266,8 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 		target_name_builder.reset();
 		out_target_template_name = StringHandle{};
 		out_target_template_arg_nodes.clear();
+		out_target_member_template_name = StringHandle{};
+		out_target_member_template_arg_nodes.clear();
 		return false;
 	};
 
@@ -314,6 +320,12 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 
 	if (consume_dependent_member_suffix) {
 		while (peek() == "::"_tok) {
+			// TemplateAliasNode currently stores only one dependent member-template hop.
+			// Reject additional suffixes here so we never silently truncate the alias target.
+			if (out_target_member_template_name.isValid()) {
+				FLASH_LOG(Parser, Debug, "Rejecting deferred alias target with multiple dependent member-template hops");
+				return restore_on_failure();
+			}
 			advance();
 			if (peek() == "template"_tok) {
 				advance();
@@ -321,12 +333,18 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 			if (peek_info().type() != Token::Type::Identifier) {
 				break;
 			}
+			StringHandle member_name = peek_info().handle();
 			advance();
+			out_target_member_template_name = member_name;
 			if (peek() == "<"_tok) {
-				auto ignored_member_args = parse_explicit_template_arguments();
-				if (!ignored_member_args.has_value()) {
-					break;
+				InlineVector<ASTNode, 4> member_arg_nodes;
+				auto member_args = parse_explicit_template_arguments(&member_arg_nodes);
+				if (!member_args.has_value()) {
+					return restore_on_failure();
 				}
+				out_target_member_template_arg_nodes = std::move(member_arg_nodes);
+			} else {
+				out_target_member_template_arg_nodes.clear();
 			}
 		}
 	}

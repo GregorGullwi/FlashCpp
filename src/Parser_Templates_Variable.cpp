@@ -54,7 +54,7 @@ StringHandle Parser::parseRawAliasTargetTemplateId(
 		auto parsed_args = parse_explicit_template_arguments(&out_args);
 		out_has_template_args = parsed_args.has_value();
 		if (parsed_args.has_value()) {
-			out_concrete_args = std::move(*parsed_args);
+			out_concrete_args = std::move(*parsed_args).toVector();
 		}
 	}
 
@@ -161,13 +161,17 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	bool has_deferred_target = false;
 	StringHandle target_template_name;
-	std::vector<ASTNode> target_template_arg_nodes;
+	InlineVector<ASTNode, 4> target_template_arg_nodes;
+	StringHandle target_member_template_name;
+	InlineVector<ASTNode, 4> target_member_template_arg_nodes;
 	{
 		SaveHandle after_target_pos = save_token_position();
 		restore_token_position(target_type_start_pos);
 		if (parseDeferredAliasTargetTemplateId(
 				target_template_name,
 				target_template_arg_nodes,
+				target_member_template_name,
+				target_member_template_arg_nodes,
 				false) &&
 			gTemplateRegistry.lookup_alias_template(target_template_name).has_value()) {
 			has_deferred_target = true;
@@ -197,7 +201,9 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 			alias_name_handle,
 			type_result.node().value(),
 			target_template_name,
-			std::move(target_template_arg_nodes));
+			std::move(target_template_arg_nodes),
+			target_member_template_name,
+			std::move(target_member_template_arg_nodes));
 	} else {
 		alias_node = emplace_node<TemplateAliasNode>(
 			template_params,

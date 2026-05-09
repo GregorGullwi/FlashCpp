@@ -303,14 +303,14 @@ private:
 struct QualifiedIdParseResult {
 	std::vector<StringHandle> namespaces;
 	Token final_identifier;
-	std::optional<std::vector<TemplateTypeArg>> template_args;
+	std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
 	bool has_template_arguments;
 
 	QualifiedIdParseResult(const std::vector<StringHandle>& ns, const Token& id)
 		: namespaces(ns), final_identifier(id), has_template_arguments(false) {}
 
 	QualifiedIdParseResult(const std::vector<StringHandle>& ns, const Token& id,
-						   const std::vector<TemplateTypeArg>& args)
+						   const InlineVector<TemplateTypeArg, 4>& args)
 		: namespaces(ns), final_identifier(id), template_args(args), has_template_arguments(true) {}
 };
 
@@ -625,7 +625,7 @@ private:
 	// Store parsed explicit template arguments for cross-function access
 	// This allows template arguments parsed in one function (e.g., parse_primary_expression)
 	// to be accessible in another function (e.g., parse_postfix_expression) for template instantiation
-	std::optional<std::vector<TemplateTypeArg>> pending_explicit_template_args_;
+	std::optional<InlineVector<TemplateTypeArg, 4>> pending_explicit_template_args_;
 	const std::vector<TypeSpecifierNode>* current_explicit_call_arg_types_ = nullptr;
 
 	// Handle-based save/restore to avoid cursor position collisions
@@ -1314,8 +1314,10 @@ private:
 		FlashCpp::TemplateParameterScope& template_scope);
 	bool parseDeferredAliasTargetTemplateId(
 		StringHandle& out_target_template_name,
-		std::vector<ASTNode>& out_target_template_arg_nodes,
-		bool consume_dependent_member_suffix);
+		InlineVector<ASTNode, 4>& out_target_template_arg_nodes,
+		StringHandle& out_target_member_template_name,
+		InlineVector<ASTNode, 4>& out_target_member_template_arg_nodes,
+		bool consume_dependent_member_suffix);	// Supports one dependent member-template hop; rejects additional hops.
 	// Simple struct to hold constant expression evaluation results
 	// Public members are intentional for this lightweight data structure
 	struct ConstantValue {
@@ -1330,7 +1332,7 @@ private:
 	struct TemplateTypeArgParsingResult
 	{
 	protected:
-		std::vector<TemplateTypeArg> template_type_args_;	// use read_template_type_args() or move_template_type_args() to access
+		InlineVector<TemplateTypeArg, 4> template_type_args_;	// use read_template_type_args() or move_template_type_args() to access
 
 	public:
 		Parser* parser_ = nullptr;
@@ -1339,7 +1341,7 @@ private:
 
 		TemplateTypeArgParsingResult() = default;
 
-		TemplateTypeArgParsingResult(Parser* p, std::vector<TemplateTypeArg> args, SaveHandle save, TokenDestroyPattern destroy_pattern)
+		TemplateTypeArgParsingResult(Parser* p, InlineVector<TemplateTypeArg, 4> args, SaveHandle save, TokenDestroyPattern destroy_pattern)
 			: template_type_args_(std::move(args)), parser_(p), original_token_(save), destroy_pattern_(destroy_pattern) {}
 
 		TemplateTypeArgParsingResult(TemplateTypeArgParsingResult&& other) noexcept
@@ -1376,11 +1378,11 @@ private:
 		}
 
 		operator bool() const { return (parser_ != nullptr && original_token_ != 0); }
-		const std::vector<TemplateTypeArg>& read_template_type_args() const {	// If we use the arguments, we change to discard
+		const InlineVector<TemplateTypeArg, 4>& read_template_type_args() const {	// If we use the arguments, we change to discard
 			destroy_pattern_ = TokenDestroyPattern::Discard;
 			return template_type_args_;
 		}
-		std::vector<TemplateTypeArg>&& move_template_type_args() {	// If we use the arguments, we change to discard
+		InlineVector<TemplateTypeArg, 4>&& move_template_type_args() {	// If we use the arguments, we change to discard
 			destroy_pattern_ = TokenDestroyPattern::Discard;
 			return std::move(template_type_args_);
 		}
@@ -1388,7 +1390,9 @@ private:
 
 	ParseResult parse_template_template_parameter_forms(InlineVector<TemplateParameterNode, 4>& out_params);  // NEW: Parse template<template<typename> class T> forms
 	ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
-	std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes = nullptr);  // NEW: Parse explicit template arguments like <int, float>
+	std::optional<InlineVector<TemplateTypeArg, 4>> parse_explicit_template_arguments();	// NEW: Parse explicit template arguments like <int, float>
+	std::optional<InlineVector<TemplateTypeArg, 4>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes);
+	std::optional<InlineVector<TemplateTypeArg, 4>> parse_explicit_template_arguments(InlineVector<ASTNode, 4>* out_type_nodes);
 	TemplateTypeArgParsingResult parse_explicit_template_arguments_as_result(TokenDestroyPattern destroy_pattern);	// NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
 	ConstructorLookaheadResult consume_constructor_or_destructor_prefix(std::string_view class_name);  // Priority 3: Consume ClassName[<...>]::[~] prefix and detect ClassName( pattern (advances token position)
 	ConstructorLookaheadResult lookahead_constructor_or_destructor(std::string_view class_name);	 // Priority 3: Detect ClassName[<...>]::[~]ClassName( pattern with save/restore
@@ -1400,8 +1404,8 @@ private:
 	std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
 	std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types, int& recursion_depth);	 // Helper: Try to instantiate a specific template node (for SFINAE)
 	const FunctionDeclarationNode* tryInstantiateOperatorTemplateForBinary(std::string_view op_symbol, const TypeSpecifierNode& left_type_spec, const TypeSpecifierNode& right_type_spec);
-	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count = SIZE_MAX);	// NEW: Instantiate with explicit args
-	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, const std::vector<TypeSpecifierNode>& arg_types);
+	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, size_t call_arg_count = SIZE_MAX);	// NEW: Instantiate with explicit args
+	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, const std::vector<TypeSpecifierNode>& arg_types);
 	struct CallArgDeductionInfo {
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
 		std::unordered_set<size_t> pre_deduced_arg_indices;
@@ -2053,9 +2057,16 @@ private:
 		const InlineVector<StringHandle, 4>& param_names,
 		std::span<const TemplateTypeArg> template_args,
 		const TemplateParameterNode* target_template_param);
-	std::optional<std::vector<TemplateTypeArg>> materializeDeferredAliasTemplateArgs(
+	std::optional<InlineVector<TemplateTypeArg, 4>> materializeDeferredAliasTemplateArgs(
 		const TemplateAliasNode& alias_node,
 		std::span<const TemplateTypeArg> template_args);
+	StringHandle getDeferredMemberAliasHandle(
+		const TemplateAliasNode& alias_node,
+		std::string_view instantiated_name) const;
+	std::optional<InlineVector<TemplateTypeArg, 4>> materializeDeferredAliasMemberTemplateArgs(
+		const TemplateAliasNode& alias_node,
+		std::span<const TemplateTypeArg> template_args,
+		StringHandle member_alias_handle);
 	StringHandle getAliasTargetNameHandle(const TypeSpecifierNode& alias_target) const;
 	std::optional<size_t> findAliasTargetTemplateParamIndex(
 		const TemplateAliasNode& alias_node,
@@ -2084,7 +2095,7 @@ private:
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
 	std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Instantiate member function template
-	std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, const std::vector<TemplateTypeArg>& template_type_args);  // NEW: Instantiate member function template with explicit args
+	std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, std::span<const TemplateTypeArg> template_type_args);  // NEW: Instantiate member function template with explicit args
 		// Core logic shared by both try_instantiate_member_function_template and _explicit.
 		// Given a resolved template node and template arguments, performs type substitution,
 		// body parsing, scope management, and AST registration.
@@ -2452,8 +2463,14 @@ private:
 		std::span<const TemplateParameterNode> template_parameters,
 		std::vector<TemplateTypeArg>& template_args);
 	void normalizeDependentNonTypeTemplateArgs(
+		std::span<const TemplateParameterNode> template_parameters,
+		InlineVector<TemplateTypeArg, 4>& template_args);
+	void normalizeDependentNonTypeTemplateArgs(
 		const InlineVector<ASTNode, 4>& template_parameters,
 		std::vector<TemplateTypeArg>& template_args);
+	void normalizeDependentNonTypeTemplateArgs(
+		const InlineVector<ASTNode, 4>& template_parameters,
+		InlineVector<TemplateTypeArg, 4>& template_args);
 	bool resolveAliasTemplateInstantiation(
 		TypeSpecifierNode& type_spec,
 		std::string_view alias_template_name,
@@ -2683,13 +2700,13 @@ private:	 // Resume private methods
 	std::optional<ASTNode> try_synthesize_atomic_builtin_overload(std::string_view builtin_name, const std::vector<TypeSpecifierNode>& arg_types, const Token& call_token);
 	const FunctionDeclarationNode* tryResolveConcreteMemberFunction(const std::optional<ASTNode>& object_expr, std::string_view member_name);
 	std::optional<ASTNode> tryResolveMemberFunctionTemplate(const std::optional<ASTNode>& object_expr, std::string_view member_name,
-															const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args, const std::vector<TypeSpecifierNode>& arg_types);
+															const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args, const std::vector<TypeSpecifierNode>& arg_types);
 	// Shared member-template call dispatch once the caller knows whether arguments were
 	// syntactically present and whether any of them stayed dependent while collecting types.
 	std::optional<ASTNode> tryInstantiateMemberFunctionTemplateCall(
 		std::string_view struct_name,
 		std::string_view member_name,
-		const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args,
+		const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args,
 		const std::vector<TypeSpecifierNode>& call_arg_types,
 		bool has_call_args,
 		bool has_dependent_call_args);

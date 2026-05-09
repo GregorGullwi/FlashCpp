@@ -155,7 +155,7 @@ ParseResult Parser::parse_template_declaration() {
 			}
 
 			// Parse template arguments: Name<Args>
-			std::optional<std::vector<TemplateTypeArg>> template_args;
+			std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
 			if (peek() == "<"_tok) {
 				template_args = parse_explicit_template_arguments();
 				if (!template_args.has_value()) {
@@ -873,7 +873,9 @@ ParseResult Parser::parse_template_declaration() {
 		// The integral_constant<bool, B> gets instantiated with "?" placeholder in the name
 		bool has_unresolved_params = false;
 		StringHandle target_template_name;
-		std::vector<ASTNode> target_template_arg_nodes;
+		InlineVector<ASTNode, 4> target_template_arg_nodes;
+		StringHandle target_member_template_name;
+		InlineVector<ASTNode, 4> target_member_template_arg_nodes;
 
 		if ((is_struct_type(type_spec.category())) &&
 			type_spec.type_index().index() < getTypeInfoCount()) {
@@ -961,6 +963,8 @@ ParseResult Parser::parse_template_declaration() {
 				if (parseDeferredAliasTargetTemplateId(
 						target_template_name,
 						target_template_arg_nodes,
+						target_member_template_name,
+						target_member_template_arg_nodes,
 						true)) {
 					FLASH_LOG(Parser, Debug, "Captured ", target_template_arg_nodes.size(), " unevaluated template argument nodes for deferred instantiation");
 
@@ -1005,7 +1009,9 @@ ParseResult Parser::parse_template_declaration() {
 				StringTable::getOrInternStringHandle(alias_name),
 				type_result.node().value(),
 				target_template_name,
-				std::move(target_template_arg_nodes));
+				std::move(target_template_arg_nodes),
+				target_member_template_name,
+				std::move(target_member_template_arg_nodes));
 		} else {
 			// Regular (non-deferred) alias
 			alias_node = emplace_node<TemplateAliasNode>(
@@ -1311,7 +1317,7 @@ ParseResult Parser::parse_template_declaration() {
 				return ParseResult::error("Expected template arguments in specialization", current_token_);
 			}
 
-			std::vector<TemplateTypeArg> template_args = *template_args_opt;
+			InlineVector<TemplateTypeArg, 4> template_args = *template_args_opt;
 
 			// Check for out-of-line member class definition: template<> class Foo<Args>::Bar { ... }
 			// E.g., template<> class basic_ostream<char, char_traits<char>>::sentry { ... };
@@ -1402,7 +1408,7 @@ ParseResult Parser::parse_template_declaration() {
 				// Register the specialization with the template registry
 				gTemplateRegistry.registerSpecialization(
 					std::string(template_name),
-					template_args,
+					template_args.toVector(),
 					struct_node);
 
 				FLASH_LOG_FORMAT(Templates, Debug, "Registered forward declaration for specialization: {}",
@@ -1486,7 +1492,7 @@ ParseResult Parser::parse_template_declaration() {
 
 					std::string_view base_class_name = base_class_name_builder.commit();
 					std::vector<ASTNode> template_arg_nodes;
-					std::optional<std::vector<TemplateTypeArg>> base_template_args_opt;
+					std::optional<InlineVector<TemplateTypeArg, 4>> base_template_args_opt;
 					std::vector<QualifiedTypeMemberAccess> member_type_chain;
 					std::optional<Token> member_name_token;
 
@@ -1507,7 +1513,7 @@ ParseResult Parser::parse_template_declaration() {
 						member_type_chain = post_info.member_type_chain;
 						member_name_token = post_info.member_name_token;
 
-						std::vector<TemplateTypeArg> base_template_args = *base_template_args_opt;
+						InlineVector<TemplateTypeArg, 4> base_template_args = *base_template_args_opt;
 
 						// Check if any template arguments are dependent
 						bool has_dependent_args = post_info.is_pack_expansion;
@@ -2681,10 +2687,10 @@ ParseResult Parser::parse_template_declaration() {
 			//     registerSpecializationPattern().
 			if (template_param_nodes.empty()) {
 				// Full specialization: exact match on concrete arguments
-				gTemplateRegistry.registerSpecialization(template_name, template_args, struct_node);
+				gTemplateRegistry.registerSpecialization(template_name, template_args.toVector(), struct_node);
 			} else {
 				// Partial specialization: register as a pattern for matching
-				gTemplateRegistry.registerSpecializationPattern(template_name, template_param_nodes, template_args, struct_node);
+				gTemplateRegistry.registerSpecializationPattern(template_name, template_param_nodes, template_args.toVector(), struct_node);
 			}
 
 			// Reset parsing context flags
@@ -2726,7 +2732,7 @@ ParseResult Parser::parse_template_declaration() {
 				return ParseResult::error("Expected template argument pattern in partial specialization", current_token_);
 			}
 
-			std::vector<TemplateTypeArg> pattern_args = *pattern_args_opt;
+			InlineVector<TemplateTypeArg, 4> pattern_args = *pattern_args_opt;
 
 			// Check for out-of-line member class definition: template<...> class Foo<...>::Bar { ... }
 			// E.g., template<typename _CharT, typename _Traits>
@@ -2917,7 +2923,7 @@ ParseResult Parser::parse_template_declaration() {
 							return ParseResult::error("Failed to parse template arguments for base class", peek_info());
 						}
 
-						std::vector<TemplateTypeArg> template_args = *template_args_opt;
+						InlineVector<TemplateTypeArg, 4> template_args = *template_args_opt;
 
 						// Consume optional ::member type access and ... pack expansion
 						auto post_info_opt = consume_base_class_qualifiers_after_template_args();
@@ -3010,7 +3016,7 @@ ParseResult Parser::parse_template_declaration() {
 				}
 				std::string_view pattern_key_view = pattern_key.commit();
 
-				gTemplateRegistry.registerSpecialization(template_name, pattern_args, template_class_node);
+				gTemplateRegistry.registerSpecialization(template_name, pattern_args.toVector(), template_class_node);
 				FLASH_LOG_FORMAT(Parser, Debug, "Registered forward declaration for partial specialization: {} with pattern {}", template_name, pattern_key_view);
 
 				// Clean up template parameter context
@@ -3037,7 +3043,7 @@ ParseResult Parser::parse_template_declaration() {
 					std::move(param_names_view2),
 					struct_node);
 
-				gTemplateRegistry.registerSpecialization(template_name, pattern_args, template_class_node);
+				gTemplateRegistry.registerSpecialization(template_name, pattern_args.toVector(), template_class_node);
 				FLASH_LOG_FORMAT(Parser, Debug, "Registered forward declaration for partial specialization (after extra tokens): {}", template_name);
 
 				clearCurrentTemplateParameters();
@@ -4033,7 +4039,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Register the specialization PATTERN (not exact match)
 			// This allows pattern matching during instantiation
-			gTemplateRegistry.registerSpecializationPattern(template_name, template_param_nodes, pattern_args, struct_node);
+			gTemplateRegistry.registerSpecializationPattern(template_name, template_param_nodes, pattern_args.toVector(), struct_node);
 
 			// Clean up template parameter context before returning
 			clearCurrentTemplateParameters();
@@ -4373,7 +4379,7 @@ ParseResult Parser::parse_template_declaration() {
 			std::string_view func_base_name = decl_node.identifier_token().value();
 
 			// Parse explicit template arguments (e.g., <int>, <int, int>)
-			std::vector<TemplateTypeArg> spec_template_args;
+			InlineVector<TemplateTypeArg, 4> spec_template_args;
 			if (peek() == "<"_tok) {
 				auto template_args_opt = parse_explicit_template_arguments();
 				if (!template_args_opt.has_value()) {
@@ -4422,7 +4428,7 @@ ParseResult Parser::parse_template_declaration() {
 				StringHandle func_handle = StringTable::getOrInternStringHandle(func_base_name);
 				StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, func_handle);
 				std::string_view qualified_specialization_name = StringTable::getStringView(qualified_handle);
-				gTemplateRegistry.registerSpecialization(qualified_specialization_name, spec_template_args, *func_result.node());
+				gTemplateRegistry.registerSpecialization(qualified_specialization_name, spec_template_args.toVector(), *func_result.node());
 
 				return saved_position.success(*func_result.node());
 			}
@@ -4505,7 +4511,7 @@ ParseResult Parser::parse_template_declaration() {
 				}
 
 				specialization_mangled_name = NameMangling::generateMangledNameWithTypeTemplateArgs(
-					func_base_name, return_type, param_types, spec_template_args,
+					func_base_name, return_type, param_types, spec_template_args.toVector(),
 					func_for_mangling.is_variadic(), StringHandle{}, namespace_handle, false);
 			} else {
 				// Regular specialization without any template args.
@@ -4520,7 +4526,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			func_for_mangling.set_mangled_name(specialization_mangled_name.view());
 
-			gTemplateRegistry.registerSpecialization(qualified_specialization_name, spec_template_args, func_node_copy);
+			gTemplateRegistry.registerSpecialization(qualified_specialization_name, spec_template_args.toVector(), func_node_copy);
 
 			// Also add to symbol table so codegen can find it during overload resolution
 			// Use the base function name (without template args) so it can be looked up
@@ -4969,7 +4975,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			return ParseResult::error("Expected template argument pattern in partial specialization", current_token_);
 		}
 
-		std::vector<TemplateTypeArg> pattern_args = *pattern_args_opt;
+		InlineVector<TemplateTypeArg, 4> pattern_args = *pattern_args_opt;
 
 		// Generate a unique name for the pattern template
 		// We use the template parameter names + modifiers to create unique pattern names
@@ -5464,7 +5470,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		gTemplateRegistry.registerSpecializationPattern(
 			StringTable::getStringView(qualified_simple_name),
 			template_param_nodes,
-			pattern_args,
+			pattern_args.toVector(),
 			template_struct_node);
 
 		// Also register pattern under simple name (List) for consistency with primary template
@@ -5472,7 +5478,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		gTemplateRegistry.registerSpecializationPattern(
 			struct_name,
 			template_param_nodes,
-			pattern_args,
+			pattern_args.toVector(),
 			template_struct_node);
 
 		FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template partial specialization: {} with pattern",

@@ -332,7 +332,7 @@ std::string_view getTemplateArgTokenText(const TemplateTypeArg& arg) {
 }
 
 std::vector<ASTNode> materializeTemplateArgumentNodes(
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	const Token& source_token) {
 	std::vector<ASTNode> result;
 	result.reserve(template_args.size());
@@ -668,7 +668,7 @@ bool argsHaveDeferredTemplateDependency(
 
 void syncTemplateArgumentNodeMetadata(
 	std::vector<ASTNode>& template_arg_nodes,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	size_t count = std::min(template_arg_nodes.size(), template_args.size());
 	for (size_t i = 0; i < count; ++i) {
 		if (!template_args[i].is_pack) {
@@ -2146,7 +2146,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		// - Non-global namespace -> looks in specified namespace
 		identifierType = lookup_symbol_qualified(qual_id.namespace_handle(), qual_id.name());
 
-		std::optional<std::vector<TemplateTypeArg>> template_args;
+		std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
 		std::vector<ASTNode> template_arg_nodes;
 		if (current_token_.value() == "<") {
 			std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
@@ -2437,7 +2437,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		// Phase 1: C++20 Template Argument Disambiguation - try to parse template arguments
 		// after qualified identifiers, BUT check if the member is actually a template first
 		// to avoid misinterpreting comparisons like _R1::num < _R2::num
-			std::optional<std::vector<TemplateTypeArg>> template_args;
+			std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
 			std::vector<ASTNode> template_arg_nodes;	 // Store the actual expression nodes
 			if (current_token_.value() == "<") {
 			// Build the qualified name from namespace handle
@@ -3462,7 +3462,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			FLASH_LOG(Parser, Debug, "Qualified identifier: final name = '{}'", final_identifier.value());
 
 			// Check if final identifier is followed by template arguments: ns::Template<Args>
-			std::optional<std::vector<TemplateTypeArg>> template_args;
+			std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
 			std::vector<ASTNode> template_arg_nodes;	 // Store the actual expression nodes
 			if (peek() == "<"_tok) {
 				// Before parsing < as template arguments, check if the identifier is actually a template
@@ -5779,7 +5779,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			// Check for explicit template arguments: identifier<type1, type2>(args)
 			// BUT: Don't attempt template argument parsing for regular variables (could be < comparison)
-			std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
+			std::optional<InlineVector<TemplateTypeArg, 4>> explicit_template_args;
 			std::vector<ASTNode> explicit_template_arg_nodes;  // Store AST nodes for template arguments
 			bool should_try_template_args = true;  // Default: try template parsing
 
@@ -6529,7 +6529,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							// If we successfully extracted all argument types, perform overload resolution
 							if (arg_types.size() == args.size()) {
 								// Check for explicit template arguments: either from local variable or pending member variable
-								std::optional<std::vector<TemplateTypeArg>> effective_template_args;
+								std::optional<InlineVector<TemplateTypeArg, 4>> effective_template_args;
 								if (explicit_template_args.has_value()) {
 									effective_template_args = explicit_template_args;
 								} else if (pending_explicit_template_args_.has_value()) {
