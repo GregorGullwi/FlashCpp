@@ -1,12 +1,12 @@
 # Template Binding Architecture Plan
 
 **Date:** 2026-05-09  
-**Status:** In Progress (Phases 1-4 completed)  
+**Status:** In Progress (Phases 1-5 completed)  
 **Scope:** Template argument identity, parameter binding environments, instantiation consumers, and C++20 failure-mode boundaries.
 
 ## Next Task
 
-Implement Phase 5: make `TypeInfo::InstantiationContext` binding-based with compatibility accessors during migration.
+Implement Phase 6: extend `TypeInfo::TemplateArgInfo` to preserve full template argument metadata losslessly through round-trip through persistent storage.
 
 Existing helpers now cover part of this work:
 
@@ -339,6 +339,15 @@ Special attention: commit `8fb3701c` added ad hoc alignment vectors such as `tem
 
 Complexity: L  
 Risk: High
+
+Completed notes:
+
+- Added parallel binding storage arrays alongside legacy param_names/param_args for compatibility.
+- Implemented `setInstantiationContext()` to dual-populate both legacy and new binding fields.
+- Added accessor methods `hasInstantiationContextBindings()` and `getInstantiationContextBindingsCount()`.
+- Resolved circular header dependencies by using parallel simple arrays instead of embedding `TemplateBindingSnapshot` structs directly.
+- Kept legacy param_names/param_args fields for unmigrated readers; binding arrays are now canonical for new code.
+- Verified with build and full test suite.
 
 ### Phase 6: Make Persistent Argument Metadata Lossless
 
