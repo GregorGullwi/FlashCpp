@@ -345,6 +345,13 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	MaterializedStoredTemplateArgs result;
 	const auto& stored_args = template_instantiation_info.templateArgs();
 	result.args.reserve(stored_args.size());
+	// Alias/template helper instantiations can store arguments in terms of their
+	// own template parameters (for example `_Tp`) while the current
+	// ExpressionSubstitutor only knows the consumer's bindings (for example
+	// `_Head -> NonEmpty`). Resolve those renamed dependent type arguments by
+	// walking the instantiated type's context chain. `resolution_stack` breaks
+	// cycles in malformed/self-referential contexts, and the recursive `self`
+	// parameter lets the lambda re-enter for transitive renames.
 	std::vector<StringHandle> resolution_stack;
 	auto resolveContextBinding =
 		[&](StringHandle target_name,
