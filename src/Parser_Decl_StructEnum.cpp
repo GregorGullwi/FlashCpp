@@ -3542,6 +3542,23 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			deferred.struct_type_index = delayed.struct_type_index.index();
 			deferred.template_param_names = delayed.template_param_names;
 			pending_template_deferred_bodies_.push_back(std::move(deferred));
+
+			// Set template body position on the function/constructor node so that
+			// has_any_body_source() returns true. This is required for the lazy instantiation
+			// path to register a lazy stub and later materialize the body on demand.
+			// Without this, has_any_body_source() returns false, no lazy stub is registered,
+			// and neither lazy nor eager materialization can happen, leaving the function as
+			// an unmaterialized stub that causes compile/link/runtime failures.
+			if (delayed.is_constructor && delayed.ctor_node) {
+				delayed.ctor_node->set_template_body_position(delayed.body_start);
+				if (delayed.has_initializer_list) {
+					delayed.ctor_node->set_template_initializer_list_position(delayed.initializer_list_start);
+				}
+			} else if (!delayed.is_destructor && delayed.func_node) {
+				// Destructors don't support saved template body positions (they require
+				// is_materialized() = true for lazy materialization). Skip dtors here.
+				delayed.func_node->set_template_body_position(delayed.body_start);
+			}
 		}
 
 		// Clear the delayed bodies list - they're now in pending_template_deferred_bodies_

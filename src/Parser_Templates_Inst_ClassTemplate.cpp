@@ -7947,6 +7947,39 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					// Slice 3: record constructor-with-definition stub.
 					source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_ctor_node;
+
+					// When implicitly instantiating a constructor whose body was deferred to the
+					// pending_template_deferred_bodies_ list (has_template_body_position but not yet
+					// is_materialized), register the instantiated stub in the lazy registry so it
+					// can be re-parsed with concrete types when odr-used. Without this, the stub
+					// remains unmaterialized and codegen reports "unmaterialized constructor".
+					// The stub carries template_body_position (and template_initializer_list_position
+					// for ctors with member-initializers) propagated from the original above.
+					if (is_implicit_instantiation &&
+						!ctor_decl.is_materialized() &&
+						ctor_decl.has_template_body_position() &&
+						shouldCommitTemplateInstantiationArtifacts()) {
+						LazyMemberFunctionInfo lazy_ctor_info;
+						{
+							auto& id = lazy_ctor_info.identity;
+							// Store the instantiated stub as original_member_node. The lazy
+							// materializer uses this node's template_body_position for re-parsing,
+							// and matches it by raw pointer when updating struct_info.
+							id.original_member_node = new_ctor_node;
+							id.template_owner_name = StringTable::getOrInternStringHandle(template_name);
+							id.instantiated_owner_name = instantiated_name;
+							id.original_lookup_name = instantiated_name; // constructor name = class name
+							id.kind = DeferredMemberIdentity::Kind::Constructor;
+							id.is_const_method = false;
+						}
+						lazy_ctor_info.template_params = template_params;
+						lazy_ctor_info.template_args = template_args_to_use;
+						lazy_ctor_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
+							effective_template_params,
+							effective_template_args);
+						lazy_ctor_info.access = mem_func.access;
+						LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_ctor_info));
+					}
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for constructor ",
 							  ctor_decl.name(), ": ", e.what());

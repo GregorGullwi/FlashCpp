@@ -1750,6 +1750,25 @@ void AstToIr::generateTrivialDefaultConstructors() {
 					// base classes like Base<T> resolved to a concrete type.
 					const StructTypeInfo* base_struct_info = base_type_it->second->getStructInfo();
 					if (base_struct_info && base_struct_info->hasConstructor()) {
+						// If the base class has a lazy (unmateriailzed) default constructor,
+						// materialize it via the parser before emitting the ConstructorCallOp.
+						// generateTrivialDefaultConstructors() runs before sema_ is set, so we
+						// cannot use ensureMemberFunctionMaterialized here; instead we call the
+						// parser's lazy-instantiation entry point directly.
+						if (parser_) {
+							const StructMemberFunction* base_default_ctor = base_struct_info->findDefaultConstructor();
+							if (base_default_ctor &&
+								base_default_ctor->function_decl.is<ConstructorDeclarationNode>() &&
+								!base_default_ctor->function_decl.as<ConstructorDeclarationNode>().is_materialized() &&
+								!base_default_ctor->function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
+								StringHandle base_name = base_struct_info->name;
+								StringHandle ctor_name = base_default_ctor->function_decl.as<ConstructorDeclarationNode>().name();
+								if (base_name.isValid() && ctor_name.isValid()) {
+									LazyMemberKey key = LazyMemberKey::exact(base_name, ctor_name, false);
+									parser_->instantiateLazyMemberIfNeeded(key);
+								}
+							}
+						}
 						ConstructorCallOp call_op;
 						call_op.object = StringTable::getOrInternStringHandle("this");
 						// No arguments for default constructor
