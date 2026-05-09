@@ -883,7 +883,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 					stored_arg,
 					template_params,
 					template_args,
-					[this, &substitution_environment](
+					[this, substitution_environment](
 						const ASTNode& expr,
 						std::span<const ASTNode> params,
 						std::span<const TemplateTypeArg> args) {
@@ -2592,8 +2592,7 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 					type_substitution_map[param_type_index] = subst.substituted_type;
 				}
 			}
-		}
-		if (subst.is_value_param) {
+		} else if (subst.is_value_param) {
 			nontype_substitution_map[StringTable::getStringView(subst.param_name)] = subst.value;
 		}
 	}
