@@ -1347,6 +1347,12 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 				const ASTNode& func_decl = member_func.function_declaration;
 				if (func_decl.is<FunctionDeclarationNode>()) {
 					const auto& fn = func_decl.as<FunctionDeclarationNode>();
+					if (fn.is_implicit() &&
+						(member_func.operator_kind == OverloadableOperator::CopyAssign ||
+						 member_func.operator_kind == OverloadableOperator::MoveAssign)) {
+						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - deferring implicit assignment operator emission until ODR-use");
+						continue;
+					}
 					// Skip functions with unresolved auto parameters (abbreviated templates)
 					// These will be instantiated when called with concrete types
 					bool fn_has_auto = false;
@@ -1390,6 +1396,10 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 					}
 				} else if (func_decl.is<ConstructorDeclarationNode>()) {
 					const auto& ctor = func_decl.as<ConstructorDeclarationNode>();
+					if (ctor.is_implicit()) {
+						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - deferring implicit constructor emission until ODR-use");
+						continue;
+					}
 						// Skip constructors with unresolved auto parameters (member function templates)
 						// These will be instantiated when called with concrete types
 					bool ctor_has_auto = false;

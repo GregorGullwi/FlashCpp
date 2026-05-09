@@ -941,7 +941,7 @@ void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, cons
 void AstToIr::finalizeConstructorCallOp(
 	ConstructorCallOp& ctor_op,
 	const StructTypeInfo& target_struct_info,
-	const Token& source_token) const {
+	const Token& source_token) {
 	(void)source_token;
 	if (target_struct_info.own_type_index_.has_value()) {
 		ctor_op.target_type_index = *target_struct_info.own_type_index_;
@@ -962,6 +962,18 @@ void AstToIr::finalizeConstructorCallOp(
 											.append(StringTable::getStringView(target_struct_info.name))
 											.append("'")
 											.commit()));
+	}
+
+	if (ctor_op.resolved_constructor && ctor_op.resolved_constructor->is_implicit()) {
+		StringHandle saved_function_name = current_function_name_;
+		StringHandle saved_function_mangled_name = current_function_mangled_name_;
+		StringHandle saved_struct_name = current_struct_name_;
+		auto saved_namespace_stack = current_namespace_stack_;
+		visitConstructorDeclarationNode(*ctor_op.resolved_constructor);
+		current_function_name_ = saved_function_name;
+		current_function_mangled_name_ = saved_function_mangled_name;
+		current_struct_name_ = saved_struct_name;
+		current_namespace_stack_ = std::move(saved_namespace_stack);
 	}
 }
 

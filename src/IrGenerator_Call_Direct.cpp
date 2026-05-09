@@ -1210,6 +1210,21 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				.commit()));
 	}
 
+	if (matched_func_decl &&
+		matched_func_decl->is_member_function() &&
+		matched_func_decl->is_implicit() &&
+		matched_func_decl->decl_node().identifier_token().value() == "operator=") {
+		StringHandle saved_function_name = current_function_name_;
+		StringHandle saved_function_mangled_name = current_function_mangled_name_;
+		StringHandle saved_struct_name = current_struct_name_;
+		auto saved_namespace_stack = current_namespace_stack_;
+		visitFunctionDeclarationNode(*matched_func_decl);
+		current_function_name_ = saved_function_name;
+		current_function_mangled_name_ = saved_function_mangled_name;
+		current_struct_name_ = saved_struct_name;
+		current_namespace_stack_ = std::move(saved_namespace_stack);
+	}
+
 	// consteval enforcement: every call to a consteval function is an immediate invocation and
 	// must be a constant expression (C++20 [dcl.consteval]).  generateFunctionCallIr is only
 	// reached when emitting runtime IR, so we first try to fold the call at compile time.

@@ -155,7 +155,7 @@ private:
 	void finalizeConstructorCallOp(
 		ConstructorCallOp& ctor_op,
 		const StructTypeInfo& target_struct_info,
-		const Token& source_token) const;
+		const Token& source_token);
 	// Fill trailing default arguments for a constructor overload that has already
 	// been selected, starting after the explicitly provided arguments.
 	void fillInConstructorDefaultArguments(
