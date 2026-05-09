@@ -662,7 +662,9 @@ ParseResult Parser::parse_template_template_parameter_form() {
 // Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
 // Template parameters must already be registered in getTypesByNameMap() via TemplateParameterScope
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments() {
-	return parse_explicit_template_arguments(static_cast<std::vector<ASTNode>*>(nullptr));
+	// Keep the no-output overload explicit so callers do not rely on default parameters.
+	std::vector<ASTNode>* out_type_nodes = nullptr;
+	return parse_explicit_template_arguments(out_type_nodes);
 }
 
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes) {
@@ -712,7 +714,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		advance(); // consume '>'
 		// Success - discard saved position
 		discard_saved_token(saved_pos);
-		return template_args.toVector();  // Return empty vector
+		return template_args;
 	}
 
 	// Handle >> token for empty template arguments in nested context (e.g., __void_t<>>)
@@ -723,7 +725,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		if (peek() == ">"_tok) {
 			advance(); // consume first '>'
 			discard_saved_token(saved_pos);
-			return template_args.toVector();  // Return empty vector
+			return template_args;
 		}
 	}
 
@@ -2266,7 +2268,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 	// Success - discard saved position
 	discard_saved_token(saved_pos);
 	last_failed_template_arg_parse_handle_ = SIZE_MAX;  // Clear failure marker on success
-	return template_args.toVector();
+	return template_args;
 }
 
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(

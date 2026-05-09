@@ -342,7 +342,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 	std::span<const TemplateTypeArg> template_args) {
 	InlineVector<TemplateTypeArg, 4> substituted_args;
 	const auto& param_names = alias_node.template_param_names();
-	const std::span<const ASTNode> target_template_args = alias_node.target_template_args();
+	std::span<const ASTNode> target_template_args = alias_node.target_template_args();
 	const auto target_template_params =
 		getTargetTemplateParameters(StringTable::getOrInternStringHandle(alias_node.target_template_name()));
 	substituted_args.reserve(target_template_args.size());
@@ -396,7 +396,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 	StringHandle member_alias_handle) {
 	const auto member_template_params = getTargetTemplateParameters(member_alias_handle);
 	InlineVector<TemplateTypeArg, 4> member_args;
-	const std::span<const ASTNode> member_template_args = alias_node.targetMemberTemplateArgs();
+	std::span<const ASTNode> member_template_args = alias_node.targetMemberTemplateArgs();
 	member_args.reserve(member_template_args.size());
 
 	for (size_t i = 0; i < member_template_args.size(); ++i) {
@@ -528,9 +528,11 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 	}
 }
 
-void Parser::normalizeDependentNonTypeTemplateArgs(
-	const InlineVector<ASTNode, 4>& template_parameters,
-	std::vector<TemplateTypeArg>& template_args) {
+namespace {
+
+// Collect only template-parameter nodes from a mixed AST-node parameter list.
+InlineVector<TemplateParameterNode, 4> extractTemplateParameterNodes(
+	const InlineVector<ASTNode, 4>& template_parameters) {
 	InlineVector<TemplateParameterNode, 4> typed_template_parameters;
 	typed_template_parameters.reserve(template_parameters.size());
 	for (const ASTNode& template_param : template_parameters) {
@@ -539,6 +541,16 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 		}
 		typed_template_parameters.push_back(template_param.as<TemplateParameterNode>());
 	}
+	return typed_template_parameters;
+}
+
+}
+
+void Parser::normalizeDependentNonTypeTemplateArgs(
+	const InlineVector<ASTNode, 4>& template_parameters,
+	std::vector<TemplateTypeArg>& template_args) {
+	InlineVector<TemplateParameterNode, 4> typed_template_parameters =
+		extractTemplateParameterNodes(template_parameters);
 	normalizeDependentNonTypeTemplateArgs(
 		typed_template_parameters,
 		template_args);
@@ -547,14 +559,8 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 void Parser::normalizeDependentNonTypeTemplateArgs(
 	const InlineVector<ASTNode, 4>& template_parameters,
 	InlineVector<TemplateTypeArg, 4>& template_args) {
-	InlineVector<TemplateParameterNode, 4> typed_template_parameters;
-	typed_template_parameters.reserve(template_parameters.size());
-	for (const ASTNode& template_param : template_parameters) {
-		if (!template_param.is<TemplateParameterNode>()) {
-			continue;
-		}
-		typed_template_parameters.push_back(template_param.as<TemplateParameterNode>());
-	}
+	InlineVector<TemplateParameterNode, 4> typed_template_parameters =
+		extractTemplateParameterNodes(template_parameters);
 	normalizeDependentNonTypeTemplateArgs(
 		typed_template_parameters,
 		template_args);

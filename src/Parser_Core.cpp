@@ -323,6 +323,7 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 			// TemplateAliasNode currently stores only one dependent member-template hop.
 			// Reject additional suffixes here so we never silently truncate the alias target.
 			if (out_target_member_template_name.isValid()) {
+				FLASH_LOG(Parser, Debug, "Rejecting deferred alias target with multiple dependent member-template hops");
 				return restore_on_failure();
 			}
 			advance();
