@@ -1,0 +1,370 @@
+#include "TemplateEnvironment.h"
+
+#include "TemplateRegistry_Pattern.h"
+#include "TemplateRegistry_Types.h"
+
+#include <algorithm>
+#include <unordered_set>
+
+const TemplateTypeArg* TemplateEnvironment::findOne(StringHandle name) const {
+	for (const TemplateBinding& binding : bindings) {
+		if (binding.name != name || binding.is_pack || binding.args.empty()) {
+			continue;
+		}
+		return &binding.args.front();
+	}
+	return parent != nullptr ? parent->findOne(name) : nullptr;
+}
+
+std::span<const TemplateTypeArg> TemplateEnvironment::findPack(StringHandle name) const {
+	for (const TemplateBinding& binding : bindings) {
+		if (binding.name != name || !binding.is_pack) {
+			continue;
+		}
+		return std::span<const TemplateTypeArg>(binding.args.data(), binding.args.size());
+	}
+	return parent != nullptr ? parent->findPack(name) : std::span<const TemplateTypeArg>{};
+}
+
+TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
+	TypeInfo::TemplateArgInfo info;
+	info.type_index = arg.type_index; // carries both index and TypeCategory
+	info.pointer_depth = arg.pointer_depth;
+	info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
+	info.ref_qualifier = arg.ref_qualifier;
+	info.cv_qualifier = arg.cv_qualifier;
+	info.is_array = arg.is_array;
+	info.array_dimensions.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
+	info.value = arg.value;
+	info.is_value = arg.is_value;
+	info.dependent_name = arg.dependent_name;
+	info.function_signature = arg.function_signature;
+	info.dependent_expr = arg.dependent_expr;
+	info.is_template_template_arg = arg.is_template_template_arg;
+	info.template_name = arg.template_name_handle;
+	info.member_pointer_kind = arg.member_pointer_kind;
+	return info;
+}
+
+TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
+	TemplateTypeArg ta;
+	ta.type_index = arg.type_index;
+	ta.is_value = arg.is_value;
+	ta.cv_qualifier = arg.cv_qualifier;
+	ta.ref_qualifier = arg.ref_qualifier;
+	ta.pointer_depth = static_cast<uint8_t>(arg.pointer_depth);
+	ta.is_array = arg.is_array;
+	ta.array_dimensions.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
+	ta.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
+	ta.dependent_name = arg.dependent_name;
+	ta.dependent_expr = arg.dependent_expr;
+	ta.function_signature = arg.function_signature;
+	ta.is_dependent = arg.dependent_name.isValid() || arg.dependent_expr.has_value();
+	ta.is_template_template_arg = arg.is_template_template_arg;
+	ta.template_name_handle = arg.template_name;
+	ta.member_pointer_kind = arg.member_pointer_kind;
+	if (arg.is_value) {
+		ta.value = arg.intValue();
+	}
+	return ta;
+}
+
+InlineVector<TypeInfo::TemplateArgInfo, 4> toTemplateArgInfoList(std::span<const TemplateTypeArg> args) {
+	InlineVector<TypeInfo::TemplateArgInfo, 4> result;
+	result.reserve(args.size());
+	for (const TemplateTypeArg& arg : args) {
+		result.push_back(toTemplateArgInfo(arg));
+	}
+	return result;
+}
+
+InlineVector<TemplateTypeArg, 4> toTemplateTypeArgList(std::span<const TypeInfo::TemplateArgInfo> args) {
+	InlineVector<TemplateTypeArg, 4> result;
+	result.reserve(args.size());
+	for (const TypeInfo::TemplateArgInfo& arg : args) {
+		result.push_back(toTemplateTypeArg(arg));
+	}
+	return result;
+}
+
+namespace {
+
+TemplateParameterKind inferBindingKind(const TypeInfo::TemplateArgInfo& arg) {
+	if (arg.is_value) {
+		return TemplateParameterKind::NonType;
+	}
+	return TemplateParameterKind::Type;
+}
+
+size_t countRequiredTemplateArgsAfter(
+	std::span<const TemplateParameterNode> params,
+	size_t start_index) {
+	size_t count = 0;
+	for (size_t i = start_index; i < params.size(); ++i) {
+		if (!params[i].is_variadic()) {
+			++count;
+		}
+	}
+	return count;
+}
+
+TemplateParameterKind inferBindingKind(const TemplateTypeArg& arg) {
+	if (arg.is_template_template_arg) {
+		return TemplateParameterKind::Template;
+	}
+	if (arg.is_value) {
+		return TemplateParameterKind::NonType;
+	}
+	return TemplateParameterKind::Type;
+}
+
+void countSnapshotBindingsRecursive(const TemplateEnvironmentSnapshot& snapshot, size_t& count) {
+	if (snapshot.parent != nullptr) {
+		countSnapshotBindingsRecursive(*snapshot.parent, count);
+	}
+	count += snapshot.bindings.size();
+}
+
+void appendSnapshotLegacyViewsRecursive(
+	const TemplateEnvironmentSnapshot& snapshot,
+	InlineVector<StringHandle, 4>& out_param_names,
+	InlineVector<TypeInfo::TemplateArgInfo, 4>& out_args) {
+	if (snapshot.parent != nullptr) {
+		appendSnapshotLegacyViewsRecursive(*snapshot.parent, out_param_names, out_args);
+	}
+	for (const TemplateBindingSnapshot& binding : snapshot.bindings) {
+		if (binding.is_pack) {
+			for (const auto& arg : binding.args) {
+				out_param_names.push_back(binding.name);
+				out_args.push_back(arg);
+			}
+			continue;
+		}
+
+		if (binding.args.empty()) {
+			continue;
+		}
+		out_param_names.push_back(binding.name);
+		out_args.push_back(binding.args.front());
+	}
+}
+
+void appendContextBindings(
+	const TypeInfo::InstantiationContext* context,
+	InlineVector<TemplateBinding, 4>& out_bindings) {
+	if (context == nullptr) {
+		return;
+	}
+	appendContextBindings(context->parent, out_bindings);
+	const size_t binding_count = std::min(context->param_names.size(), context->param_args.size());
+	for (size_t i = 0; i < binding_count; ++i) {
+		TemplateBinding binding;
+		binding.name = context->param_names[i];
+		TemplateTypeArg arg = toTemplateTypeArg(context->param_args[i]);
+		binding.kind = inferBindingKind(arg);
+		binding.args.push_back(std::move(arg));
+		out_bindings.push_back(std::move(binding));
+	}
+}
+
+} // namespace
+
+TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
+	std::span<const StringHandle> param_names,
+	std::span<const TypeInfo::TemplateArgInfo> args,
+	std::shared_ptr<const TemplateEnvironmentSnapshot> parent) {
+	TemplateEnvironmentSnapshot snapshot;
+	snapshot.parent = std::move(parent);
+	const size_t pair_count = std::min(param_names.size(), args.size());
+	snapshot.bindings.reserve(pair_count);
+	for (size_t i = 0; i < pair_count; ++i) {
+		TemplateBindingSnapshot binding;
+		binding.name = param_names[i];
+		binding.kind = inferBindingKind(args[i]);
+		binding.args.push_back(args[i]);
+		snapshot.bindings.push_back(std::move(binding));
+	}
+	return snapshot;
+}
+
+TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
+	std::span<const StringHandle> param_names,
+	std::span<const TypeInfo::TemplateArgInfo> args) {
+	return buildTemplateEnvironmentSnapshot(param_names, args, nullptr);
+}
+
+bool hasTemplateEnvironmentSnapshotBindings(const TemplateEnvironmentSnapshot& snapshot) {
+	if (!snapshot.bindings.empty()) {
+		return true;
+	}
+	return snapshot.parent != nullptr ? hasTemplateEnvironmentSnapshotBindings(*snapshot.parent) : false;
+}
+
+void populateTemplateEnvironmentLegacyViews(
+	const TemplateEnvironmentSnapshot& snapshot,
+	InlineVector<StringHandle, 4>& out_param_names,
+	InlineVector<TypeInfo::TemplateArgInfo, 4>& out_args) {
+	out_param_names.clear();
+	out_args.clear();
+
+	size_t binding_count = 0;
+	countSnapshotBindingsRecursive(snapshot, binding_count);
+	out_param_names.reserve(binding_count);
+	out_args.reserve(binding_count);
+	appendSnapshotLegacyViewsRecursive(snapshot, out_param_names, out_args);
+}
+
+TemplateEnvironment buildTemplateEnvironment(
+	std::span<const TemplateParameterNode> params,
+	std::span<const TemplateTypeArg> args,
+	const TemplateEnvironment* parent) {
+	TemplateEnvironment environment;
+	environment.parent = parent;
+	environment.bindings.reserve(params.size());
+
+	size_t arg_index = 0;
+	for (size_t i = 0; i < params.size(); ++i) {
+		const TemplateParameterNode& param = params[i];
+		TemplateBinding binding;
+		binding.name = param.nameHandle();
+		binding.kind = param.kind();
+		binding.is_pack = param.is_variadic();
+
+		if (binding.is_pack) {
+			const size_t remaining_args = arg_index < args.size() ? args.size() - arg_index : 0;
+			const size_t required_after = countRequiredTemplateArgsAfter(params, i + 1);
+			const size_t pack_size = remaining_args > required_after ? remaining_args - required_after : 0;
+			binding.args.reserve(pack_size);
+			for (size_t pack_index = 0; pack_index < pack_size && (arg_index + pack_index) < args.size(); ++pack_index) {
+				binding.args.push_back(args[arg_index + pack_index]);
+			}
+			arg_index += pack_size;
+			environment.bindings.push_back(std::move(binding));
+			continue;
+		}
+
+		if (arg_index < args.size()) {
+			binding.args.push_back(args[arg_index]);
+			++arg_index;
+		}
+		environment.bindings.push_back(std::move(binding));
+	}
+
+	return environment;
+}
+
+TemplateEnvironment buildTemplateEnvironment(const TemplateEnvironmentSnapshot& snapshot) {
+	TemplateEnvironment environment;
+	auto append_snapshot = [&](auto&& self, const TemplateEnvironmentSnapshot& current) -> void {
+		if (current.parent != nullptr) {
+			self(self, *current.parent);
+		}
+		for (const TemplateBindingSnapshot& snapshot_binding : current.bindings) {
+			TemplateBinding binding;
+			binding.name = snapshot_binding.name;
+			binding.kind = snapshot_binding.kind;
+			binding.is_pack = snapshot_binding.is_pack;
+			binding.args.reserve(snapshot_binding.args.size());
+			for (const TypeInfo::TemplateArgInfo& snapshot_arg : snapshot_binding.args) {
+				binding.args.push_back(toTemplateTypeArg(snapshot_arg));
+			}
+			environment.bindings.push_back(std::move(binding));
+		}
+	};
+	append_snapshot(append_snapshot, snapshot);
+	return environment;
+}
+
+TemplateEnvironment buildTemplateEnvironment(const OuterTemplateBinding& binding) {
+	InlineVector<TemplateParameterNode, 4> params;
+	params.reserve(binding.params.size());
+	for (const ASTNode& param_node : binding.params) {
+		if (!param_node.is<TemplateParameterNode>()) {
+			continue;
+		}
+		params.push_back(param_node.as<TemplateParameterNode>());
+	}
+	if (!params.empty()) {
+		return buildTemplateEnvironment(
+			std::span<const TemplateParameterNode>(params.data(), params.size()),
+			std::span<const TemplateTypeArg>(binding.all_args.data(), binding.all_args.size()),
+			nullptr);
+	}
+
+	TemplateEnvironment environment;
+	if (binding.param_names.size() != binding.param_args.size()) {
+		return environment;
+	}
+	if (!binding.all_args.empty() && binding.all_args.size() != binding.param_args.size()) {
+		return environment;
+	}
+
+	const size_t pair_count = binding.param_names.size();
+	environment.bindings.reserve(pair_count);
+	for (size_t i = 0; i < pair_count;) {
+		TemplateBinding entry;
+		entry.name = binding.param_names[i];
+		entry.kind = inferBindingKind(binding.param_args[i]);
+		entry.args.push_back(binding.param_args[i]);
+
+		size_t next_index = i + 1;
+		while (next_index < pair_count && binding.param_names[next_index] == entry.name) {
+			entry.is_pack = true;
+			entry.args.push_back(binding.param_args[next_index]);
+			++next_index;
+		}
+		environment.bindings.push_back(std::move(entry));
+		i = next_index;
+	}
+	return environment;
+}
+
+TemplateEnvironment buildTemplateEnvironment(const TypeInfo::InstantiationContext& context) {
+	TemplateEnvironment environment;
+	appendContextBindings(&context, environment.bindings);
+	return environment;
+}
+
+std::optional<TemplateTypeArg> resolveContextBinding(
+	StringHandle target_name,
+	const TemplateEnvironment& environment) {
+	std::unordered_set<StringHandle, StringHandleHash> resolution_stack;
+	auto resolve_binding = [&](auto&& self, StringHandle current_name) -> std::optional<TemplateTypeArg> {
+		if (!current_name.isValid()) {
+			return std::nullopt;
+		}
+		if (!resolution_stack.insert(current_name).second) {
+			return std::nullopt;
+		}
+
+		const TemplateTypeArg* bound_arg = environment.findOne(current_name);
+		if (bound_arg == nullptr ||
+			bound_arg->is_value ||
+			bound_arg->is_template_template_arg) {
+			resolution_stack.erase(current_name);
+			return std::nullopt;
+		}
+		if (!bound_arg->is_dependent) {
+			TemplateTypeArg resolved = *bound_arg;
+			resolution_stack.erase(current_name);
+			return resolved;
+		}
+		if (!bound_arg->dependent_name.isValid() ||
+			bound_arg->dependent_name == current_name) {
+			resolution_stack.erase(current_name);
+			return std::nullopt;
+		}
+
+		auto rebound = self(self, bound_arg->dependent_name);
+		if (!rebound.has_value()) {
+			resolution_stack.erase(current_name);
+			return std::nullopt;
+		}
+		TemplateTypeArg resolved = rebindDependentTemplateTypeArg(*rebound, *bound_arg);
+		resolution_stack.erase(current_name);
+		return resolved;
+	};
+
+	return resolve_binding(resolve_binding, target_name);
+}
+

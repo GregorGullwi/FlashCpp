@@ -21,6 +21,9 @@
 // Matches Parser::SaveHandle typedef in Parser.h
 using SaveHandle = size_t;
 
+struct TemplateTypeArg;
+TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg);
+
 // Transparent string hash for heterogeneous lookup (C++20)
 // Allows unordered_map with StringHandle keys to lookup with string_view
 // Use ONLY for maps that need heterogeneous lookup (string_view finding StringHandle keys)
@@ -78,13 +81,6 @@ struct TransparentStringEqual {
 	bool operator()(StringHandle lhs, const std::string& rhs) const {
 		return lhs == std::string_view(rhs);
 	}
-};
-
-// Member pointer classification for template arguments
-enum class MemberPointerKind : uint8_t {
-	None = 0,
-	Object,
-	Function
 };
 
 /**
@@ -706,6 +702,10 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 
 /**
  * Create a TemplateInstantiationKey from template name and TemplateTypeArg vector
+ * 
+ * This populates both the split fields (type_args, value_args, template_template_args)
+ * for backward compatibility and algorithm use, and the ordered identity (Phase 7)
+ * that preserves source order.
  */
 inline TemplateInstantiationKey makeInstantiationKey(
 	StringHandle template_name,
@@ -713,21 +713,69 @@ inline TemplateInstantiationKey makeInstantiationKey(
 
 	TemplateInstantiationKey key(template_name);
 	key.type_args.reserve(args.size());
+	key.ordered_identity.base_template = template_name;
+	key.ordered_identity.args.reserve(args.size());
 
 	for (const auto& arg : args) {
 		if (arg.is_value) {
 			// Non-type template argument - use the canonical valueIdentity() accessor
 			key.value_args.push_back(arg.valueIdentity());
+			
+			// Add to ordered identity
+			key.ordered_identity.args.push_back(
+				TemplateArgIdentity::makeValue(arg.valueIdentity()));
 		} else if (arg.is_template_template_arg) {
 			// Template template argument
 			key.template_template_args.push_back(arg.template_name_handle);
+			
+			// Add to ordered identity
+			key.ordered_identity.args.push_back(
+				TemplateArgIdentity::makeTemplate(arg.template_name_handle));
 		} else {
 			// Type template argument
-			key.type_args.push_back(makeTypeIndexArg(arg));
+			TypeIndexArg type_index_arg = makeTypeIndexArg(arg);
+			key.type_args.push_back(type_index_arg);
+			
+			// Add to ordered identity
+			key.ordered_identity.args.push_back(
+				TemplateArgIdentity::makeType(type_index_arg));
 		}
 	}
 
 	return key;
+}
+
+/**
+ * Create an OrderedTemplateInstantiationIdentity from template name and arguments
+ * 
+ * Phase 7: Build just the ordered identity for cases where split fields aren't needed.
+ * This preserves template arguments in source order with their parameter kind.
+ */
+inline OrderedTemplateInstantiationIdentity buildOrderedIdentity(
+	StringHandle base_template,
+	std::span<const TemplateTypeArg> args) {
+
+	OrderedTemplateInstantiationIdentity identity;
+	identity.base_template = base_template;
+	identity.args.reserve(args.size());
+
+	for (const auto& arg : args) {
+		if (arg.is_value) {
+			// Non-type template argument
+			identity.args.push_back(
+				TemplateArgIdentity::makeValue(arg.valueIdentity()));
+		} else if (arg.is_template_template_arg) {
+			// Template template argument
+			identity.args.push_back(
+				TemplateArgIdentity::makeTemplate(arg.template_name_handle));
+		} else {
+			// Type template argument
+			identity.args.push_back(
+				TemplateArgIdentity::makeType(makeTypeIndexArg(arg)));
+		}
+	}
+
+	return identity;
 }
 
 /**
@@ -864,9 +912,7 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	materialized.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
 	materialized.cv_qualifier = arg_info.cv_qualifier;
 	materialized.is_array = arg_info.is_array;
-	materialized.array_dimensions = arg_info.array_size
-		? std::vector<size_t>{*arg_info.array_size}
-		: std::vector<size_t>{};
+	materialized.array_dimensions.assign(arg_info.array_dimensions.begin(), arg_info.array_dimensions.end());
 	materialized.function_signature = arg_info.function_signature;
 
 	TypeSpecifierNode substituted_spec(
@@ -882,10 +928,10 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 		substituted_spec.add_pointer_level(pointer_cv);
 	}
 	if (arg_info.is_array) {
-		if (!arg_info.array_size.has_value() || *arg_info.array_size == 0) {
+		if (arg_info.array_dimensions.empty() || arg_info.array_dimensions[0] == 0) {
 			substituted_spec.set_array(true, std::nullopt);
 		} else {
-			substituted_spec.set_array(true, *arg_info.array_size);
+			substituted_spec.set_array_dimensions(arg_info.array_dimensions);
 		}
 	}
 	if (arg_info.function_signature.has_value()) {
@@ -944,9 +990,9 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 	pattern_arg.pointer_cv_qualifiers = dependent_pattern.pointer_cv_qualifiers;
 	pattern_arg.ref_qualifier = dependent_pattern.ref_qualifier;
 	pattern_arg.cv_qualifier = dependent_pattern.cv_qualifier;
-	pattern_arg.array_dimensions = dependent_pattern.array_size.has_value()
-		? std::vector<size_t>{*dependent_pattern.array_size}
-		: std::vector<size_t>{};
+	pattern_arg.array_dimensions.assign(
+		dependent_pattern.array_dimensions.begin(),
+		dependent_pattern.array_dimensions.end());
 	pattern_arg.is_array = dependent_pattern.is_array;
 	pattern_arg.function_signature = dependent_pattern.function_signature;
 	pattern_arg.dependent_name = dependent_pattern.dependent_name;
@@ -995,23 +1041,8 @@ inline TemplateTypeArg materializeTemplateArg(
 	const ParamContainer& template_params,
 	const ArgContainer& template_args,
 	EvalFn&& eval_dependent_expr) {
-	TemplateTypeArg concrete_arg;
+	TemplateTypeArg concrete_arg = toTemplateTypeArg(arg_info);
 	concrete_arg.setCategory(arg_info.category());
-	concrete_arg.type_index = arg_info.type_index;
-	concrete_arg.is_value = arg_info.is_value;
-	concrete_arg.value = arg_info.intValue();
-	concrete_arg.pointer_depth = static_cast<uint8_t>(arg_info.pointer_depth);
-	concrete_arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
-	concrete_arg.ref_qualifier = arg_info.ref_qualifier;
-	concrete_arg.cv_qualifier = arg_info.cv_qualifier;
-	concrete_arg.array_dimensions = arg_info.array_size.has_value()
-		? std::vector<size_t>{*arg_info.array_size}
-		: std::vector<size_t>{};
-	concrete_arg.is_array = arg_info.is_array;
-	concrete_arg.function_signature = arg_info.function_signature;
-	concrete_arg.dependent_name = arg_info.dependent_name;
-	concrete_arg.dependent_expr = arg_info.dependent_expr;
-	concrete_arg.is_dependent = arg_info.dependent_name.isValid() || arg_info.dependent_expr.has_value();
 
 	bool substituted_dependent_name = false;
 	if (arg_info.dependent_name.isValid()) {

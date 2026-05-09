@@ -88,11 +88,16 @@ namespace {
 	}
 
 	auto sub_map = buildSubstitutionParamMap(template_params, template_args);
+	TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+		template_args,
+		nullptr);
+	sub_map = buildSubstitutionParamMap(substitution_environment);
 	if (sub_map.empty()) {
 		return default_node;
 	}
 
-	ExpressionSubstitutor substitutor(sub_map.param_map, parser, sub_map.param_order);
+	ExpressionSubstitutor substitutor(substitution_environment, parser);
 	return substitutor.substitute(default_node);
 }
 
@@ -114,6 +119,10 @@ namespace {
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 	eval_ctx.parser = &parser;
 	eval_ctx.sema = parser.getActiveSemanticAnalysis();
+	eval_ctx.template_environment = buildTemplateEnvironment(
+		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+		template_args,
+		nullptr);
 	eval_ctx.template_args.assign(template_args.begin(), template_args.end());
 	eval_ctx.template_param_names.assign(
 		template_param_names.begin(),
@@ -140,6 +149,23 @@ ASTNode Parser::substituteNonTypeDefaultExpression(
 		default_node,
 		template_params,
 		template_args);
+}
+
+std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
+	const ASTNode& default_node,
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	InlineVector<std::string_view, 4> derived_param_names;
+	derived_param_names.reserve(template_params.size());
+	for (const TemplateParameterNode& template_param : template_params) {
+		derived_param_names.push_back(template_param.name());
+	}
+	return substituteAndEvaluateNonTypeDefaultImpl(
+		*this,
+		default_node,
+		template_params,
+		template_args,
+		std::span<const std::string_view>(derived_param_names.data(), derived_param_names.size()));
 }
 
 std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
@@ -290,12 +316,6 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		}
 	}
 
-	std::vector<std::string_view> template_param_names_sv;
-	template_param_names_sv.reserve(param_names.size());
-	for (StringHandle param_name : param_names) {
-		template_param_names_sv.push_back(StringTable::getStringView(param_name));
-	}
-
 	InlineVector<TemplateParameterNode, 4> typed_template_parameters;
 	typed_template_parameters.reserve(template_parameters.size());
 	for (const TemplateParameterNode& template_param : template_parameters) {
@@ -305,8 +325,7 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	if (auto substituted_eval = substituteAndEvaluateNonTypeDefault(
 			arg_node,
 			typed_template_parameters,
-			std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
-			std::span<const std::string_view>(template_param_names_sv.data(), template_param_names_sv.size()))) {
+			std::span<const TemplateTypeArg>(template_args.data(), template_args.size()))) {
 		return *substituted_eval;
 	}
 
@@ -821,6 +840,77 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		return nullptr;
 	}
 
+	TemplateEnvironment inherited_environment;
+	const TemplateEnvironment* inherited_environment_ptr = nullptr;
+	if (const TypeInfo::InstantiationContext* dependent_base_context =
+			dependent_base_info->instantiationContext();
+		dependent_base_context != nullptr) {
+		inherited_environment = buildTemplateEnvironment(*dependent_base_context);
+		inherited_environment_ptr = &inherited_environment;
+	}
+	TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+		template_params,
+		template_args,
+		inherited_environment_ptr);
+	auto materialize_template_args_with_environment =
+		[&](
+			const TypeInfo& source_type_info) -> InlineVector<TemplateTypeArg, 4> {
+		InlineVector<TemplateTypeArg, 4> concrete_args;
+		concrete_args.reserve(source_type_info.templateArgs().size());
+		for (const TypeInfo::TemplateArgInfo& stored_arg : source_type_info.templateArgs()) {
+			TemplateTypeArg concrete_arg = toTemplateTypeArg(stored_arg);
+			concrete_arg.setCategory(stored_arg.category());
+			bool resolved_from_environment = false;
+			if (stored_arg.dependent_name.isValid()) {
+				std::optional<TemplateTypeArg> bound_arg;
+				if (const TemplateTypeArg* direct_bound_arg =
+						substitution_environment.findOne(stored_arg.dependent_name);
+					direct_bound_arg != nullptr) {
+					bound_arg = *direct_bound_arg;
+				} else {
+					bound_arg = resolveContextBinding(
+						stored_arg.dependent_name,
+						substitution_environment);
+				}
+				if (bound_arg.has_value()) {
+					if (!stored_arg.is_value && !bound_arg->is_value) {
+						concrete_arg = rebindDependentTemplateTypeArg(*bound_arg, stored_arg);
+					} else {
+						concrete_arg = *bound_arg;
+					}
+					resolved_from_environment = true;
+				}
+			}
+			if (!resolved_from_environment) {
+				concrete_arg = materializeTemplateArg(
+					stored_arg,
+					template_params,
+					template_args,
+					[this, substitution_environment](
+						const ASTNode& expr,
+						std::span<const ASTNode> params,
+						std::span<const TemplateTypeArg> args) {
+						InlineVector<TemplateParameterNode, 4> typed_params;
+						typed_params.reserve(params.size());
+						for (const ASTNode& param_node : params) {
+							if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+								typed_param != nullptr) {
+								typed_params.push_back(*typed_param);
+							}
+						}
+						FlashCpp::ScopedState guard_subs(template_param_substitutions_);
+						populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
+						return this->evaluateDependentNTTPExpression(
+							expr,
+							std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+							args);
+					});
+			}
+			concrete_args.push_back(std::move(concrete_arg));
+		}
+		return concrete_args;
+	};
+
 	StringHandle direct_concrete_member_handle =
 		StringTable::getOrInternStringHandle(
 			StringBuilder()
@@ -839,8 +929,8 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	StringHandle base_template_name_handle = gNamespaceRegistry.buildQualifiedIdentifier(
 		dependent_base_info->sourceNamespace(),
 		dependent_base_info->baseTemplateName());
-	std::vector<TemplateTypeArg> concrete_base_args =
-		materializeTemplateArgs(*dependent_base_info, template_params, template_args);
+	InlineVector<TemplateTypeArg, 4> concrete_base_args =
+		materialize_template_args_with_environment(*dependent_base_info);
 	AliasTemplateMaterializationResult materialized_alias_base =
 		materializeTemplateInstantiationForLookup(
 			StringTable::getStringView(base_template_name_handle),
@@ -863,10 +953,10 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 				.append(dependent_member_name)
 				.commit());
 	if (gTemplateRegistry.lookup_alias_template(member_alias_handle).has_value()) {
-		std::vector<TemplateTypeArg> concrete_member_template_args;
+		InlineVector<TemplateTypeArg, 4> concrete_member_template_args;
 		if (original_alias_target_info->isTemplateInstantiation()) {
 			concrete_member_template_args =
-				materializeTemplateArgs(*original_alias_target_info, template_params, template_args);
+				materialize_template_args_with_environment(*original_alias_target_info);
 		}
 		AliasTemplateMaterializationResult materialized_member_alias =
 			materializeAliasTemplateInstantiation(
@@ -925,7 +1015,7 @@ bool Parser::resolveAliasTemplateInstantiation(TypeSpecifierNode& type_spec) {
 		return false;
 	}
 
-	std::vector<TemplateTypeArg> concrete_args;
+	InlineVector<TemplateTypeArg, 4> concrete_args;
 	concrete_args.reserve(aliased_info->templateArgs().size());
 	for (const auto& arg_info : aliased_info->templateArgs()) {
 		concrete_args.push_back(toTemplateTypeArg(arg_info));
@@ -1250,6 +1340,29 @@ ASTNode Parser::substitute_template_params_in_expression(
 								return emplace_node<ExpressionNode>(new_sizeof);
 							}
 						}
+					}
+
+					for (const auto& subst : template_param_substitutions_) {
+						if (!subst.is_type_param || subst.substituted_type.is_value) {
+							continue;
+						}
+						if (StringTable::getStringView(subst.param_name) != type_name) {
+							continue;
+						}
+						const TemplateTypeArg& arg = subst.substituted_type;
+						TypeSpecifierNode new_type(
+							arg.typeEnum(),
+							TypeQualifier::None,
+							get_type_size_bits(arg.category()),
+							sizeof_node.sizeof_token(), CVQualifier::None);
+						new_type.set_type_index(arg.type_index);
+						new_type.set_reference_qualifier(arg.ref_qualifier);
+						for (size_t p = 0; p < arg.pointer_depth; ++p) {
+							new_type.add_pointer_level(CVQualifier::None);
+						}
+						auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
+						SizeofExprNode new_sizeof(new_type_node, sizeof_node.sizeof_token());
+						return emplace_node<ExpressionNode>(new_sizeof);
 					}
 				}
 			}
@@ -1730,7 +1843,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		const DeclarationNode& spec_decl = spec_var_decl.declaration();
 		ASTNode spec_type = spec_decl.type_node();
 		const auto& spec_params = spec_template.template_parameters();
-		std::vector<TemplateTypeArg> converted_args;
+		InlineVector<TemplateTypeArg, 4> converted_args;
 		if (!spec_params.empty()) {
 			// Build deduced args from the structural match substitutions.
 			// TemplatePattern::matches() already deduced T→int by stripping
@@ -2473,27 +2586,17 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 			nontype_substitution_map[param->name()] = template_args[i].value;
 		}
 	}
-
-	// sizeof/alignof over a dependent type should already have a direct type-index mapping
-	// once template parameter registration is complete.
-	auto ensureMappedDependentSizeofType = [&](const TypeSpecifierNode& type_node) {
-		if (type_substitution_map.count(type_node.type_index())) {
-			return;
-		}
-		throw InternalError("Dependent sizeof/alignof type should already be mapped before evaluation");
-	};
-	if (dependent_expr.is<ExpressionNode>()) {
-		const ExpressionNode& top_variant = dependent_expr.as<ExpressionNode>();
-		if (std::holds_alternative<SizeofExprNode>(top_variant)) {
-			const SizeofExprNode& sn = std::get<SizeofExprNode>(top_variant);
-			if (sn.is_type() && sn.type_or_expr().is<TypeSpecifierNode>()) {
-				ensureMappedDependentSizeofType(sn.type_or_expr().as<TypeSpecifierNode>());
+	for (const auto& subst : template_param_substitutions_) {
+		if (subst.is_type_param && !subst.substituted_type.is_value && subst.substituted_type.type_index.is_valid()) {
+			auto type_it = getTypesByNameMap().find(subst.param_name);
+			if (type_it != getTypesByNameMap().end() && type_it->second != nullptr) {
+				TypeIndex param_type_index = type_it->second->registeredTypeIndex();
+				if (param_type_index.is_valid()) {
+					type_substitution_map[param_type_index] = subst.substituted_type;
+				}
 			}
-		} else if (std::holds_alternative<AlignofExprNode>(top_variant)) {
-			const AlignofExprNode& an = std::get<AlignofExprNode>(top_variant);
-			if (an.is_type() && an.type_or_expr().is<TypeSpecifierNode>()) {
-				ensureMappedDependentSizeofType(an.type_or_expr().as<TypeSpecifierNode>());
-			}
+		} else if (subst.is_value_param) {
+			nontype_substitution_map[StringTable::getStringView(subst.param_name)] = subst.value;
 		}
 	}
 

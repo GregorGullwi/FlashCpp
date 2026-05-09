@@ -1,4 +1,5 @@
 #pragma once
+#include <type_traits>
 #include "AstNodeTypes_Template.h"
 
 // Namespace declaration node
@@ -812,28 +813,28 @@ public:
 		}
 
 		for (const auto& arg : template_args) {
-			TypeInfo::TemplateArgInfo info;
-			info.type_index = arg.type_index;
-			info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
-			info.pointer_depth = arg.pointer_depth;
-			info.cv_qualifier = arg.cv_qualifier;
-			info.ref_qualifier = arg.ref_qualifier;
-			info.value = arg.value;
-			info.is_value = arg.is_value;
-			info.is_array = arg.is_array;
-			// TemplateTypeArg uses array_size() method; TypeInfo::TemplateArgInfo uses array_size field.
-			if constexpr (requires(decltype(arg) a) { a.array_size(); }) {
-				info.array_size = arg.array_size();
+			using ArgT = std::remove_cvref_t<decltype(arg)>;
+			if constexpr (std::is_same_v<ArgT, TypeInfo::TemplateArgInfo>) {
+				outer_template_args_.push_back(arg);
 			} else {
-				info.array_size = arg.array_size;
+				outer_template_args_.push_back(toTemplateArgInfo(arg));
 			}
-			info.dependent_name = arg.dependent_name;
-			info.function_signature = arg.function_signature;
-			outer_template_args_.push_back(std::move(info));
 		}
+		outer_template_environment_snapshot_ = buildTemplateEnvironmentSnapshot(
+			std::span<const StringHandle>(outer_template_param_names_.data(), outer_template_param_names_.size()),
+			std::span<const TypeInfo::TemplateArgInfo>(outer_template_args_.data(), outer_template_args_.size()));
 	}
 
-	bool has_outer_template_bindings() const { return !outer_template_args_.empty(); }
+	void set_outer_template_bindings(const TemplateEnvironmentSnapshot& snapshot) {
+		outer_template_environment_snapshot_ = snapshot;
+		populateTemplateEnvironmentLegacyViews(
+			outer_template_environment_snapshot_,
+			outer_template_param_names_,
+			outer_template_args_);
+	}
+
+	bool has_outer_template_bindings() const { return hasTemplateEnvironmentSnapshotBindings(outer_template_environment_snapshot_); }
+	const TemplateEnvironmentSnapshot& outer_template_environment_snapshot() const { return outer_template_environment_snapshot_; }
 	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
 	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
 
@@ -854,6 +855,7 @@ private:
 	bool is_noexcept_;	   // Whether the lambda is noexcept
 	bool is_constexpr_;	// Whether the lambda is constexpr
 	bool is_consteval_;	// Whether the lambda is consteval
+	TemplateEnvironmentSnapshot outer_template_environment_snapshot_;
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 

@@ -5574,9 +5574,16 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				advance(); // consume 'static'
 
 				// Check if it's const or constexpr
+				CVQualifier cv_qual = CVQualifier::None;
 				while (peek().is_keyword()) {
 					auto kw = peek();
-					if (kw == "const"_tok || kw == "constexpr"_tok || kw == "inline"_tok) {
+					if (kw == "const"_tok) {
+						cv_qual |= CVQualifier::Const;
+						advance();
+					} else if (kw == "constexpr"_tok) {
+						cv_qual |= CVQualifier::Const;
+						advance();
+					} else if (kw == "inline"_tok) {
 						advance();
 					} else {
 						break;
@@ -5597,7 +5604,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 
 				// Check for initialization (e.g., = sizeof(T))
+				std::optional<ASTNode> init_expr_opt;
+				std::optional<SaveHandle> initializer_position;
 				if (peek() == "="_tok) {
+					initializer_position = save_token_position();
 					advance(); // consume '='
 
 					// Parse the initializer expression
@@ -5605,7 +5615,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					if (init_result.is_error()) {
 						return init_result;
 					}
-					// We parse but don't store the initializer for member templates
+					if (init_result.node().has_value()) {
+						init_expr_opt = *init_result.node();
+					}
 				}
 
 				// Expect semicolon (for static data member)
@@ -5613,8 +5625,49 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					return ParseResult::error("Expected ';' after static member declaration", current_token_);
 				}
 
-				// For member templates, we just skip static members
-				// Full instantiation will handle them properly
+				if (type_and_name_result.node().has_value()) {
+					const DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
+					const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+
+					auto [static_member_size, static_member_alignment] =
+						calculateResolvedMemberSizeAndAlignment(type_spec, type_spec.type_index());
+					bool is_array = decl.is_array() || type_spec.is_array();
+					std::vector<size_t> array_dimensions;
+					if (decl.is_array()) {
+						for (const auto& dim_expr : decl.array_dimensions()) {
+							ConstExpr::EvaluationContext ctx(gSymbolTable);
+							auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+							if (eval_result.success() && eval_result.as_int() > 0) {
+								size_t dim_size = static_cast<size_t>(eval_result.as_int());
+								array_dimensions.push_back(dim_size);
+								static_member_size *= dim_size;
+							}
+						}
+					} else if (type_spec.is_array()) {
+						for (size_t dim_size : type_spec.array_dimensions()) {
+							if (dim_size == 0) {
+								continue;
+							}
+							array_dimensions.push_back(dim_size);
+							static_member_size *= dim_size;
+						}
+					}
+
+					member_struct_ref.add_static_member(
+						decl.identifier_token().handle(),
+						*type_and_name_result.node(),
+						type_spec.type_index(),
+						static_member_size,
+						static_member_alignment,
+						current_access,
+						init_expr_opt,
+						cv_qual,
+						type_spec.reference_qualifier(),
+						static_cast<int>(type_spec.pointer_depth()),
+						is_array,
+						std::move(array_dimensions),
+						initializer_position);
+				}
 				continue;
 			}
 			// Handle 'using' type aliases: using type = T;

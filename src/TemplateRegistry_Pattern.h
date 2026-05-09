@@ -1,37 +1,6 @@
 #pragma once
+#include "TemplateEnvironment.h"
 #include "TemplateRegistry_Types.h"
-
-/**
- * Convert TypeInfo::TemplateArgInfo to TemplateTypeArg
- *
- * Provides a single canonical conversion from the TypeInfo-embedded metadata
- * form to TemplateTypeArg.  Supersedes the local static helper that previously
- * lived in ExpressionSubstitutor.cpp.
- *
- * @param arg The TypeInfo::TemplateArgInfo to convert
- * @return TemplateTypeArg with all available type information populated
- */
-inline TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
-	TemplateTypeArg ta;
-	ta.type_index = arg.type_index;
-	ta.is_value = arg.is_value;
-	ta.cv_qualifier = arg.cv_qualifier;
-	ta.ref_qualifier = arg.ref_qualifier;
-	ta.pointer_depth = static_cast<uint8_t>(arg.pointer_depth);
-	ta.is_array = arg.is_array;
-	ta.array_dimensions = arg.array_size.has_value()
-		? std::vector<size_t>{*arg.array_size}
-		: std::vector<size_t>{};
-	ta.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
-	ta.dependent_name = arg.dependent_name;
-	ta.dependent_expr = arg.dependent_expr;
-	ta.function_signature = arg.function_signature;
-	ta.is_dependent = arg.dependent_name.isValid() || arg.dependent_expr.has_value();
-	if (arg.is_value) {
-		ta.value = arg.intValue();
-	}
-	return ta;
-}
 
 inline bool patternPointerDepthMatches(
 	const TemplateTypeArg& pattern_arg,
@@ -154,9 +123,9 @@ struct TemplatePattern {
 			deduced.ref_qualifier = c.ref_qualifier;
 			deduced.pointer_cv_qualifiers = c.pointer_cv_qualifiers;
 			deduced.is_array = c.is_array;
-			deduced.array_dimensions = c.array_size.has_value()
-				? std::vector<size_t>{*c.array_size}
-				: std::vector<size_t>{};
+			deduced.array_dimensions.assign(
+				c.array_dimensions.begin(),
+				c.array_dimensions.end());
 			deduced.function_signature = c.function_signature;
 		}
 		return deduced;

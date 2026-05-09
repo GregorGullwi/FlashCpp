@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <numeric>
+#include <cstdint>
 #include <string_view>
 #include <source_location>
 #include <functional>
@@ -381,6 +382,48 @@ inline SubstitutionParamMap buildSubstitutionParamMap(
 		result.param_map[param->name()] = arg_to_insert;
 		result.param_order.push_back(param->name());
 	}
+	return result;
+}
+
+inline SubstitutionParamMap buildSubstitutionParamMap(
+	const TemplateEnvironment& environment) {
+	SubstitutionParamMap result;
+	auto append_environment = [&](auto&& self, const TemplateEnvironment* current) -> void {
+		if (current == nullptr) {
+			return;
+		}
+		self(self, current->parent);
+		for (const TemplateBinding& binding : current->bindings) {
+			if (binding.is_pack || binding.args.empty()) {
+				continue;
+			}
+			if (!binding.name.isValid()) {
+				continue;
+			}
+			TemplateTypeArg arg_to_insert = binding.args.front();
+			if (binding.kind == TemplateParameterKind::Template) {
+				arg_to_insert.is_template_template_arg = true;
+				if (!arg_to_insert.template_name_handle.isValid()) {
+					if (arg_to_insert.type_index.is_valid()) {
+						if (const TypeInfo* ti = tryGetTypeInfo(arg_to_insert.type_index)) {
+							arg_to_insert.template_name_handle = ti->name_;
+						}
+					}
+					if (!arg_to_insert.template_name_handle.isValid() &&
+						arg_to_insert.dependent_name.isValid()) {
+						arg_to_insert.template_name_handle = arg_to_insert.dependent_name;
+					}
+				}
+			}
+			std::string_view name_view = StringTable::getStringView(binding.name);
+			if (name_view.empty()) {
+				continue;
+			}
+			result.param_map[name_view] = arg_to_insert;
+			result.param_order.push_back(name_view);
+		}
+	};
+	append_environment(append_environment, &environment);
 	return result;
 }
 
@@ -1566,6 +1609,7 @@ private:
 	const FunctionDeclarationNode* tryInstantiateOperatorTemplateForBinary(std::string_view op_symbol, const TypeSpecifierNode& left_type_spec, const TypeSpecifierNode& right_type_spec);
 	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, size_t call_arg_count = SIZE_MAX);	// NEW: Instantiate with explicit args
 	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, const std::vector<TypeSpecifierNode>& arg_types);
+	
 	struct CallArgDeductionInfo {
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
 		std::unordered_set<size_t> pre_deduced_arg_indices;
@@ -1630,6 +1674,10 @@ private:
 	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
 		const ASTNode& default_node,
 		const InlineVector<TemplateParameterNode, 4>& template_params,
+		std::span<const TemplateTypeArg> template_args);
+	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefault(
+		const ASTNode& default_node,
+		const InlineVector<TemplateParameterNode, 4>& template_params,
 		std::span<const TemplateTypeArg> template_args,
 		std::span<const std::string_view> template_param_names);
 	std::optional<InlineVector<TemplateTypeArg, 4>> deduceTemplateArgsFromCall(
@@ -1683,18 +1731,64 @@ private:
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args,
 		bool preserve_ref_qualifier);
-	// Populate template_param_substitutions_ from parallel (name, arg) pairs for
-	// body-reparse paths so non-type params (e.g. int N → 4) are resolved in parse_block().
-	// Overload 1: TemplateTypeArg source (lazy body-reparse path).
-	// Overload 2: TemplateTypeArg source (member-func body-reparse path).
+	struct FunctionTemplateInstantiationContext {
+		std::string_view template_name;
+		const TemplateFunctionDeclarationNode& template_func;
+		const FunctionDeclarationNode& func_decl;
+		std::span<const TemplateParameterNode> template_params;
+		std::span<const TemplateTypeArg> template_args;
+		const FlashCpp::TemplateInstantiationKey& key;
+		uintptr_t overload_id;
+		int recursion_depth;
+	};
+	struct FunctionTemplateBindingData {
+		const std::vector<TypeSpecifierNode>* arg_types;
+		const std::vector<size_t>* template_param_arg_starts;
+		const std::vector<size_t>* template_param_arg_counts;
+		const std::optional<CallArgDeductionInfo>* deduction_info;
+		const std::optional<TypeSpecifierNode>* reparsed_trailing_return_type;
+	};
+	enum class FunctionTemplateInstantiationFlags : uint16_t {
+		None = 0,
+		PreserveRefQualifier = 1u << 0,
+		ExplicitMaterialization = 1u << 1,
+		CacheableInstantiation = 1u << 2,
+		CommitInstantiation = 1u << 3,
+		RegisterInstantiation = 1u << 4,
+		MemoizeBodyReparseFailure = 1u << 5,
+		RunInlineHeuristic = 1u << 6
+	};
+	static constexpr FunctionTemplateInstantiationFlags mergeInstantiationFlags(
+		FunctionTemplateInstantiationFlags lhs,
+		FunctionTemplateInstantiationFlags rhs) {
+		return static_cast<FunctionTemplateInstantiationFlags>(
+			static_cast<uint16_t>(lhs) | static_cast<uint16_t>(rhs));
+	}
+	static constexpr bool hasInstantiationFlag(
+		FunctionTemplateInstantiationFlags flags,
+		FunctionTemplateInstantiationFlags flag) {
+		return (static_cast<uint16_t>(flags) & static_cast<uint16_t>(flag)) != 0;
+	}
+	bool materializeTemplateFunctionParameters(
+		FunctionDeclarationNode& new_func_ref,
+		const FunctionTemplateInstantiationContext& instantiation_context,
+		const FunctionTemplateBindingData& binding_data,
+		FunctionTemplateInstantiationFlags instantiation_flags);
+	std::optional<ASTNode> finalizeInstantiatedFunction(
+		ASTNode new_func_node,
+		FunctionDeclarationNode& new_func_ref,
+		const FunctionTemplateInstantiationContext& instantiation_context,
+		std::string_view mangled_name,
+		FunctionTemplateInstantiationFlags instantiation_flags);
+	std::optional<ASTNode> instantiateBoundFunctionTemplate(
+		const FunctionTemplateInstantiationContext& instantiation_context,
+		const FunctionTemplateBindingData& binding_data,
+		FunctionTemplateInstantiationFlags instantiation_flags);
+	// Populate template_param_substitutions_ from a normalized template environment
+	// for body-reparse paths so non-type params (e.g. int N → 4) are resolved in parse_block().
 	void populateTemplateParamSubstitutions(
 		InlineVector<TemplateParamSubstitution, 4>& subs,
-		const InlineVector<StringHandle, 4>& param_names,
-		std::span<const TemplateTypeArg> type_args);
-	void populateTemplateParamSubstitutions(
-		InlineVector<TemplateParamSubstitution, 4>& subs,
-		std::span<const TemplateParameterNode> template_params,
-		std::span<const TemplateTypeArg> template_args);
+		const TemplateEnvironment& environment);
 	// Build outer-template binding data from the AST template parameter list so
 	// parameter names and args stay index-aligned even if the parameter list
 	// ever stops being a pure TemplateParameterNode sequence.
@@ -1733,52 +1827,45 @@ private:
 		out_binding.params.reserve(template_params.size());
 		out_binding.all_args.reserve(template_args.size());
 
-		size_t arg_index = 0;
+		InlineVector<TemplateParameterNode, 4> normalized_params;
+		normalized_params.reserve(template_params.size());
 		for (size_t i = 0; i < template_params.size(); ++i) {
 			const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
 			if (tparam == nullptr) {
 				continue;
 			}
-			out_binding.param_names.push_back(tparam->nameHandle());
 			if constexpr (std::is_same_v<std::decay_t<decltype(template_params[i])>, ASTNode>) {
 				out_binding.params.push_back(template_params[i]);
 			} else {
 				out_binding.params.push_back(ASTNode::emplace_node<TemplateParameterNode>(*tparam));
 			}
+			normalized_params.push_back(*tparam);
+		}
 
-			if (tparam->is_variadic()) {
-				size_t remaining_args = arg_index < template_args.size()
-										 ? template_args.size() - arg_index
-										 : 0;
-				size_t required_after = countRequiredTemplateArgsAfter(template_params, i + 1);
-				size_t pack_size = remaining_args > required_after
-									 ? remaining_args - required_after
-									 : 0;
-				// Maintain the 1:1 invariant between param_names/params and
-				// param_args that legacy consumers (e.g. the fallback path in
-				// appendOuterBindingSubstitutionInputs) rely on. For an empty
-				// pack, push a placeholder TemplateTypeArg so indices stay
-				// aligned with the variadic parameter entry above.
-				if (pack_size > 0) {
-					out_binding.param_args.push_back(template_args[arg_index]);
+		const TemplateEnvironment environment = buildTemplateEnvironment(
+			std::span<const TemplateParameterNode>(normalized_params.data(), normalized_params.size()),
+			std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
+			nullptr);
+
+		for (const TemplateBinding& binding : environment.bindings) {
+			out_binding.param_names.push_back(binding.name);
+			if (binding.is_pack) {
+				if (!binding.args.empty()) {
+					out_binding.param_args.push_back(binding.args.front());
 				} else {
 					out_binding.param_args.push_back(TemplateTypeArg());
 				}
-				for (size_t pack_index = 0; pack_index < pack_size && (arg_index + pack_index) < template_args.size(); ++pack_index) {
-					out_binding.all_args.push_back(template_args[arg_index + pack_index]);
+				for (const TemplateTypeArg& pack_arg : binding.args) {
+					out_binding.all_args.push_back(pack_arg);
 				}
-				arg_index += pack_size;
 				continue;
 			}
-
-			if (arg_index >= template_args.size()) {
+			if (!binding.args.empty()) {
+				out_binding.param_args.push_back(binding.args.front());
+				out_binding.all_args.push_back(binding.args.front());
+			} else {
 				out_binding.param_args.push_back(TemplateTypeArg());
-				continue;
 			}
-
-			out_binding.param_args.push_back(template_args[arg_index]);
-			out_binding.all_args.push_back(template_args[arg_index]);
-			++arg_index;
 		}
 	}
 	template <typename NodeT, typename ParamContainer, typename ArgContainer>
@@ -2271,8 +2358,8 @@ private:
 		size_t pack_element_offset,
 		const std::unordered_set<StringHandle, StringHash, StringEqual>& dependent_pack_names,
 		std::span<const TemplateParameterNode> template_params,
-		const std::vector<size_t>& template_param_arg_starts,
-		const std::vector<size_t>& template_param_arg_counts,
+		std::span<const size_t> template_param_arg_starts,
+		std::span<const size_t> template_param_arg_counts,
 		std::span<const TemplateTypeArg> template_args,
 		InlineVector<ASTNode, 4>& subst_params,
 		InlineVector<TemplateTypeArg, 4>& subst_args);
@@ -2311,6 +2398,7 @@ private:
 	}
 	bool isHardUseLikeInstantiationMode() const;
 	bool isTemplateInstantiationFailureProbeMode() const;
+	TemplateSubstitutionFailurePolicy currentTemplateSubstitutionFailurePolicy() const;
 	std::optional<ASTNode> failTemplateInstantiation(
 		std::string_view reason,
 		const FlashCpp::TemplateInstantiationKey* key,

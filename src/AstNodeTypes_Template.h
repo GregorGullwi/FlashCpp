@@ -1,6 +1,8 @@
 #pragma once
 #include <span>
+#include <type_traits>
 #include "AstNodeTypes_DeclNodes.h"
+#include "TemplateEnvironment.h"
 
 // Template parameter kinds
 enum class TemplateParameterKind {
@@ -333,28 +335,28 @@ public:
 		}
 
 		for (const auto& arg : template_args) {
-			TypeInfo::TemplateArgInfo info;
-			info.type_index = arg.type_index;
-			info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
-			info.pointer_depth = arg.pointer_depth;
-			info.cv_qualifier = arg.cv_qualifier;
-			info.ref_qualifier = arg.ref_qualifier;
-			info.value = arg.value;
-			info.is_value = arg.is_value;
-			info.is_array = arg.is_array;
-			// TemplateTypeArg uses array_size() method; TypeInfo::TemplateArgInfo uses array_size field.
-			if constexpr (requires(decltype(arg) a) { a.array_size(); }) {
-				info.array_size = arg.array_size();
+			using ArgT = std::remove_cvref_t<decltype(arg)>;
+			if constexpr (std::is_same_v<ArgT, TypeInfo::TemplateArgInfo>) {
+				outer_template_args_.push_back(arg);
 			} else {
-				info.array_size = arg.array_size;
+				outer_template_args_.push_back(toTemplateArgInfo(arg));
 			}
-			info.dependent_name = arg.dependent_name;
-			info.function_signature = arg.function_signature;
-			outer_template_args_.push_back(std::move(info));
 		}
+		outer_template_environment_snapshot_ = buildTemplateEnvironmentSnapshot(
+			std::span<const StringHandle>(outer_template_param_names_.data(), outer_template_param_names_.size()),
+			std::span<const TypeInfo::TemplateArgInfo>(outer_template_args_.data(), outer_template_args_.size()));
 	}
 
-	bool has_outer_template_bindings() const { return !outer_template_args_.empty(); }
+	void set_outer_template_bindings(const TemplateEnvironmentSnapshot& snapshot) {
+		outer_template_environment_snapshot_ = snapshot;
+		populateTemplateEnvironmentLegacyViews(
+			outer_template_environment_snapshot_,
+			outer_template_param_names_,
+			outer_template_args_);
+	}
+
+	bool has_outer_template_bindings() const { return hasTemplateEnvironmentSnapshotBindings(outer_template_environment_snapshot_); }
+	const TemplateEnvironmentSnapshot& outer_template_environment_snapshot() const { return outer_template_environment_snapshot_; }
 	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
 	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
 
@@ -365,6 +367,7 @@ private:
 	bool is_thread_local_ = false;
 	bool is_constexpr_;
 	bool is_constinit_;
+	TemplateEnvironmentSnapshot outer_template_environment_snapshot_;
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 };
@@ -594,28 +597,28 @@ public:
 		}
 
 		for (const auto& arg : template_args) {
-			TypeInfo::TemplateArgInfo info;
-			info.type_index = arg.type_index;
-			info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
-			info.pointer_depth = arg.pointer_depth;
-			info.cv_qualifier = arg.cv_qualifier;
-			info.ref_qualifier = arg.ref_qualifier;
-			info.value = arg.value;
-			info.is_value = arg.is_value;
-			info.is_array = arg.is_array;
-			// TemplateTypeArg uses array_size() method; TypeInfo::TemplateArgInfo uses array_size field.
-			if constexpr (requires(decltype(arg) a) { a.array_size(); }) {
-				info.array_size = arg.array_size();
+			using ArgT = std::remove_cvref_t<decltype(arg)>;
+			if constexpr (std::is_same_v<ArgT, TypeInfo::TemplateArgInfo>) {
+				outer_template_args_.push_back(arg);
 			} else {
-				info.array_size = arg.array_size;
+				outer_template_args_.push_back(toTemplateArgInfo(arg));
 			}
-			info.dependent_name = arg.dependent_name;
-			info.function_signature = arg.function_signature;
-			outer_template_args_.push_back(std::move(info));
 		}
+		outer_template_environment_snapshot_ = buildTemplateEnvironmentSnapshot(
+			std::span<const StringHandle>(outer_template_param_names_.data(), outer_template_param_names_.size()),
+			std::span<const TypeInfo::TemplateArgInfo>(outer_template_args_.data(), outer_template_args_.size()));
 	}
 
-	bool has_outer_template_bindings() const { return !outer_template_args_.empty(); }
+	void set_outer_template_bindings(const TemplateEnvironmentSnapshot& snapshot) {
+		outer_template_environment_snapshot_ = snapshot;
+		populateTemplateEnvironmentLegacyViews(
+			outer_template_environment_snapshot_,
+			outer_template_param_names_,
+			outer_template_args_);
+	}
+
+	bool has_outer_template_bindings() const { return hasTemplateEnvironmentSnapshotBindings(outer_template_environment_snapshot_); }
+	const TemplateEnvironmentSnapshot& outer_template_environment_snapshot() const { return outer_template_environment_snapshot_; }
 	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
 	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
 
@@ -639,6 +642,7 @@ private:
 	bool has_template_initializer_list_ = false;
 	SaveHandle template_body_position_handle_;  // Handle to saved position for template body
 	SaveHandle template_initializer_list_position_handle_{};  // Handle to saved position for constructor initializer list
+	TemplateEnvironmentSnapshot outer_template_environment_snapshot_;
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 	TypeIndex owning_type_index_{};
@@ -743,28 +747,28 @@ public:
 		}
 
 		for (const auto& arg : template_args) {
-			TypeInfo::TemplateArgInfo info;
-			info.type_index = arg.type_index;
-			info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
-			info.pointer_depth = arg.pointer_depth;
-			info.cv_qualifier = arg.cv_qualifier;
-			info.ref_qualifier = arg.ref_qualifier;
-			info.value = arg.value;
-			info.is_value = arg.is_value;
-			info.is_array = arg.is_array;
-			// TemplateTypeArg uses array_size() method; TypeInfo::TemplateArgInfo uses array_size field.
-			if constexpr (requires(decltype(arg) a) { a.array_size(); }) {
-				info.array_size = arg.array_size();
+			using ArgT = std::remove_cvref_t<decltype(arg)>;
+			if constexpr (std::is_same_v<ArgT, TypeInfo::TemplateArgInfo>) {
+				outer_template_args_.push_back(arg);
 			} else {
-				info.array_size = arg.array_size;
+				outer_template_args_.push_back(toTemplateArgInfo(arg));
 			}
-			info.dependent_name = arg.dependent_name;
-			info.function_signature = arg.function_signature;
-			outer_template_args_.push_back(std::move(info));
 		}
+		outer_template_environment_snapshot_ = buildTemplateEnvironmentSnapshot(
+			std::span<const StringHandle>(outer_template_param_names_.data(), outer_template_param_names_.size()),
+			std::span<const TypeInfo::TemplateArgInfo>(outer_template_args_.data(), outer_template_args_.size()));
 	}
 
-	bool has_outer_template_bindings() const { return !outer_template_args_.empty(); }
+	void set_outer_template_bindings(const TemplateEnvironmentSnapshot& snapshot) {
+		outer_template_environment_snapshot_ = snapshot;
+		populateTemplateEnvironmentLegacyViews(
+			outer_template_environment_snapshot_,
+			outer_template_param_names_,
+			outer_template_args_);
+	}
+
+	bool has_outer_template_bindings() const { return hasTemplateEnvironmentSnapshotBindings(outer_template_environment_snapshot_); }
+	const TemplateEnvironmentSnapshot& outer_template_environment_snapshot() const { return outer_template_environment_snapshot_; }
 	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
 	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
 
@@ -776,6 +780,7 @@ private:
 	bool is_noexcept_ = true;  // C++11+: destructors are implicitly noexcept(true)
 	bool has_noexcept_specifier_ = false;  // True iff an explicit noexcept / noexcept(expr) was written
 	std::optional<ASTNode> noexcept_expression_;	 // For explicit noexcept(expr)
+	TemplateEnvironmentSnapshot outer_template_environment_snapshot_;
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
@@ -1266,28 +1271,28 @@ public:
 		}
 
 		for (const auto& arg : template_args) {
-			TypeInfo::TemplateArgInfo info;
-			info.type_index = arg.type_index;
-			info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
-			info.pointer_depth = arg.pointer_depth;
-			info.cv_qualifier = arg.cv_qualifier;
-			info.ref_qualifier = arg.ref_qualifier;
-			info.value = arg.value;
-			info.is_value = arg.is_value;
-			info.is_array = arg.is_array;
-			// TemplateTypeArg uses array_size() method; TypeInfo::TemplateArgInfo uses array_size field.
-			if constexpr (requires(decltype(arg) a) { a.array_size(); }) {
-				info.array_size = arg.array_size();
+			using ArgT = std::remove_cvref_t<decltype(arg)>;
+			if constexpr (std::is_same_v<ArgT, TypeInfo::TemplateArgInfo>) {
+				outer_template_args_.push_back(arg);
 			} else {
-				info.array_size = arg.array_size;
+				outer_template_args_.push_back(toTemplateArgInfo(arg));
 			}
-			info.dependent_name = arg.dependent_name;
-			info.function_signature = arg.function_signature;
-			outer_template_args_.push_back(std::move(info));
 		}
+		outer_template_environment_snapshot_ = buildTemplateEnvironmentSnapshot(
+			std::span<const StringHandle>(outer_template_param_names_.data(), outer_template_param_names_.size()),
+			std::span<const TypeInfo::TemplateArgInfo>(outer_template_args_.data(), outer_template_args_.size()));
 	}
 
-	bool has_outer_template_bindings() const { return !outer_template_args_.empty(); }
+	void set_outer_template_bindings(const TemplateEnvironmentSnapshot& snapshot) {
+		outer_template_environment_snapshot_ = snapshot;
+		populateTemplateEnvironmentLegacyViews(
+			outer_template_environment_snapshot_,
+			outer_template_param_names_,
+			outer_template_args_);
+	}
+
+	bool has_outer_template_bindings() const { return hasTemplateEnvironmentSnapshotBindings(outer_template_environment_snapshot_); }
+	const TemplateEnvironmentSnapshot& outer_template_environment_snapshot() const { return outer_template_environment_snapshot_; }
 	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
 	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
 
@@ -1312,6 +1317,7 @@ private:
 	bool has_deleted_copy_constructor_ = false;		// Track deleted copy constructor
 	bool has_deleted_move_constructor_ = false;		// Track deleted move constructor
 	std::vector<DeferredStaticAssert> deferred_static_asserts_;	// Static_asserts deferred during template definition
+	TemplateEnvironmentSnapshot outer_template_environment_snapshot_;
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 	StructBodyStateTag struct_body_state_tag_ = StructBodyStateTag::NotMaterialized;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "TemplateEnvironment.h"
 #include "TemplateRegistry.h"
 #include <unordered_map>
 #include <string_view>
@@ -60,9 +61,12 @@ public:
 	/// @param template_param_order Optional vector preserving the original template parameter declaration order
 	ExpressionSubstitutor(
 		const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
+		Parser& parser);
+
+	ExpressionSubstitutor(
+		const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
 		Parser& parser,
-		const std::vector<std::string_view>& template_param_order = {})
-		: param_map_(param_map), parser_(parser), template_param_order_(template_param_order) {}
+		const std::vector<std::string_view>& template_param_order);
 
 	/// Construct a substitutor with both scalar and pack parameter mappings
 	/// @param param_map Maps scalar template parameter names to concrete template arguments
@@ -72,9 +76,17 @@ public:
 	ExpressionSubstitutor(
 		const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
 		const std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>& pack_map,
+		Parser& parser);
+
+	ExpressionSubstitutor(
+		const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
+		const std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>& pack_map,
 		Parser& parser,
-		const std::vector<std::string_view>& template_param_order = {})
-		: param_map_(param_map), pack_map_(pack_map), parser_(parser), template_param_order_(template_param_order) {}
+		const std::vector<std::string_view>& template_param_order);
+
+	ExpressionSubstitutor(
+		const TemplateEnvironment& environment,
+		Parser& parser);
 
 	/// Main entry point: Substitute template parameters in an expression
 	/// @param expr The expression AST node to process
@@ -123,11 +135,13 @@ private:
 		bool evaluate_dependent_member_values,
 		int depth);
 	const TypeInfo* resolveDependentMemberType(const TypeInfo& type_info, int depth);
+	void rebuildEnvironmentFromCurrentBindings();
 
 // Substitution context
-	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map_;
-	const std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_map_;
+	std::unordered_map<std::string_view, TemplateTypeArg> param_map_;
+	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_map_;
 	Parser& parser_;
-	const std::vector<std::string_view> template_param_order_;
+	std::vector<std::string_view> template_param_order_;
+	TemplateEnvironment environment_;
 	StringHandle current_owner_type_name_{};
 };

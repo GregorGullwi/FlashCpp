@@ -37,6 +37,13 @@ enum class ReferenceQualifier : uint8_t {
 
 using CVReferenceQualifier = ReferenceQualifier;
 
+// Member pointer classification for template arguments
+enum class MemberPointerKind : uint8_t {
+	None = 0,
+	Object,
+	Function
+};
+
 // Overloadable operator kinds for struct member operator overloads.
 // Stored as an enum instead of a string for efficient comparison.
 enum class OverloadableOperator : uint8_t {

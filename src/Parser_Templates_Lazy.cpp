@@ -25,6 +25,19 @@ namespace {
 		.commit()));
 }
 
+TemplateEnvironment buildLazySubstitutionEnvironment(
+	const TemplateEnvironmentSnapshot& outer_snapshot,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	std::optional<TemplateEnvironment>& outer_environment_storage) {
+	const TemplateEnvironment* parent_environment = nullptr;
+	if (hasTemplateEnvironmentSnapshotBindings(outer_snapshot)) {
+		outer_environment_storage = buildTemplateEnvironment(outer_snapshot);
+		parent_environment = &*outer_environment_storage;
+	}
+	return buildTemplateEnvironment(template_params, template_args, parent_environment);
+}
+
 } // namespace
 
 std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey& member_key) {
@@ -76,7 +89,11 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		}
 		auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 			lazy_info.identity.instantiated_owner_name, ctor_name_handle);
-		setOuterTemplateBindingsFromParams(new_ctor_ref, lazy_info.template_params, lazy_info.template_args);
+		if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
+			new_ctor_ref.set_outer_template_bindings(lazy_info.outer_template_environment_snapshot);
+		} else {
+			setOuterTemplateBindingsFromParams(new_ctor_ref, lazy_info.template_params, lazy_info.template_args);
+		}
 		TypeIndex instantiated_owner_type_index{};
 		if (auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
 			struct_it != getTypesByNameMap().end()) {
@@ -295,7 +312,13 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			SaveHandle current_pos = save_token_position();
 			auto parse_ctor_with_current_context = [&]() {
 				FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-				populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
+				std::optional<TemplateEnvironment> outer_environment;
+				TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
+					lazy_info.outer_template_environment_snapshot,
+					std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
+					std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
+					outer_environment);
+				populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 				DelayedFunctionBody delayed{
 					nullptr,
 					ctor_decl.template_body_position(),
@@ -437,6 +460,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			ConstExpr::EvaluationContext ctx(gSymbolTable);
 			ctx.parser = this;
 			ctx.sema = getActiveSemanticAnalysis();
+			std::optional<TemplateEnvironment> outer_environment;
+			ctx.template_environment = buildLazySubstitutionEnvironment(
+				lazy_info.outer_template_environment_snapshot,
+				std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
+				std::span<const TemplateTypeArg>(converted_template_args.data(), converted_template_args.size()),
+				outer_environment);
 			ctx.template_args = converted_template_args;
 			for (const TemplateParameterNode& tparam : lazy_info.template_params) {
 				ctx.template_param_names.push_back(tparam.name());
@@ -518,6 +547,15 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		true);		   // Force resolved TypeIndex onto full AST substitutions
 	ASTNode new_func_node = shell.function_node;
 	FunctionDeclarationNode& new_func_ref = *shell.function;
+	if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
+		InlineVector<StringHandle, 4> outer_param_names;
+		InlineVector<TypeInfo::TemplateArgInfo, 4> outer_args;
+		populateTemplateEnvironmentLegacyViews(
+			lazy_info.outer_template_environment_snapshot,
+			outer_param_names,
+			outer_args);
+		new_func_ref.set_outer_template_bindings(outer_param_names, outer_args);
+	}
 
 	// Substitute and copy parameters, expanding variadic pack parameters into N individual
 	// parameters (args_0, args_1, ...) and populating pack_param_info_ for body expansion.
@@ -578,7 +616,13 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			// Set up template parameter substitutions so non-type params (e.g., int N)
 			// are resolved during parse_block() just as in try_instantiate_single_template.
 			FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-			populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
+			std::optional<TemplateEnvironment> outer_environment;
+			TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
+				lazy_info.outer_template_environment_snapshot,
+				std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
+				std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
+				outer_environment);
+			populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 
 			// Parse the function body
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
@@ -628,6 +672,13 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			new_func_ref.mark_failed_substitution(body_reparse_failure_reason);
 			FLASH_LOG(Templates, Debug, "Marked lazy member function as failed substitution after body reparse: ",
 					  StringTable::getStringView(body_reparse_failure_reason));
+			const TemplateSubstitutionFailurePolicy failure_policy = currentTemplateSubstitutionFailurePolicy();
+			if (failure_policy == TemplateSubstitutionFailurePolicy::HardUse) {
+				throw CompileError(std::string(StringTable::getStringView(body_reparse_failure_reason)));
+			}
+			if (failure_policy == TemplateSubstitutionFailurePolicy::SfinaeProbe) {
+				return std::nullopt;
+			}
 		}
 	} else if (has_parsed_body) {
 		// Use the already-parsed definition only when no deferred body position is available.
@@ -637,11 +688,44 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// Substitute template parameters in the function body
 	if (body_to_substitute.has_value()) {
 		// Build template argument vector for registration
+		InlineVector<TemplateParameterNode, 4> substitution_params;
 		std::vector<TemplateTypeArg> converted_template_args;
-		converted_template_args.reserve(lazy_info.template_args.size());
-		for (const auto& ttype_arg : lazy_info.template_args) {
-
-			converted_template_args.push_back(ttype_arg);
+		if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
+			InlineVector<StringHandle, 4> snapshot_param_names;
+			InlineVector<TypeInfo::TemplateArgInfo, 4> snapshot_args;
+			populateTemplateEnvironmentLegacyViews(
+				lazy_info.outer_template_environment_snapshot,
+				snapshot_param_names,
+				snapshot_args);
+			substitution_params.reserve(snapshot_param_names.size());
+			converted_template_args.reserve(snapshot_args.size());
+			for (size_t i = 0; i < snapshot_param_names.size() && i < snapshot_args.size(); ++i) {
+				TemplateTypeArg arg = toTemplateTypeArg(snapshot_args[i]);
+				Token param_token(Token::Type::Identifier, StringTable::getStringView(snapshot_param_names[i]), 0, 0, 0);
+				if (arg.is_value) {
+					TypeSpecifierNode type_node(
+						arg.type_index.withCategory(arg.typeEnum()),
+						get_type_size_bits(arg.typeEnum()),
+						param_token,
+						CVQualifier::None,
+						ReferenceQualifier::None);
+					substitution_params.push_back(TemplateParameterNode(snapshot_param_names[i], type_node, param_token));
+				} else {
+					TemplateParameterNode type_param(snapshot_param_names[i], param_token);
+					type_param.set_registered_type_index(arg.type_index.withCategory(arg.typeEnum()));
+					substitution_params.push_back(type_param);
+				}
+				converted_template_args.push_back(arg);
+			}
+		} else {
+			substitution_params.reserve(lazy_info.template_params.size());
+			converted_template_args.reserve(lazy_info.template_args.size());
+			for (const TemplateParameterNode& template_param : lazy_info.template_params) {
+				substitution_params.push_back(template_param);
+			}
+			for (const auto& ttype_arg : lazy_info.template_args) {
+				converted_template_args.push_back(ttype_arg);
+			}
 		}
 
 		// Push struct parsing context so that get_class_template_pack_size can find pack info in the registry
@@ -661,9 +745,15 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		FlashCpp::ScopedState guard_current_function(current_function_);
 		current_function_ = &new_func_ref;
 		register_parameters_in_scope(new_func_ref.parameter_nodes());
+		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
+		TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+			std::span<const TemplateParameterNode>(substitution_params.data(), substitution_params.size()),
+			std::span<const TemplateTypeArg>(converted_template_args.data(), converted_template_args.size()),
+			nullptr);
+		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 		ASTNode substituted_body = substituteTemplateParameters(
 			*body_to_substitute,
-			lazy_info.template_params,
+			substitution_params,
 			converted_template_args);
 		new_func_ref.set_definition(substituted_body);
 	}
@@ -825,7 +915,13 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 		parsing_template_depth_ = 0;
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-		populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
+		std::optional<TemplateEnvironment> outer_environment;
+		TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
+			lazy_info.outer_template_environment_snapshot,
+			std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
+			std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
+			outer_environment);
+		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 		for (StringHandle param_name : param_names) {
 			pushCurrentTemplateParamName(param_name);
@@ -999,10 +1095,15 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 		if (!was_substituted) {
 			// Use ExpressionSubstitutor for general template parameter substitution
-			auto sub_map = buildSubstitutionParamMap(template_params, template_args);
-
+			std::optional<TemplateEnvironment> outer_environment;
+			TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
+				lazy_info.outer_template_environment_snapshot,
+				std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+				std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
+				outer_environment);
+			auto sub_map = buildSubstitutionParamMap(substitution_environment);
 			if (!sub_map.empty()) {
-				ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
+				ExpressionSubstitutor substitutor(substitution_environment, *this);
 				substitutor.setCurrentOwnerTypeName(struct_info->getName());
 				substituted_initializer = substitutor.substitute(lazy_info.initializer.value());
 				FLASH_LOG(Templates, Debug, "Applied general template parameter substitution to lazy static member initializer");
@@ -1043,6 +1144,12 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			// Provide struct context so the evaluator prefers same-struct member functions over globals.
 			eval_ctx.struct_info = struct_info;
 			// Provide template args so sizeof(T) etc. resolve correctly.
+			std::optional<TemplateEnvironment> outer_environment;
+			eval_ctx.template_environment = buildLazySubstitutionEnvironment(
+				lazy_info.outer_template_environment_snapshot,
+				std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
+				std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
+				outer_environment);
 			for (size_t i = 0; i < lazy_info.template_params.size() && i < lazy_info.template_args.size(); ++i) {
 				eval_ctx.template_param_names.push_back(lazy_info.template_params[i].name());
 				eval_ctx.template_args.push_back(lazy_info.template_args[i]);

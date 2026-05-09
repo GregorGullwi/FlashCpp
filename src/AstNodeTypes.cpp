@@ -3,6 +3,7 @@
 #include "StringBuilder.h"
 #include "NameMangling.h"
 #include "Log.h"
+#include "TemplateEnvironment.h"
 #include <sstream>
 #include <set>
 #include <unordered_set>
@@ -894,6 +895,44 @@ void TypeInfo::setStructInfo(std::unique_ptr<StructTypeInfo> info) {
 		}
 	}
 	struct_info_ = std::move(info);
+}
+
+void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names,
+									   InlineVector<TemplateArgInfo, 4> param_args,
+									   const InstantiationContext* parent) {
+	instantiation_context_ = std::make_unique<InstantiationContext>();
+	instantiation_context_->parent = parent;
+	instantiation_context_->param_names = param_names;
+	instantiation_context_->param_args = param_args;
+
+	// Phase 5: Populate binding-based storage alongside legacy fields
+	if (param_args.size() < param_names.size()) {
+		StringBuilder error_builder;
+		error_builder.append("TypeInfo::setInstantiationContext invalid size mismatch: param_names=");
+		error_builder.append(param_names.size());
+		error_builder.append(", param_args=");
+		error_builder.append(param_args.size());
+		throw InternalError(std::string(error_builder.commit()));
+	}
+	const size_t pair_count = param_names.size();
+	instantiation_context_->binding_names.reserve(pair_count);
+	instantiation_context_->binding_args.reserve(pair_count);
+	instantiation_context_->binding_kinds.reserve(pair_count);
+	instantiation_context_->binding_is_packs.reserve(pair_count);
+	
+	for (size_t i = 0; i < pair_count; ++i) {
+		instantiation_context_->binding_names.push_back(param_names[i]);
+		instantiation_context_->binding_args.push_back(param_args[i]);
+		TemplateParameterKind binding_kind = TemplateParameterKind::Type;
+		if (param_args[i].is_template_template_arg) {
+			binding_kind = TemplateParameterKind::Template;
+		} else if (param_args[i].is_value) {
+			binding_kind = TemplateParameterKind::NonType;
+		}
+		const uint8_t kind = static_cast<uint8_t>(binding_kind);
+		instantiation_context_->binding_kinds.push_back(kind);
+		instantiation_context_->binding_is_packs.push_back(false);  // Individual bindings are never packs
+	}
 }
 
 bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {

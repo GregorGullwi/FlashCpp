@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "TemplateRegistry.h"  // For gTemplateRegistry
+#include "TemplateEnvironment.h"
 #include "TypeTraitEvaluator.h"	// For evaluateTypeTrait
 #include "TemplateInstantiationHelper.h"	 // For shared template instantiation utilities
 #include "IROperandHelpers.h"  // For isCompoundAssignmentOp / kCompoundOpTable
@@ -434,6 +435,7 @@ struct EvaluationContext {
 	// (e.g., sizeof(T) inside a template member function)
 	InlineVector<std::string_view, 4> template_param_names;
 	InlineVector<TemplateTypeArg, 4> template_args;
+	TemplateEnvironment template_environment;
 
 	// Parser pointer for template instantiation (optional)
 	Parser* parser = nullptr;

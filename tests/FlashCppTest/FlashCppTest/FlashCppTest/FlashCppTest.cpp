@@ -195,7 +195,7 @@ TEST_CASE("InlineVector clears inline-held references immediately") {
 }
 
 TEST_CASE("InlineVector preserves self-referential values when spilling to heap") {
-	InlineVector<std::string, 2> appended_values;
+	InlineVector<std::string_view, 2> appended_values;
 	appended_values.push_back("alpha");
 	appended_values.push_back("beta");
 	appended_values.push_back(appended_values[0]);
@@ -205,7 +205,7 @@ TEST_CASE("InlineVector preserves self-referential values when spilling to heap"
 	CHECK(appended_values[1] == "beta");
 	CHECK(appended_values[2] == "alpha");
 
-	InlineVector<std::string, 2> inserted_values;
+	InlineVector<std::string_view, 2> inserted_values;
 	inserted_values.push_back("left");
 	inserted_values.push_back("right");
 	inserted_values.insert(inserted_values.begin() + 1, inserted_values[0]);
@@ -217,7 +217,7 @@ TEST_CASE("InlineVector preserves self-referential values when spilling to heap"
 
 	// Regression: insert_at inline path must copy value before shifting
 	// when value references an element at or after the insertion index.
-	InlineVector<std::string, 4> inline_insert;
+	InlineVector<std::string_view, 4> inline_insert;
 	inline_insert.push_back("A");
 	inline_insert.push_back("B");
 	inline_insert.push_back("C");

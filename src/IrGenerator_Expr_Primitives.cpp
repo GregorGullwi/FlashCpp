@@ -1700,11 +1700,13 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 			}
 		}
 
-		if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isStruct()) {
-			const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
-				// If struct_info is null, this might be a type alias - resolve it via type_index
-			if (!struct_info) {
-				const TypeInfo* resolved_type = tryGetTypeInfo(struct_type_it->second->type_index_);
+		if (struct_type_it != getTypesByNameMap().end()) {
+			const TypeInfo* accessed_type_info = struct_type_it->second;
+			const StructTypeInfo* struct_info = accessed_type_info->isStruct()
+				? accessed_type_info->getStructInfo()
+				: nullptr;
+			if (!struct_info && accessed_type_info->type_index_.is_valid()) {
+				const TypeInfo* resolved_type = tryGetTypeInfo(accessed_type_info->type_index_);
 				if (resolved_type && resolved_type->isStruct()) {
 					struct_info = resolved_type->getStructInfo();
 				}

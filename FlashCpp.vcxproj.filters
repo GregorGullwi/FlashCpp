@@ -207,6 +207,9 @@
     <ClCompile Include="src\TypeTraitEvaluator.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\TemplateEnvironment.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -420,6 +423,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\TemplateRegistry_Types.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TemplateEnvironment.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\TemplateTypes.h">

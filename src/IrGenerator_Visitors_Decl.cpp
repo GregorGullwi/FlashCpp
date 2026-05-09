@@ -1691,8 +1691,17 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 
 	// Create constructor declaration with typed payload
 	FunctionDeclOp ctor_decl_op;
-	// For nested classes, use current_struct_name_ which contains the fully qualified name
-	std::string_view struct_name_for_ctor = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : StringTable::getStringView(node.struct_name());
+	// Prefer the owning TypeInfo name when available. Deferred nested-template
+	// constructors can be visited outside their original struct context, where
+	// current_struct_name_ may contain only the unqualified nested name.
+	std::string_view struct_name_for_ctor = StringTable::getStringView(node.struct_name());
+	if (node.owning_type_index().is_valid()) {
+		if (const TypeInfo* owner_type_info = tryGetTypeInfo(node.owning_type_index())) {
+			struct_name_for_ctor = StringTable::getStringView(owner_type_info->name());
+		}
+	} else if (current_struct_name_.isValid()) {
+		struct_name_for_ctor = StringTable::getStringView(current_struct_name_);
+	}
 	const TypeInfo* enclosing_type_info = nullptr;
 	if (auto enclosing_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
 		enclosing_type_it != getTypesByNameMap().end()) {

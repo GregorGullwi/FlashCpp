@@ -954,6 +954,9 @@ enum class DependentPlaceholderKind : uint8_t {
 	DependentMemberType,
 };
 
+// Phase 5: Placeholder for binding storage in InstantiationContext
+// (Will be replaced with actual struct later after TypeInfo is defined)
+
 struct TypeInfo {
 	TypeInfo() = default;
 	TypeInfo(StringHandle name, TypeIndex idx, int fallback_size_bits)
@@ -1013,10 +1016,21 @@ struct TypeInfo {
 		std::variant<int64_t, double, StringHandle> value = int64_t{0};	// For non-type arguments
 		bool is_value = false;		   // true if this is a non-type argument
 		bool is_array = false;
-		std::optional<size_t> array_size = std::nullopt;
+		InlineVector<size_t, 2> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
 		StringHandle dependent_name;	 // Name of the dependent template parameter (for inner deduction)
 		std::optional<FunctionSignature> function_signature; // For function pointer template arguments
 		std::optional<ASTNode> dependent_expr;  // Original AST for dependent NTTP expressions (e.g., sizeof(T))
+		bool is_template_template_arg = false;  // true if this is a template template argument
+		StringHandle template_name;  // Name of the template for template-template arguments
+		MemberPointerKind member_pointer_kind = MemberPointerKind::None;  // Distinguish member function vs data pointers
+
+		// Backward-compatible accessor: returns the first (outermost) array dimension if the type
+		// is a 1-D or multi-dimensional array, or nullopt if it is not an array.
+		// NOTE: For multi-dimensional arrays this is intentionally lossy — it returns only the first
+		// dimension and drops the rest.  Callers that need all dimensions must use array_dimensions directly.
+		std::optional<size_t> array_size() const {
+			return array_dimensions.empty() ? std::nullopt : std::optional<size_t>(array_dimensions[0]);
+		}
 
 		// Category accessor (delegates to type_index.category())
 		TypeCategory category() const noexcept { return type_index.category(); }
@@ -1035,9 +1049,22 @@ struct TypeInfo {
  // registry-name reconstruction.  For nested types inside a template
  // instantiation, `parent` points to the enclosing type's context.
 	struct InstantiationContext {
+		// Phase 5: Binding-based storage (simplified for now using vectors)
+		// Structure: names, arg_infos, kinds, is_packs are parallel arrays
+		// where binding i = {names[i], {arg_infos[i]}, kinds[i], is_packs[i]}
+		InlineVector<StringHandle, 4> binding_names;
+		InlineVector<TemplateArgInfo, 4> binding_args;
+		InlineVector<uint8_t, 4> binding_kinds;  // TemplateParameterKind as uint8
+		InlineVector<bool, 4> binding_is_packs;
+		const InstantiationContext* parent = nullptr; // Enclosing type's context (for nesting)
+
+		// Legacy fields for compatibility (populated in parallel during transition)
 		InlineVector<StringHandle, 4> param_names; // Template parameter names (e.g., "T", "U")
 		InlineVector<TemplateArgInfo, 4> param_args; // Concrete template arguments
-		const InstantiationContext* parent = nullptr; // Enclosing type's context (for nesting)
+
+		// Phase 5 accessors
+		bool hasInstantiationContextBindings() const { return !binding_names.empty(); }
+		size_t getInstantiationContextBindingsCount() const { return binding_names.size(); }
 	};
 
 	InlineVector<TemplateArgInfo, 4> template_args_;
@@ -1077,12 +1104,7 @@ struct TypeInfo {
  // Set the type-owned instantiation context for template instantiations.
 	void setInstantiationContext(InlineVector<StringHandle, 4> param_names,
 								 InlineVector<TemplateArgInfo, 4> param_args,
-								 const InstantiationContext* parent) {
-		instantiation_context_ = std::make_unique<InstantiationContext>();
-		instantiation_context_->param_names = std::move(param_names);
-		instantiation_context_->param_args = std::move(param_args);
-		instantiation_context_->parent = parent;
-	}
+								 const InstantiationContext* parent);
 
 	// Returns the TypeCategory embedded in type_index_.
 	TypeCategory category() const {
@@ -2578,11 +2600,9 @@ public:
 			info.value = arg.value;
 			info.is_value = arg.is_value;
 			info.is_array = arg.is_array;
-			// TemplateTypeArg uses array_size() method; TypeInfo::TemplateArgInfo uses array_size field.
-			if constexpr (requires(decltype(arg) a) { a.array_size(); }) {
-				info.array_size = arg.array_size();
-			} else {
-				info.array_size = arg.array_size;
+			// Copy array dimensions from TemplateTypeArg to TemplateArgInfo
+			if constexpr (requires(decltype(arg) a) { a.array_dimensions; }) {
+				info.array_dimensions.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
 			}
 			info.dependent_name = arg.dependent_name;
 			info.function_signature = arg.function_signature;
