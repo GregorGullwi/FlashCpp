@@ -5040,14 +5040,14 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		if (stripped_desc.category() == to_desc.category())
 			return false; // Same category after stripping — no cast needed.
 		const CanonicalTypeAlias from_canonical2 = canonicalize_type_alias(stripped_desc.type_index);
-		const TypeCategory from_resolved_cat2 = from_canonical2.typeEnum();
+		const TypeCategory stripped_resolved_category = from_canonical2.typeEnum();
 		const CanonicalTypeAlias to_canonical2 = canonicalize_type_alias(to_desc.type_index);
-		const ConversionPlan plan2 = buildConversionPlan(from_resolved_cat2, to_canonical2.typeEnum());
+		const ConversionPlan plan2 = buildConversionPlan(stripped_resolved_category, to_canonical2.typeEnum());
 		if (!plan2.is_valid || plan2.rank == ConversionRank::UserDefined)
 			return false;
 		TypeIndex stripped_resolved_tidx = from_canonical2.resolvedTypeIndex();
 		if (!stripped_resolved_tidx.is_valid())
-			stripped_resolved_tidx = nativeTypeIndex(from_resolved_cat2);
+			stripped_resolved_tidx = nativeTypeIndex(stripped_resolved_category);
 		CanonicalTypeDesc stripped_resolved_desc;
 		stripped_resolved_desc.type_index = stripped_resolved_tidx;
 		const CanonicalTypeId stripped_resolved_from_id = type_context_.intern(stripped_resolved_desc);
