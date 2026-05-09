@@ -345,8 +345,8 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	MaterializedStoredTemplateArgs result;
 	const auto& stored_args = template_instantiation_info.templateArgs();
 	result.args.reserve(stored_args.size());
-	std::vector<StringHandle> context_resolution_stack;
-	auto resolveConcreteTypeBindingFromContext =
+	std::vector<StringHandle> resolution_stack;
+	auto resolveContextBinding =
 		[&](StringHandle target_name,
 			const TypeInfo::InstantiationContext* instantiation_context,
 			auto&& self) -> std::optional<TemplateTypeArg> {
@@ -354,13 +354,13 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 				return std::nullopt;
 			}
 			if (std::find(
-					context_resolution_stack.begin(),
-					context_resolution_stack.end(),
-					target_name) != context_resolution_stack.end()) {
+					resolution_stack.begin(),
+					resolution_stack.end(),
+					target_name) != resolution_stack.end()) {
 				return std::nullopt;
 			}
 
-			context_resolution_stack.push_back(target_name);
+			resolution_stack.push_back(target_name);
 
 			std::string_view target_name_view = StringTable::getStringView(target_name);
 			auto direct_binding_it = param_map_.find(target_name_view);
@@ -369,7 +369,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 				!direct_binding_it->second.is_template_template_arg &&
 				!direct_binding_it->second.is_dependent) {
 				TemplateTypeArg direct_binding = direct_binding_it->second;
-				context_resolution_stack.pop_back();
+				resolution_stack.pop_back();
 				return direct_binding;
 			}
 
@@ -387,16 +387,16 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 					TemplateTypeArg bound_arg =
 						toTemplateTypeArg(current_context->param_args[binding_index]);
 					if (bound_arg.is_value || bound_arg.is_template_template_arg) {
-						context_resolution_stack.pop_back();
+						resolution_stack.pop_back();
 						return std::nullopt;
 					}
 					if (!bound_arg.is_dependent) {
-						context_resolution_stack.pop_back();
+						resolution_stack.pop_back();
 						return bound_arg;
 					}
 					if (!bound_arg.dependent_name.isValid() ||
 						bound_arg.dependent_name == target_name) {
-						context_resolution_stack.pop_back();
+						resolution_stack.pop_back();
 						return std::nullopt;
 					}
 
@@ -406,15 +406,15 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 						TemplateTypeArg rebound_arg = rebindDependentTemplateTypeArg(
 							*rebound_binding,
 							bound_arg);
-						context_resolution_stack.pop_back();
+						resolution_stack.pop_back();
 						return rebound_arg;
 					}
-					context_resolution_stack.pop_back();
+					resolution_stack.pop_back();
 					return std::nullopt;
 				}
 			}
 
-			context_resolution_stack.pop_back();
+			resolution_stack.pop_back();
 			return std::nullopt;
 		};
 
@@ -461,10 +461,10 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 					substituted = true;
 				}
 			} else if (!materialized_arg.is_value) {
-				if (auto context_binding = resolveConcreteTypeBindingFromContext(
+				if (auto context_binding = resolveContextBinding(
 						materialized_arg.dependent_name,
 						template_instantiation_info.instantiationContext(),
-						resolveConcreteTypeBindingFromContext);
+						resolveContextBinding);
 					context_binding.has_value()) {
 					materialized_arg = rebindDependentTemplateTypeArg(*context_binding, materialized_arg);
 					result.had_substitution = true;
