@@ -215,6 +215,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 	// Check for C-style cast: (Type)expression
 	// This must be checked before parse_primary_expression() which handles parenthesized expressions
 	if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == "(") {
+#if WITH_PARSER_RUNTIME_STATS
+		if (runtime_stats_enabled_) {
+			++runtime_stats_.unary_c_style_cast_probes;
+		}
+#endif
 		// Save position to potentially backtrack if this isn't a cast
 		SaveHandle saved_pos = save_token_position();
 		advance(); // consume '('
@@ -305,6 +310,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 						// not a C-style cast. Fall through to line 291 which restores position.
 					} else {
 						discard_saved_token(saved_pos);
+#if WITH_PARSER_RUNTIME_STATS
+						if (runtime_stats_enabled_) {
+							++runtime_stats_.unary_c_style_cast_successes;
+						}
+#endif
 						// Create a StaticCastNode (C-style casts behave like static_cast in most cases)
 						auto cast_expr = emplace_node<ExpressionNode>(
 							StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
@@ -318,6 +328,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		}
 
 		// Not a cast, restore position and continue to parse_primary_expression
+#if WITH_PARSER_RUNTIME_STATS
+		if (runtime_stats_enabled_) {
+			++runtime_stats_.unary_c_style_cast_backtracks;
+		}
+#endif
 		restore_token_position(saved_pos);
 	}
 

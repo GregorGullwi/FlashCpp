@@ -202,6 +202,9 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 // - Optional argument type collection for template deduction
 // - Simple pack identifier expansion (for already-expanded packs in symbol table)
 FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx) {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(FunctionArguments);
+#endif
 	using namespace FlashCpp;
 
 	// Check if function call has arguments (not empty parentheses)

@@ -658,6 +658,9 @@ private:
 		UnaryExpression,
 		PostfixExpression,
 		PrimaryExpression,
+		FunctionArguments,
+		ExplicitTemplateArgumentProbe,
+		ExpressionTypeResolution,
 		StatementOrDeclaration,
 		Block,
 		StructDeclaration,
@@ -698,6 +701,21 @@ private:
 		size_t restore_ast_nodes_discarded = 0;
 		size_t type_specifier_triggered_template_instantiations = 0;
 		size_t class_template_instantiation_cache_hits = 0;
+		size_t expression_context_normal_calls = 0;
+		size_t expression_context_decltype_calls = 0;
+		size_t expression_context_template_arg_calls = 0;
+		size_t expression_context_requires_clause_calls = 0;
+		size_t expression_context_concept_definition_calls = 0;
+		size_t expression_binary_loop_iterations = 0;
+		size_t expression_binary_operators_consumed = 0;
+		size_t expression_template_disambiguation_checks = 0;
+		size_t expression_template_disambiguation_success = 0;
+		size_t expression_template_disambiguation_breaks = 0;
+		size_t expression_rhs_recursive_calls = 0;
+		size_t expression_ternary_operators = 0;
+		size_t unary_c_style_cast_probes = 0;
+		size_t unary_c_style_cast_successes = 0;
+		size_t unary_c_style_cast_backtracks = 0;
 		int64_t save_time_us = 0;
 		int64_t restore_time_us = 0;
 		int64_t restore_lexer_only_time_us = 0;
@@ -767,6 +785,12 @@ private:
 			return "parse_postfix_expression";
 		case RuntimePhase::PrimaryExpression:
 			return "parse_primary_expression";
+		case RuntimePhase::FunctionArguments:
+			return "parse_function_arguments";
+		case RuntimePhase::ExplicitTemplateArgumentProbe:
+			return "parse_explicit_template_arguments_as_result";
+		case RuntimePhase::ExpressionTypeResolution:
+			return "get_expression_type";
 		case RuntimePhase::StatementOrDeclaration:
 			return "parse_statement_or_declaration";
 		case RuntimePhase::Block:

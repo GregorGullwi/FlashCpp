@@ -741,6 +741,21 @@ void Parser::printRuntimeStats() const {
 			  stats.type_specifier_triggered_template_instantiations);
 	FLASH_LOG(General, Info, "  Class-template instantiation cache hits: ",
 			  stats.class_template_instantiation_cache_hits);
+	FLASH_LOG(General, Info, "  Expression context calls: normal=", stats.expression_context_normal_calls,
+			  ", decltype=", stats.expression_context_decltype_calls,
+			  ", template-arg=", stats.expression_context_template_arg_calls,
+			  ", requires=", stats.expression_context_requires_clause_calls,
+			  ", concept=", stats.expression_context_concept_definition_calls);
+	FLASH_LOG(General, Info, "  Expression binary loop: iterations=", stats.expression_binary_loop_iterations,
+			  ", operators-consumed=", stats.expression_binary_operators_consumed,
+			  ", rhs-recursions=", stats.expression_rhs_recursive_calls,
+			  ", ternary=", stats.expression_ternary_operators);
+	FLASH_LOG(General, Info, "  Expression '<' disambiguation: checks=", stats.expression_template_disambiguation_checks,
+			  ", success=", stats.expression_template_disambiguation_success,
+			  ", break-after-template-args=", stats.expression_template_disambiguation_breaks);
+	FLASH_LOG(General, Info, "  Unary C-style cast probes: probes=", stats.unary_c_style_cast_probes,
+			  ", successes=", stats.unary_c_style_cast_successes,
+			  ", backtracks=", stats.unary_c_style_cast_backtracks);
 	FLASH_LOG(General, Info, "  Parser phase breakdown:");
 	double total_parse_loop_ms = 0.0;
 	if (const auto& parse_loop_stat = stats.phase_stats[static_cast<size_t>(RuntimePhase::ParseLoop)];

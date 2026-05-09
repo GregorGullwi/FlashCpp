@@ -357,6 +357,25 @@ void Parser::annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_o
 ParseResult Parser::parse_expression(int precedence, ExpressionContext context) {
 #if WITH_PARSER_RUNTIME_STATS
 	FLASHCPP_PARSER_RUNTIME_PHASE(Expression);
+	if (runtime_stats_enabled_) {
+		switch (context) {
+		case ExpressionContext::Normal:
+			++runtime_stats_.expression_context_normal_calls;
+			break;
+		case ExpressionContext::Decltype:
+			++runtime_stats_.expression_context_decltype_calls;
+			break;
+		case ExpressionContext::TemplateTypeArg:
+			++runtime_stats_.expression_context_template_arg_calls;
+			break;
+		case ExpressionContext::RequiresClause:
+			++runtime_stats_.expression_context_requires_clause_calls;
+			break;
+		case ExpressionContext::ConceptDefinition:
+			++runtime_stats_.expression_context_concept_definition_calls;
+			break;
+		}
+	}
 #endif
 	static thread_local int recursion_depth = 0;
 	// Flat binary chains and simple unary prefixes no longer recurse/iterate artificially,
@@ -401,6 +420,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		return ParseResult::error("Parser error: stalled while parsing binary expression", stalled_token);
 	};
 	while (true) {
+#if WITH_PARSER_RUNTIME_STATS
+		if (runtime_stats_enabled_) {
+			++runtime_stats_.expression_binary_loop_iterations;
+		}
+#endif
 		// Safety check: ensure we have a token to examine
 		if (peek().is_eof()) {
 			break;
@@ -455,6 +479,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		// - RequiresClause context: prefer template arguments
 		// - Normal context: use regular disambiguation
 		if (is_operator && peek() == "<"_tok && result.node().has_value()) {
+#if WITH_PARSER_RUNTIME_STATS
+			if (runtime_stats_enabled_) {
+				++runtime_stats_.expression_template_disambiguation_checks;
+			}
+#endif
 			FLASH_LOG(Parser, Debug, "Binary operator loop: checking if '<' is template arguments, context=", static_cast<int>(context));
 
 			// Check if the left side could be a template name
@@ -558,6 +587,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 			}
 
 			if (template_args) {
+#if WITH_PARSER_RUNTIME_STATS
+				if (runtime_stats_enabled_) {
+					++runtime_stats_.expression_template_disambiguation_success;
+				}
+#endif
 				FLASH_LOG(Parser, Debug, "Confirmed: '<' starts template arguments, not comparison operator");
 
 				// Check if followed by '::' for qualified member access
@@ -670,6 +704,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				// parse_postfix_expression.  Break out of the binary loop; the Restore
 				// destructor rewinds the token position back to before '<' so the
 				// caller sees '<' and treats it as a comparison operator.
+#if WITH_PARSER_RUNTIME_STATS
+				if (runtime_stats_enabled_) {
+					++runtime_stats_.expression_template_disambiguation_breaks;
+				}
+#endif
 				break;
 			}
 			// If parse_explicit_template_arguments_as_result() returned an invalid result, fall through to treat '<' as operator
@@ -688,8 +727,18 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		// Consume the operator token
 		Token operator_token = current_token_;
 		advance();
+#if WITH_PARSER_RUNTIME_STATS
+		if (runtime_stats_enabled_) {
+			++runtime_stats_.expression_binary_operators_consumed;
+		}
+#endif
 
 		// Parse the right-hand side expression
+#if WITH_PARSER_RUNTIME_STATS
+		if (runtime_stats_enabled_) {
+			++runtime_stats_.expression_rhs_recursive_calls;
+		}
+#endif
 		ParseResult rhs_result = parse_expression(current_operator_precedence + 1, context);
 		if (rhs_result.is_error()) {
 			return rhs_result;
@@ -882,6 +931,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 	// Ternary has precedence 5 (between assignment=3 and logical-or=7)
 	// Only parse ternary if we're at a precedence level that allows it
 	if (precedence <= 5 && peek() == "?"_tok) {
+#if WITH_PARSER_RUNTIME_STATS
+		if (runtime_stats_enabled_) {
+			++runtime_stats_.expression_ternary_operators;
+		}
+#endif
 		advance();  // Consume '?'
 		Token question_token = current_token_;  // Save the '?' token
 

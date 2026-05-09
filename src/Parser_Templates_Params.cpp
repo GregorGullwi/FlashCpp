@@ -2291,6 +2291,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 // Check if '<' at current position could start template arguments without consuming tokens.
 // This implements lookahead to disambiguate template argument lists from comparison operators.
 Parser::TemplateTypeArgParsingResult Parser::parse_explicit_template_arguments_as_result(TokenDestroyPattern destroy_pattern) {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(ExplicitTemplateArgumentProbe);
+#endif
 	// Quick check: must have '<' at current position
 	if (peek() != "<"_tok) {
 		return {};
