@@ -513,15 +513,50 @@ private:
 		auto expr_node = ASTNode::emplace_node<ExpressionNode>(node);
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 
-		if (eval_result.success()) {
-			// Return the constant value
-			unsigned long long value = 0;
-			if (const auto* ll_val = std::get_if<long long>(&eval_result.value)) {
-				value = static_cast<unsigned long long>(*ll_val);
-			} else if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
-				value = *ull_val;
+		if (eval_result.success() &&
+			!eval_result.is_array &&
+			!eval_result.object_type_index.is_valid() &&
+			!eval_result.pointer_to_var.isValid()) {
+			// Determine TypeCategory and size from exact_type when available,
+			// otherwise infer from the variant discriminant.
+			TypeCategory cat = TypeCategory::UnsignedLongLong;
+			int size_bits = 64;
+			if (eval_result.exact_type.has_value()) {
+				const TypeSpecifierNode& exact = *eval_result.exact_type;
+				cat = exact.category();
+				size_bits = exact.size_in_bits();
+				// Non-primitive types (structs, etc.) cannot be folded to a scalar constant.
+				if (!is_primitive_type(cat) && cat != TypeCategory::Enum) {
+					return ExprResult{};
+				}
+			} else {
+				// Infer from variant
+				if (std::holds_alternative<bool>(eval_result.value)) {
+					cat = TypeCategory::Bool;
+					size_bits = 8;
+				} else if (std::holds_alternative<long long>(eval_result.value)) {
+					cat = TypeCategory::LongLong;
+					size_bits = 64;
+				} else if (std::holds_alternative<double>(eval_result.value)) {
+					cat = TypeCategory::Double;
+					size_bits = 64;
+				}
+				// unsigned long long: defaults already set above
 			}
-			return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
+
+			// Build the IrOperand with the correctly typed value
+			IrOperand operand_value{0ULL};
+			if (std::holds_alternative<bool>(eval_result.value)) {
+				operand_value = IrOperand{std::get<bool>(eval_result.value) ? 1ULL : 0ULL};
+			} else if (std::holds_alternative<long long>(eval_result.value)) {
+				operand_value = IrOperand{static_cast<unsigned long long>(std::get<long long>(eval_result.value))};
+			} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
+				operand_value = IrOperand{std::get<unsigned long long>(eval_result.value)};
+			} else if (std::holds_alternative<double>(eval_result.value)) {
+				operand_value = IrOperand{std::get<double>(eval_result.value)};
+			}
+
+			return makeExprResult(nativeTypeIndex(cat), SizeInBits{size_bits}, std::move(operand_value), PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Return default ExprResult if evaluation failed

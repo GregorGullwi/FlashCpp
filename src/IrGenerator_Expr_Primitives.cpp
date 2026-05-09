@@ -7,6 +7,21 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 	return std::visit([this, context](const auto& expr) -> ExprResult {
 		using T = std::decay_t<decltype(expr)>;
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			// Attempt constexpr constant folding only for confirmed constexpr local/global
+			// variables. Skip StaticMember and NonStaticMember identifiers to avoid folding
+			// runtime-mutable static members. Skip enum-typed identifiers since generateIdentifierIr
+			// has specialised handling that returns the underlying type.
+			if (context != ExpressionContext::LValueAddress &&
+				expr.binding() != IdentifierBinding::StaticMember &&
+				expr.binding() != IdentifierBinding::NonStaticMember) {
+				auto sym = lookupSymbol(expr.nameHandle().isValid() ? expr.nameHandle() : StringTable::getOrInternStringHandle(expr.name()));
+				bool is_constexpr_var = sym.has_value() && sym->is<VariableDeclarationNode>() && sym->as<VariableDeclarationNode>().is_constexpr();
+				if (is_constexpr_var) {
+					auto const_result = tryEvaluateAsConstExpr(expr);
+					if (const_result.effectiveIrType() != IrType::Void)
+						return const_result;
+				}
+			}
 			return generateIdentifierIr(expr, context);
 		} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 			return generateQualifiedIdentifierIr(expr, context);
@@ -29,6 +44,12 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 			return generateArraySubscriptIr(expr, context);
 		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			// Attempt constexpr constant folding when we are not taking the address.
+			if (context != ExpressionContext::LValueAddress) {
+				auto const_result = tryEvaluateAsConstExpr(expr);
+				if (const_result.effectiveIrType() != IrType::Void)
+					return const_result;
+			}
 			return generateMemberAccessIr(expr, context);
 		} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
 			auto const_result = tryEvaluateAsConstExpr(expr);
