@@ -1678,6 +1678,9 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_struct
 
 // Helper to extract type from an expression for overload resolution
 std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr_node) {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(ExpressionTypeResolution);
+#endif
 	// Guard against infinite recursion by tracking the call stack
 	// Use the address of the expr_node as a unique identifier
 	const void* expr_ptr = &expr_node;

@@ -100,6 +100,9 @@ ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width, std::
 // Parse template declaration: template<typename T> ...
 // Also handles explicit template instantiation: template void Func<int>(); or template class Container<int>;
 ParseResult Parser::parse_template_declaration() {
+#if WITH_PARSER_RUNTIME_STATS
+	FLASHCPP_PARSER_RUNTIME_PHASE(TemplateDeclaration);
+#endif
 	ScopedTokenPosition saved_position(*this);
 
 	// Consume 'template' keyword

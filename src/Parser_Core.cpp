@@ -737,6 +737,57 @@ void Parser::printRuntimeStats() const {
 			  " ms, restore=", stats.restore_time_us / 1000.0,
 			  " ms, restore-lexer-only=", stats.restore_lexer_only_time_us / 1000.0,
 			  " ms, discard=", stats.discard_time_us / 1000.0, " ms");
+	FLASH_LOG(General, Info, "  Type-specifier-triggered template instantiations: ",
+			  stats.type_specifier_triggered_template_instantiations);
+	FLASH_LOG(General, Info, "  Class-template instantiation cache hits: ",
+			  stats.class_template_instantiation_cache_hits);
+	FLASH_LOG(General, Info, "  Expression context calls: normal=", stats.expression_context_normal_calls,
+			  ", decltype=", stats.expression_context_decltype_calls,
+			  ", template-arg=", stats.expression_context_template_arg_calls,
+			  ", requires=", stats.expression_context_requires_clause_calls,
+			  ", concept=", stats.expression_context_concept_definition_calls);
+	FLASH_LOG(General, Info, "  Expression binary loop: iterations=", stats.expression_binary_loop_iterations,
+			  ", operators-consumed=", stats.expression_binary_operators_consumed,
+			  ", rhs-recursions=", stats.expression_rhs_recursive_calls,
+			  ", ternary=", stats.expression_ternary_operators);
+	FLASH_LOG(General, Info, "  Expression '<' disambiguation: checks=", stats.expression_template_disambiguation_checks,
+			  ", success=", stats.expression_template_disambiguation_success,
+			  ", break-after-template-args=", stats.expression_template_disambiguation_breaks);
+	FLASH_LOG(General, Info, "  Unary C-style cast probes: probes=", stats.unary_c_style_cast_probes,
+			  ", successes=", stats.unary_c_style_cast_successes,
+			  ", backtracks=", stats.unary_c_style_cast_backtracks);
+	FLASH_LOG(General, Info, "  Parser phase breakdown:");
+	double total_parse_loop_ms = 0.0;
+	if (const auto& parse_loop_stat = stats.phase_stats[static_cast<size_t>(RuntimePhase::ParseLoop)];
+		parse_loop_stat.inclusive_time_us > 0) {
+		total_parse_loop_ms = parse_loop_stat.inclusive_time_us / 1000.0;
+	}
+	if (total_parse_loop_ms <= 0.0) {
+		for (size_t i = 1; i < static_cast<size_t>(RuntimePhase::Count); ++i) {
+			total_parse_loop_ms += stats.phase_stats[i].self_time_us / 1000.0;
+		}
+	}
+	for (size_t i = 0; i < static_cast<size_t>(RuntimePhase::Count); ++i) {
+		const auto phase = static_cast<RuntimePhase>(i);
+		const auto& phase_stat = stats.phase_stats[i];
+		if (phase_stat.calls == 0) {
+			continue;
+		}
+		double inclusive_ms = phase_stat.inclusive_time_us / 1000.0;
+		double self_ms = phase_stat.self_time_us / 1000.0;
+		double inclusive_pct = total_parse_loop_ms > 0.0
+			? (inclusive_ms * 100.0 / total_parse_loop_ms)
+			: 0.0;
+		double self_pct = total_parse_loop_ms > 0.0
+			? (self_ms * 100.0 / total_parse_loop_ms)
+			: 0.0;
+		FLASH_LOG(General, Info, "    ", runtimePhaseName(phase),
+				  ": calls=", phase_stat.calls,
+				  ", inclusive=", std::fixed, std::setprecision(3), inclusive_ms, " ms",
+				  " (", std::setprecision(2), inclusive_pct, "%)",
+				  ", self=", std::setprecision(3), self_ms, " ms",
+				  " (", self_pct, "%)");
+	}
 #endif
 }
 
