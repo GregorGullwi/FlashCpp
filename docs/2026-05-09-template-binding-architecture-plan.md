@@ -1,7 +1,7 @@
 # Template Binding Architecture Plan
 
 **Date:** 2026-05-09  
-**Status:** COMPLETE (Phases 1-9 complete)
+**Status:** Phase 10 follow-up open (Phases 1-9 implemented; unresolved PR feedback tracked)
 
 **Scope:** Template argument identity, parameter binding environments, instantiation consumers, and C++20 failure-mode boundaries.
 
@@ -17,10 +17,10 @@ This reduces accidental fallback paths, makes nested template instantiation more
 
 ## Next Task
 
-Phase 9 completion:
-- compacted metadata containers on hot binding paths
-- hardened metadata-boundary correctness for instantiation context, environment fallback, and constexpr binding lookup
-- preserved ordered identity semantics with discriminated payload storage
+Phase 10 follow-up closure:
+- close non-test unresolved PR #1473 feedback still open/current;
+- align plan text with current implementation where Phase 9 completion was overstated;
+- keep test-file-only review items tracked separately (not in this follow-up phase).
 
 **Phase 8 completion:**
 1. ✅ Extracted post-binding function-template materialization into shared helpers used by both `try_instantiate_template_explicit()` and `try_instantiate_single_template()` in `src/Parser_Templates_Inst_Deduction.cpp`
@@ -599,9 +599,66 @@ Acceptance criteria:
 Complexity: M
 Risk: Medium
 
+### Phase 10: PR #1473 Follow-up Closure (non-test items)
+
+Goal: close all remaining **non-test** review issues still open/current after Phase 9, and reconcile doc claims with actual code state.
+
+Scope note:
+- This phase intentionally excludes test-only feedback items (member-function-pointer and multidimensional test strengthening, return-code uniqueness in existing tests).
+
+Open implementation items (non-test):
+
+1. ⏳ `src/TemplateEnvironment.h`: `TemplateBinding::args` is still `std::vector<TemplateTypeArg>`.
+   - Plan/implementation mismatch: Phase 9 text currently says this was changed to `InlineVector<TemplateTypeArg, 1>`.
+   - Action: either migrate to `InlineVector<TemplateTypeArg, 1>` safely or explicitly revise Phase 9 documentation to keep `std::vector` by design.
+
+2. ⏳ `src/AstNodeTypes_DeclNodes.h`: `InstantiationContext` pack bindings are still flattened (`binding_args` is one arg per binding name).
+   - Action: represent per-binding argument lists for packs (list-of-lists or equivalent) and update binding consumers.
+
+3. ⏳ `src/ConstExprEvaluator_Core.cpp`: `sizeof(T)` bound-type sizing still reduces metadata in helper paths.
+   - Action: reconstruct full bound type information and route through existing constexpr type-size path so array extents and richer metadata are preserved.
+
+4. ⏳ `src/IrGenerator_Lambdas.cpp` / `src/IrGenerator.h`: deferred lambda metadata still stores only legacy flattened vectors in `LambdaInfo`.
+   - Action: carry `TemplateEnvironmentSnapshot` on `LambdaInfo` (keep legacy vectors only as compatibility views).
+
+5. ⏳ `src/Parser_Templates_Lazy.cpp`: `pack_param_info_` restoration still depends on tail restore and can be bypassed on early `HardUse`/`SfinaeProbe` exits.
+   - Action: add guard-based restoration so parser pack state is restored on all exits.
+
+6. ⏳ `src/Parser_Templates_Inst_Substitution.cpp`: nested non-type default evaluation still rebuilds local environment with `parent = nullptr`.
+   - Action: propagate outer bindings/environment into both substitution and constexpr evaluation helper paths.
+
+7. ⏳ `src/Parser_Templates_Inst_Substitution.cpp`: filtered template-parameter list is still paired with unfiltered args in one callback path.
+   - Action: keep filtered params and args aligned by building both filtered containers together.
+
+8. ⏳ `src/TemplateEnvironment.cpp`: `toTemplateTypeArg(const TemplateArgInfo&)` still reconstructs values via `intValue()`.
+   - Action: preserve full NTTP identity by copying stored value identity directly.
+
+9. ⏳ `src/TemplateEnvironment.cpp`: `inferBindingKind(const TemplateArgInfo&)` still checks `is_value` only.
+   - Action: preserve template-template kind there as well (check `is_template_template_arg` first).
+
+10. ⏳ `src/TemplateEnvironment.cpp`: `appendContextBindings(...)` still appends parent before child.
+    - Action: preserve inner-scope shadowing in rebuild order (child-first lookup precedence).
+
+11. ⏳ `src/TemplateRegistry_Lazy.h`: `buildTemplateEnvironmentSnapshotFromBindings(...)` remains flattening/pack-lossy and still uses a default parameter in `src/`.
+    - Action: make pack-aware mapping from params+args and remove default `parent` argument (or provide explicit overload).
+
+12. ⏳ `src/TemplateEnvironment.cpp`: `buildTemplateEnvironmentSnapshot(...)` still emits one binding per `(name,arg)` and does not coalesce repeated names into packs.
+    - Action: coalesce repeated names into pack bindings so `findPack()` can recover grouped bindings.
+
+13. ⏳ `src/Parser_Templates_Inst_Deduction.cpp`: helper-layer ownership mismatch remains for finalization flags/inputs.
+    - `memoize_body_reparse_failure` is derived and then explicitly unused.
+    - `overload_id` is also cast-away in the finalization helper layer.
+    - Action: either move failure memoization responsibility into `finalizeInstantiatedFunction()` or remove non-owned flags/parameters from that layer.
+
+Verification notes from current branch (no action required unless regressions appear):
+
+1. ✅ `TemplateArgIdentity` discriminated payload/variant goal is implemented in `src/TemplateTypes.h`.
+2. ✅ Template-template kind inference feedback in instantiation-context population is addressed in `src/AstNodeTypes.cpp`.
+3. ✅ Constexpr template-value lookup is environment-first with compatibility fallback isolated behind helper logic.
+
 ## Implementation Status
 
-The binding architecture through Phase 9 has been implemented and tested:
+The binding architecture through Phase 9 has been implemented and tested, with a non-test follow-up backlog captured in Phase 10:
 
 1. ✅ Phase 1: Consolidated template argument conversion helpers
 2. ✅ Phase 2: Added TemplateEnvironment as adapter
@@ -611,9 +668,10 @@ The binding architecture through Phase 9 has been implemented and tested:
 6. ✅ Phase 6: Made persistent argument metadata lossless
 7. ✅ Phase 7: Made TemplateInstantiationKey ordered
 8. ✅ Phase 8: Refactor instantiation paths around the environment
-9. ✅ Phase 9: Compact and harden binding metadata
+9. ✅ Phase 9: Compact and harden binding metadata (core implementation complete)
+10. ⏳ Phase 10: PR #1473 non-test follow-up closure
 
-**Status: COMPLETE**
+**Status: IN PROGRESS (Phase 10 open)**
 
 Add debug assertions as each phase creates the relevant type:
 
