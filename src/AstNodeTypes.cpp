@@ -906,7 +906,15 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 	instantiation_context_->param_args = param_args;
 
 	// Phase 5: Populate binding-based storage alongside legacy fields
-	const size_t pair_count = std::min(param_names.size(), param_args.size());
+	if (param_args.size() < param_names.size()) {
+		StringBuilder error_builder;
+		error_builder.append("TypeInfo::setInstantiationContext invalid size mismatch: param_names=");
+		error_builder.append(param_names.size());
+		error_builder.append(", param_args=");
+		error_builder.append(param_args.size());
+		throw InternalError(std::string(error_builder.commit()));
+	}
+	const size_t pair_count = param_names.size();
 	instantiation_context_->binding_names.reserve(pair_count);
 	instantiation_context_->binding_args.reserve(pair_count);
 	instantiation_context_->binding_kinds.reserve(pair_count);

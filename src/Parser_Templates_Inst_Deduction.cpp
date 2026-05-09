@@ -1987,7 +1987,6 @@ bool Parser::materializeTemplateFunctionParameters(
 	const FunctionTemplateInstantiationContext& instantiation_context,
 	const FunctionTemplateBindingData& binding_data,
 	FunctionTemplateInstantiationFlags instantiation_flags) {
-	const TemplateFunctionDeclarationNode& template_func = instantiation_context.template_func;
 	const FunctionDeclarationNode& func_decl = instantiation_context.func_decl;
 	std::span<const TemplateParameterNode> template_params = instantiation_context.template_params;
 	std::span<const TemplateTypeArg> template_args = instantiation_context.template_args;
@@ -2495,14 +2494,11 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 	const FunctionTemplateBindingData& binding_data,
 	FunctionTemplateInstantiationFlags instantiation_flags) {
 	std::string_view template_name = instantiation_context.template_name;
-	const TemplateFunctionDeclarationNode& template_func = instantiation_context.template_func;
 	const FunctionDeclarationNode& func_decl = instantiation_context.func_decl;
 	std::span<const TemplateParameterNode> template_params = instantiation_context.template_params;
 	std::span<const TemplateTypeArg> template_args = instantiation_context.template_args;
 	const FlashCpp::TemplateInstantiationKey& key = instantiation_context.key;
 	const uintptr_t overload_id = instantiation_context.overload_id;
-	const int recursion_depth = instantiation_context.recursion_depth;
-	const std::vector<TypeSpecifierNode>* arg_types = binding_data.arg_types;
 	const std::vector<size_t>* template_param_arg_starts = binding_data.template_param_arg_starts;
 	const std::vector<size_t>* template_param_arg_counts = binding_data.template_param_arg_counts;
 	const std::optional<CallArgDeductionInfo>* deduction_info = binding_data.deduction_info;
@@ -2517,10 +2513,6 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::CommitInstantiation);
 	const bool register_instantiation =
 		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::RegisterInstantiation);
-	const bool memoize_body_reparse_failure =
-		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::MemoizeBodyReparseFailure);
-	const bool run_inline_heuristic =
-		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::RunInlineHeuristic);
 	const DeclarationNode& orig_decl = func_decl.decl_node();
 	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(template_name, template_args);
 
@@ -2774,10 +2766,10 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			}
 			if (template_instantiation_mode_ == TemplateInstantiationMode::HardUseCandidateProbe) {
 				ScopedParserInstantiationContext body_instantiation_mode(*this, TemplateInstantiationMode::HardUse, StringHandle{});
-				reparse_template_function_body(new_func_ref, func_decl, template_func.template_parameters(), template_args,
+				reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
 											   preserve_ref_qualifier);
 			} else {
-				reparse_template_function_body(new_func_ref, func_decl, template_func.template_parameters(), template_args,
+				reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
 											   preserve_ref_qualifier);
 			}
 			if (!new_func_ref.is_materialized()) {
