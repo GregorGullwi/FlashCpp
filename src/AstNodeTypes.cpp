@@ -915,8 +915,13 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 	for (size_t i = 0; i < pair_count; ++i) {
 		instantiation_context_->binding_names.push_back(param_names[i]);
 		instantiation_context_->binding_args.push_back(param_args[i]);
-		// Infer kind from the TemplateArgInfo: is_value indicates NonType, otherwise Type
-		uint8_t kind = param_args[i].is_value ? 1 : 0;  // 1=NonType, 0=Type
+		TemplateParameterKind binding_kind = TemplateParameterKind::Type;
+		if (param_args[i].is_template_template_arg) {
+			binding_kind = TemplateParameterKind::Template;
+		} else if (param_args[i].is_value) {
+			binding_kind = TemplateParameterKind::NonType;
+		}
+		const uint8_t kind = static_cast<uint8_t>(binding_kind);
 		instantiation_context_->binding_kinds.push_back(kind);
 		instantiation_context_->binding_is_packs.push_back(false);  // Individual bindings are never packs
 	}
