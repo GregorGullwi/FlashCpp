@@ -7948,13 +7948,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Slice 3: record constructor-with-definition stub.
 					source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_ctor_node;
 
-					// When implicitly instantiating a constructor whose body was deferred to the
-					// pending_template_deferred_bodies_ list (has_template_body_position but not yet
-					// is_materialized), register the instantiated stub in the lazy registry so it
-					// can be re-parsed with concrete types when odr-used. Without this, the stub
-					// remains unmaterialized and codegen reports "unmaterialized constructor".
-					// The stub carries template_body_position (and template_initializer_list_position
-					// for ctors with member-initializers) propagated from the original above.
+					// Register lazy constructor stubs with deferred bodies in the lazy registry
+					// for on-demand materialization when odr-used. The stub carries
+					// template_body_position (and template_initializer_list_position for ctors
+					// with member-initializers) propagated from the original above.
 					if (is_implicit_instantiation &&
 						!ctor_decl.is_materialized() &&
 						ctor_decl.has_template_body_position() &&
@@ -8115,16 +8112,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					throw;
 				}
 			} else {
-				// No definition to substitute, copy directly
-				instantiated_struct_ref.add_destructor(
-					mem_func.function_declaration,
-					mem_func.access);
+				// Destructor body is deferred (not yet materialized): create a new stub
+				// that carries the template-body position so the deferred body replay can
+				// find and re-parse it with concrete template arguments.
+				StringHandle specialized_dtor_name = StringTable::getOrInternStringHandle(StringBuilder()
+																							  .append("~")
+																							  .append(instantiated_name));
+				auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
+					instantiated_name,
+					specialized_dtor_name);
+				setOuterTemplateBindingsFromParams(new_dtor_ref, template_params, template_args_to_use);
+				new_dtor_ref.set_has_noexcept_specifier(dtor_decl.has_noexcept_specifier());
+				new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
+				if (dtor_decl.has_template_body_position()) {
+					new_dtor_ref.set_template_body_position(dtor_decl.template_body_position());
+				}
 
-				// Also add to struct_info so hasDestructor() returns true during codegen
-				struct_info_ptr->addDestructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
-
-				// Slice 3: record destructor-no-definition stub (same node is reused).
-				source_member_to_stub[astNodeKey(mem_func.function_declaration)] = mem_func.function_declaration;
+				instantiated_struct_ref.add_destructor(new_dtor_node, mem_func.access);
+				struct_info_ptr->addDestructor(new_dtor_node, mem_func.access, mem_func.is_virtual);
+				// Slice 3: record the deferred stub so the deferred-body replay can find it.
+				source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_dtor_node;
 			}
 		} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
 			// Member template functions need outer template parameters substituted
@@ -8960,9 +8967,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// above; reparsing every deferred body here would eagerly instantiate unused
 	// members and incorrectly diagnose dependent bodies such as std::pair::swap
 	// for const keys.
-	// Exception: if any deferred body is a constructor or destructor (implicit special
-	// members), replay is required even for implicit instantiations so that the
-	// constructor/destructor bodies are properly materialized.
+	// Exception: if any deferred body is a constructor or destructor (special
+	// members that require eager replay regardless of explicit/implicit status),
+	// replay is required so the constructor/destructor bodies are materialized.
 	bool has_implicit_special = false;
 	for (const auto& deferred : template_class.deferred_bodies()) {
 		if (deferred.identity.kind == DeferredMemberIdentity::Kind::Constructor ||

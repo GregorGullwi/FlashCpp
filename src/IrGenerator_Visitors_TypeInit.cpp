@@ -1750,7 +1750,7 @@ void AstToIr::generateTrivialDefaultConstructors() {
 					// base classes like Base<T> resolved to a concrete type.
 					const StructTypeInfo* base_struct_info = base_type_it->second->getStructInfo();
 					if (base_struct_info && base_struct_info->hasConstructor()) {
-						// If the base class has a lazy (unmateriailzed) default constructor,
+						// If the base class has a lazy (unmaterialized) default constructor,
 						// materialize it via the parser before emitting the ConstructorCallOp.
 						// generateTrivialDefaultConstructors() runs before sema_ is set, so we
 						// cannot use ensureMemberFunctionMaterialized here; instead we call the
@@ -1759,13 +1759,13 @@ void AstToIr::generateTrivialDefaultConstructors() {
 							const StructMemberFunction* base_default_ctor = base_struct_info->findDefaultConstructor();
 							if (base_default_ctor &&
 								base_default_ctor->function_decl.is<ConstructorDeclarationNode>() &&
-								!base_default_ctor->function_decl.as<ConstructorDeclarationNode>().is_materialized() &&
-								!base_default_ctor->function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
+								!base_default_ctor->function_decl.as<ConstructorDeclarationNode>().is_materialized()) {
 								StringHandle base_name = base_struct_info->name;
 								StringHandle ctor_name = base_default_ctor->function_decl.as<ConstructorDeclarationNode>().name();
 								if (base_name.isValid() && ctor_name.isValid()) {
 									LazyMemberKey key = LazyMemberKey::exact(base_name, ctor_name, false);
 									parser_->instantiateLazyMemberIfNeeded(key);
+									normalizePendingSemanticRoots();
 								}
 							}
 						}

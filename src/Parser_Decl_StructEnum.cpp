@@ -3554,9 +3554,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				if (delayed.has_initializer_list) {
 					delayed.ctor_node->set_template_initializer_list_position(delayed.initializer_list_start);
 				}
-			} else if (!delayed.is_destructor && delayed.func_node) {
-				// Destructors don't support saved template body positions (they require
-				// is_materialized() = true for lazy materialization). Skip dtors here.
+			} else if (delayed.is_destructor && delayed.dtor_node) {
+				delayed.dtor_node->set_template_body_position(delayed.body_start);
+			} else if (delayed.func_node) {
 				delayed.func_node->set_template_body_position(delayed.body_start);
 			}
 		}

@@ -695,11 +695,21 @@ public:
 	}
 
 	// Category E: is there any source we can recover a body from?
-	// DestructorDeclarationNode has no saved token-stream body position, so
-	// the only source is a fully-parsed block.
+	// A saved template body position (set when the destructor body is deferred
+	// during template class parsing) or a fully-parsed block both count.
 	bool has_any_body_source() const {
-		return is_materialized();
+		return is_materialized() || (has_template_body_ && !failed_substitution());
 	}
+
+	// Saved template body position — mirrors FunctionDeclarationNode.
+	// Set when the destructor's body is deferred during template class parsing
+	// so that it can be replayed and materialized during template instantiation.
+	void set_template_body_position(SaveHandle handle) {
+		template_body_position_ = handle;
+		has_template_body_ = true;
+	}
+	bool has_template_body_position() const { return has_template_body_; }
+	SaveHandle template_body_position() const { return template_body_position_; }
 
 	// Diagnostic payload for a cached substitution failure.
 	StringHandle substitution_failure_reason() const { return substitution_failure_reason_; }
@@ -785,6 +795,8 @@ private:
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
 	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution
+	SaveHandle template_body_position_;  // Saved position for deferred template body replay
+	bool has_template_body_ = false;	 // True when template_body_position_ is valid
 };
 
 // Anonymous union member information - stored during parsing, processed during layout

@@ -939,7 +939,7 @@ void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, cons
 	// (e.g. for a derived class) call an unmaterialized base-class constructor.
 	if (sema_ &&
 		!ctor_op.resolved_constructor->is_materialized() &&
-		!ctor_op.resolved_constructor->is_implicit() &&
+		ctor_op.resolved_constructor->has_any_body_source() &&
 		struct_info.name.isValid()) {
 		StringHandle ctor_name = ctor_op.resolved_constructor->name();
 		if (ctor_name.isValid()) {
