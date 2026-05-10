@@ -125,7 +125,7 @@ struct TypeIndexArg {
 
 	// Array information - critical for differentiating T[], T[N], and T
 	bool is_array = false;
-	std::optional<size_t> array_size;  // nullopt for T[], value for T[N]
+	InlineVector<size_t, 2> array_sizes;  // Empty for T, full dimension list for arrays
 	std::optional<FunctionSignature> function_signature; // Needed for function pointer identity
 	bool is_dependent = false;
 	StringHandle dependent_name{};
@@ -141,7 +141,7 @@ struct TypeIndexArg {
 			   ref_qualifier == other.ref_qualifier &&
 			   pointer_depth == other.pointer_depth &&
 			   is_array == other.is_array &&
-			   array_size == other.array_size &&
+			   array_sizes == other.array_sizes &&
 			   function_signature.has_value() == other.function_signature.has_value() &&
 			   (!function_signature.has_value() ||
 				equalFunctionSignatureIdentity(*function_signature, *other.function_signature)) &&
@@ -161,8 +161,8 @@ struct TypeIndexArg {
 		h ^= std::hash<uint8_t>{}(pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		// Include array info in hash - critical for differentiating T[] from T[N] from T
 		h ^= std::hash<bool>{}(is_array) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		if (array_size.has_value()) {
-			h ^= std::hash<size_t>{}(*array_size) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		for (size_t array_size : array_sizes) {
+			h ^= std::hash<size_t>{}(array_size) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		if (function_signature.has_value()) {
 			h ^= hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (h << 6) + (h >> 2);

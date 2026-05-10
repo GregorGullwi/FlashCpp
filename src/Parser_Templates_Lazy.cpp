@@ -560,6 +560,13 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// Substitute and copy parameters, expanding variadic pack parameters into N individual
 	// parameters (args_0, args_1, ...) and populating pack_param_info_ for body expansion.
 	size_t saved_pack_info = pack_param_info_.size();
+	struct PackParamInfoRestoreGuard {
+		std::vector<PackParamInfo>& pack_info;
+		size_t saved_size;
+		~PackParamInfoRestoreGuard() {
+			pack_info.resize(saved_size);
+		}
+	} pack_info_restore_guard{pack_param_info_, saved_pack_info};
 	substituteAndCopyMemberFunctionParameters(
 		func_decl.parameter_nodes(),
 		new_func_ref,
@@ -759,7 +766,6 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	}
 
 	copy_function_properties(new_func_ref, func_decl);
-	pack_param_info_.resize(saved_pack_info);
 	// Carry the const-method qualifier so mangling emits 'K' (Itanium) / 'QEBA' (MSVC).
 	new_func_ref.set_is_const_member_function(lazy_info.identity.is_const_method);
 	new_func_ref.set_is_volatile_member_function(hasCVQualifier(lazy_info.identity.cv_qualifier, CVQualifier::Volatile));

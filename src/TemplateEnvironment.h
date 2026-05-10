@@ -21,7 +21,7 @@ struct TemplateBinding {
 	StringHandle name;
 	TemplateParameterKind kind{};
 	bool is_pack = false;
-	std::vector<TemplateTypeArg> args;
+	InlineVector<TemplateTypeArg, 1> args;
 };
 
 struct TemplateBindingSnapshot {
@@ -72,4 +72,3 @@ TemplateEnvironment buildTemplateEnvironment(const TypeInfo::InstantiationContex
 std::optional<TemplateTypeArg> resolveContextBinding(
 	StringHandle target_name,
 	const TemplateEnvironment& environment);
-

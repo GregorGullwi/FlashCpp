@@ -16,20 +16,44 @@ template <typename ParamContainer, typename ArgContainer>
 TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshotFromBindings(
 	const ParamContainer& template_params,
 	const ArgContainer& template_args,
-	std::shared_ptr<const TemplateEnvironmentSnapshot> parent = nullptr) {
-	InlineVector<StringHandle, 4> param_names;
-	param_names.reserve(template_params.size());
-	for (const auto& template_param : template_params) {
-		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
-			typed_param != nullptr) {
-			param_names.push_back(typed_param->nameHandle());
-		}
-	}
-
+	std::shared_ptr<const TemplateEnvironmentSnapshot> parent) {
 	InlineVector<TemplateTypeArg, 4> typed_args;
 	typed_args.reserve(template_args.size());
 	for (const auto& template_arg : template_args) {
 		typed_args.push_back(template_arg);
+	}
+
+	InlineVector<StringHandle, 4> param_names;
+	param_names.reserve(template_params.size());
+	size_t arg_index = 0;
+	for (size_t param_index = 0; param_index < template_params.size() && arg_index < typed_args.size(); ++param_index) {
+		const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_params[param_index]);
+		if (typed_param == nullptr) {
+			continue;
+		}
+		if (typed_param->is_variadic()) {
+			size_t remaining_args = typed_args.size() - arg_index;
+			size_t required_after = 0;
+			for (size_t after = param_index + 1; after < template_params.size(); ++after) {
+				const TemplateParameterNode* after_param = tryGetTemplateParameterNode(template_params[after]);
+				if (after_param == nullptr) {
+					continue;
+				}
+				if (after_param->is_variadic() || after_param->has_default()) {
+					continue;
+				}
+				++required_after;
+			}
+			size_t pack_size = remaining_args > required_after
+				? remaining_args - required_after
+				: 0;
+			for (size_t pack_index = 0; pack_index < pack_size && arg_index < typed_args.size(); ++pack_index, ++arg_index) {
+				param_names.push_back(typed_param->nameHandle());
+			}
+			continue;
+		}
+		param_names.push_back(typed_param->nameHandle());
+		++arg_index;
 	}
 	InlineVector<TypeInfo::TemplateArgInfo, 4> arg_infos = toTemplateArgInfoList(
 		std::span<const TemplateTypeArg>(typed_args.data(), typed_args.size()));
