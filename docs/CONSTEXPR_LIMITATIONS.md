@@ -1,1624 +1,341 @@
 # Constexpr Evaluation Limitations
 
-This document details the current limitations of constexpr evaluation in FlashCpp, particularly regarding member access and constructor evaluation in constant expressions.
+**Standard boundary:** C++20 constexpr. `try`/`catch` inside constant evaluation is not a support target.
 
 ## Overview
 
-FlashCpp supports constexpr evaluation for use in `static_assert`, template parameters, and other contexts requiring compile-time constant expressions. The implementation supports struct/class member access, constructor evaluation, and constexpr member functions with some limitations.
-
-**Standard boundary:** this document tracks FlashCpp against **C++20 constexpr**.
-It does not treat `throw` / `try` / `catch` during constant evaluation as a
-supported target. If evaluator internals catch exceptions while reporting
-errors, that is implementation plumbing, not language-feature support.
-
-## What Works
-
-### ✅ All Primitive Types in Constexpr Variables and Expressions
-
-Every C++ primitive type is supported as a constexpr variable and in arithmetic/comparison expressions:
-
-```cpp
-constexpr bool          cv_bool   = true;
-constexpr char          cv_char   = 'A';        // 65
-constexpr signed char   cv_schar  = -5;
-constexpr unsigned char cv_uchar  = 200;
-constexpr short         cv_short  = 1000;
-constexpr unsigned short cv_ushort = 60000;
-constexpr int           cv_int    = -42;
-constexpr unsigned int  cv_uint   = 4000000000u;
-constexpr long          cv_long   = 100000L;
-constexpr unsigned long cv_ulong  = 3000000000UL;
-constexpr long long     cv_llong  = -9000000000LL;
-constexpr unsigned long long cv_ullong = 10000000000ULL;
-constexpr float         cv_float  = 3.14f;
-constexpr double        cv_double = 2.718281828;
-constexpr long double   cv_ldouble = 1.41421356L;
-```
-
-Arithmetic and comparisons work correctly for all of these types including mixed-type
-expressions (C++ usual arithmetic conversions are applied):
-
-```cpp
-constexpr double result = 3 + 0.14;      // int + double → double ✅
-constexpr float  sum    = 3.5f + 2;      // float + int  → double ✅
-static_assert(3.14 > 3.0);               // non-integer double comparison ✅
-static_assert(3.14f > 3.0f);             // non-integer float comparison  ✅
-
-constexpr unsigned long long big = 18000000000000000000ULL;
-static_assert(big > 1LL);               // unsigned long long vs signed ✅
-```
-
-Constexpr functions may also return and accept all primitive types, and
-C-style casts / `static_cast` / cv-only `const_cast` inside function bodies work correctly:
-
-```cpp
-constexpr double fn(double a, double b) { return a * b; }
-static_assert(fn(3.14, 2.0) > 6.0);    // 6.28 > 6.0 ✅
-
-constexpr int fn_cast(double a) { return (int)a; }
-static_assert(fn_cast(3.9) == 3);       // truncation ✅
-```
-
-**Unsigned type width:**
-Unsigned arithmetic wraps at the *declared type's* width:
-
-```cpp
-constexpr unsigned int wrap = 1u - 2u;
-static_assert(wrap == 4294967295u);  // ✅ wraps at 32 bits (UINT_MAX)
-
-constexpr unsigned int add_overflow = 4294967295u + 1u;
-static_assert(add_overflow == 0u);   // ✅ wraps correctly
-```
-
-The evaluator masks the result to the correct width after each arithmetic
-operation when both operands have known exact types.  When the declared type
-cannot be determined (e.g. some template-dependent expressions), the result
-may fall back to 64-bit storage; arithmetic that stays well within range is
-always unaffected.
-
-Unsigned wrapping for `++` / `--` now also applies the declared-type mask after
-the arithmetic step, so `unsigned int`, `unsigned char`, and `unsigned short`
-all wrap correctly (e.g. `unsigned int x = UINT_MAX; x++;` wraps to `0`).
-
-### ✅ Basic Constexpr Variables
-```cpp
-constexpr int x = 10;
-constexpr double pi = 3.14159;
-constexpr bool flag = true;
-static_assert(x == 10);  // ✅ Works
-```
-
-### ✅ Constexpr Expressions
-```cpp
-constexpr int sum = 10 + 20 + 30;
-constexpr int product = 5 * 6;
-constexpr bool comparison = (10 > 5);
-static_assert(sum == 60);  // ✅ Works
-```
-
-### ✅ Unary Operators
-```cpp
-constexpr int negative = -42;
-static_assert(negative == -42);  // ✅ Works
-
-constexpr int positive = +42;
-static_assert(positive == 42);  // ✅ Works
-
-constexpr int double_neg = -(-10);
-static_assert(double_neg == 10);  // ✅ Works
-```
-
-### ✅ `sizeof(expr)` / `alignof(expr)` for Common Expression Operands (NEW)
-Common non-type operands for `sizeof` and `alignof` now work in constexpr evaluation, including:
-
-- binary expressions such as `a + b`
-- constexpr function calls such as `makeInt()`
-- member access such as `obj.member`
-- pointer-to-member access such as `obj.*pm` and `ptr->*pm`
-- array subscripts such as `arr[1]`, `obj.data[2]`, and `matrix[0]`
-- array subscripts through function-returned/temporary member arrays such as `makeBox().data[1]`
-- ternary expressions such as `cond ? a : b`
-- cast expressions such as `static_cast<short>(x)`
-- dereference expressions such as `*ptr`
-
-See `tests/test_constexpr_sizeof_alignof_complex_expr_ret0.cpp` and `tests/test_constexpr_sizeof_alignof_member_pointer_access_ret0.cpp` for coverage.
-
-### ✅ Constexpr Struct Construction
-```cpp
-struct Point {
-    int x;
-    int y;
-    constexpr Point(int x_val, int y_val) : x(x_val), y(y_val) {}
-};
-
-constexpr Point p1(10, 20);  // ✅ Works
-```
-
-### ✅ Simple Member Access with Member Initializer Lists
-```cpp
-struct Point {
-    int x;
-    int y;
-    constexpr Point(int x_val, int y_val) : x(x_val), y(y_val) {}
-};
-
-constexpr Point p1(10, 20);
-static_assert(p1.x == 10);  // ✅ Works
-static_assert(p1.y == 20);  // ✅ Works
-```
-
-### ✅ Local Aggregate Object Member Access in Constexpr Functions (NEW)
-```cpp
-struct Point {
-    int x;
-};
-
-constexpr int f() {
-    Point p{42};
-    return p.x;
-}
-
-static_assert(f() == 42);  // ✅ Works
-```
-
-Nested local reads such as `obj.inner.value` and `obj.data[1]` work for both aggregate-initialized (brace-init) and constructor-initialized local objects. Nested member access through constexpr function results such as `make_outer().inner.value` now also works.
-
-### ✅ Complex Initializer Expressions
-```cpp
-struct Rectangle {
-    int width;
-    int height;
-    int area;
-    
-    constexpr Rectangle(int w, int h) 
-        : width(w), height(h), area(w * h) {}
-};
-
-constexpr Rectangle r(10, 20);
-static_assert(r.area == 200);  // ✅ Works - complex expression in initializer
-```
-
-### ✅ C++20 Designated Initializers
-
-C++20 designated aggregate initializers work in constexpr contexts and now enforce
-the C++ ordering/mixing rules for designator clauses:
-
-```cpp
-struct Vec {
-    int x = 0;
-    int y = 0;
-    int z = 0;
-};
-
-constexpr Vec v = {.y = 42};      // ✅ skipped members use their default/zero initialization
-static_assert(v.x == 0);
-static_assert(v.y == 42);
-```
-
-Invalid C++20 forms such as `{1, .y = 2}` (mixing positional and designated
-clauses) and `{.y = 2, .x = 1}` (designators out of declaration order) are rejected.
-
-### ✅ Default Member Initializers
-```cpp
-struct Config {
-    int timeout = 30;  // Default initializer
-    int retries = 5;
-    int max_connections;
-    
-    constexpr Config(int max_conn) : max_connections(max_conn) {}
-};
-
-constexpr Config cfg(100);
-static_assert(cfg.timeout == 30);  // ✅ Works - uses default value
-static_assert(cfg.retries == 5);   // ✅ Works - uses default value
-static_assert(cfg.max_connections == 100);  // ✅ Works
-```
-
-### ✅ Constexpr Member Functions
-```cpp
-struct Point {
-    int x;
-    int y;
-    
-    constexpr Point(int x_val, int y_val) : x(x_val), y(y_val) {}
-    
-    constexpr int sum() const {
-        return x + y;
-    }
-};
-
-constexpr Point p1(10, 20);
-static_assert(p1.sum() == 30);  // ✅ Works - member function call
-```
-
-Multi-statement member functions with if/else, loops, and switch now also work. See the "What Doesn't Work" section for details.
-
-### ✅ Member Function Calls Through Constexpr Pointers (NEW)
-Straightforward member-function calls through constexpr pointers now work in the currently supported constexpr paths, including:
-
-- pointers to global/static constexpr objects
-- pointers to local constexpr objects inside constexpr functions
-- pointers returned by constexpr `new`, as long as the allocation is later freed
-
-```cpp
-struct Counter {
-    int value;
-    constexpr Counter(int v) : value(v) {}
-    constexpr int get() const { return value; }
-    constexpr void add(int delta) { value += delta; }
-};
-
-constexpr Counter g(40);
-constexpr const Counter* gp = &g;
-static_assert(gp->get() == 40);  // ✅ Works
-
-constexpr int f() {
-    Counter c(10);
-    Counter* p = &c;
-    p->add(5);
-    return p->get();
-}
-static_assert(f() == 15);  // ✅ Works
-```
-
-### ✅ Break and Continue in Constexpr Loops
-```cpp
-constexpr int find_first_gt(int n) {
-    int result = -1;
-    for (int i = 0; i < 100; i++) {
-        if (i * i > n) { result = i; break; }
-    }
-    return result;
-}
-
-static_assert(find_first_gt(10) == 4);  // ✅ Works
-
-constexpr int sum_odd(int n) {
-    int sum = 0;
-    for (int i = 1; i <= n; i++) {
-        if (i % 2 == 0) continue;
-        sum += i;
-    }
-    return sum;
-}
-
-static_assert(sum_odd(5) == 9);  // ✅ Works
-```
-
-### ✅ Switch Statements in Constexpr Functions
-```cpp
-constexpr int grade(int score) {
-    switch (score / 10) {
-        case 10:
-        case 9:  return 1;  // A — fall-through supported
-        case 8:  return 2;  // B
-        case 7:  return 3;  // C
-        default: return 4;  // F
-    }
-}
-
-static_assert(grade(95) == 1);  // ✅ Works
-static_assert(grade(85) == 2);  // ✅ Works
-```
-
-### ✅ Range-Based For Loops in Constexpr Functions
-```cpp
-constexpr int sum_arr() {
-    int arr[] = {1, 2, 3, 4, 5};
-    int sum = 0;
-    for (int x : arr) { sum += x; }
-    return sum;
-}
-
-static_assert(sum_arr() == 15);  // ✅ Works
-
-struct Pair { int key; int value; };
-constexpr int find_value(int key) {
-    Pair pairs[] = {{1, 10}, {2, 20}, {3, 30}};
-    for (auto p : pairs) {
-        if (p.key == key) return p.value;
-    }
-    return -1;
-}
-
-static_assert(find_value(2) == 20);  // ✅ Works
-```
-
-Range-based for loops over local arrays (both primitive and struct types) are supported.
-Range-based for over objects with `begin()`/`end()` member functions is now supported when the methods are `constexpr` and return a member array or pointer. This covers user-defined iterable structs with integral element types. See also the [begin()/end() section](#constexpr-range-based-for-over-beginend-objects-new).
-
-### ✅ Constexpr Recursion
-
-Recursive constexpr functions are fully supported. Both the `if`/`return` style and the
-ternary-expression style work at any reasonable depth (the evaluator enforces a 512-level
-recursion limit, matching common compilers).
-
-```cpp
-// Classic Fibonacci — if/return style
-constexpr int fib(int n) {
-    if (n <= 1) return n;
-    return fib(n - 1) + fib(n - 2);
-}
-
-static_assert(fib(0) == 0);   // ✅
-static_assert(fib(1) == 1);   // ✅
-static_assert(fib(10) == 55); // ✅
-static_assert(fib(15) == 610);// ✅
-
-// Fibonacci — ternary style
-constexpr long long fib_t(long long n) {
-    return n <= 1 ? n : fib_t(n - 1) + fib_t(n - 2);
-}
-
-static_assert(fib_t(10) == 55LL); // ✅
-
-// Factorial
-constexpr long long factorial(int n) {
-    return n <= 1 ? 1LL : (long long)n * factorial(n - 1);
-}
-
-static_assert(factorial(5)  == 120);     // ✅
-static_assert(factorial(10) == 3628800); // ✅
-
-// Integer power
-constexpr long long power(long long base, int exp) {
-    if (exp == 0) return 1LL;
-    return base * power(base, exp - 1);
-}
-
-static_assert(power(2, 8)  == 256);     // ✅
-static_assert(power(10, 6) == 1000000); // ✅
-```
-
-## What Doesn't Work
-
-### ⚠️ Constructor Body Statements Are Partially Supported
-
-Constructor bodies with member assignments, conditionals, loops, and switch statements now work in constexpr:
-
-```cpp
-struct Point {
-    int x;
-    int y;
-
-    constexpr Point(int x_val, int y_val) {
-        x = x_val;
-        y = y_val;
-    }
-};
-
-constexpr Point p1(10, 20);
-static_assert(p1.x == 10);  // ✅ Works
-static_assert(p1.y == 20);  // ✅ Works
-```
-
-```cpp
-struct Range {
-    int lo;
-    int hi;
-
-    constexpr Range(int a, int b) {
-        if (a < b) { lo = a; hi = b; }
-        else       { lo = b; hi = a; }
-    }
-};
-
-constexpr Range r(9, 2);
-static_assert(r.lo == 2 && r.hi == 9);  // ✅ Works
-```
-
-More complex constructor-body execution involving complex aliasing or non-trivial call chains is still a remaining limitation.
-
-Constructor bodies may now also mutate member subobjects through straightforward
-constexpr helper calls that take the member address:
-
-```cpp
-struct Pair { int value; };
-constexpr void setPair(Pair* p, int v) { p->value = v; }
-
-struct Box {
-    Pair pair;
-    constexpr Box(int v) {
-        pair.value = 0;
-        setPair(&pair, v);
-    }
-};
-
-constexpr Box b(42);
-static_assert(b.pair.value == 42);  // ✅ Works
-```
-
-This is covered by `tests/test_constexpr_ctor_body_member_pointer_call_ret0.cpp`.
-
-Straightforward constructor-body reference aliases to local/member lvalues are now
-also supported, for example:
-
-```cpp
-struct Box {
-	int x;
-	constexpr Box(int v) {
-		int& r = x;
-		r = v;
-	}
-};
-
-constexpr Box b(42);
-static_assert(b.x == 42);  // ✅ Works
-```
-
-This is covered by `tests/test_constexpr_reference_alias_ctor_body_ret0.cpp`.
-
-**Preferred style when practical:** Use member initializer lists:
-```cpp
-constexpr Point(int x_val, int y_val) : x(x_val), y(y_val) {}  // ✅ Works
-```
-
-### ✅ Complex Member Function Bodies (NEW)
-
-Multi-statement member functions with if/else, loops, and switch are now supported:
-
-```cpp
-struct Counter {
-    int value;
-    
-    constexpr Counter(int v) : value(v) {}
-    
-    constexpr int conditionalSum() const {
-        if (value > 0) {
-            return value + 10;
-        }
-        return value;  // ✅ Works
-    }
-    
-    constexpr int classify() const {
-        switch (value) {
-            case 0: return 0;
-            case 1:
-            case 2: return 1;
-            default: return 2;
-        }  // ✅ Works
-    }
-};
-```
-
-### ✅ Member Function Calls on Bound Conditional/Temporary Receivers (NEW)
-
-Constexpr member-function calls now also work when the receiver is a bound
-non-identifier expression that still resolves to a constexpr object in the
-current evaluation state, such as a conditional expression choosing between a
-local object and a temporary:
-
-```cpp
-struct Box {
-    int a;
-    int b;
-    constexpr int sum() const { return a + b; }
-};
-
-constexpr int f() {
-    Box x{7, 8};
-    return (true ? x : Box{1, 2}).sum();
-}
-
-static_assert(f() == 15);  // ✅ Works
-```
-
-This also covers straightforward temporary-producing branches such as
-`(cond ? makeBox() : Box{1, 2}).sum()`.
-
-### ✅ Default Constructor Invocation for Local Struct Variables (NEW)
-
-Declaring a local struct variable without an initializer inside a constexpr function now invokes the default constructor:
-
-```cpp
-struct Counter {
-    int value;
-    constexpr Counter() { value = 42; }  // constructor body style
-};
-
-constexpr int f() {
-    Counter c;       // ✅ default constructor called — c.value == 42
-    return c.value;
-}
-static_assert(f() == 42);  // ✅ Works
-
-struct Mixed {
-    int value;
-    int step;
-    constexpr Mixed() : value(1) { step = 2; }  // init-list + body
-};
-constexpr int g() {
-    Mixed m;
-    return m.value + m.step;
-}
-static_assert(g() == 3);  // ✅ Works
-```
-
-For aggregates / implicit-default-constructor cases, the evaluator now preserves C++ default-initialization semantics: members without default member initializers remain indeterminate, members with default member initializers are still evaluated, and reads from the indeterminate parts are rejected during constexpr evaluation. This also applies to default-initialized local scalars and arrays. For non-aggregate types with user-declared constructors, a missing default constructor is now rejected instead of silently defaulting to zeroed members. Covered by `tests/test_constexpr_local_default_init_scalar_fail.cpp`, `tests/test_constexpr_local_default_init_compound_fail.cpp`, and `tests/test_constexpr_local_default_init_aggregate_fail.cpp`.
-
-### ✅ Void Mutating Member Functions on Local Structs (NEW)
-
-Calling a `void`-returning non-const member function on a local struct variable inside a constexpr function now correctly mutates the object:
-
-```cpp
-struct Counter {
-    int value;
-    constexpr Counter() : value(0) {}
-    constexpr void increment() { value++; }
-    constexpr void add(int n) { value += n; }
-    constexpr int get() const { return value; }
-};
-
-constexpr int f() {
-    Counter c;
-    c.increment();   // ✅ c.value == 1
-    c.increment();   // ✅ c.value == 2
-    c.add(5);        // ✅ c.value == 7
-    return c.get();  // ✅ 7
-}
-static_assert(f() == 7);  // ✅ Works
-```
-
-Multiple void method calls accumulate correctly, and changes made inside the method body are visible to subsequent calls on the same object.
-
-### ✅ Nested Member Access (NEW)
-
-Accessing members of nested objects is now supported:
-
-```cpp
-struct Inner {
-    int value;
-    constexpr Inner(int v) : value(v) {}
-};
-
-struct Outer {
-    Inner inner;
-    constexpr Outer(int v) : inner(v) {}
-};
-
-constexpr Outer obj(42);
-static_assert(obj.inner.value == 42);  // ✅ Works - nested access supported!
-```
-
-**Note:** Multi-level nesting (e.g., `a.b.c.d`) is supported. The evaluator recursively 
-evaluates each level of member access.
-
-### ✅ Array Member Brace-Init in Constructor Initializer Lists (NEW)
-
-Member arrays initialized with a brace-init list in a constructor's member initializer list are now supported:
-
-```cpp
-struct Triplet {
-    int vals[3];
-    constexpr Triplet(int a, int b, int c) : vals{a, b, c} {}
-    constexpr int get(int i) const { return vals[i]; }
-};
-
-constexpr Triplet t(10, 20, 30);
-static_assert(t.vals[0] == 10);  // ✅ Works
-static_assert(t.vals[2] == 30);  // ✅ Works
-static_assert(t.get(1) == 20);   // ✅ Works - member function with literal index
-```
-
-Single-element and partial brace-init also correctly zero-fill trailing elements:
-
-```cpp
-struct A {
-    int arr[4];
-    constexpr A() : arr{7} {}     // ✅ arr[0]=7, arr[1..3]=0
-};
-struct B {
-    int arr[5];
-    constexpr B() : arr{1,2,3} {} // ✅ arr[0..2]=1,2,3, arr[3..4]=0
-};
-```
-
-Using a local variable as the array subscript inside a constexpr member function is also supported:
-
-```cpp
-struct Container {
-    int data[4];
-    constexpr Container() : data{1, 2, 3, 4} {}
-    constexpr int getSecond() const {
-        int idx = 1;
-        return data[idx];   // ✅ Works - local variable as subscript
-    }
-};
-```
-
-### ✅ Multi-Dimensional Arrays in Constexpr (NEW)
-
-Multi-dimensional array initialization, element access, and global runtime materialization are now supported in constexpr:
-
-```cpp
-// Global constexpr 2D array with nested-brace init
-constexpr int grid[2][3] = {{1,2,3},{4,5,6}};
-static_assert(grid[0][0] == 1);  // ✅ Works
-static_assert(grid[1][2] == 6);  // ✅ Works
-
-int main() {
-    return grid[0][0] == 1 && grid[1][2] == 6 ? 0 : 1;  // ✅ Runtime values also match
-}
-
-// In constexpr functions: init, loop reads, and element assignment
-constexpr int mat_sum() {
-    int mat[2][3] = {{1,2,3},{4,5,6}};
-    int sum = 0;
-    for (int i = 0; i < 2; i++)
-        for (int j = 0; j < 3; j++)
-            sum += mat[i][j];
-    return sum;
-}
-static_assert(mat_sum() == 21);  // ✅ Works
-
-// Scalar brace-elision: {1} → mat[0][0]=1, rest zero (C++20 rule)
-constexpr int mat_brace_elide() {
-    int mat[2][3] = {1};
-    return mat[0][0];  // 1
-}
-static_assert(mat_brace_elide() == 1);  // ✅ Works
-
-// Subscript assignment: mat[i][j] = value
-constexpr int mat_assign() {
-    int mat[2][3] = {0};
-    mat[0][1] = 5;
-    mat[1][2] = 10;
-    return mat[0][1] + mat[1][2];
-}
-static_assert(mat_assign() == 15);  // ✅ Works
-```
-
-**Supported forms:**
-- `int arr[M][N] = {{…},{…}}` and higher-dimensional nested brace-init at global scope and inside constexpr functions
-- `arr[i][j]` and higher-dimensional subscript reads in loops and direct expressions
-- `arr[i][j] = value` and higher-dimensional subscript assignment in constexpr function bodies
-- Scalar brace-elision (`{v}` places `v` at `[0][0]`, zero-fills remaining elements)
-- Zero-init (`{0}`) for entire multi-dimensional array
-- Fully-flattened brace-elision (`int arr[2][3] = {1, 2, 3, 4, 5, 6}` without inner braces) — scalars now distributed correctly across inner dimensions per C++20 rules
-- Multiple scalar partial brace-init (`int mat[2][3] = {1, 2}`) — now correctly fills the first row sequentially
-- Mixed scalar/nested brace-init (`int arr[2][3] = {1, 2, 3, {4, 5, 6}}` and `{{1, 2, 3}, 4, 5, 6}`) — now follows C++20 aggregate brace-elision rules
-
-This support now extends to 3D and higher-dimensional local arrays for constexpr subscript assignment and readback as long as each dimension is materialized as a constexpr array value.
-
-### ✅ Aggregate Initialization Inside Constexpr Functions Uses Local Bindings (FIXED)
-
-Aggregate struct initialization inside constexpr function bodies (no user-defined constructor) now correctly accesses local variable bindings and function parameters:
-
-```cpp
-struct Pt { int x; int y; }; // aggregate, no constructor
-constexpr int f(int a, int b) {
-    Pt p{a, b}; // ✅ Works: 'a' and 'b' found in local bindings
-    return p.x + p.y;
-}
-static_assert(f(3, 7) == 10); // ✅ Works
-```
-
-This also works with local variables as arguments:
-```cpp
-constexpr int h() {
-    int v1 = 3;
-    int v2 = 7;
-    Pt p{v1, v2}; // ✅ Works
-    return p.x + p.y;
-}
-static_assert(h() == 10); // ✅ Works
-```
-
-✅ **Ternary/generic fallback now propagates evaluation failures** — Previously, when a ternary expression used as a struct initializer failed for a specific reason (e.g., an unevaluable call inside a branch), the fallback evaluation path in `resolve_constexpr_member_source_from_initializer` would silently discard the specific error and fall through to the generic "requires a struct initializer" message. The fix adds `if (!gen_result.success()) return gen_result;` immediately after evaluation so the real error is surfaced. Covered by `tests/test_constexpr_ternary_init_error_propagate_fail.cpp`.
-
-### ✅ Nested Member Access on Local Constructor-Initialized Objects (FIXED)
-
-Nested member access (`o.inner.x`) on local struct variables constructed via a **user-defined constructor** inside a constexpr function body is now supported. Both single-level (`o.x`) and two-level (`o.inner.x`) nested access work correctly.
-
-```cpp
-struct Inner { int x; int y; };
-struct Outer {
-    Inner inner;
-    constexpr Outer(int a, int b) : inner{a, b} {}
-};
-
-constexpr int test() {
-    Outer o(3, 7);
-    return o.inner.x + o.inner.y;  // ✅ Works
-}
-static_assert(test() == 10);  // ✅ Works
-```
-
-**Root cause and fix:** At block scope, `Outer o(3, 7)` was parsed as `InitializerListNode{3, 7}` (by `parse_direct_initialization`), which triggered the aggregate-init path. The aggregate path mapped the literal `3` directly to the `inner` struct member, producing a scalar EvalResult without struct type info. When the nested member access `o.inner.x` then looked up `inner`, its EvalResult had no valid `object_type_index`, causing the bindings-aware evaluator to fall through to the non-bindings path, which only searches the symbol table.
-
-The fix (`src/ConstExprEvaluator_Core.cpp`, `evaluate_statement_with_bindings`) detects when an `InitializerListNode` initializer is used for a struct type that has a matching user-defined constructor. In that case, it uses the constructor path (`find_matching_constructor` + `bind_evaluated_arguments` + `materialize_members_from_constructor`), ensuring the member EvalResults have correct struct type info and `object_member_bindings` populated. Per C++20, a type with user-defined constructors is not an aggregate, so when no matching constructor is found the evaluator emits a clear diagnostic instead of falling through to aggregate initialization.
-
-**Also supported:**
-- Assigning a nested struct member to a local variable, then accessing its fields: `Inner inner = o.inner; return inner.x;`
-- Mixed primitive and struct members: `cfg.version + cfg.offset.x`
-- Multiple local constructor-initialized objects in the same function body
-- Constructor bodies with extra computed fields alongside nested struct members
-
-### ⚠️ Array Access Has Partial Support
-
-Several array-related constexpr forms are supported in simple/supported shapes:
-
-- direct array subscripts such as `values[1]`
-- array-element member access such as `items[1].value`
-- member-array subscripts such as `box.data[1]`, including straightforward local aggregate object cases inside constexpr functions
-- member-array subscripts on function-returned or temporary struct/class objects such as `makeBox().data[1]` and `Box(1, 2).data[1]`
-- member-array brace-init in constructor initializer lists such as `arr{a, b, c}` with full C++ zero-fill for partial/single-element init
-- local variable as array subscript inside constexpr member functions such as `int idx = 1; return arr[idx];`
-- flat brace-elision for one-dimensional arrays of aggregate struct elements such as `Item items[] = {40, 2}` and aggregate members such as `Holder h = {40, 2, 7}`
-
-```cpp
-struct Container {
-    int data[3];
-    constexpr Container() : data{1, 2, 3} {}
-};
-
-constexpr Container c{};
-static_assert(c.data[0] == 1);  // ✅ Works
-```
-
-Array support is still incomplete in more complex cases.
-
-**Known remaining limitations include:**
-
-1. **Inferred array size in richer contexts**: straightforward local inferred-size arrays now work, simple global `sizeof(arr)` and `sizeof(arr) / sizeof(arr[0])` over inferred-size constexpr arrays now work too, direct-list forms such as `int arr[]{1,2,3}` / `constexpr int arr[]{1,2,3}` now work in straightforward local and global constexpr contexts, nested-brace unsized-first multidimensional forms such as `constexpr int grid[][3] = {{1,2,3},{4,5,6}};` now work end-to-end in constexpr plus runtime codegen (including 3D forms like `int cube[][2][3]` and partial inner init like `int sparse[][3] = {{1},{2}}`), and flat brace-elision for unsized-first multidimensional arrays (e.g., `int arr[][3] = {1,2,3,4,5,6}`) also works end-to-end in constexpr plus runtime codegen. Mixed brace/scalar init (e.g., `int arr[][3] = {1,2,3,{4,5,6}}`) is parsed and the outer dimension is inferred correctly, but richer parser/evaluator contexts can still fail.
-   **Known follow-up:** For unsized global struct-arrays (e.g., `Point pts[] = {{1,2},{3,4},{5,6}}`), `op.element_count` in the emitted `GlobalVariableDeclOp` may remain at its default of `1` because neither `type_node.array_dimensions()` nor `decl.array_dimensions()` are populated for unsized arrays. The struct-array init-data path (`IrGenerator_Stmt_Decl.cpp:895`) uses `op.element_count` to size the buffer, which can truncate writes for elements beyond the first. In practice, the constexpr materializer succeeds for all-literal initializers and bypasses this path, so the bug is latent for constant initializers. The proper fix is to infer the array size from `initializers.size()` in the parser (after parsing the initializer at `Parser.cpp:3210`) and store it back into the `DeclarationNode` or `TypeSpecifierNode`, so codegen does not need to re-infer it. See also the `element_count` fallback that was removed from the old code (`op.element_count = initializers.size()` at old line 845).
-2. **Range-based for over arrays**: range-based for loops over local arrays now work in constexpr, and over objects with `constexpr begin()`/`end()` methods returning a member array or pointer are now also supported (see dedicated section)
-
-**Guidance for array access:** Prefer explicit array sizes when practical, but straightforward inferred-size local array patterns are now supported too.
-
-### ✅ Constexpr Range-Based For over `begin()`/`end()` Objects (NEW)
-
-Range-based for loops over user-defined iterable types with `constexpr begin()` and `constexpr end()` member functions are now supported in the constexpr evaluator. The member functions must be `constexpr` and return either:
-
-1. The member array directly (`return data;`) — the evaluator detects the full array and iterates it, using the `end()` return value as a count constraint when it involves array decay.
-2. A pointer via `&data[0]` or `&data[size]` syntax — the evaluator resolves the backing member array and uses the pointer offsets to bound the iteration.
-
-```cpp
-// Case A: begin() returns member array directly
-struct IntVec3 {
-    int data[3];
-    constexpr IntVec3() : data{10, 20, 30} {}
-    constexpr int* begin() { return data; }
-    constexpr int* end()   { return data + 3; }
-};
-
-constexpr int sum_vec3() {
-    IntVec3 v{};
-    int s = 0;
-    for (int x : v) s += x;
-    return s;
-}
-static_assert(sum_vec3() == 60);  // ✅ Works
-
-// Case B: begin()/end() with pointer syntax
-struct BoundedVec {
-    int data[5];
-    int size;
-    constexpr BoundedVec() : data{2, 4, 6, 8, 10}, size(3) {}
-    constexpr int* begin() { return &data[0]; }
-    constexpr int* end()   { return &data[size]; }
-};
-
-constexpr int sum_bounded() {
-    BoundedVec v{};
-    int s = 0;
-    for (int x : v) s += x;
-    return s;
-}
-static_assert(sum_bounded() == 12);  // ✅ Works (only first 3 elements)
-
-// Template structs with begin()/end() are also supported
-template<int N>
-struct StaticVec {
-    int data[N];
-    constexpr int* begin() { return data; }
-    constexpr int* end()   { return data + N; }
-};
-
-constexpr int sum_static() {
-    StaticVec<4> v{{1, 2, 3, 4}};
-    int s = 0;
-    for (int x : v) s += x;
-    return s;
-}
-static_assert(sum_static() == 10);  // ✅ Works
-```
-
-`break`, `continue`, and early `return` inside these loops work correctly.
-Nested range-for loops over two objects also work.
-Struct element types in the iteration variable now work too, so member reads like `p.key` and `p.value` are supported inside the loop body.
-
-**Current limitations:**
-- `data + N` style in member functions (array decay) relies on `origin_var_name` tagging; this works when `begin()` returns the member array directly
-
-Also supported:
-- Iterating over a struct member's range: `for (int v : holder.range)`
-- Iterating over a function-returned range: `for (int v : make_range())`
-
-### ✅ Basic Pointer Dereference in Constexpr (NEW)
-
-Basic constexpr pointer support is now implemented for named constexpr variables:
-
-```cpp
-constexpr int value = 42;
-constexpr const int* ptr = &value;
-static_assert(*ptr == 42);  // ✅ Works
-
-// Pointer passed as constexpr function argument
-constexpr int deref(const int* p) { return *p; }
-static_assert(deref(&value) == 42);  // ✅ Works
-
-// Arrow member access through constexpr pointer
-struct Point { int x, y; constexpr Point(int a, int b) : x(a), y(b) {} };
-constexpr Point p{10, 20};
-constexpr const Point* pp = &p;
-static_assert(pp->x == 10);  // ✅ Works
-
-// Arrow access in constexpr function
-constexpr int sum(const Point* pt) { return pt->x + pt->y; }
-static_assert(sum(&p) == 30);  // ✅ Works
-```
-
-### ✅ Null Pointer Checks and Pointer Comparisons in Constexpr (NEW)
-
-Null pointer checks and pointer equality comparisons are now supported:
-
-```cpp
-constexpr int val = 42;
-constexpr const int* ptr = &val;
-
-// ptr == nullptr → false (valid constexpr pointer is always non-null)
-static_assert(!(ptr == nullptr));   // ✅ Works
-static_assert(ptr != nullptr);      // ✅ Works
-static_assert(!(nullptr == ptr));   // ✅ Works
-
-// Pointer equality (same/different variables)
-constexpr const int* ptr2 = &val;
-static_assert(ptr == ptr2);         // ✅ Works — same variable
-
-constexpr int other = 99;
-constexpr const int* ptr3 = &other;
-static_assert(ptr != ptr3);         // ✅ Works — different variables
-
-// Logical not: !ptr → false (non-null pointer is truthy)
-static_assert(!(!ptr));             // ✅ Works
-
-// Logical and/or with pointers
-static_assert(ptr && true);         // ✅ Works
-static_assert(ptr || false);        // ✅ Works
-
-// Null check helper function
-constexpr bool is_null(const int* p) { return p == nullptr; }
-static_assert(!is_null(&val));      // ✅ Works
-
-// Conditional using pointer truthiness
-constexpr int deref_or(const int* p, int def) {
-    if (p) return *p;
-    return def;
-}
-static_assert(deref_or(&val, 0) == 42);  // ✅ Works
-```
-
-**Supported pointer forms:**
-- `&named_var` (address-of a named constexpr variable)
-- `&Type::member` (pointer-to-data-member creation)
-- `&arr[i]` (address of array element — produces a pointer with offset)
-- `*ptr` (dereference to get the pointed-to value)
-- `*(ptr + n)` (dereference with pointer arithmetic)
-- `ptr[i]` (pointer subscript — equivalent to `*(ptr + i)`)
-- `ptr + n`, `n + ptr`, `ptr - n` (pointer arithmetic)
-- `ptr1 - ptr2` (pointer difference — both must point into the same array)
-- `ptr->member` (arrow member access through constexpr pointer)
-- `(ptr + n)->member` (arrow member access with offset, for struct arrays with object_member_bindings)
-- Pointer parameters in constexpr functions (`const T* p`)
-- `ptr == nullptr`, `ptr != nullptr` (null pointer check — always false/true for valid pointers)
-- `nullptr == ptr`, `nullptr != ptr` (null pointer check, symmetric form)
-- `ptr1 == ptr2`, `ptr1 != ptr2` (pointer equality — compares variable name AND offset)
-- `ptr1 < ptr2`, `ptr1 <= ptr2`, `ptr1 > ptr2`, `ptr1 >= ptr2` (pointer relational — both must point into same array)
-- `if (ptr)` / `!ptr` / `ptr && x` / `ptr || x` (pointer truthiness — valid pointer is always truthy)
-- `obj.*pmf` / `ptr->*pmf` for constexpr data-member pointers, including constexpr function parameters
-
-### ✅ Pointer Arithmetic in Constexpr (NEW)
-
-Pointer arithmetic, pointer subscript, address of array elements, pointer difference, and pointer relational comparisons are now supported in constexpr:
-
-```cpp
-constexpr int arr[] = {10, 20, 30, 40, 50};
-
-// &arr[i] — address of array element
-constexpr const int* p0 = &arr[0];
-static_assert(*p0 == 10);             // ✅ Works
-
-constexpr const int* p2 = &arr[2];
-static_assert(*p2 == 30);             // ✅ Works
-
-// ptr + n, n + ptr
-static_assert(*(p0 + 2) == 30);       // ✅ Works
-static_assert(*(2 + p0) == 30);       // ✅ Works
-
-// ptr - n
-static_assert(*(p2 - 1) == 20);       // ✅ Works
-
-// ptr[i] (pointer subscript)
-static_assert(p0[0] == 10);           // ✅ Works
-static_assert(p0[3] == 40);           // ✅ Works
-
-// ptr - ptr (pointer difference)
-static_assert(p2 - p0 == 2);          // ✅ Works
-
-// Pointer relational comparisons
-static_assert(p0 < p2);               // ✅ Works
-static_assert(p0 + 2 == p2);          // ✅ Works
-
-// Pointer arithmetic in constexpr functions
-constexpr int sum_via_ptr(const int* p, int n) {
-    int total = 0;
-    for (int i = 0; i < n; i++) {
-        total += p[i];
-    }
-    return total;
-}
-static_assert(sum_via_ptr(&arr[0], 5) == 150);  // ✅ Works
-```
-
-### ✅ Dereference Assignment Through Local-Variable Pointer in Constexpr (NEW)
-
-`*ptr = value` and compound-assignment forms (`*ptr += n`, etc.) now work when `ptr`
-points to a local variable in the same constexpr function frame.  Previously the
-dereference-assignment path only handled heap-allocated objects (those created with
-`constexpr new`); any write through a pointer to a non-heap local produced a spurious
-"pointer does not refer to a constexpr heap object" error.
+FlashCpp implements a custom constexpr evaluator used for `static_assert`, template non-type arguments, and constant-expression variable initializers. The evaluator walks AST nodes with a binding map that tracks local variable state, object member bindings, and capture state for lambdas and callable objects.
+
+## Supported Features ✅
+
+### Primitives and arithmetic
+- All primitive types (`bool`, `char`, `signed/unsigned char/short/int/long/long long`, `float`, `double`, `long double`) as constexpr variables and in arithmetic/comparisons.
+- Mixed-type arithmetic follows C++ usual arithmetic conversions.
+- Unsigned wrapping at the declared type's width (`unsigned int`, `unsigned char`, etc.) for arithmetic and all compound-assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`), including `++`/`--`.
+- Shift-count validation against the promoted left-operand width.
+- C-style casts and `static_cast` / cv-only `const_cast` inside constexpr function bodies.
+- `sizeof(expr)` and `alignof(expr)` for common expression operands.
+- `noexcept(expr)` and `offsetof(T, member)` (including simple nested forms).
+- Comma operator (`(side_effect, result)`).
+
+### Struct construction and member access
+- Aggregate initialization (brace-init and C++20 paren-init), including C++20 designated initializers (`{.x=1, .y=2}`).
+- User-defined constructors: member-initializer list, constructor body assignments, conditionals, loops, switch, early return.
+- Default member initializers.
+- Nested member access (`obj.inner.value`) on both aggregate and constructor-initialized locals.
+- Local struct member dot-assignment and compound-assignment (`p.a += 5`).
+- Void member functions that mutate local struct state, including repeated calls.
+- `*this` dereference inside constexpr member function bodies.
+- Ternary expressions returning struct types.
+- Sub-word struct returns (e.g., 3-byte `Color{r,g,b}`) propagated correctly.
+- C++20 rule: types with user-declared constructors are not aggregates; aggregate initialization rejects them.
+- Inheritance: `Derived : Base` with constructor chaining via member-initializer lists.
+
+### Functions, lambdas, and callables
+- Multi-statement constexpr free functions with local variables, `if`/`else`, `for`, `while`, `switch`, `break`, `continue`, and `return`.
+- Overload resolution reuses sema-resolved call target for both free functions and callable objects.
+- Constexpr lambdas: explicit captures (`[x]`, `[&x]`), default captures (`[=]`, `[&]`), init-captures, `[this]`, `[*this]`.
+- Void lambdas (implicit or explicit `-> void`) with by-reference captures that mutate outer locals, including early `return;` paths.
+- Mutable closure-local state across repeated lambda calls.
+- Returned lambda closure objects from constexpr helper functions with repeated calls.
+- Nested lambdas over enclosing captured/member state.
+- `operator()` called on locally-declared struct variables (aggregate and non-aggregate).
+- Callable objects (functors) with `operator()` overloads; trailing default arguments.
+- `const char*` / string literals: subscript, loops, `str_len`-style traversal.
+
+### Arrays and pointers
+- Explicit-size and inferred-size (`int arr[] = {1,2,3}`) local and global arrays.
+- Multi-dimensional arrays (`int m[M][N]`) with nested-brace init, element reads/writes, brace-elision.
+- Member arrays via brace-init in constructor initializer lists.
+- Range-based for over local arrays, arrays with struct element types, and objects with `constexpr begin()`/`end()`.
+- Pointer dereference (`*ptr`), pointer arithmetic (`ptr+n`, `ptr-n`, `ptr[i]`, `ptr1-ptr2`), `&arr[i]`.
+- Pointer comparisons: `==`, `!=`, `<`, `<=`, `>`, `>=`; null checks (`ptr == nullptr`); truthiness (`if (ptr)`, `!ptr`).
+- Arrow member access (`ptr->member`) through constexpr and heap-allocated pointers.
+- Pointer-to-member: `&Type::member`, `obj.*pm`, `ptr->*pm`.
+- Dereference assignment `*p = value` and arrow member write `p->member = value`.
+
+### Dynamic allocation (`new`/`delete`)
+- Scalar `new T(args)` / `new T()` / `new T{}`, array `new T[n]`, `delete`, `delete[]`.
+- Struct/class allocation with constructor or aggregate arguments.
+- Arrow member read/write on heap structs; subscript assignment on heap arrays.
+- Value-initialization (`new T()`, `new T{}`) zero-fills members without default initializers.
+- Bare `new T` / `new T[n]` (default-initialization) rejects reads of indeterminate scalars.
+- Leak detection: all heap allocations must be freed before the constant expression returns.
+- Use-after-free through arrow access produces a clear diagnostic.
+
+### Diagnostics
+- Evaluated `throw` produces a "not a constant expression" diagnostic; untaken branches are skipped.
+- Indeterminate reads (`int x; return x;`, `Pair p; return p.first;`) are rejected.
+- C++20 designated-initializer diagnostics: mixed positional/designated and out-of-order designators rejected.
+- `new` on non-aggregate type without a default constructor rejected with a clear error.
+
+---
+
+## Partial Support ⚠️
+
+### Nested lambdas with shared by-reference state
+
+Lambdas that capture another lambda *by reference* and then call it — where the inner lambda also writes to a shared outer variable — lose the write-back on the outer hop.
 
 ```cpp
 constexpr int f() {
     int x = 0;
-    int* p = &x;
-    *p = 5;         // ✅ Works (previously: "does not refer to a constexpr heap object")
-    return x;       // returns 5
+    auto inc = [&x]() { x++; };        // inner: writes x via capture
+    auto twice = [&inc]() { inc(); inc(); };  // outer: captures inc by ref
+    twice();
+    return x;  // ❌ evaluates to 0, not 2
 }
-static_assert(f() == 5);  // ✅ Works
-
-constexpr int g() {
-    int x = 3;
-    int* p = &x;
-    *p += 7;        // compound-assignment through local pointer
-    return x;       // returns 10
-}
-static_assert(g() == 10);  // ✅ Works
 ```
 
-Write-through-pointer in a different constexpr call frame is now supported for
-straightforward local scalar and local struct-object targets. Passing `&local` to a
-separate constexpr function can update the caller's object through `*p = value`,
-compound assignments such as `*p += value`, and direct member writes such as
-`p->member = value`.
+**Root cause:** When `twice` is evaluated, `inc` is a bound lambda value in `twice`'s capture bindings. After calling `inc()`, the write-back updates `inc`'s *copy* of `x` inside `twice`'s binding map, but that copy is not propagated back to the *outer* binding map that holds the original `x`. The evaluator's single-level by-reference writeback (`mutable_outer_bindings`) does not chase indirect capture chains.
+
+**What is needed:** After each lambda call that wrote to captured references, the evaluator must walk back through any intermediate lambda-capture indirection layers and propagate the mutations outward until the original binding is reached.
+
+---
+
+### `constexpr auto fn = make_fn()` where `make_fn()` returns a lambda
+
+A global constexpr variable initialized to a returned lambda cannot be called in `static_assert`.
 
 ```cpp
-struct Pair { int value; };
-
-constexpr void set_int(int* p, int value) { *p = value; }
-constexpr void set_pair(Pair* p, int value) { p->value = value; }
-
-constexpr int f() {
-	int x = 1;
-	Pair pair{2};
-	set_int(&x, 7);
-	set_pair(&pair, 11);
-	return x + pair.value;
-}
-
-static_assert(f() == 18);  // ✅ Works
+constexpr auto make_fn() { return [](int x) { return x * 3; }; }
+constexpr auto fn = make_fn();
+static_assert(fn(5) == 15);  // ❌ "Member function calls require struct/class objects"
 ```
 
-This is covered by `tests/test_constexpr_pointer_param_write_ret0.cpp`.
+**Root cause:** The evaluator stores `fn` as an `EvalResult` with a `callable_lambda` pointer, but that pointer refers to the `LambdaExpressionNode` inside the transient return value of `make_fn()` — not a stable node. When `evaluate_function_call` looks up `fn` at `static_assert` time, it finds a `VariableDeclarationNode` and routes to `evaluate_callable_object`, which cannot reconstruct the lambda from the stored `EvalResult` because the `callable_var_decl` path expects a var-decl holding the original lambda, not a propagated result.
 
-Covered by `tests/test_constexpr_deref_assign_local_ret5.cpp`.
+**What is needed:** The binding for `fn` must persist the full `EvalResult` (including `callable_lambda` / `callable_bindings`) through the global-variable materialization path so that `evaluate_function_call` can directly call it without going back to the symbol table.
 
+---
 
+### Subscript through a struct member `const char*`
 
-`const char*` pointers to string literals are supported in constexpr evaluation.
-This includes compile-time array subscript, compile-time string-length computation
-via `while`/pointer loops, and runtime string usage obtained from constexpr functions.
+`operator[]` on a struct whose implementation subscripts a `const char*` data member fails.
 
 ```cpp
-constexpr const char* get_hello() { return "Hello"; }
-
-// Compile-time subscript on constexpr const char*
-constexpr const char* hello = get_hello();
-static_assert(hello[0] == 'H');   // ✅ Works
-static_assert(hello[4] == 'o');   // ✅ Works
-
-// Compile-time string length via constexpr function
-constexpr int str_len(const char* s) {
-    int len = 0;
-    while (s[len] != '\0') ++len;
-    return len;
-}
-static_assert(str_len("Hello") == 5);  // ✅ Works — string literal argument
-static_assert(str_len("")      == 0);  // ✅ Works — empty string
-
-// Runtime usage from constexpr function
-const char* s = get_hello();  // runtime call
-if (s[0] == 'H') { /* ✅ runtime subscript works */ }
-int len = str_len(s);         // ✅ runtime call with runtime pointer
+struct Str {
+    const char* d;
+    constexpr char operator[](int i) const { return d[i]; }
+};
+constexpr Str s{"hi"};
+static_assert(s[0] == 'h');  // ❌ "Array subscript on unsupported expression type"
 ```
 
-**How it works:** String literal expressions (e.g., `"Hello"`) are materialised by the
-constexpr evaluator as an array of `char` elements (including the null terminator) with
-`is_array = true`.  Subscript, pointer-parameter passing, and `while`/`for` loops over
-such char arrays all use the existing array/pointer evaluation paths.
+**Root cause:** Inside `operator[]`, `d` is resolved as an `EvalResult` holding a string-literal pointer (via the bound `const char*` member). The subscript evaluator (`try_evaluate_bound_array_subscript` and the top-level subscript path) accepts `const char*` results from *named constexpr variables*, but not from a member-binding dereference — the path that extracts `d`'s value from `object_member_bindings` does not set the `pointer_to_var` / origin metadata required by the string-subscript fast-path.
 
-**Standard escape sequences** (`\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0`) are decoded
-correctly when materialising string-literal arrays at compile time.
+**What is needed:** After resolving `d` from `object_member_bindings` to a string-literal result, propagate the `pointer_to_var.origin_var_name` so the subscript path can find the string data. Alternatively, teach the subscript handler to operate directly on a string-literal `EvalResult` regardless of how it was obtained.
 
-**Still unsupported in compile-time evaluation:**
-- String concatenation at compile-time across different pointer variables (e.g., two
-  `const char*` joined with `+`)
-- `std::string` / `std::string_view` manipulation at compile time
+---
 
-### ✅ Struct Values Returned from Constexpr Functions (NEW)
+### Fold expressions and pack expansions in constexpr
 
-Constexpr functions may return aggregate/struct values.  Both compile-time
-(`static_assert`) and runtime call sites are supported, including structs whose size
-is not a power-of-two machine word (e.g., a 3-byte `Color` struct with three
-`unsigned char` fields):
+Fold expressions (`(vs + ...)`) only work when the pack is already expanded by the template instantiator before constexpr evaluation begins.
 
 ```cpp
-struct Point { int x; int y; };
-struct Color { unsigned char r; unsigned char g; unsigned char b; };  // 3 bytes
-
-constexpr Point make_point(int x, int y) { return {x, y}; }
-constexpr Color make_color(unsigned char r, unsigned char g, unsigned char b) {
-    return {r, g, b};
-}
-
-// Compile-time
-constexpr Point cp = make_point(10, 20);
-static_assert(cp.x == 10 && cp.y == 20);  // ✅
-
-// Runtime
-Point p  = make_point(3, 4);   // ✅ all members correct
-Color c  = make_color(255, 128, 0);  // ✅ all 3 bytes correct (sub-word struct)
+template<typename... Ts>
+constexpr int sum(Ts... vs) { return (vs + ...); }
+// Works only after full template instantiation; may fail in un-instantiated contexts.
 ```
 
-**Note:** Prior to this fix, sub-word struct returns (e.g., 3-byte structs returned
-in a single register) would only propagate the first byte correctly to the caller.
-The code-generator now rounds the register store up to the next power-of-two
-granularity so every byte of the struct is present before the struct-copy code
-reads it field by field.
+**Root cause:** The constexpr evaluator receives an already-parsed AST. If the fold expression node still contains an unexpanded pack (because the template was not yet instantiated with concrete arguments), the evaluator has no mechanism to iterate over the pack elements — it sees a single `FoldExprNode` with no concrete operands.
 
-### ✅ Dynamic Allocation in Constexpr (`new` / `delete`)  *(Implemented)*
+**What is needed:** The evaluator must be able to trigger on-demand pack expansion for fold expressions, or the template instantiator must fully expand packs before the expression reaches constexpr evaluation. This is already the path taken for fully-instantiated templates; the gap is un-instantiated or partially-instantiated contexts.
 
-`new`, `new[]`, `delete`, and `delete[]` are now supported inside constexpr function bodies when all allocations are freed before the constant expression ends (C++20 [expr.const]/p5).
+---
+
+### Unsigned wrapping in template-dependent expressions
+
+When the declared type of an intermediate result cannot be statically determined (e.g., in a template-dependent arithmetic chain), the result falls back to 64-bit storage and unsigned wrapping is not applied.
+
+```cpp
+template<typename T>
+constexpr T wrap_add(T a, T b) { return a + b; }
+// May not wrap at T's width for unsigned T when the declared type is opaque.
+```
+
+**What is needed:** The evaluator must propagate `exact_type` through all arithmetic operations so that width truncation is applied even for template-dependent intermediate values.
+
+---
+
+### Inferred array size in richer contexts
+
+`int arr[] = {1,2,3}` in straightforward local and global constexpr contexts works. The following still fail:
+
+```cpp
+// Inferred-size array returned from a constexpr function
+constexpr auto make_arr() { int arr[] = {1,2,3}; return arr; }  // ❌
+
+// Inferred-size array as a struct member (requires sizeof deduction at class layout time)
+struct S { int data[]; };  // ❌ (flexible array member — also ill-formed in C++)
+```
+
+**Root cause:** The evaluator relies on the array having a known element count in `EvalResult::array_elements`. When the count is not materialized before evaluation (e.g., inside an uninstantiated template or for a function return type), the array remains opaque.
+
+---
+
+## Not Supported ❌
+
+### Indirect mutation through a captured lambda reference
+
+A lambda `B` that captures lambda `A` by reference and calls `A` does not propagate `A`'s mutations to the variables `A` closed over.
 
 ```cpp
 constexpr int f() {
-    int* p = new int(42);
-    int v = *p;
-    delete p;
-    return v;
+    int x = 0;
+    auto inc = [&x]() { x++; };
+    auto twice = [&inc]() { inc(); inc(); };
+    twice();
+    return x;  // ❌ 0 instead of 2
 }
-
-static_assert(f() == 42);  // ✅ Supported
 ```
 
-The following patterns are supported:
-- Scalar `new T(args)` / `new T()` / `new T` and `delete p`
-- Array `new T[n]` and `delete[] p`
-- Struct/class allocation with constructor or straightforward aggregate arguments: `new MyStruct(args)`, `new Pair{1, 2}`, `new Pair(1, 2)`, and `delete p`
-- Dereference assignment through pointer: `*p = value` (both heap-allocated and local-variable targets; same-frame writes through `int* p = &x; *p = 5;` update `x` correctly)
-- Subscript assignment on heap array: `arr[i] = value`
-- Arrow member access on heap struct: `p->member`
-- Multiple allocations, loops with new/delete
+Same root cause as the partial-support case above; listed here because it is a common pattern and there is no workaround other than inlining the body.
 
-**Requirement:** All heap allocations must be freed before the constant expression returns. The evaluator enforces this at the outermost function-call boundary (depth returning to 0).
+---
 
-**Known limitations of constexpr `new`/`delete`:**
-
-1. ✅ **Arrow member write (`p->member = value`) now supported** — Assignment and compound-assignment through arrow access on heap-allocated structs is now implemented. The LHS assignment handler now recognizes `p->member` forms in addition to plain identifiers, `this->member`, `*ptr`, and `arr[i]`.
-2. ✅ **Use-after-free on arrow access now produces a clear "use after free" diagnostic** — `try_evaluate_bound_member_access` now returns `EvalResult::error("Arrow member access on freed heap pointer: use after free in constant expression")` when the heap entry is freed, rather than silently returning `std::nullopt`.
-3. ✅ **Default constructors now invoked for `new MyStruct()` on non-aggregate types** *(Fixed)* — When `new MyStruct()` is called with no arguments and the type has user-defined constructors, the evaluator now tries to find and invoke a matching default constructor via `try_materialize_struct_from_ctor_args`. If no default constructor exists, a clear error is emitted instead of silently falling through to aggregate/zero initialization. For true aggregates (no user-defined constructors), the previous default-member-initializer / zero-init behavior is preserved.
-4. ✅ **`new`/`delete` now work in the const-dispatch path** — `evaluate_expression_with_bindings_dispatch` now forwards `NewExpressionNode` / `DeleteExpressionNode` through the bindings-aware dynamic-allocation helpers instead of falling back to `evaluate()` without bindings. This means bound local expressions such as `take(new int(x))` now resolve correctly during constexpr evaluation. Covered by `tests/test_constexpr_new_bound_expr_ret0.cpp`.
-5. ✅ **Constructor arguments can now use mutable bindings** — `evaluate_new_expression` now evaluates constructor arguments through the mutable bindings path when available, so side-effecting arguments like `new int(++x)` and `new Box(++x)` update the local constexpr state correctly. Covered by `tests/test_constexpr_new_bound_expr_ret0.cpp`.
-6. **Heap keys permanently interned in `StringTable`** — Each `alloc_heap_slot()` call interns a synthetic key (e.g., `@new_0`) into the global `StringTable`. These persist for the lifetime of the compiler process even after the constexpr evaluation completes.
-7. ✅ **Arrow member-not-found on heap objects now produces a clear diagnostic** — Previously, when `p->nonexistent` was evaluated and the member name was absent from the heap object's `object_member_bindings`, the path returned `std::nullopt` which caused a fall-through to the non-heap path and the confusing "could not resolve pointed-to object '@new_N'" error. The heap arrow-access path now returns an explicit "Member 'X' not found on heap-allocated object in constant expression" error. Covered by `tests/test_constexpr_heap_arrow_member_not_found_fail.cpp`.
-8. ✅ **Bare `new T` / `new T[n]` now reject indeterminate reads for scalars, arrays, and aggregate members** — FlashCpp now distinguishes bare default-initialization from value-initializing forms such as `new T()`, `new T{}`, and `new T[n]{}` for supported shapes. Reading a scalar fundamental object allocated with bare `new T`, an element of a bare `new T[n]` array, or a member of a bare `new Aggregate` object is rejected during constexpr evaluation as an indeterminate read. This closes the false-accept cases for patterns like `int* p = new int; return *p;`, `int* p = new int[3]; return p[0];`, and `Pair* p = new Pair; return p->x;`. Value-initializing forms still zero-initialize members without default member initializers, while bare aggregate `new T` still applies any default member initializers before leaving the remaining members indeterminate. Covered by `tests/test_constexpr_new_default_init_scalar_fail.cpp`, `tests/test_constexpr_new_default_init_array_fail.cpp`, `tests/test_constexpr_new_default_init_aggregate_fail.cpp`, and `tests/test_constexpr_new_value_init_aggregate_ret0.cpp`.
-   **Follow-up items for indeterminate-value tracking:**
-   - ✅ **Local default-initialized constexpr bindings now preserve indeterminate state** — Function-scope default-initialized scalars, arrays, and implicit-default-initialized aggregate/class objects no longer collapse to zero in constexpr evaluation. Reads such as `int x; return x;`, `int x; x += 1;`, and `Pair p; return p.first;` are now rejected, while default member initializers continue to materialize and later writes still operate on the bound object/array state. Covered by `tests/test_constexpr_local_default_init_scalar_fail.cpp`, `tests/test_constexpr_local_default_init_compound_fail.cpp`, and `tests/test_constexpr_local_default_init_aggregate_fail.cpp`.
-   - ✅ **Non-array `new T{}` / `new T{args}` brace-init syntax now parses correctly** — The parser now treats brace-init for scalar/class `new` the same way it already handled parenthesized constructor arguments and array brace-init. This means value-initializing forms such as `new int{}` and constructor calls such as `new Point{3, 4}` now set `has_value_init=true`, consume the full braced argument list, and flow through the existing constexpr `new` evaluation paths.
-   - ✅ **Scalar `new T{arg}` now preserves direct-list-init narrowing rules** — `NewExpressionNode` now records whether the initializer used braces or parentheses, so `new T{arg}` no longer collapses to the same form as `new T(arg)`. For scalar/fundamental `new`, constexpr evaluation and runtime codegen now reject narrowing conversions in the brace form while continuing to allow the paren form's normal conversion rules. Covered by `tests/test_constexpr_new_scalar_brace_narrowing_fail.cpp` and `tests/test_constexpr_new_scalar_paren_narrowing_ret0.cpp`.
-   - ⚠️ **Full brace-init vs paren-init semantics for `new` are still incomplete for richer type forms** — Straightforward aggregate heap construction with explicit scalar member arguments (for example `new Pair{1, 2}` / `new Pair(1, 2)`) now works in constexpr evaluation and runtime codegen, and straightforward nested-brace aggregate heap construction such as `new Outer{{1, 2}, 3}` now also works end-to-end in constexpr plus runtime codegen. Covered by `tests/test_constexpr_new_nested_aggregate_brace_ret0.cpp`. Downstream handling still does not fully model every semantic difference between `new T{args}` and `new T(args)` for richer brace-elision cases and other list-initialization-only diagnostics. This is also a pre-existing limitation outside `new`. **TODO:** Extend the preserved init-kind through the remaining initialization/codegen paths so aggregate-init rules and other list-initialization-only diagnostics are enforced uniformly.
-
-### ⚠️ Constexpr Lambdas Have Remaining Capture Limits
-
-Basic constexpr lambdas work, including:
-- Explicit captures
-- Default local captures (`[=]`, `[&]`)
-- Implicit `this` through default member captures in supported shapes
-- Init-captures
-- Multi-statement bodies
-- Simple member reads / constexpr member calls through `this` / `*this` capture
-- Straightforward mutable by-reference local updates
-- Straightforward by-reference init-capture alias updates, including simple identifier, member, array-element, and dereferenced-pointer aliases
-- Straightforward mutable shared-object updates through `[this]`
-- Straightforward mutable copy-local updates through `[*this]`
-- Straightforward mutable closure-local state persistence for by-value/init captures across repeated calls to the same lambda object
-- Straightforward return of lambda closure objects from constexpr functions with repeated calls after local initialization
-- Straightforward returned `[*this]` member closures after local aggregate object initialization
-- Straightforward nested lambdas that capture enclosing lambda/object state in supported shapes
-
-Capture support is still incomplete beyond those supported shapes.
-
-**Still partial in constexpr lambda evaluation:**
-
-- complex interactions through captured locals / `this` / `*this` (for example, relying on richer aliasing/object-identity behavior, deeper nested aliasing/copying behavior, or more advanced member-function dispatch through the captured object)
+### `std::initializer_list` in constexpr
 
 ```cpp
-constexpr int base = 10;
-constexpr auto ok = [base](int x) { return base + x; };  // ✅ explicit capture supported
-
-constexpr int f() {
-	constexpr int x = 40;
-	auto also_ok = [=]() { return x + 2; };
-	return also_ok();
+constexpr int sum(std::initializer_list<int> vals) {
+    int s = 0;
+    for (int v : vals) s += v;
+    return s;
 }
+static_assert(sum({1, 2, 3}) == 6);  // ❌ "Expression type not supported in constant expressions"
+```
 
+**Root cause:** `std::initializer_list<T>` is a library type backed by a compiler-synthesized backing array and two pointers (`begin`/`end`). FlashCpp's constexpr evaluator does not model this synthetic object. The brace-argument list `{1,2,3}` at a call site that expects `std::initializer_list` is parsed as an `InitializerListNode`, but the evaluator does not translate it into the `begin`/`end` pointer pair the library type exposes.
+
+**What is needed:** Special-case `std::initializer_list<T>` in the evaluator: when a function parameter has this type and the argument is an `InitializerListNode`, synthesize an internal array `EvalResult` and make `begin()`/`end()` return suitable pointer results over it.
+
+---
+
+### Constexpr variable storing a returned lambda (global scope call)
+
+```cpp
+constexpr auto fn = []{ return 42; };
+static_assert(fn() == 42);            // ✅ direct lambda — works
+
+constexpr auto make() { return [](int x){ return x*2; }; }
+constexpr auto fn2 = make();
+static_assert(fn2(5) == 10);          // ❌ "Member function calls require struct/class objects"
+```
+
+See the partial-support section above for root cause details.
+
+---
+
+### `try`/`catch` in constexpr
+
+C++20 permits `try`/`catch` blocks inside constexpr functions (they just cannot be entered during constant evaluation). FlashCpp does not currently parse `try` blocks inside constexpr function bodies, so any constexpr function containing a `try` block will fail to compile.
+
+**What is needed:** Parser support for `try`/`catch` inside constexpr bodies; the evaluator then simply never enters the handler during constant evaluation, so no evaluator changes are needed.
+
+---
+
+### Complex member-initialization chains (delegating constructors, calling non-constexpr helpers)
+
+```cpp
 struct S {
-    int value = 42;
-    constexpr int f() const {
-        auto ok = [=]() { return read(); };
-        return ok();
-    }
-    constexpr int read() const { return value; }
+    int x;
+    constexpr S() : S(0) {}        // ❌ delegating constructor not evaluated
+    constexpr S(int v) : x(v) {}
 };
+constexpr S s;
+static_assert(s.x == 0);
 ```
 
-**Workaround:** If you hit a remaining edge case, prefer capturing concrete constexpr values instead of depending on richer `this` / `*this` object behavior.
+**Root cause:** The evaluator's `try_materialize_struct_from_ctor_args` path does not detect or recurse into delegating constructors. When the selected constructor's initializer list contains another constructor call (`:S(0)`), the path does not recognize this as a delegation and falls through without producing member bindings.
 
-### ⚠️ Some Constant-Expression Forms Are Still Partial or Unsupported
+**What is needed:** After finding a matching constructor, inspect its initializer list for a delegating constructor call (initializer target is the same class name). If found, recursively invoke the delegated constructor to obtain the initial member state, then apply any additional initializer-list entries on top.
 
-Some parsed expression kinds are not yet fully handled by the constexpr evaluator.
+---
 
-**Now supported:**
+### Virtual dispatch in constexpr
 
-- `noexcept(expr)`
-- `offsetof(T, member)` for direct and straightforward nested data-member access (for example `offsetof(T, inner.value)`)
-- comma operator expressions (for example `(x = 2, x + 40)`)
-- `throw` expressions now behave correctly in constant evaluation: untaken `?:` / short-circuit branches are skipped, and an evaluated `throw` produces a dedicated not-constant-expression diagnostic
+```cpp
+struct Base { virtual constexpr int value() const { return 0; } };
+struct Derived : Base { int x; constexpr Derived(int v) : x(v) {}
+    constexpr int value() const override { return x; } };
+constexpr Derived d(42);
+static_assert(d.value() == 42);  // ✅ direct call on concrete type — works
+// But through a Base* / Base& pointer, virtual dispatch is not resolved.
+```
 
-**Partial support:**
+Virtual dispatch through a base-class pointer or reference is not implemented in the evaluator. C++20 does require it to work; FlashCpp does not track vtable information in `EvalResult`.
 
-- fold expressions require template instantiation context
-- pack expansions require template instantiation context
+**What is needed:** The member-function lookup must consult the *dynamic type* (stored in `object_type_index`) when the static type is a base class, and route to the most-derived override.
 
-## Implementation Details
+---
 
-### How Member Access Works
+## Implementation Architecture
 
-When evaluating `p1.x` in a constant expression:
+The evaluator lives in `src/ConstExprEvaluator*.cpp` (split into `_Core`, `_Members`, and header files). Central types:
 
-1. **Identify the object**: `p1` must refer to a constexpr object/value source
-	- this now includes straightforward local aggregate objects already materialized in bound constexpr evaluation state
-2. **Get the initializer**: Look up `p1` and obtain its constexpr initializer
-3. **Resolve the object shape**: Handle constructor-initialized and aggregate-initialized forms
-4. **Locate the member**: Find the member `x` in the object initializer data
-5. **Extract the member expression**: Get the expression used to initialize `x` (for example `x_val`)
-6. **Match parameter to argument when needed**: If constructor parameters are involved, bind the referenced parameter to the corresponding argument
-7. **Evaluate the resulting expression**: Recursively evaluate the resulting value expression
+- **`EvalResult`** — carries a scalar value, optional `object_member_bindings` (for struct objects), `array_elements` (for arrays), `callable_lambda` / `callable_var_decl` / `callable_bindings` (for lambda/functor callables), and `pointer_to_var` (for pointers). All evaluation results pass through this type; copies are value-semantic and expensive for large objects.
+- **`EvaluationContext`** — holds the current binding maps (`local_bindings`, `global_bindings`), struct info for member function evaluation, recursion depth, and flags (`is_speculative`).
+- **`evaluate_block_with_bindings`** — evaluates a sequence of statements, returning either a successful value (return statement) or a sentinel error. Loops, conditionals, switch, break/continue all terminate the block early via specific error sentinel strings (`kBreakExecuted`, `kContinueExecuted`, etc.).
 
-### Why Constructor Body Execution is Complex
+Key design constraint: the evaluator is a tree-walk interpreter with no heap or mutable global state between evaluations. Each constexpr call starts fresh from the AST and binding maps.
 
-Supporting constructor body execution would require:
+### Architectural debt: `EvalResult` copy pressure
 
-1. **Statement-level evaluation**: 
-   - Assignment statements (`x = value;`)
-   - Conditional statements (`if`, `switch`)
-   - Loop statements (`for`, `while`)
-   - Return statements (for early exit)
+`EvalResult` is value-semantic and copied frequently. For large objects (deep member-binding maps, large arrays, lambda closures with many captures) this becomes expensive. A tracked follow-up task is to split heavy recursive state into arena-managed payload objects while keeping scalar results inline.
 
-2. **State tracking**:
-   - Maintaining member values as they're modified
-   - Handling member initialization order
-   - Supporting member default values
-
-3. **Control flow**:
-   - Branching based on conditions
-   - Loop iteration with constexpr bounds
-   - Exception handling (if supported)
-
-4. **Function calls**:
-   - Calling other constexpr functions
-   - Handling recursion limits
-   - Managing call stacks
-
-This would essentially require a constexpr interpreter for C++ statements, which is a substantial undertaking.
-
-## Future Improvements
-
-Potential areas for enhancement (in order of complexity):
-
-### Implemented ✅
-- ✅ Simple parameter reference in initializers
-- ✅ Default member initializers
-- ✅ Literal expressions in initializers (e.g., `x(val * 2)`)
-- ✅ Unary `-` and `+` operators
-- ✅ Constexpr member function calls, including multi-statement bodies with `if`, `for`, `while`, and `switch`
-- ✅ Constexpr lambdas with explicit captures, default captures, current supported `this` / `*this` shapes, and straightforward by-reference init-capture subobject aliases (including `*ptr`)
-- ✅ Multi-statement constexpr free functions (`return`, local vars, `if`, `for`, `while`, `switch`)
-- ✅ Multi-statement constexpr lambdas and callable/operator() bodies in supported shapes
-- ✅ Nested member access (e.g., `obj.inner.value`)
-- ✅ Direct and nested member reads from local constexpr objects inside constexpr functions (e.g., `obj.value`, `obj.inner.value`) — both aggregate-initialized (brace-init) and constructor-initialized local objects now work for nested access (see "Nested Member Access on Local Constructor-Initialized Objects" fix below)
-- ✅ Direct/member array subscript support in current supported shapes, including straightforward local aggregate object reads like `obj.data[1]`
-- ✅ Straightforward inferred-size local arrays in constexpr functions, including simple scalar reads and simple aggregate-array element member reads
-- ✅ Straightforward local aggregate-array element reads in constexpr functions, including nested/member-array compositions like `items[i].inner.value` and `items[i].data[0]`
-- ✅ Straightforward loop-driven local array reads in constexpr functions, including `sum += arr[i]` and `sum += items[i].value`
-- ✅ Straightforward constructor-body member assignments in constexpr objects (including if/else, for/while, and switch bodies)
-- ✅ Straightforward constructor-body/reference local aliases now work in constexpr evaluation (e.g., `int& r = x; r = v;` for member/local lvalues in supported shapes)
-- ✅ `noexcept(expr)` in constexpr evaluation
-- ✅ `offsetof(T, member)` for direct and straightforward nested data-member access in constexpr evaluation
-- ✅ `throw` expressions now produce a dedicated not-constant-expression diagnostic when evaluated, while untaken `?:` / short-circuit branches continue to work
-- ✅ comma operator expressions now work in constexpr evaluation, including left-operand side effects followed by a right-operand result
-- ✅ `break` and `continue` statements in constexpr for/while loops
-- ✅ `switch` statements with case labels, default label, fall-through, and `break` in constexpr functions
-- ✅ Range-based for loops over local arrays (primitive and struct element types) in constexpr functions
-- ✅ All primitive types (`bool`, `char`, signed/unsigned integer variants, `float`, `double`, `long double`) in constexpr variables, arithmetic, comparisons, function parameters/return values, and C-style/`static_cast` conversions inside constexpr function bodies
-- ✅ Mixed-type arithmetic following C++ usual arithmetic conversions: float/double vs any → double path; unsigned long long vs signed → unsigned path; bool/char/short/int/long/long long → signed path
-- ✅ Unsigned arithmetic and initialization/binding into unsigned targets wrap at the declared type's width (e.g. `unsigned int` wraps at 32 bits, `unsigned long long` wraps at 64 bits, `unsigned char x = 300` stores `44`, and binding `300` to an `unsigned char` constexpr constructor parameter also stores `44`) when the target type is known
-- ✅ Increment/decrement operators (`++` / `--`) correctly wrap at the declared unsigned type's width (e.g. `unsigned int x = UINT_MAX; x++;` wraps to `0`; `unsigned char x = 255; ++x;` wraps to `0`)
-- ✅ Increment/decrement operators now also work on bound constexpr subscript/member lvalues such as `++arr[i]`, `arr[i]--`, and nested forms that resolve through local bindings
-- ✅ Shift-count validation for arithmetic-produced left operands: e.g. `(1u + 1u) << 40` is correctly rejected because the result of `1u + 1u` is `unsigned int` (32 bits) and 40 ≥ 32
-- ✅ Member array brace-init in constructor initializer lists (e.g., `arr{a, b, c}` for `int arr[3]`) is correctly materialized as an array value in constexpr evaluation
-- ✅ C++ aggregate-init zero-fill for partially-specified and single-element array brace-init: `arr{val}` sets `arr[0]=val` and zero-fills the rest; `arr{1,2,3}` for `int arr[5]` zero-fills elements 3 and 4
-- ✅ Local variable as array subscript inside constexpr member functions (e.g., `int idx = 1; return arr[idx];`)
-- ✅ Basic constexpr pointer dereference: `&named_var` (address-of), `*ptr` (dereference), `ptr->member` (arrow member access), and pointer function parameters (e.g., `const T* p`) in supported shapes
-- ✅ Constexpr null pointer checks and pointer comparisons: `ptr == nullptr`, `ptr != nullptr`, `ptr1 == ptr2`, `ptr1 != ptr2`, `!ptr`, `ptr && x`, `ptr || x` (valid constexpr pointer is always non-null/truthy)
-- ✅ Constexpr pointer arithmetic: `&arr[i]` (address of array element), `ptr + n`, `n + ptr`, `ptr - n` (pointer arithmetic), `ptr1 - ptr2` (pointer difference), `ptr[i]` (pointer subscript), `ptr < ptr2` / `ptr <= ptr2` / `ptr > ptr2` / `ptr >= ptr2` (pointer relational comparisons); works in both top-level constexpr and inside constexpr function bodies
-- ✅ `const char*` and string literals in constexpr: `constexpr const char* s = get_fn();`, `static_assert(s[0] == 'H')`, `str_len("Hello")` using `while (s[n] != '\0')` loop, string literal as function argument; standard escape sequences decoded at compile time
-- ✅ Sub-word struct returns from constexpr functions: structs smaller than a machine word (e.g., 3-byte `Color{r,g,b}`) are now correctly propagated in all bytes to both compile-time and runtime call sites
-- ✅ All compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`) now correctly truncate results to the declared unsigned type's width (e.g. `unsigned char x = 200; x += 100;` wraps to 44)
-- ✅ Arrow member write (`p->member = value`) on heap-allocated structs in constexpr `new`/`delete` — all compound-assignment forms (`p->count += 1`, etc.) are also supported
-- ✅ Use-after-free through arrow access produces a clear "use after free" diagnostic instead of a confusing "variable not found" error
-- ✅ **Struct constructor calls inside constexpr function bodies** *(Implemented)* — `ConstructorCallNode` for struct/user-defined types is now handled in the bindings-aware evaluator, enabling patterns like `return Pair{a, b}` from a constexpr function, `Point p = Point{5, 6}` as a local variable, and calling member functions on locally-constructed objects.
-- ✅ **Local struct member assignment (`p.a = value`) in constexpr functions** *(Implemented)* — Dot-member assignment on local struct variables (non-`this`, non-arrow) is now supported. Both simple (`p.a = 10`) and compound (`p.a += 3`) assignment operators work. Enables swap patterns, loop accumulators, and general local struct mutation.
-- ✅ **`*this` dereference in constexpr member function bodies** *(Implemented)* — `*this` can now be evaluated as an expression inside a constexpr member function, producing an object `EvalResult` with the current member state. Enables passing the current object to another member function (e.g., `dot(*this)`), or using it as an argument in nested calls.
-- ✅ **Default constructor invocation for uninitialized local struct variables in constexpr functions** *(Implemented)* — Declaring a local struct variable without an explicit initializer (e.g., `Counter c;`) now invokes the default constructor, including constructors with a body. Both member-initializer-list and constructor-body styles work. Aggregate / implicit-default-constructor cases now preserve default-initialization semantics instead of silently zero-filling: members without default member initializers remain indeterminate, while default member initializers are still applied. Non-aggregate types with user-declared constructors still correctly require a matching default constructor.
-- ✅ **Void mutating member function calls on local constexpr structs** *(Implemented)* — Calling a `void`-returning non-const member function on a local struct variable (e.g., `c.increment()`) now correctly mutates the local object and writes the updated member values back. Repeated calls accumulate correctly, and parameterized void methods (e.g., `c.add(5)`) also work.
-- ✅ **Multi-dimensional array initialization and element access** *(Implemented)* — `int arr[M][N] = {{…},{…}}` nested-brace init now works end-to-end for both constexpr evaluation and emitted global runtime data, `arr[i][j]` reads in loops, `arr[i][j] = v` subscript assignment, scalar brace-elision (`{v}` seeds `[0][0]`, zero-fills the rest per C++20), `{0}` zero-init, and fully-flattened brace-elision (`{1,2,3,4,5,6}` for `int[2][3]`) are all supported at global constexpr scope and inside constexpr function bodies. User-defined constructors are now correctly preferred over aggregate initialization when both are available.
-- ✅ **Aggregate initialization inside constexpr functions uses local bindings** *(Implemented)* — Aggregate structs (no user-defined constructor) can now be initialized with brace-init inside constexpr function bodies using local variables or function parameters as arguments (e.g., `Pt p{a, b}` where `a` and `b` are in scope).
-- ✅ **Ternary operator returning struct types** *(Implemented)* — `constexpr Pt p = (cond ? Pt{3,7} : Pt{1,2})` now works at global scope and inside constexpr functions. Struct-typed `ConstructorCallNode` expressions are routed through `materialize_constructor_object_value` (with aggregate-init fallback), and the member resolution path gained a generic expression fallback for initializers that aren't constructor calls or initializer lists. See "Ternary Struct Initializer Error Propagation" in the limitations section for the remaining edge case.
-- ✅ **Nested member access on local constructor-initialized objects** *(Implemented)* — `o.inner.x` now works inside constexpr function bodies when `o` is a local variable constructed via a user-defined constructor (e.g., `Outer o(3, 7)` where `Outer::inner` is of a struct type). Root cause: `parse_direct_initialization` stores block-scope `Type o(a, b)` as `InitializerListNode{a, b}`, which previously triggered the aggregate-init path. The fix adds a constructor-detection step in `evaluate_statement_with_bindings`: if a matching user-defined constructor exists for the struct type, the constructor evaluation path (`bind_evaluated_arguments` + `materialize_members_from_constructor`) is used, producing correctly-typed member EvalResults that the bindings-aware nested-member-access path can traverse.
-- ✅ **Zero-argument constexpr struct construction now materializes object state** *(Implemented)* — `Type{}` / `Type()` for struct and user-defined types now route through constructor/aggregate materialization instead of collapsing to scalar zero in the top-level evaluator. This fixes emitted globals such as `constexpr Holder h{};` when the default constructor initializes members (including array members), so runtime reads now match compile-time `static_assert` results. Covered by `tests/test_constexpr_global_member_array_runtime_ret0.cpp`.
-- ✅ **Constexpr aggregate paren-init `Type var(args)` now works** *(Implemented)* — Aggregate structs (no user-defined constructors) can now be initialized with parentheses syntax in constexpr evaluation, both at global scope and inside constexpr function bodies. For example, `constexpr Pair p(3, 7);` now correctly performs aggregate initialization with the provided arguments, allowing member access like `p.first` and `p.second` to work. This applies the C++20 rule that paren-init on aggregates behaves like aggregate initialization (allowing narrowing conversions), while brace-init enforces list-initialization narrowing rules. Covered by `tests/test_constexpr_aggregate_paren_init_ret0.cpp` and `tests/test_constexpr_aggregate_paren_init_conversion_ret0.cpp`. The fix unified the fallback behavior in three locations:
-  1. `resolve_constexpr_member_source_from_initializer` — when resolving member access on a paren-init object
-  2. `extract_object_members` — when extracting members for member function calls
-  3. `bind_members_from_initializer_list` — applying conversion via `applyAggregateMemberScalarInitialization`
-  All now correctly try constructor-based materialization first, then fall back to aggregate initialization for aggregates without user-defined constructors.
-- ✅ **Trailing default arguments now work for constexpr member calls and callable objects** *(Implemented)* — The constexpr member-lookup and functor `operator()` lookup paths now accept any explicit argument count in the callable range `[countMinRequiredArgs, parameter_count]` instead of requiring exact arity. Missing trailing arguments continue to be materialized by `bind_evaluated_arguments`, so calls like `counter.add(40)` and `adder(40)` now evaluate correctly when the omitted parameters have defaults. Covered by `tests/test_constexpr_member_default_arg_ret0.cpp` and `tests/test_constexpr_functor_default_arg_ret0.cpp`.
-- ✅ **Constexpr callable objects now honor sema-resolved same-arity `operator()` overloads** *(Implemented)* — The callable-object constexpr path now reuses the resolved `CallExprNode` target when available instead of falling back to arity-only `operator()` lookup. This fixes false ambiguity for cases like `f(40)` when a functor has both `operator()(int)` and `operator()(long)` and normal overload resolution already selected the `int` overload. Covered by `tests/test_constexpr_functor_same_arity_overload_ret0.cpp`.
-- ✅ **C++20 designated aggregate initializer diagnostics** *(Implemented)* — Constexpr aggregate initialization now rejects mixed positional/designated clauses and out-of-order designators instead of accepting C/GNU extension forms. Covered by `tests/test_constexpr_designated_init_mixed_fail.cpp` and `tests/test_constexpr_designated_init_order_fail.cpp`.
-
-### Medium
-- ✅ **Constexpr free-function calls now honor sema-resolved same-arity overloads** *(Implemented)* — The constexpr free-function call path now reuses the parser/sema-resolved `CallExprNode` target when available instead of falling back to raw symbol-table name lookup. This fixes wrong-overload evaluation for cases like `pick(2.5)` when both `pick(int)` and `pick(double)` exist and normal overload resolution already selected the `double` overload. Covered by `tests/test_constexpr_free_function_overload_ret0.cpp`.
-- ⚠️ Inferred array size parsing in richer contexts beyond the currently supported straightforward cases — straightforward copy-init and direct-list forms such as `int arr[] = {1,2,3}` and `int arr[]{1,2,3}` now work in current local/global constexpr paths, and simple global `sizeof(arr)` plus `sizeof(arr) / sizeof(arr[0])` on inferred-size constexpr arrays are supported.
-- ⚠️ Fold expressions / pack expansions require template instantiation context
-- ✅ Range-based for loops over objects with `constexpr begin()`/`end()` member functions are now supported. The iterator methods must return a member array (which the evaluator iterates) or a pointer (`&data[0]` / `&data[N]` style). Template structs with `constexpr begin()`/`end()` are also supported. Nested range-for loops and `break`/`continue` work correctly inside these loops.
-- ✅ Flat brace-elision for one-dimensional arrays of aggregate struct elements now works in constexpr evaluation, both for standalone arrays like `Item items[] = {40, 2}` and for aggregate members like `Holder h = {40, 2, 7}` where a following scalar initializes the next member after the array.
-- ✅ **Bitwise compound assignments (`&=`, `|=`, `^=`, `<<=`, `>>=`) in constexpr function bodies** *(Implemented)* — All five operators now work correctly in constexpr function bodies, including inside loops and XOR-swap idioms.
-  - ✅ **Compound assignments now apply unsigned type-width truncation** *(Implemented)* — The `apply_op_to` lambda now truncates results to the declared unsigned type's width using `apply_uint_type_mask`, matching the behavior of the `++`/`--` handler. For example, `unsigned char x = 200; x += 100;` now correctly wraps to 44. This applies to all compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`).
-- ⚠️ Unsigned wrapping arithmetic: when the declared type cannot be determined (e.g. some template-dependent expressions), the result may fall back to 64-bit storage. Direct identifiers, literals, casts, and most common arithmetic chains all produce correctly-widthed results.
-  - Increment/decrement operators (`++` / `--`) now correctly wrap at the declared type's width (e.g. `unsigned int x = UINT_MAX; x++;` wraps to `0`; `unsigned char x = 255; ++x;` wraps to `0`).
-- ⚠️ Shift-count validation now uses the promoted left-operand width for direct identifiers, literals, casts, chained shift results, and arithmetic-produced operands (e.g. `(1u + 1u) << 40` is correctly rejected).
-  - Some template-dependent or complex intermediate expressions may still fall back to the evaluator's 64-bit storage width when `exact_type` is unavailable.
-
-### Medium-Hard
-- ✅ **C++20 aggregate-initialization rules for user-declared constructors**
-  *(Implemented)* — In C++20, a type with any user-declared constructor is **not**
-  an aggregate ([dcl.init.aggr]/1,
-  [P1008R1](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p1008r1.pdf)).
-  FlashCpp now tracks user-declared constructors separately from compiler-implicit
-  constructors for aggregate checks, including explicitly defaulted constructors
-  and deleted constructors.  The constexpr aggregate materialization path now
-  rejects these non-aggregate types instead of silently falling back to memberwise
-  aggregate initialization, while constructor-based initialization remains valid.
-  The `__is_aggregate` implementation uses the same user-declared-constructor
-  distinction.  Covered by `tests/test_constexpr_aggregate_defaulted_ctor_fail.cpp`,
-  `tests/test_constexpr_aggregate_deleted_ctor_fail.cpp`, and
-  `tests/test_constexpr_defaulted_ctor_value_init_ret0.cpp`.
-- ✅ **Constructor-backed callable-object materialization now reuses `try_materialize_struct_from_ctor_args`** *(Implemented)* — The remaining constexpr functor path in `evaluate_callable_object` no longer inlines its own `find_matching_constructor` → `bind_evaluated_arguments` → `materialize_members_from_constructor` sequence. It now delegates to `try_materialize_struct_from_ctor_args` and moves the resulting `object_member_bindings` into the evaluation bindings before binding `operator()` arguments. This keeps callable-object constexpr evaluation aligned with the other constructor-materialization paths and removes the last duplicated implementation of that sequence.
-- ✅ **Global struct paren-init `Type var(args)` now emits correct runtime init data** *(Implemented)* — Three separate bugs were fixed:
-  1. **Parser** (`src/Parser_Decl_FunctionOrVar.cpp`): The `Type::Struct` check in the global-scope paren-init branch was extended to also cover `Type::UserDefined` (typedef'd / template-instantiated struct types). Previously, non-Struct-tagged types fell through to `parse_direct_initialization()` which produced an `InitializerListNode` instead of a `ConstructorCallNode`.
-  2. **ExpressionNode wrapping** (`src/Parser_Decl_FunctionOrVar.cpp`): The newly-created `ConstructorCallNode` was stored as a bare `ConstructorCallNode` ASTNode rather than being wrapped inside an `ExpressionNode`, so the IR converter's `holds_alternative<ConstructorCallNode>` check silently fell through and emitted the global as uninitialized. Fixed by wrapping in `ExpressionNode` (matching the convention used everywhere else).
-  3. **IR aggregate checks** (`src/IrGenerator_Stmt_Decl.cpp`): Three `type_node.type() == Type::Struct` conditions (in the `InitializerListNode` aggregate path, the array-of-structs path, and the single-expression struct eval path) were extended to `Type::Struct || Type::UserDefined`.
-  The ConstructorCallNode IR path now also tries the constexpr evaluator first (which handles all member types via `packStructEvalResultIntoInitData`) before falling back to the manual member-by-member path. The manual fallback was also fixed to use `evalResultMemberToRaw` instead of `as_int()`, preserving IEEE-754 bit patterns for `float`/`double` members. Covered by `tests/test_constexpr_global_paren_init_ret0.cpp` and `tests/test_constexpr_global_float_struct_ret0.cpp`.
-
-- ✅ **Constructor default arguments now evaluated in constexpr contexts** *(Implemented)* — `find_matching_constructor` (`src/ConstExprEvaluator_Members.cpp`) previously returned `nullptr` when the call had fewer explicit arguments than the constructor's total parameter count, even when the missing parameters all had default values. Fixed by adding a fallback to `resolve_constructor_overload_arity` (which already accounts for default-arg arity). Additionally, `bind_evaluated_arguments` (`src/ConstExprEvaluator_Core.cpp`) previously only bound explicit arguments; it now also evaluates and binds default values for any remaining parameters. Together these fixes make `Pair g(5)` correct when `Pair` has `constexpr Pair(int a, int b = 7)`. Covered by `tests/test_global_ctor_default_arg_ret0.cpp`.
-  - ✅ **`bind_pre_evaluated_arguments` now binds default values** *(Fixed)* — The pre-evaluated binding path now mirrors `bind_evaluated_arguments`: it carries `EvaluationContext&`, evaluates trailing default-value AST nodes, and binds them for any omitted parameters. This keeps array-element and nested-member constructor materialization paths aligned with the main constructor binding path, including constexpr member access that depends on defaulted constructor parameters. Covered by `tests/test_constexpr_array_subscript_member_ctor_default_arg_ret0.cpp` and `tests/test_constexpr_nested_member_ctor_default_arg_ret0.cpp`.
-
-- ✅ **`find_matching_constructor` now skips implicit default constructors in guarded empty-argument constexpr paths** *(Implemented)* — Empty-argument construction paths that are already guarded by `hasUserDefinedConstructor()` now opt into skipping implicit constructors when probing for a default constructor. This closes the gap where parser-synthesized implicit defaults could leak through non-aggregate constexpr default-initialization paths. Covered by `tests/test_constexpr_new_nodefault_ctor_fail.cpp`, `tests/test_constexpr_empty_brace_nodefault_ctor_fail.cpp`, and `tests/test_constexpr_local_nodefault_ctor_fail.cpp`.
-- ✅ **`return {x, y}` in struct-returning constexpr functions now honors constructors** *(Implemented)* — The return-statement handler in `evaluate_statement_with_bindings` now mirrors the variable-declaration and `new`-expression paths: if the struct return type has user-defined constructors, `return {a, b}` routes through constructor matching (`try_materialize_struct_from_ctor_args`) instead of unconditionally binding members as an aggregate. This fixes non-aggregate cases where the constructor reorders, transforms, or validates its arguments, so `return {a, b}` now behaves consistently with `Type result(a, b); return result;` during constexpr evaluation.
-  **`try_materialize_struct_from_ctor_args` now documents its `object_type_index` contract** *(Implemented)* — The helper now has an explicit post-condition assertion before returning the materialized object. This protects the direct-return call sites in the `new`-expression, variable-declaration, and struct-return constexpr paths, all of which rely on the helper preserving `object_type_index` for downstream member access and callable-object dispatch.
-- ✅ **Static-storage emission now preserves constexpr struct results that used constructor-based brace returns** *(Implemented)* — When a `constexpr` global/static struct is initialized from a constexpr function result, the static-storage codegen path now packs the fully materialized `EvalResult::object_member_bindings` into emitted init bytes instead of collapsing the whole object through the scalar `evalToValue()` fallback. This keeps runtime global/static objects consistent with the compile-time constexpr result, including non-aggregate return types whose constructors reorder or transform their arguments. Repro that now works:
-
-  ```cpp
-  struct Pair {
-      int first;
-      int second;
-      constexpr Pair(int x, int y) : first(y), second(x + 1) {}
-  };
-
-  constexpr Pair makePair(int x, int y) { return {x, y}; }
-  constexpr Pair p = makePair(2, 5);
-
-  static_assert(p.first == 5 && p.second == 3); // ✅ compile-time path
-  int main() { return (p.first == 5 && p.second == 3) ? 0 : 1; } // observed 1
-  ```
-
-  This is covered by `tests/test_constexpr_return_braced_init_ctor_ret0.cpp`, which now checks both the `static_assert` path and the runtime value of the emitted global `constexpr` object.
-
-  - ✅ **Global/static nested brace-init now preserves constructor semantics for non-aggregate subobjects** *(Implemented)* — Static-storage packing no longer assumes every nested `InitializerListNode` for a struct member is aggregate-init. For cases like `constexpr Outer g = {{1, 2}, 3};` where `Outer::inner` has a user-declared constructor, the codegen path now re-materializes the nested object through `try_materialize_struct_from_ctor_args` / aggregate fallback and then packs the resulting member bindings into emitted bytes. This keeps runtime global/static data aligned with the compile-time constexpr object model instead of writing zeroed or aggregate-mapped bytes. Covered by `tests/test_constexpr_global_nested_nonaggregate_brace_runtime_ret0.cpp`.
-
-  - ✅ **Floating-point constexpr arrays no longer truncate through `array_values`** *(Implemented)* — The evaluator now keeps `float` / `double` array elements exclusively in `array_elements`, so initializer-list materialization and normalized-byte reconstruction preserve IEEE-754 values instead of routing them through `as_int()`. The remaining legacy `array_values` emission fallback in static-storage codegen now also routes through `evalResultMemberToRaw(...)` for consistency. Covered by `tests/test_constexpr_static_member_double_array_runtime_ret0.cpp` plus the existing array-member/runtime constexpr coverage.
-
-  - ✅ **Global constexpr struct arrays now preserve constructor semantics in emitted runtime data** *(Implemented)* — The static-storage array path now tries full-array constexpr materialization before falling back to the older per-element packing logic, and the array packer now recognizes struct-valued `EvalResult` leaves instead of collapsing them through scalar conversion. In addition, global unsized-array declarations now keep the inferred outer bound on the registered declaration node, so later codegen/runtime uses the real array extent instead of the pre-inference `[]` form. This fixes cases like `constexpr Pair arr[2] = {{1, 2}, {3, 4}};` and `constexpr Pair arr[] = {{1, 2}, {3, 4}, {5, 6}};` when `Pair` has a user-declared constructor that reorders/transforms its arguments. Covered by `tests/test_constexpr_global_struct_array_ctor_runtime_ret0.cpp` and `tests/test_constexpr_global_unsized_struct_array_ctor_runtime_ret0.cpp`.
-
-### Hard
-- ⚠️ Complex constructor body statement execution involving complex aliasing or non-trivial call chains (simple assignments, conditionals, loops, switch, and straightforward member-address helper calls now work)
-- ✅ **Short-circuit `&&` / `||` in top-level `evaluate_binary_operator`** *(Implemented)* — Both the top-level path (`static_assert`, constexpr variable initializers) and the bindings-aware path (constexpr function bodies) now short-circuit correctly. The `is_speculative` flag in `EvaluationContext` is set to `true` during template-argument disambiguation so that speculative evaluation does not change parse behavior.
-  - ⚠️ **`is_speculative` disables short-circuit globally** — The flag is set on the `EvaluationContext` and applies to all sub-expressions (including nested function calls). This means expressions like `constexpr bool x = false && some_complex_call()` evaluated speculatively will eagerly evaluate `some_complex_call()`, potentially producing spurious errors. This is acceptable since speculative evaluation returns `nullopt` on failure anyway.
-  - ⚠️ **`is_speculative` only affects the top-level path** — The bindings-aware paths (`evaluate_expression_with_bindings`, `evaluate_expression_with_bindings_dispatch`) always short-circuit regardless of the flag. This is correct because `try_evaluate_constant_expression` only uses the top-level evaluator for template-argument disambiguation.
-- ✅ **Dynamic allocation in constexpr (`new` / `delete`)** *(Implemented)* — See the section above.
-- ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond:
-  - straightforward by-reference locals
-  - straightforward identifier-based and dereferenced-pointer by-reference init-capture aliases
-  - straightforward `[this]` / `[*this]` mutation behavior
-  - straightforward repeated-call mutable closure-local state
-  - straightforward returned closure-object state transfer
-  - straightforward returned `[*this]` member closures from local aggregate objects
-  - straightforward nested lambdas over enclosing state
-- ✅ Straightforward write-through-pointer across constexpr function frames for local scalar and struct-object targets
-- ❌ `throw` expressions in constexpr evaluation
-- ❌ Complex member initialization chains
+---
 
 ## Recommendations
 
 ### For Users
 
-1. **Prefer member initializer lists when practical** - constructor body member assignments, conditionals, loops, and switch all work too, but complex aliasing chains are still more fragile
-2. **Nested/member access is okay in supported shapes** - this includes straightforward local aggregate object reads like `obj.value` and `obj.inner.value`; prefer simple, directly initialized object graphs
-3. **Multi-statement member functions now work** - if/else, for/while, switch, and break/continue are all supported
-4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns, including simple local object member-array reads like `obj.data[1]`, straightforward local inferred-size arrays like `int arr[] = {1, 2}`, and straightforward loop-driven reads over supported local arrays
-5. **Pointer forms are broader now** - `&arr[i]`, `ptr + n`, `ptr - n`, `ptr[i]`, `ptr1 - ptr2`, pointer relational comparisons (`<`, `<=`, `>`, `>=`), straightforward pointer-based member access / member calls (`ptr->value`, `ptr->get()`), and constexpr pointer-to-member forms (`&Type::member`, `obj.*pmf`) all work in the currently supported constexpr paths
-6. **Use straightforward lambda captures** - the following work best:
-   - explicit captures
-   - straightforward local `&` captures
-   - straightforward `&name = other`, `&name = obj.member`, and `&name = arr[i]` init-captures
-   - straightforward mutable by-value/init-capture local state
-   - straightforward returned closure objects from constexpr helper functions
-   - straightforward returned `[*this]` member closures from local aggregate objects
-   - local/default member captures
-   - simple `this` / `*this` member reads/calls
-   - straightforward nested lambdas over enclosing captured/member state
-   - straightforward mutable `[this]` / `[*this]` updates
-7. **`const char*` works in constexpr** - constexpr functions can return string literals,
-   and subscript/loop operations on `const char*` in both `static_assert` and constexpr
-   function bodies work.  `std::string` / `std::string_view` manipulation is not yet
-   supported at compile time.
-8. **Small structs are safe** - structs smaller than a machine word (e.g., a 3-byte
-   `{unsigned char r, g, b}`) can be returned from constexpr functions to both
-   compile-time and runtime variables correctly.
-9. **`new` / `delete` is supported in constexpr (C++20)** — all heap allocations must be freed before the constant expression returns. Arrow member writes (`p->x = 10`) on heap structs are now also supported. Avoid `throw` expressions in constexpr code.
+1. **Prefer member-initializer lists** over complex constructor-body chains for most reliable constexpr support.
+2. **Void lambdas with `[&]` captures work** — accumulator and mutating-callback patterns are fully supported.
+3. **Avoid indirect lambda capture chains** — `[&inc]() { inc(); }` where `inc` itself captures by-ref does not propagate writes back. Inline the body instead.
+4. **Use `constexpr` lambdas directly**, not via a global `constexpr auto fn = make_fn()` variable (the returned-lambda case is not yet supported).
+5. **Dynamic allocation works** — `new`/`delete` in constexpr follow C++20 rules; all allocations must be freed before the constant expression returns.
+6. **`const char*` string operations work** — subscript, `while (*s != '\0')` traversal, and string-literal return values are all supported.
+7. **Avoid `std::initializer_list` parameters** — use explicit array parameters or variadic templates instead.
 
 ### For Contributors
 
-When extending constexpr support:
+The most impactful next improvements in rough priority order:
 
-1. Start with the evaluator in `src/ConstExprEvaluator.h`
-2. Add support for specific expression types incrementally
-3. Test thoroughly with both valid and invalid cases
-4. Document new capabilities and limitations
-5. Consider the compile-time performance impact
+1. **Propagate mutations through indirect lambda-capture chains** — fix `evaluate_lambda_call` to walk capture-of-capture chains after each call and propagate writes all the way to the original binding.
+2. **`constexpr auto fn = make_fn()` at global scope** — persist the full `EvalResult` (including `callable_lambda`) through global-variable materialization so `evaluate_function_call` can invoke it directly.
+3. **`const char*` member subscript** — after resolving a `const char*` member binding, propagate `pointer_to_var.origin_var_name` so the subscript fast-path can find the string data.
+4. **Delegating constructors** — detect delegation in the initializer list and recurse before applying any remaining initializer entries.
+5. **`std::initializer_list`** — synthesize an internal array from the brace-argument list when the parameter type is `std::initializer_list<T>`.
+6. **Virtual dispatch** — use `object_type_index` as the dynamic type when looking up member functions through a base-class static type.
 
-### Architectural Follow-Up Task: Evolve `EvalResult` for Fuller C++20 Constexpr Support
-
-As constexpr support expands toward fuller C++20 object/array/closure semantics, `EvalResult` is carrying increasingly rich recursive state (for example array elements, object member bindings, and callable capture bindings). The current value-heavy representation is still workable, but it is now architectural debt and should be treated as a tracked follow-up task rather than an open-ended future concern.
-
-**Task:** Design and implement a phased `EvalResult` representation refactor that keeps scalar constexpr results cheap while making recursive object/array/callable state more scalable.
-
-**Preferred direction:** Keep simple scalar values inline, but split heavier recursive state into dedicated payload objects instead of turning the entire `EvalResult` into a shared, implicitly aliased graph.
-
-**Draft plan:**
-
-1. **Measure current copy pressure**
-   - Identify the hottest `EvalResult` copy paths in constexpr evaluation (binding maps, argument binding, object materialization, array materialization, callable capture state, return propagation).
-   - Add lightweight instrumentation or targeted profiling before changing representation.
-2. **Separate scalar vs structured state**
-   - Keep primitive constant values (`bool` / integer / floating-point) directly embedded in `EvalResult`.
-   - Move array/object/callable payloads behind dedicated state nodes or arena-managed payload storage.
-3. **Preserve explicit value semantics**
-   - Do not switch blindly to `shared_ptr` everywhere.
-   - Make copy-vs-share behavior explicit so constexpr by-value copies, closure copies, `[this]` vs `[*this]`, and local object writeback remain correct.
-4. **Introduce structured clone-on-write only where needed**
-   - If shared backing is introduced for heavy payloads, require explicit detachment before mutation in paths that semantically produce independent state.
-5. **Refactor incrementally with regression coverage**
-   - Convert one payload family at a time (arrays, then object state, then callable state).
-   - Keep targeted regression tests for local object mutation, array element access, constructor materialization, lambda closure copies, and by-reference capture writeback.
-6. **Re-evaluate complexity limits and performance after each slice**
-   - Confirm that new representation changes do not accidentally make constexpr evaluation slower or more alias-prone in common scalar cases.
-
-**Non-goal for the first slice:** A blanket “everything becomes `shared_ptr`” rewrite. That would be too risky for current constexpr value/copy semantics.
-
-## Examples
-
-### ✅ Best Practices
-
-```cpp
-// Good: Simple member initializer list
-struct Point {
-    int x, y;
-    constexpr Point(int x_val, int y_val) : x(x_val), y(y_val) {}
-};
-
-// Good: Pre-computed values
-constexpr Point p1(5 * 2, 7 + 3);  // Compute at call site
-static_assert(p1.x == 10);
-
-// Good: All members initialized
-struct Config {
-    int timeout;
-    int retries;
-    constexpr Config(int t, int r) : timeout(t), retries(r) {}
-};
-
-// Good: Complex initializer expressions (now supported!)
-struct Rectangle {
-    int width, height, area;
-    constexpr Rectangle(int w, int h) : width(w), height(h), area(w * h) {}
-};
-constexpr Rectangle rect(4, 5);
-static_assert(rect.area == 20);
-
-// Good: Default member initializers (now supported!)
-struct DefaultValues {
-    int x = 10;
-    int y = 20;
-};
-constexpr DefaultValues dv{};
-static_assert(dv.x == 10);
-
-// Good: Constexpr member functions (single expression body)
-struct Calculator {
-    int a, b;
-    constexpr int sum() const { return a + b; }
-};
-constexpr Calculator calc{3, 4};
-static_assert(calc.sum() == 7);
-
-// Good: Nested member access
-struct Inner { int value; constexpr Inner(int v) : value(v) {} };
-struct Outer { Inner inner; constexpr Outer(int v) : inner(v) {} };
-constexpr Outer outer{42};
-static_assert(outer.inner.value == 42);
-
-// Good: Member array brace-init (now supported!)
-struct Triplet { int vals[3]; constexpr Triplet(int a, int b, int c) : vals{a, b, c} {} };
-constexpr Triplet t(10, 20, 30);
-static_assert(t.vals[1] == 20);
-
-// Good: Simple member array access
-struct Data { int arr[3]; constexpr Data() : arr{1, 2, 3} {} };
-constexpr Data data{};
-static_assert(data.arr[1] == 2);
-
-// Good: Basic pointer dereference (now supported!)
-constexpr int val = 42;
-constexpr const int* ptr = &val;
-static_assert(*ptr == 42);
-
-// Good: Arrow member access through constexpr pointer (now supported!)
-struct Vec2 { int x, y; constexpr Vec2(int a, int b) : x(a), y(b) {} };
-constexpr Vec2 v{3, 4};
-constexpr const Vec2* vp = &v;
-static_assert(vp->x == 3);
-
-// Good: Null pointer checks and pointer comparisons (now supported!)
-constexpr const int* nn_ptr = &val;
-static_assert(nn_ptr != nullptr);   // non-null check
-static_assert(!(nn_ptr == nullptr)); // same
-static_assert(!!nn_ptr);            // truthiness via double-negation
-constexpr bool isNull(const int* p) { return p == nullptr; }
-static_assert(!isNull(&val));       // false: &val is non-null
-```
-
-### ❌ Patterns to Avoid
-
-```cpp
-// Avoid assuming all constructor body logic is supported
-struct Point {
-    int x, y;
-    constexpr Point(int x_val, int y_val) {
-        x = x_val;
-        y = y_val;
-        // more complex constructor-body logic may still fail in constexpr evaluation
-    }
-};
-
-// Good: Dynamic allocation in constexpr (C++20) — all allocations must be freed
-constexpr int f() {
-    int* p = new int(42);
-    int v = *p;
-    delete p;
-    return v;
-}
-static_assert(f() == 42);  // ✅ Supported (all memory freed before return)
-
-// Bad: Leaking allocation in constexpr — will be rejected
-// constexpr int leak() {
-//     int* p = new int(42);
-//     return *p;  // ❌ forgot delete p — ill-formed per C++20
-// }
-
-// Pointer-to-member is now supported in constexpr for data members:
-// constexpr int S::* pm = &S::x;
-// static_assert(obj.*pm == 42);  // ✅
-// Note: pointer arithmetic (ptr + n, ptr - n, ptr[i]), address of array elements
-//       (&arr[0]), null pointer checks (ptr == nullptr), pointer equality (ptr1 == ptr2),
-//       and pointer truthiness (if (ptr), !ptr, ptr && x) are all now supported.
-
-// Still risky: richer captured-object aliasing/identity behavior in constexpr lambdas
-struct CaptureExample {
-    int x = 7;
-    constexpr int bump() { x += 1; return x; }
-    constexpr int value() {
-        auto by_ref = [this]() mutable { return this->bump(); };
-        auto by_copy = [*this]() mutable { return this->bump(); };
-        return by_ref() + by_copy();
-    }
-};
-
-// Note: local variable as array subscript in constexpr member functions NOW WORKS:
-// struct Data {
-//     int arr[3];
-//     constexpr int getSecond() const { int idx = 1; return arr[idx]; }  // ✅ Works
-// };
-```
-
-## Related Features
-
-- **Type traits**: Basic type trait intrinsics (`__is_pointer`, `__is_class`, etc.) are supported
-- **Template metaprogramming**: Template specialization and SFINAE work independently of constexpr evaluation
-- **Constant folding**: The compiler can optimize constant expressions even without full constexpr support
+---
 
 ## See Also
 
-- `src/ConstExprEvaluator.h` - Constexpr evaluation implementation
-- `docs/TEMPLATE_FEATURES_COMPLETE.md` - Complete template features status
-- `tests/test_constexpr_comprehensive.cpp` - Examples of working constexpr code
-- `tests/test_constexpr_structs.cpp` - Test cases showing limitations
-- `tests/test_constexpr_improved.cpp` - Test cases for improved features
-- `tests/test_constexpr_member_func.cpp` - Member function constexpr tests
-- `tests/test_constexpr_struct_runtime_assign_ret0.cpp` - Struct return from constexpr functions (incl. sub-word structs)
-- `tests/test_constexpr_const_char_ptr_ret0.cpp` - `const char*` / string-literal support in constexpr
-- `tests/test_constexpr_new_delete_ret0.cpp` - Constexpr `new`/`delete` (scalar, array, struct, loops)
-- `tests/test_constexpr_new_scalar_brace_narrowing_fail.cpp` - Scalar `new T{arg}` rejects narrowing in direct-list-init form
-- `tests/test_constexpr_new_scalar_paren_narrowing_ret0.cpp` - Scalar `new T(arg)` still uses normal paren-init conversions
-- `tests/test_constexpr_new_leak_fail.cpp` - Constexpr heap leak detection (expected failure)
-- `tests/test_constexpr_new_array_toolarge_fail.cpp` - Constexpr array size limit (expected failure)
-- `tests/test_constexpr_short_circuit_ret0.cpp` - Short-circuit `&&`/`||` in constexpr
-- `tests/test_constexpr_designated_init_member_ret42.cpp` - C++20 designated initializer support
-- `tests/test_constexpr_designated_init_mixed_fail.cpp` / `tests/test_constexpr_designated_init_order_fail.cpp` - C++20 designated initializer diagnostics
-- `tests/test_constexpr_bitwise_compound_assign_ret0.cpp` - Bitwise compound assignments in constexpr
-- `tests/test_constexpr_struct_ctor_in_body_ret0.cpp` - Struct constructor calls inside constexpr function bodies (return struct, local struct usage)
-- `tests/test_constexpr_reference_alias_ctor_body_ret0.cpp` - Constructor/local reference-alias mutation in constexpr (`int& r = x; r = v;`) for supported shapes
-- `tests/test_constexpr_local_member_assign_ret0.cpp` - Local struct member dot-assignment (`p.a = value`) in constexpr functions
-- `tests/test_constexpr_this_deref_ret0.cpp` - `*this` dereference in constexpr member function bodies (`dot(*this)`, `scale` chaining)
-- `tests/test_constexpr_multidim_array_ret0.cpp` - Multi-dimensional array init, reads, subscript assignment, brace-elision, and global nested-brace runtime materialization in constexpr
-- `tests/test_constexpr_inferred_multidim_array_ret0.cpp` - Unsized-first multidimensional array inference with nested-brace init in global/local constexpr contexts, including runtime materialization
-- `tests/test_constexpr_ternary_struct_ret0.cpp` - Ternary operator returning struct types in constexpr (global and function-returned)
-- `tests/test_constexpr_nested_member_ctor_local_ret0.cpp` - Nested member access on local constructor-initialized objects in constexpr functions
-- `tests/test_constexpr_sizeof_alignof_member_pointer_access_ret0.cpp` - `sizeof` / `alignof` on `obj.*pm` and `ptr->*pm` in constexpr
-- `tests/test_constexpr_empty_brace_nodefault_ctor_fail.cpp` - Empty-brace init rejected for non-aggregate types without default constructor (expected failure)
-- `tests/test_constexpr_local_nodefault_ctor_fail.cpp` - Uninitialized local constexpr object rejects missing default constructor on non-aggregate types (expected failure)
-- `tests/test_constexpr_new_nodefault_ctor_fail.cpp` - `new` on non-aggregate type without default constructor rejected (expected failure)
-- `tests/test_constexpr_new_with_default_ctor_ret0.cpp` - `new` with user-defined default constructor correctly invokes constructor
-- `tests/test_constexpr_global_paren_init_ret0.cpp` - Global struct paren-init `Type var(args)` (fixes Type::UserDefined and ExpressionNode wrapping)
-- `tests/test_constexpr_global_float_struct_ret0.cpp` - Global struct paren-init with float/double members (fixes IEEE-754 precision via constexpr-evaluator-first path)
+- `src/ConstExprEvaluator.h` / `src/ConstExprEvaluator_Core.cpp` / `src/ConstExprEvaluator_Members.cpp` — evaluator implementation
+- `tests/test_constexpr_comprehensive.cpp` — general working constexpr patterns
+- `tests/test_constexpr_structs.cpp` — struct construction and member access
+- `tests/test_constexpr_member_func.cpp` — member function constexpr tests
+- `tests/test_constexpr_struct_runtime_assign_ret0.cpp` — struct return from constexpr functions (incl. sub-word structs)
+- `tests/test_constexpr_const_char_ptr_ret0.cpp` — `const char*` / string-literal support
+- `tests/test_constexpr_new_delete_ret0.cpp` — constexpr `new`/`delete`
+- `tests/test_constexpr_new_scalar_brace_narrowing_fail.cpp` — scalar `new T{arg}` rejects narrowing
+- `tests/test_constexpr_new_scalar_paren_narrowing_ret0.cpp` — scalar `new T(arg)` uses normal conversions
+- `tests/test_constexpr_new_leak_fail.cpp` — constexpr heap leak detection (expected failure)
+- `tests/test_constexpr_new_default_init_scalar_fail.cpp` / `_array_fail.cpp` / `_aggregate_fail.cpp` — bare `new T` indeterminate-read rejection
+- `tests/test_constexpr_new_value_init_aggregate_ret0.cpp` — value-init zero-fills correctly
+- `tests/test_constexpr_short_circuit_ret0.cpp` — short-circuit `&&`/`||`
+- `tests/test_constexpr_designated_init_member_ret42.cpp` — C++20 designated initializer support
+- `tests/test_constexpr_designated_init_mixed_fail.cpp` / `_order_fail.cpp` — designated initializer diagnostics
+- `tests/test_constexpr_bitwise_compound_assign_ret0.cpp` — bitwise compound assignments
+- `tests/test_constexpr_struct_ctor_in_body_ret0.cpp` — struct constructor calls inside constexpr functions
+- `tests/test_constexpr_reference_alias_ctor_body_ret0.cpp` — reference-alias mutation in constexpr
+- `tests/test_constexpr_local_member_assign_ret0.cpp` — local struct member dot-assignment
+- `tests/test_constexpr_this_deref_ret0.cpp` — `*this` dereference in constexpr member functions
+- `tests/test_constexpr_multidim_array_ret0.cpp` — multi-dimensional array constexpr support
+- `tests/test_constexpr_ternary_struct_ret0.cpp` — ternary returning struct types
+- `tests/test_constexpr_nested_member_ctor_local_ret0.cpp` — nested member access on local constructor-initialized objects
+- `tests/test_constexpr_global_paren_init_ret0.cpp` — global struct paren-init
+- `tests/test_constexpr_global_float_struct_ret0.cpp` — global struct paren-init with float/double members
+- `tests/test_constexpr_void_lambda_ref_capture_ret0.cpp` — void constexpr lambdas with by-reference capture mutations
+- `tests/test_constexpr_local_callable_operator_ret0.cpp` — `operator()` on locally-declared struct variables

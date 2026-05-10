@@ -1535,9 +1535,10 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	}
 
 	std::string_view func_name = call_info->function_declaration->decl_node().identifier_token().value();
-	if (overloadableOperatorFromFunctionName(func_name) == OverloadableOperator::Call) {
-		return std::nullopt;
-	}
+	// operator() on a bound local struct object falls through to this function
+	// when try_evaluate_bound_member_operator_call could not resolve it via a
+	// stored lambda or callable_var_decl.  The caller returns early on the first
+	// success, so there is no double-evaluation risk.
 
 	const IdentifierNode* object_identifier = tryGetIdentifier(call_info->receiver);
 	const bool receiver_is_this = object_identifier && object_identifier->name() == "this";
