@@ -2764,14 +2764,8 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			if (!pack_param_info_.empty()) {
 				has_parameter_packs_ = true;
 			}
-			if (template_instantiation_mode_ == TemplateInstantiationMode::HardUseCandidateProbe) {
-				ScopedParserInstantiationContext body_instantiation_mode(*this, TemplateInstantiationMode::HardUse, StringHandle{});
-				reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
-											   preserve_ref_qualifier);
-			} else {
-				reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
-											   preserve_ref_qualifier);
-			}
+			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
+										   preserve_ref_qualifier);
 			if (!new_func_ref.is_materialized()) {
 				StringBuilder reason_builder;
 				StringHandle body_reparse_failure_reason = StringTable::getOrInternStringHandle(
