@@ -1374,6 +1374,12 @@ ParseResult Parser::parse_lambda_expression() {
 	// Non-mutable lambdas have a const operator() per C++20 [expr.prim.lambda.closure] p4
 	operator_call_func.set_is_const_member_function(!is_mutable);
 	operator_call_func.set_is_volatile_member_function(false);
+	// Per C++20 [expr.prim.lambda.closure] p4, operator() is implicitly constexpr
+	// if it satisfies the requirements for a constexpr function.  We mark it
+	// constexpr eagerly; the constexpr evaluator rejects ill-formed bodies at the
+	// point of use.  consteval lambdas use consteval instead.
+	operator_call_func.set_is_constexpr(!lambda_is_consteval);
+	operator_call_func.set_is_consteval(lambda_is_consteval);
 
 	// Add parameters from lambda to operator()
 	for (const auto& param : lambda.parameters()) {

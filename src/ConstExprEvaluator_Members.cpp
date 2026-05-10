@@ -5043,6 +5043,9 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_object_source(
 	}
 
 	std::optional<ASTNode> symbol_opt = lookup_identifier_symbol(object_identifier, object_name, *context.symbols);
+	if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+		symbol_opt = lookup_identifier_symbol(object_identifier, object_name, *context.global_symbols);
+	}
 	if (!symbol_opt.has_value()) {
 		return EvalResult::error("Undefined variable in " + std::string(usage_name) + ": " + std::string(object_name));
 	}

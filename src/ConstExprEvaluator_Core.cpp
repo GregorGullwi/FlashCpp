@@ -3172,6 +3172,10 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		}
 	} else {
 		symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.symbols);
+		// If not in local scope, also check global symbols for global constexpr variables
+		if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+			symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.global_symbols);
+		}
 	}
 
 	// If not found in symbol table, check for static members in the current struct
