@@ -113,13 +113,13 @@ block-scope using-declaration candidate set.
 
 Regression coverage:
 
-- `tests/std/test_std_bits_move_block_scope_using_swap.cpp`
+- `tests/std/test_libstdcxx_bits_move_block_scope_using_swap.cpp`
 
 Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
 
 | Header/Test | Status | Time | First-order stop / note |
 |-------------|--------|------|-------------------------|
-| `test_std_bits_move_block_scope_using_swap.cpp` | ✅ Compiled | 0.54s | New regression verifies `using std::swap; swap(int&, int&)` inside a class with a deleted member `swap` keeps the block-scope using-declaration result. |
+| `test_libstdcxx_bits_move_block_scope_using_swap.cpp` | ✅ Compiled | 0.54s | New regression verifies `using std::swap; swap(int&, int&)` inside a class with a deleted member `swap` keeps the block-scope using-declaration result. |
 | `<optional>` (`test_std_optional.cpp`) | ❌ Codegen Error | 1.46s | Progressed past `optional::swap`'s deleted `swap` call; current stop is unresolved semantic type category 25 plus missing `_Optional_payload<...>::_M_engaged` reconstruction during IR. |
 | `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | 2.45s | Progressed past the shared `swap` lookup path; current stop is `Failed to instantiate template function` in `bits/max_size_type.h:790` (`min()`). |
 | `<string>` (`test_std_string.cpp`) | ❌ Compile Error | 2.71s | Progressed past the earlier `basic_string::clear` lazy-body stop; current stop is the same `bits/max_size_type.h:790` `min()` instantiation path. |
