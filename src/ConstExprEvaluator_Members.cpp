@@ -244,7 +244,25 @@ std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult&
 	return std::nullopt;
 }
 
-EvalResult read_bound_identifier_value(const EvalResult& bound_value, std::string_view name) {
+bool isReferenceAliasBinding(const EvalResult& value);
+const EvalResult* resolveReadThroughReferenceAlias(
+	const EvalResult& bound_value,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context);
+
+EvalResult read_bound_identifier_value(
+	const EvalResult& bound_value,
+	std::string_view name,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	if (isReferenceAliasBinding(bound_value)) {
+		const EvalResult* referenced_value = resolveReadThroughReferenceAlias(bound_value, bindings, context);
+		if (!referenced_value) {
+			return EvalResult::error("Dangling reference binding in constant expression: " + std::string(name));
+		}
+		return validateConstexprRead(*referenced_value);
+	}
+
 	if (bound_value.is_array) {
 		if (!bound_value.array_origin_var.isValid()) {
 			EvalResult tagged = bound_value;
@@ -747,6 +765,10 @@ std::optional<ASTNode> Evaluator::lookup_function_symbol(
 }
 
 namespace {
+// Keep alias-chain traversal bounded so malformed/self-referential bindings do
+// not cause unbounded recursion/loops during constexpr evaluation.
+constexpr size_t kMaxReferenceAliasChainDepth = 8;
+
 const EvalResult* findLocalBinding(std::string_view name, EvaluationContext& context) {
 	if (!context.local_bindings) {
 		return nullptr;
@@ -775,6 +797,62 @@ const EvalResult* findBindingValue(
 
 	auto it = bindings.find(name);
 	return it == bindings.end() ? nullptr : &it->second;
+}
+
+bool isReferenceAliasBinding(const EvalResult& value) {
+	return value.pointer_to_var.isValid() &&
+		value.exact_type.has_value() &&
+		value.exact_type->reference_qualifier() != ReferenceQualifier::None;
+}
+
+const EvalResult* resolveReadThroughReferenceAlias(
+	const EvalResult& bound_value,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	const EvalResult* current = &bound_value;
+	for (size_t depth = 0; depth < kMaxReferenceAliasChainDepth; ++depth) {
+		if (!isReferenceAliasBinding(*current)) {
+			return current;
+		}
+		std::string_view pointed_name = StringTable::getStringView(current->pointer_to_var);
+		const EvalResult* pointed_value = findBindingValue(pointed_name, bindings, context);
+		if (!pointed_value) {
+			return nullptr;
+		}
+		current = pointed_value;
+	}
+	return nullptr;
+}
+
+EvalResult* findMutableBindingValue(
+	std::string_view name,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context);
+
+bool resolveMutableReferenceAliasTarget(
+	EvalResult*& target_binding,
+	std::string_view& target_name,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	std::string_view diagnostic_name,
+	std::optional<EvalResult>& resolve_error) {
+	for (size_t depth = 0; depth < kMaxReferenceAliasChainDepth; ++depth) {
+		if (!isReferenceAliasBinding(*target_binding)) {
+			return true;
+		}
+		std::string_view pointed_name = StringTable::getStringView(target_binding->pointer_to_var);
+		EvalResult* pointed_binding = findMutableBindingValue(pointed_name, bindings, context);
+		if (!pointed_binding) {
+			resolve_error = EvalResult::error(
+				"Dangling reference binding in constant expression: " + std::string(diagnostic_name));
+			return false;
+		}
+		target_binding = pointed_binding;
+		target_name = pointed_name;
+	}
+	resolve_error = EvalResult::error(
+		"Reference alias chain too deep in constant expression: " + std::string(diagnostic_name));
+	return false;
 }
 
 EvalResult* findMutableBindingValue(
@@ -880,7 +958,18 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 
 	if (const IdentifierNode* identifier = tryGetIdentifier(expr)) {
 		if (EvalResult* binding = findMutableBindingValue(identifier->name(), bindings, context)) {
-			return BoundWriteTarget{binding, identifier->name()};
+			EvalResult* target_binding = binding;
+			std::string_view target_name = identifier->name();
+			if (!resolveMutableReferenceAliasTarget(
+					target_binding,
+					target_name,
+					bindings,
+					context,
+					identifier->name(),
+					resolve_error)) {
+				return std::nullopt;
+			}
+			return BoundWriteTarget{target_binding, target_name};
 		}
 		return std::nullopt;
 	}
@@ -2115,7 +2204,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		// Fast path: pre-resolved Local bindings are always in the bindings map
 		if (id.binding() == IdentifierBinding::Local) {
 			if (const EvalResult* bound_value = findBindingValue(id.name(), bindings, context)) {
-				return read_bound_identifier_value(*bound_value, id.name());
+				return read_bound_identifier_value(*bound_value, id.name(), bindings, context);
 			}
 			// fall through to existing logic as safety net
 		}
@@ -2124,7 +2213,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 
 		// Check if it's a bound parameter
 		if (const EvalResult* bound_value = findBindingValue(name, bindings, context)) {
-			return read_bound_identifier_value(*bound_value, name);
+			return read_bound_identifier_value(*bound_value, name, bindings, context);
 		}
 
 		// Not a parameter, evaluate normally
@@ -2243,12 +2332,27 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					} else {
 						target_binding = findMutableBindingValue(var_name, bindings, context);
 					}
+					std::string_view target_binding_name = var_name;
+					if (target_binding && !assign_to_member_binding) {
+						std::optional<EvalResult> resolve_error;
+						if (!resolveMutableReferenceAliasTarget(
+								target_binding,
+								target_binding_name,
+								bindings,
+								context,
+								var_name,
+								resolve_error)) {
+							return resolve_error.has_value()
+								? *resolve_error
+								: EvalResult::error("Failed to resolve reference alias assignment target");
+						}
+					}
 
 					// Perform the assignment
 					if (op == "=") {
 						if (target_binding) {
 							*target_binding = rhs_result;
-							refreshPointerSnapshotsForBinding(var_name, *target_binding, bindings, context);
+							refreshPointerSnapshotsForBinding(target_binding_name, *target_binding, bindings, context);
 						} else {
 							bindings[var_name] = rhs_result;
 							refreshPointerSnapshotsForBinding(var_name, bindings[var_name], bindings, context);
@@ -2261,7 +2365,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						}
 						auto result = apply_op_to(*target_binding, rhs_result);
 						if (result.success()) {
-							refreshPointerSnapshotsForBinding(var_name, *target_binding, bindings, context);
+							refreshPointerSnapshotsForBinding(target_binding_name, *target_binding, bindings, context);
 						}
 						return result;
 					}
@@ -2812,7 +2916,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		// Fast path: pre-resolved Local bindings are always in the bindings map
 		if (id.binding() == IdentifierBinding::Local) {
 			if (const EvalResult* bound_value = findBindingValue(id.name(), bindings, context)) {
-				return read_bound_identifier_value(*bound_value, id.name());
+				return read_bound_identifier_value(*bound_value, id.name(), bindings, context);
 			}
 			// fall through to existing logic as safety net
 		}
@@ -2821,7 +2925,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 
 		// Check if it's a bound parameter
 		if (const EvalResult* bound_value = findBindingValue(name, bindings, context)) {
-			return read_bound_identifier_value(*bound_value, name);
+			return read_bound_identifier_value(*bound_value, name, bindings, context);
 		}
 
 		// Not a parameter, evaluate normally
