@@ -41,6 +41,10 @@ template<int I, class H>
 struct HeadBase<I, H, false> {
 };
 
+template<int I, class H>
+struct HeadBase<I, H, true> {
+};
+
 template<int I, class... Elements>
 struct TupleImpl;
 
@@ -52,7 +56,11 @@ struct NonEmpty {
 	int value;
 };
 
+struct Empty {
+};
+
 int main() {
-	TupleImpl<0, NonEmpty>* ptr = nullptr;
-	return ptr != nullptr;
+	constexpr unsigned long long non_empty_size = sizeof(TupleImpl<0, NonEmpty>);
+	constexpr unsigned long long empty_size = sizeof(TupleImpl<1, Empty>);
+	return (non_empty_size > 0 && empty_size > 0) ? 0 : 1;
 }
