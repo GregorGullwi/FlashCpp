@@ -101,11 +101,21 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
 			return generateStringLiteralIr(expr);
 		} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
-			if (context != ExpressionContext::LValueAddress &&
-				isSideEffectFreeConstexprCandidate(expr)) {
-				auto const_result = tryEvaluateAsConstExpr(expr);
-				if (const_result.effectiveIrType() != IrType::Void) {
-					return const_result;
+			if (context != ExpressionContext::LValueAddress) {
+				// Full check: every sub-node must be constexpr-eligible.
+				bool should_try_fold = isSideEffectFreeConstexprCandidate(expr);
+				// Short-circuit path for && and ||: if the LHS is side-effect free,
+				// the evaluator may resolve the result from the LHS alone, never
+				// inspecting the RHS (e.g. false && sideEffect() → 0).
+				if (!should_try_fold && (expr.op() == "&&" || expr.op() == "||") &&
+					isSideEffectFreeConstexprCandidateNode(expr.get_lhs())) {
+					should_try_fold = true;
+				}
+				if (should_try_fold) {
+					auto const_result = tryEvaluateAsConstExpr(expr);
+					if (const_result.effectiveIrType() != IrType::Void) {
+						return const_result;
+					}
 				}
 			}
 			ExprResult result = generateBinaryOperatorIr(expr);
@@ -116,11 +126,21 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 			return generateUnaryOperatorIr(expr, context);
 		} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
-			if (context != ExpressionContext::LValueAddress &&
-				isSideEffectFreeConstexprCandidate(expr)) {
-				auto const_result = tryEvaluateAsConstExpr(expr);
-				if (const_result.effectiveIrType() != IrType::Void) {
-					return const_result;
+			if (context != ExpressionContext::LValueAddress) {
+				// Full check: every sub-node must be constexpr-eligible.
+				bool should_try_fold = isSideEffectFreeConstexprCandidate(expr);
+				// Short-circuit path: if the condition is side-effect free, the
+				// evaluator will resolve which branch is taken and only evaluate
+				// that branch — the other branch may have side effects freely
+				// (e.g. true ? 42 : sideEffect() → 42).
+				if (!should_try_fold && isSideEffectFreeConstexprCandidateNode(expr.condition())) {
+					should_try_fold = true;
+				}
+				if (should_try_fold) {
+					auto const_result = tryEvaluateAsConstExpr(expr);
+					if (const_result.effectiveIrType() != IrType::Void) {
+						return const_result;
+					}
 				}
 			}
 			return generateTernaryOperatorIr(expr, context);
