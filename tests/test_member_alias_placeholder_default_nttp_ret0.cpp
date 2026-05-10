@@ -26,12 +26,12 @@ struct IsEmptyNonTuple : IsEmpty<T> {
 };
 
 template<class T>
-using EmptyNotFinal = typename Conditional<__is_final(T)>::template type<FalseType, IsEmptyNonTuple<T>>;
+using FinalityConditionalType = typename Conditional<__is_final(T)>::template type<FalseType, IsEmptyNonTuple<T>>;
 
 template<class T>
 struct ForceCandidate {
 	using type = IsEmptyNonTuple<T>;
-	static constexpr bool value = EmptyNotFinal<T>::value;
+	static constexpr bool value = FinalityConditionalType<T>::value;
 };
 
 template<int I, class H, bool = ForceCandidate<H>::value>
