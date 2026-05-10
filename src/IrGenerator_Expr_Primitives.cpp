@@ -50,12 +50,18 @@ bool isSideEffectFreeConstexprCandidateNode(const ASTNode& node) {
 		}
 		if (current.is<CallExprNode>())
 			return !isConstexprFoldableCall(current.as<CallExprNode>());
+		if (current.is<NewExpressionNode>() ||
+			current.is<DeleteExpressionNode>() ||
+			current.is<ThrowExpressionNode>() ||
+			current.is<PseudoDestructorCallNode>()) {
+			return true;
+		}
 		return false;
 	});
 }
 
 bool isSideEffectFreeConstexprCandidate(const ExpressionNode& expr) {
-	return isSideEffectFreeConstexprCandidateNode(ASTNode::emplace_node<ExpressionNode>(expr));
+	return isSideEffectFreeConstexprCandidateNode(ASTNode(&expr));
 }
 }
 
@@ -181,7 +187,7 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
 			// Attempt constexpr folding when the callee is a constexpr/consteval function or
 			// an indirect call through a constexpr variable (e.g. a global constexpr lambda).
-			if (context != ExpressionContext::LValueAddress && isConstexprFoldableCall(expr)) {
+			if (context != ExpressionContext::LValueAddress && isSideEffectFreeConstexprCandidate(expr)) {
 				auto const_result = tryEvaluateAsConstExpr(expr);
 				if (const_result.effectiveIrType() != IrType::Void) {
 					return const_result;
