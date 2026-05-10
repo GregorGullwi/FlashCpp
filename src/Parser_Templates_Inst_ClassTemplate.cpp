@@ -4952,13 +4952,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// that no handler could evaluate, and any other unhandled parameter kind.
 		if (filled_template_args.size() == size_before) {
 			if (param->kind() == TemplateParameterKind::Type) {
-				throw CompileError(std::string(StringBuilder()
-					.append("Could not resolve type template default for parameter ")
-					.append(std::to_string(i))
-					.append(" of '")
-					.append(template_name)
-					.append("'")
-					.commit()));
+				throw CompileError(
+					"Could not resolve type template default for parameter " +
+					std::to_string(i) +
+					" of '" +
+					std::string(template_name) +
+					"'");
 			} else if (param->kind() == TemplateParameterKind::Template) {
 				throw InternalError(
 					std::string("Could not resolve template-template default for param ") +
