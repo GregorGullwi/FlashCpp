@@ -22,17 +22,17 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | 💥 Crash | ~2380ms (retested 2026-05-07, Linux/libstdc++-14). Progresses well past prior unresolved-`auto` stops, then aborts in codegen with `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
-| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~2930ms (retested 2026-05-09, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop is fixed; current first hard error is `Max template instantiation depth (24) exceeded for 'basic_string'`. |
+| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~5150ms (retested 2026-05-10, Linux/libstdc++-14). The deleted dependent `std::pair::swap` stop is fixed; current first hard error is `failed to reparse lazy member body for basic_string<...>::clear`. |
 | `<array>` | `test_std_array.cpp` | ❌ Codegen Error | Focused retest 2026-05-04 after injected-class-name fix. The `Cannot use copy initialization with explicit constructor` diagnostic for `std::reverse_iterator` is fixed; the header now progresses into existing IR/codegen gaps around unresolved `std::reverse_iterator` constructor/placeholder lowering. |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~2320ms (retested 2026-05-07, Linux/libstdc++-14). Unresolved-`auto` mangling stop is gone; current crash is late codegen `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~1260ms (retested 2026-05-09, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop is fixed; the targeted header now reaches post-parse semantic boundary checking and stops on uneliminated `PackExpansionExprNode` in `_Tuple_impl` constructors. |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~3200ms (retested 2026-05-10, Linux/libstdc++-14). The deleted dependent `std::pair::swap` stop is fixed; current first hard error is again `_Head_base` default-NTTP evaluation through the libstdc++ tuple path. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2062ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Itanium name mangling: unknown type — cannot generate valid symbol` after several deferred/incomplete `reverse_iterator` instantiations. |
 | `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
 | `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~3780ms (retested 2026-05-09, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop is fixed; current first hard error is `Max template instantiation depth (24) exceeded for 'basic_string'`. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~2370ms (retested 2026-05-09, Linux/libstdc++-14). No longer stops in tuple `_Head_base` default NTTP evaluation; current first hard error is `Max template instantiation depth (24) exceeded for 'list'`. |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~4110ms (retested 2026-05-10, Linux/libstdc++-14). The deleted dependent `std::pair::swap` stop is fixed; current first hard error is `_Head_base` default-NTTP evaluation through the shared tuple path. |
 | `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~3763ms (retested 2026-04-24, Linux/libstdc++). `_M_tail` blocker resolved by the member-function overload fix; now first-order error is non-dependent name `__node_gen` C++20 [temp.res]/9 violation (false positive triggered by template reparse depth-guard firing during deep instantiation). |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -100,6 +100,32 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-10 Linux/libstdc++ deleted dependent-call follow-up
+
+This pass fixed a high-layer template semantic issue where an unqualified call
+with dependent arguments could eagerly instantiate and diagnose a deleted
+function-template overload.  In libstdc++ this showed up in `std::pair::swap`:
+`using std::swap; swap(first, __p.first);` could select a deleted `std::swap`
+template while `first` was still dependent, stopping `<tuple>` before later
+tuple semantics were reached.
+
+Regression coverage:
+
+- `tests/test_dependent_deleted_overload_defers_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_dependent_deleted_overload_defers_ret0.cpp` | ✅ Pass | n/a | Distilled deleted-overload template-body case compiles, links, and returns 0. |
+| `test_std_type_traits_is_integral_any_of_fail.cpp` | ✅ Compiled | 0.04s | Previously documented variable-template base NTTP repro now compiles. |
+| `test_ucrt_vfwprintf_const_pointer_alias_arg_ret0.cpp` | ✅ Compiled | 0.04s | Top-level const pointer-alias repro remains fixed. |
+| `test_parenthesized_func_template_decl_ret0.cpp` | ✅ Pass | n/a | Parenthesized function-template declaration repro remains fixed. |
+| `<tuple>` (`test_std_tuple.cpp`) | ❌ Compile Error | 3.20s | Progressed past the deleted `std::pair::swap` stop; current first hard error is `Could not evaluate non-type template default for parameter 2 of '_Head_base'`. |
+| `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | 4.11s | Progressed past the deleted `std::pair::swap` stop; current first hard error is the shared `_Head_base` default-NTTP path. |
+| `<string>` (`test_std_string.cpp`) | ❌ Compile Error | 5.15s | Progressed into lazy member replay; current first hard error is `failed to reparse lazy member body for basic_string<...>::clear`. |
+| Full regression suite after edits | ✅ Pass | n/a | `bash tests/run_all_tests.sh`: 2263 pass / 0 fail, 170 `_fail` correct. |
 
 ### 2026-05-09 Linux/libstdc++ partial-specialization default-NTTP follow-up
 
@@ -2090,20 +2116,11 @@ The overall header counts above still reflect the older full sweep and need a fu
 
 ### Recommended Next Work
 
-1. **Fix parenthesized function-template declarations.** This is the best next std-header include blocker because it is now the first hard error for `<array>`, `<optional>`, `<variant>`, `<functional>`, `<map>`, and `<algorithm>` on the current MSVC 14.44 headers. The isolated expected-failure test is `tests/test_std_utility_parenthesized_func_template_decl_fail.cpp`; it reproduces the MSVC `<utility>:82` shape without including `<utility>`.
+1. **Fix the remaining `_Head_base` dependent default-NTTP path.** This is the current first hard Linux/libstdc++ blocker for `<tuple>` and `<memory>` after the deleted dependent-call fix. The failing expression still flows through `_Head_base<_Idx, _Head, bool = __empty_not_final<_Head>::value>`, so focus on preserving/rebinding the dependent alias-chain payload until the default argument is evaluated with the deduced `_Head`.
 
-   Target pattern:
+2. **Fix lazy `basic_string` member-body replay for `clear`.** `<string>` now gets past the deleted dependent `std::pair::swap` path and stops when replaying `basic_string<...>::clear`; this is likely shared with later string/list follow-ons.
 
-   ```cpp
-   template <class Ty, class Predicate>
-   constexpr Ty(max)(initializer_list<Ty>, Predicate);
-   ```
-
-   When this is fixed, rename the repro from `_fail.cpp` to a `_ret0.cpp` test and re-run the affected headers above.
-
-2. **Then fix variable-template values used as base-class non-type arguments.** This is the next semantic blocker for `<type_traits>` and a source of recoverable warnings in `<concepts>`. The distilled expected-failure test is `tests/test_std_type_traits_is_integral_any_of_fail.cpp`; it reduces the MSVC `is_integral` failure to `is_same_v<T, T>` feeding `is_integral_v<T>`, which then feeds `bool_constant<is_integral_v<T>>`.
-
-3. **Fix top-level const on pointer aliases during overload resolution.** This is the isolated UCRT blocker behind `<vector>`'s `__stdio_common_vfwprintf` failure. The distilled expected-failure test is `tests/test_ucrt_vfwprintf_const_pointer_alias_arg_fail.cpp`; it reduces the real `_locale_t const _Locale` wrapper argument to a call that expects `_locale_t`, where `_locale_t` aliases `void*`.
+3. **Retest the next std-header group after `_Head_base` moves again.** Parenthesized function-template declarations, the variable-template base NTTP repro, and the UCRT pointer-alias const repro are now covered by passing tests (`test_parenthesized_func_template_decl_ret0.cpp`, `test_std_type_traits_is_integral_any_of_fail.cpp`, and `test_ucrt_vfwprintf_const_pointer_alias_arg_ret0.cpp`), so the next broad sweep should prioritize `<tuple>`, `<memory>`, `<string>`, `<list>`, and then iterator/ranges headers.
 
 ### Known Blockers
 
@@ -2111,11 +2128,11 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 
 As of the 2026-04-20 targeted retest, the global namespace prefix blocker and the `<concepts>` requires-expression pack expansion blocker are fixed. The earlier `Template<...>::template Member<...>` base lookup gap and the bare non-member calling-convention function-type partial-specialization gap are also fixed.
 
-1. **Parenthesized function-template declarations**: MSVC `<utility>` declares overloads such as `constexpr Ty(max)(initializer_list<Ty>, Predicate);`. FlashCpp currently rejects this with "Expected '(' for parameter list". This is the highest-impact include blocker because it is the first hard error for `<array>`, `<optional>`, `<variant>`, `<functional>`, `<map>`, and `<algorithm>`. Isolated repro: `tests/test_std_utility_parenthesized_func_template_decl_fail.cpp`.
+1. **Dependent `_Head_base` default-NTTP re-evaluation**: `<tuple>` and `<memory>` currently stop on `Could not evaluate non-type template default for parameter 2 of '_Head_base'` after deleted dependent `std::pair::swap` calls are deferred correctly.
 
-2. **Variable-template values used as base-class non-type arguments**: `<type_traits>` parses, but `std::is_integral<int>::value` evaluates false in the targeted test. The distilled pattern is `is_same_v<T, T>` feeding `is_integral_v<T>`, then `bool_constant<is_integral_v<T>>` inheritance. Isolated repro: `tests/test_std_type_traits_is_integral_any_of_fail.cpp`.
+2. **Lazy `basic_string` member-body replay**: `<string>` now stops on `failed to reparse lazy member body for basic_string<...>::clear`.
 
-3. **Top-level const on pointer aliases during overload resolution**: UCRT inline wrappers pass `_locale_t const` to declarations expecting `_locale_t`, where `_locale_t` is a pointer alias. FlashCpp currently treats that top-level const as call-incompatible and rejects `__stdio_common_vfwprintf`. Isolated repro: `tests/test_ucrt_vfwprintf_const_pointer_alias_arg_fail.cpp`.
+3. **Parenthesized function-template declarations / variable-template base NTTP / UCRT pointer-alias const**: these previously documented repros now pass in the current Linux run; keep the passing tests as regression coverage and re-check affected MSVC headers separately.
 
 4. **Deferred template-base placeholder materialization / inherited-member follow-ons**: Some dependent base arguments now materialize correctly, and chained member access no longer immediately erases concrete payload types back to `type_index=0`, but later CRTP/deferred-body codegen still has remaining gaps where instantiated payload structs are not always recovered as full structs and inherited members are not fully reconstructed. `<optional>` now reaches the later `_Optional_payload<...>` / `_M_engaged` failures with concrete type index `2758`, but those deferred paths still lose struct info or inherited `_M_engaged` lookup during codegen.
 
