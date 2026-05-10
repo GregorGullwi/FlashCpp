@@ -4827,6 +4827,20 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 			(*mutable_outer_bindings)[target_name] = local_it->second;
 		}
 	}
+	// Apply the function's declared return type as exact_type.
+	// The body may internally produce a different type (e.g., sizeof(T) returns
+	// unsigned long long while the function declares int), but callers observe the
+	// declared return type. Without this, tryEvaluateAsConstExpr mis-tags the
+	// result, causing a type-mismatch against the caller's return type.
+	if (result.success() && !result.is_array && !result.object_type_index.is_valid() &&
+		!result.pointer_to_var.isValid()) {
+		const TypeSpecifierNode& ret_spec = func_decl.decl_node().type_specifier_node();
+		if (should_preserve_exact_type(ret_spec) &&
+			ret_spec.category() != TypeCategory::Void &&
+			!is_struct_type(ret_spec.category())) {
+			result.set_exact_type(ret_spec);
+		}
+	}
 	// Per C++20 [expr.const]/p5, any allocation made with `new` during a
 	// constant expression must be freed before the constant expression ends.
 	// Check this at the outermost function call (depth returning to 0).
