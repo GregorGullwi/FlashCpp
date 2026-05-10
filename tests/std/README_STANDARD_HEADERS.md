@@ -16,13 +16,13 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~639ms. The header still compiles, but `std::ratio_less` remains blocked because non-type default template arguments that depend on qualified constexpr members (for example `__ratio_less_impl`'s bool defaults) are still not fully instantiated/evaluated. |
-| `<optional>` | `test_std_optional.cpp` | ❌ Compile Error | ~1070ms (retested 2026-05-07, Linux/libstdc++-14). The unresolved-`auto` mangling stop is gone; current blockers are later IR failures around unresolved semantic type category 25 and missing `_Optional_payload<...>::_M_engaged` reconstruction. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1460ms (retested 2026-05-10, Linux/libstdc++-14). The deleted `swap` stop in `optional::swap` is fixed; current blockers are later IR failures around unresolved semantic type category 25 and missing `_Optional_payload<...>::_M_engaged` reconstruction. |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~587ms (retested 2026-04-28, Linux/libstdc++-14). The dependent `decltype` alias target in `__do_common_type_impl::__cond_t` is no longer collapsed to concrete `auto`, so the full targeted header compiles. Regression: `tests/test_dependent_decltype_alias_template_ret0.cpp`. |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | 💥 Crash | ~2380ms (retested 2026-05-07, Linux/libstdc++-14). Progresses well past prior unresolved-`auto` stops, then aborts in codegen with `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
-| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~5150ms (retested 2026-05-10, Linux/libstdc++-14). The deleted dependent `std::pair::swap` stop is fixed; current first hard error is `failed to reparse lazy member body for basic_string<...>::clear`. |
+| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~2710ms (retested 2026-05-10, Linux/libstdc++-14). The deleted dependent `std::pair::swap` and current-class override of block-scope `using std::swap` stops are fixed; current first hard error is `Failed to instantiate template function` in `bits/max_size_type.h:790` (`min()`). |
 | `<array>` | `test_std_array.cpp` | ❌ Codegen Error | Focused retest 2026-05-04 after injected-class-name fix. The `Cannot use copy initialization with explicit constructor` diagnostic for `std::reverse_iterator` is fixed; the header now progresses into existing IR/codegen gaps around unresolved `std::reverse_iterator` constructor/placeholder lowering. |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~2320ms (retested 2026-05-07, Linux/libstdc++-14). Unresolved-`auto` mangling stop is gone; current crash is late codegen `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
@@ -32,7 +32,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~3780ms (retested 2026-05-09, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop is fixed; current first hard error is `Max template instantiation depth (24) exceeded for 'basic_string'`. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~4110ms (retested 2026-05-10, Linux/libstdc++-14). The deleted dependent `std::pair::swap` stop is fixed; current first hard error is `_Head_base` default-NTTP evaluation through the shared tuple path. |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~2450ms (retested 2026-05-10, Linux/libstdc++-14). The deleted dependent `std::pair::swap` and block-scope `using std::swap` lookup stops are fixed; current first hard error is `Failed to instantiate template function` in `bits/max_size_type.h:790` (`min()`). |
 | `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~3763ms (retested 2026-04-24, Linux/libstdc++). `_M_tail` blocker resolved by the member-function overload fix; now first-order error is non-dependent name `__node_gen` C++20 [temp.res]/9 violation (false positive triggered by template reparse depth-guard firing during deep instantiation). |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -100,6 +100,30 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-10 Linux/libstdc++ block-scope using-declaration swap follow-up
+
+This pass fixed a high-layer unqualified lookup issue where a current-class
+member function could replace the declaration found by ordinary lookup when the
+found declaration was a function template.  In libstdc++ this broke the standard
+`using std::swap; swap(a, b);` idiom inside member functions such as
+`std::optional<T>::swap`, because the later template-instantiation fallback
+could select an unrelated deleted `swap` template instead of preserving the
+block-scope using-declaration candidate set.
+
+Regression coverage:
+
+- `tests/std/test_std_bits_move_block_scope_using_swap.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_std_bits_move_block_scope_using_swap.cpp` | ✅ Compiled | 0.54s | New regression verifies `using std::swap; swap(int&, int&)` inside a class with a deleted member `swap` keeps the block-scope using-declaration result. |
+| `<optional>` (`test_std_optional.cpp`) | ❌ Codegen Error | 1.46s | Progressed past `optional::swap`'s deleted `swap` call; current stop is unresolved semantic type category 25 plus missing `_Optional_payload<...>::_M_engaged` reconstruction during IR. |
+| `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | 2.45s | Progressed past the shared `swap` lookup path; current stop is `Failed to instantiate template function` in `bits/max_size_type.h:790` (`min()`). |
+| `<string>` (`test_std_string.cpp`) | ❌ Compile Error | 2.71s | Progressed past the earlier `basic_string::clear` lazy-body stop; current stop is the same `bits/max_size_type.h:790` `min()` instantiation path. |
+| `<tuple>` (`test_std_tuple.cpp`) | ❌ Compile Error | 1.91s | Still stops at `_Head_base` default-NTTP evaluation. |
 
 ### 2026-05-10 Linux/libstdc++ deleted dependent-call follow-up
 
