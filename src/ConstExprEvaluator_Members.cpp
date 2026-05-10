@@ -6005,6 +6005,15 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 
 	// Check if this is a lambda call (operator() on a lambda object)
 	if (is_operator_call && !has_complex_object_result) {
+		if (initializer && initializer->has_value()) {
+			if (auto callable_from_initializer = try_evaluate_callable_initializer_for_call(
+					initializer->value(),
+					call_expr.arguments(),
+					context,
+					call_expr.callee().function_declaration_or_null())) {
+				return *callable_from_initializer;
+			}
+		}
 		const LambdaExpressionNode* lambda = extract_lambda_from_initializer(*initializer);
 		if (lambda) {
 			return evaluate_lambda_call(*lambda, call_expr.arguments(), context);

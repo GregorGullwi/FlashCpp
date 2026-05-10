@@ -3724,6 +3724,38 @@ EvalResult Evaluator::evaluate_callable_object(
 	return EvalResult::error("Object is not callable in constant expression");
 }
 
+std::optional<EvalResult> Evaluator::try_evaluate_callable_initializer_for_call(
+	const ASTNode& initializer_expr,
+	const ChunkedVector<ASTNode>& arguments,
+	EvaluationContext& context,
+	const FunctionDeclarationNode* resolved_call_operator) {
+	EvalResult callable_value = evaluate(initializer_expr, context);
+	if (!callable_value.success() ||
+		(callable_value.callable_var_decl == nullptr && callable_value.callable_lambda == nullptr)) {
+		return std::nullopt;
+	}
+
+	if (callable_value.callable_var_decl) {
+		return evaluate_callable_object(
+			*callable_value.callable_var_decl,
+			arguments,
+			context,
+			nullptr,
+			nullptr,
+			&callable_value,
+			resolved_call_operator);
+	}
+
+	return evaluate_lambda_call(
+		*callable_value.callable_lambda,
+		arguments,
+		context,
+		nullptr,
+		nullptr,
+		&callable_value.callable_bindings,
+		nullptr);
+}
+
 // Evaluate a lambda call
 EvalResult Evaluator::evaluate_lambda_call(
 	const LambdaExpressionNode& lambda,
@@ -4528,26 +4560,12 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	if (symbol_node.is<VariableDeclarationNode>()) {
 		const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
 		if (var_decl.initializer().has_value()) {
-			EvalResult callable_value = evaluate(var_decl.initializer().value(), context);
-			if (callable_value.success() && (callable_value.callable_var_decl || callable_value.callable_lambda)) {
-				if (callable_value.callable_var_decl) {
-					return evaluate_callable_object(
-						*callable_value.callable_var_decl,
-						call_expr.arguments(),
-						context,
-						nullptr,
-						nullptr,
-						&callable_value,
-						call_expr.callee().function_declaration_or_null());
-				}
-				return evaluate_lambda_call(
-					*callable_value.callable_lambda,
+			if (auto callable_from_initializer = try_evaluate_callable_initializer_for_call(
+					var_decl.initializer().value(),
 					call_expr.arguments(),
 					context,
-					nullptr,
-					nullptr,
-					&callable_value.callable_bindings,
-					nullptr);
+					call_expr.callee().function_declaration_or_null())) {
+				return *callable_from_initializer;
 			}
 		}
 		return evaluate_callable_object(
