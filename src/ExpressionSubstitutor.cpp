@@ -596,7 +596,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 			}
 		}
 
-		if (!substituted && !arg.is_value) {
+		if (!substituted && !arg.is_value && arg.type_index.is_valid()) {
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
 				if (const TypeInfo* recursively_resolved_type = resolveDependentMemberType(
 						*arg_type_info,
