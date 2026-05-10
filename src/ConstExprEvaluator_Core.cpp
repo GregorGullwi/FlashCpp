@@ -3172,6 +3172,10 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		}
 	} else {
 		symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.symbols);
+		// If not in local scope, also check global symbols for global constexpr variables
+		if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+			symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.global_symbols);
+		}
 	}
 
 	// If not found in symbol table, check for static members in the current struct
@@ -4821,6 +4825,33 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 				continue;
 			}
 			(*mutable_outer_bindings)[target_name] = local_it->second;
+		}
+	}
+	// Apply the function's declared return type to the result.
+	// The body may internally produce a different type (e.g., sizeof(T) returns
+	// unsigned long long while the function declares int), but callers observe the
+	// declared return type. Without this, tryEvaluateAsConstExpr mis-tags the
+	// result, causing a type-mismatch against the caller's return type.
+	// For scalar primitive/enum types, also convert the stored payload so the
+	// integer width, signedness and floating-point representation match the
+	// declared type (C++20 value-truncation semantics).
+	if (result.success() && !result.is_array && !result.object_type_index.is_valid() &&
+		!result.pointer_to_var.isValid()) {
+		const TypeSpecifierNode& ret_spec = func_decl.decl_node().type_specifier_node();
+		const TypeCategory ret_cat = ret_spec.category();
+		if (should_preserve_exact_type(ret_spec) &&
+			ret_cat != TypeCategory::Void &&
+			!is_struct_type(ret_cat)) {
+			if (isIntegralType(ret_cat) || isFloatingPointType(ret_cat) || ret_cat == TypeCategory::Enum) {
+				EvalResult converted = convertEvalResultToTargetType(
+					ret_spec, result,
+					"Unsupported return type conversion in constexpr function");
+				if (converted.success()) {
+					result = std::move(converted);
+				}
+			} else {
+				result.set_exact_type(ret_spec);
+			}
 		}
 	}
 	// Per C++20 [expr.const]/p5, any allocation made with `new` during a

@@ -137,7 +137,9 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
+		EvalResult result{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
+		result.set_exact_type(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None));
+		return result;
 	}
 
 	static EvalResult from_int(long long val) {

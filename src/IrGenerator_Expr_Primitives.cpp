@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
+#include "AstTraversal.h"
 
 namespace {
 bool isAssignmentLikeOperator(std::string_view op) {
@@ -17,46 +18,50 @@ bool isAssignmentLikeOperator(std::string_view op) {
 		   op == ">>=";
 }
 
-bool isSideEffectFreeConstexprCandidate(const ExpressionNode& expr);
+// Returns true when `call` is eligible for a constexpr folding attempt:
+//   - the callee is a resolved constexpr or consteval function, OR
+//   - the call is indirect (through a function pointer / constexpr lambda variable).
+// This mirrors the predicate used by isSideEffectFreeConstexprCandidateNode below.
+bool isConstexprFoldableCall(const CallExprNode& call) {
+	const FunctionDeclarationNode* func_decl = call.callee().function_declaration_or_null();
+	if (func_decl && (func_decl->is_constexpr() || func_decl->is_consteval()))
+		return true;
+	return call.call_kind() == CalleeKind::IndirectCall;
+}
 
+// Returns true if the expression tree rooted at `node` contains no side-effecting
+// constructs that would prevent constant folding.  Uses AstTraversal::visitASTUntil
+// to walk every sub-node; the predicate fires (returns true) when a disqualifying
+// node is found, so the overall result is inverted.
+//
+// Disqualifying patterns:
+//   - BinaryOperatorNode with comma or any assignment-like operator
+//   - UnaryOperatorNode with ++ or --
+//   - CallExprNode whose callee is neither constexpr/consteval nor an indirect call
 bool isSideEffectFreeConstexprCandidateNode(const ASTNode& node) {
-	if (!node.is<ExpressionNode>()) {
+	return !AstTraversal::visitASTUntil(node, [](const ASTNode& current) -> bool {
+		if (current.is<BinaryOperatorNode>()) {
+			const std::string_view op = current.as<BinaryOperatorNode>().op();
+			return op == "," || isAssignmentLikeOperator(op);
+		}
+		if (current.is<UnaryOperatorNode>()) {
+			const std::string_view op = current.as<UnaryOperatorNode>().op();
+			return op == "++" || op == "--";
+		}
+		if (current.is<CallExprNode>())
+			return !isConstexprFoldableCall(current.as<CallExprNode>());
+		if (current.is<NewExpressionNode>() ||
+			current.is<DeleteExpressionNode>() ||
+			current.is<ThrowExpressionNode>() ||
+			current.is<PseudoDestructorCallNode>()) {
+			return true;
+		}
 		return false;
-	}
-	return isSideEffectFreeConstexprCandidate(node.as<ExpressionNode>());
+	});
 }
 
 bool isSideEffectFreeConstexprCandidate(const ExpressionNode& expr) {
-	return std::visit([](const auto& node) -> bool {
-		using T = std::decay_t<decltype(node)>;
-		if constexpr (std::is_same_v<T, IdentifierNode> ||
-					  std::is_same_v<T, QualifiedIdentifierNode> ||
-					  std::is_same_v<T, BoolLiteralNode> ||
-					  std::is_same_v<T, NumericLiteralNode> ||
-					  std::is_same_v<T, StringLiteralNode> ||
-					  std::is_same_v<T, SizeofExprNode> ||
-					  std::is_same_v<T, AlignofExprNode> ||
-					  std::is_same_v<T, TypeTraitExprNode>) {
-			return true;
-		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-			return isSideEffectFreeConstexprCandidateNode(node.object());
-		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-			const std::string_view op = node.op();
-			if (op != "+" && op != "-" && op != "!" && op != "~") {
-				return false;
-			}
-			return isSideEffectFreeConstexprCandidateNode(node.get_operand());
-		} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
-			const std::string_view op = node.op();
-			if (op == "," || isAssignmentLikeOperator(op)) {
-				return false;
-			}
-			return isSideEffectFreeConstexprCandidateNode(node.get_lhs()) &&
-				   isSideEffectFreeConstexprCandidateNode(node.get_rhs());
-		}
-		return false;
-	},
-					  expr);
+	return isSideEffectFreeConstexprCandidateNode(ASTNode(&expr));
 }
 }
 
@@ -96,11 +101,21 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
 			return generateStringLiteralIr(expr);
 		} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
-			if (context != ExpressionContext::LValueAddress &&
-				isSideEffectFreeConstexprCandidate(expr)) {
-				auto const_result = tryEvaluateAsConstExpr(expr);
-				if (const_result.effectiveIrType() != IrType::Void) {
-					return const_result;
+			if (context != ExpressionContext::LValueAddress) {
+				// Full check: every sub-node must be constexpr-eligible.
+				bool should_try_fold = isSideEffectFreeConstexprCandidate(expr);
+				// Short-circuit path for && and ||: if the LHS is side-effect free,
+				// the evaluator may resolve the result from the LHS alone, never
+				// inspecting the RHS (e.g. false && sideEffect() → 0).
+				if (!should_try_fold && (expr.op() == "&&" || expr.op() == "||") &&
+					isSideEffectFreeConstexprCandidateNode(expr.get_lhs())) {
+					should_try_fold = true;
+				}
+				if (should_try_fold) {
+					auto const_result = tryEvaluateAsConstExpr(expr);
+					if (const_result.effectiveIrType() != IrType::Void) {
+						return const_result;
+					}
 				}
 			}
 			ExprResult result = generateBinaryOperatorIr(expr);
@@ -111,6 +126,23 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 			return generateUnaryOperatorIr(expr, context);
 		} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+			if (context != ExpressionContext::LValueAddress) {
+				// Full check: every sub-node must be constexpr-eligible.
+				bool should_try_fold = isSideEffectFreeConstexprCandidate(expr);
+				// Short-circuit path: if the condition is side-effect free, the
+				// evaluator will resolve which branch is taken and only evaluate
+				// that branch — the other branch may have side effects freely
+				// (e.g. true ? 42 : sideEffect() → 42).
+				if (!should_try_fold && isSideEffectFreeConstexprCandidateNode(expr.condition())) {
+					should_try_fold = true;
+				}
+				if (should_try_fold) {
+					auto const_result = tryEvaluateAsConstExpr(expr);
+					if (const_result.effectiveIrType() != IrType::Void) {
+						return const_result;
+					}
+				}
+			}
 			return generateTernaryOperatorIr(expr, context);
 		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 			return generateArraySubscriptIr(expr, context);
@@ -173,6 +205,14 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 			FLASH_LOG(Codegen, Debug, "ThrowExpressionNode encountered in expression context - skipping codegen");
 			return ExprResult{};
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
+			// Attempt constexpr folding when the callee is a constexpr/consteval function or
+			// an indirect call through a constexpr variable (e.g. a global constexpr lambda).
+			if (context != ExpressionContext::LValueAddress && isSideEffectFreeConstexprCandidate(expr)) {
+				auto const_result = tryEvaluateAsConstExpr(expr);
+				if (const_result.effectiveIrType() != IrType::Void) {
+					return const_result;
+				}
+			}
 			return generateCallExprIr(expr, context);
 		} else {
 			static_assert(!std::is_same_v<T, T>, "Unhandled ExpressionNode variant");
