@@ -4355,9 +4355,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			} else if constexpr (std::is_same_v<T, SizeofExprNode> ||
 								 std::is_same_v<T, SizeofPackNode> ||
 								 std::is_same_v<T, AlignofExprNode>) {
-				// sizeof, sizeof... and alignof always return size_t (UnsignedLongLong on 64-bit).
+				// sizeof, sizeof... and alignof always return size_t.
 				CanonicalTypeDesc desc;
-				desc.type_index = nativeTypeIndex(TypeCategory::UnsignedLongLong);
+				const TypeCategory size_t_base = (g_target_data_model == TargetDataModel::LLP64)
+					? TypeCategory::UnsignedLongLong
+					: TypeCategory::UnsignedLong;
+				desc.type_index = nativeTypeIndex(size_t_base);
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, TypeidNode>) {
 				// The current backend models typeid as producing a const void* handle.
@@ -4429,9 +4432,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			} else if constexpr (std::is_same_v<T, DynamicCastNode>) {
 				return canonicalizeType(e.target_type());
 			} else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
-				// offsetof returns size_t (UnsignedLongLong on 64-bit).
+				// offsetof returns size_t; on LP64 that is unsigned long, on LLP64 unsigned long long.
 				CanonicalTypeDesc desc;
-				desc.type_index = nativeTypeIndex(TypeCategory::UnsignedLongLong);
+				const TypeCategory size_t_base = (g_target_data_model == TargetDataModel::LLP64)
+					? TypeCategory::UnsignedLongLong
+					: TypeCategory::UnsignedLong;
+				desc.type_index = nativeTypeIndex(size_t_base);
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				// noexcept(expr) returns bool.

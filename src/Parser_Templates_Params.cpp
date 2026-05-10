@@ -915,7 +915,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 
 			if (std::holds_alternative<SizeofExprNode>(expr) ||
 				std::holds_alternative<AlignofExprNode>(expr)) {
-				return TypeCategory::UnsignedLongLong;
+				return (g_target_data_model == TargetDataModel::LLP64)
+					? TypeCategory::UnsignedLongLong
+					: TypeCategory::UnsignedLong;
 			}
 
 			if (std::holds_alternative<NoexceptExprNode>(expr) ||

@@ -2201,10 +2201,14 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			   std::holds_alternative<SizeofPackNode>(expr) ||
 			   std::holds_alternative<AlignofExprNode>(expr) ||
 			   std::holds_alternative<OffsetofExprNode>(expr)) {
+		// size_t is unsigned long long on LLP64 (Windows) and unsigned long on LP64 (Linux/macOS).
+		const TypeCategory size_t_cat = (g_target_data_model == TargetDataModel::LLP64)
+			? TypeCategory::UnsignedLongLong
+			: TypeCategory::UnsignedLong;
 		return TypeSpecifierNode(
-			TypeCategory::UnsignedLongLong,
+			size_t_cat,
 			TypeQualifier::None,
-			get_type_size_bits(TypeCategory::UnsignedLongLong),
+			get_type_size_bits(size_t_cat),
 			Token{},
 			CVQualifier::None);
 	} else if (std::holds_alternative<TernaryOperatorNode>(expr)) {

@@ -521,7 +521,7 @@ private:
 			!eval_result.pointer_to_var.isValid()) {
 			// For general expression folding we require exact_type to preserve sema
 			// conversion behavior. For sizeof/alignof, evaluator results are always
-			// size_t-like integer constants, so allow missing exact_type and use ULL/64.
+			// size_t-like integer constants, so allow missing exact_type and use model-aware size_t.
 			constexpr bool allow_untyped_sizeof_alignof =
 				std::is_same_v<NodeType, SizeofExprNode> ||
 				std::is_same_v<NodeType, AlignofExprNode>;
@@ -532,7 +532,13 @@ private:
 				const TypeSpecifierNode& exact = *eval_result.exact_type;
 				cat = exact.category();
 				size_bits = exact.size_in_bits();
-			} else if (!allow_untyped_sizeof_alignof) {
+			} else if (allow_untyped_sizeof_alignof) {
+				// sizeof/alignof return size_t, which is model-dependent.
+				cat = (g_target_data_model == TargetDataModel::LLP64)
+					? TypeCategory::UnsignedLongLong
+					: TypeCategory::UnsignedLong;
+				size_bits = get_type_size_bits(cat);
+			} else {
 				return ExprResult{};
 			}
 			// Non-primitive types (structs, etc.) cannot be folded to a scalar constant.

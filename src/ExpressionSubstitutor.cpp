@@ -1789,6 +1789,16 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				source_arg.dependent_name != candidate_arg.dependent_name) {
 				return false;
 			}
+			// If the source has a concrete NTTP value (not dependent), the candidate must
+			// carry the same value to be in the same "instantiation family". Without this
+			// check, e.g. _Head_base<0,T> and _Head_base<1,T> look identical by shape alone
+			// and the sibling search can silently pick the wrong specialization.
+			if (source_arg.is_value &&
+				!source_arg.dependent_name.isValid() &&
+				!candidate_arg.dependent_name.isValid() &&
+				source_arg.value != candidate_arg.value) {
+				return false;
+			}
 		}
 
 		return true;
