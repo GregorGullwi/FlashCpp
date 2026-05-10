@@ -4611,6 +4611,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Create a mutable copy of template_args to fill in defaults
 	std::vector<TemplateTypeArg> filled_template_args(template_args.begin(), template_args.end());
+	auto default_arg_source_namespace = [&]() -> NamespaceHandle {
+		if (template_name.find("::") != std::string_view::npos) {
+			return QualifiedIdentifier::fromQualifiedName(
+				template_name,
+				NamespaceRegistry::GLOBAL_NAMESPACE)
+				.namespace_handle;
+		}
+
+		std::string_view decl_name = StringTable::getStringView(class_decl.name());
+		if (size_t pos = decl_name.rfind("::"); pos != std::string_view::npos) {
+			return QualifiedIdentifier::fromQualifiedName(
+				decl_name,
+				NamespaceRegistry::GLOBAL_NAMESPACE)
+				.namespace_handle;
+		}
+
+		return gSymbolTable.get_current_namespace_handle();
+	}();
 
 	// Fill in default arguments for missing parameters
 	for (size_t i = filled_template_args.size(); i < template_params.size(); ++i) {
@@ -4923,7 +4941,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					*param,
 					std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
 					retry_args,
-					NamespaceHandle{})) {
+					default_arg_source_namespace)) {
 				filled_template_args.assign(retry_args.begin(), retry_args.end());
 			}
 		}
@@ -4934,12 +4952,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// that no handler could evaluate, and any other unhandled parameter kind.
 		if (filled_template_args.size() == size_before) {
 			if (param->kind() == TemplateParameterKind::Type) {
-				// Push a void-like placeholder type
-				TemplateTypeArg placeholder;
-				placeholder.setType(TypeCategory::Void);
-				filled_template_args.push_back(placeholder);
-				FLASH_LOG(Templates, Warning, "Could not resolve type default for param ", i,
-						  " of '", template_name, "', using placeholder");
+				throw CompileError(std::string(StringBuilder()
+					.append("Could not resolve type template default for parameter ")
+					.append(std::to_string(i))
+					.append(" of '")
+					.append(template_name)
+					.append("'")
+					.commit()));
 			} else if (param->kind() == TemplateParameterKind::Template) {
 				throw InternalError(
 					std::string("Could not resolve template-template default for param ") +
