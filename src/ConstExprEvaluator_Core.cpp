@@ -1459,19 +1459,40 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 				if (!arg.isTypeArgument()) {
 					return std::nullopt;
 				}
-				TypeCategory bound_category = arg.type_index.is_valid()
-					? arg.type_index.category()
-					: arg.category();
-				size_t size_bytes = get_type_size_bits(bound_category) / 8;
-				if (size_bytes == 0 && arg.type_index.is_valid()) {
+				const TypeSpecifierNode bound_spec = makeTypeSpecifierFromTemplateTypeArg(arg, type_spec.token());
+				if (auto size_bytes = tryGetConstexprTypeSizeBytes(bound_spec); size_bytes.has_value()) {
+					return static_cast<long long>(*size_bytes);
+				}
+				if (arg.type_index.is_valid()) {
 					if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
-						size_bytes = toSizeT(type_info->sizeInBytes());
+						size_t fallback_size = toSizeT(type_info->sizeInBytes());
+						if (fallback_size > 0) {
+							return static_cast<long long>(fallback_size);
+						}
 					}
 				}
-				if (size_bytes == 0) {
-					return std::nullopt;
+				if (TypeCategory bound_category = arg.type_index.is_valid() ? arg.type_index.category() : arg.category();
+					bound_category != TypeCategory::Invalid) {
+					size_t fallback_size = get_type_size_bits(bound_category) / 8;
+					if (fallback_size > 0) {
+						return static_cast<long long>(fallback_size);
+					}
 				}
-				return static_cast<long long>(size_bytes);
+				return std::nullopt;
+			};
+			const auto find_bound_type_arg = [&](StringHandle type_handle) -> const TemplateTypeArg* {
+				if (!type_handle.isValid()) {
+					return nullptr;
+				}
+				if (const TemplateTypeArg* env_arg = context.template_environment.findOne(type_handle)) {
+					return env_arg;
+				}
+				for (size_t i = 0; i < context.template_param_names.size() && i < context.template_args.size(); ++i) {
+					if (context.template_param_names[i] == type_handle) {
+						return &context.template_args[i];
+					}
+				}
+				return nullptr;
 			};
 
 			if (type_spec.token().type() == Token::Type::Identifier &&
@@ -1480,20 +1501,11 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 				type_spec.reference_qualifier() == ReferenceQualifier::None) {
 				std::string_view type_name = type_spec.token().value();
 				if (!type_name.empty()) {
-					if (const TemplateTypeArg* env_arg = context.template_environment.findOne(
-							StringTable::getOrInternStringHandle(type_name))) {
-						if (auto bound_size = try_bound_type_size(*env_arg)) {
+					const StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
+					if (const TemplateTypeArg* bound_arg = find_bound_type_arg(type_handle)) {
+						if (auto bound_size = try_bound_type_size(*bound_arg)) {
 							return EvalResult::from_int(*bound_size);
 						}
-					}
-					for (size_t i = 0; i < context.template_param_names.size() && i < context.template_args.size(); ++i) {
-						if (context.template_param_names[i] != type_name) {
-							continue;
-						}
-						if (auto bound_size = try_bound_type_size(context.template_args[i])) {
-							return EvalResult::from_int(*bound_size);
-						}
-						break;
 					}
 				}
 			}
@@ -1712,44 +1724,35 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 					if (!arg.isTypeArgument()) {
 						return std::nullopt;
 					}
+					const TypeSpecifierNode bound_spec = makeTypeSpecifierFromTemplateTypeArg(arg, type_spec.token());
+					if (auto size_opt = tryGetConstexprTypeSizeBytes(bound_spec); size_opt.has_value()) {
+						return static_cast<unsigned long long>(*size_opt);
+					}
+					if (arg.type_index.is_valid()) {
+						if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index); type_info != nullptr) {
+							size_t size_bytes = toSizeT(type_info->sizeInBytes());
+							if (size_bytes > 0) {
+								return static_cast<unsigned long long>(size_bytes);
+							}
+						}
+					}
 					TypeCategory bound_category = arg.type_index.is_valid()
 						? arg.type_index.category()
 						: arg.category();
-					size_t param_size = get_type_size_bits(bound_category) / 8;
-					if (param_size == 0 && arg.type_index.is_valid()) {
-						const TypeInfo* type_info = tryGetTypeInfo(arg.type_index);
-						if (type_info) {
-							param_size = toSizeT(type_info->sizeInBytes());
-						}
-					}
-					if (param_size == 0 && bound_category == TypeCategory::Struct) {
-						const TypeInfo* type_info = tryGetTypeInfo(arg.type_index);
-						if (type_info != nullptr) {
-							param_size = toSizeT(type_info->sizeInBytes());
-						}
-					}
-					if (param_size > 0) {
-						return static_cast<unsigned long long>(param_size);
+					size_t fallback_size = get_type_size_bits(bound_category) / 8;
+					if (fallback_size > 0) {
+						return static_cast<unsigned long long>(fallback_size);
 					}
 					return std::nullopt;
 				};
 
 				if (!type_name.empty()) {
-					if (const TemplateTypeArg* env_arg = context.template_environment.findOne(
-							StringTable::getOrInternStringHandle(type_name))) {
-						if (auto bound_size = try_bound_size(*env_arg)) {
+					const StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
+					if (const TemplateTypeArg* bound_arg = find_bound_type_arg(type_handle)) {
+						if (auto bound_size = try_bound_size(*bound_arg)) {
 							return EvalResult::from_int(static_cast<long long>(*bound_size));
 						}
 					}
-				}
-				for (size_t i = 0; i < context.template_param_names.size() && i < context.template_args.size(); ++i) {
-					if (context.template_param_names[i] != type_name) {
-						continue;
-					}
-					if (auto bound_size = try_bound_size(context.template_args[i])) {
-						return EvalResult::from_int(static_cast<long long>(*bound_size));
-					}
-					break;
 				}
 			}
 			if (size_in_bytes == 0) {

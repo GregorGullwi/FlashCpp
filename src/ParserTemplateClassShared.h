@@ -292,7 +292,8 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	appendLazyTemplateSequence(lazy_mem_info.template_args, template_args);
 	lazy_mem_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
 		template_params,
-		template_args);
+		template_args,
+		nullptr);
 	lazy_mem_info.access = mem_func.access;
 	lazy_mem_info.is_virtual = mem_func.is_virtual;
 	lazy_mem_info.is_pure_virtual = mem_func.is_pure_virtual;

@@ -905,7 +905,9 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 	instantiation_context_->param_names = param_names;
 	instantiation_context_->param_args = param_args;
 
-	// Phase 5: Populate binding-based storage alongside legacy fields
+	// Phase 5: Populate binding-based storage alongside legacy fields.
+	// param_args may be a flattened pack list and can therefore be longer than
+	// param_names in legacy callers.
 	if (param_args.size() < param_names.size()) {
 		StringBuilder error_builder;
 		error_builder.append("TypeInfo::setInstantiationContext invalid size mismatch: param_names=");
@@ -914,24 +916,54 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 		error_builder.append(param_args.size());
 		throw InternalError(std::string(error_builder.commit()));
 	}
-	const size_t pair_count = param_names.size();
-	instantiation_context_->binding_names.reserve(pair_count);
-	instantiation_context_->binding_args.reserve(pair_count);
-	instantiation_context_->binding_kinds.reserve(pair_count);
-	instantiation_context_->binding_is_packs.reserve(pair_count);
-	
-	for (size_t i = 0; i < pair_count; ++i) {
-		instantiation_context_->binding_names.push_back(param_names[i]);
-		instantiation_context_->binding_args.push_back(param_args[i]);
+	const size_t estimated_binding_count = param_names.size();
+	instantiation_context_->binding_names.reserve(estimated_binding_count);
+	instantiation_context_->binding_args.reserve(estimated_binding_count);
+	instantiation_context_->binding_kinds.reserve(estimated_binding_count);
+	instantiation_context_->binding_is_packs.reserve(estimated_binding_count);
+
+	size_t arg_index = 0;
+	size_t name_index = 0;
+	while (name_index < param_names.size()) {
+		InlineVector<TemplateArgInfo, 1> binding_args;
+		const StringHandle binding_name = param_names[name_index];
+		if (arg_index < param_args.size()) {
+			binding_args.push_back(param_args[arg_index]);
+			++arg_index;
+		}
+		++name_index;
+		while (name_index < param_names.size() &&
+			   param_names[name_index] == binding_name &&
+			   arg_index < param_args.size()) {
+			binding_args.push_back(param_args[arg_index]);
+			++arg_index;
+			++name_index;
+		}
+		// Legacy callers may provide a flattened pack list where param_names has
+		// one trailing pack parameter name and param_args carries every expanded
+		// element. Preserve those elements by attaching the remaining args to the
+		// final binding.
+		if (name_index == param_names.size()) {
+			while (arg_index < param_args.size()) {
+				binding_args.push_back(param_args[arg_index]);
+				++arg_index;
+			}
+		}
+		if (binding_args.empty()) {
+			continue;
+		}
+
+		instantiation_context_->binding_names.push_back(binding_name);
+		instantiation_context_->binding_args.push_back(binding_args);
 		TemplateParameterKind binding_kind = TemplateParameterKind::Type;
-		if (param_args[i].is_template_template_arg) {
+		if (binding_args.front().is_template_template_arg) {
 			binding_kind = TemplateParameterKind::Template;
-		} else if (param_args[i].is_value) {
+		} else if (binding_args.front().is_value) {
 			binding_kind = TemplateParameterKind::NonType;
 		}
 		const uint8_t kind = static_cast<uint8_t>(binding_kind);
 		instantiation_context_->binding_kinds.push_back(kind);
-		instantiation_context_->binding_is_packs.push_back(false);  // Individual bindings are never packs
+		instantiation_context_->binding_is_packs.push_back(binding_args.size() > 1);
 	}
 }
 

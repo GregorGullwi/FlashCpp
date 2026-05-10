@@ -1050,12 +1050,12 @@ struct TypeInfo {
  // instantiation, `parent` points to the enclosing type's context.
 	struct InstantiationContext {
 		// Phase 5: Binding-based storage (simplified for now using vectors)
-		// Structure: names, arg_infos, kinds, is_packs are parallel arrays
-		// where binding i = {names[i], {arg_infos[i]}, kinds[i], is_packs[i]}
+		// Structure: names, arg_lists, kinds, is_packs are parallel arrays
+		// where binding i = {names[i], arg_lists[i], kinds[i], is_packs[i]}
 		InlineVector<StringHandle, 4> binding_names;
-		InlineVector<TemplateArgInfo, 4> binding_args;
+		InlineVector<InlineVector<TemplateArgInfo, 1>, 4> binding_args;
 		InlineVector<uint8_t, 4> binding_kinds;  // TemplateParameterKind as uint8
-		InlineVector<bool, 4> binding_is_packs;
+		InlineVector<uint8_t, 4> binding_is_packs;
 		const InstantiationContext* parent = nullptr; // Enclosing type's context (for nesting)
 
 		// Legacy fields for compatibility (populated in parallel during transition)
@@ -1064,7 +1064,9 @@ struct TypeInfo {
 
 		// Phase 5 accessors
 		bool hasInstantiationContextBindings() const { return !binding_names.empty(); }
-		size_t getInstantiationContextBindingsCount() const { return binding_names.size(); }
+		size_t getInstantiationContextBindingsCount() const {
+			return std::min(binding_names.size(), binding_args.size());
+		}
 	};
 
 	InlineVector<TemplateArgInfo, 4> template_args_;

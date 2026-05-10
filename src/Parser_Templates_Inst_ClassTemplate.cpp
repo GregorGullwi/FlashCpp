@@ -6559,7 +6559,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.template_args = template_args_to_use;
 				lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
 					effective_template_params,
-					effective_template_args);
+					effective_template_args,
+					nullptr);
 				lazy_info.needs_substitution = true;
 
 				LazyStaticMemberRegistry::getInstance().registerLazyStaticMember(lazy_info);
@@ -7471,7 +7472,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.template_args = template_args_to_use;
 				lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
 					effective_template_params,
-					effective_template_args);
+					effective_template_args,
+					nullptr);
 				lazy_info.access = mem_func.access;
 				lazy_info.is_virtual = mem_func.is_virtual;
 				lazy_info.is_pure_virtual = mem_func.is_pure_virtual;
@@ -7973,7 +7975,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						lazy_ctor_info.template_args = template_args_to_use;
 						lazy_ctor_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
 							effective_template_params,
-							effective_template_args);
+							effective_template_args,
+							nullptr);
 						lazy_ctor_info.access = mem_func.access;
 						LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_ctor_info));
 					}

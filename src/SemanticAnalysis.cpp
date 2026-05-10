@@ -1425,16 +1425,25 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaExpressi
 }
 
 void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaInfo& lambda_info) {
-	const size_t binding_count = std::min(
-		lambda_info.outer_template_param_names.size(),
-		lambda_info.outer_template_args.size());
+	InlineVector<StringHandle, 4> param_names;
+	InlineVector<TypeInfo::TemplateArgInfo, 4> param_args;
+	if (hasTemplateEnvironmentSnapshotBindings(lambda_info.outer_template_environment_snapshot)) {
+		populateTemplateEnvironmentLegacyViews(
+			lambda_info.outer_template_environment_snapshot,
+			param_names,
+			param_args);
+	} else {
+		param_names = lambda_info.outer_template_param_names;
+		param_args = lambda_info.outer_template_args;
+	}
+	const size_t binding_count = std::min(param_names.size(), param_args.size());
 	for (size_t i = 0; i < binding_count; ++i) {
-		const StringHandle param_name = lambda_info.outer_template_param_names[i];
+		const StringHandle param_name = param_names[i];
 		if (!param_name.isValid()) {
 			continue;
 		}
 
-		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(lambda_info.outer_template_args[i]);
+		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(param_args[i]);
 		if (desc.category() == TypeCategory::Invalid) {
 			continue;
 		}

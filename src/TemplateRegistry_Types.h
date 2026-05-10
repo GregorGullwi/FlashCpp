@@ -693,7 +693,7 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.pointer_depth = std::min(arg.pointer_depth, uint8_t(255));
 	// Include array info - critical for differentiating T[] from T[N] from T
 	result.is_array = arg.is_array;
-	result.array_size = arg.array_size();  // TypeIndexArg carries only first dim for key identity
+	result.array_sizes.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
 	result.function_signature = arg.function_signature;
 	result.is_dependent = arg.is_dependent;
 	result.dependent_name = arg.dependent_name;

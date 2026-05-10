@@ -90,6 +90,9 @@ InlineVector<TemplateTypeArg, 4> toTemplateTypeArgList(std::span<const TypeInfo:
 namespace {
 
 TemplateParameterKind inferBindingKind(const TypeInfo::TemplateArgInfo& arg) {
+	if (arg.is_template_template_arg) {
+		return TemplateParameterKind::Template;
+	}
 	if (arg.is_value) {
 		return TemplateParameterKind::NonType;
 	}
@@ -155,16 +158,46 @@ void appendContextBindings(
 	if (context == nullptr) {
 		return;
 	}
-	appendContextBindings(context->parent, out_bindings);
+	if (context->hasInstantiationContextBindings()) {
+		const size_t binding_count = std::min({
+			context->binding_names.size(),
+			context->binding_args.size(),
+			context->binding_kinds.size(),
+			context->binding_is_packs.size()});
+		for (size_t i = 0; i < binding_count; ++i) {
+			TemplateBinding binding;
+			binding.name = context->binding_names[i];
+			binding.kind = static_cast<TemplateParameterKind>(context->binding_kinds[i]);
+			binding.is_pack = context->binding_is_packs[i];
+			binding.args.reserve(context->binding_args[i].size());
+			for (const TypeInfo::TemplateArgInfo& arg_info : context->binding_args[i]) {
+				binding.args.push_back(toTemplateTypeArg(arg_info));
+			}
+			binding.is_pack |= (binding.args.size() > 1);
+			out_bindings.push_back(std::move(binding));
+		}
+		appendContextBindings(context->parent, out_bindings);
+		return;
+	}
+
 	const size_t binding_count = std::min(context->param_names.size(), context->param_args.size());
-	for (size_t i = 0; i < binding_count; ++i) {
+	for (size_t i = 0; i < binding_count;) {
 		TemplateBinding binding;
 		binding.name = context->param_names[i];
 		TemplateTypeArg arg = toTemplateTypeArg(context->param_args[i]);
 		binding.kind = inferBindingKind(arg);
 		binding.args.push_back(std::move(arg));
+
+		size_t next_index = i + 1;
+		while (next_index < binding_count && context->param_names[next_index] == binding.name) {
+			binding.is_pack = true;
+			binding.args.push_back(toTemplateTypeArg(context->param_args[next_index]));
+			++next_index;
+		}
 		out_bindings.push_back(std::move(binding));
+		i = next_index;
 	}
+	appendContextBindings(context->parent, out_bindings);
 }
 
 } // namespace
@@ -178,6 +211,13 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
 	const size_t pair_count = std::min(param_names.size(), args.size());
 	snapshot.bindings.reserve(pair_count);
 	for (size_t i = 0; i < pair_count; ++i) {
+		if (!snapshot.bindings.empty() &&
+			snapshot.bindings.back().name == param_names[i]) {
+			TemplateBindingSnapshot& prior = snapshot.bindings.back();
+			prior.is_pack = true;
+			prior.args.push_back(args[i]);
+			continue;
+		}
 		TemplateBindingSnapshot binding;
 		binding.name = param_names[i];
 		binding.kind = inferBindingKind(args[i]);
@@ -256,9 +296,6 @@ TemplateEnvironment buildTemplateEnvironment(
 TemplateEnvironment buildTemplateEnvironment(const TemplateEnvironmentSnapshot& snapshot) {
 	TemplateEnvironment environment;
 	auto append_snapshot = [&](auto&& self, const TemplateEnvironmentSnapshot& current) -> void {
-		if (current.parent != nullptr) {
-			self(self, *current.parent);
-		}
 		for (const TemplateBindingSnapshot& snapshot_binding : current.bindings) {
 			TemplateBinding binding;
 			binding.name = snapshot_binding.name;
@@ -269,6 +306,9 @@ TemplateEnvironment buildTemplateEnvironment(const TemplateEnvironmentSnapshot& 
 				binding.args.push_back(toTemplateTypeArg(snapshot_arg));
 			}
 			environment.bindings.push_back(std::move(binding));
+		}
+		if (current.parent != nullptr) {
+			self(self, *current.parent);
 		}
 	};
 	append_snapshot(append_snapshot, snapshot);
@@ -293,25 +333,34 @@ TemplateEnvironment buildTemplateEnvironment(const OuterTemplateBinding& binding
 
 	TemplateEnvironment environment;
 	if (binding.param_names.size() != binding.param_args.size()) {
-		return environment;
-	}
-	if (!binding.all_args.empty() && binding.all_args.size() != binding.param_args.size()) {
-		return environment;
+		if (binding.all_args.empty() || binding.param_names.empty()) {
+			return environment;
+		}
 	}
 
-	const size_t pair_count = binding.param_names.size();
+	const std::span<const TemplateTypeArg> source_args =
+		!binding.all_args.empty()
+			? std::span<const TemplateTypeArg>(binding.all_args.data(), binding.all_args.size())
+			: std::span<const TemplateTypeArg>(binding.param_args.data(), binding.param_args.size());
+	const size_t pair_count = std::min(binding.param_names.size(), source_args.size());
 	environment.bindings.reserve(pair_count);
 	for (size_t i = 0; i < pair_count;) {
 		TemplateBinding entry;
 		entry.name = binding.param_names[i];
-		entry.kind = inferBindingKind(binding.param_args[i]);
-		entry.args.push_back(binding.param_args[i]);
+		entry.kind = inferBindingKind(source_args[i]);
+		entry.args.push_back(source_args[i]);
 
 		size_t next_index = i + 1;
 		while (next_index < pair_count && binding.param_names[next_index] == entry.name) {
 			entry.is_pack = true;
-			entry.args.push_back(binding.param_args[next_index]);
+			entry.args.push_back(source_args[next_index]);
 			++next_index;
+		}
+		if (next_index == pair_count && source_args.size() > pair_count) {
+			entry.is_pack = true;
+			for (size_t extra = pair_count; extra < source_args.size(); ++extra) {
+				entry.args.push_back(source_args[extra]);
+			}
 		}
 		environment.bindings.push_back(std::move(entry));
 		i = next_index;
@@ -367,4 +416,3 @@ std::optional<TemplateTypeArg> resolveContextBinding(
 
 	return resolve_binding(resolve_binding, target_name);
 }
-

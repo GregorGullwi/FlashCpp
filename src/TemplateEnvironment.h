@@ -72,4 +72,3 @@ TemplateEnvironment buildTemplateEnvironment(const TypeInfo::InstantiationContex
 std::optional<TemplateTypeArg> resolveContextBinding(
 	StringHandle target_name,
 	const TemplateEnvironment& environment);
-
