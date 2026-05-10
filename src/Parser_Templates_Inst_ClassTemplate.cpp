@@ -4913,6 +4913,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 
+		// Retry unresolved defaults through the shared default-argument materialization
+		// path before falling into catch-all placeholder/error handling.
+		if (filled_template_args.size() == size_before &&
+			(param->kind() == TemplateParameterKind::Type ||
+			 param->kind() == TemplateParameterKind::NonType)) {
+			InlineVector<TemplateTypeArg, 4> retry_args = toInlineTemplateArgs(filled_template_args);
+			if (tryAppendDefaultTemplateArg(
+					*param,
+					std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+					retry_args,
+					NamespaceHandle{})) {
+				filled_template_args.assign(retry_args.begin(), retry_args.end());
+			}
+		}
+
 		// Catch-all: ensure filled_template_args grows by exactly 1 per non-variadic
 		// parameter so that filled_template_args[j] stays in sync with template_params[j].
 		// This covers: Type defaults whose node isn't TypeSpecifierNode, NonType defaults
