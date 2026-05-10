@@ -20,6 +20,7 @@ constexpr std::string_view kBreakExecuted = "Break executed";
 constexpr std::string_view kContinueExecuted = "Continue executed";
 constexpr std::string_view kFunctionDidNotReturnValue = "Constexpr function did not return a value";
 constexpr std::string_view kReturnStatementNoExpression = "Constexpr function return statement has no expression";
+constexpr std::string_view kLambdaDidNotReturnValue = "Constexpr lambda did not return a value";
 
 struct MemberPointerTarget {
 	StringHandle member_name;
@@ -3810,7 +3811,7 @@ EvalResult Evaluator::evaluate_lambda_call(
 			bindings,
 			context,
 			"Constexpr lambda body is not a block",
-			"Constexpr lambda did not return a value");
+			kLambdaDidNotReturnValue);
 	} else if (body_node.is<ExpressionNode>()) {
 		// Expression body (implicit return)
 		result = evaluate_expression_with_bindings(body_node, bindings, context);
@@ -3820,6 +3821,31 @@ EvalResult Evaluator::evaluate_lambda_call(
 	}
 
 	context.current_depth--;
+	// Void lambda support: reaching end-of-body without a return statement, or
+	// an explicit "return;" (no expression), is valid for void lambdas.  Convert
+	// those sentinel errors to a void success so that by-reference capture
+	// writebacks below can still propagate the mutated bindings to the caller.
+	// This mirrors the same handling in evaluate_function_call for free functions
+	// and evaluate_member_function for member functions.
+	if (!result.success() &&
+		(result.error_message == kLambdaDidNotReturnValue ||
+		 result.error_message == kReturnStatementNoExpression)) {
+		// Only convert if the lambda has no explicit non-void return type.
+		bool is_void = !lambda.return_type().has_value();
+		if (!is_void) {
+			const ASTNode& ret_type_node = lambda.return_type().value();
+			if (ret_type_node.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& ret_spec = ret_type_node.as<TypeSpecifierNode>();
+				is_void = (ret_spec.category() == TypeCategory::Void);
+			} else {
+				// Unable to determine return type; conservatively treat as void.
+				is_void = true;
+			}
+		}
+		if (is_void) {
+			result = EvalResult::from_int(0LL);
+		}
+	}
 	if (result.success() && mutable_stored_capture_bindings) {
 		for (std::string_view capture_name : by_value_capture_names) {
 			auto binding_it = bindings.find(capture_name);
