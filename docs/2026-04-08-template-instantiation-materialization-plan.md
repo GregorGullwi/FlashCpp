@@ -130,12 +130,13 @@ Active fallback evidence from the 2026-04-27 audit:
   `substituteTemplateParameters(...)` first and then shares the existing static
   initializer normalization pipeline, instead of maintaining a separate manual
   rewrite ladder plus a trailing catch-all `ExpressionSubstitutor` pass;
-- unresolved template defaults still need catch-all handling for some type
-  defaults and some NTTP defaults; class-template default filling now retries
-  unresolved type/non-type defaults through shared
-  `tryAppendDefaultTemplateArg(...)` materialization before entering the local
-  catch-all, so template-template defaults are no longer part of this residual
-  class;
+- unresolved template defaults still need catch-all handling for some NTTP
+  defaults; class-template default filling now retries unresolved type/non-type
+  defaults through shared `tryAppendDefaultTemplateArg(...)` materialization
+  (with declaration-namespace reparse context) before entering the local
+  catch-all, and unresolved type defaults now hard-fail instead of injecting a
+  placeholder type, so template-template defaults are no longer part of this
+  residual class;
 - class-template NTTP defaults now use the shared
   `substituteAndEvaluateNonTypeDefault(...)` path for final substituted
   evaluation, so ordinary `noexcept(...)` / `sizeof(T)`-style defaults no longer
