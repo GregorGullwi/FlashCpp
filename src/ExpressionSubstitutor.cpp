@@ -513,44 +513,6 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 		active_environment.bindings.empty() && active_environment.parent != nullptr
 		? *active_environment.parent
 		: active_environment;
-	auto rebindTypeArgFromVisibleBindings = [&](TemplateTypeArg& materialized_arg) {
-		if (materialized_arg.is_value || !materialized_arg.type_index.is_valid()) {
-			return false;
-		}
-
-		const TypeInfo* arg_type_info = tryGetTypeInfo(materialized_arg.type_index);
-		if (arg_type_info == nullptr) {
-			return false;
-		}
-
-		StringHandle arg_type_name = arg_type_info->name();
-		if (!arg_type_name.isValid()) {
-			return false;
-		}
-
-		auto apply_rebound_arg = [&](const TemplateTypeArg& rebound_source) {
-			TemplateTypeArg rebound = rebindDependentTemplateTypeArg(rebound_source, materialized_arg);
-			if (rebound.type_index == materialized_arg.type_index &&
-				rebound.dependent_name == materialized_arg.dependent_name &&
-				rebound.is_dependent == materialized_arg.is_dependent) {
-				return false;
-			}
-			materialized_arg = std::move(rebound);
-			return true;
-		};
-
-		if (auto type_subst_it = param_map_.find(StringTable::getStringView(arg_type_name));
-			type_subst_it != param_map_.end()) {
-			return apply_rebound_arg(type_subst_it->second);
-		}
-
-		if (auto context_binding = resolveContextBinding(arg_type_name, lookup_environment);
-			context_binding.has_value()) {
-			return apply_rebound_arg(*context_binding);
-		}
-
-		return false;
-	};
 
 	for (const auto& arg : stored_args) {
 		TemplateTypeArg materialized_arg = toTemplateTypeArg(arg);
@@ -602,8 +564,6 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 					materialized_arg = rebindDependentTemplateTypeArg(*context_binding, materialized_arg);
 					result.had_substitution = true;
 					substituted = true;
-					while (rebindTypeArgFromVisibleBindings(materialized_arg)) {
-					}
 				}
 			} else if (evaluate_dependent_member_values && materialized_arg.is_value) {
 				size_t scope_pos = dependent_name.rfind("::");
@@ -659,9 +619,6 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 					result.had_substitution = true;
 				}
 			}
-		}
-		while (rebindTypeArgFromVisibleBindings(materialized_arg)) {
-			result.had_substitution = true;
 		}
 
 		result.args.push_back(materialized_arg);
@@ -1792,7 +1749,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					*candidate_info,
 					/*evaluate_dependent_member_values=*/true,
 					kInitialDependentMemberTypeResolutionDepth);
-			if (!candidate_args.args.empty() && !templateArgsStillDependent(candidate_args.args)) {
+			if (candidate_args.had_substitution &&
+				!candidate_args.args.empty() &&
+				!templateArgsStillDependent(candidate_args.args)) {
 				inst_args = std::move(candidate_args.args);
 				break;
 			}
