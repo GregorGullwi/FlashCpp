@@ -5024,6 +5024,57 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				return EvalResult::error("Statement executed (not a return)");
 			}
 
+			const TypeSpecifierNode& decl_type_spec = decl.type_specifier_node();
+			if (decl_type_spec.reference_qualifier() != ReferenceQualifier::None) {
+				std::string_view alias_target_name = getIdentifierNameFromAstNode(init_expr);
+				if (init_expr.is<ExpressionNode>()) {
+					const ExpressionNode& init_expression = init_expr.as<ExpressionNode>();
+					if (const auto* member_access = std::get_if<MemberAccessNode>(&init_expression)) {
+						if (const IdentifierNode* object_id = tryGetIdentifier(member_access->object())) {
+							if (object_id->name() == "this" && !member_access->is_arrow()) {
+								alias_target_name = member_access->member_name();
+							}
+						}
+						if (alias_target_name.empty()) {
+							alias_target_name = member_access->member_name();
+						}
+					}
+				}
+
+				if (!alias_target_name.empty()) {
+					const EvalResult* alias_target = nullptr;
+					if (context.local_bindings) {
+						auto local_it = context.local_bindings->find(alias_target_name);
+						if (local_it != context.local_bindings->end()) {
+							alias_target = &local_it->second;
+						}
+					}
+					if (!alias_target) {
+						auto decl_it = declaration_bindings.find(alias_target_name);
+						if (decl_it != declaration_bindings.end()) {
+							alias_target = &decl_it->second;
+						}
+					}
+					if (!alias_target) {
+						auto outer_it = bindings.find(alias_target_name);
+						if (outer_it != bindings.end()) {
+							alias_target = &outer_it->second;
+						}
+					}
+					if (!alias_target && context.struct_info) {
+						auto emplace_result = declaration_bindings.emplace(alias_target_name, EvalResult::indeterminate());
+						alias_target = &emplace_result.first->second;
+					}
+					if (alias_target) {
+						EvalResult reference_alias = EvalResult::from_pointer(alias_target_name);
+						reference_alias.pointer_value_snapshot = {*alias_target};
+						maybe_set_binding_result_exact_type(reference_alias, decl, &init_expr, context);
+						declaration_bindings[var_name] = std::move(reference_alias);
+						return EvalResult::error("Statement executed (not a return)");
+					}
+				}
+			}
+
 			// Handle InitializerListNode initializers that the parser preserves for arrays
 			// and aggregate/object brace-init. Scalar brace-init (e.g. int x{5} / int x = {5})
 			// is normalized by parse_brace_initializer() into the contained expression and

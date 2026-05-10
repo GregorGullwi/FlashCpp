@@ -430,6 +430,24 @@ static_assert(b.pair.value == 42);  // ✅ Works
 
 This is covered by `tests/test_constexpr_ctor_body_member_pointer_call_ret0.cpp`.
 
+Straightforward constructor-body reference aliases to local/member lvalues are now
+also supported, for example:
+
+```cpp
+struct Box {
+	int x;
+	constexpr Box(int v) {
+		int& r = x;
+		r = v;
+	}
+};
+
+constexpr Box b(42);
+static_assert(b.x == 42);  // ✅ Works
+```
+
+This is covered by `tests/test_constexpr_reference_alias_ctor_body_ret0.cpp`.
+
 **Preferred style when practical:** Use member initializer lists:
 ```cpp
 constexpr Point(int x_val, int y_val) : x(x_val), y(y_val) {}  // ✅ Works
@@ -1235,6 +1253,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Straightforward local aggregate-array element reads in constexpr functions, including nested/member-array compositions like `items[i].inner.value` and `items[i].data[0]`
 - ✅ Straightforward loop-driven local array reads in constexpr functions, including `sum += arr[i]` and `sum += items[i].value`
 - ✅ Straightforward constructor-body member assignments in constexpr objects (including if/else, for/while, and switch bodies)
+- ✅ Straightforward constructor-body/reference local aliases now work in constexpr evaluation (e.g., `int& r = x; r = v;` for member/local lvalues in supported shapes)
 - ✅ `noexcept(expr)` in constexpr evaluation
 - ✅ `offsetof(T, member)` for direct and straightforward nested data-member access in constexpr evaluation
 - ✅ `throw` expressions now produce a dedicated not-constant-expression diagnostic when evaluated, while untaken `?:` / short-circuit branches continue to work
@@ -1589,6 +1608,7 @@ struct CaptureExample {
 - `tests/test_constexpr_designated_init_mixed_fail.cpp` / `tests/test_constexpr_designated_init_order_fail.cpp` - C++20 designated initializer diagnostics
 - `tests/test_constexpr_bitwise_compound_assign_ret0.cpp` - Bitwise compound assignments in constexpr
 - `tests/test_constexpr_struct_ctor_in_body_ret0.cpp` - Struct constructor calls inside constexpr function bodies (return struct, local struct usage)
+- `tests/test_constexpr_reference_alias_ctor_body_ret0.cpp` - Constructor/local reference-alias mutation in constexpr (`int& r = x; r = v;`) for supported shapes
 - `tests/test_constexpr_local_member_assign_ret0.cpp` - Local struct member dot-assignment (`p.a = value`) in constexpr functions
 - `tests/test_constexpr_this_deref_ret0.cpp` - `*this` dereference in constexpr member function bodies (`dot(*this)`, `scale` chaining)
 - `tests/test_constexpr_multidim_array_ret0.cpp` - Multi-dimensional array init, reads, subscript assignment, brace-elision, and global nested-brace runtime materialization in constexpr
