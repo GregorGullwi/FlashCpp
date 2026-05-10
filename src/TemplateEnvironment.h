@@ -3,9 +3,9 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <vector>
 
 #include "AstNodeTypes_DeclNodes.h"
+#include "TemplateRegistry_Types.h"
 
 enum class TemplateParameterKind;
 class TemplateParameterNode;
@@ -21,7 +21,7 @@ struct TemplateBinding {
 	StringHandle name;
 	TemplateParameterKind kind{};
 	bool is_pack = false;
-	std::vector<TemplateTypeArg> args;
+	InlineVector<TemplateTypeArg, 1> args;
 };
 
 struct TemplateBindingSnapshot {

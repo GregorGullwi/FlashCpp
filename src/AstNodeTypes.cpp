@@ -917,10 +917,7 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 		throw InternalError(std::string(error_builder.commit()));
 	}
 	const size_t estimated_binding_count = param_names.size();
-	instantiation_context_->binding_names.reserve(estimated_binding_count);
-	instantiation_context_->binding_args.reserve(estimated_binding_count);
-	instantiation_context_->binding_kinds.reserve(estimated_binding_count);
-	instantiation_context_->binding_is_packs.reserve(estimated_binding_count);
+	instantiation_context_->bindings.reserve(estimated_binding_count);
 
 	size_t arg_index = 0;
 	size_t name_index = 0;
@@ -953,17 +950,18 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 			continue;
 		}
 
-		instantiation_context_->binding_names.push_back(binding_name);
-		instantiation_context_->binding_args.push_back(binding_args);
+		TypeInfo::InstantiationContext::Binding binding;
+		binding.name = binding_name;
+		binding.args = std::move(binding_args);
 		TemplateParameterKind binding_kind = TemplateParameterKind::Type;
-		if (binding_args.front().is_template_template_arg) {
+		if (binding.args.front().is_template_template_arg) {
 			binding_kind = TemplateParameterKind::Template;
-		} else if (binding_args.front().is_value) {
+		} else if (binding.args.front().is_value) {
 			binding_kind = TemplateParameterKind::NonType;
 		}
-		const uint8_t kind = static_cast<uint8_t>(binding_kind);
-		instantiation_context_->binding_kinds.push_back(kind);
-		instantiation_context_->binding_is_packs.push_back(binding_args.size() > 1);
+		binding.kind = static_cast<uint8_t>(binding_kind);
+		binding.is_pack = (binding.args.size() > 1);
+		instantiation_context_->bindings.push_back(std::move(binding));
 	}
 }
 

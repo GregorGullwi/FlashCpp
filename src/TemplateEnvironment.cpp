@@ -159,18 +159,13 @@ void appendContextBindings(
 		return;
 	}
 	if (context->hasInstantiationContextBindings()) {
-		const size_t binding_count = std::min({
-			context->binding_names.size(),
-			context->binding_args.size(),
-			context->binding_kinds.size(),
-			context->binding_is_packs.size()});
-		for (size_t i = 0; i < binding_count; ++i) {
+		for (const TypeInfo::InstantiationContext::Binding& context_binding : context->bindings) {
 			TemplateBinding binding;
-			binding.name = context->binding_names[i];
-			binding.kind = static_cast<TemplateParameterKind>(context->binding_kinds[i]);
-			binding.is_pack = context->binding_is_packs[i];
-			binding.args.reserve(context->binding_args[i].size());
-			for (const TypeInfo::TemplateArgInfo& arg_info : context->binding_args[i]) {
+			binding.name = context_binding.name;
+			binding.kind = static_cast<TemplateParameterKind>(context_binding.kind);
+			binding.is_pack = context_binding.is_pack;
+			binding.args.reserve(context_binding.args.size());
+			for (const TypeInfo::TemplateArgInfo& arg_info : context_binding.args) {
 				binding.args.push_back(toTemplateTypeArg(arg_info));
 			}
 			binding.is_pack |= (binding.args.size() > 1);

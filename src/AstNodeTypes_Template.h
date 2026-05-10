@@ -2,7 +2,6 @@
 #include <span>
 #include <type_traits>
 #include "AstNodeTypes_DeclNodes.h"
-#include "TemplateEnvironment.h"
 
 // Template parameter kinds
 enum class TemplateParameterKind {
@@ -301,6 +300,8 @@ enum class StorageClass {
 	Register,  // register keyword (deprecated in C++17)
 	Mutable	// mutable keyword (for class members)
 };
+
+#include "TemplateEnvironment.h"
 
 class VariableDeclarationNode {
 public:

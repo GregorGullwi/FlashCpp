@@ -1049,13 +1049,14 @@ struct TypeInfo {
  // registry-name reconstruction.  For nested types inside a template
  // instantiation, `parent` points to the enclosing type's context.
 	struct InstantiationContext {
-		// Phase 5: Binding-based storage (simplified for now using vectors)
-		// Structure: names, arg_lists, kinds, is_packs are parallel arrays
-		// where binding i = {names[i], arg_lists[i], kinds[i], is_packs[i]}
-		InlineVector<StringHandle, 4> binding_names;
-		InlineVector<InlineVector<TemplateArgInfo, 1>, 4> binding_args;
-		InlineVector<uint8_t, 4> binding_kinds;  // TemplateParameterKind as uint8
-		InlineVector<uint8_t, 4> binding_is_packs;
+		struct Binding {
+			StringHandle name;
+			InlineVector<TemplateArgInfo, 1> args;
+			uint8_t kind = 0; // TemplateParameterKind as uint8
+			bool is_pack = false;
+		};
+
+		InlineVector<Binding, 4> bindings;
 		const InstantiationContext* parent = nullptr; // Enclosing type's context (for nesting)
 
 		// Legacy fields for compatibility (populated in parallel during transition)
@@ -1063,10 +1064,8 @@ struct TypeInfo {
 		InlineVector<TemplateArgInfo, 4> param_args; // Concrete template arguments
 
 		// Phase 5 accessors
-		bool hasInstantiationContextBindings() const { return !binding_names.empty(); }
-		size_t getInstantiationContextBindingsCount() const {
-			return std::min(binding_names.size(), binding_args.size());
-		}
+		bool hasInstantiationContextBindings() const { return !bindings.empty(); }
+		size_t getInstantiationContextBindingsCount() const { return bindings.size(); }
 	};
 
 	InlineVector<TemplateArgInfo, 4> template_args_;
