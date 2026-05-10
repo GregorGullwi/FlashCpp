@@ -596,7 +596,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 			}
 		}
 
-		if (!substituted && !arg.is_value && is_struct_type(arg.category())) {
+		if (!substituted && !arg.is_value) {
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
 				if (const TypeInfo* recursively_resolved_type = resolveDependentMemberType(
 						*arg_type_info,
@@ -617,6 +617,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 				if (type_subst_it != param_map_.end()) {
 					materialized_arg = rebindDependentTemplateTypeArg(type_subst_it->second, materialized_arg);
 					result.had_substitution = true;
+					substituted = true;
 				}
 			}
 		}
@@ -1713,8 +1714,6 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 
 	auto ns_name_handle = StringTable::getOrInternStringHandle(ns_name);
 	auto type_it = getTypesByNameMap().find(ns_name_handle);
-	const TypeInfo* originating_placeholder_type =
-		(type_it != getTypesByNameMap().end()) ? type_it->second : nullptr;
 	auto template_args_still_dependent = [&](const std::vector<TemplateTypeArg>& args) {
 		for (const TemplateTypeArg& arg : args) {
 			if (arg.is_dependent) {
@@ -1732,103 +1731,10 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		}
 		return false;
 	};
-	auto has_matching_binding_layout = [](
-		const TypeInfo::InstantiationContext* lhs,
-		const TypeInfo::InstantiationContext* rhs) {
-		if (lhs == nullptr || rhs == nullptr) {
-			return false;
-		}
-		if (lhs->bindings.size() != rhs->bindings.size()) {
-			return false;
-		}
-		for (size_t i = 0; i < lhs->bindings.size(); ++i) {
-			const TypeInfo::InstantiationContext::Binding& lhs_binding = lhs->bindings[i];
-			const TypeInfo::InstantiationContext::Binding& rhs_binding = rhs->bindings[i];
-			if (lhs_binding.name != rhs_binding.name ||
-				lhs_binding.kind != rhs_binding.kind ||
-				lhs_binding.is_pack != rhs_binding.is_pack) {
-				return false;
-			}
-		}
-		return true;
-	};
-	auto is_same_placeholder_chain_candidate = [&](
-		const TypeInfo& candidate_info) {
-		if (originating_placeholder_type == nullptr || originating_placeholder_type == &candidate_info) {
-			return false;
-		}
-		if (!candidate_info.isTemplateInstantiation() ||
-			candidate_info.templateArgs().size() != originating_placeholder_type->templateArgs().size()) {
-			return false;
-		}
-
-		const TypeInfo::InstantiationContext* source_context =
-			originating_placeholder_type->instantiationContext();
-		const TypeInfo::InstantiationContext* candidate_context =
-			candidate_info.instantiationContext();
-		if (!has_matching_binding_layout(source_context, candidate_context)) {
-			return false;
-		}
-
-		if (source_context != nullptr && source_context->parent != nullptr) {
-			if (candidate_context == nullptr || candidate_context->parent != source_context->parent) {
-				return false;
-			}
-		}
-
-		for (size_t i = 0; i < originating_placeholder_type->templateArgs().size(); ++i) {
-			const TypeInfo::TemplateArgInfo& source_arg =
-				originating_placeholder_type->templateArgs()[i];
-			const TypeInfo::TemplateArgInfo& candidate_arg = candidate_info.templateArgs()[i];
-			if (source_arg.is_value != candidate_arg.is_value ||
-				source_arg.category() != candidate_arg.category()) {
-				return false;
-			}
-			if (source_arg.dependent_name.isValid() &&
-				candidate_arg.dependent_name.isValid() &&
-				source_arg.dependent_name != candidate_arg.dependent_name) {
-				return false;
-			}
-			// If the source has a concrete NTTP value (not dependent), the candidate must
-			// carry the same value to be in the same "instantiation family". Without this
-			// check, e.g. _Head_base<0,T> and _Head_base<1,T> look identical by shape alone
-			// and the sibling search can silently pick the wrong specialization.
-			if (source_arg.is_value &&
-				!source_arg.dependent_name.isValid() &&
-				!candidate_arg.dependent_name.isValid() &&
-				source_arg.value != candidate_arg.value) {
-				return false;
-			}
-		}
-
-		return true;
-	};
 	if (type_it != getTypesByNameMap().end() && type_it->second->isTemplateInstantiation()) {
 		MaterializedStoredTemplateArgs materialized_args =
 			materializeStoredTemplateArgs(*type_it->second, /*evaluate_dependent_member_values=*/true, kInitialDependentMemberTypeResolutionDepth);
 		inst_args = std::move(materialized_args.args);
-	}
-	if (!inst_args.empty() && template_args_still_dependent(inst_args)) {
-		for (const auto& [candidate_name, candidate_info] : getTypesByNameMap()) {
-			(void)candidate_name;
-			if (candidate_info == nullptr ||
-				!is_same_placeholder_chain_candidate(*candidate_info) ||
-				StringTable::getStringView(candidate_info->baseTemplateName()) != base_template_name) {
-				continue;
-			}
-
-			MaterializedStoredTemplateArgs candidate_args =
-				materializeStoredTemplateArgs(
-					*candidate_info,
-					/*evaluate_dependent_member_values=*/true,
-					kInitialDependentMemberTypeResolutionDepth);
-			if (candidate_args.had_substitution &&
-				!candidate_args.args.empty() &&
-				!template_args_still_dependent(candidate_args.args)) {
-				inst_args = std::move(candidate_args.args);
-				break;
-			}
-		}
 	}
 
 	// Fallback: if TypeInfo lookup found no stored args (e.g., the placeholder wasn't registered
@@ -1836,6 +1742,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	// This handles cases like pack expansion bases where no TypeInfo exists.
 	if (inst_args.empty()) {
 		inst_args = collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteQualifiedIdentifier");
+	}
+	if (!inst_args.empty() && template_args_still_dependent(inst_args)) {
+		throw InternalError("ExpressionSubstitutor could not materialize concrete template arguments for qualified identifier substitution");
 	}
 
 	if (!inst_args.empty()) {
