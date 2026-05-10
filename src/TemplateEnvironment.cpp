@@ -163,7 +163,7 @@ void appendContextBindings(
 			TemplateBinding binding;
 			binding.name = context_binding.name;
 			binding.kind = static_cast<TemplateParameterKind>(context_binding.kind);
-			binding.is_pack = context_binding.is_pack != 0;
+			binding.is_pack = context_binding.is_pack;
 			binding.args.reserve(context_binding.args.size());
 			for (const TypeInfo::TemplateArgInfo& arg_info : context_binding.args) {
 				binding.args.push_back(toTemplateTypeArg(arg_info));

@@ -960,7 +960,7 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 			binding_kind = TemplateParameterKind::NonType;
 		}
 		binding.kind = static_cast<uint8_t>(binding_kind);
-		binding.is_pack = static_cast<uint8_t>(binding.args.size() > 1);
+		binding.is_pack = (binding.args.size() > 1);
 		instantiation_context_->bindings.push_back(std::move(binding));
 	}
 }

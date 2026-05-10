@@ -1053,7 +1053,7 @@ struct TypeInfo {
 			StringHandle name;
 			InlineVector<TemplateArgInfo, 1> args;
 			uint8_t kind = 0; // TemplateParameterKind as uint8
-			uint8_t is_pack = 0;
+			bool is_pack = false;
 		};
 
 		InlineVector<Binding, 4> bindings;
