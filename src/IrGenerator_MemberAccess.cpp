@@ -2076,7 +2076,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 						}
 						// Fallback: use fallback_size_bits_ from TypeInfo (works for template instantiations at global scope)
 						if (type_info->hasStoredSize()) {
-							return makeSizeTExprResult(type_info->sizeInBits().value);
+							return makeSizeTExprResult(static_cast<size_t>(type_info->sizeInBits().value) / 8);
 						}
 					}
 					// Fallback: use size_in_bits from the type specifier node
