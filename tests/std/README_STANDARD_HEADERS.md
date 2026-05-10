@@ -26,13 +26,13 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<array>` | `test_std_array.cpp` | ❌ Codegen Error | Focused retest 2026-05-04 after injected-class-name fix. The `Cannot use copy initialization with explicit constructor` diagnostic for `std::reverse_iterator` is fixed; the header now progresses into existing IR/codegen gaps around unresolved `std::reverse_iterator` constructor/placeholder lowering. |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~2320ms (retested 2026-05-07, Linux/libstdc++-14). Unresolved-`auto` mangling stop is gone; current crash is late codegen `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~3200ms (retested 2026-05-10, Linux/libstdc++-14). The deleted dependent `std::pair::swap` stop is fixed; current first hard error is again `_Head_base` default-NTTP evaluation through the libstdc++ tuple path. |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Compile Error | ~2070ms (retested 2026-05-10, Linux/libstdc++-14). The `_Head_base` default-NTTP blocker is fixed; current first hard error is uneliminated `PackExpansionExprNode` in tuple constructors at the post-parse semantic boundary. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2062ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Itanium name mangling: unknown type — cannot generate valid symbol` after several deferred/incomplete `reverse_iterator` instantiations. |
 | `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~3780ms (retested 2026-05-09, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop is fixed; current first hard error is `Max template instantiation depth (24) exceeded for 'basic_string'`. |
+| `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2650ms (retested 2026-05-10, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop is fixed; current first hard error is `Max template instantiation depth (24) exceeded for 'list'`. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~2450ms (retested 2026-05-10, Linux/libstdc++-14). The deleted dependent `std::pair::swap` and block-scope `using std::swap` lookup stops are fixed; current first hard error is `Failed to instantiate template function` in `bits/max_size_type.h:790` (`min()`). |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~4740ms (retested 2026-05-10, Linux/libstdc++-14). The deleted dependent `std::pair::swap`, block-scope `using std::swap`, and shared `_Head_base` default-NTTP stops are fixed; current first hard error is `Max template instantiation depth (24) exceeded for 'basic_string'`. |
 | `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~3763ms (retested 2026-04-24, Linux/libstdc++). `_M_tail` blocker resolved by the member-function overload fix; now first-order error is non-dependent name `__node_gen` C++20 [temp.res]/9 violation (false positive triggered by template reparse depth-guard firing during deep instantiation). |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -100,6 +100,31 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-10 Linux/libstdc++ dependent member-alias placeholder rematerialization follow-up
+
+This pass fixed a high-layer template substitution issue where a qualified-id
+namespace placeholder captured through a dependent member-alias chain could keep
+the original alias-template parameter instead of rematerializing through the
+currently visible outer template argument. In the libstdc++ tuple path this
+showed up as `_Head_base<_Idx, _Head, bool = __empty_not_final<_Head>::value>`
+failing to evaluate the default NTTP because the stored
+`__is_empty_non_tuple<_Head>::value` qualified-id still materialized as the
+older `__is_empty_non_tuple<_Tp>::value` placeholder.
+
+Regression coverage:
+
+- `tests/test_member_alias_placeholder_default_nttp_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_member_alias_placeholder_default_nttp_ret0.cpp` | ✅ Pass | n/a | New regression verifies an alias-selected `IsEmptyNonTuple<T>::value` default NTTP can rematerialize through an outer `HeadBase<H>` argument. |
+| `<tuple>` (`test_std_tuple.cpp`) | ❌ Compile Error | 2.07s | Progressed past `_Head_base` default-NTTP evaluation; current stop is uneliminated `PackExpansionExprNode` in `_Tuple_impl`/`tuple` constructors at the post-parse semantic boundary. |
+| `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | 4.74s | Progressed past the shared tuple/default-NTTP path; current stop is `Max template instantiation depth (24) exceeded for 'basic_string'`. |
+| `<list>` (`test_std_list.cpp`) | ❌ Compile Error | 2.65s | Progressed past the shared tuple/default-NTTP path; current stop is `Max template instantiation depth (24) exceeded for 'list'`. |
+| `<string>` (`test_std_string.cpp`) | ❌ Compile Error | 3.57s | Still stops while reparsing lazy `basic_string::clear`, with earlier `basic_string_view` out-of-line member signature mismatches and unresolved `contiguous_iterator` variable-template lookups. |
 
 ### 2026-05-10 Linux/libstdc++ block-scope using-declaration swap follow-up
 
