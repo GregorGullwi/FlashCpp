@@ -1713,7 +1713,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 
 	auto ns_name_handle = StringTable::getOrInternStringHandle(ns_name);
 	auto type_it = getTypesByNameMap().find(ns_name_handle);
-	auto templateArgsStillDependent = [&](const std::vector<TemplateTypeArg>& args) {
+	auto template_args_still_dependent = [&](const std::vector<TemplateTypeArg>& args) {
 		for (const TemplateTypeArg& arg : args) {
 			if (arg.is_dependent) {
 				return true;
@@ -1735,7 +1735,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			materializeStoredTemplateArgs(*type_it->second, /*evaluate_dependent_member_values=*/true, kInitialDependentMemberTypeResolutionDepth);
 		inst_args = std::move(materialized_args.args);
 	}
-	if (!inst_args.empty() && templateArgsStillDependent(inst_args)) {
+	if (!inst_args.empty() && template_args_still_dependent(inst_args)) {
 		for (const auto& [candidate_name, candidate_info] : getTypesByNameMap()) {
 			if (candidate_info == nullptr ||
 				candidate_info == type_it->second ||
@@ -1751,7 +1751,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					kInitialDependentMemberTypeResolutionDepth);
 			if (candidate_args.had_substitution &&
 				!candidate_args.args.empty() &&
-				!templateArgsStillDependent(candidate_args.args)) {
+				!template_args_still_dependent(candidate_args.args)) {
 				inst_args = std::move(candidate_args.args);
 				break;
 			}
