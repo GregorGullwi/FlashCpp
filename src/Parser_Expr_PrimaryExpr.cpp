@@ -451,6 +451,10 @@ bool typeRefersToCurrentTemplateParam(
 		type_spec.category() != TypeCategory::TypeAlias) {
 		return false;
 	}
+	if (!current_template_param_names.empty() &&
+		(typeSpecStillUsesDependentPlaceholder(type_spec) || !type_spec.sizeBits().is_set())) {
+		return true;
+	}
 	if (!type_spec.type_index().is_valid()) {
 		return true;
 	}
@@ -4597,6 +4601,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (instantiated_func.has_value()) {
 						const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
 						if (func_check && func_check->is_deleted()) {
+							if (argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+								return make_dependent_call_result();
+							}
 							return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "\'", identifier_token);
 						}
 						if (instantiated_func->is<FunctionDeclarationNode>()) {
@@ -4661,6 +4668,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (instantiated_func.has_value()) {
 						const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
 						if (func_check && func_check->is_deleted()) {
+							if (argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+								return make_dependent_call_result();
+							}
 							return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "\'", identifier_token);
 						}
 						if (instantiated_func->is<FunctionDeclarationNode>()) {
@@ -6594,6 +6604,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										// Check if the function is deleted
 										const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
 										if (func_check && func_check->is_deleted()) {
+											if (argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+												argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+												FLASH_LOG(Templates, Debug, "Creating dependent call expression for deleted dependent call to '", identifier_token.value(), "'");
+												auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+												auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+												result = emplace_node<ExpressionNode>(
+													makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
+												return ParseResult::success(*result);
+											}
 											return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "'", identifier_token);
 										}
 										if (instantiated_func->is<FunctionDeclarationNode>()) {
@@ -6720,6 +6739,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											// Check if the function is deleted
 											const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
 											if (func_check && func_check->is_deleted()) {
+												if (argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+													argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+													FLASH_LOG(Templates, Debug, "Creating dependent call expression for deleted dependent call to '", identifier_token.value(), "'");
+													auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+													auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+													result = emplace_node<ExpressionNode>(
+														makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
+													return ParseResult::success(*result);
+												}
 												return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "'", identifier_token);
 											}
 											if (instantiated_func->is<FunctionDeclarationNode>()) {
@@ -6788,6 +6816,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												// Check if the function is deleted
 												const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
 												if (func_check && func_check->is_deleted()) {
+													if (argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+														argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+														FLASH_LOG(Templates, Debug, "Creating dependent call expression for deleted dependent call to '", identifier_token.value(), "'");
+														auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+														auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+														result = emplace_node<ExpressionNode>(
+															makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
+														return ParseResult::success(*result);
+													}
 													return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "'", identifier_token);
 												}
 												// Successfully instantiated template
