@@ -3914,10 +3914,40 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		}
 
 		// Check if this is a template function call.
-		// Ordinary lookup has already selected the visible declaration set.  Do
-		// not replace a block-scope using-declaration such as `using std::swap`
-		// with a current-class member of the same name; unqualified call
-		// resolution below must use the declaration found by lookup.
+		// If ordinary lookup found a namespace template but the current class has
+		// a static member with the same name, the member belongs to the class
+		// scope searched before the enclosing namespace.  Do not apply this to
+		// non-static members: a block-scope using-declaration such as
+		// `using std::swap` must not be replaced by an unrelated instance member.
+		if (identifierType && identifierType->is<TemplateFunctionDeclarationNode>() &&
+			peek() == "("_tok) {
+			auto check_class_static_members = [&](const StructDeclarationNode* struct_node) -> bool {
+				if (!struct_node) {
+					return false;
+				}
+				for (const auto& member_func : struct_node->member_functions()) {
+					if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+						const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
+						if (func_decl.is_static() &&
+							func_decl.decl_node().identifier_token().value() == identifier_token.value()) {
+							identifierType = member_func.function_declaration;
+							gSymbolTable.insert(identifier_token.value(), member_func.function_declaration);
+							found_member_function_in_context = false;
+							FLASH_LOG_FORMAT(Parser, Debug, "Resolved '{}' as static member function of current class (overrides namespace template)", identifier_token.value());
+							return true;
+						}
+					}
+				}
+				return false;
+			};
+
+			if (!struct_parsing_context_stack_.empty()) {
+				check_class_static_members(struct_parsing_context_stack_.back().struct_node);
+			}
+			if (identifierType->is<TemplateFunctionDeclarationNode>() && !member_function_context_stack_.empty()) {
+				check_class_static_members(member_function_context_stack_.back().struct_node);
+			}
+		}
 		if (identifierType && identifierType->is<TemplateFunctionDeclarationNode>() &&
 			consume("("_tok)) {
 
