@@ -60,7 +60,7 @@ struct Empty {
 };
 
 int main() {
-	constexpr unsigned long long non_empty_size = sizeof(TupleImpl<0, NonEmpty>);
-	constexpr unsigned long long empty_size = sizeof(TupleImpl<1, Empty>);
+	constexpr auto non_empty_size = sizeof(TupleImpl<0, NonEmpty>);
+	constexpr auto empty_size = sizeof(TupleImpl<1, Empty>);
 	return (non_empty_size > 0 && empty_size > 0) ? 0 : 1;
 }

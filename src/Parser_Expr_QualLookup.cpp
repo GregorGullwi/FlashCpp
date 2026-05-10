@@ -2197,6 +2197,16 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		// Pseudo-destructor call (obj.~Type()) always returns void
 		const auto& dtor_call = std::get<PseudoDestructorCallNode>(expr);
 		return TypeSpecifierNode(TypeCategory::Void, TypeQualifier::None, 0, dtor_call.type_name_token(), CVQualifier::None);
+	} else if (std::holds_alternative<SizeofExprNode>(expr) ||
+			   std::holds_alternative<SizeofPackNode>(expr) ||
+			   std::holds_alternative<AlignofExprNode>(expr) ||
+			   std::holds_alternative<OffsetofExprNode>(expr)) {
+		return TypeSpecifierNode(
+			TypeCategory::UnsignedLongLong,
+			TypeQualifier::None,
+			get_type_size_bits(TypeCategory::UnsignedLongLong),
+			Token{},
+			CVQualifier::None);
 	} else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 		// For ternary expressions (cond ? true_expr : false_expr), determine the common type
 		// This is important for decltype(true ? expr1 : expr2) patterns used in <type_traits>
