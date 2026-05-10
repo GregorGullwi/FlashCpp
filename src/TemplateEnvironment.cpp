@@ -64,7 +64,7 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.template_name_handle = arg.template_name;
 	ta.member_pointer_kind = arg.member_pointer_kind;
 	if (arg.is_value) {
-		ta.value = arg.value;
+		ta.value = arg.intValue();
 	}
 	return ta;
 }

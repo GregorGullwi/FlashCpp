@@ -1055,7 +1055,7 @@ struct TypeInfo {
 		InlineVector<StringHandle, 4> binding_names;
 		InlineVector<InlineVector<TemplateArgInfo, 1>, 4> binding_args;
 		InlineVector<uint8_t, 4> binding_kinds;  // TemplateParameterKind as uint8
-		InlineVector<bool, 4> binding_is_packs;
+		InlineVector<uint8_t, 4> binding_is_packs;
 		const InstantiationContext* parent = nullptr; // Enclosing type's context (for nesting)
 
 		// Legacy fields for compatibility (populated in parallel during transition)

@@ -21,7 +21,7 @@ struct TemplateBinding {
 	StringHandle name;
 	TemplateParameterKind kind{};
 	bool is_pack = false;
-	InlineVector<TemplateTypeArg, 1> args;
+	std::vector<TemplateTypeArg> args;
 };
 
 struct TemplateBindingSnapshot {
