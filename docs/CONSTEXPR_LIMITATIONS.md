@@ -93,22 +93,6 @@ constexpr int f() {
 
 ---
 
-### `constexpr auto fn = make_fn()` where `make_fn()` returns a lambda
-
-A global constexpr variable initialized to a returned lambda cannot be called in `static_assert`.
-
-```cpp
-constexpr auto make_fn() { return [](int x) { return x * 3; }; }
-constexpr auto fn = make_fn();
-static_assert(fn(5) == 15);  // ❌ "Member function calls require struct/class objects"
-```
-
-**Root cause:** The evaluator stores `fn` as an `EvalResult` with a `callable_lambda` pointer, but that pointer refers to the `LambdaExpressionNode` inside the transient return value of `make_fn()` — not a stable node. When `evaluate_function_call` looks up `fn` at `static_assert` time, it finds a `VariableDeclarationNode` and routes to `evaluate_callable_object`, which cannot reconstruct the lambda from the stored `EvalResult` because the `callable_var_decl` path expects a var-decl holding the original lambda, not a propagated result.
-
-**What is needed:** The binding for `fn` must persist the full `EvalResult` (including `callable_lambda` / `callable_bindings`) through the global-variable materialization path so that `evaluate_function_call` can directly call it without going back to the symbol table.
-
----
-
 ### Subscript through a struct member `const char*`
 
 `operator[]` on a struct whose implementation subscripts a `const char*` data member fails.
@@ -211,21 +195,6 @@ static_assert(sum({1, 2, 3}) == 6);  // ❌ "Expression type not supported in co
 
 ---
 
-### Constexpr variable storing a returned lambda (global scope call)
-
-```cpp
-constexpr auto fn = []{ return 42; };
-static_assert(fn() == 42);            // ✅ direct lambda — works
-
-constexpr auto make() { return [](int x){ return x*2; }; }
-constexpr auto fn2 = make();
-static_assert(fn2(5) == 10);          // ❌ "Member function calls require struct/class objects"
-```
-
-See the partial-support section above for root cause details.
-
----
-
 ### `try`/`catch` in constexpr
 
 C++20 permits `try`/`catch` blocks inside constexpr functions (they just cannot be entered during constant evaluation). FlashCpp does not currently parse `try` blocks inside constexpr function bodies, so any constexpr function containing a `try` block will fail to compile.
@@ -292,7 +261,7 @@ Key design constraint: the evaluator is a tree-walk interpreter with no heap or 
 1. **Prefer member-initializer lists** over complex constructor-body chains for most reliable constexpr support.
 2. **Void lambdas with `[&]` captures work** — accumulator and mutating-callback patterns are fully supported.
 3. **Avoid indirect lambda capture chains** — `[&inc]() { inc(); }` where `inc` itself captures by-ref does not propagate writes back. Inline the body instead.
-4. **Use `constexpr` lambdas directly**, not via a global `constexpr auto fn = make_fn()` variable (the returned-lambda case is not yet supported).
+4. **`constexpr` lambdas and returned lambda values are supported**, including `constexpr auto fn = make_fn(); static_assert(fn(...));`.
 5. **Dynamic allocation works** — `new`/`delete` in constexpr follow C++20 rules; all allocations must be freed before the constant expression returns.
 6. **`const char*` string operations work** — subscript, `while (*s != '\0')` traversal, and string-literal return values are all supported.
 7. **Avoid `std::initializer_list` parameters** — use explicit array parameters or variadic templates instead.
@@ -302,11 +271,10 @@ Key design constraint: the evaluator is a tree-walk interpreter with no heap or 
 The most impactful next improvements in rough priority order:
 
 1. **Propagate mutations through indirect lambda-capture chains** — fix `evaluate_lambda_call` to walk capture-of-capture chains after each call and propagate writes all the way to the original binding.
-2. **`constexpr auto fn = make_fn()` at global scope** — persist the full `EvalResult` (including `callable_lambda`) through global-variable materialization so `evaluate_function_call` can invoke it directly.
-3. **`const char*` member subscript** — after resolving a `const char*` member binding, propagate `pointer_to_var.origin_var_name` so the subscript fast-path can find the string data.
-4. **Delegating constructors** — detect delegation in the initializer list and recurse before applying any remaining initializer entries.
-5. **`std::initializer_list`** — synthesize an internal array from the brace-argument list when the parameter type is `std::initializer_list<T>`.
-6. **Virtual dispatch** — use `object_type_index` as the dynamic type when looking up member functions through a base-class static type.
+2. **`const char*` member subscript** — after resolving a `const char*` member binding, propagate `pointer_to_var.origin_var_name` so the subscript fast-path can find the string data.
+3. **Delegating constructors** — detect delegation in the initializer list and recurse before applying any remaining initializer entries.
+4. **`std::initializer_list`** — synthesize an internal array from the brace-argument list when the parameter type is `std::initializer_list<T>`.
+5. **Virtual dispatch** — use `object_type_index` as the dynamic type when looking up member functions through a base-class static type.
 
 ---
 
@@ -339,3 +307,4 @@ The most impactful next improvements in rough priority order:
 - `tests/test_constexpr_global_float_struct_ret0.cpp` — global struct paren-init with float/double members
 - `tests/test_constexpr_void_lambda_ref_capture_ret0.cpp` — void constexpr lambdas with by-reference capture mutations
 - `tests/test_constexpr_local_callable_operator_ret0.cpp` — `operator()` on locally-declared struct variables
+- `tests/test_constexpr_returned_lambda_global_ret0.cpp` — returned lambda values stored in global `constexpr auto` variables

@@ -4527,6 +4527,29 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	// Check if it's a VariableDeclarationNode (could be a lambda/functor callable object)
 	if (symbol_node.is<VariableDeclarationNode>()) {
 		const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
+		if (var_decl.initializer().has_value()) {
+			EvalResult callable_value = evaluate(var_decl.initializer().value(), context);
+			if (callable_value.success() && (callable_value.callable_var_decl || callable_value.callable_lambda)) {
+				if (callable_value.callable_var_decl) {
+					return evaluate_callable_object(
+						*callable_value.callable_var_decl,
+						call_expr.arguments(),
+						context,
+						nullptr,
+						nullptr,
+						&callable_value,
+						call_expr.callee().function_declaration_or_null());
+				}
+				return evaluate_lambda_call(
+					*callable_value.callable_lambda,
+					call_expr.arguments(),
+					context,
+					nullptr,
+					nullptr,
+					&callable_value.callable_bindings,
+					nullptr);
+			}
+		}
 		return evaluate_callable_object(
 			var_decl,
 			call_expr.arguments(),
