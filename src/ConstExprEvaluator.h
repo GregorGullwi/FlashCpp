@@ -753,6 +753,11 @@ private:
 		std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings = nullptr,
 		EvalResult* callable_state = nullptr,
 		const FunctionDeclarationNode* resolved_call_operator = nullptr);
+	static std::optional<EvalResult> try_evaluate_callable_initializer_for_call(
+		const ASTNode& initializer_expr,
+		const ChunkedVector<ASTNode>& arguments,
+		EvaluationContext& context,
+		const FunctionDeclarationNode* resolved_call_operator);
 	static EvalResult evaluate_lambda_call(
 		const LambdaExpressionNode& lambda,
 		const ChunkedVector<ASTNode>& arguments,

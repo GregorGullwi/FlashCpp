@@ -1137,6 +1137,18 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						if (struct_info && !eval_result.object_member_bindings.empty()) {
 							op.init_data.resize(toSizeT(struct_info->sizeInBytes()), 0);
 							packStructEvalResultIntoInitData(packStructEvalResultIntoInitData, op.init_data, *struct_info, eval_result, 0, 0);
+						} else if (struct_info && !eval_result.callable_bindings.empty()) {
+							ConstExpr::EvalResult synthetic_closure_result = ConstExpr::EvalResult::from_int(0LL);
+							synthetic_closure_result.object_type_index = type_node.type_index();
+							for (const auto& member : struct_info->members) {
+								std::string_view member_name = StringTable::getStringView(member.getName());
+								auto capture_it = eval_result.callable_bindings.find(member_name);
+								if (capture_it != eval_result.callable_bindings.end()) {
+									synthetic_closure_result.object_member_bindings[member_name] = capture_it->second;
+								}
+							}
+							op.init_data.resize(toSizeT(struct_info->sizeInBytes()), 0);
+							packStructEvalResultIntoInitData(packStructEvalResultIntoInitData, op.init_data, *struct_info, synthetic_closure_result, 0, 0);
 						} else {
 							unsigned long long value = evalResultMemberToRaw(eval_result, type_node.type());
 							appendValueAsBytes(op.init_data, value, element_size);
