@@ -3962,25 +3962,45 @@ EvalResult Evaluator::evaluate_lambda_call(
 				// updated x that must also be reflected in the outer frame's x.
 				// Lambdas may be stored as either callable_lambda or callable_var_decl
 				// (when declared as a named variable); handle both cases.
+				// Propagate inner by-reference captures from the written-back lambda to the
+				// outer scope iteratively, handling N-hop chains (e.g., thrice->twice->inc->x).
 				const EvalResult& written_back = binding_it->second;
-				const LambdaExpressionNode* written_back_lambda = written_back.callable_lambda;
-				if (!written_back_lambda && written_back.callable_var_decl) {
-					written_back_lambda = extract_lambda_from_initializer(
+				const LambdaExpressionNode* wb_lambda = written_back.callable_lambda;
+				if (!wb_lambda && written_back.callable_var_decl) {
+					wb_lambda = extract_lambda_from_initializer(
 						written_back.callable_var_decl->initializer());
 				}
-				if (written_back_lambda) {
-					for (const auto& inner_capture : written_back_lambda->captures()) {
-						using InnerCaptureKind = LambdaCaptureNode::CaptureKind;
-						if (inner_capture.kind() != InnerCaptureKind::ByReference ||
-							inner_capture.has_initializer()) {
-							continue;
-						}
-						std::string_view inner_var = inner_capture.identifier_name();
-						auto inner_binding_it = written_back.callable_bindings.find(inner_var);
-						if (inner_binding_it != written_back.callable_bindings.end()) {
+				if (wb_lambda) {
+					using WorkItem = std::pair<const LambdaExpressionNode*, const std::unordered_map<std::string_view, EvalResult>*>;
+					std::vector<WorkItem> worklist;
+					worklist.push_back({wb_lambda, &written_back.callable_bindings});
+					while (!worklist.empty()) {
+						auto [cur_lambda, cur_bindings] = worklist.back();
+						worklist.pop_back();
+						for (const auto& inner_capture : cur_lambda->captures()) {
+							using InnerCaptureKind = LambdaCaptureNode::CaptureKind;
+							if (inner_capture.kind() != InnerCaptureKind::ByReference ||
+								inner_capture.has_initializer()) {
+								continue;
+							}
+							std::string_view inner_var = inner_capture.identifier_name();
+							auto inner_binding_it = cur_bindings->find(inner_var);
+							if (inner_binding_it == cur_bindings->end()) {
+								continue;
+							}
 							auto outer_var_it = mutable_outer_bindings->find(inner_var);
 							if (outer_var_it != mutable_outer_bindings->end()) {
 								outer_var_it->second = inner_binding_it->second;
+							}
+							// If the inner value is also a lambda, enqueue it to propagate its captures
+							const EvalResult& inner_val = inner_binding_it->second;
+							const LambdaExpressionNode* inner_lambda = inner_val.callable_lambda;
+							if (!inner_lambda && inner_val.callable_var_decl) {
+								inner_lambda = extract_lambda_from_initializer(
+									inner_val.callable_var_decl->initializer());
+							}
+							if (inner_lambda) {
+								worklist.push_back({inner_lambda, &inner_val.callable_bindings});
 							}
 						}
 					}

@@ -1522,6 +1522,11 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 				const FunctionDeclarationNode* actual_func = candidate.function;
 				std::unordered_map<std::string_view, EvalResult> member_bindings =
 					array_result->object_member_bindings;
+				// Inject 'this' before parameters so object_member_bindings only contains struct members
+				EvalResult this_binding = EvalResult::from_int(0LL);
+				this_binding.object_type_index = array_result->object_type_index;
+				this_binding.object_member_bindings = member_bindings;
+				member_bindings["this"] = std::move(this_binding);
 				EvalResult idx_result_copy = index_result;
 				std::vector<EvalResult> pre_evaluated_args = {idx_result_copy};
 				auto bind_result = bind_pre_evaluated_arguments(
@@ -1534,12 +1539,9 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 				if (!bind_result.success()) {
 					return bind_result;
 				}
-				EvalResult this_binding = EvalResult::from_int(0LL);
-				this_binding.object_type_index = array_result->object_type_index;
-				this_binding.object_member_bindings = member_bindings;
-				member_bindings["this"] = std::move(this_binding);
 				auto saved_template_param_names = context.template_param_names;
 				auto saved_template_args = context.template_args;
+				auto saved_template_environment = context.template_environment;
 				if (actual_func->has_outer_template_bindings()) {
 					context.template_param_names.clear();
 					context.template_args.clear();
@@ -1553,6 +1555,12 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 					}
 				} else {
 					load_template_bindings_from_type(type_info, context);
+				}
+				if (context.current_depth >= context.max_recursion_depth) {
+					context.template_param_names = std::move(saved_template_param_names);
+					context.template_args = std::move(saved_template_args);
+					context.template_environment = std::move(saved_template_environment);
+					return EvalResult::error("Constexpr recursion depth limit exceeded in operator[] call");
 				}
 				auto saved_struct_info = context.struct_info;
 				auto saved_struct_type_index = context.struct_type_index;
@@ -1582,6 +1590,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 				context.struct_type_index = saved_struct_type_index;
 				context.template_param_names = std::move(saved_template_param_names);
 				context.template_args = std::move(saved_template_args);
+				context.template_environment = std::move(saved_template_environment);
 				return result;
 			}
 		}
@@ -7109,6 +7118,11 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	// Handle delegating constructors: S() : S(42) {} — the delegation performs
 	// full construction; the delegating constructor's own body runs afterwards.
 	if (const auto& del_init = ctor_decl.delegating_initializer(); del_init.has_value()) {
+		if (context.current_depth >= context.max_recursion_depth) {
+			return EvalResult::error("Constexpr recursion depth limit exceeded in delegating constructor");
+		}
+		context.current_depth++;
+		auto depth_guard = ScopeGuard([&context]() { context.current_depth--; });
 		ChunkedVector<ASTNode> del_args;
 		for (const auto& arg : del_init->arguments) {
 			del_args.push_back(arg);
@@ -7578,6 +7592,11 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 				const FunctionDeclarationNode* actual_func = candidate.function;
 				// Set up member_bindings from struct object, bind parameter, add 'this'
 				std::unordered_map<std::string_view, EvalResult> member_bindings = arr_result.object_member_bindings;
+				// Inject 'this' before parameters so object_member_bindings only contains struct members
+				EvalResult this_binding = EvalResult::from_int(0LL);
+				this_binding.object_type_index = arr_result.object_type_index;
+				this_binding.object_member_bindings = member_bindings;
+				member_bindings["this"] = std::move(this_binding);
 				// Bind the index parameter using bind_pre_evaluated_arguments
 				EvalResult idx_result = index_result;
 				std::vector<EvalResult> pre_evaluated_args = {idx_result};
@@ -7591,14 +7610,10 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 				if (!bind_result.success()) {
 					return bind_result;
 				}
-				// Inject 'this' binding
-				EvalResult this_binding = EvalResult::from_int(0LL);
-				this_binding.object_type_index = arr_result.object_type_index;
-				this_binding.object_member_bindings = member_bindings;
-				member_bindings["this"] = std::move(this_binding);
 				// Save and set context for member function evaluation
 				auto saved_template_param_names = context.template_param_names;
 				auto saved_template_args = context.template_args;
+				auto saved_template_environment = context.template_environment;
 				if (actual_func->has_outer_template_bindings()) {
 					context.template_param_names.clear();
 					context.template_args.clear();
@@ -7612,6 +7627,12 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 					}
 				} else {
 					load_template_bindings_from_type(type_info, context);
+				}
+				if (context.current_depth >= context.max_recursion_depth) {
+					context.template_param_names = std::move(saved_template_param_names);
+					context.template_args = std::move(saved_template_args);
+					context.template_environment = std::move(saved_template_environment);
+					return EvalResult::error("Constexpr recursion depth limit exceeded in operator[] call");
 				}
 				auto saved_struct_info = context.struct_info;
 				auto saved_struct_type_index = context.struct_type_index;
@@ -7641,6 +7662,7 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 				context.struct_type_index = saved_struct_type_index;
 				context.template_param_names = std::move(saved_template_param_names);
 				context.template_args = std::move(saved_template_args);
+				context.template_environment = std::move(saved_template_environment);
 				return result;
 			}
 		}
