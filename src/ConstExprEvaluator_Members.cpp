@@ -1508,6 +1508,84 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 		offset_ptr.pointer_offset += index;
 		return deref_pointer_with_bindings(offset_ptr, bindings, context);
 	}
+	// Handle struct with operator[]: dispatch to the member function when the
+	// subscripted expression resolves to a struct object with operator[] defined.
+	if (!array_result->is_array && array_result->object_type_index.is_valid()) {
+		const TypeInfo* type_info = tryGetTypeInfo(array_result->object_type_index);
+		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+		if (struct_info) {
+			StringHandle op_bracket = StringTable::getOrInternStringHandle("operator[]");
+			auto candidate = find_member_function_candidate(
+				struct_info, op_bracket, 1, context,
+				MemberFunctionLookupMode::ConstexprEvaluable, false, true);
+			if (!candidate.ambiguous && candidate.function && candidate.function->get_definition().has_value()) {
+				const FunctionDeclarationNode* actual_func = candidate.function;
+				std::unordered_map<std::string_view, EvalResult> member_bindings =
+					array_result->object_member_bindings;
+				EvalResult idx_result_copy = index_result;
+				std::vector<EvalResult> pre_evaluated_args = {idx_result_copy};
+				auto bind_result = bind_pre_evaluated_arguments(
+					actual_func->parameter_nodes(),
+					pre_evaluated_args,
+					member_bindings,
+					context,
+					"Invalid parameter node in constexpr operator[]",
+					false);
+				if (!bind_result.success()) {
+					return bind_result;
+				}
+				EvalResult this_binding = EvalResult::from_int(0LL);
+				this_binding.object_type_index = array_result->object_type_index;
+				this_binding.object_member_bindings = member_bindings;
+				member_bindings["this"] = std::move(this_binding);
+				auto saved_template_param_names = context.template_param_names;
+				auto saved_template_args = context.template_args;
+				if (actual_func->has_outer_template_bindings()) {
+					context.template_param_names.clear();
+					context.template_args.clear();
+					context.template_param_names.reserve(actual_func->outer_template_param_names().size());
+					context.template_args.reserve(actual_func->outer_template_args().size());
+					for (StringHandle param_name : actual_func->outer_template_param_names()) {
+						context.template_param_names.push_back(StringTable::getStringView(param_name));
+					}
+					for (const auto& arg : actual_func->outer_template_args()) {
+						context.template_args.push_back(toTemplateTypeArg(arg));
+					}
+				} else {
+					load_template_bindings_from_type(type_info, context);
+				}
+				auto saved_struct_info = context.struct_info;
+				auto saved_struct_type_index = context.struct_type_index;
+				const TypeInfo* saved_return_type_info = context.return_type_info;
+				context.struct_info = struct_info;
+				context.struct_type_index = array_result->object_type_index;
+				context.return_type_info = nullptr;
+				{
+					const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_specifier_node();
+					TypeIndex ret_idx = ret_spec.type_index();
+					if (const TypeInfo* rtype = tryGetTypeInfo(ret_idx))
+						context.return_type_info = rtype;
+				}
+				context.current_depth++;
+				auto* saved_local_bindings = context.local_bindings;
+				context.local_bindings = &member_bindings;
+				auto result = evaluate_block_with_bindings(
+					actual_func->get_definition().value(),
+					member_bindings,
+					context,
+					"operator[] body is not a block",
+					"operator[] did not return a value");
+				context.local_bindings = saved_local_bindings;
+				context.current_depth--;
+				context.return_type_info = saved_return_type_info;
+				context.struct_info = saved_struct_info;
+				context.struct_type_index = saved_struct_type_index;
+				context.template_param_names = std::move(saved_template_param_names);
+				context.template_args = std::move(saved_template_args);
+				return result;
+			}
+		}
+	}
 	if (!array_result->is_array) {
 		return EvalResult::error("Subscript on non-array variable in constant expression");
 	}
@@ -7028,6 +7106,74 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	bool ignore_default_initializer_errors) {
 	auto* saved_local_bindings = context.local_bindings;
 
+	// Handle delegating constructors: S() : S(42) {} — the delegation performs
+	// full construction; the delegating constructor's own body runs afterwards.
+	if (const auto& del_init = ctor_decl.delegating_initializer(); del_init.has_value()) {
+		ChunkedVector<ASTNode> del_args;
+		for (const auto& arg : del_init->arguments) {
+			del_args.push_back(arg);
+		}
+		auto del_result = try_materialize_struct_from_ctor_args(
+			struct_info,
+			ctor_decl.owning_type_index().is_valid()
+				? ctor_decl.owning_type_index()
+				: (struct_info->own_type_index_.has_value() ? *struct_info->own_type_index_ : TypeIndex{}),
+			del_args,
+			context,
+			false,
+			&ctor_param_bindings,
+			nullptr,
+			ignore_default_initializer_errors);
+		if (!del_result.has_value()) {
+			return EvalResult::error("Delegating constructor: no matching constructor found for delegation");
+		}
+		if (!del_result->success()) {
+			return *del_result;
+		}
+		// Copy member bindings from the delegated-to constructor result
+		member_bindings = std::move(del_result->object_member_bindings);
+		// Now execute the delegating constructor's own body (if any)
+		const auto& ctor_definition = ctor_decl.get_definition();
+		if (!ctor_definition.has_value() || !ctor_definition->is<BlockNode>()) {
+			return EvalResult::from_bool(true);
+		}
+		std::unordered_map<std::string_view, EvalResult> ctor_body_bindings = member_bindings;
+		std::unordered_map<std::string_view, EvalResult> ctor_local_bindings = ctor_param_bindings;
+		const StructTypeInfo* saved_struct_info = context.struct_info;
+		TypeIndex saved_struct_type_index = context.struct_type_index;
+		context.local_bindings = &ctor_local_bindings;
+		context.struct_info = struct_info;
+		if (ctor_decl.owning_type_index().is_valid()) {
+			context.struct_type_index = ctor_decl.owning_type_index();
+		} else if (struct_info && struct_info->own_type_index_.has_value()) {
+			context.struct_type_index = *struct_info->own_type_index_;
+		}
+		const BlockNode& ctor_body = ctor_definition->as<BlockNode>();
+		for (const auto& ctor_stmt : ctor_body.get_statements()) {
+			auto stmt_result = evaluate_statement_with_bindings(ctor_stmt, ctor_body_bindings, context);
+			if (stmt_result.success()) {
+				break;
+			}
+			if (stmt_result.error_message != "Statement executed (not a return)") {
+				context.local_bindings = saved_local_bindings;
+				context.struct_info = saved_struct_info;
+				context.struct_type_index = saved_struct_type_index;
+				return stmt_result;
+			}
+		}
+		context.local_bindings = saved_local_bindings;
+		context.struct_info = saved_struct_info;
+		context.struct_type_index = saved_struct_type_index;
+		for (const auto& member : struct_info->members) {
+			std::string_view member_name = StringTable::getStringView(member.getName());
+			auto it = ctor_body_bindings.find(member_name);
+			if (it != ctor_body_bindings.end()) {
+				member_bindings[member_name] = it->second;
+			}
+		}
+		return EvalResult::from_bool(true);
+	}
+
 	auto materializeBaseInitializers = [&]() -> EvalResult {
 		for (const auto& base_init : ctor_decl.base_initializers()) {
 			const BaseClassSpecifier* base_spec = nullptr;
@@ -7416,6 +7562,88 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 			return EvalResult::error("Array index out of bounds in constant expression");
 		}
 		return arr_result.array_elements[static_cast<size_t>(index)];
+	}
+
+	// Handle struct with operator[]: if arr_result is a struct object, look up operator[]
+	// and dispatch to it (e.g., s[0] where s has constexpr char operator[](int i) const).
+	if (arr_result.success() && arr_result.object_type_index.is_valid()) {
+		const TypeInfo* type_info = tryGetTypeInfo(arr_result.object_type_index);
+		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+		if (struct_info) {
+			StringHandle op_bracket = StringTable::getOrInternStringHandle("operator[]");
+			auto candidate = find_member_function_candidate(
+				struct_info, op_bracket, 1, context,
+				MemberFunctionLookupMode::ConstexprEvaluable, false, true);
+			if (!candidate.ambiguous && candidate.function && candidate.function->get_definition().has_value()) {
+				const FunctionDeclarationNode* actual_func = candidate.function;
+				// Set up member_bindings from struct object, bind parameter, add 'this'
+				std::unordered_map<std::string_view, EvalResult> member_bindings = arr_result.object_member_bindings;
+				// Bind the index parameter using bind_pre_evaluated_arguments
+				EvalResult idx_result = index_result;
+				std::vector<EvalResult> pre_evaluated_args = {idx_result};
+				auto bind_result = bind_pre_evaluated_arguments(
+					actual_func->parameter_nodes(),
+					pre_evaluated_args,
+					member_bindings,
+					context,
+					"Invalid parameter node in constexpr operator[]",
+					false);
+				if (!bind_result.success()) {
+					return bind_result;
+				}
+				// Inject 'this' binding
+				EvalResult this_binding = EvalResult::from_int(0LL);
+				this_binding.object_type_index = arr_result.object_type_index;
+				this_binding.object_member_bindings = member_bindings;
+				member_bindings["this"] = std::move(this_binding);
+				// Save and set context for member function evaluation
+				auto saved_template_param_names = context.template_param_names;
+				auto saved_template_args = context.template_args;
+				if (actual_func->has_outer_template_bindings()) {
+					context.template_param_names.clear();
+					context.template_args.clear();
+					context.template_param_names.reserve(actual_func->outer_template_param_names().size());
+					context.template_args.reserve(actual_func->outer_template_args().size());
+					for (StringHandle param_name : actual_func->outer_template_param_names()) {
+						context.template_param_names.push_back(StringTable::getStringView(param_name));
+					}
+					for (const auto& arg : actual_func->outer_template_args()) {
+						context.template_args.push_back(toTemplateTypeArg(arg));
+					}
+				} else {
+					load_template_bindings_from_type(type_info, context);
+				}
+				auto saved_struct_info = context.struct_info;
+				auto saved_struct_type_index = context.struct_type_index;
+				const TypeInfo* saved_return_type_info = context.return_type_info;
+				context.struct_info = struct_info;
+				context.struct_type_index = arr_result.object_type_index;
+				context.return_type_info = nullptr;
+				{
+					const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_specifier_node();
+					TypeIndex ret_idx = ret_spec.type_index();
+					if (const TypeInfo* rtype = tryGetTypeInfo(ret_idx))
+						context.return_type_info = rtype;
+				}
+				context.current_depth++;
+				auto* saved_local_bindings = context.local_bindings;
+				context.local_bindings = &member_bindings;
+				auto result = evaluate_block_with_bindings(
+					actual_func->get_definition().value(),
+					member_bindings,
+					context,
+					"operator[] body is not a block",
+					"operator[] did not return a value");
+				context.local_bindings = saved_local_bindings;
+				context.current_depth--;
+				context.return_type_info = saved_return_type_info;
+				context.struct_info = saved_struct_info;
+				context.struct_type_index = saved_struct_type_index;
+				context.template_param_names = std::move(saved_template_param_names);
+				context.template_args = std::move(saved_template_args);
+				return result;
+			}
+		}
 	}
 
 	return EvalResult::error("Array subscript on unsupported expression type");

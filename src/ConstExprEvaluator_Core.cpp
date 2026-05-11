@@ -3420,6 +3420,18 @@ EvalResult Evaluator::evaluate_lambda_captures(
 					}
 				}
 
+				// For ByReference captures, if outer_bindings didn't have the variable,
+				// fall back to stored_capture_bindings (this handles indirect lambda capture
+				// chains, e.g. twice([&inc]) calls inc([&x]) where x isn't in twice's bindings
+				// but is in inc's stored callable_bindings from the outer constexpr frame).
+				if (capture.kind() == CaptureKind::ByReference && stored_capture_bindings) {
+					auto stored_it = stored_capture_bindings->find(var_name);
+					if (stored_it != stored_capture_bindings->end()) {
+						bindings[var_name] = stored_it->second;
+						break;
+					}
+				}
+
 				// Look up the variable in the symbol table
 				if (!context.symbols) {
 					return EvalResult::error("Cannot evaluate capture: no symbol table provided");
@@ -3889,6 +3901,23 @@ EvalResult Evaluator::evaluate_lambda_call(
 				(*mutable_stored_capture_bindings)[capture_name] = binding_it->second;
 			}
 		}
+		// Fix 2a writeback: by-reference captures that were loaded from stored_capture_bindings
+		// (because they weren't in outer_bindings) must be written back to mutable_stored_capture_bindings.
+		// This is the case when a lambda is called from inside another lambda that doesn't have
+		// the captured variable directly (e.g. twice([&inc]) calls inc([&x]) where x is not in
+		// twice's bindings but lives in inc's callable_bindings).
+		for (std::string_view capture_name : by_reference_capture_names) {
+			bool not_in_outer = !outer_bindings ||
+				outer_bindings->find(capture_name) == outer_bindings->end();
+			bool in_stored = stored_capture_bindings &&
+				stored_capture_bindings->find(capture_name) != stored_capture_bindings->end();
+			if (not_in_outer && in_stored) {
+				auto binding_it = bindings.find(capture_name);
+				if (binding_it != bindings.end()) {
+					(*mutable_stored_capture_bindings)[capture_name] = binding_it->second;
+				}
+			}
+		}
 		if (captures_copy_this) {
 			if (context.struct_info) {
 				for (const auto& member : context.struct_info->members) {
@@ -3912,7 +3941,50 @@ EvalResult Evaluator::evaluate_lambda_call(
 		for (std::string_view capture_name : by_reference_capture_names) {
 			auto binding_it = bindings.find(capture_name);
 			if (binding_it != bindings.end()) {
-				(*mutable_outer_bindings)[capture_name] = binding_it->second;
+				// Only UPDATE an existing entry — never INSERT a new key.
+				// Variables that were loaded from stored_capture_bindings (because they
+				// were not present in outer_bindings) must not be injected into the outer
+				// scope.  If we did insert them, a subsequent call to the same lambda
+				// would find the variable in outer_bindings and skip the Fix-2a
+				// stored-writeback path, causing the stored copy to fall out of sync and
+				// the second call to produce a stale value.
+				auto outer_existing = mutable_outer_bindings->find(capture_name);
+				if (outer_existing == mutable_outer_bindings->end()) {
+					continue;
+				}
+				outer_existing->second = binding_it->second;
+				// Fix 2b: For lambda values captured by reference, also propagate their
+				// inner by-reference captures back to the outer scope.  This handles
+				// indirect capture chains such as:
+				//   auto inc = [&x]() { x++; };
+				//   auto twice = [&inc]() { inc(); inc(); };
+				// After twice() writes inc back, inc.callable_bindings["x"] has the
+				// updated x that must also be reflected in the outer frame's x.
+				// Lambdas may be stored as either callable_lambda or callable_var_decl
+				// (when declared as a named variable); handle both cases.
+				const EvalResult& written_back = binding_it->second;
+				const LambdaExpressionNode* written_back_lambda = written_back.callable_lambda;
+				if (!written_back_lambda && written_back.callable_var_decl) {
+					written_back_lambda = extract_lambda_from_initializer(
+						written_back.callable_var_decl->initializer());
+				}
+				if (written_back_lambda) {
+					for (const auto& inner_capture : written_back_lambda->captures()) {
+						using InnerCaptureKind = LambdaCaptureNode::CaptureKind;
+						if (inner_capture.kind() != InnerCaptureKind::ByReference ||
+							inner_capture.has_initializer()) {
+							continue;
+						}
+						std::string_view inner_var = inner_capture.identifier_name();
+						auto inner_binding_it = written_back.callable_bindings.find(inner_var);
+						if (inner_binding_it != written_back.callable_bindings.end()) {
+							auto outer_var_it = mutable_outer_bindings->find(inner_var);
+							if (outer_var_it != mutable_outer_bindings->end()) {
+								outer_var_it->second = inner_binding_it->second;
+							}
+						}
+					}
+				}
 			}
 		}
 		for (const auto& alias : by_reference_init_capture_aliases) {
