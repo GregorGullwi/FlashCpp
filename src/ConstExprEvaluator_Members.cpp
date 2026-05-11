@@ -52,6 +52,10 @@ bool tryRebindSingleArgumentFallback(
 	const EvaluationContext& context,
 	std::string_view debug_context,
 	bool enable_ambiguity_warnings) {
+	if (!dependent_arg.isTypeArgument()) {
+		return false;
+	}
+
 	// Alias-template chains can preserve alias-local parameter names after
 	// substitution. For single-argument dependent owners in default template
 	// argument substitution, exactly one non-value context argument is the only
