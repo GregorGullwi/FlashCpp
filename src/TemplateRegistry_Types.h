@@ -1071,6 +1071,33 @@ inline TemplateTypeArg materializeTemplateArg(
 			}
 		}
 	}
+	if (!substituted_dependent_name &&
+		!arg_info.is_value &&
+		arg_info.type_index.is_valid()) {
+		if (const TypeInfo* dependent_type_info = tryGetTypeInfo(arg_info.type_index);
+			dependent_type_info != nullptr &&
+			dependent_type_info->name().isValid()) {
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				const TemplateParameterNode* template_param =
+					tryGetTemplateParameterNode(template_params[i]);
+				if (template_param == nullptr) {
+					continue;
+				}
+				if (template_param->nameHandle() != dependent_type_info->name()) {
+					continue;
+				}
+				const TemplateTypeArg& substituted_arg = template_args[i];
+				if (!substituted_arg.is_value) {
+					concrete_arg = rebindDependentTemplateTypeArg(substituted_arg, arg_info);
+					substituted_dependent_name = true;
+				} else {
+					concrete_arg = substituted_arg;
+					substituted_dependent_name = true;
+				}
+				break;
+			}
+		}
+	}
 	if (!substituted_dependent_name && arg_info.dependent_expr.has_value() && arg_info.is_value) {
 		// For dependent NTTP expressions (e.g., sizeof(T)), evaluate with concrete args.
 		// Only attempted when a non-null evaluator callback is provided.

@@ -250,6 +250,73 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 				return normalize_alias_param_arg(*alias_param_idx, template_args[*alias_param_idx]);
 			}
 		}
+		if (arg_type.type_index().is_valid()) {
+			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg_type.type_index());
+				arg_type_info != nullptr &&
+				arg_type_info->isTemplateInstantiation()) {
+				std::vector<TemplateTypeArg> concrete_instantiation_args = materializeTemplateArgs(
+					*arg_type_info,
+					template_parameters,
+					template_args);
+				TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+					std::span<const TemplateParameterNode>(
+						template_parameters.data(),
+						template_parameters.size()),
+					template_args,
+					nullptr);
+				for (TemplateTypeArg& concrete_arg : concrete_instantiation_args) {
+					if (concrete_arg.is_value) {
+						continue;
+					}
+					if (concrete_arg.is_dependent &&
+						concrete_arg.dependent_name.isValid()) {
+						if (std::optional<TemplateTypeArg> rebound =
+								resolveContextBinding(
+									concrete_arg.dependent_name,
+									substitution_environment);
+							rebound.has_value()) {
+							concrete_arg = !rebound->is_value
+								? rebindDependentTemplateTypeArg(*rebound, concrete_arg)
+								: *rebound;
+							continue;
+						}
+					}
+					if (!concrete_arg.type_index.is_valid()) {
+						continue;
+					}
+					const TypeInfo* concrete_type_info = tryGetTypeInfo(concrete_arg.type_index);
+					if (concrete_type_info == nullptr || !concrete_type_info->name().isValid()) {
+						continue;
+					}
+					if (std::optional<TemplateTypeArg> rebound =
+							resolveContextBinding(
+								concrete_type_info->name(),
+								substitution_environment);
+						rebound.has_value()) {
+						concrete_arg = !rebound->is_value
+							? rebindDependentTemplateTypeArg(*rebound, concrete_arg)
+							: *rebound;
+					}
+				}
+				std::string_view base_template_name =
+					StringTable::getStringView(arg_type_info->baseTemplateName());
+				if (!base_template_name.empty()) {
+					AliasTemplateMaterializationResult materialized_type =
+						materializeTemplateInstantiationForLookup(
+							base_template_name,
+							concrete_instantiation_args);
+					const TypeInfo* resolved_type_info = materialized_type.resolved_type_info;
+					if (resolved_type_info == nullptr &&
+						!materialized_type.instantiated_name.empty()) {
+						resolved_type_info = findTypeByName(
+							StringTable::getOrInternStringHandle(materialized_type.instantiated_name));
+					}
+					if (resolved_type_info != nullptr) {
+						return resolveTypeInfoToTemplateArg(*resolved_type_info, arg_type);
+					}
+				}
+			}
+		}
 		return TemplateTypeArg(arg_type);
 	}
 
@@ -293,8 +360,24 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		// rather than a concrete (wrong) one. When the outer template is later
 		// instantiated with a concrete type (e.g. FinalHead), this function will
 		// be called again with non-dependent args and will evaluate correctly.
+		const auto unresolved_dependent_anchor = [](const TemplateTypeArg& candidate) -> StringHandle {
+			if (candidate.dependent_name.isValid()) {
+				return candidate.dependent_name;
+			}
+			if (!candidate.is_value &&
+				candidate.type_index.is_valid() &&
+				typeIndexContainsDependentPlaceholder(candidate.type_index)) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(candidate.type_index);
+					type_info != nullptr &&
+					type_info->name().isValid()) {
+					return type_info->name();
+				}
+			}
+			return {};
+		};
 		for (const TemplateTypeArg& arg : template_args) {
-			if (arg.is_dependent && arg.dependent_name.isValid()) {
+			if (StringHandle dependent_anchor = unresolved_dependent_anchor(arg);
+				dependent_anchor.isValid()) {
 				FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: arg is dependent, returning dependent bool placeholder");
 				// Pre-substitute the alias template parameters (e.g. 'Type' in __is_final(Type))
 				// into the outer dependent parameter (e.g. 'Head') so that when the outer
@@ -305,7 +388,7 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 					arg_node,
 					template_parameters,
 					std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
-				return TemplateTypeArg::makeDependentValue(arg.dependent_name, TypeCategory::Bool, 0, pre_substituted);
+				return TemplateTypeArg::makeDependentValue(dependent_anchor, TypeCategory::Bool, 0, pre_substituted);
 			}
 		}
 	} else {
@@ -2607,6 +2690,16 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 	// Evaluate the substituted expression using the standard constant expression evaluator
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 	eval_ctx.parser = this;
+	eval_ctx.sema = getActiveSemanticAnalysis();
+	eval_ctx.template_environment = buildTemplateEnvironment(
+		template_params,
+		template_args,
+		nullptr);
+	eval_ctx.template_args.assign(template_args.begin(), template_args.end());
+	eval_ctx.template_param_names.reserve(template_params.size());
+	for (const TemplateParameterNode& template_param : template_params) {
+		eval_ctx.template_param_names.push_back(template_param.name());
+	}
 	ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
 	if (result.success()) {
 		return templateTypeArgFromEvalResult(result);

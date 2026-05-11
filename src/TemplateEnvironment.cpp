@@ -388,6 +388,21 @@ std::optional<TemplateTypeArg> resolveContextBinding(
 			resolution_stack.erase(current_name);
 			return std::nullopt;
 		}
+		if (!bound_arg->is_dependent &&
+			bound_arg->type_index.is_valid() &&
+			typeIndexContainsDependentPlaceholder(bound_arg->type_index)) {
+			if (const TypeInfo* dependent_type_info = tryGetTypeInfo(bound_arg->type_index);
+				dependent_type_info != nullptr &&
+				dependent_type_info->name().isValid() &&
+				dependent_type_info->name() != current_name) {
+				auto rebound = self(self, dependent_type_info->name());
+				if (rebound.has_value()) {
+					TemplateTypeArg resolved = rebindDependentTemplateTypeArg(*rebound, *bound_arg);
+					resolution_stack.erase(current_name);
+					return resolved;
+				}
+			}
+		}
 		if (!bound_arg->is_dependent) {
 			TemplateTypeArg resolved = *bound_arg;
 			resolution_stack.erase(current_name);

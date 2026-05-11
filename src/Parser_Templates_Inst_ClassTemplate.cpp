@@ -2377,6 +2377,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (primary_template_opt.has_value() && primary_template_opt->is<TemplateClassDeclarationNode>()) {
 			const TemplateClassDeclarationNode& primary_template = primary_template_opt->as<TemplateClassDeclarationNode>();
 			const auto& primary_params = primary_template.template_parameters();
+			InlineVector<TemplateParameterNode, 4> typed_primary_params = primary_params;
 
 			// Fill in defaults for missing arguments
 			for (size_t i = filled_args_for_pattern_match.size(); i < primary_params.size(); ++i) {
@@ -2570,6 +2571,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									primary_param_names.size()));
 							evaluated_default.has_value()) {
 							filled_args_for_pattern_match.push_back(*evaluated_default);
+						}
+					}
+					if (filled_args_for_pattern_match.size() == size_before) {
+						InlineVector<TemplateTypeArg, 4> retry_args =
+							toInlineTemplateArgs(filled_args_for_pattern_match);
+						if (tryAppendDefaultTemplateArg(
+								*param,
+								std::span<const TemplateParameterNode>(
+									typed_primary_params.data(),
+									typed_primary_params.size()),
+								retry_args,
+								NamespaceHandle{})) {
+							filled_args_for_pattern_match.assign(
+								retry_args.begin(),
+								retry_args.end());
 						}
 					}
 
@@ -5664,7 +5680,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								[[maybe_unused]] bool substituted = false;
 								TypeSpecifierNode substituted_type_spec = type_spec;
 
-								if ((is_struct_type(base_type)) && type_idx.is_valid()) {
+								if ((is_struct_type(base_type) ||
+									 base_type == TypeCategory::UserDefined ||
+									 base_type == TypeCategory::TypeAlias ||
+									 base_type == TypeCategory::Template) &&
+									type_idx.is_valid()) {
 									if (const TypeInfo* type_idx_ti = tryGetTypeInfo(type_idx)) {
 										std::string_view type_name = StringTable::getStringView(type_idx_ti->name());
 										auto subst_it = subst_map.find(type_name);
@@ -5688,6 +5708,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								ASTNode subst_type_node = emplace_node<TypeSpecifierNode>(substituted_type_spec);
 								ASTNode subst_trait_node = emplace_node<ExpressionNode>(
 									TypeTraitExprNode(trait_expr.kind(), subst_type_node, trait_expr.trait_token()));
+
+								if (typeSpecStillUsesDependentPlaceholder(substituted_type_spec)) {
+									StringHandle dependent_anchor;
+									if (const TypeInfo* dependent_ti = tryGetTypeInfo(substituted_type_spec.type_index());
+										dependent_ti != nullptr &&
+										dependent_ti->name().isValid()) {
+										dependent_anchor = dependent_ti->name();
+									}
+									TemplateTypeArg dependent_value =
+										TemplateTypeArg::makeDependentValue(
+											dependent_anchor,
+											TypeCategory::Bool,
+											0,
+											subst_trait_node);
+									dependent_value.is_pack = arg_info.is_pack;
+									resolved_args.push_back(std::move(dependent_value));
+									continue;
+								}
 
 								if (auto value = try_evaluate_constant_expression(subst_trait_node)) {
 									TemplateTypeArg val_arg(value->value, value->type);
