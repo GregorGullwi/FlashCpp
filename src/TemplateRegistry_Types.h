@@ -679,6 +679,34 @@ inline const TemplateTypeArg* findTemplateArgByName(
 
 namespace FlashCpp {
 
+inline TypeIndex canonicalizeTemplateIdentityTypeIndex(TypeIndex type_index) {
+	if (typeIndexContainsDependentPlaceholder(type_index)) {
+		return type_index;
+	}
+
+	ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_index);
+	TypeIndex canonical_type_index = resolved_alias.type_index.is_valid()
+		? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+		: type_index.withCategory(type_index.category());
+
+	if (is_builtin_type(canonical_type_index.category())) {
+		if (TypeIndex canonical_builtin = nativeTypeIndex(canonical_type_index.category());
+			canonical_builtin.is_valid()) {
+			return canonical_builtin.withCategory(canonical_type_index.category());
+		}
+		return TypeIndex{0, canonical_type_index.category()};
+	}
+
+	return canonical_type_index;
+}
+
+inline bool hasConcreteTemplateIdentity(TypeIndex type_index) {
+	if (typeIndexContainsDependentPlaceholder(type_index)) {
+		return false;
+	}
+	return type_index.is_valid() || is_builtin_type(type_index.category());
+}
+
 /**
  * Create a TypeIndexArg from a TemplateTypeArg
  * 
@@ -687,15 +715,7 @@ namespace FlashCpp {
  */
 inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	TypeIndexArg result;
-	result.type_index = arg.type_index;
-	if (result.type_index.is_valid() &&
-		!typeIndexContainsDependentPlaceholder(result.type_index) &&
-		is_builtin_type(result.type_index.category())) {
-		if (TypeIndex canonical_builtin = nativeTypeIndex(result.type_index.category());
-			canonical_builtin.is_valid()) {
-			result.type_index = canonical_builtin;
-		}
-	}
+	result.type_index = canonicalizeTemplateIdentityTypeIndex(arg.type_index);
 	result.cv_qualifier = arg.cv_qualifier;
 	result.ref_qualifier = arg.reference_qualifier();
 	result.pointer_depth = std::min(arg.pointer_depth, uint8_t(255));
@@ -703,9 +723,7 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.is_array = arg.is_array;
 	result.array_sizes.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
 	result.function_signature = arg.function_signature;
-	const bool has_concrete_type_identity =
-		result.type_index.is_valid() &&
-		!typeIndexContainsDependentPlaceholder(result.type_index);
+	const bool has_concrete_type_identity = hasConcreteTemplateIdentity(result.type_index);
 	result.is_dependent = arg.is_dependent && !has_concrete_type_identity;
 	result.dependent_name = result.is_dependent ? arg.dependent_name : StringHandle{};
 	return result;

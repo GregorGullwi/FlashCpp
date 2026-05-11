@@ -6581,12 +6581,35 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									// Skip template instantiation in extern "C" contexts - C has no templates
 									std::optional<ASTNode> instantiated_func;
 									bool resolved_as_struct_member = false;
+									bool defer_struct_member_template_instantiation = false;
 									if (current_linkage_ != Linkage::C && !has_dependent_template_args) {
+										auto should_defer_current_struct_member_template_instantiation =
+											[&](std::string_view struct_name, TypeIndex struct_type_index) -> bool {
+											if (struct_name.empty()) {
+												return false;
+											}
+											if (const TypeInfo* owner_type_info = tryGetTypeInfo(struct_type_index);
+												owner_type_info != nullptr && owner_type_info->isTemplateInstantiation()) {
+												return false;
+											}
+											if (current_function_ != nullptr && current_function_->has_outer_template_bindings()) {
+												return false;
+											}
+											return isTemplateBodyWithActiveParameters();
+										};
+
 										auto try_instantiate_current_struct_member_template = [&]() -> std::optional<ASTNode> {
 											if (!member_function_context_stack_.empty()) {
+												const auto& member_ctx = member_function_context_stack_.back();
 												std::string_view struct_name =
-													StringTable::getStringView(member_function_context_stack_.back().struct_name);
+													StringTable::getStringView(member_ctx.struct_name);
 												if (!struct_name.empty()) {
+													if (should_defer_current_struct_member_template_instantiation(
+															struct_name,
+															member_ctx.struct_type_index)) {
+														defer_struct_member_template_instantiation = true;
+														return std::nullopt;
+													}
 													if (auto member_inst = try_instantiate_member_function_template_explicit(
 															struct_name,
 															identifier_token.value(),
@@ -6599,6 +6622,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											if (!struct_parsing_context_stack_.empty()) {
 												const auto& struct_ctx = struct_parsing_context_stack_.back();
 												if (!struct_ctx.struct_name.empty()) {
+													TypeIndex struct_type_index{};
+													if (auto scope_type_it = getTypesByNameMap().find(
+															StringTable::getOrInternStringHandle(struct_ctx.struct_name));
+														scope_type_it != getTypesByNameMap().end()) {
+														struct_type_index = scope_type_it->second->type_index_;
+													}
+													if (should_defer_current_struct_member_template_instantiation(
+															struct_ctx.struct_name,
+															struct_type_index)) {
+														defer_struct_member_template_instantiation = true;
+														return std::nullopt;
+													}
 													return try_instantiate_member_function_template_explicit(
 														struct_ctx.struct_name,
 														identifier_token.value(),
@@ -6611,7 +6646,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 										instantiated_func = try_instantiate_current_struct_member_template();
 										resolved_as_struct_member = instantiated_func.has_value();
-										if (!resolved_as_struct_member) {
+										if (!resolved_as_struct_member && !defer_struct_member_template_instantiation) {
 											instantiated_func = try_instantiate_template_explicit(identifier_token.value(), *effective_template_args, arg_types);
 										}
 									}
@@ -6673,7 +6708,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 											}
 										}
-									} else if (has_dependent_template_args) {
+									} else if (has_dependent_template_args || defer_struct_member_template_instantiation) {
 										// Template arguments are dependent - this is a template-dependent expression
 										// Create a CallExprNode with a placeholder declaration that will be resolved during template instantiation
 										// IMPORTANT: We must create a call expression (not just IdentifierNode) to preserve the information
@@ -6701,13 +6736,32 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										result = emplace_node<ExpressionNode>(makeDirectCallExpr(decl_ref, std::move(args), identifier_token));
 
 										// Store the template arguments in the call expression for later resolution
-										if (explicit_template_arg_nodes.empty() && explicit_template_args.has_value()) {
-											explicit_template_arg_nodes = materializeTemplateArgumentNodes(*explicit_template_args, identifier_token);
-										} else if (explicit_template_args.has_value()) {
-											syncTemplateArgumentNodeMetadata(explicit_template_arg_nodes, *explicit_template_args);
+										if (explicit_template_arg_nodes.empty() && effective_template_args.has_value()) {
+											explicit_template_arg_nodes = materializeTemplateArgumentNodes(*effective_template_args, identifier_token);
+										} else if (effective_template_args.has_value()) {
+											syncTemplateArgumentNodeMetadata(explicit_template_arg_nodes, *effective_template_args);
 										}
 										if (!explicit_template_arg_nodes.empty()) {
 											setCallTemplateArguments(result->as<ExpressionNode>(), std::move(explicit_template_arg_nodes));
+										}
+										if (defer_struct_member_template_instantiation) {
+											std::string_view struct_name_for_qual;
+											if (!member_function_context_stack_.empty()) {
+												struct_name_for_qual =
+													StringTable::getStringView(member_function_context_stack_.back().struct_name);
+											} else if (!struct_parsing_context_stack_.empty()) {
+												struct_name_for_qual =
+													struct_parsing_context_stack_.back().struct_name;
+											}
+											if (!struct_name_for_qual.empty()) {
+												setCallQualifiedName(
+													result->as<ExpressionNode>(),
+													StringBuilder()
+														.append(struct_name_for_qual)
+														.append("::")
+														.append(identifier_token.value())
+														.commit());
+											}
 										}
 									} else {
 										return ParseResult::error("No matching template for call to '" + std::string(identifier_token.value()) + "'", identifier_token);

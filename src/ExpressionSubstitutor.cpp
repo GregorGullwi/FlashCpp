@@ -960,12 +960,89 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				}
 				return instantiated;
 			};
+			auto tryInstantiateExplicitMemberTemplateForCurrentOwner =
+				[&](std::string_view member_name) -> std::optional<ASTNode> {
+				if (!current_owner_type_name_.isValid() || member_name.empty()) {
+					return std::nullopt;
+				}
+				std::vector<TemplateTypeArg> current_inst_args;
+				if (auto owner_type_it = getTypesByNameMap().find(current_owner_type_name_);
+					owner_type_it != getTypesByNameMap().end() && owner_type_it->second != nullptr) {
+					const TypeInfo* owner_type_info = owner_type_it->second;
+					current_inst_args.reserve(owner_type_info->templateArgs().size());
+					for (const auto& stored_arg : owner_type_info->templateArgs()) {
+						current_inst_args.push_back(toTemplateTypeArg(stored_arg));
+					}
+				}
+				if (current_inst_args.empty()) {
+					current_inst_args =
+						collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteFunctionCallImpl");
+				}
+				FLASH_LOG(Templates, Debug,
+					"Trying member template lookup for owner ",
+					StringTable::getStringView(current_owner_type_name_),
+					" with ", current_inst_args.size(), " bound args");
+				Parser::AliasTemplateMaterializationResult canonical_owner =
+					parser_.resolveCanonicalInstantiatedOwnerForLookup(
+						StringTable::getStringView(current_owner_type_name_),
+						std::span<const TemplateTypeArg>(
+							current_inst_args.data(),
+							current_inst_args.size()));
+				std::string_view member_owner_name = canonical_owner.instantiated_name.empty()
+					? StringTable::getStringView(current_owner_type_name_)
+					: canonical_owner.instantiated_name;
+				FLASH_LOG(Templates, Debug,
+					"Member template canonical owner resolved to ", member_owner_name);
+				std::optional<ASTNode> instantiated =
+					parser_.try_instantiate_member_function_template_explicit(
+						member_owner_name,
+						member_name,
+						substituted_template_args);
+				if (instantiated.has_value()) {
+					normalizePendingSemanticRoots();
+				} else {
+					FLASH_LOG(Templates, Debug,
+						"Member template instantiation failed for ", member_owner_name,
+						"::", member_name);
+				}
+				return instantiated;
+			};
 			// First try function template instantiation to obtain accurate return type
 			std::optional<ASTNode> instantiated_template = std::nullopt;
 			if (!qualified_name.empty()) {
 				if (size_t scope_pos = qualified_name.rfind("::"); scope_pos != std::string_view::npos) {
 					std::string_view owner_name = qualified_name.substr(0, scope_pos);
 					std::string_view member_name = qualified_name.substr(scope_pos + 2);
+					if (current_owner_type_name_.isValid()) {
+						bool source_owner_matches_current_instantiation = false;
+						std::string_view current_owner_name = StringTable::getStringView(current_owner_type_name_);
+						if (owner_name == current_owner_name) {
+							source_owner_matches_current_instantiation = true;
+						} else if (auto owner_type_it = getTypesByNameMap().find(current_owner_type_name_);
+							owner_type_it != getTypesByNameMap().end() && owner_type_it->second != nullptr) {
+							const TypeInfo* owner_type_info = owner_type_it->second;
+							std::string_view base_template_name =
+								StringTable::getStringView(owner_type_info->baseTemplateName());
+							if (owner_name == base_template_name) {
+								source_owner_matches_current_instantiation = true;
+							} else {
+								std::string_view qualified_base_template_name =
+									buildQualifiedNameFromHandle(
+										owner_type_info->sourceNamespace(),
+										StringTable::getStringView(owner_type_info->baseTemplateName()));
+								source_owner_matches_current_instantiation =
+									!qualified_base_template_name.empty() &&
+									owner_name == qualified_base_template_name;
+							}
+						}
+						if (source_owner_matches_current_instantiation) {
+							instantiated_template =
+								tryInstantiateExplicitMemberTemplateForCurrentOwner(member_name);
+						}
+					}
+					if (instantiated_template.has_value()) {
+						// Current-instantiation member lookup already found the correct owner.
+					} else {
 					std::vector<TemplateTypeArg> current_inst_args =
 						collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteFunctionCallImpl");
 					Parser::AliasTemplateMaterializationResult canonical_owner =
@@ -987,10 +1064,15 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 							normalizePendingSemanticRoots();
 						}
 					}
+					}
 				}
 				if (!instantiated_template.has_value()) {
 					instantiated_template = tryInstantiateExplicitFunctionTemplate(qualified_name);
 				}
+			}
+			if (!instantiated_template.has_value()) {
+				instantiated_template =
+					tryInstantiateExplicitMemberTemplateForCurrentOwner(func_name);
 			}
 			if (!instantiated_template.has_value()) {
 				instantiated_template = tryInstantiateExplicitFunctionTemplate(func_name);
@@ -1224,18 +1306,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					substituted_args.push_back(substitute(call.arguments()[i]));
 				}
 
-				// Create new forward declaration with corrected name
-				auto& fwd_type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
-				ASTNode fwd_type_ast(&fwd_type_node);
-				auto& new_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(fwd_type_ast, new_func_token);
-
 				// Try to trigger lazy member function instantiation for the target
 				parser_.instantiateLazyMemberForCanonicalOwner(instantiated_name, member_name);
 
 				StringHandle inst_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
 				StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 
-				const DeclarationNode* target_decl = &new_decl;
 				const FunctionDeclarationNode* target_func = nullptr;
 				auto type_it = getTypesByNameMap().find(inst_name_handle);
 				if (type_it != getTypesByNameMap().end()) {
@@ -1244,15 +1320,19 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 							if (member_func.getName() == member_handle &&
 								member_func.function_decl.is<FunctionDeclarationNode>()) {
 								target_func = &member_func.function_decl.as<FunctionDeclarationNode>();
-								target_decl = &target_func->decl_node();
 								break;
 							}
 						}
 					}
 				}
 
+				if (target_func == nullptr) {
+					FLASH_LOG(Templates, Debug, "  Canonical owner member not materialized yet, keeping original call");
+					return wrapOriginalCall();
+				}
+
 				ExpressionNode& new_expr = emplaceDirectCallExpr(
-					*target_decl,
+					target_func->decl_node(),
 					target_func,
 					std::move(substituted_args),
 					new_func_token);
@@ -1891,6 +1971,62 @@ ASTNode ExpressionSubstitutor::substituteSizeofExpr(const SizeofExprNode& sizeof
 	} else {
 		// This is sizeof(expression) - substitute the expression
 		ASTNode substituted_expr = substitute(type_or_expr);
+		if (substituted_expr.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& substituted_type = substituted_expr.as<TypeSpecifierNode>();
+			const int size_bits = getTypeSpecSizeBits(substituted_type);
+			if (size_bits > 0) {
+				StringBuilder size_builder;
+				std::string_view size_str = size_builder.append(static_cast<size_t>(size_bits / 8)).commit();
+				Token literal_token(
+					Token::Type::Literal,
+					size_str,
+					sizeof_expr.sizeof_token().line(),
+					sizeof_expr.sizeof_token().column(),
+					sizeof_expr.sizeof_token().file_index());
+				return ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(
+					literal_token,
+					static_cast<unsigned long long>(size_bits / 8),
+					TypeCategory::UnsignedLongLong,
+					TypeQualifier::None,
+					64));
+			}
+		}
+		if (type_or_expr.is<ExpressionNode>()) {
+			const ExpressionNode& original_expr = type_or_expr.as<ExpressionNode>();
+			std::string_view dependent_name;
+			if (const auto* ident = std::get_if<IdentifierNode>(&original_expr)) {
+				dependent_name = ident->name();
+			} else if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&original_expr)) {
+				dependent_name = tparam_ref->param_name().view();
+			}
+			if (!dependent_name.empty()) {
+				auto it = param_map_.find(dependent_name);
+				if (it != param_map_.end() && it->second.isTypeArgument()) {
+					TypeSpecifierNode bound_type = makeTypeSpecifierFromTemplateTypeArg(
+						it->second,
+						sizeof_expr.sizeof_token());
+					int size_bits = getTypeSpecSizeBits(bound_type);
+					if (size_bits > 0) {
+						StringBuilder size_builder;
+						std::string_view size_str = size_builder.append(static_cast<size_t>(size_bits / 8)).commit();
+						Token literal_token(
+							Token::Type::Literal,
+							size_str,
+							sizeof_expr.sizeof_token().line(),
+							sizeof_expr.sizeof_token().column(),
+							sizeof_expr.sizeof_token().file_index());
+						return ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(
+							literal_token,
+							static_cast<unsigned long long>(size_bits / 8),
+							TypeCategory::UnsignedLongLong,
+							TypeQualifier::None,
+							64));
+					}
+					return ASTNode::emplace_node<ExpressionNode>(
+						SizeofExprNode(ASTNode::emplace_node<TypeSpecifierNode>(bound_type), sizeof_expr.sizeof_token()));
+				}
+			}
+		}
 
 		// Create new SizeofExprNode with substituted expression
 		SizeofExprNode new_sizeof = SizeofExprNode::from_expression(substituted_expr, sizeof_expr.sizeof_token());
@@ -1990,19 +2126,18 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 		}
 	}
 
-	// First, check if this is a template parameter type that needs substitution
-	// Template parameters can show up as Type::Template, Type::Auto, or Type::UserDefined
-	if (type.category() == TypeCategory::Template || isPlaceholderAutoType(type.category()) || type.category() == TypeCategory::UserDefined || type.category() == TypeCategory::TypeAlias) {
-		std::string_view type_name = type.token().value();
-		if (type_name.empty()) {
-			if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
-				type_name = StringTable::getStringView(type_info->name());
-			}
+	// First, check whether this type spelling names a template parameter that needs substitution.
+	std::string_view type_name = type.token().value();
+	if (type_name.empty()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
+			type_name = StringTable::getStringView(type_info->name());
 		}
+	}
 
-		FLASH_LOG(Templates, Debug, "  Type is template parameter: ", type_name);
+	if (!type_name.empty()) {
+		FLASH_LOG(Templates, Debug, "  Type candidate for template substitution: ", type_name);
 
-		// Look up this template parameter in our substitution map
+		// Look up this template parameter in our substitution map.
 		auto it = param_map_.find(type_name);
 		if (it == param_map_.end()) {
 			if (std::optional<std::string_view> canonical_type_name = tryResolveCanonicalTypeName(type, type_name, param_map_)) {
@@ -2022,9 +2157,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			return makeTypeSpecifierFromTemplateTypeArg(subst, type.token());
 		}
 
-		if (!type_name.empty()) {
-			FLASH_LOG(Templates, Warning, "  Template parameter not found in substitution map: ", type_name);
-		}
+		FLASH_LOG(Templates, Warning, "  Template parameter not found in substitution map: ", type_name);
 	}
 
 	// Check if this is a struct/class type that might have template arguments

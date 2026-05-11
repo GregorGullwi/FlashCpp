@@ -121,37 +121,6 @@ TemplateParameterKind inferBindingKind(const TemplateTypeArg& arg) {
 	return TemplateParameterKind::Type;
 }
 
-void countSnapshotBindingsRecursive(const TemplateEnvironmentSnapshot& snapshot, size_t& count) {
-	if (snapshot.parent != nullptr) {
-		countSnapshotBindingsRecursive(*snapshot.parent, count);
-	}
-	count += snapshot.bindings.size();
-}
-
-void appendSnapshotLegacyViewsRecursive(
-	const TemplateEnvironmentSnapshot& snapshot,
-	InlineVector<StringHandle, 4>& out_param_names,
-	InlineVector<TypeInfo::TemplateArgInfo, 4>& out_args) {
-	if (snapshot.parent != nullptr) {
-		appendSnapshotLegacyViewsRecursive(*snapshot.parent, out_param_names, out_args);
-	}
-	for (const TemplateBindingSnapshot& binding : snapshot.bindings) {
-		if (binding.is_pack) {
-			for (const auto& arg : binding.args) {
-				out_param_names.push_back(binding.name);
-				out_args.push_back(arg);
-			}
-			continue;
-		}
-
-		if (binding.args.empty()) {
-			continue;
-		}
-		out_param_names.push_back(binding.name);
-		out_args.push_back(binding.args.front());
-	}
-}
-
 void appendContextBindings(
 	const TypeInfo::InstantiationContext* context,
 	InlineVector<TemplateBinding, 4>& out_bindings) {
@@ -200,11 +169,13 @@ void appendContextBindings(
 TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
 	std::span<const StringHandle> param_names,
 	std::span<const TypeInfo::TemplateArgInfo> args,
-	std::shared_ptr<const TemplateEnvironmentSnapshot> parent) {
+	const TemplateEnvironmentSnapshot* parent) {
 	TemplateEnvironmentSnapshot snapshot;
-	snapshot.parent = std::move(parent);
+	if (parent != nullptr) {
+		snapshot.bindings = parent->bindings;
+	}
 	const size_t pair_count = std::min(param_names.size(), args.size());
-	snapshot.bindings.reserve(pair_count);
+	snapshot.bindings.reserve(snapshot.bindings.size() + pair_count);
 	for (size_t i = 0; i < pair_count; ++i) {
 		if (!snapshot.bindings.empty() &&
 			snapshot.bindings.back().name == param_names[i]) {
@@ -229,10 +200,7 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
 }
 
 bool hasTemplateEnvironmentSnapshotBindings(const TemplateEnvironmentSnapshot& snapshot) {
-	if (!snapshot.bindings.empty()) {
-		return true;
-	}
-	return snapshot.parent != nullptr ? hasTemplateEnvironmentSnapshotBindings(*snapshot.parent) : false;
+	return !snapshot.bindings.empty();
 }
 
 void populateTemplateEnvironmentLegacyViews(
@@ -241,12 +209,23 @@ void populateTemplateEnvironmentLegacyViews(
 	InlineVector<TypeInfo::TemplateArgInfo, 4>& out_args) {
 	out_param_names.clear();
 	out_args.clear();
+	out_param_names.reserve(snapshot.bindings.size());
+	out_args.reserve(snapshot.bindings.size());
+	for (const TemplateBindingSnapshot& binding : snapshot.bindings) {
+		if (binding.is_pack) {
+			for (const auto& arg : binding.args) {
+				out_param_names.push_back(binding.name);
+				out_args.push_back(arg);
+			}
+			continue;
+		}
 
-	size_t binding_count = 0;
-	countSnapshotBindingsRecursive(snapshot, binding_count);
-	out_param_names.reserve(binding_count);
-	out_args.reserve(binding_count);
-	appendSnapshotLegacyViewsRecursive(snapshot, out_param_names, out_args);
+		if (binding.args.empty()) {
+			continue;
+		}
+		out_param_names.push_back(binding.name);
+		out_args.push_back(binding.args.front());
+	}
 }
 
 TemplateEnvironment buildTemplateEnvironment(
@@ -290,23 +269,18 @@ TemplateEnvironment buildTemplateEnvironment(
 
 TemplateEnvironment buildTemplateEnvironment(const TemplateEnvironmentSnapshot& snapshot) {
 	TemplateEnvironment environment;
-	auto append_snapshot = [&](auto&& self, const TemplateEnvironmentSnapshot& current) -> void {
-		for (const TemplateBindingSnapshot& snapshot_binding : current.bindings) {
-			TemplateBinding binding;
-			binding.name = snapshot_binding.name;
-			binding.kind = snapshot_binding.kind;
-			binding.is_pack = snapshot_binding.is_pack;
-			binding.args.reserve(snapshot_binding.args.size());
-			for (const TypeInfo::TemplateArgInfo& snapshot_arg : snapshot_binding.args) {
-				binding.args.push_back(toTemplateTypeArg(snapshot_arg));
-			}
-			environment.bindings.push_back(std::move(binding));
+	environment.bindings.reserve(snapshot.bindings.size());
+	for (const TemplateBindingSnapshot& snapshot_binding : snapshot.bindings) {
+		TemplateBinding binding;
+		binding.name = snapshot_binding.name;
+		binding.kind = snapshot_binding.kind;
+		binding.is_pack = snapshot_binding.is_pack;
+		binding.args.reserve(snapshot_binding.args.size());
+		for (const TypeInfo::TemplateArgInfo& snapshot_arg : snapshot_binding.args) {
+			binding.args.push_back(toTemplateTypeArg(snapshot_arg));
 		}
-		if (current.parent != nullptr) {
-			self(self, *current.parent);
-		}
-	};
-	append_snapshot(append_snapshot, snapshot);
+		environment.bindings.push_back(std::move(binding));
+	}
 	return environment;
 }
 

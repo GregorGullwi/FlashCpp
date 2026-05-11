@@ -283,7 +283,8 @@ bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
 ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
 	std::span<const TemplateParameterNode> template_params,
-	std::span<const TemplateTypeArg> template_args) {
+	std::span<const TemplateTypeArg> template_args,
+	StringHandle current_owner_type_name) {
 	// Helper function to get type name as string
 	auto get_type_name = [](TypeCategory type) -> std::string_view {
 		switch (type) {
@@ -409,6 +410,9 @@ ASTNode Parser::substituteTemplateParameters(
 		}
 
 		ExpressionSubstitutor substitutor(param_map, pack_map, *this, template_param_order);
+		if (current_owner_type_name.isValid()) {
+			substitutor.setCurrentOwnerTypeName(current_owner_type_name);
+		}
 		return substitutor.substitute(substituted_call_node);
 	};
 	auto substituteCallExprWithExpressionSubstitutor = [&](const CallExprNode& call) -> ASTNode {
@@ -437,10 +441,6 @@ ASTNode Parser::substituteTemplateParameters(
 				return substituteTemplateParameters(template_arg, template_params, template_args);
 			},
 			CallMetadataCopyOptions{});
-		if (call.has_receiver()) {
-			return emplace_node<ExpressionNode>(substituted_call);
-		}
-
 		return substituteWithExpressionSubstitutor(ASTNode(&substituted_call));
 	};
 
@@ -1167,11 +1167,48 @@ ASTNode Parser::substituteTemplateParameters(
 					}
 					return emplace_node<ExpressionNode>(SizeofExprNode(substituted_type, sizeof_expr.sizeof_token()));
 				}
-			} else {
-				// sizeof(expression) - substitute the expression
-				ASTNode substituted_expr = substituteTemplateParameters(sizeof_expr.type_or_expr(), template_params, template_args);
-				return emplace_node<ExpressionNode>(SizeofExprNode::from_expression(substituted_expr, sizeof_expr.sizeof_token()));
+		} else {
+			// sizeof(expression) - substitute the expression
+			ASTNode substituted_expr = substituteTemplateParameters(sizeof_expr.type_or_expr(), template_params, template_args);
+			if (sizeof_expr.type_or_expr().is<ExpressionNode>()) {
+				const ExpressionNode& original_expr = sizeof_expr.type_or_expr().as<ExpressionNode>();
+				std::string_view dependent_name;
+				if (const auto* ident = std::get_if<IdentifierNode>(&original_expr)) {
+					dependent_name = ident->name();
+				} else if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&original_expr)) {
+					dependent_name = tparam_ref->param_name().view();
+				}
+				if (!dependent_name.empty()) {
+					const TemplateTypeArg* bound_arg = findTemplateArgByName(
+						dependent_name,
+						template_params,
+						template_args);
+					if (bound_arg != nullptr && bound_arg->isTypeArgument()) {
+						TypeSpecifierNode bound_type = makeTypeSpecifierFromTemplateTypeArg(
+							*bound_arg,
+							sizeof_expr.sizeof_token());
+						int size_bits = getTypeSpecSizeBits(bound_type);
+						if (size_bits > 0) {
+							StringBuilder size_builder;
+							std::string_view size_str = size_builder.append(static_cast<size_t>(size_bits / 8)).commit();
+							Token literal_token(Token::Type::Literal, size_str,
+												sizeof_expr.sizeof_token().line(), sizeof_expr.sizeof_token().column(),
+												sizeof_expr.sizeof_token().file_index());
+							return emplace_node<ExpressionNode>(NumericLiteralNode(
+								literal_token,
+								static_cast<unsigned long long>(size_bits / 8),
+								TypeCategory::UnsignedLongLong,
+								TypeQualifier::None,
+								64));
+						}
+						return emplace_node<ExpressionNode>(SizeofExprNode(
+							ASTNode::emplace_node<TypeSpecifierNode>(bound_type),
+							sizeof_expr.sizeof_token()));
+					}
+				}
 			}
+			return emplace_node<ExpressionNode>(SizeofExprNode::from_expression(substituted_expr, sizeof_expr.sizeof_token()));
+		}
 
 			// Return the original node if no substitution was possible
 			return node;

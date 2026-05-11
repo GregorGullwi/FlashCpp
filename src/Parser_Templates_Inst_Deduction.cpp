@@ -198,9 +198,13 @@ static TypeInfo& registerTemplateTypeBinding(
 			getTypeSizeFromTemplateArgument(arg),
 			alias_spec);
 	}
-	return add_template_param_type(
+	TypeIndex canonical_builtin = nativeTypeIndex(arg.typeEnum());
+	if (!canonical_builtin.is_valid()) {
+		canonical_builtin = TypeIndex{0, arg.typeEnum()};
+	}
+	return add_type_alias_copy(
 		param_name,
-		arg.typeEnum(),
+		canonical_builtin.withCategory(arg.typeEnum()),
 		getTypeSizeFromTemplateArgument(arg));
 }
 

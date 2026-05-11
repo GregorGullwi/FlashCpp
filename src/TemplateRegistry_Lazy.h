@@ -16,7 +16,7 @@ template <typename ParamContainer, typename ArgContainer>
 TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshotFromBindings(
 	const ParamContainer& template_params,
 	const ArgContainer& template_args,
-	std::shared_ptr<const TemplateEnvironmentSnapshot> parent) {
+	const TemplateEnvironmentSnapshot* parent) {
 	InlineVector<TemplateTypeArg, 4> typed_args;
 	typed_args.reserve(template_args.size());
 	for (const auto& template_arg : template_args) {
@@ -60,7 +60,7 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshotFromBindings(
 	return buildTemplateEnvironmentSnapshot(
 		std::span<const StringHandle>(param_names.data(), param_names.size()),
 		std::span<const TypeInfo::TemplateArgInfo>(arg_infos.data(), arg_infos.size()),
-		std::move(parent));
+		parent);
 }
 
 struct LazyMemberFunctionInfo {

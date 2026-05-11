@@ -2787,7 +2787,8 @@ public:	// Public methods for template instantiation
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
 		std::span<const TemplateParameterNode> template_params,
-		std::span<const TemplateTypeArg> template_args);
+		std::span<const TemplateTypeArg> template_args,
+		StringHandle current_owner_type_name = StringHandle{});
 
 	// Helper to extract type from an expression for overload resolution.
 	// Public so codegen/constexpr consumers can reuse the parser's type deduction.

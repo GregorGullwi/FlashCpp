@@ -598,7 +598,34 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 		new_func_decl_ref,
 		parent_struct_name);
-	setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args_inline);
+	if (original_func.has_outer_template_bindings()) {
+		InlineVector<TemplateParameterNode, 4> combined_params;
+		InlineVector<TemplateTypeArg, 4> combined_args;
+		combined_params.reserve(
+			original_func.outer_template_param_names().size() + template_params.size());
+		combined_args.reserve(
+			original_func.outer_template_args().size() + template_args_inline.size());
+		for (size_t i = 0; i < original_func.outer_template_param_names().size(); ++i) {
+			Token outer_token(
+				Token::Type::Identifier,
+				StringTable::getStringView(original_func.outer_template_param_names()[i]),
+				0,
+				0,
+				0);
+			combined_params.push_back(
+				TemplateParameterNode(original_func.outer_template_param_names()[i], outer_token));
+			combined_args.push_back(toTemplateTypeArg(original_func.outer_template_args()[i]));
+		}
+		for (const auto& param : template_params) {
+			combined_params.push_back(param);
+		}
+		for (const auto& arg : template_args_inline) {
+			combined_args.push_back(arg);
+		}
+		setOuterTemplateBindingsFromParams(new_func_ref, combined_params, combined_args);
+	} else {
+		setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args_inline);
+	}
 
 	return {
 		new_func_decl_node,
@@ -5114,8 +5141,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			concrete_type = instantiated_base_it->second;
-			concrete_arg.type_index = concrete_type->registeredTypeIndex();
-			concrete_arg.type_index.setCategory(concrete_type->typeEnum());
+			concrete_arg.type_index = FlashCpp::canonicalizeTemplateIdentityTypeIndex(
+				concrete_type->registeredTypeIndex().withCategory(concrete_type->typeEnum()));
 			return true;
 		};
 
@@ -5135,13 +5162,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			concrete_type = underlying_type;
-			concrete_arg.type_index = concrete_type->registeredTypeIndex();
-			concrete_arg.type_index.setCategory(concrete_type->typeEnum());
+			concrete_arg.type_index = FlashCpp::canonicalizeTemplateIdentityTypeIndex(
+				concrete_type->registeredTypeIndex().withCategory(concrete_type->typeEnum()));
 		}
 
 		if (concrete_type && concrete_type->getStructInfo()) {
-			concrete_arg.type_index = concrete_type->registeredTypeIndex();
-			concrete_arg.type_index.setCategory(TypeCategory::Struct);
+			concrete_arg.type_index = FlashCpp::canonicalizeTemplateIdentityTypeIndex(
+				concrete_type->registeredTypeIndex().withCategory(TypeCategory::Struct));
 		}
 
 		return concrete_type;
@@ -7541,10 +7568,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				lazy_info.template_params = template_params;
 				lazy_info.template_args = template_args_to_use;
+				const TemplateEnvironmentSnapshot* outer_parent_snapshot =
+					instantiated_struct_ref.has_outer_template_bindings()
+						? &instantiated_struct_ref.outer_template_environment_snapshot()
+						: nullptr;
 				lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
 					effective_template_params,
 					effective_template_args,
-					nullptr);
+					outer_parent_snapshot);
 				lazy_info.access = mem_func.access;
 				lazy_info.is_virtual = mem_func.is_virtual;
 				lazy_info.is_pure_virtual = mem_func.is_pure_virtual;
@@ -8044,10 +8075,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 						lazy_ctor_info.template_params = template_params;
 						lazy_ctor_info.template_args = template_args_to_use;
+						const TemplateEnvironmentSnapshot* outer_parent_snapshot =
+							instantiated_struct_ref.has_outer_template_bindings()
+								? &instantiated_struct_ref.outer_template_environment_snapshot()
+								: nullptr;
 						lazy_ctor_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
 							effective_template_params,
 							effective_template_args,
-							nullptr);
+							outer_parent_snapshot);
 						lazy_ctor_info.access = mem_func.access;
 						LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_ctor_info));
 					}
@@ -8297,7 +8332,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
 					new_return_type, decl_node.identifier_token());
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-					new_decl_ref);
+					new_decl_ref,
+					instantiated_name);
 				setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args_to_use);
 
 				// Copy parameter nodes with outer template parameter substitution
@@ -8422,18 +8458,47 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
 				}
 			} else {
-				// No substitution needed - copy as-is
+				// Even when no outer substitution is needed in the member template signature,
+				// we must still rebind ownership to the instantiated class.
+				auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
+					decl_node.type_node(),
+					decl_node.identifier_token());
+				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+					new_decl_ref,
+					instantiated_name);
+				setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args_to_use);
+
+				for (const auto& param : func_decl.parameter_nodes()) {
+					new_func_ref.add_parameter_node(param);
+				}
+
+				copy_function_properties(new_func_ref, func_decl);
+				new_func_ref.set_is_const_member_function(mem_func.is_const());
+				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
+				if (func_decl.is_materialized())
+					new_func_ref.set_definition(*func_decl.get_definition());
+				if (func_decl.has_template_body_position())
+					new_func_ref.set_template_body_position(func_decl.template_body_position());
+				if (func_decl.has_trailing_return_type_position())
+					new_func_ref.set_trailing_return_type_position(func_decl.trailing_return_type_position());
+				new_func_ref.set_is_template_pattern(true);
+
+				auto new_template_func = emplace_node<TemplateFunctionDeclarationNode>(
+					template_func.template_parameters(),
+					new_func_node,
+					template_func.requires_clause());
+
 				if (mem_func.operator_kind != OverloadableOperator::None) {
-					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, mem_func.function_declaration, mem_func.access);
-					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, mem_func.function_declaration, mem_func.access,
+					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_template_func, mem_func.access);
+					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_template_func, mem_func.access,
 														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
 				} else {
 					instantiated_struct_ref.add_member_function(
-						mem_func.function_declaration,
+						new_template_func,
 						mem_func.access);
 					struct_info_ptr->addMemberFunction(
 						decl_node.identifier_token().handle(),
-						mem_func.function_declaration,
+						new_template_func,
 						mem_func.access,
 						mem_func.is_virtual,
 						mem_func.is_pure_virtual,
@@ -8448,8 +8513,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					.append(decl_node.identifier_token().value());
 				StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 
-				gTemplateRegistry.registerTemplate(qualified_name_handle, mem_func.function_declaration);
-				gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), mem_func.function_declaration);
+				gTemplateRegistry.registerTemplate(qualified_name_handle, new_template_func);
+				gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), new_template_func);
 
 				// Register outer template parameter bindings
 				{
