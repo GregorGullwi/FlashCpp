@@ -812,10 +812,12 @@ private:
 			const bool pushed = pushContext(StringTable::getStringView(ctor.name()));
 			// Template-pattern constructor AST still belongs to parser/template-substitution
 			// ownership and intentionally retains pre-substitution helper nodes.
-			if (ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos ||
+			const bool parser_owned_ctor =
+				ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos ||
 				ctor.has_template_parameters() ||
 				ctor.has_template_body_position() ||
-				ctor.has_template_initializer_list_position()) {
+				ctor.has_template_initializer_list_position();
+			if (parser_owned_ctor) {
 				popContext(pushed);
 				return;
 			}

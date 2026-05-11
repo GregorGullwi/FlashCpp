@@ -4015,6 +4015,11 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 									}
 								}
 								if (!rebound_arg && type_info->templateArgs().size() == 1) {
+									// Alias-template chains can preserve an alias-local
+									// parameter name after substitution.  For a single-argument
+									// dependent owner, C++20 default-argument substitution leaves
+									// only one viable non-type context binding, so use that when
+									// explicit name matching cannot recover the original parameter.
 									size_t non_value_context_args = 0;
 									const TemplateTypeArg* only_non_value_context_arg = nullptr;
 									for (const TemplateTypeArg& context_arg : context.template_args) {
