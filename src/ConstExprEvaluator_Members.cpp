@@ -49,15 +49,6 @@ std::optional<EvalResult> tryEvaluateEnumConstant(
 	return result;
 }
 
-TemplateParameterKind inferTemplateBindingKindForLookup(const TemplateTypeArg& arg) {
-	if (arg.is_template_template_arg) {
-		return TemplateParameterKind::Template;
-	}
-	if (arg.is_value) {
-		return TemplateParameterKind::NonType;
-	}
-	return TemplateParameterKind::Type;
-}
 
 InlineVector<TemplateParameterNode, 4> getTemplateParametersForTypeInfo(
 	const TypeInfo& owner_type_info) {

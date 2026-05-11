@@ -17,6 +17,7 @@ NC='\033[0m'
 VERBOSE=0
 JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 REQUESTED_TEST_NAMES=()
+SCAN_DIRS=()
 [ "${GITHUB_ACTIONS:-}" = "true" ] && VERBOSE=1
 
 while [ $# -gt 0 ]; do
@@ -48,7 +49,15 @@ while [ $# -gt 0 ]; do
 			break
 			;;
 		*)
-			REQUESTED_TEST_NAMES+=("$(basename "$1")")
+			if [ -d "$1" ]; then
+				SCAN_DIRS+=("${1%/}")
+			elif [ -f "$1" ]; then
+				# Full path to a test file — used by re-run diagnostics
+				SCAN_DIRS+=("$(dirname "$1")")
+				REQUESTED_TEST_NAMES+=("$(basename "$1")")
+			else
+				REQUESTED_TEST_NAMES+=("$(basename "$1")")
+			fi
 			;;
 	esac
 	shift
@@ -125,9 +134,23 @@ contains() {
 TEST_FILES=()
 FAIL_FILES=()
 SEH_SKIPPED=0
-for f in tests/*.cpp; do
+[ ${#SCAN_DIRS[@]} -eq 0 ] && SCAN_DIRS=("tests")
+# Deduplicate SCAN_DIRS to avoid double-scanning when re-run passes many files from the same dir
+declare -A _seen_scan_dirs=()
+UNIQUE_SCAN_DIRS=()
+for _d in "${SCAN_DIRS[@]}"; do
+    if [[ ! -v _seen_scan_dirs[$_d] ]]; then
+        _seen_scan_dirs[$_d]=1
+        UNIQUE_SCAN_DIRS+=("$_d")
+    fi
+done
+SCAN_DIRS=("${UNIQUE_SCAN_DIRS[@]}")
+unset _seen_scan_dirs UNIQUE_SCAN_DIRS _d
+for scan_dir in "${SCAN_DIRS[@]}"; do
+for f in "$scan_dir"/*.cpp; do
     [ -f "$f" ] || continue
     base=$(basename "$f")
+    relpath="${f#tests/}"
 
     # Skip Windows-only SEH tests on Linux
     if [[ "$base" == test_seh_*.cpp ]]; then
@@ -136,23 +159,25 @@ for f in tests/*.cpp; do
     fi
 
     if grep -q '\bint\s\+main\s*(' "$f" || grep -q '\bvoid\s\+main\s*(' "$f"; then
-        [[ "$base" == *"_fail.cpp" ]] && FAIL_FILES+=("$base") || TEST_FILES+=("$base")
+        [[ "$base" == *"_fail.cpp" ]] && FAIL_FILES+=("$relpath") || TEST_FILES+=("$relpath")
     fi
+done
 done
 
 if [ ${#REQUESTED_TEST_NAMES[@]} -gt 0 ]; then
 	FILTERED_TEST_FILES=()
 	FILTERED_FAIL_FILES=()
 	for base in "${TEST_FILES[@]}"; do
-		contains "$base" "${REQUESTED_TEST_NAMES[@]}" && FILTERED_TEST_FILES+=("$base")
+		contains "$(basename "$base")" "${REQUESTED_TEST_NAMES[@]}" && FILTERED_TEST_FILES+=("$base")
 	done
 	for base in "${FAIL_FILES[@]}"; do
-		contains "$base" "${REQUESTED_TEST_NAMES[@]}" && FILTERED_FAIL_FILES+=("$base")
+		contains "$(basename "$base")" "${REQUESTED_TEST_NAMES[@]}" && FILTERED_FAIL_FILES+=("$base")
 	done
 
 	matched_names=()
-	[ ${#FILTERED_TEST_FILES[@]} -gt 0 ] && matched_names+=("${FILTERED_TEST_FILES[@]}")
-	[ ${#FILTERED_FAIL_FILES[@]} -gt 0 ] && matched_names+=("${FILTERED_FAIL_FILES[@]}")
+	for f in "${FILTERED_TEST_FILES[@]}" "${FILTERED_FAIL_FILES[@]}"; do
+		matched_names+=("$(basename "$f")")
+	done
 	missing_names=()
 	for requested in "${REQUESTED_TEST_NAMES[@]}"; do
 		if ! contains "$requested" "${matched_names[@]}" && ! contains "$requested" "${missing_names[@]}"; then
@@ -187,16 +212,19 @@ trap "rm -rf '$RESULT_DIR'" EXIT
 #           RUNTIME_CRASH, RETURN_MISMATCH, RETURN_OK, EXPECTED_LINK_FAIL, EXPECTED_FAIL
 # ──────────────────────────────────────────────────────
 test_one_file() {
-    local base="$1"
+    local relpath="$1"
+    local base
+    base=$(basename "$relpath")
     local repo_root="$2"
     local result_dir="$3"
-    local f="tests/$base"
+    local f="tests/$relpath"
     # Use unique per-job paths in /tmp to avoid race conditions when parallel
     # workers compile different tests that happen to share the same base name.
     local obj="/tmp/${base%.cpp}_$$.o"
     local exe="/tmp/${base%.cpp}_$$_exe"
-    local result_file="$result_dir/$base.result"
+    local result_file="$result_dir/${relpath}.result"
 
+    mkdir -p "$result_dir/$(dirname "$relpath")"
     cd "$repo_root"
     rm -f "$obj" "$exe"
 
@@ -292,13 +320,16 @@ export -f test_one_file
 # Worker: test one _fail file
 # ──────────────────────────────────────────────────────
 test_one_fail_file() {
-    local base="$1"
+    local relpath="$1"
+    local base
+    base=$(basename "$relpath")
     local repo_root="$2"
     local result_dir="$3"
-    local f="tests/$base"
+    local f="tests/$relpath"
     local obj="/tmp/${base%.cpp}_$$.o"
-    local result_file="$result_dir/$base.result"
+    local result_file="$result_dir/${relpath}.result"
 
+    mkdir -p "$result_dir/$(dirname "$relpath")"
     cd "$repo_root"
     rm -f "$obj"
 
@@ -360,11 +391,11 @@ declare -a RETURN_MISMATCH_DETAILS=()
 declare -a FAILED_TEST_NAMES=()
 
 for base in "${TEST_FILES[@]}"; do
-    result_file="$RESULT_DIR/$base.result"
+    result_file="$RESULT_DIR/${base}.result"
     if [ ! -f "$result_file" ]; then
         COMPILE_FAIL+=("$base (no result)")
         COMPILE_FAIL_DETAILS+=("")
-        FAILED_TEST_NAMES+=("$base")
+        FAILED_TEST_NAMES+=("tests/$base")
         continue
     fi
     IFS='|' read -r status file detail < "$result_file"
@@ -379,7 +410,7 @@ for base in "${TEST_FILES[@]}"; do
             LINK_OK+=("$base")
             RETURN_MISMATCH+=("$base")
             RETURN_MISMATCH_DETAILS+=("$detail")
-            FAILED_TEST_NAMES+=("$base")
+            FAILED_TEST_NAMES+=("tests/$base")
             echo -e "${RED}[RETURN MISMATCH]${NC} $base ($detail)"
             ;;
         RUNTIME_CRASH)
@@ -391,7 +422,7 @@ for base in "${TEST_FILES[@]}"; do
             else
                 RUNTIME_CRASH+=("$base")
                 RUNTIME_CRASH_DETAILS+=("$detail")
-                FAILED_TEST_NAMES+=("$base")
+                FAILED_TEST_NAMES+=("tests/$base")
                 echo -e "${RED}[RUNTIME CRASH]${NC} $base ($detail)"
             fi
             ;;
@@ -404,7 +435,7 @@ for base in "${TEST_FILES[@]}"; do
             else
                 LINK_FAIL+=("$base")
                 LINK_FAIL_DETAILS+=("$detail")
-                FAILED_TEST_NAMES+=("$base")
+                FAILED_TEST_NAMES+=("tests/$base")
                 echo -e "${RED}[LINK FAIL]${NC} $base"
                 [ -n "$detail" ] && echo "  $detail" | sed 's/^/  /'
             fi
@@ -416,7 +447,7 @@ for base in "${TEST_FILES[@]}"; do
             else
                 COMPILE_FAIL+=("$base")
                 COMPILE_FAIL_DETAILS+=("$detail")
-                FAILED_TEST_NAMES+=("$base")
+                FAILED_TEST_NAMES+=("tests/$base")
                 echo -e "${RED}[COMPILE FAIL]${NC} $base"
                 [ -n "$detail" ] && echo "  $detail"
             fi
@@ -425,11 +456,11 @@ for base in "${TEST_FILES[@]}"; do
 done
 
 for base in "${FAIL_FILES[@]}"; do
-    result_file="$RESULT_DIR/$base.result"
+    result_file="$RESULT_DIR/${base}.result"
     if [ ! -f "$result_file" ]; then
         FAIL_BAD+=("$base (no result)")
         FAIL_BAD_DETAILS+=("")
-        FAILED_TEST_NAMES+=("$base")
+        FAILED_TEST_NAMES+=("tests/$base")
         continue
     fi
     IFS='|' read -r status file detail < "$result_file"
@@ -441,7 +472,7 @@ for base in "${FAIL_FILES[@]}"; do
         FAIL_BAD)
             FAIL_BAD+=("$base")
             FAIL_BAD_DETAILS+=("$detail")
-            FAILED_TEST_NAMES+=("$base")
+            FAILED_TEST_NAMES+=("tests/$base")
             if [[ "$detail" == CRASHED* ]]; then
                 echo -e "${RED}[COMPILER CRASH]${NC} $base ($detail)"
             else
