@@ -266,6 +266,44 @@ const ConstructorDeclarationNode* resolveUniqueArityConstructor(const StructType
 	return nullptr;
 }
 
+static bool isParserOwnedConstructor(const ConstructorDeclarationNode& ctor) {
+	return ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos ||
+		ctor.has_template_parameters() ||
+		ctor.has_template_body_position() ||
+		ctor.has_template_initializer_list_position();
+}
+
+static bool isTopLevelPackExpansionExpr(const ASTNode& arg) {
+	if (!arg.is<ExpressionNode>()) {
+		return false;
+	}
+	const ExpressionNode& expr = arg.as<ExpressionNode>();
+	return std::holds_alternative<PackExpansionExprNode>(expr);
+}
+
+static bool hasTopLevelPackExpansionInConstructorInitializers(const ConstructorDeclarationNode& ctor) {
+	for (const auto& member_init : ctor.member_initializers()) {
+		if (isTopLevelPackExpansionExpr(member_init.initializer_expr)) {
+			return true;
+		}
+	}
+	for (const auto& base_init : ctor.base_initializers()) {
+		for (const auto& arg : base_init.arguments) {
+			if (isTopLevelPackExpansionExpr(arg)) {
+				return true;
+			}
+		}
+	}
+	if (ctor.delegating_initializer().has_value()) {
+		for (const auto& arg : ctor.delegating_initializer()->arguments) {
+			if (isTopLevelPackExpansionExpr(arg)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	TypeSpecifierNode type_node(desc.type_index.withCategory(desc.category()), 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	type_node.set_cv_qualifier(desc.base_cv);
@@ -812,46 +850,16 @@ private:
 			const bool pushed = pushContext(StringTable::getStringView(ctor.name()));
 			// Template-pattern constructor AST still belongs to parser/template-substitution
 			// ownership and intentionally retains pre-substitution helper nodes.
-			const bool parser_owned_ctor =
-				ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos ||
-				ctor.has_template_parameters() ||
-				ctor.has_template_body_position() ||
-				ctor.has_template_initializer_list_position();
-			if (parser_owned_ctor) {
+			if (isParserOwnedConstructor(ctor)) {
 				popContext(pushed);
 				return;
 			}
 			// Constructor initializer pack expansions are intentionally left on
 			// parser-owned member-template constructors until the constructor itself
 			// is instantiated.
-			auto isTopLevelPackExpansion = [](const ASTNode& arg) {
-				if (!arg.is<ExpressionNode>()) {
-					return false;
-				}
-				const ExpressionNode& expr = arg.as<ExpressionNode>();
-				return std::holds_alternative<PackExpansionExprNode>(expr);
-			};
-			for (const auto& mi : ctor.member_initializers()) {
-				if (isTopLevelPackExpansion(mi.initializer_expr)) {
-					popContext(pushed);
-					return;
-				}
-			}
-			for (const auto& bi : ctor.base_initializers()) {
-				for (const auto& arg : bi.arguments) {
-					if (isTopLevelPackExpansion(arg)) {
-						popContext(pushed);
-						return;
-					}
-				}
-			}
-			if (ctor.delegating_initializer().has_value()) {
-				for (const auto& arg : ctor.delegating_initializer()->arguments) {
-					if (isTopLevelPackExpansion(arg)) {
-						popContext(pushed);
-						return;
-					}
-				}
+			if (hasTopLevelPackExpansionInConstructorInitializers(ctor)) {
+				popContext(pushed);
+				return;
 			}
 			for (const auto& param : ctor.parameter_nodes()) {
 				visit(param);
