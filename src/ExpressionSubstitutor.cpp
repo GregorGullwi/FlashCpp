@@ -618,11 +618,13 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 					materialized_arg = rebindDependentTemplateTypeArg(type_subst_it->second, materialized_arg);
 					result.had_substitution = true;
 					substituted = true;
-				} else if (auto context_binding = resolveContextBinding(arg_type_info->name(), lookup_environment);
-						   context_binding.has_value()) {
+				} else if (arg_type_info->isDependentPlaceholder()) {
+					if (auto context_binding = resolveContextBinding(arg_type_info->name(), lookup_environment);
+						context_binding.has_value()) {
 					materialized_arg = rebindDependentTemplateTypeArg(*context_binding, materialized_arg);
 					result.had_substitution = true;
 					substituted = true;
+					}
 				}
 			}
 		}
