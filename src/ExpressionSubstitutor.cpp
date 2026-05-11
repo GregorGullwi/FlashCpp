@@ -1307,7 +1307,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				}
 
 				// Try to trigger lazy member function instantiation for the target
-				parser_.instantiateLazyMemberForCanonicalOwner(instantiated_name, member_name);
+				parser_.instantiateLazyMemberForCanonicalOwner(
+					instantiated_name,
+					member_name,
+					std::span<const TemplateTypeArg>{});
 
 				StringHandle inst_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
 				StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
@@ -1375,7 +1378,8 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 						StringTable::getStringView(receiver_type_info->name());
 					if (parser_.instantiateLazyMemberForCanonicalOwner(
 							class_name,
-							call.called_from().value())
+							call.called_from().value(),
+							std::span<const TemplateTypeArg>{})
 							.has_value()) {
 						rebound_member =
 							parser_.tryResolveConcreteMemberFunction(substituted_receiver, call.called_from().value());

@@ -22,6 +22,28 @@ static thread_local int g_template_inst_iteration_count = 0;
 static thread_local bool g_template_inst_iteration_limit_tripped = false;
 static constexpr int g_template_inst_max_iterations = 10000;
 
+static TemplateParameterNode rebuildOuterTemplateParameter(
+	StringHandle param_name,
+	const TypeInfo::TemplateArgInfo& arg_info) {
+	Token outer_token(
+		Token::Type::Identifier,
+		StringTable::getStringView(param_name),
+		0,
+		0,
+		0);
+	if (arg_info.is_template_template_arg) {
+		return TemplateParameterNode(
+			param_name,
+			std::vector<TemplateParameterNode>{},
+			outer_token);
+	}
+	if (auto outer_type_spec = makeTypeSpecifierFromTemplateArgInfo(arg_info, outer_token);
+		outer_type_spec.has_value()) {
+		return TemplateParameterNode(param_name, *outer_type_spec, outer_token);
+	}
+	return TemplateParameterNode(param_name, outer_token);
+}
+
 void resetTemplateInstantiationCounters() {
 	g_template_inst_iteration_count = 0;
 	g_template_inst_iteration_limit_tripped = false;
@@ -646,14 +668,10 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 		combined_args.reserve(
 			original_func.outer_template_args().size() + template_args_inline.size());
 		for (size_t i = 0; i < original_func.outer_template_param_names().size(); ++i) {
-			Token outer_token(
-				Token::Type::Identifier,
-				StringTable::getStringView(original_func.outer_template_param_names()[i]),
-				0,
-				0,
-				0);
 			combined_params.push_back(
-				TemplateParameterNode(original_func.outer_template_param_names()[i], outer_token));
+				rebuildOuterTemplateParameter(
+					original_func.outer_template_param_names()[i],
+					original_func.outer_template_args()[i]));
 			combined_args.push_back(toTemplateTypeArg(original_func.outer_template_args()[i]));
 		}
 		for (const auto& param : template_params) {
@@ -2643,13 +2661,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (filled_args_for_pattern_match.size() == size_before) {
 						InlineVector<TemplateTypeArg, 4> retry_args =
 							toInlineTemplateArgs(filled_args_for_pattern_match);
+						NamespaceHandle declaration_namespace = NamespaceHandle{};
+						if (template_name.find("::") != std::string_view::npos) {
+							declaration_namespace =
+								QualifiedIdentifier::fromQualifiedName(
+									template_name,
+									NamespaceRegistry::GLOBAL_NAMESPACE)
+									.namespace_handle;
+						}
 						if (tryAppendDefaultTemplateArg(
 								*param,
 								std::span<const TemplateParameterNode>(
 									typed_primary_params.data(),
 									typed_primary_params.size()),
 								retry_args,
-								NamespaceHandle{})) {
+								declaration_namespace)) {
 							filled_args_for_pattern_match.assign(
 								retry_args.begin(),
 								retry_args.end());
@@ -8429,12 +8455,65 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				normalizeSubstitutedTypeSpec(new_return_spec);
 
+				auto buildMergedOuterTemplateBinding = [&](OuterTemplateBinding& out_binding) {
+					if (func_decl.has_outer_template_bindings()) {
+						InlineVector<TemplateParameterNode, 4> combined_params;
+						InlineVector<TemplateTypeArg, 4> combined_args;
+						combined_params.reserve(
+							func_decl.outer_template_param_names().size() + template_params.size());
+						combined_args.reserve(
+							func_decl.outer_template_args().size() + template_args_to_use.size());
+						for (size_t i = 0; i < func_decl.outer_template_param_names().size(); ++i) {
+							combined_params.push_back(
+								rebuildOuterTemplateParameter(
+									func_decl.outer_template_param_names()[i],
+									func_decl.outer_template_args()[i]));
+							combined_args.push_back(toTemplateTypeArg(func_decl.outer_template_args()[i]));
+						}
+						for (const auto& param : template_params) {
+							combined_params.push_back(param);
+						}
+						for (const auto& arg : template_args_to_use) {
+							combined_args.push_back(arg);
+						}
+						collectOuterTemplateBinding(combined_params, combined_args, out_binding);
+						return;
+					}
+					collectOuterTemplateBinding(template_params, template_args_to_use, out_binding);
+				};
+				auto applyMergedOuterTemplateBindings = [&](FunctionDeclarationNode& target_func) {
+					if (func_decl.has_outer_template_bindings()) {
+						InlineVector<TemplateParameterNode, 4> combined_params;
+						InlineVector<TemplateTypeArg, 4> combined_args;
+						combined_params.reserve(
+							func_decl.outer_template_param_names().size() + template_params.size());
+						combined_args.reserve(
+							func_decl.outer_template_args().size() + template_args_to_use.size());
+						for (size_t i = 0; i < func_decl.outer_template_param_names().size(); ++i) {
+							combined_params.push_back(
+								rebuildOuterTemplateParameter(
+									func_decl.outer_template_param_names()[i],
+									func_decl.outer_template_args()[i]));
+							combined_args.push_back(toTemplateTypeArg(func_decl.outer_template_args()[i]));
+						}
+						for (const auto& param : template_params) {
+							combined_params.push_back(param);
+						}
+						for (const auto& arg : template_args_to_use) {
+							combined_args.push_back(arg);
+						}
+						setOuterTemplateBindingsFromParams(target_func, combined_params, combined_args);
+						return;
+					}
+					setOuterTemplateBindingsFromParams(target_func, template_params, template_args_to_use);
+				};
+
 				auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
 					new_return_type, decl_node.identifier_token());
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_decl_ref,
 					instantiated_name);
-				setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args_to_use);
+				applyMergedOuterTemplateBindings(new_func_ref);
 
 				// Copy parameter nodes with outer template parameter substitution
 				for (const auto& param : func_decl.parameter_nodes()) {
@@ -8553,20 +8632,46 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Register outer template parameter bindings
 				{
 					OuterTemplateBinding outer_binding;
-					collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
+					buildMergedOuterTemplateBinding(outer_binding);
 					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
 					FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
 				}
 			} else {
 				// Even when no outer substitution is needed in the member template signature,
 				// we must still rebind ownership to the instantiated class.
+				auto applyMergedOuterTemplateBindings = [&](FunctionDeclarationNode& target_func) {
+					if (func_decl.has_outer_template_bindings()) {
+						InlineVector<TemplateParameterNode, 4> combined_params;
+						InlineVector<TemplateTypeArg, 4> combined_args;
+						combined_params.reserve(
+							func_decl.outer_template_param_names().size() + template_params.size());
+						combined_args.reserve(
+							func_decl.outer_template_args().size() + template_args_to_use.size());
+						for (size_t i = 0; i < func_decl.outer_template_param_names().size(); ++i) {
+							combined_params.push_back(
+								rebuildOuterTemplateParameter(
+									func_decl.outer_template_param_names()[i],
+									func_decl.outer_template_args()[i]));
+							combined_args.push_back(toTemplateTypeArg(func_decl.outer_template_args()[i]));
+						}
+						for (const auto& param : template_params) {
+							combined_params.push_back(param);
+						}
+						for (const auto& arg : template_args_to_use) {
+							combined_args.push_back(arg);
+						}
+						setOuterTemplateBindingsFromParams(target_func, combined_params, combined_args);
+						return;
+					}
+					setOuterTemplateBindingsFromParams(target_func, template_params, template_args_to_use);
+				};
 				auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
 					decl_node.type_node(),
 					decl_node.identifier_token());
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_decl_ref,
 					instantiated_name);
-				setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args_to_use);
+				applyMergedOuterTemplateBindings(new_func_ref);
 
 				for (const auto& param : func_decl.parameter_nodes()) {
 					new_func_ref.add_parameter_node(param);

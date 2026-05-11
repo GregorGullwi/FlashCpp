@@ -318,7 +318,10 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		isHardUseLikeInstantiationMode()) {
 		FLASH_LOG(Templates, Debug, "Checking lazy instantiation for: ", instantiated_class_name, "::", member_name);
 		instantiated_func =
-			instantiateLazyMemberForCanonicalOwner(instantiated_class_name, member_name);
+			instantiateLazyMemberForCanonicalOwner(
+				instantiated_class_name,
+				member_name,
+				std::span<const TemplateTypeArg>{});
 	}
 
 	// Build qualified function name including template args

@@ -19,7 +19,7 @@ bool explicitTemplateArgsRequireDeferredInstantiation(const InlineVector<Templat
 		template_args.begin(),
 		template_args.end(),
 		[](const TemplateTypeArg& arg) {
-			return arg.is_dependent || arg.dependent_name.isValid();
+			return arg.is_dependent || arg.dependent_name.isValid() || arg.is_pack;
 		});
 }
 }
@@ -2574,7 +2574,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						concept_opt = gConceptRegistry.lookupConcept(qual_id.name());
 					}
 
-					if (concept_opt.has_value()) {
+					const bool has_dependent_explicit_template_args =
+						explicitTemplateArgsRequireDeferredInstantiation(*template_args);
+					if (concept_opt.has_value() && !has_dependent_explicit_template_args) {
 						FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with template arguments (qualified lookup)", qualified_name.view());
 
 						// Evaluate the concept constraint with the provided template arguments
@@ -2590,6 +2592,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										 final_identifier.line(), final_identifier.column(), final_identifier.file_index());
 						result = emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, concept_satisfied));
 						return ParseResult::success(*result);
+					}
+					if (concept_opt.has_value() && has_dependent_explicit_template_args) {
+						FLASH_LOG_FORMAT(
+							Parser,
+							Debug,
+							"Deferring eager concept evaluation for dependent concept-id '{}'",
+							qualified_name.view());
 					}
 
 					// Check if this is an alias template (like detail::cref<int> -> int)
@@ -2651,9 +2660,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					std::string_view instantiated_name = materialized_owner.instantiated_name;
 					if (instantiated_name.empty()) {
 						auto instantiation_result = try_instantiate_template_explicit(qual_id.name(), *template_args);
-						if (instantiation_result.has_value()) {
+						if (!instantiation_result.has_value()) {
 							instantiation_result = try_instantiate_template_explicit(qualified_name.view(), *template_args);
-							if (instantiation_result.has_value()) {
+							if (!instantiation_result.has_value()) {
 								// Template instantiation failed - this might not be a template after all
 								// But we successfully parsed template arguments, so continue with the parsed args
 								FLASH_LOG_FORMAT(Parser, Warning, "Parsed template arguments but instantiation failed for '{}'", qualified_name.view());

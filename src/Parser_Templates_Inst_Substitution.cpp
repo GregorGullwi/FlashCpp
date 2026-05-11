@@ -894,6 +894,13 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 }
 
 Parser::AliasTemplateMaterializationResult Parser::resolveCanonicalInstantiatedOwnerForLookup(
+	std::string_view owner_name) {
+	return resolveCanonicalInstantiatedOwnerForLookup(
+		owner_name,
+		std::span<const TemplateTypeArg>{});
+}
+
+Parser::AliasTemplateMaterializationResult Parser::resolveCanonicalInstantiatedOwnerForLookup(
 	std::string_view owner_name,
 	std::span<const TemplateTypeArg> owner_template_args) {
 	AliasTemplateMaterializationResult result;
@@ -919,9 +926,20 @@ Parser::AliasTemplateMaterializationResult Parser::resolveCanonicalInstantiatedO
 	};
 
 	const StringHandle owner_name_handle = StringTable::getOrInternStringHandle(owner_name);
-	if (const TypeInfo* owner_type_info = findTypeByName(owner_name_handle);
-		owner_type_info != nullptr) {
+	if (const TypeInfo* initial_owner_type_info = findTypeByName(owner_name_handle);
+		initial_owner_type_info != nullptr) {
+		const TypeInfo* owner_type_info = initial_owner_type_info;
 		result.resolved_type_info = owner_type_info;
+		if (!owner_type_info->isTemplateInstantiation()) {
+			ResolvedAliasTypeInfo resolved_owner_alias = resolveAliasTypeInfo(
+				owner_type_info->registeredTypeIndex().withCategory(owner_type_info->typeEnum()));
+			if (resolved_owner_alias.terminal_type_info != nullptr &&
+				resolved_owner_alias.terminal_type_info != owner_type_info &&
+				resolved_owner_alias.terminal_type_info->isTemplateInstantiation()) {
+				owner_type_info = resolved_owner_alias.terminal_type_info;
+				result.resolved_type_info = owner_type_info;
+			}
+		}
 		if (!owner_type_info->isTemplateInstantiation()) {
 			if (!owner_template_args.empty() &&
 				can_materialize_owner_template(owner_name)) {

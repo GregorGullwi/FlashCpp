@@ -129,8 +129,8 @@ InlineVector<TemplateParameterNode, 4> getTemplateParametersForTypeInfo(
 std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 	const TemplateTypeArg& dependent_arg,
 	EvaluationContext& context,
-	const TypeInfo* owner_type_info = nullptr,
-	int recursion_depth = 0) {
+	const TypeInfo* owner_type_info,
+	int recursion_depth) {
 	constexpr int kMaxDependentLookupMaterializationDepth = 32;
 	if (recursion_depth > kMaxDependentLookupMaterializationDepth) {
 		return std::nullopt;
@@ -300,12 +300,12 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 			context.template_param_names = std::move(saved_template_param_names);
 			context.template_args = std::move(saved_template_args);
 			if (evaluated.success()) {
-				const TypeCategory evaluated_category = evaluated.exact_type.has_value()
-					? evaluated.exact_type->type()
-					: (dependent_arg.category() != TypeCategory::Invalid
-						   ? dependent_arg.category()
-						   : TypeCategory::Int);
-				return TemplateTypeArg(evaluated.as_int(), evaluated_category);
+				TemplateTypeArg evaluated_arg = templateTypeArgFromEvalResult(evaluated);
+				if (evaluated_arg.category() == TypeCategory::Invalid &&
+					dependent_arg.category() != TypeCategory::Invalid) {
+					evaluated_arg.setCategory(dependent_arg.category());
+				}
+				return evaluated_arg;
 			}
 			TemplateTypeArg substituted_dependent_arg = dependent_arg;
 			substituted_dependent_arg.dependent_expr = std::move(substituted_expr);
@@ -8701,6 +8701,8 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 	bool is_reference = type_spec.is_reference();
 	bool is_rvalue_reference = type_spec.is_rvalue_reference();
 	size_t pointer_depth = type_spec.pointer_depth();
+	bool is_array = type_spec.is_array();
+	std::optional<size_t> array_size = type_spec.array_size();
 	const ResolvedAliasTypeInfo resolved_trait_type =
 		resolveAliasTypeInfo(type_spec.type_index());
 	if (resolved_trait_type.terminal_type_info != nullptr &&
@@ -8709,6 +8711,18 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		 type_cat == TypeCategory::Template ||
 		 type_cat == TypeCategory::Invalid)) {
 		type_cat = resolved_trait_type.typeEnum();
+		if (resolved_trait_type.reference_qualifier != ReferenceQualifier::None) {
+			is_reference = true;
+			is_rvalue_reference =
+				resolved_trait_type.reference_qualifier == ReferenceQualifier::RValueReference;
+		}
+		pointer_depth += resolved_trait_type.pointer_depth;
+		if (resolved_trait_type.isArray()) {
+			is_array = true;
+			if (!resolved_trait_type.array_dimensions.empty()) {
+				array_size = resolved_trait_type.array_dimensions.front();
+			}
+		}
 	}
 
 	bool result = false;
@@ -8750,7 +8764,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		break;
 
 	case TypeTraitKind::IsArray:
-		result = type_spec.is_array() && !is_reference && pointer_depth == 0;
+		result = is_array && !is_reference && pointer_depth == 0;
 		break;
 
 	case TypeTraitKind::IsReference:
@@ -8799,16 +8813,16 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		break;
 
 	case TypeTraitKind::IsBoundedArray:
-		result = type_spec.is_array() & int(type_spec.array_size() > 0) & !is_reference & (pointer_depth == 0);
+		result = is_array & int(array_size.value_or(0) > 0) & !is_reference & (pointer_depth == 0);
 		break;
 
 	case TypeTraitKind::IsUnboundedArray:
-		result = type_spec.is_array() & int(type_spec.array_size() == 0) & !is_reference & (pointer_depth == 0);
+		result = is_array & int(array_size.value_or(0) == 0) & !is_reference & (pointer_depth == 0);
 		break;
 
 	case TypeTraitKind::IsAggregate:
 			// Arrays are aggregates
-		result = type_spec.is_array() & !is_reference & (pointer_depth == 0);
+		result = is_array & !is_reference & (pointer_depth == 0);
 			// For struct types, we need runtime type info, so fall through to default
 		break;
 

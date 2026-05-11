@@ -1583,7 +1583,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		for (const auto& outer_arg : outer_arg_infos) {
 			outer_args.push_back(toTemplateTypeArg(outer_arg));
 		}
-		registerTypeParamsInScope(outer_param_names, outer_args, template_scope, false);
+		registerTypeParamsInScope(outer_param_names, outer_args, template_scope, true);
 		FLASH_LOG(Templates, Debug, "Added ", outer_param_names.size(), " outer template param bindings for body parsing");
 	}
 

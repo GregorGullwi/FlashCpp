@@ -1335,6 +1335,9 @@ void Parser::reparse_template_function_body(
 		}
 	};
 	const int entered_namespace_count = enterSourceNamespaceIfNeeded();
+	auto exit_source_namespace = ScopeGuard([&]() {
+		exitSourceNamespaceIfNeeded(entered_namespace_count);
+	});
 
 	// Enter function scope, set current function, register parameters.
 	gSymbolTable.enter_scope(ScopeType::Function);
@@ -1386,7 +1389,6 @@ void Parser::reparse_template_function_body(
 	// Clean up scope.
 	current_function_ = nullptr;
 	gSymbolTable.exit_scope();
-	exitSourceNamespaceIfNeeded(entered_namespace_count);
 	restore_lexer_position_only(current_pos);
 	discard_saved_token(current_pos);
 
@@ -1954,9 +1956,17 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			const auto parameter_cv = static_cast<uint8_t>(fp_type.cv_qualifier());
 			new_arg.cv_qualifier = static_cast<CVQualifier>(argument_cv & ~parameter_cv);
 		} else if (fp_type.reference_qualifier() == ReferenceQualifier::RValueReference) {
-			// Forwarding-reference deduction needs the full T&& vs lvalue/rvalue rules.
-			// Let the main deduction path handle it instead of pre-deducing the wrong shape.
-			continue;
+			const bool is_forwarding_reference =
+				fp_type.cv_qualifier() == CVQualifier::None;
+			if (is_forwarding_reference) {
+				// Forwarding-reference deduction needs the full T&& vs lvalue/rvalue rules.
+				// Let the main deduction path handle it instead of pre-deducing the wrong shape.
+				continue;
+			}
+			new_arg.ref_qualifier = ReferenceQualifier::None;
+			const auto argument_cv = static_cast<uint8_t>(new_arg.cv_qualifier);
+			const auto parameter_cv = static_cast<uint8_t>(fp_type.cv_qualifier());
+			new_arg.cv_qualifier = static_cast<CVQualifier>(argument_cv & ~parameter_cv);
 		}
 		param_name_to_arg.emplace(fp_name, new_arg);
 		pre_deduced_arg_indices.insert(concrete_arg_index);
@@ -2628,6 +2638,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 				template_params,
 				template_args,
 				nullptr);
+			template_param_substitutions_.clear();
 			populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 			for (const TemplateParameterNode& template_param : template_params) {
 				pushCurrentTemplateParamName(template_param.nameHandle());
@@ -2635,8 +2646,10 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			FlashCpp::TemplateParameterScope template_scope;
 			registerTypeParamsInScope(substitution_environment, template_scope, preserve_ref_qualifier);
 			const int entered_namespace_count = enterSourceNamespaceIfNeeded();
+			auto exit_source_namespace = ScopeGuard([&]() {
+				exitSourceNamespaceIfNeeded(entered_namespace_count);
+			});
 			auto return_type_result = parse_type_specifier();
-			exitSourceNamespaceIfNeeded(entered_namespace_count);
 			if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
 				auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
 				consume_pointer_ref_modifiers(rt);
@@ -2699,15 +2712,18 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 				template_params,
 				template_args,
 				nullptr);
+			template_param_substitutions_.clear();
 			populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 			for (const TemplateParameterNode& template_param : template_params) {
 				pushCurrentTemplateParamName(template_param.nameHandle());
 			}
 			FlashCpp::TemplateParameterScope template_scope;
 			registerTypeParamsInScope(substitution_environment, template_scope, false);
-			int entered_namespace_count = enterSourceNamespaceIfNeeded();
+			const int entered_namespace_count = enterSourceNamespaceIfNeeded();
+			auto exit_return_type_namespace = ScopeGuard([&]() {
+				exitSourceNamespaceIfNeeded(entered_namespace_count);
+			});
 			auto return_type_result = parse_type_specifier();
-			exitSourceNamespaceIfNeeded(entered_namespace_count);
 			if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
 				auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
 				consume_pointer_ref_modifiers(rt);
@@ -2730,9 +2746,11 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			restore_lexer_position_only(func_decl.template_declaration_position());
 			FlashCpp::TemplateParameterScope template_scope2;
 			registerTypeParamsInScope(substitution_environment, template_scope2, false);
-			entered_namespace_count = enterSourceNamespaceIfNeeded();
+			const int entered_name_parse_namespace_count = enterSourceNamespaceIfNeeded();
+			auto exit_name_parse_namespace = ScopeGuard([&]() {
+				exitSourceNamespaceIfNeeded(entered_name_parse_namespace_count);
+			});
 			auto type_and_name_result = parse_type_and_name();
-			exitSourceNamespaceIfNeeded(entered_namespace_count);
 			restore_lexer_position_only(current_pos);
 			if (!type_and_name_result.is_error() &&
 				type_and_name_result.node().has_value() &&

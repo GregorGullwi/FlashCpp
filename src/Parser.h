@@ -2690,12 +2690,14 @@ private:
 		std::string_view template_name,
 		std::span<const TemplateTypeArg> template_args);
 	AliasTemplateMaterializationResult resolveCanonicalInstantiatedOwnerForLookup(
+		std::string_view owner_name);
+	AliasTemplateMaterializationResult resolveCanonicalInstantiatedOwnerForLookup(
 		std::string_view owner_name,
-		std::span<const TemplateTypeArg> owner_template_args = {});
+		std::span<const TemplateTypeArg> owner_template_args);
 	std::optional<ASTNode> instantiateLazyMemberForCanonicalOwner(
 		std::string_view& owner_name,
 		std::string_view member_name,
-		std::span<const TemplateTypeArg> owner_template_args = {});
+		std::span<const TemplateTypeArg> owner_template_args);
 	AliasTemplateMaterializationResult materializePrimaryTemplateOwnerForLookup(
 		std::string_view primary_template_name,
 		std::string_view fallback_template_name,
@@ -2787,8 +2789,12 @@ public:	// Public methods for template instantiation
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
 		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
+	ASTNode substituteTemplateParameters(
+		const ASTNode& node,
+		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args,
-		StringHandle current_owner_type_name = StringHandle{});
+		StringHandle current_owner_type_name);
 
 	// Helper to extract type from an expression for overload resolution.
 	// Public so codegen/constexpr consumers can reuse the parser's type deduction.
@@ -2929,6 +2935,7 @@ private:	 // Resume private methods
 		const ASTNode& arg,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args,
+		StringHandle current_owner_type_name,
 		ChunkedVector<ASTNode>& out);
 
 		// Phase 3: Expression context tracking for template disambiguation

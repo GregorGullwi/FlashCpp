@@ -357,7 +357,10 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 						instantiating_lazy_member_ = false;
 					});
 					instantiated_func =
-						instantiateLazyMemberForCanonicalOwner(*object_struct_name, func_name);
+						instantiateLazyMemberForCanonicalOwner(
+							*object_struct_name,
+							func_name,
+							std::span<const TemplateTypeArg>{});
 				}
 				if (instantiated_func.has_value()) {
 					FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
@@ -990,7 +993,10 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 									instantiating_lazy_member_ = false;
 								});
 								auto instantiated_func =
-									instantiateLazyMemberForCanonicalOwner(class_scope, final_identifier.value());
+									instantiateLazyMemberForCanonicalOwner(
+										class_scope,
+										final_identifier.value(),
+										std::span<const TemplateTypeArg>{});
 								if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 									qualified_symbol = instantiated_func;
 									decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
