@@ -21,11 +21,13 @@ FlashCpp implements a custom constexpr evaluator used for `static_assert`, templ
 ### Struct construction and member access
 - Aggregate initialization (brace-init and C++20 paren-init), including C++20 designated initializers (`{.x=1, .y=2}`).
 - User-defined constructors: member-initializer list, constructor body assignments, conditionals, loops, switch, early return.
+- **Delegating constructors**: `S() : S(42) {}` chains to another constructor; multi-level chains work.
 - Default member initializers.
 - Nested member access (`obj.inner.value`) on both aggregate and constructor-initialized locals.
 - Local struct member dot-assignment and compound-assignment (`p.a += 5`).
 - Void member functions that mutate local struct state, including repeated calls.
 - `*this` dereference inside constexpr member function bodies.
+- **`operator[]` subscript syntax** (`s[i]`) on struct types — dispatches to the matching `operator[]` overload.
 - Ternary expressions returning struct types.
 - Sub-word struct returns (e.g., 3-byte `Color{r,g,b}`) propagated correctly.
 - C++20 rule: types with user-declared constructors are not aggregates; aggregate initialization rejects them.
@@ -39,6 +41,7 @@ FlashCpp implements a custom constexpr evaluator used for `static_assert`, templ
 - Mutable closure-local state across repeated lambda calls.
 - Returned lambda closure objects from constexpr helper functions with repeated calls.
 - Nested lambdas over enclosing captured/member state.
+- **Indirect lambda capture chains**: a lambda that captures another lambda by reference can call it and the inner lambda's by-reference mutations propagate back to the enclosing scope (`[&inc]() { inc(); inc(); }` where `inc` captures `x` by ref — `x` is correctly updated).
 - `operator()` called on locally-declared struct variables (aggregate and non-aggregate).
 - Callable objects (functors) with `operator()` overloads; trailing default arguments.
 - `const char*` / string literals: subscript, loops, `str_len`-style traversal.
@@ -72,45 +75,6 @@ FlashCpp implements a custom constexpr evaluator used for `static_assert`, templ
 ---
 
 ## Partial Support ⚠️
-
-### Nested lambdas with shared by-reference state
-
-Lambdas that capture another lambda *by reference* and then call it — where the inner lambda also writes to a shared outer variable — lose the write-back on the outer hop.
-
-```cpp
-constexpr int f() {
-    int x = 0;
-    auto inc = [&x]() { x++; };        // inner: writes x via capture
-    auto twice = [&inc]() { inc(); inc(); };  // outer: captures inc by ref
-    twice();
-    return x;  // ❌ evaluates to 0, not 2
-}
-```
-
-**Root cause:** When `twice` is evaluated, `inc` is a bound lambda value in `twice`'s capture bindings. After calling `inc()`, the write-back updates `inc`'s *copy* of `x` inside `twice`'s binding map, but that copy is not propagated back to the *outer* binding map that holds the original `x`. The evaluator's single-level by-reference writeback (`mutable_outer_bindings`) does not chase indirect capture chains.
-
-**What is needed:** After each lambda call that wrote to captured references, the evaluator must walk back through any intermediate lambda-capture indirection layers and propagate the mutations outward until the original binding is reached.
-
----
-
-### Subscript through a struct member `const char*`
-
-`operator[]` on a struct whose implementation subscripts a `const char*` data member fails.
-
-```cpp
-struct Str {
-    const char* d;
-    constexpr char operator[](int i) const { return d[i]; }
-};
-constexpr Str s{"hi"};
-static_assert(s[0] == 'h');  // ❌ "Array subscript on unsupported expression type"
-```
-
-**Root cause:** Inside `operator[]`, `d` is resolved as an `EvalResult` holding a string-literal pointer (via the bound `const char*` member). The subscript evaluator (`try_evaluate_bound_array_subscript` and the top-level subscript path) accepts `const char*` results from *named constexpr variables*, but not from a member-binding dereference — the path that extracts `d`'s value from `object_member_bindings` does not set the `pointer_to_var` / origin metadata required by the string-subscript fast-path.
-
-**What is needed:** After resolving `d` from `object_member_bindings` to a string-literal result, propagate the `pointer_to_var.origin_var_name` so the subscript path can find the string data. Alternatively, teach the subscript handler to operate directly on a string-literal `EvalResult` regardless of how it was obtained.
-
----
 
 ### Fold expressions and pack expansions in constexpr
 
@@ -160,24 +124,6 @@ struct S { int data[]; };  // ❌ (flexible array member — also ill-formed in 
 
 ## Not Supported ❌
 
-### Indirect mutation through a captured lambda reference
-
-A lambda `B` that captures lambda `A` by reference and calls `A` does not propagate `A`'s mutations to the variables `A` closed over.
-
-```cpp
-constexpr int f() {
-    int x = 0;
-    auto inc = [&x]() { x++; };
-    auto twice = [&inc]() { inc(); inc(); };
-    twice();
-    return x;  // ❌ 0 instead of 2
-}
-```
-
-Same root cause as the partial-support case above; listed here because it is a common pattern and there is no workaround other than inlining the body.
-
----
-
 ### `std::initializer_list` in constexpr
 
 ```cpp
@@ -200,24 +146,6 @@ static_assert(sum({1, 2, 3}) == 6);  // ❌ "Expression type not supported in co
 C++20 permits `try`/`catch` blocks inside constexpr functions (they just cannot be entered during constant evaluation). FlashCpp does not currently parse `try` blocks inside constexpr function bodies, so any constexpr function containing a `try` block will fail to compile.
 
 **What is needed:** Parser support for `try`/`catch` inside constexpr bodies; the evaluator then simply never enters the handler during constant evaluation, so no evaluator changes are needed.
-
----
-
-### Complex member-initialization chains (delegating constructors, calling non-constexpr helpers)
-
-```cpp
-struct S {
-    int x;
-    constexpr S() : S(0) {}        // ❌ delegating constructor not evaluated
-    constexpr S(int v) : x(v) {}
-};
-constexpr S s;
-static_assert(s.x == 0);
-```
-
-**Root cause:** The evaluator's `try_materialize_struct_from_ctor_args` path does not detect or recurse into delegating constructors. When the selected constructor's initializer list contains another constructor call (`:S(0)`), the path does not recognize this as a delegation and falls through without producing member bindings.
-
-**What is needed:** After finding a matching constructor, inspect its initializer list for a delegating constructor call (initializer target is the same class name). If found, recursively invoke the delegated constructor to obtain the initial member state, then apply any additional initializer-list entries on top.
 
 ---
 
@@ -260,7 +188,7 @@ Key design constraint: the evaluator is a tree-walk interpreter with no heap or 
 
 1. **Prefer member-initializer lists** over complex constructor-body chains for most reliable constexpr support.
 2. **Void lambdas with `[&]` captures work** — accumulator and mutating-callback patterns are fully supported.
-3. **Avoid indirect lambda capture chains** — `[&inc]() { inc(); }` where `inc` itself captures by-ref does not propagate writes back. Inline the body instead.
+3. **Indirect lambda capture chains work** — `[&inc]() { inc(); inc(); }` where `inc` itself captures by-ref correctly propagates writes back to the enclosing scope.
 4. **`constexpr` lambdas and returned lambda values are supported**, including `constexpr auto fn = make_fn(); static_assert(fn(...));`.
 5. **Dynamic allocation works** — `new`/`delete` in constexpr follow C++20 rules; all allocations must be freed before the constant expression returns.
 6. **`const char*` string operations work** — subscript, `while (*s != '\0')` traversal, and string-literal return values are all supported.
@@ -270,11 +198,10 @@ Key design constraint: the evaluator is a tree-walk interpreter with no heap or 
 
 The most impactful next improvements in rough priority order:
 
-1. **Propagate mutations through indirect lambda-capture chains** — fix `evaluate_lambda_call` to walk capture-of-capture chains after each call and propagate writes all the way to the original binding.
-2. **`const char*` member subscript** — after resolving a `const char*` member binding, propagate `pointer_to_var.origin_var_name` so the subscript fast-path can find the string data.
-3. **Delegating constructors** — detect delegation in the initializer list and recurse before applying any remaining initializer entries.
-4. **`std::initializer_list`** — synthesize an internal array from the brace-argument list when the parameter type is `std::initializer_list<T>`.
-5. **Virtual dispatch** — use `object_type_index` as the dynamic type when looking up member functions through a base-class static type.
+1. **`std::initializer_list`** — synthesize an internal array from the brace-argument list when the parameter type is `std::initializer_list<T>`.
+2. **Virtual dispatch** — use `object_type_index` as the dynamic type when looking up member functions through a base-class static type.
+3. **Fold expressions in un-instantiated contexts** — trigger on-demand pack expansion when the evaluator encounters an unexpanded `FoldExprNode`.
+4. **Unsigned wrapping for template-dependent types** — propagate `exact_type` through arithmetic so width truncation applies even when the declared type is opaque.
 
 ---
 
@@ -306,5 +233,8 @@ The most impactful next improvements in rough priority order:
 - `tests/test_constexpr_global_paren_init_ret0.cpp` — global struct paren-init
 - `tests/test_constexpr_global_float_struct_ret0.cpp` — global struct paren-init with float/double members
 - `tests/test_constexpr_void_lambda_ref_capture_ret0.cpp` — void constexpr lambdas with by-reference capture mutations
+- `tests/test_constexpr_lambda_indirect_capture_chain_ret0.cpp` — indirect lambda capture chain (`[&inc]() { inc(); }` where `inc` captures by-ref)
 - `tests/test_constexpr_local_callable_operator_ret0.cpp` — `operator()` on locally-declared struct variables
 - `tests/test_constexpr_returned_lambda_global_ret0.cpp` — returned lambda values stored in global `constexpr auto` variables
+- `tests/test_constexpr_operator_bracket_struct_ret0.cpp` — `operator[]` subscript syntax on struct types
+- `tests/test_constexpr_delegating_ctor_ret0.cpp` — delegating constructors (`S() : S(42) {}`) in constexpr
