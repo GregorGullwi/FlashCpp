@@ -26,7 +26,11 @@ std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	if (!type_info)
 		return std::nullopt;
 	if (type_info->is_incomplete_instantiation_) {
-		return std::nullopt;
+		instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
+		type_info = findTypeByName(type_info->name());
+		if (!type_info || type_info->is_incomplete_instantiation_) {
+			return std::nullopt;
+		}
 	}
 	auto struct_name = StringTable::getStringView(type_info->name());
 	instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
@@ -53,7 +57,11 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	if (!type_info)
 		return nullptr;
 	if (type_info->is_incomplete_instantiation_) {
-		return nullptr;
+		instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
+		type_info = findTypeByName(type_info->name());
+		if (!type_info || type_info->is_incomplete_instantiation_) {
+			return nullptr;
+		}
 	}
 
 	StringHandle type_name = type_info->name();
@@ -73,7 +81,9 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 			continue;
 
 		const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-		if (candidate.has_template_body_position()) {
+		// Keep deferred-body concrete members viable for overload selection.
+		// Their bodies are materialized lazily via LazyMemberInstantiationRegistry.
+		if (candidate.failed_substitution()) {
 			continue;
 		}
 		if (match) {
@@ -341,21 +351,16 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			isHardUseLikeInstantiationMode()) {
 			std::string_view func_name = member_name_token.value();
 			if (!func_name.empty()) {
-				StringHandle class_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
-				StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-				LazyMemberKey member_key = LazyMemberKey::anyConst(class_name_handle, func_name_handle);
-				if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
-					FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for: ", *object_struct_name, "::", func_name);
-					if (!instantiated_func.has_value()) {
-						instantiating_lazy_member_ = true;
-						auto restore_lazy_instantiation = ScopeGuard([&]() {
-							instantiating_lazy_member_ = false;
-						});
-						instantiated_func = instantiateLazyMemberIfNeeded(member_key);
-					}
-					if (instantiated_func.has_value()) {
-						FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
-					}
+				if (!instantiated_func.has_value()) {
+					instantiating_lazy_member_ = true;
+					auto restore_lazy_instantiation = ScopeGuard([&]() {
+						instantiating_lazy_member_ = false;
+					});
+					instantiated_func =
+						instantiateLazyMemberForCanonicalOwner(*object_struct_name, func_name);
+				}
+				if (instantiated_func.has_value()) {
+					FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
 				}
 			}
 		}
@@ -979,15 +984,13 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_scope);
 						auto class_type_it = getTypesByNameMap().find(class_name_handle);
 						if (class_type_it != getTypesByNameMap().end() && class_type_it->second->isTemplateInstantiation()) {
-							StringHandle member_name_handle = final_identifier.handle();
-							LazyMemberKey member_key = LazyMemberKey::anyConst(class_name_handle, member_name_handle);
-							if (!instantiating_lazy_member_ &&
-								LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
+							if (!instantiating_lazy_member_) {
 								instantiating_lazy_member_ = true;
 								auto restore_lazy_instantiation = ScopeGuard([&]() {
 									instantiating_lazy_member_ = false;
 								});
-								auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);
+								auto instantiated_func =
+									instantiateLazyMemberForCanonicalOwner(class_scope, final_identifier.value());
 								if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 									qualified_symbol = instantiated_func;
 									decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();

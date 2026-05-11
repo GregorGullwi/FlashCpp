@@ -960,11 +960,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				}
 				return instantiated;
 			};
-			auto hasResolvedTypeOwner = [&](StringHandle owner_name_handle) {
-				const auto& types_by_name = getTypesByNameMap();
-				return types_by_name.find(owner_name_handle) != types_by_name.end();
-			};
-
 			// First try function template instantiation to obtain accurate return type
 			std::optional<ASTNode> instantiated_template = std::nullopt;
 			if (!qualified_name.empty()) {
@@ -973,20 +968,16 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					std::string_view member_name = qualified_name.substr(scope_pos + 2);
 					std::vector<TemplateTypeArg> current_inst_args =
 						collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteFunctionCallImpl");
-					if (!current_inst_args.empty() && extractBaseTemplateName(owner_name).empty()) {
-						auto owner_template = gTemplateRegistry.lookupTemplate(owner_name);
-						if (owner_template.has_value()) {
-							// Only class-template owners can be materialized here. Namespace-qualified
-							// calls like std::__atomic_impl::fn should skip this path entirely.
-							Parser::AliasTemplateMaterializationResult materialized_owner =
-								parser_.materializeTemplateInstantiationForLookup(owner_name, current_inst_args);
-							if (!materialized_owner.instantiated_name.empty()) {
-								owner_name = materialized_owner.instantiated_name;
-							}
-						}
+					Parser::AliasTemplateMaterializationResult canonical_owner =
+						parser_.resolveCanonicalInstantiatedOwnerForLookup(
+							owner_name,
+							std::span<const TemplateTypeArg>(
+								current_inst_args.data(),
+								current_inst_args.size()));
+					if (!canonical_owner.instantiated_name.empty()) {
+						owner_name = canonical_owner.instantiated_name;
 					}
-					StringHandle owner_name_handle = StringTable::getOrInternStringHandle(owner_name);
-					if (hasResolvedTypeOwner(owner_name_handle)) {
+					if (canonical_owner.resolved_type_info != nullptr) {
 						// Only try member-template recovery when the owner resolved to an actual type.
 						instantiated_template = parser_.try_instantiate_member_function_template_explicit(
 							owner_name,
@@ -1191,16 +1182,11 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		}
 	}
 
-	// If not a template function call or instantiation failed, check for dependent qualified names
-	// Pattern: Base$dependentHash::member(args) — needs re-instantiation with concrete types
-	// This happens when a template body is re-parsed: Base<T>::member() creates Base$hash1::member
-	// during initial template parsing, but the actual instantiation is Base$hash2.
+	// If not a template function call or instantiation failed, check for qualified owners
+	// that became concrete during substitution and need canonical owner identity rebound.
 	size_t scope_pos = func_name.find("::");
-	std::string_view base_template_name;
 	if (scope_pos != std::string_view::npos) {
-		base_template_name = extractBaseTemplateName(func_name.substr(0, scope_pos));
-	}
-	if (!base_template_name.empty() && scope_pos != std::string_view::npos) {
+		std::string_view owner_name = func_name.substr(0, scope_pos);
 		std::string_view member_name = func_name.substr(scope_pos + 2);
 
 		// Collect concrete template arguments from param_map_
@@ -1208,69 +1194,75 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteFunctionCallImpl");
 
 		if (!inst_args.empty()) {
-			Parser::AliasTemplateMaterializationResult materialized_base =
-				parser_.materializeTemplateInstantiationForLookup(base_template_name, inst_args);
-			std::string_view instantiated_name = materialized_base.instantiated_name;
+			Parser::AliasTemplateMaterializationResult canonical_owner =
+				parser_.resolveCanonicalInstantiatedOwnerForLookup(
+					owner_name,
+					std::span<const TemplateTypeArg>(inst_args.data(), inst_args.size()));
+			const bool owner_is_template_instantiation =
+				canonical_owner.resolved_type_info != nullptr &&
+				canonical_owner.resolved_type_info->isTemplateInstantiation();
+			const bool owner_has_template_hash = !extractBaseTemplateName(owner_name).empty();
+			if (owner_is_template_instantiation || owner_has_template_hash) {
+				std::string_view instantiated_name = canonical_owner.instantiated_name.empty()
+					? owner_name
+					: canonical_owner.instantiated_name;
 
-			// Build the corrected qualified function name
-			StringBuilder new_func_name_builder;
-			new_func_name_builder.append(instantiated_name).append("::").append(member_name);
-			std::string_view new_func_name = new_func_name_builder.commit();
+				// Build the corrected qualified function name
+				StringBuilder new_func_name_builder;
+				new_func_name_builder.append(instantiated_name).append("::").append(member_name);
+				std::string_view new_func_name = new_func_name_builder.commit();
 
-			FLASH_LOG(Templates, Debug, "  Substituted qualified function name: ", func_name, " -> ", new_func_name);
+				FLASH_LOG(Templates, Debug, "  Substituted qualified function name: ", func_name, " -> ", new_func_name);
 
-			// Create a new token with the corrected name
-			Token new_func_token(Token::Type::Identifier, new_func_name,
-								 call.called_from().line(), call.called_from().column(), call.called_from().file_index());
+				// Create a new token with the corrected name
+				Token new_func_token(Token::Type::Identifier, new_func_name,
+									 call.called_from().line(), call.called_from().column(), call.called_from().file_index());
 
-			// Substitute arguments
-			ChunkedVector<ASTNode> substituted_args;
-			for (size_t i = 0; i < call.arguments().size(); ++i) {
-				substituted_args.push_back(substitute(call.arguments()[i]));
-			}
-
-			// Create new forward declaration with corrected name
-			auto& fwd_type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
-			ASTNode fwd_type_ast(&fwd_type_node);
-			auto& new_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(fwd_type_ast, new_func_token);
-
-			// Try to trigger lazy member function instantiation for the target
-			StringHandle inst_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
-			StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
-			LazyMemberKey member_key = LazyMemberKey::anyConst(inst_name_handle, member_handle);
-			if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
-				if (parser_.instantiateLazyMemberIfNeeded(member_key).has_value()) {
-					normalizePendingSemanticRoots();
+				// Substitute arguments
+				ChunkedVector<ASTNode> substituted_args;
+				for (size_t i = 0; i < call.arguments().size(); ++i) {
+					substituted_args.push_back(substitute(call.arguments()[i]));
 				}
-			}
 
-			const DeclarationNode* target_decl = &new_decl;
-			const FunctionDeclarationNode* target_func = nullptr;
-			auto type_it = getTypesByNameMap().find(inst_name_handle);
-			if (type_it != getTypesByNameMap().end()) {
-				if (const StructTypeInfo* struct_info = type_it->second->getStructInfo()) {
-					for (const auto& member_func : struct_info->member_functions) {
-						if (member_func.getName() == member_handle &&
-							member_func.function_decl.is<FunctionDeclarationNode>()) {
-							target_func = &member_func.function_decl.as<FunctionDeclarationNode>();
-							target_decl = &target_func->decl_node();
-							break;
+				// Create new forward declaration with corrected name
+				auto& fwd_type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
+				ASTNode fwd_type_ast(&fwd_type_node);
+				auto& new_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(fwd_type_ast, new_func_token);
+
+				// Try to trigger lazy member function instantiation for the target
+				parser_.instantiateLazyMemberForCanonicalOwner(instantiated_name, member_name);
+
+				StringHandle inst_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+				StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+
+				const DeclarationNode* target_decl = &new_decl;
+				const FunctionDeclarationNode* target_func = nullptr;
+				auto type_it = getTypesByNameMap().find(inst_name_handle);
+				if (type_it != getTypesByNameMap().end()) {
+					if (const StructTypeInfo* struct_info = type_it->second->getStructInfo()) {
+						for (const auto& member_func : struct_info->member_functions) {
+							if (member_func.getName() == member_handle &&
+								member_func.function_decl.is<FunctionDeclarationNode>()) {
+								target_func = &member_func.function_decl.as<FunctionDeclarationNode>();
+								target_decl = &target_func->decl_node();
+								break;
+							}
 						}
 					}
 				}
-			}
 
-			ExpressionNode& new_expr = emplaceDirectCallExpr(
-				*target_decl,
-				target_func,
-				std::move(substituted_args),
-				new_func_token);
-			copyMetadataToExpr(new_expr);
-			setCallQualifiedName(new_expr, new_func_name);
-			if (target_func && target_func->has_mangled_name()) {
-				setCallMangledName(new_expr, target_func->mangled_name());
+				ExpressionNode& new_expr = emplaceDirectCallExpr(
+					*target_decl,
+					target_func,
+					std::move(substituted_args),
+					new_func_token);
+				copyMetadataToExpr(new_expr);
+				setCallQualifiedName(new_expr, new_func_name);
+				if (target_func && target_func->has_mangled_name()) {
+					setCallMangledName(new_expr, target_func->mangled_name());
+				}
+				return ASTNode(&new_expr);
 			}
-			return ASTNode(&new_expr);
 		}
 	}
 
@@ -1288,6 +1280,49 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 	ChunkedVector<ASTNode> substituted_args;
 	for (size_t i = 0; i < call.arguments().size(); ++i) {
 		substituted_args.push_back(substitute(call.arguments()[i]));
+	}
+
+	if ((call.callee().is_member() || call.callee().is_static_member()) &&
+		call.called_from().kind().is_identifier()) {
+		if (const FunctionDeclarationNode* rebound_member =
+				parser_.tryResolveConcreteMemberFunction(substituted_receiver, call.called_from().value());
+			rebound_member != nullptr) {
+			if (auto receiver_type = parser_.get_expression_type(substituted_receiver);
+				receiver_type.has_value() && is_struct_type(receiver_type->category())) {
+				if (const TypeInfo* receiver_type_info = tryGetTypeInfo(receiver_type->type_index());
+					receiver_type_info != nullptr) {
+					std::string_view class_name =
+						StringTable::getStringView(receiver_type_info->name());
+					if (parser_.instantiateLazyMemberForCanonicalOwner(
+							class_name,
+							call.called_from().value())
+							.has_value()) {
+						rebound_member =
+							parser_.tryResolveConcreteMemberFunction(substituted_receiver, call.called_from().value());
+					}
+				}
+			}
+
+			if (rebound_member != nullptr) {
+				CallExprNode rebound_call = makeResolvedMemberCallExpr(
+					substituted_receiver,
+					*rebound_member,
+					std::move(substituted_args),
+					call.called_from());
+				copyCallMetadataWithTransformedTemplateArguments(
+					rebound_call,
+					call,
+					[this](const ASTNode& template_arg) {
+						return substitute(template_arg);
+					},
+					CallMetadataCopyOptions{});
+				if (rebound_member->has_mangled_name()) {
+					rebound_call.set_mangled_name(rebound_member->mangled_name());
+				}
+				ExpressionNode& rebound_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(rebound_call);
+				return ASTNode(&rebound_expr);
+			}
+		}
 	}
 
 	CallExprNode substituted_call(call.callee(), substituted_receiver, std::move(substituted_args), call.called_from());

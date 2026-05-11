@@ -2689,6 +2689,13 @@ private:
 	AliasTemplateMaterializationResult materializeTemplateInstantiationForLookup(
 		std::string_view template_name,
 		std::span<const TemplateTypeArg> template_args);
+	AliasTemplateMaterializationResult resolveCanonicalInstantiatedOwnerForLookup(
+		std::string_view owner_name,
+		std::span<const TemplateTypeArg> owner_template_args = {});
+	std::optional<ASTNode> instantiateLazyMemberForCanonicalOwner(
+		std::string_view& owner_name,
+		std::string_view member_name,
+		std::span<const TemplateTypeArg> owner_template_args = {});
 	AliasTemplateMaterializationResult materializePrimaryTemplateOwnerForLookup(
 		std::string_view primary_template_name,
 		std::string_view fallback_template_name,

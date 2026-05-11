@@ -893,6 +893,178 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 	return result;
 }
 
+Parser::AliasTemplateMaterializationResult Parser::resolveCanonicalInstantiatedOwnerForLookup(
+	std::string_view owner_name,
+	std::span<const TemplateTypeArg> owner_template_args) {
+	AliasTemplateMaterializationResult result;
+	result.instantiated_name = owner_name;
+	if (owner_name.empty()) {
+		return result;
+	}
+
+	const auto can_materialize_owner_template =
+		[&](std::string_view candidate_name) {
+		if (candidate_name.empty()) {
+			return false;
+		}
+		if (gTemplateRegistry.lookup_alias_template(candidate_name).has_value()) {
+			return true;
+		}
+		if (auto template_entry = gTemplateRegistry.lookupTemplate(candidate_name);
+			template_entry.has_value() &&
+			template_entry->is<TemplateClassDeclarationNode>()) {
+			return true;
+		}
+		return false;
+	};
+
+	const StringHandle owner_name_handle = StringTable::getOrInternStringHandle(owner_name);
+	if (const TypeInfo* owner_type_info = findTypeByName(owner_name_handle);
+		owner_type_info != nullptr) {
+		result.resolved_type_info = owner_type_info;
+		if (!owner_type_info->isTemplateInstantiation()) {
+			return result;
+		}
+
+		const std::string_view base_template_name =
+			StringTable::getStringView(owner_type_info->baseTemplateName());
+		if (base_template_name.empty()) {
+			return result;
+		}
+
+		std::vector<TemplateTypeArg> concrete_template_args;
+		concrete_template_args.reserve(owner_type_info->templateArgs().size());
+		bool has_dependent_template_arg = false;
+		for (const auto& stored_arg : owner_type_info->templateArgs()) {
+			TemplateTypeArg concrete_arg = toTemplateTypeArg(stored_arg);
+			concrete_arg.setCategory(stored_arg.category());
+			if (concrete_arg.is_dependent || stored_arg.dependent_name.isValid()) {
+				has_dependent_template_arg = true;
+				break;
+			}
+			concrete_template_args.push_back(concrete_arg);
+		}
+		if (!has_dependent_template_arg) {
+			AliasTemplateMaterializationResult canonical_owner =
+				materializeTemplateInstantiationForLookup(
+					base_template_name,
+					std::span<const TemplateTypeArg>(
+						concrete_template_args.data(),
+						concrete_template_args.size()));
+			if (!canonical_owner.instantiated_name.empty()) {
+				result.instantiated_name = canonical_owner.instantiated_name;
+			}
+			if (canonical_owner.resolved_type_info != nullptr) {
+				result.resolved_type_info = canonical_owner.resolved_type_info;
+			}
+			return result;
+		}
+
+		if (has_dependent_template_arg &&
+			owner_type_info->hasInstantiationContext() &&
+			owner_type_info->instantiationContext() != nullptr) {
+			concrete_template_args.clear();
+			has_dependent_template_arg = false;
+			for (const auto& context_arg : owner_type_info->instantiationContext()->param_args) {
+				TemplateTypeArg concrete_arg = toTemplateTypeArg(context_arg);
+				concrete_arg.setCategory(context_arg.category());
+				if (concrete_arg.is_dependent || context_arg.dependent_name.isValid()) {
+					has_dependent_template_arg = true;
+					break;
+				}
+				concrete_template_args.push_back(concrete_arg);
+			}
+			if (!has_dependent_template_arg) {
+				AliasTemplateMaterializationResult canonical_owner =
+					materializeTemplateInstantiationForLookup(
+						base_template_name,
+						std::span<const TemplateTypeArg>(
+							concrete_template_args.data(),
+							concrete_template_args.size()));
+				if (!canonical_owner.instantiated_name.empty()) {
+					result.instantiated_name = canonical_owner.instantiated_name;
+				}
+				if (canonical_owner.resolved_type_info != nullptr) {
+					result.resolved_type_info = canonical_owner.resolved_type_info;
+				}
+				return result;
+			}
+		}
+
+		if (!owner_template_args.empty() &&
+			can_materialize_owner_template(base_template_name)) {
+			AliasTemplateMaterializationResult canonical_owner =
+				materializeTemplateInstantiationForLookup(
+					base_template_name,
+					owner_template_args);
+			if (!canonical_owner.instantiated_name.empty() ||
+				canonical_owner.resolved_type_info != nullptr) {
+				return canonical_owner;
+			}
+		}
+		return result;
+	}
+
+	if (!owner_template_args.empty()) {
+		if (can_materialize_owner_template(owner_name)) {
+			AliasTemplateMaterializationResult materialized_owner =
+				materializeTemplateInstantiationForLookup(owner_name, owner_template_args);
+			if (!materialized_owner.instantiated_name.empty() ||
+				materialized_owner.resolved_type_info != nullptr) {
+				return materialized_owner;
+			}
+		}
+
+		const std::string_view base_template_name = extractBaseTemplateName(owner_name);
+		if (!base_template_name.empty() &&
+			base_template_name != owner_name &&
+			can_materialize_owner_template(base_template_name)) {
+			AliasTemplateMaterializationResult materialized_owner =
+				materializeTemplateInstantiationForLookup(base_template_name, owner_template_args);
+			if (!materialized_owner.instantiated_name.empty() ||
+				materialized_owner.resolved_type_info != nullptr) {
+				return materialized_owner;
+			}
+		}
+	}
+
+	return result;
+}
+
+std::optional<ASTNode> Parser::instantiateLazyMemberForCanonicalOwner(
+	std::string_view& owner_name,
+	std::string_view member_name,
+	std::span<const TemplateTypeArg> owner_template_args) {
+	AliasTemplateMaterializationResult canonical_owner =
+		resolveCanonicalInstantiatedOwnerForLookup(owner_name, owner_template_args);
+	if (!canonical_owner.instantiated_name.empty()) {
+		owner_name = canonical_owner.instantiated_name;
+	}
+	if (owner_name.empty() || member_name.empty()) {
+		return std::nullopt;
+	}
+
+	StringHandle owner_handle = StringTable::getOrInternStringHandle(owner_name);
+	StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+	LazyMemberKey member_key = LazyMemberKey::anyConst(owner_handle, member_handle);
+	if (!LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
+		return std::nullopt;
+	}
+
+	FLASH_LOG(
+		Templates,
+		Debug,
+		"Lazy instantiation triggered for canonical owner: ",
+		owner_name,
+		"::",
+		member_name);
+	std::optional<ASTNode> instantiated = instantiateLazyMemberIfNeeded(member_key);
+	if (instantiated.has_value()) {
+		normalizePendingSemanticRootsIfAvailable();
+	}
+	return instantiated;
+}
+
 const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	const TypeSpecifierNode& alias_type_spec,
 	std::span<const TemplateParameterNode> template_params,
