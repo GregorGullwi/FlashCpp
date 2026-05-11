@@ -925,6 +925,29 @@ private:
 		MemberFunctionLookupMode lookup_mode,
 		bool require_static,
 		bool detect_ambiguity);
+	// Invoke a constexpr member function with pre-evaluated arguments.
+	// Handles: this injection, argument binding, template context save/restore,
+	// recursion depth guard, struct context setup, evaluate_block_with_bindings.
+	// member_bindings contains the struct object's members (moved in).
+	static EvalResult invoke_constexpr_member_function(
+		const FunctionDeclarationNode& func,
+		std::unordered_map<std::string_view, EvalResult> member_bindings,
+		TypeIndex type_index,
+		const TypeInfo* type_info,
+		const StructTypeInfo* struct_info,
+		std::vector<EvalResult> pre_evaluated_args,
+		EvaluationContext& context,
+		std::string_view body_error,
+		std::string_view return_error);
+	// Select the best constexpr-evaluable overload of operator_name from struct_info.
+	// When both const and non-const overloads exist, the const overload is preferred
+	// (constexpr evaluation is read-only so both produce identical results).
+	// Returns nullptr if no suitable overload with a definition is found.
+	static const FunctionDeclarationNode* find_constexpr_operator_overload(
+		const StructTypeInfo* struct_info,
+		StringHandle operator_name,
+		size_t argument_count,
+		EvaluationContext& context);
 	static ResolvedMemberFunctionCandidate find_current_struct_member_function_candidate(
 		StringHandle function_name_handle,
 		size_t argument_count,

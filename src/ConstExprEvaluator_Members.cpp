@@ -1548,83 +1548,19 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		if (struct_info) {
 			StringHandle op_bracket = StringTable::getOrInternStringHandle("operator[]");
-			auto candidate = find_member_function_candidate(
-				struct_info, op_bracket, 1, context,
-				MemberFunctionLookupMode::ConstexprEvaluable, false, true);
-			if (!candidate.ambiguous && candidate.function && candidate.function->get_definition().has_value()) {
-				const FunctionDeclarationNode* actual_func = candidate.function;
-				std::unordered_map<std::string_view, EvalResult> member_bindings =
-					array_result->object_member_bindings;
-				// Inject 'this' before parameters so object_member_bindings only contains struct members
-				EvalResult this_binding = EvalResult::from_int(0LL);
-				this_binding.object_type_index = array_result->object_type_index;
-				this_binding.object_member_bindings = member_bindings;
-				member_bindings["this"] = std::move(this_binding);
-				EvalResult idx_result_copy = index_result;
-				std::vector<EvalResult> pre_evaluated_args = {idx_result_copy};
-				auto bind_result = bind_pre_evaluated_arguments(
-					actual_func->parameter_nodes(),
-					pre_evaluated_args,
-					member_bindings,
-					context,
-					"Invalid parameter node in constexpr operator[]",
-					false);
-				if (!bind_result.success()) {
-					return bind_result;
-				}
-				auto saved_template_param_names = context.template_param_names;
-				auto saved_template_args = context.template_args;
-				auto saved_template_environment = context.template_environment;
-				if (actual_func->has_outer_template_bindings()) {
-					context.template_param_names.clear();
-					context.template_args.clear();
-					context.template_param_names.reserve(actual_func->outer_template_param_names().size());
-					context.template_args.reserve(actual_func->outer_template_args().size());
-					for (StringHandle param_name : actual_func->outer_template_param_names()) {
-						context.template_param_names.push_back(StringTable::getStringView(param_name));
-					}
-					for (const auto& arg : actual_func->outer_template_args()) {
-						context.template_args.push_back(toTemplateTypeArg(arg));
-					}
-				} else {
-					load_template_bindings_from_type(type_info, context);
-				}
-				if (context.current_depth >= context.max_recursion_depth) {
-					context.template_param_names = std::move(saved_template_param_names);
-					context.template_args = std::move(saved_template_args);
-					context.template_environment = std::move(saved_template_environment);
-					return EvalResult::error("Constexpr recursion depth limit exceeded in operator[] call");
-				}
-				auto saved_struct_info = context.struct_info;
-				auto saved_struct_type_index = context.struct_type_index;
-				const TypeInfo* saved_return_type_info = context.return_type_info;
-				context.struct_info = struct_info;
-				context.struct_type_index = array_result->object_type_index;
-				context.return_type_info = nullptr;
-				{
-					const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_specifier_node();
-					TypeIndex ret_idx = ret_spec.type_index();
-					if (const TypeInfo* rtype = tryGetTypeInfo(ret_idx))
-						context.return_type_info = rtype;
-				}
-				context.current_depth++;
-				auto* saved_local_bindings = context.local_bindings;
-				context.local_bindings = &member_bindings;
-				auto result = evaluate_block_with_bindings(
-					actual_func->get_definition().value(),
-					member_bindings,
+			const FunctionDeclarationNode* actual_func =
+				find_constexpr_operator_overload(struct_info, op_bracket, 1, context);
+			if (actual_func) {
+				return invoke_constexpr_member_function(
+					*actual_func,
+					array_result->object_member_bindings,
+					array_result->object_type_index,
+					type_info,
+					struct_info,
+					{index_result},
 					context,
 					"operator[] body is not a block",
 					"operator[] did not return a value");
-				context.local_bindings = saved_local_bindings;
-				context.current_depth--;
-				context.return_type_info = saved_return_type_info;
-				context.struct_info = saved_struct_info;
-				context.struct_type_index = saved_struct_type_index;
-				context.template_param_names = std::move(saved_template_param_names);
-				context.template_args = std::move(saved_template_args);
-				context.template_environment = std::move(saved_template_environment);
-				return result;
 			}
 		}
 	}
@@ -2146,6 +2082,129 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 		}
 	}
 
+	return result;
+}
+
+const FunctionDeclarationNode* Evaluator::find_constexpr_operator_overload(
+	const StructTypeInfo* struct_info,
+	StringHandle operator_name,
+	size_t argument_count,
+	EvaluationContext& context) {
+	auto candidate = find_member_function_candidate(
+		struct_info, operator_name, argument_count, context,
+		MemberFunctionLookupMode::ConstexprEvaluable, false, true);
+	if (!candidate.ambiguous && candidate.function && candidate.function->get_definition().has_value()) {
+		return candidate.function;
+	}
+	if (!candidate.ambiguous) {
+		return nullptr;
+	}
+	// Ambiguous: prefer the const overload - constexpr evaluation is read-only
+	// so selecting the const overload is always correct. If the non-const overload
+	// must be called in future (e.g., write-through semantics), this preference
+	// must be revisited.
+	const FunctionDeclarationNode* const_overload = nullptr;
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.is_constructor || member_func.is_destructor ||
+			member_func.getName() != operator_name ||
+			!member_func.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+		if (!isConstexprMemberLookupCandidate(
+				func_decl, argument_count, context,
+				MemberFunctionLookupMode::ConstexprEvaluable, false)) {
+			continue;
+		}
+		if (!func_decl.get_definition().has_value()) {
+			continue;
+		}
+		if (func_decl.is_const_member_function()) {
+			if (const_overload) {
+				return nullptr;
+			}
+			const_overload = &func_decl;
+		}
+	}
+	return const_overload;
+}
+
+EvalResult Evaluator::invoke_constexpr_member_function(
+	const FunctionDeclarationNode& func,
+	std::unordered_map<std::string_view, EvalResult> member_bindings,
+	TypeIndex type_index,
+	const TypeInfo* type_info,
+	const StructTypeInfo* struct_info,
+	std::vector<EvalResult> pre_evaluated_args,
+	EvaluationContext& context,
+	std::string_view body_error,
+	std::string_view return_error) {
+	EvalResult this_binding = EvalResult::from_int(0LL);
+	this_binding.object_type_index = type_index;
+	this_binding.object_member_bindings = member_bindings;
+	member_bindings["this"] = std::move(this_binding);
+	auto bind_result = bind_pre_evaluated_arguments(
+		func.parameter_nodes(),
+		pre_evaluated_args,
+		member_bindings,
+		context,
+		"Invalid parameter node in constexpr member function call",
+		false);
+	if (!bind_result.success()) {
+		return bind_result;
+	}
+	auto saved_template_param_names = context.template_param_names;
+	auto saved_template_args = context.template_args;
+	auto saved_template_environment = context.template_environment;
+	if (func.has_outer_template_bindings()) {
+		context.template_param_names.clear();
+		context.template_args.clear();
+		context.template_param_names.reserve(func.outer_template_param_names().size());
+		context.template_args.reserve(func.outer_template_args().size());
+		for (StringHandle param_name : func.outer_template_param_names()) {
+			context.template_param_names.push_back(StringTable::getStringView(param_name));
+		}
+		for (const auto& arg : func.outer_template_args()) {
+			context.template_args.push_back(toTemplateTypeArg(arg));
+		}
+	} else {
+		load_template_bindings_from_type(type_info, context);
+	}
+	if (context.current_depth >= context.max_recursion_depth) {
+		context.template_param_names = std::move(saved_template_param_names);
+		context.template_args = std::move(saved_template_args);
+		context.template_environment = std::move(saved_template_environment);
+		return EvalResult::error("Constexpr recursion depth limit exceeded in member function call");
+	}
+	auto saved_struct_info = context.struct_info;
+	auto saved_struct_type_index = context.struct_type_index;
+	const TypeInfo* saved_return_type_info = context.return_type_info;
+	context.struct_info = struct_info;
+	context.struct_type_index = type_index;
+	context.return_type_info = nullptr;
+	{
+		const TypeSpecifierNode& ret_spec = func.decl_node().type_specifier_node();
+		TypeIndex ret_idx = ret_spec.type_index();
+		if (const TypeInfo* rtype = tryGetTypeInfo(ret_idx))
+			context.return_type_info = rtype;
+	}
+	context.current_depth++;
+	auto* saved_local_bindings = context.local_bindings;
+	context.local_bindings = &member_bindings;
+	auto result = evaluate_block_with_bindings(
+		func.get_definition().value(),
+		member_bindings,
+		context,
+		body_error,
+		return_error);
+	context.local_bindings = saved_local_bindings;
+	context.current_depth--;
+	context.return_type_info = saved_return_type_info;
+	context.struct_info = saved_struct_info;
+	context.struct_type_index = saved_struct_type_index;
+	context.template_param_names = std::move(saved_template_param_names);
+	context.template_args = std::move(saved_template_args);
+	context.template_environment = std::move(saved_template_environment);
 	return result;
 }
 
@@ -7236,22 +7295,19 @@ EvalResult Evaluator::materialize_members_from_constructor(
 		} else if (struct_info && struct_info->own_type_index_.has_value()) {
 			context.struct_type_index = *struct_info->own_type_index_;
 		}
-		const BlockNode& ctor_body = ctor_definition->as<BlockNode>();
-		for (const auto& ctor_stmt : ctor_body.get_statements()) {
-			auto stmt_result = evaluate_statement_with_bindings(ctor_stmt, ctor_body_bindings, context);
-			if (stmt_result.success()) {
-				break;
-			}
-			if (stmt_result.error_message != "Statement executed (not a return)") {
-				context.local_bindings = saved_local_bindings;
-				context.struct_info = saved_struct_info;
-				context.struct_type_index = saved_struct_type_index;
-				return stmt_result;
-			}
-		}
+		auto body_result = evaluate_block_with_bindings(
+			*ctor_definition,
+			ctor_body_bindings,
+			context,
+			"Delegating constructor body is not a block",
+			"");
 		context.local_bindings = saved_local_bindings;
 		context.struct_info = saved_struct_info;
 		context.struct_type_index = saved_struct_type_index;
+		// Constructor body returns void; a "no return value" result (empty error) is normal.
+		if (!body_result.success() && !body_result.error_message.empty()) {
+			return body_result;
+		}
 		for (const auto& member : struct_info->members) {
 			std::string_view member_name = StringTable::getStringView(member.getName());
 			auto it = ctor_body_bindings.find(member_name);
@@ -7659,85 +7715,19 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		if (struct_info) {
 			StringHandle op_bracket = StringTable::getOrInternStringHandle("operator[]");
-			auto candidate = find_member_function_candidate(
-				struct_info, op_bracket, 1, context,
-				MemberFunctionLookupMode::ConstexprEvaluable, false, true);
-			if (!candidate.ambiguous && candidate.function && candidate.function->get_definition().has_value()) {
-				const FunctionDeclarationNode* actual_func = candidate.function;
-				// Set up member_bindings from struct object, bind parameter, add 'this'
-				std::unordered_map<std::string_view, EvalResult> member_bindings = arr_result.object_member_bindings;
-				// Inject 'this' before parameters so object_member_bindings only contains struct members
-				EvalResult this_binding = EvalResult::from_int(0LL);
-				this_binding.object_type_index = arr_result.object_type_index;
-				this_binding.object_member_bindings = member_bindings;
-				member_bindings["this"] = std::move(this_binding);
-				// Bind the index parameter using bind_pre_evaluated_arguments
-				EvalResult idx_result = index_result;
-				std::vector<EvalResult> pre_evaluated_args = {idx_result};
-				auto bind_result = bind_pre_evaluated_arguments(
-					actual_func->parameter_nodes(),
-					pre_evaluated_args,
-					member_bindings,
-					context,
-					"Invalid parameter node in constexpr operator[]",
-					false);
-				if (!bind_result.success()) {
-					return bind_result;
-				}
-				// Save and set context for member function evaluation
-				auto saved_template_param_names = context.template_param_names;
-				auto saved_template_args = context.template_args;
-				auto saved_template_environment = context.template_environment;
-				if (actual_func->has_outer_template_bindings()) {
-					context.template_param_names.clear();
-					context.template_args.clear();
-					context.template_param_names.reserve(actual_func->outer_template_param_names().size());
-					context.template_args.reserve(actual_func->outer_template_args().size());
-					for (StringHandle param_name : actual_func->outer_template_param_names()) {
-						context.template_param_names.push_back(StringTable::getStringView(param_name));
-					}
-					for (const auto& arg : actual_func->outer_template_args()) {
-						context.template_args.push_back(toTemplateTypeArg(arg));
-					}
-				} else {
-					load_template_bindings_from_type(type_info, context);
-				}
-				if (context.current_depth >= context.max_recursion_depth) {
-					context.template_param_names = std::move(saved_template_param_names);
-					context.template_args = std::move(saved_template_args);
-					context.template_environment = std::move(saved_template_environment);
-					return EvalResult::error("Constexpr recursion depth limit exceeded in operator[] call");
-				}
-				auto saved_struct_info = context.struct_info;
-				auto saved_struct_type_index = context.struct_type_index;
-				const TypeInfo* saved_return_type_info = context.return_type_info;
-				context.struct_info = struct_info;
-				context.struct_type_index = arr_result.object_type_index;
-				context.return_type_info = nullptr;
-				{
-					const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_specifier_node();
-					TypeIndex ret_idx = ret_spec.type_index();
-					if (const TypeInfo* rtype = tryGetTypeInfo(ret_idx))
-						context.return_type_info = rtype;
-				}
-				context.current_depth++;
-				auto* saved_local_bindings = context.local_bindings;
-				context.local_bindings = &member_bindings;
-				auto result = evaluate_block_with_bindings(
-					actual_func->get_definition().value(),
-					member_bindings,
+			const FunctionDeclarationNode* actual_func =
+				find_constexpr_operator_overload(struct_info, op_bracket, 1, context);
+			if (actual_func) {
+				return invoke_constexpr_member_function(
+					*actual_func,
+					arr_result.object_member_bindings,
+					arr_result.object_type_index,
+					type_info,
+					struct_info,
+					{index_result},
 					context,
 					"operator[] body is not a block",
 					"operator[] did not return a value");
-				context.local_bindings = saved_local_bindings;
-				context.current_depth--;
-				context.return_type_info = saved_return_type_info;
-				context.struct_info = saved_struct_info;
-				context.struct_type_index = saved_struct_type_index;
-				context.template_param_names = std::move(saved_template_param_names);
-				context.template_args = std::move(saved_template_args);
-				context.template_environment = std::move(saved_template_environment);
-				return result;
 			}
 		}
 	}
