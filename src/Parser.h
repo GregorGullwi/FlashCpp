@@ -2348,6 +2348,7 @@ private:
 		// body parsing, scope management, and AST registration.
 	std::optional<ASTNode> instantiate_member_function_template_core(
 		std::string_view struct_name, std::string_view member_name,
+		StringHandle requested_qualified_name,
 		StringHandle qualified_name,
 		const ASTNode& template_node,
 		std::span<const TemplateTypeArg> template_args,

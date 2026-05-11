@@ -8698,6 +8698,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 	TypeCategory type_cat = type_spec.category();
+	CVQualifier type_cv = type_spec.cv_qualifier();
 	bool is_reference = type_spec.is_reference();
 	bool is_rvalue_reference = type_spec.is_rvalue_reference();
 	size_t pointer_depth = type_spec.pointer_depth();
@@ -8711,13 +8712,14 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		 type_cat == TypeCategory::Template ||
 		 type_cat == TypeCategory::Invalid)) {
 		type_cat = resolved_trait_type.typeEnum();
+		type_cv |= resolved_trait_type.cv_qualifier;
 		if (resolved_trait_type.reference_qualifier != ReferenceQualifier::None) {
 			is_reference = true;
 			is_rvalue_reference =
 				resolved_trait_type.reference_qualifier == ReferenceQualifier::RValueReference;
 		}
 		pointer_depth += resolved_trait_type.pointer_depth;
-		if (resolved_trait_type.isArray()) {
+		if (!is_array && resolved_trait_type.isArray()) {
 			is_array = true;
 			if (!resolved_trait_type.array_dimensions.empty()) {
 				array_size = resolved_trait_type.array_dimensions.front();
@@ -8796,11 +8798,11 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		break;
 
 	case TypeTraitKind::IsConst:
-		result = type_spec.is_const();
+		result = hasCVQualifier(type_cv, CVQualifier::Const);
 		break;
 
 	case TypeTraitKind::IsVolatile:
-		result = type_spec.is_volatile();
+		result = hasCVQualifier(type_cv, CVQualifier::Volatile);
 		break;
 
 	case TypeTraitKind::IsSigned:

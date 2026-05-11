@@ -4092,7 +4092,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				trySubstituteIntrinsicTypeAlias(
 					alias_type_spec,
 					template_params,
-					filled_args_for_pattern_match,
+					template_args_for_pattern,
 					substituted_type,
 					substituted_type_index,
 					substituted_size);
@@ -4194,7 +4194,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						materializeInstantiatedMemberAliasTarget(
 							alias_type_spec,
 							template_params,
-							filled_args_for_pattern_match);
+							template_args_for_pattern);
 					concrete_member_info != nullptr) {
 					substituted_type = concrete_member_info->typeEnum();
 					substituted_type_index =
@@ -4258,7 +4258,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Register the type alias globally with its qualified name
 				std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
-					type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, filled_args_for_pattern_match);
+					type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args_for_pattern);
 				const TypeSpecifierNode& alias_registration_type_spec = substituted_alias_type_spec.has_value()
 																		   ? substituted_alias_type_spec.value()
 																		   : alias_type_spec;

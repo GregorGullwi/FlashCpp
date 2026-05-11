@@ -299,7 +299,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	return instantiate_member_function_template_core(
-		struct_name, member_name, qualified_name, template_node, template_args, key, arg_types);
+		struct_name, member_name, requested_qualified_name, qualified_name, template_node, template_args, key, arg_types);
 }
 
 std::optional<ASTNode> Parser::try_instantiate_constructor_template(
@@ -816,7 +816,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				? *current_explicit_call_arg_types_
 				: empty_call_arg_types;
 		auto result = instantiate_member_function_template_core(
-			struct_name, member_name, qualified_name, template_node, template_args, key, call_arg_types);
+			struct_name, member_name, requested_qualified_name, qualified_name, template_node, template_args, key, call_arg_types);
 		if (result.has_value()) {
 			return result;
 		}
@@ -991,6 +991,7 @@ ASTNode Parser::buildMaterializedParamType(
 
 std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	std::string_view struct_name, std::string_view member_name,
+	StringHandle requested_qualified_name,
 	StringHandle qualified_name,
 	const ASTNode& template_node,
 	std::span<const TemplateTypeArg> template_args,
@@ -1033,7 +1034,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	const auto& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 	const OuterTemplateBinding* outer_binding =
-		gTemplateRegistry.getOuterTemplateBinding(qualified_name.view());
+		gTemplateRegistry.getOuterTemplateBinding(requested_qualified_name.view());
 	InlineVector<TemplateTypeArg, 4> inline_template_args;
 	inline_template_args.reserve(template_args.size());
 	for (const TemplateTypeArg& template_arg : template_args) {
