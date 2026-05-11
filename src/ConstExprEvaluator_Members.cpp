@@ -1548,11 +1548,14 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		if (struct_info) {
 			StringHandle op_bracket = StringTable::getOrInternStringHandle("operator[]");
-			const FunctionDeclarationNode* actual_func =
+			ResolvedMemberFunctionCandidate candidate =
 				find_constexpr_operator_overload(struct_info, op_bracket, 1, context);
-			if (actual_func) {
+			if (candidate.ambiguous) {
+				return EvalResult::error("Ambiguous operator[] overload in constant expression");
+			}
+			if (candidate.function) {
 				return invoke_constexpr_member_function(
-					*actual_func,
+					*candidate.function,
 					array_result->object_member_bindings,
 					array_result->object_type_index,
 					type_info,
@@ -2085,7 +2088,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 	return result;
 }
 
-const FunctionDeclarationNode* Evaluator::find_constexpr_operator_overload(
+Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_constexpr_operator_overload(
 	const StructTypeInfo* struct_info,
 	StringHandle operator_name,
 	size_t argument_count,
@@ -2094,10 +2097,10 @@ const FunctionDeclarationNode* Evaluator::find_constexpr_operator_overload(
 		struct_info, operator_name, argument_count, context,
 		MemberFunctionLookupMode::ConstexprEvaluable, false, true);
 	if (!candidate.ambiguous && candidate.function && candidate.function->get_definition().has_value()) {
-		return candidate.function;
+		return candidate;
 	}
 	if (!candidate.ambiguous) {
-		return nullptr;
+		return {};
 	}
 	// Ambiguous: prefer the const overload - constexpr evaluation is read-only
 	// so selecting the const overload is always correct. If the non-const overload
@@ -2121,12 +2124,15 @@ const FunctionDeclarationNode* Evaluator::find_constexpr_operator_overload(
 		}
 		if (func_decl.is_const_member_function()) {
 			if (const_overload) {
-				return nullptr;
+				return {.function = nullptr, .ambiguous = true};
 			}
 			const_overload = &func_decl;
 		}
 	}
-	return const_overload;
+	if (const_overload) {
+		return {.function = const_overload, .ambiguous = false};
+	}
+	return {.function = nullptr, .ambiguous = true};
 }
 
 EvalResult Evaluator::invoke_constexpr_member_function(
@@ -7715,11 +7721,14 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		if (struct_info) {
 			StringHandle op_bracket = StringTable::getOrInternStringHandle("operator[]");
-			const FunctionDeclarationNode* actual_func =
+			ResolvedMemberFunctionCandidate candidate =
 				find_constexpr_operator_overload(struct_info, op_bracket, 1, context);
-			if (actual_func) {
+			if (candidate.ambiguous) {
+				return EvalResult::error("Ambiguous operator[] overload in constant expression");
+			}
+			if (candidate.function) {
 				return invoke_constexpr_member_function(
-					*actual_func,
+					*candidate.function,
 					arr_result.object_member_bindings,
 					arr_result.object_type_index,
 					type_info,

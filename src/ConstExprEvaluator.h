@@ -942,8 +942,8 @@ private:
 	// Select the best constexpr-evaluable overload of operator_name from struct_info.
 	// When both const and non-const overloads exist, the const overload is preferred
 	// (constexpr evaluation is read-only so both produce identical results).
-	// Returns nullptr if no suitable overload with a definition is found.
-	static const FunctionDeclarationNode* find_constexpr_operator_overload(
+	// Returns ambiguity when multiple viable const overloads exist.
+	static ResolvedMemberFunctionCandidate find_constexpr_operator_overload(
 		const StructTypeInfo* struct_info,
 		StringHandle operator_name,
 		size_t argument_count,
