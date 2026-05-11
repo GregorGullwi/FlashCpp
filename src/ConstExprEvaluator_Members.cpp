@@ -47,6 +47,39 @@ std::optional<EvalResult> tryEvaluateEnumConstant(
 	return result;
 }
 
+bool tryRebindSingleArgumentFallback(
+	TemplateTypeArg& dependent_arg,
+	const EvaluationContext& context,
+	std::string_view debug_context,
+	bool enable_ambiguity_warnings) {
+	if (!dependent_arg.isTypeArgument()) {
+		return false;
+	}
+
+	// Alias-template chains can preserve alias-local parameter names after
+	// substitution. For single-argument dependent owners in default template
+	// argument substitution, exactly one non-value context argument is the only
+	// viable rebound candidate when direct name matching fails.
+	size_t non_value_context_arg_count = 0;
+	const TemplateTypeArg* only_non_value_context_arg = nullptr;
+	for (const TemplateTypeArg& context_arg : context.template_args) {
+		if (!context_arg.is_value) {
+			++non_value_context_arg_count;
+			only_non_value_context_arg = &context_arg;
+		}
+	}
+	if (non_value_context_arg_count == 1 &&
+		only_non_value_context_arg != nullptr) {
+		dependent_arg = *only_non_value_context_arg;
+		FLASH_LOG(ConstExpr, Debug, "Rebound single-argument dependent owner fallback for ", debug_context);
+		return true;
+	}
+	if (enable_ambiguity_warnings && non_value_context_arg_count > 1) {
+		FLASH_LOG(ConstExpr, Warning, "Single-argument dependent owner fallback skipped due to ambiguous non-value context arguments for ", debug_context);
+	}
+	return false;
+}
+
 struct ShiftEvaluationInfo {
 	int width_bits = kDefaultShiftWidthBits;
 	std::optional<TypeSpecifierNode> promoted_type;
@@ -3985,6 +4018,65 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							  ", type_index=", type_info->type_index_, ", hasStructInfo=", (type_info->getStructInfo() != nullptr));
 				}
 
+				// A constexpr qualified-id can name a dependent template-instantiation
+				// placeholder whose arguments are now concrete in the current default-NTTP
+				// context, but whose StructTypeInfo has not been materialized yet.
+				// Materialize that owner before looking for static members such as
+				// `__empty_not_final<_Head>::value`.
+				if (type_info->isTemplateInstantiation() &&
+					type_info->getStructInfo() == nullptr &&
+					context.parser != nullptr) {
+					std::string_view base_template_name =
+						StringTable::getStringView(type_info->baseTemplateName());
+					if (!base_template_name.empty()) {
+						std::vector<TemplateTypeArg> concrete_args;
+						concrete_args.reserve(type_info->templateArgs().size());
+						for (const auto& arg_info : type_info->templateArgs()) {
+							TemplateTypeArg concrete_arg = toTemplateTypeArg(arg_info);
+							if (concrete_arg.dependent_name.isValid()) {
+								bool rebound_arg = false;
+								std::string_view dependent_arg_name =
+									StringTable::getStringView(concrete_arg.dependent_name);
+								for (size_t i = 0;
+									 i < context.template_param_names.size() &&
+									 i < context.template_args.size();
+									 ++i) {
+									if (context.template_param_names[i] == dependent_arg_name) {
+										concrete_arg = context.template_args[i];
+										rebound_arg = true;
+										break;
+									}
+								}
+								if (!rebound_arg && type_info->templateArgs().size() == 1) {
+									rebound_arg = tryRebindSingleArgumentFallback(
+										concrete_arg,
+										context,
+										"constexpr qualified-id owner",
+										false);
+								}
+							}
+							concrete_args.push_back(std::move(concrete_arg));
+						}
+
+						Parser::AliasTemplateMaterializationResult materialized_type =
+							context.parser->materializeTemplateInstantiationForLookup(
+								base_template_name,
+								concrete_args);
+						if (materialized_type.resolved_type_info != nullptr) {
+							type_info = materialized_type.resolved_type_info;
+							FLASH_LOG(ConstExpr, Debug, "Materialized constexpr qualified-id owner through template args");
+						} else if (!materialized_type.instantiated_name.empty()) {
+							auto materialized_it = getTypesByNameMap().find(
+								StringTable::getOrInternStringHandle(materialized_type.instantiated_name));
+							if (materialized_it != getTypesByNameMap().end() &&
+								materialized_it->second != nullptr) {
+								type_info = materialized_it->second;
+								FLASH_LOG(ConstExpr, Debug, "Resolved constexpr qualified-id owner by materialized name");
+							}
+						}
+					}
+				}
+
 				// Follow the type alias chain until we find a struct with actual StructTypeInfo
 				// Type aliases may have isStruct()=true but getStructInfo()=null
 				// Limit iterations to prevent infinite loops from cycles
@@ -4162,29 +4254,11 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 										}
 									}
 									if (!rebound_nested_arg && nested_target_info->templateArgs().size() == 1) {
-										// Alias-template chains can preserve the alias' local parameter name
-										// (for example `Type`) after the outer default-argument context has
-										// already rebound it to a different parameter name (for example `Head`).
-										// For a single-argument alias target, the only viable type binding in the
-										// current default-argument context is the aliased type argument.
-										FLASH_LOG(ConstExpr, Debug, "Rebinding single-argument nested alias target by first non-value context argument");
-										size_t non_value_context_args = 0;
-										for (const TemplateTypeArg& context_arg : context.template_args) {
-											if (!context_arg.is_value) {
-												++non_value_context_args;
-											}
-										}
-										if (non_value_context_args == 1) {
-											for (const TemplateTypeArg& context_arg : context.template_args) {
-												if (!context_arg.is_value) {
-													nested_arg = context_arg;
-													rebound_nested_arg = true;
-													break;
-												}
-											}
-										} else if (non_value_context_args > 1) {
-											FLASH_LOG(ConstExpr, Warning, "Single-argument nested alias fallback skipped due to ambiguous non-value context arguments");
-										}
+										rebound_nested_arg = tryRebindSingleArgumentFallback(
+											nested_arg,
+											context,
+											"nested alias target",
+											true);
 									}
 								}
 								nested_template_args.push_back(std::move(nested_arg));
