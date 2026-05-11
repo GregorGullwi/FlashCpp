@@ -300,6 +300,11 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		}
 		deduced_arg_types.push_back(*type_opt);
 	}
+	if (AliasTemplateMaterializationResult canonical_owner =
+			resolveCanonicalInstantiatedOwnerForLookup(instantiated_class_name);
+		!canonical_owner.instantiated_name.empty()) {
+		instantiated_class_name = canonical_owner.instantiated_name;
+	}
 	std::optional<ASTNode> instantiated_func = tryInstantiateMemberFunctionTemplateCall(
 		instantiated_class_name,
 		member_name,
@@ -311,41 +316,12 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	// Trigger lazy member function instantiation if needed
 	if (!instantiated_func.has_value() &&
 		isHardUseLikeInstantiationMode()) {
-		StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_class_name);
-		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-		LazyMemberKey member_key = LazyMemberKey::anyConst(class_name_handle, member_name_handle);
 		FLASH_LOG(Templates, Debug, "Checking lazy instantiation for: ", instantiated_class_name, "::", member_name);
-		if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
-			FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for qualified call: ", instantiated_class_name, "::", member_name);
-			instantiated_func = instantiateLazyMemberIfNeeded(member_key);
-		}
-		// If the hash-based name didn't match (dependent vs concrete hash mismatch),
-		// try to find the correct instantiation by looking up getTypesByNameMap() for a matching
-		// template instantiation with the same base template name.
-		if (!instantiated_func.has_value()) {
-			std::string_view base_tmpl = extractBaseTemplateName(instantiated_class_name);
-			if (!base_tmpl.empty()) {
-				// Search all types to find a matching template instantiation
-				for (const auto& [name_handle, type_info_ptr] : getTypesByNameMap()) {
-					if (type_info_ptr->isTemplateInstantiation() &&
-						StringTable::getStringView(type_info_ptr->baseTemplateName()) == base_tmpl &&
-						StringTable::getStringView(name_handle) != instantiated_class_name) {
-						StringHandle alt_class_handle = name_handle;
-						LazyMemberKey alt_member_key = LazyMemberKey::anyConst(alt_class_handle, member_name_handle);
-						if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(alt_member_key)) {
-							FLASH_LOG(Templates, Debug, "Lazy instantiation triggered via base template match: ",
-									  StringTable::getStringView(alt_class_handle), "::", member_name);
-							instantiated_func = instantiateLazyMemberIfNeeded(alt_member_key);
-							if (instantiated_func.has_value()) {
-								// Update instantiated_class_name to the correct one for mangling
-								instantiated_class_name = StringTable::getStringView(alt_class_handle);
-								break;
-							}
-						}
-					}
-				}
-			}
-		}
+		instantiated_func =
+			instantiateLazyMemberForCanonicalOwner(
+				instantiated_class_name,
+				member_name,
+				std::span<const TemplateTypeArg>{});
 	}
 
 	// Build qualified function name including template args
@@ -536,6 +512,48 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 
 	// If this is a type alias (no struct_info_), resolve the underlying type
 	if (!struct_type_info->struct_info_) {
+		if (struct_type_info->isTemplateInstantiation()) {
+			StringHandle alias_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
+				struct_type_info->sourceNamespace(),
+				struct_type_info->baseTemplateName());
+			auto alias_template_entry = gTemplateRegistry.lookup_alias_template(alias_template_name);
+			if (!alias_template_entry.has_value()) {
+				alias_template_entry = gTemplateRegistry.lookup_alias_template(
+					struct_type_info->baseTemplateName());
+			}
+			if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
+				std::vector<TemplateTypeArg> concrete_args;
+				concrete_args.reserve(struct_type_info->templateArgs().size());
+				for (const auto& arg_info : struct_type_info->templateArgs()) {
+					TemplateTypeArg concrete_arg = toTemplateTypeArg(arg_info);
+					concrete_arg.setCategory(arg_info.category());
+					concrete_args.push_back(concrete_arg);
+				}
+
+				if (std::optional<TemplateTypeArg> rebound_arg =
+						tryRebindAliasTargetTemplateArg(
+							alias_template_entry->as<TemplateAliasNode>(),
+							concrete_args);
+					rebound_arg.has_value() &&
+					!rebound_arg->is_value &&
+					rebound_arg->type_index.is_valid()) {
+					if (const TypeInfo* rebound_type = tryGetTypeInfo(rebound_arg->type_index)) {
+						FLASH_LOG_FORMAT(
+							Templates,
+							Debug,
+							"Alias-template placeholder '{}' resolved '{}' through alias target '{}'",
+							StringTable::getStringView(struct_name),
+							StringTable::getStringView(member_name),
+							StringTable::getStringView(rebound_type->name()));
+						if (member_name == StringTable::getOrInternStringHandle("type")) {
+							return rebound_type;
+						}
+						return lookup_inherited_type_alias(rebound_type->name(), member_name, depth + 1);
+					}
+				}
+			}
+		}
+
 		// This might be a type alias - try to find the actual struct type
 		// Type aliases have a type_index that points to the underlying type
 		// Check if type_index_ is valid and points to a different TypeInfo entry

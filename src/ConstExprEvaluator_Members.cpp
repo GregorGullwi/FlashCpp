@@ -2,9 +2,11 @@
 #include "ConstExprEvaluator.h"
 #include "BuiltinListInitNarrowing.h"
 #include "CallNodeHelpers.h"
+#include "ExpressionSubstitutor.h"
 #include "OverloadResolution.h"
 #include "SemanticAnalysis.h"
 #include "TypeTraitEvaluator.h"
+#include <algorithm>
 #include <limits>
 
 namespace ConstExpr {
@@ -47,37 +49,372 @@ std::optional<EvalResult> tryEvaluateEnumConstant(
 	return result;
 }
 
-bool tryRebindSingleArgumentFallback(
-	TemplateTypeArg& dependent_arg,
-	const EvaluationContext& context,
-	std::string_view debug_context,
-	bool enable_ambiguity_warnings) {
-	if (!dependent_arg.isTypeArgument()) {
-		return false;
+TemplateParameterKind inferTemplateBindingKindForLookup(const TemplateTypeArg& arg) {
+	if (arg.is_template_template_arg) {
+		return TemplateParameterKind::Template;
 	}
+	if (arg.is_value) {
+		return TemplateParameterKind::NonType;
+	}
+	return TemplateParameterKind::Type;
+}
 
-	// Alias-template chains can preserve alias-local parameter names after
-	// substitution. For single-argument dependent owners in default template
-	// argument substitution, exactly one non-value context argument is the only
-	// viable rebound candidate when direct name matching fails.
-	size_t non_value_context_arg_count = 0;
-	const TemplateTypeArg* only_non_value_context_arg = nullptr;
-	for (const TemplateTypeArg& context_arg : context.template_args) {
-		if (!context_arg.is_value) {
-			++non_value_context_arg_count;
-			only_non_value_context_arg = &context_arg;
+TemplateEnvironment buildLegacyTemplateLookupEnvironment(const EvaluationContext& context) {
+	TemplateEnvironment legacy_environment;
+	const size_t pair_count =
+		std::min(context.template_param_names.size(), context.template_args.size());
+	legacy_environment.bindings.reserve(pair_count);
+	for (size_t i = 0; i < pair_count; ++i) {
+		TemplateBinding binding;
+		binding.name =
+			StringTable::getOrInternStringHandle(context.template_param_names[i]);
+		binding.kind = inferTemplateBindingKindForLookup(context.template_args[i]);
+		binding.is_pack = false;
+		binding.args.push_back(context.template_args[i]);
+		legacy_environment.bindings.push_back(std::move(binding));
+	}
+	return legacy_environment;
+}
+
+void populateLegacyTemplateBindingsFromEnvironment(
+	const TemplateEnvironment& environment,
+	InlineVector<std::string_view, 4>& out_param_names,
+	InlineVector<TemplateTypeArg, 4>& out_args) {
+	out_param_names.clear();
+	out_args.clear();
+	for (const TemplateEnvironment* current = &environment;
+		 current != nullptr;
+		 current = current->parent) {
+		for (const TemplateBinding& binding : current->bindings) {
+			if (binding.is_pack || binding.args.empty()) {
+				continue;
+			}
+			out_param_names.push_back(StringTable::getStringView(binding.name));
+			out_args.push_back(binding.args.front());
 		}
 	}
-	if (non_value_context_arg_count == 1 &&
-		only_non_value_context_arg != nullptr) {
-		dependent_arg = *only_non_value_context_arg;
-		FLASH_LOG(ConstExpr, Debug, "Rebound single-argument dependent owner fallback for ", debug_context);
-		return true;
+}
+
+InlineVector<TemplateParameterNode, 4> getTemplateParametersForTypeInfo(
+	const TypeInfo& owner_type_info) {
+	const StringHandle qualified_template_name =
+		gNamespaceRegistry.buildQualifiedIdentifier(
+			owner_type_info.sourceNamespace(),
+			owner_type_info.baseTemplateName());
+	if (auto alias_template_opt =
+			gTemplateRegistry.lookup_alias_template(qualified_template_name);
+		alias_template_opt.has_value() &&
+		alias_template_opt->is<TemplateAliasNode>()) {
+		return alias_template_opt->as<TemplateAliasNode>().template_parameters();
 	}
-	if (enable_ambiguity_warnings && non_value_context_arg_count > 1) {
-		FLASH_LOG(ConstExpr, Warning, "Single-argument dependent owner fallback skipped due to ambiguous non-value context arguments for ", debug_context);
+	if (auto alias_template_opt =
+			gTemplateRegistry.lookup_alias_template(owner_type_info.baseTemplateName());
+		alias_template_opt.has_value() &&
+		alias_template_opt->is<TemplateAliasNode>()) {
+		return alias_template_opt->as<TemplateAliasNode>().template_parameters();
 	}
-	return false;
+	if (auto template_opt = gTemplateRegistry.lookupTemplate(qualified_template_name);
+		template_opt.has_value() &&
+		template_opt->is<TemplateClassDeclarationNode>()) {
+		return template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+	}
+	if (auto template_opt = gTemplateRegistry.lookupTemplate(owner_type_info.baseTemplateName());
+		template_opt.has_value() &&
+		template_opt->is<TemplateClassDeclarationNode>()) {
+		return template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+	}
+	return {};
+}
+
+std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
+	const TemplateTypeArg& dependent_arg,
+	EvaluationContext& context,
+	const TypeInfo* owner_type_info,
+	int recursion_depth) {
+	constexpr int kMaxDependentLookupMaterializationDepth = 32;
+	if (recursion_depth > kMaxDependentLookupMaterializationDepth) {
+		return std::nullopt;
+	}
+	TemplateEnvironment legacy_environment;
+	TemplateEnvironment context_environment;
+	bool context_environment_initialized = false;
+	TemplateEnvironment owner_environment;
+	bool owner_environment_initialized = false;
+	const auto ensure_legacy_environment = [&]() -> bool {
+		if (!legacy_environment.bindings.empty()) {
+			return true;
+		}
+		legacy_environment = buildLegacyTemplateLookupEnvironment(context);
+		return !legacy_environment.bindings.empty();
+	};
+	const auto ensure_context_environment = [&]() -> const TemplateEnvironment* {
+		if (context_environment_initialized) {
+			return (!context_environment.bindings.empty() || context_environment.parent != nullptr)
+				? &context_environment
+				: nullptr;
+		}
+		context_environment_initialized = true;
+		if (context.template_environment.bindings.empty() &&
+			context.template_environment.parent == nullptr) {
+			return nullptr;
+		}
+		context_environment = context.template_environment;
+		if (context_environment.parent == nullptr && ensure_legacy_environment()) {
+			context_environment.parent = &legacy_environment;
+		}
+		return &context_environment;
+	};
+	const auto ensure_owner_environment = [&]() -> const TemplateEnvironment* {
+		if (owner_environment_initialized) {
+			return (!owner_environment.bindings.empty() || owner_environment.parent != nullptr)
+				? &owner_environment
+				: nullptr;
+		}
+		owner_environment_initialized = true;
+		if (owner_type_info == nullptr || !owner_type_info->hasInstantiationContext()) {
+			return nullptr;
+		}
+		owner_environment = buildTemplateEnvironment(*owner_type_info->instantiationContext());
+		if (const TemplateEnvironment* context_env = ensure_context_environment();
+			context_env != nullptr) {
+			owner_environment.parent = context_env;
+		} else if (ensure_legacy_environment()) {
+			owner_environment.parent = &legacy_environment;
+		}
+		return &owner_environment;
+	};
+	const auto select_lookup_environment = [&]() -> const TemplateEnvironment* {
+		if (const TemplateEnvironment* owner_env = ensure_owner_environment();
+			owner_env != nullptr) {
+			return owner_env;
+		}
+		if (const TemplateEnvironment* context_env = ensure_context_environment();
+			context_env != nullptr) {
+			return context_env;
+		}
+		if (ensure_legacy_environment()) {
+			return &legacy_environment;
+		}
+		return nullptr;
+	};
+
+	StringHandle lookup_name = dependent_arg.dependent_name;
+	if (!lookup_name.isValid() &&
+		!dependent_arg.is_value &&
+		dependent_arg.type_index.is_valid()) {
+		if (const TypeInfo* arg_type_info = tryGetTypeInfo(dependent_arg.type_index);
+			arg_type_info != nullptr && arg_type_info->name().isValid()) {
+			if (const TemplateEnvironment* lookup_environment = select_lookup_environment();
+				lookup_environment != nullptr) {
+				if (resolveContextBinding(arg_type_info->name(), *lookup_environment).has_value() ||
+					lookup_environment->findOne(arg_type_info->name()) != nullptr) {
+					lookup_name = arg_type_info->name();
+				}
+			}
+		}
+	}
+	const bool can_try_dependent_expression_substitution =
+		dependent_arg.is_value &&
+		dependent_arg.dependent_expr.has_value() &&
+		context.parser != nullptr;
+	if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
+		FLASH_LOG(ConstExpr, Debug, "trySubstituteDependentTemplateArgForLookup: is_value=", dependent_arg.is_value,
+			", is_dependent=", dependent_arg.is_dependent,
+			", dep_name=", StringTable::getStringView(dependent_arg.dependent_name),
+			", lookup_name=", StringTable::getStringView(lookup_name),
+			", type_index=", dependent_arg.type_index,
+			", owner_has_inst_ctx=", (owner_type_info != nullptr && owner_type_info->hasInstantiationContext()));
+		if (owner_type_info != nullptr && owner_type_info->hasInstantiationContext()) {
+			const auto* inst_ctx = owner_type_info->instantiationContext();
+			for (size_t i = 0; i < inst_ctx->param_names.size() && i < inst_ctx->param_args.size(); ++i) {
+				const TemplateTypeArg arg = toTemplateTypeArg(inst_ctx->param_args[i]);
+				FLASH_LOG(ConstExpr, Debug, "  owner inst_ctx[", i, "] name=",
+					StringTable::getStringView(inst_ctx->param_names[i]),
+					", is_value=", arg.is_value,
+					", is_dependent=", arg.is_dependent,
+					", dep_name=", StringTable::getStringView(arg.dependent_name),
+					", type_index=", arg.type_index);
+			}
+		}
+	}
+	if (!lookup_name.isValid() && !can_try_dependent_expression_substitution) {
+		return std::nullopt;
+	}
+
+	auto resolve_from_environment =
+		[&](const TemplateEnvironment& environment) -> std::optional<TemplateTypeArg> {
+		if (!lookup_name.isValid()) {
+			return std::nullopt;
+		}
+		std::optional<TemplateTypeArg> resolved = resolveContextBinding(
+			lookup_name,
+			environment);
+		if (!resolved.has_value()) {
+			if (const TemplateTypeArg* direct_binding =
+					environment.findOne(lookup_name);
+				direct_binding != nullptr) {
+				resolved = *direct_binding;
+			}
+		}
+		return resolved;
+	};
+
+	std::optional<TemplateTypeArg> resolved_binding;
+	const TemplateEnvironment* resolved_environment = nullptr;
+	if (lookup_name.isValid()) {
+		if (const TemplateEnvironment* lookup_environment = select_lookup_environment();
+			lookup_environment != nullptr) {
+			resolved_binding = resolve_from_environment(*lookup_environment);
+			if (resolved_binding.has_value()) {
+				if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
+					FLASH_LOG(ConstExpr, Debug, "lookup binding resolved for '",
+						StringTable::getStringView(lookup_name),
+						"': is_value=", resolved_binding->is_value,
+						", is_dependent=", resolved_binding->is_dependent,
+						", dep_name=", StringTable::getStringView(resolved_binding->dependent_name),
+						", type_index=", resolved_binding->type_index);
+				}
+				resolved_environment = lookup_environment;
+			}
+		}
+	}
+
+	if (dependent_arg.is_value && dependent_arg.dependent_expr.has_value() && context.parser != nullptr) {
+		const TemplateEnvironment* evaluation_environment = resolved_environment;
+		if (evaluation_environment == nullptr) {
+			evaluation_environment = select_lookup_environment();
+		}
+		if (evaluation_environment != nullptr) {
+			ExpressionSubstitutor substitutor(*evaluation_environment, *context.parser);
+			ASTNode substituted_expr = substitutor.substitute(*dependent_arg.dependent_expr);
+			auto saved_template_environment = context.template_environment;
+			auto saved_template_param_names = context.template_param_names;
+			auto saved_template_args = context.template_args;
+			context.template_environment = *evaluation_environment;
+			populateLegacyTemplateBindingsFromEnvironment(
+				context.template_environment,
+				context.template_param_names,
+				context.template_args);
+			EvalResult evaluated = Evaluator::evaluate(substituted_expr, context);
+			context.template_environment = std::move(saved_template_environment);
+			context.template_param_names = std::move(saved_template_param_names);
+			context.template_args = std::move(saved_template_args);
+			if (evaluated.success()) {
+				TemplateTypeArg evaluated_arg = templateTypeArgFromEvalResult(evaluated);
+				if (evaluated_arg.category() == TypeCategory::Invalid &&
+					dependent_arg.category() != TypeCategory::Invalid) {
+					evaluated_arg.setCategory(dependent_arg.category());
+				}
+				return evaluated_arg;
+			}
+			TemplateTypeArg substituted_dependent_arg = dependent_arg;
+			substituted_dependent_arg.dependent_expr = std::move(substituted_expr);
+			substituted_dependent_arg.is_dependent = true;
+			return substituted_dependent_arg;
+		}
+	}
+
+	if (!resolved_binding.has_value()) {
+		if (lookup_name.isValid() &&
+			owner_type_info != nullptr &&
+			owner_type_info->isTemplateInstantiation()) {
+			InlineVector<TemplateParameterNode, 4> owner_template_params =
+				getTemplateParametersForTypeInfo(*owner_type_info);
+			const size_t owner_pair_count = std::min(
+				owner_template_params.size(),
+				owner_type_info->templateArgs().size());
+			for (size_t i = 0; i < owner_pair_count; ++i) {
+				if (owner_template_params[i].name() !=
+					StringTable::getStringView(lookup_name)) {
+					continue;
+				}
+				TemplateTypeArg owner_bound_arg =
+					toTemplateTypeArg(owner_type_info->templateArgs()[i]);
+				if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
+					FLASH_LOG(ConstExpr, Debug, "owner param positional rebound for '",
+						owner_template_params[i].name(),
+						"': is_value=", owner_bound_arg.is_value,
+						", is_dependent=", owner_bound_arg.is_dependent,
+						", dep_name=", StringTable::getStringView(owner_bound_arg.dependent_name),
+						", type_index=", owner_bound_arg.type_index);
+				}
+				if (std::optional<TemplateTypeArg> rematerialized =
+						trySubstituteDependentTemplateArgForLookup(
+							owner_bound_arg,
+							context,
+							owner_type_info,
+							recursion_depth + 1);
+					rematerialized.has_value()) {
+					owner_bound_arg = std::move(*rematerialized);
+				}
+				if (!dependent_arg.is_value && !owner_bound_arg.is_value) {
+					return rebindDependentTemplateTypeArg(
+						owner_bound_arg,
+						dependent_arg);
+				}
+				if (dependent_arg.is_value &&
+					dependent_arg.dependent_expr.has_value() &&
+					!owner_bound_arg.is_value) {
+					return std::nullopt;
+				}
+				return owner_bound_arg;
+			}
+		}
+		return std::nullopt;
+	}
+	if (!dependent_arg.is_value && !resolved_binding->is_value) {
+		TemplateTypeArg materialized_binding = *resolved_binding;
+		const TemplateEnvironment* lookup_environment = resolved_environment;
+		if (lookup_environment == nullptr) {
+			lookup_environment = select_lookup_environment();
+		}
+		if (lookup_environment != nullptr) {
+			constexpr size_t kMaxBindingMaterializationDepth = 16;
+			size_t materialization_depth = 0;
+			while (materialization_depth < kMaxBindingMaterializationDepth) {
+				bool advanced = false;
+				if (materialized_binding.is_dependent &&
+					materialized_binding.dependent_name.isValid()) {
+					if (auto rebound_binding = resolveContextBinding(
+							materialized_binding.dependent_name,
+							*lookup_environment);
+						rebound_binding.has_value() && !rebound_binding->is_value) {
+						materialized_binding = rebindDependentTemplateTypeArg(
+							*rebound_binding,
+							materialized_binding);
+						advanced = true;
+					}
+				}
+				if (!advanced &&
+					materialized_binding.type_index.is_valid()) {
+					if (const TypeInfo* materialized_type_info = tryGetTypeInfo(materialized_binding.type_index);
+						materialized_type_info != nullptr &&
+						materialized_type_info->isDependentPlaceholder()) {
+						if (auto rebound_binding = resolveContextBinding(
+								materialized_type_info->name(),
+								*lookup_environment);
+							rebound_binding.has_value() && !rebound_binding->is_value) {
+							materialized_binding = rebindDependentTemplateTypeArg(
+								*rebound_binding,
+								materialized_binding);
+							advanced = true;
+						}
+					}
+				}
+				if (!advanced) {
+					break;
+				}
+				++materialization_depth;
+			}
+		}
+		return rebindDependentTemplateTypeArg(materialized_binding, dependent_arg);
+	}
+
+	if (dependent_arg.is_value && !resolved_binding->is_value) {
+		return std::nullopt;
+	}
+
+	return *resolved_binding;
 }
 
 struct ShiftEvaluationInfo {
@@ -4329,7 +4666,8 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 				if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 					FLASH_LOG(ConstExpr, Debug, "Found type_info, isStruct=", type_info->isStruct(),
-							  ", type_index=", type_info->type_index_, ", hasStructInfo=", (type_info->getStructInfo() != nullptr));
+							  ", type_index=", type_info->type_index_, ", hasStructInfo=", (type_info->getStructInfo() != nullptr),
+							  ", hasInstCtx=", type_info->hasInstantiationContext());
 				}
 
 				// A constexpr qualified-id can name a dependent template-instantiation
@@ -4340,35 +4678,89 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				if (type_info->isTemplateInstantiation() &&
 					type_info->getStructInfo() == nullptr &&
 					context.parser != nullptr) {
+					auto materialize_template_arg_for_owner =
+						[&](auto&& self,
+							const TemplateTypeArg& source_arg,
+							const TypeInfo* source_owner,
+							int depth) -> TemplateTypeArg {
+						constexpr int kMaxOwnerArgMaterializationDepth = 8;
+						TemplateTypeArg concrete_arg = source_arg;
+						if (std::optional<TemplateTypeArg> rebound_arg =
+								trySubstituteDependentTemplateArgForLookup(
+									concrete_arg,
+									context,
+									source_owner,
+									depth);
+							rebound_arg.has_value()) {
+							concrete_arg = std::move(*rebound_arg);
+						}
+
+						if (depth >= kMaxOwnerArgMaterializationDepth ||
+							concrete_arg.is_value ||
+							!concrete_arg.type_index.is_valid() ||
+							context.parser == nullptr) {
+							return concrete_arg;
+						}
+
+						const TypeInfo* concrete_type_info = tryGetTypeInfo(concrete_arg.type_index);
+						if (concrete_type_info == nullptr ||
+							!concrete_type_info->isTemplateInstantiation()) {
+							return concrete_arg;
+						}
+
+						std::string_view nested_base_template_name =
+							StringTable::getStringView(concrete_type_info->baseTemplateName());
+						if (nested_base_template_name.empty()) {
+							return concrete_arg;
+						}
+
+						std::vector<TemplateTypeArg> nested_concrete_args;
+						nested_concrete_args.reserve(concrete_type_info->templateArgs().size());
+						for (const auto& nested_arg_info : concrete_type_info->templateArgs()) {
+							TemplateTypeArg nested_arg = self(
+								self,
+								toTemplateTypeArg(nested_arg_info),
+								concrete_type_info,
+								depth + 1);
+							nested_concrete_args.push_back(std::move(nested_arg));
+						}
+
+						Parser::AliasTemplateMaterializationResult nested_materialized_type =
+							context.parser->materializeTemplateInstantiationForLookup(
+								nested_base_template_name,
+								nested_concrete_args);
+						const TypeInfo* nested_resolved_info =
+							nested_materialized_type.resolved_type_info;
+						if (nested_resolved_info == nullptr &&
+							!nested_materialized_type.instantiated_name.empty()) {
+							nested_resolved_info = findTypeByName(
+								StringTable::getOrInternStringHandle(
+									nested_materialized_type.instantiated_name));
+						}
+						if (nested_resolved_info == nullptr) {
+							return concrete_arg;
+						}
+
+						TemplateTypeArg resolved_type_arg;
+						resolved_type_arg.type_index =
+							nested_resolved_info->registeredTypeIndex().withCategory(
+								nested_resolved_info->typeEnum());
+						resolved_type_arg.setCategory(nested_resolved_info->typeEnum());
+						return rebindDependentTemplateTypeArg(
+							resolved_type_arg,
+							concrete_arg);
+					};
 					std::string_view base_template_name =
 						StringTable::getStringView(type_info->baseTemplateName());
 					if (!base_template_name.empty()) {
 						std::vector<TemplateTypeArg> concrete_args;
 						concrete_args.reserve(type_info->templateArgs().size());
 						for (const auto& arg_info : type_info->templateArgs()) {
-							TemplateTypeArg concrete_arg = toTemplateTypeArg(arg_info);
-							if (concrete_arg.dependent_name.isValid()) {
-								bool rebound_arg = false;
-								std::string_view dependent_arg_name =
-									StringTable::getStringView(concrete_arg.dependent_name);
-								for (size_t i = 0;
-									 i < context.template_param_names.size() &&
-									 i < context.template_args.size();
-									 ++i) {
-									if (context.template_param_names[i] == dependent_arg_name) {
-										concrete_arg = context.template_args[i];
-										rebound_arg = true;
-										break;
-									}
-								}
-								if (!rebound_arg && type_info->templateArgs().size() == 1) {
-									rebound_arg = tryRebindSingleArgumentFallback(
-										concrete_arg,
-										context,
-										"constexpr qualified-id owner",
-										false);
-								}
-							}
+							TemplateTypeArg concrete_arg = materialize_template_arg_for_owner(
+								materialize_template_arg_for_owner,
+								toTemplateTypeArg(arg_info),
+								type_info,
+								0);
 							concrete_args.push_back(std::move(concrete_arg));
 						}
 
@@ -4549,32 +4941,81 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							nested_target_info->isTemplateInstantiation() &&
 							nested_target_info->getStructInfo() == nullptr &&
 							context.parser != nullptr) {
+							const TypeInfo* nested_lookup_owner = nested_target_info;
+							if (resolved_type_info != nullptr &&
+								resolved_type_info->hasInstantiationContext()) {
+								nested_lookup_owner = resolved_type_info;
+							}
+							auto materialize_nested_lookup_arg =
+								[&](auto&& self,
+									const TemplateTypeArg& source_arg,
+									const TypeInfo* source_owner,
+									int depth) -> TemplateTypeArg {
+								constexpr int kMaxNestedLookupArgDepth = 8;
+								TemplateTypeArg concrete_arg = source_arg;
+								if (std::optional<TemplateTypeArg> rebound_arg =
+										trySubstituteDependentTemplateArgForLookup(
+											concrete_arg,
+											context,
+											source_owner,
+											depth);
+									rebound_arg.has_value()) {
+									concrete_arg = std::move(*rebound_arg);
+								}
+								if (depth >= kMaxNestedLookupArgDepth ||
+									concrete_arg.is_value ||
+									!concrete_arg.type_index.is_valid()) {
+									return concrete_arg;
+								}
+								const TypeInfo* concrete_type_info = tryGetTypeInfo(concrete_arg.type_index);
+								if (concrete_type_info == nullptr ||
+									!concrete_type_info->isTemplateInstantiation()) {
+									return concrete_arg;
+								}
+								std::string_view concrete_base_name =
+									StringTable::getStringView(concrete_type_info->baseTemplateName());
+								if (concrete_base_name.empty()) {
+									return concrete_arg;
+								}
+								std::vector<TemplateTypeArg> concrete_nested_args;
+								concrete_nested_args.reserve(concrete_type_info->templateArgs().size());
+								for (const auto& concrete_nested_arg_info : concrete_type_info->templateArgs()) {
+									TemplateTypeArg concrete_nested_arg = self(
+										self,
+										toTemplateTypeArg(concrete_nested_arg_info),
+										concrete_type_info,
+										depth + 1);
+									concrete_nested_args.push_back(std::move(concrete_nested_arg));
+								}
+								Parser::AliasTemplateMaterializationResult concrete_materialized =
+									context.parser->materializeTemplateInstantiationForLookup(
+										concrete_base_name,
+										concrete_nested_args);
+								const TypeInfo* concrete_resolved_info = concrete_materialized.resolved_type_info;
+								if (concrete_resolved_info == nullptr &&
+									!concrete_materialized.instantiated_name.empty()) {
+									concrete_resolved_info = findTypeByName(
+										StringTable::getOrInternStringHandle(
+											concrete_materialized.instantiated_name));
+								}
+								if (concrete_resolved_info == nullptr) {
+									return concrete_arg;
+								}
+								TemplateTypeArg resolved_type_arg;
+								resolved_type_arg.type_index =
+									concrete_resolved_info->registeredTypeIndex().withCategory(
+										concrete_resolved_info->typeEnum());
+								resolved_type_arg.setCategory(concrete_resolved_info->typeEnum());
+								return rebindDependentTemplateTypeArg(resolved_type_arg, concrete_arg);
+							};
 							std::vector<TemplateTypeArg> nested_template_args;
 							nested_template_args.reserve(nested_target_info->templateArgs().size());
 							for (const auto& arg_info : nested_target_info->templateArgs()) {
-								TemplateTypeArg nested_arg = toTemplateTypeArg(arg_info);
-								if (nested_arg.dependent_name.isValid()) {
-									bool rebound_nested_arg = false;
-									std::string_view nested_arg_name =
-										StringTable::getStringView(nested_arg.dependent_name);
-									for (size_t i = 0;
-										 i < context.template_param_names.size() &&
-										 i < context.template_args.size();
-										 ++i) {
-										if (context.template_param_names[i] == nested_arg_name) {
-											nested_arg = context.template_args[i];
-											rebound_nested_arg = true;
-											break;
-										}
-									}
-									if (!rebound_nested_arg && nested_target_info->templateArgs().size() == 1) {
-										rebound_nested_arg = tryRebindSingleArgumentFallback(
-											nested_arg,
-											context,
-											"nested alias target",
-											true);
-									}
-								}
+								TemplateTypeArg nested_arg = materialize_nested_lookup_arg(
+									materialize_nested_lookup_arg,
+									toTemplateTypeArg(arg_info),
+									nested_lookup_owner,
+									0);
 								nested_template_args.push_back(std::move(nested_arg));
 							}
 							std::string_view nested_base_name =
@@ -8257,9 +8698,34 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 	TypeCategory type_cat = type_spec.category();
+	CVQualifier type_cv = type_spec.cv_qualifier();
 	bool is_reference = type_spec.is_reference();
 	bool is_rvalue_reference = type_spec.is_rvalue_reference();
 	size_t pointer_depth = type_spec.pointer_depth();
+	bool is_array = type_spec.is_array();
+	std::optional<size_t> array_size = type_spec.array_size();
+	const ResolvedAliasTypeInfo resolved_trait_type =
+		resolveAliasTypeInfo(type_spec.type_index());
+	if (resolved_trait_type.terminal_type_info != nullptr &&
+		(type_cat == TypeCategory::UserDefined ||
+		 type_cat == TypeCategory::TypeAlias ||
+		 type_cat == TypeCategory::Template ||
+		 type_cat == TypeCategory::Invalid)) {
+		type_cat = resolved_trait_type.typeEnum();
+		type_cv |= resolved_trait_type.cv_qualifier;
+		if (resolved_trait_type.reference_qualifier != ReferenceQualifier::None) {
+			is_reference = true;
+			is_rvalue_reference =
+				resolved_trait_type.reference_qualifier == ReferenceQualifier::RValueReference;
+		}
+		pointer_depth += resolved_trait_type.pointer_depth;
+		if (!is_array && resolved_trait_type.isArray()) {
+			is_array = true;
+			if (!resolved_trait_type.array_dimensions.empty()) {
+				array_size = resolved_trait_type.array_dimensions.front();
+			}
+		}
+	}
 
 	bool result = false;
 
@@ -8300,7 +8766,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		break;
 
 	case TypeTraitKind::IsArray:
-		result = type_spec.is_array() && !is_reference && pointer_depth == 0;
+		result = is_array && !is_reference && pointer_depth == 0;
 		break;
 
 	case TypeTraitKind::IsReference:
@@ -8332,11 +8798,11 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		break;
 
 	case TypeTraitKind::IsConst:
-		result = type_spec.is_const();
+		result = hasCVQualifier(type_cv, CVQualifier::Const);
 		break;
 
 	case TypeTraitKind::IsVolatile:
-		result = type_spec.is_volatile();
+		result = hasCVQualifier(type_cv, CVQualifier::Volatile);
 		break;
 
 	case TypeTraitKind::IsSigned:
@@ -8349,23 +8815,25 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		break;
 
 	case TypeTraitKind::IsBoundedArray:
-		result = type_spec.is_array() & int(type_spec.array_size() > 0) & !is_reference & (pointer_depth == 0);
+		result = is_array & int(array_size.value_or(0) > 0) & !is_reference & (pointer_depth == 0);
 		break;
 
 	case TypeTraitKind::IsUnboundedArray:
-		result = type_spec.is_array() & int(type_spec.array_size() == 0) & !is_reference & (pointer_depth == 0);
+		result = is_array & int(array_size.value_or(0) == 0) & !is_reference & (pointer_depth == 0);
 		break;
 
 	case TypeTraitKind::IsAggregate:
 			// Arrays are aggregates
-		result = type_spec.is_array() & !is_reference & (pointer_depth == 0);
+		result = is_array & !is_reference & (pointer_depth == 0);
 			// For struct types, we need runtime type info, so fall through to default
 		break;
 
 	case TypeTraitKind::IsCompleteOrUnbounded:
 		{
 			const StructTypeInfo* struct_info = nullptr;
-			if (type_spec.type_index().is_valid() && is_struct_type(type_cat)) {
+			if (resolved_trait_type.terminal_type_info != nullptr) {
+				struct_info = resolved_trait_type.terminal_type_info->getStructInfo();
+			} else if (type_spec.type_index().is_valid() && is_struct_type(type_cat)) {
 				struct_info = getTypeInfo(type_spec.type_index()).getStructInfo();
 			}
 			TypeTraitResult trait_result = evaluateTypeTrait(
@@ -8388,7 +8856,9 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 	case TypeTraitKind::IsPod:
 		{
 			const StructTypeInfo* struct_info = nullptr;
-			if (type_spec.type_index().is_valid() && is_struct_type(type_cat)) {
+			if (resolved_trait_type.terminal_type_info != nullptr) {
+				struct_info = resolved_trait_type.terminal_type_info->getStructInfo();
+			} else if (type_spec.type_index().is_valid() && is_struct_type(type_cat)) {
 				struct_info = getTypeInfo(type_spec.type_index()).getStructInfo();
 			}
 			TypeTraitResult trait_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);

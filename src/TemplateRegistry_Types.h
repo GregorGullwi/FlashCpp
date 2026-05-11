@@ -234,6 +234,39 @@ struct TemplateTypeArg {
 		for (const auto& level : type_spec.pointer_levels()) {
 			pointer_cv_qualifiers.push_back(level.cv_qualifier);
 		}
+		auto isDependentTypeIndex = [](TypeIndex idx) -> bool {
+			if (idx.category() == TypeCategory::Auto ||
+				idx.category() == TypeCategory::DeclTypeAuto) {
+				return true;
+			}
+			if (!idx.is_valid()) {
+				return false;
+			}
+			const TypeInfo* type_info = tryGetTypeInfo(idx);
+			return type_info != nullptr &&
+				   (type_info->isDependentPlaceholder() || type_info->is_incomplete_instantiation_);
+		};
+		bool has_structural_dependency = isDependentTypeIndex(type_index);
+		if (!has_structural_dependency && function_signature.has_value()) {
+			has_structural_dependency = isDependentTypeIndex(function_signature->return_type_index);
+			if (!has_structural_dependency) {
+				for (TypeIndex parameter_type : function_signature->parameter_type_indices) {
+					if (isDependentTypeIndex(parameter_type)) {
+						has_structural_dependency = true;
+						break;
+					}
+				}
+			}
+		}
+		if (has_structural_dependency) {
+			is_dependent = true;
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_index);
+				type_info != nullptr && type_info->name().isValid()) {
+				dependent_name = type_info->name();
+			} else if (!type_spec.token().value().empty()) {
+				dependent_name = StringTable::getOrInternStringHandle(type_spec.token().value());
+			}
+		}
 	}
 
 	// Constructor for non-type template parameters (default int type)
@@ -679,6 +712,34 @@ inline const TemplateTypeArg* findTemplateArgByName(
 
 namespace FlashCpp {
 
+inline TypeIndex canonicalizeTemplateIdentityTypeIndex(TypeIndex type_index) {
+	if (typeIndexContainsDependentPlaceholder(type_index)) {
+		return type_index;
+	}
+
+	ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_index);
+	TypeIndex canonical_type_index = resolved_alias.type_index.is_valid()
+		? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+		: type_index.withCategory(type_index.category());
+
+	if (is_builtin_type(canonical_type_index.category())) {
+		if (TypeIndex canonical_builtin = nativeTypeIndex(canonical_type_index.category());
+			canonical_builtin.is_valid()) {
+			return canonical_builtin.withCategory(canonical_type_index.category());
+		}
+		return TypeIndex{0, canonical_type_index.category()};
+	}
+
+	return canonical_type_index;
+}
+
+inline bool hasConcreteTemplateIdentity(TypeIndex type_index) {
+	if (typeIndexContainsDependentPlaceholder(type_index)) {
+		return false;
+	}
+	return type_index.is_valid() || is_builtin_type(type_index.category());
+}
+
 /**
  * Create a TypeIndexArg from a TemplateTypeArg
  * 
@@ -687,7 +748,7 @@ namespace FlashCpp {
  */
 inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	TypeIndexArg result;
-	result.type_index = arg.type_index;
+	result.type_index = canonicalizeTemplateIdentityTypeIndex(arg.type_index);
 	result.cv_qualifier = arg.cv_qualifier;
 	result.ref_qualifier = arg.reference_qualifier();
 	result.pointer_depth = std::min(arg.pointer_depth, uint8_t(255));
@@ -695,8 +756,9 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.is_array = arg.is_array;
 	result.array_sizes.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
 	result.function_signature = arg.function_signature;
-	result.is_dependent = arg.is_dependent;
-	result.dependent_name = arg.dependent_name;
+	const bool has_concrete_type_identity = hasConcreteTemplateIdentity(result.type_index);
+	result.is_dependent = arg.is_dependent && !has_concrete_type_identity;
+	result.dependent_name = result.is_dependent ? arg.dependent_name : StringHandle{};
 	return result;
 }
 
@@ -1063,6 +1125,33 @@ inline TemplateTypeArg materializeTemplateArg(
 					// type arg verbatim into the value slot is incorrect.  Instead we leave
 					// substituted_dependent_name=false so the eval_dependent_expr path below
 					// can evaluate the stored expression against the full concrete param/arg list.
+				} else {
+					concrete_arg = substituted_arg;
+					substituted_dependent_name = true;
+				}
+				break;
+			}
+		}
+	}
+	if (!substituted_dependent_name &&
+		!arg_info.is_value &&
+		arg_info.type_index.is_valid()) {
+		if (const TypeInfo* dependent_type_info = tryGetTypeInfo(arg_info.type_index);
+			dependent_type_info != nullptr &&
+			dependent_type_info->name().isValid()) {
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				const TemplateParameterNode* template_param =
+					tryGetTemplateParameterNode(template_params[i]);
+				if (template_param == nullptr) {
+					continue;
+				}
+				if (template_param->nameHandle() != dependent_type_info->name()) {
+					continue;
+				}
+				const TemplateTypeArg& substituted_arg = template_args[i];
+				if (!substituted_arg.is_value) {
+					concrete_arg = rebindDependentTemplateTypeArg(substituted_arg, arg_info);
+					substituted_dependent_name = true;
 				} else {
 					concrete_arg = substituted_arg;
 					substituted_dependent_name = true;

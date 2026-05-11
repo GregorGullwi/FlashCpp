@@ -1999,6 +1999,22 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		// Apply pointer/reference modifiers to the type
 		consume_pointer_ref_modifiers(type_node);
 
+		if (template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe &&
+			(type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias)) {
+			StringHandle type_name_handle = type_node.token().handle();
+			auto subst_it = sfinae_type_map_.find(type_name_handle);
+			if (subst_it != sfinae_type_map_.end() && subst_it->second.is_valid()) {
+				TypeIndex substituted_index = subst_it->second;
+				TypeCategory substituted_category = substituted_index.category();
+				type_node.set_type_index(substituted_index.withCategory(substituted_category));
+				type_node.set_category(substituted_category);
+				const int substituted_size_bits = getTypeSpecSizeBits(type_node);
+				if (substituted_size_bits > 0) {
+					type_node.set_size_in_bits(substituted_size_bits);
+				}
+			}
+		}
+
 		// Check for array declarators (e.g., T[], T[N])
 		bool is_array_type = false;
 		std::optional<size_t> parsed_array_size;
@@ -2057,6 +2073,37 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 					arg = TemplateTypeArg::makeValue(subst.value, subst.value_type);
 					arg.is_pack = is_pack_expansion;
 					break;
+				} else if (subst.is_type_param && subst.param_name == type_name_handle) {
+					const TemplateTypeArg& substituted_arg = subst.substituted_type;
+					TypeIndex substituted_index = substituted_arg.type_index;
+					if (!substituted_index.is_valid()) {
+						substituted_index = nativeTypeIndex(substituted_arg.typeEnum());
+					}
+					if (substituted_index.is_valid()) {
+						TypeCategory substituted_category = substituted_arg.typeEnum();
+						type_node.set_type_index(substituted_index.withCategory(substituted_category));
+						type_node.set_category(substituted_category);
+						for (const CVQualifier cv : substituted_arg.pointer_cv_qualifiers) {
+							type_node.add_pointer_level(cv);
+						}
+						if (substituted_arg.ref_qualifier != ReferenceQualifier::None) {
+							if (type_node.reference_qualifier() == ReferenceQualifier::None) {
+								type_node.set_reference_qualifier(substituted_arg.ref_qualifier);
+							} else if (type_node.reference_qualifier() == ReferenceQualifier::LValueReference ||
+									   substituted_arg.ref_qualifier == ReferenceQualifier::LValueReference) {
+								type_node.set_reference_qualifier(ReferenceQualifier::LValueReference);
+							} else {
+								type_node.set_reference_qualifier(ReferenceQualifier::RValueReference);
+							}
+						}
+						const int substituted_size_bits = getTypeSpecSizeBits(type_node);
+						if (substituted_size_bits > 0) {
+							type_node.set_size_in_bits(substituted_size_bits);
+						}
+						arg = TemplateTypeArg(type_node);
+						arg.is_pack = is_pack_expansion;
+						break;
+					}
 				}
 			}
 		}
@@ -2127,7 +2174,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 					}
 				}
 
-				if (is_template_param || (tryGetTypeInfo(idx) && tryGetTypeInfo(idx)->is_incomplete_instantiation_)) {
+				const TypeInfo* arg_type_info = tryGetTypeInfo(idx);
+				if (is_template_param ||
+					(arg_type_info != nullptr &&
+						(arg_type_info->isDependentPlaceholder() ||
+						 arg_type_info->is_incomplete_instantiation_))) {
 					arg.is_dependent = true;
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);

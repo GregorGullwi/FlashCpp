@@ -931,14 +931,11 @@ private:
 				const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(canonical_arg.type_index);
 				if (alias_info.type_index.is_valid()) {
 					const TypeCategory resolved_category = alias_info.typeEnum();
-					const bool should_use_resolved_category =
-						canonical_arg.category() == TypeCategory::Invalid ||
-						canonical_arg.category() == TypeCategory::TypeAlias ||
-						(canonical_arg.category() == TypeCategory::UserDefined && resolved_category != TypeCategory::UserDefined) ||
-						(canonical_arg.category() == TypeCategory::Template && resolved_category != TypeCategory::Template);
-					if (should_use_resolved_category) {
-						canonical_arg.type_index = alias_info.type_index.withCategory(resolved_category);
-					}
+					const TypeCategory canonical_category =
+						resolved_category != TypeCategory::Invalid
+							? resolved_category
+							: canonical_arg.category();
+					canonical_arg.type_index = alias_info.type_index.withCategory(canonical_category);
 					if (!canonical_arg.function_signature.has_value() && alias_info.function_signature.has_value()) {
 						canonical_arg.function_signature = alias_info.function_signature;
 					}

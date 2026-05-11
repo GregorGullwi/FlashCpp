@@ -13,6 +13,17 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);
 
 void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec);
 
+namespace {
+bool explicitTemplateArgsRequireDeferredInstantiation(const InlineVector<TemplateTypeArg, 4>& template_args) {
+	return std::any_of(
+		template_args.begin(),
+		template_args.end(),
+		[](const TemplateTypeArg& arg) {
+			return arg.is_dependent || arg.dependent_name.isValid() || arg.is_pack;
+		});
+}
+}
+
 // Helper function to check if a template name is a template-template parameter
 bool Parser::isTemplateTemplateParameter(StringHandle template_name_handle) const {
 	// During function-template body reparse, parsing_template_depth_ is 0 but
@@ -458,7 +469,7 @@ bool typeRefersToCurrentTemplateParam(
 	if (!type_spec.type_index().is_valid()) {
 		return true;
 	}
-	StringHandle token_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
+	StringHandle token_handle = type_spec.token().handle();
 	if (token_handle.isValid() &&
 		std::find(current_template_param_names.begin(), current_template_param_names.end(), token_handle) != current_template_param_names.end()) {
 		return true;
@@ -2384,23 +2395,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				advance(); // consume the identifier to check for the next ::
 			}
 
-		// current_token_ is now the token after the final identifier
+			// current_token_ is now the token after the final identifier
 
-		// Create a QualifiedIdentifierNode (stack-local; copied into ExpressionNode before returning)
+			// Create a QualifiedIdentifierNode (stack-local; copied into ExpressionNode before returning)
 			NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
 			QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
 
-		// Check for std::forward intrinsic
-		// std::forward<T>(arg) is a compiler intrinsic for perfect forwarding
-		// Check if namespace is "std" (single-level namespace with name "std")
+			// Check for std::forward intrinsic
+			// std::forward<T>(arg) is a compiler intrinsic for perfect forwarding
+			// Check if namespace is "std" (single-level namespace with name "std")
 			std::string_view ns_qualified_name = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
 			if (ns_qualified_name == "std" && qual_id.name() == "forward") {
 
-			// Handle std::forward<T>(arg)
-			// For now, we'll treat it as an identity function that preserves references
-			// Skip template arguments if present
+				// Handle std::forward<T>(arg)
+				// For now, we'll treat it as an identity function that preserves references
+				// Skip template arguments if present
 				if (current_token_.value() == "<") {
-				// Skip template arguments: <T> or <iter_reference_t<_It>>
+					// Skip template arguments: <T> or <iter_reference_t<_It>>
 					int angle_bracket_depth = 1;
 					advance(); // consume <
 
@@ -2415,13 +2426,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 				}
 
-			// Now expect (arg)
+				// Now expect (arg)
 				if (current_token_.kind().is_eof() || current_token_.value() != "(") {
 					return ParseResult::error("Expected '(' after std::forward", final_identifier);
 				}
 				advance(); // consume '('
 
-			// Parse the single argument
+				// Parse the single argument
 				auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (arg_result.is_error()) {
 					return arg_result;
@@ -2432,27 +2443,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 				advance(); // consume ')'
 
-			// std::forward<T>(arg) is essentially an identity function
-			// Just return the argument expression itself
-			// The type system already preserves the reference type
+				// std::forward<T>(arg) is essentially an identity function
+				// Just return the argument expression itself
+				// The type system already preserves the reference type
 				result = arg_result.node();
 				return ParseResult::success(*result);
 			}
 
-		// Check if qualified identifier is followed by template arguments: ns::Template<Args>
-		// This must come BEFORE we try to use current_token_ as an operator
-		// Phase 1: C++20 Template Argument Disambiguation - try to parse template arguments
-		// after qualified identifiers, BUT check if the member is actually a template first
-		// to avoid misinterpreting comparisons like _R1::num < _R2::num
+			// Check if qualified identifier is followed by template arguments: ns::Template<Args>
+			// This must come BEFORE we try to use current_token_ as an operator
+			// Phase 1: C++20 Template Argument Disambiguation - try to parse template arguments
+			// after qualified identifiers, BUT check if the member is actually a template first
+			// to avoid misinterpreting comparisons like _R1::num < _R2::num
 			std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
 			std::vector<ASTNode> template_arg_nodes;	 // Store the actual expression nodes
 			if (current_token_.value() == "<") {
-			// Build the qualified name from namespace handle
-				std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
-				std::string_view member_name = qual_id.name();
+				// Build the qualified name from namespace handle
+				StringHandle qualified_name = StringTable::getOrInternStringHandle(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()));
+				StringHandle member_name = qual_id.nameHandle();
 
-			// Check if the member is a known template before parsing < as template arguments
-			// This prevents misinterpreting patterns like _R1::num < _R2::num> where < is comparison
+				// Check if the member is a known template before parsing < as template arguments
+				// This prevents misinterpreting patterns like _R1::num < _R2::num> where < is comparison
 				auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
 				auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
 				auto member_alias_template_opt = gTemplateRegistry.lookup_alias_template(member_name);
@@ -2465,7 +2476,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										 full_template_opt.has_value() || full_var_template_opt.has_value() ||
 										 full_alias_template_opt.has_value();
 
-			// Also check if the base is a template parameter - if so, the member is likely NOT a template
+				// Also check if the base is a template parameter - if so, the member is likely NOT a template
 				bool base_is_template_param = false;
 				if (!qual_id.namespace_handle().isGlobal()) {
 					std::string_view base_name = gNamespaceRegistry.getRootNamespaceName(qual_id.namespace_handle());
@@ -2477,36 +2488,36 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 				}
 
-			// Decide whether to parse template arguments
+				// Decide whether to parse template arguments
 				bool should_parse_template_args = true;
 				if (!is_known_template && (context == ExpressionContext::TemplateTypeArg || base_is_template_param)) {
-				// Member is NOT a known template and we're in a context where < is likely comparison
+					// Member is NOT a known template and we're in a context where < is likely comparison
 					FLASH_LOG_FORMAT(Parser, Debug,
 									 "Qualified identifier '{}' member is not a known template - treating '<' as comparison operator (context={}, base_is_param={})",
-									 qualified_name, static_cast<int>(context), base_is_template_param);
+									 qualified_name.view(), static_cast<int>(context), base_is_template_param);
 					should_parse_template_args = false;
 				}
 
 				if (should_parse_template_args) {
-					FLASH_LOG_FORMAT(Parser, Debug, "Qualified identifier '{}' followed by '<', attempting template argument parsing", qualified_name);
+					FLASH_LOG_FORMAT(Parser, Debug, "Qualified identifier '{}' followed by '<', attempting template argument parsing", qualified_name.view());
 					template_args = parse_explicit_template_arguments(&template_arg_nodes);
 				}
 
 				if (template_args.has_value()) {
-					FLASH_LOG_FORMAT(Parser, Debug, "Successfully parsed {} template arguments for '{}'", template_args->size(), qualified_name);
+					FLASH_LOG_FORMAT(Parser, Debug, "Successfully parsed {} template arguments for '{}'", template_args->size(), qualified_name.view());
 
-				// First, check if this is a variable template (most common case for traits like is_reference_v<T>)
+					// First, check if this is a variable template (most common case for traits like is_reference_v<T>)
 					auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
 					if (!var_template_opt.has_value()) {
-					// Try with simple name
+						// Try with simple name
 						var_template_opt = gTemplateRegistry.lookupVariableTemplate(qual_id.name());
 					}
 
-				// If still not found, check if the base is a struct/class name (not a namespace)
-				// For patterns like StructName::member_template<Args>, we need to build the qualified name manually
+					// If still not found, check if the base is a struct/class name (not a namespace)
+					// For patterns like StructName::member_template<Args>, we need to build the qualified name manually
 					std::string_view struct_qualified_name;
 					if (!var_template_opt.has_value() && !namespaces.empty()) {
-					// Build struct-qualified name: "StructName::member"
+						// Build struct-qualified name: "StructName::member"
 						struct_qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
 
 						FLASH_LOG_FORMAT(Templates, Debug, "Trying struct-qualified variable template lookup: '{}'", struct_qualified_name);
@@ -2519,20 +2530,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 
 					if (var_template_opt.has_value()) {
-					// Determine which name to use for instantiation
-						std::string_view template_name_for_instantiation = qualified_name;
+						// Determine which name to use for instantiation
+						std::string_view template_name_for_instantiation = qualified_name.view();
 						if (!struct_qualified_name.empty()) {
 							template_name_for_instantiation = struct_qualified_name;
 						}
 
 						FLASH_LOG(Templates, Debug, "Found variable template, instantiating: ", template_name_for_instantiation);
-					// Try instantiation with determined name first, fall back to simple name
+						// Try instantiation with determined name first, fall back to simple name
 						auto instantiated_var = try_instantiate_variable_template(template_name_for_instantiation, *template_args);
 						if (!instantiated_var.has_value()) {
 							instantiated_var = try_instantiate_variable_template(qual_id.name(), *template_args);
 						}
 						if (instantiated_var.has_value()) {
-						// Get the instantiated variable name
+							// Get the instantiated variable name
 							std::string_view inst_name;
 							if (instantiated_var->is<VariableDeclarationNode>()) {
 								const auto& var_decl = instantiated_var->as<VariableDeclarationNode>();
@@ -2542,12 +2553,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								const auto& decl = instantiated_var->as<DeclarationNode>();
 								inst_name = decl.identifier_token().value();
 							} else {
-								inst_name = qualified_name;	// Fallback
+								inst_name = qualified_name.view();	// Fallback
 							}
 
 							FLASH_LOG(Templates, Debug, "Successfully instantiated variable template: ", qualified_name);
 
-						// Return identifier reference to the instantiated variable
+							// Return identifier reference to the instantiated variable
 							Token inst_token(Token::Type::Identifier, inst_name,
 											 final_identifier.line(), final_identifier.column(), final_identifier.file_index());
 							result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
@@ -2555,37 +2566,46 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 					}
 
-				// Check if this is a concept application (e.g., std::same_as<T, U>)
-				// Concepts evaluate to boolean values at compile time
-					auto concept_opt = gConceptRegistry.lookupConcept(qualified_name);
+					// Check if this is a concept application (e.g., std::same_as<T, U>)
+					// Concepts evaluate to boolean values at compile time
+					auto concept_opt = gConceptRegistry.lookupConcept(qualified_name.view());
 					if (!concept_opt.has_value()) {
-					// Try with simple name
+						// Try with simple name
 						concept_opt = gConceptRegistry.lookupConcept(qual_id.name());
 					}
 
-					if (concept_opt.has_value()) {
-						FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with template arguments (qualified lookup)", qualified_name);
+					const bool has_dependent_explicit_template_args =
+						explicitTemplateArgsRequireDeferredInstantiation(*template_args);
+					if (concept_opt.has_value() && !has_dependent_explicit_template_args) {
+						FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with template arguments (qualified lookup)", qualified_name.view());
 
-					// Evaluate the concept constraint with the provided template arguments
+						// Evaluate the concept constraint with the provided template arguments
 						auto constraint_result = evaluateConstraint(
 							concept_opt->as<ConceptDeclarationNode>().constraint_expr(),
 							*template_args,
 							{}  // No template param names needed for concrete types
 						);
 
-					// Create a BoolLiteralNode with the result
+						// Create a BoolLiteralNode with the result
 						bool concept_satisfied = constraint_result.satisfied;
 						Token bool_token(Token::Type::Keyword, concept_satisfied ? "true"sv : "false"sv,
 										 final_identifier.line(), final_identifier.column(), final_identifier.file_index());
 						result = emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, concept_satisfied));
 						return ParseResult::success(*result);
 					}
+					if (concept_opt.has_value() && has_dependent_explicit_template_args) {
+						FLASH_LOG_FORMAT(
+							Parser,
+							Debug,
+							"Deferring eager concept evaluation for dependent concept-id '{}'",
+							qualified_name.view());
+					}
 
-				// Check if this is an alias template (like detail::cref<int> -> int)
-				// Alias templates should resolve to their underlying type
+					// Check if this is an alias template (like detail::cref<int> -> int)
+					// Alias templates should resolve to their underlying type
 					auto alias_opt = gTemplateRegistry.lookup_alias_template(qualified_name);
 					if (!alias_opt.has_value()) {
-					// Try with simple name
+						// Try with simple name
 						alias_opt = gTemplateRegistry.lookup_alias_template(qual_id.name());
 					}
 
@@ -2593,31 +2613,31 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						FLASH_LOG(Templates, Debug, "Found alias template, resolving: ", qualified_name);
 						const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
 
-					// Get the target type of the alias
-					// For a simple alias like `template<typename T> using cref = T;`, the target type is T
-					// We need to substitute the template parameter with the actual argument
+						// Get the target type of the alias
+						// For a simple alias like `template<typename T> using cref = T;`, the target type is T
+						// We need to substitute the template parameter with the actual argument
 						const TypeSpecifierNode& target_type = alias_node.target_type_node();
 						const auto& param_names = alias_node.template_param_names();
 
-					// Check if the target type is one of the template parameters
+						// Check if the target type is one of the template parameters
 						Token target_token = target_type.token();
 						if (target_token.type() == Token::Type::Identifier) {
 							std::string_view target_name = target_token.value();
 							for (size_t i = 0; i < param_names.size() && i < template_args->size(); ++i) {
 								if (target_name == param_names[i].view()) {
-								// The target type is the i-th template parameter
-								// Substitute it with the actual argument
+									// The target type is the i-th template parameter
+									// Substitute it with the actual argument
 									const TemplateTypeArg& arg = (*template_args)[i];
 									if (!arg.is_value) {
 										const TypeInfo* type_info = tryGetTypeInfo(arg.type_index);
 										if (!type_info)
 											continue;
-									// It's a type argument - get the type name and create an identifier
+										// It's a type argument - get the type name and create an identifier
 										StringHandle type_name_handle = type_info->name();
 										std::string_view type_name = StringTable::getStringView(type_name_handle);
 										FLASH_LOG_FORMAT(Templates, Debug, "Alias template parameter '{}' resolved to type '{}'", target_name, type_name);
 
-									// Return an IdentifierNode for the resolved type
+										// Return an IdentifierNode for the resolved type
 										Token resolved_token(Token::Type::Identifier, type_name,
 															 final_identifier.line(), final_identifier.column(), final_identifier.file_index());
 										result = emplace_node<ExpressionNode>(IdentifierNode(resolved_token));
@@ -2628,34 +2648,34 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 						}
 
-					// If the target type is not a direct parameter reference, fall through to other handling
+						// If the target type is not a direct parameter reference, fall through to other handling
 						FLASH_LOG(Templates, Debug, "Alias template target is not a direct parameter, continuing with class template instantiation");
 					}
 
 					Parser::AliasTemplateMaterializationResult materialized_owner =
 						materializePrimaryTemplateOwnerForLookup(
-							qualified_name,
+							qualified_name.view(),
 							qual_id.name(),
 							*template_args);
 					std::string_view instantiated_name = materialized_owner.instantiated_name;
 					if (instantiated_name.empty()) {
 						auto instantiation_result = try_instantiate_template_explicit(qual_id.name(), *template_args);
-						if (instantiation_result.has_value()) {
-							instantiation_result = try_instantiate_template_explicit(qualified_name, *template_args);
-							if (instantiation_result.has_value()) {
+						if (!instantiation_result.has_value()) {
+							instantiation_result = try_instantiate_template_explicit(qualified_name.view(), *template_args);
+							if (!instantiation_result.has_value()) {
 								// Template instantiation failed - this might not be a template after all
 								// But we successfully parsed template arguments, so continue with the parsed args
-								FLASH_LOG_FORMAT(Parser, Warning, "Parsed template arguments but instantiation failed for '{}'", qualified_name);
+								FLASH_LOG_FORMAT(Parser, Warning, "Parsed template arguments but instantiation failed for '{}'", qualified_name.view());
 							}
 						}
 					}
 
-				// Check if followed by :: for member access (Template<T>::member)
+					// Check if followed by :: for member access (Template<T>::member)
 					if (!instantiated_name.empty() && current_token_.value() == "::") {
-					// Build the owner scope from the concrete materialized owner, not the
-					// original qualifier chain. This keeps struct-local alias templates
-					// like `Outer::alias_t<...>::member` anchored to the resolved target
-					// type instead of incorrectly nesting the target under `Outer`.
+						// Build the owner scope from the concrete materialized owner, not the
+						// original qualifier chain. This keeps struct-local alias templates
+						// like `Outer::alias_t<...>::member` anchored to the resolved target
+						// type instead of incorrectly nesting the target under `Outer`.
 						std::string_view concrete_owner_name = instantiated_name;
 						if (materialized_owner.resolved_type_info != nullptr) {
 							concrete_owner_name = StringTable::getStringView(
@@ -2679,7 +2699,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							component_start = component_end + 2;
 						}
 
-					// Parse the :: and the member name
+						// Parse the :: and the member name
 						advance(); // consume ::
 						if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
 							return ParseResult::error("Expected identifier after '::'", current_token_);
@@ -2688,9 +2708,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						Token member_token = current_token_;
 						advance(); // consume member identifier
 
-					// Handle additional :: if present (nested member access)
+						// Handle additional :: if present (nested member access)
 						while (current_token_.value() == "::") {
-						// Add current member to namespace path
+							// Add current member to namespace path
 							StringHandle member_handle = member_token.handle();
 							full_ns_handle = gNamespaceRegistry.getOrCreateNamespace(full_ns_handle, member_handle);
 							advance(); // consume ::
@@ -2701,13 +2721,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							advance(); // consume identifier
 						}
 
-					// Create QualifiedIdentifierNode with the complete path (stack-local; copied into ExpressionNode before returning)
+						// Create QualifiedIdentifierNode with the complete path (stack-local; copied into ExpressionNode before returning)
 						QualifiedIdentifierNode full_qual_id(full_ns_handle, member_token);
 
-					// Look up the member in the instantiated struct's symbol table
+						// Look up the member in the instantiated struct's symbol table
 						auto member_lookup = gSymbolTable.lookup_qualified(full_ns_handle, member_token.value());
 
-					// If followed by '(', handle as function call (e.g., Template<T>::method())
+						// If followed by '(', handle as function call (e.g., Template<T>::method())
 						if (current_token_.value() == "(") {
 							advance(); // consume '('
 
@@ -2724,13 +2744,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								return ParseResult::error("Expected ')' after function call arguments", current_token_);
 							}
 
-						// Get the declaration node for the function
+							// Get the declaration node for the function
 							const DeclarationNode* decl_ptr = nullptr;
 							if (member_lookup.has_value()) {
 								decl_ptr = getDeclarationNode(*member_lookup);
 							}
 							if (!decl_ptr) {
-							// Member may not be in namespace symbol table - resolve from instantiated struct members.
+								// Member may not be in namespace symbol table - resolve from instantiated struct members.
 								auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
 								if (type_it != getTypesByNameMap().end() && type_it->second) {
 									const StructTypeInfo* struct_info = type_it->second->getStructInfo();
@@ -2807,26 +2827,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return ParseResult::success(*result);
 					}
 
-				// Template instantiation succeeded
-				// Don't return early - let it fall through to normal lookup which will find the instantiated type
+					// Template instantiation succeeded
+					// Don't return early - let it fall through to normal lookup which will find the instantiated type
 				}
-			// Not a template - let it fall through to be parsed as operator<
+				// Not a template - let it fall through to be parsed as operator<
 			}
 
-		// Try to look up the qualified identifier
+			// Try to look up the qualified identifier
 			auto identifierType = gSymbolTable.lookup_qualified(qual_id.qualifiedIdentifier());
 
-		// Check if this is a brace initialization: ns::Template<Args>{}
+			// Check if this is a brace initialization: ns::Template<Args>{}
 			if (template_args.has_value() && current_token_.value() == "{") {
-			// Parse the brace initialization using the helper
+				// Parse the brace initialization using the helper
 				ParseResult brace_init_result = parse_template_brace_initialization(*template_args, qual_id.name(), final_identifier);
 				if (!brace_init_result.is_error() && brace_init_result.node().has_value()) {
 					return brace_init_result;
 				}
-			// If parsing failed, fall through to function call check
+				// If parsing failed, fall through to function call check
 			}
 
-		// Check if this is a non-template brace initialization: ns::Type{args}
+			// Check if this is a non-template brace initialization: ns::Type{args}
 			if (!template_args.has_value() && current_token_.value() == "{") {
 				std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 				StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name);
@@ -2868,7 +2888,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 			}
 
-		// Check if this is a qualified class-template functional-style cast: ns::Template<Args>()
+			// Check if this is a qualified class-template functional-style cast: ns::Template<Args>()
 			if (template_args.has_value() && current_token_.value() == "(") {
 				bool has_dependent_template_args = false;
 				for (const auto& template_arg : *template_args) {
@@ -2894,11 +2914,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 			}
 
-		// Check if followed by '(' for function call
+			// Check if followed by '(' for function call
 			if (current_token_.value() == "(") {
 				advance(); // consume '('
 
-			// Parse function arguments using unified helper (expand simple packs for qualified calls)
+				// Parse function arguments using unified helper (expand simple packs for qualified calls)
 				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 					.handle_pack_expansion = true,
 					.collect_types = true,
@@ -2938,42 +2958,37 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) ||
 					 (template_args.has_value() && !template_args->empty())) &&
 					current_linkage_ != Linkage::C) {
-				// Build qualified template name
+					// Build qualified template name
 					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 
-				// Phase 1 C++20: If we have explicit template arguments, use them instead of deducing
+					// Phase 1 C++20: If we have explicit template arguments, use them instead of deducing
 					if (template_args.has_value() && !template_args->empty()) {
 						FLASH_LOG_FORMAT(Parser, Debug, "Using explicit template arguments for function call to '{}'", qualified_name);
 
-						// Check if any template args are dependent
-						for (const auto& targ : *template_args) {
-							if (targ.is_dependent || targ.dependent_name.isValid()) {
-								has_dependent_explicit_template_args = true;
-								break;
+						has_dependent_explicit_template_args =
+							explicitTemplateArgsRequireDeferredInstantiation(*template_args);
+
+						if (!has_dependent_explicit_template_args) {
+							std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
+							if (!template_inst.has_value()) {
+								template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args, arg_types);
 							}
-						}
 
-					// Try to instantiate with explicit template arguments
-						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
-						if (!template_inst.has_value()) {
-						// Try with simple name
-							template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args, arg_types);
-						}
-
-						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
-							identifierType = *template_inst;
-							FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated function template '{}' with explicit arguments", qualified_name);
+							if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+								identifierType = *template_inst;
+								FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated function template '{}' with explicit arguments", qualified_name);
+							}
 						}
 					}
 
-				// If still not found, try deducing from function arguments.
-				// But skip deduction when explicit template args are dependent -
-				// deduction cannot correctly handle this case and the expression
-				// must be deferred to template instantiation time.
+					// If still not found, try deducing from function arguments.
+					// But skip deduction when explicit template args are dependent -
+					// deduction cannot correctly handle this case and the expression
+					// must be deferred to template instantiation time.
 					if ((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) &&
 						!has_dependent_explicit_template_args) {
-					// Try to instantiate the qualified template function
+						// Try to instantiate the qualified template function
 						if (!arg_types.empty()) {
 							std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
 							if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
@@ -2983,9 +2998,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 				}
 
-			// When explicit template arguments are dependent and instantiation failed,
-			// the call expression must use a dependent placeholder return type so that
-			// decltype(...) defers resolution to template instantiation time.
+				// When explicit template arguments are dependent and instantiation failed,
+				// the call expression must use a dependent placeholder return type so that
+				// decltype(...) defers resolution to template instantiation time.
 				if (has_dependent_explicit_template_args &&
 					(!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>())) {
 					// Use Auto category to signal that the return type is dependent
@@ -2996,9 +3011,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					identifierType = placeholder_decl;
 				}
 
-			// If still not found, create a forward declaration
+				// If still not found, create a forward declaration
 				if (!identifierType) {
-				// Validate namespace exists before creating forward declaration (catches f2::func when f2 undeclared)
+					// Validate namespace exists before creating forward declaration (catches f2::func when f2 undeclared)
 					if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token(), parsing_template_depth_ > 0)) {
 						return ParseResult::error(
 							std::string(StringBuilder().append("Use of undeclared identifier '").append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name())).append("'").commit()),
@@ -3009,7 +3024,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					identifierType = forward_decl;
 				}
 
-			// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
+				// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
 				const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
 				if (!decl_ptr) {
 					return ParseResult::error("Invalid function declaration (template args path)", current_token_);
@@ -4137,7 +4152,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (has_dependent_call_args ||
 					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 					result = emplace_node<ExpressionNode>(
 						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
@@ -4587,22 +4602,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				auto make_dependent_call_result = [&]() -> ParseResult {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 					result = emplace_node<ExpressionNode>(
 						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args_ref), identifier_token));
 					return ParseResult::success(*result);
 				};
 
+				const bool has_deferred_template_call_args =
+					argsHaveDeferredTemplateDependency(args_ref, currentTemplateParamNames()) ||
+					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
+
 				if (all_overloads.empty()) {
 					std::optional<ASTNode> instantiated_func;
-					if (current_linkage_ != Linkage::C) {
+					if (current_linkage_ != Linkage::C && !has_deferred_template_call_args) {
 						instantiated_func = try_instantiate_template(identifier_token.value(), arg_types);
 					}
 					if (instantiated_func.has_value()) {
 						const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
 						if (func_check && func_check->is_deleted()) {
-							if (argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+							if (has_deferred_template_call_args) {
 								return make_dependent_call_result();
 							}
 							return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "\'", identifier_token);
@@ -4624,7 +4643,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						return ParseResult::success(*result);
 					}
-					if (argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+					if (has_deferred_template_call_args) {
 						return make_dependent_call_result();
 					}
 					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
@@ -4663,13 +4682,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return make_call_result(*synthetic_builtin);
 					}
 					std::optional<ASTNode> instantiated_func;
-					if (current_linkage_ != Linkage::C) {
+					if (current_linkage_ != Linkage::C && !has_deferred_template_call_args) {
 						instantiated_func = try_instantiate_template(identifier_token.value(), arg_types);
 					}
 					if (instantiated_func.has_value()) {
 						const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
 						if (func_check && func_check->is_deleted()) {
-							if (argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+							if (has_deferred_template_call_args) {
 								return make_dependent_call_result();
 							}
 							return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "\'", identifier_token);
@@ -4690,7 +4709,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						return ParseResult::success(*result);
 					}
-					if (argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+					if (has_deferred_template_call_args) {
 						return make_dependent_call_result();
 					}
 					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
@@ -4795,9 +4814,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				auto make_dependent_decltype_call = [&](ChunkedVector<ASTNode>&& call_args) -> ParseResult {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for decltype call to '", identifier_token.value(), "'");
 					auto type_node = emplace_node<TypeSpecifierNode>(
-						TypeCategory::Bool,
+						TypeCategory::Auto,
 						TypeQualifier::None,
-						get_type_size_bits(TypeCategory::Bool),
+						get_type_size_bits(TypeCategory::Auto),
 						identifier_token,
 						CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
@@ -4865,8 +4884,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
 
 					// Try to instantiate the template function (skip in extern "C" contexts - C has no templates)
-					if (current_linkage_ != Linkage::C) {
+					if (current_linkage_ != Linkage::C && !has_dependent_call_args) {
 						template_func_inst = try_instantiate_template(identifier_token.value(), arg_types);
+					}
+
+					if (has_dependent_call_args) {
+						if (context == ExpressionContext::Decltype) {
+							return make_dependent_decltype_call(std::move(args));
+						}
+						create_unresolved_call_decl_if_deferred();
 					}
 
 					if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
@@ -6559,7 +6585,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 								auto make_late_dependent_call_result = [&]() -> ParseResult {
 									FLASH_LOG(Templates, Debug, "Creating dependent call expression for deleted dependent call to '", identifier_token.value(), "'");
-									auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+									auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 									auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 									result = emplace_node<ExpressionNode>(
 										makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
@@ -6581,12 +6607,35 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									// Skip template instantiation in extern "C" contexts - C has no templates
 									std::optional<ASTNode> instantiated_func;
 									bool resolved_as_struct_member = false;
+									bool defer_struct_member_template_instantiation = false;
 									if (current_linkage_ != Linkage::C && !has_dependent_template_args) {
+										auto should_defer_current_struct_member_template_instantiation =
+											[&](std::string_view struct_name, TypeIndex struct_type_index) -> bool {
+											if (struct_name.empty()) {
+												return false;
+											}
+											if (const TypeInfo* owner_type_info = tryGetTypeInfo(struct_type_index);
+												owner_type_info != nullptr && owner_type_info->isTemplateInstantiation()) {
+												return false;
+											}
+											if (current_function_ != nullptr && current_function_->has_outer_template_bindings()) {
+												return false;
+											}
+											return isTemplateBodyWithActiveParameters();
+										};
+
 										auto try_instantiate_current_struct_member_template = [&]() -> std::optional<ASTNode> {
 											if (!member_function_context_stack_.empty()) {
+												const auto& member_ctx = member_function_context_stack_.back();
 												std::string_view struct_name =
-													StringTable::getStringView(member_function_context_stack_.back().struct_name);
+													StringTable::getStringView(member_ctx.struct_name);
 												if (!struct_name.empty()) {
+													if (should_defer_current_struct_member_template_instantiation(
+															struct_name,
+															member_ctx.struct_type_index)) {
+														defer_struct_member_template_instantiation = true;
+														return std::nullopt;
+													}
 													if (auto member_inst = try_instantiate_member_function_template_explicit(
 															struct_name,
 															identifier_token.value(),
@@ -6599,6 +6648,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											if (!struct_parsing_context_stack_.empty()) {
 												const auto& struct_ctx = struct_parsing_context_stack_.back();
 												if (!struct_ctx.struct_name.empty()) {
+													TypeIndex struct_type_index{};
+													if (auto scope_type_it = getTypesByNameMap().find(
+															StringTable::getOrInternStringHandle(struct_ctx.struct_name));
+														scope_type_it != getTypesByNameMap().end()) {
+														struct_type_index = scope_type_it->second->type_index_;
+													}
+													if (should_defer_current_struct_member_template_instantiation(
+															struct_ctx.struct_name,
+															struct_type_index)) {
+														defer_struct_member_template_instantiation = true;
+														return std::nullopt;
+													}
 													return try_instantiate_member_function_template_explicit(
 														struct_ctx.struct_name,
 														identifier_token.value(),
@@ -6611,7 +6672,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 										instantiated_func = try_instantiate_current_struct_member_template();
 										resolved_as_struct_member = instantiated_func.has_value();
-										if (!resolved_as_struct_member) {
+										if (!resolved_as_struct_member && !defer_struct_member_template_instantiation) {
 											instantiated_func = try_instantiate_template_explicit(identifier_token.value(), *effective_template_args, arg_types);
 										}
 									}
@@ -6673,7 +6734,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 											}
 										}
-									} else if (has_dependent_template_args) {
+									} else if (has_dependent_template_args || defer_struct_member_template_instantiation) {
 										// Template arguments are dependent - this is a template-dependent expression
 										// Create a CallExprNode with a placeholder declaration that will be resolved during template instantiation
 										// IMPORTANT: We must create a call expression (not just IdentifierNode) to preserve the information
@@ -6682,7 +6743,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										FLASH_LOG(Templates, Debug, "Creating dependent call expression for call to '", identifier_token.value(), "'");
 
 										// Create a placeholder declaration for the dependent function call
-										TypeSpecifierNode placeholder_type(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+										TypeSpecifierNode placeholder_type(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 										if (const std::vector<ASTNode>* template_overloads = gTemplateRegistry.lookupAllTemplates(identifier_token.value())) {
 											for (const ASTNode& template_overload : *template_overloads) {
 												const FunctionDeclarationNode* function_decl = get_function_decl_node(template_overload);
@@ -6701,13 +6762,32 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										result = emplace_node<ExpressionNode>(makeDirectCallExpr(decl_ref, std::move(args), identifier_token));
 
 										// Store the template arguments in the call expression for later resolution
-										if (explicit_template_arg_nodes.empty() && explicit_template_args.has_value()) {
-											explicit_template_arg_nodes = materializeTemplateArgumentNodes(*explicit_template_args, identifier_token);
-										} else if (explicit_template_args.has_value()) {
-											syncTemplateArgumentNodeMetadata(explicit_template_arg_nodes, *explicit_template_args);
+										if (explicit_template_arg_nodes.empty() && effective_template_args.has_value()) {
+											explicit_template_arg_nodes = materializeTemplateArgumentNodes(*effective_template_args, identifier_token);
+										} else if (effective_template_args.has_value()) {
+											syncTemplateArgumentNodeMetadata(explicit_template_arg_nodes, *effective_template_args);
 										}
 										if (!explicit_template_arg_nodes.empty()) {
 											setCallTemplateArguments(result->as<ExpressionNode>(), std::move(explicit_template_arg_nodes));
+										}
+										if (defer_struct_member_template_instantiation) {
+											std::string_view struct_name_for_qual;
+											if (!member_function_context_stack_.empty()) {
+												struct_name_for_qual =
+													StringTable::getStringView(member_function_context_stack_.back().struct_name);
+											} else if (!struct_parsing_context_stack_.empty()) {
+												struct_name_for_qual =
+													struct_parsing_context_stack_.back().struct_name;
+											}
+											if (!struct_name_for_qual.empty()) {
+												setCallQualifiedName(
+													result->as<ExpressionNode>(),
+													StringBuilder()
+														.append(struct_name_for_qual)
+														.append("::")
+														.append(identifier_token.value())
+														.commit());
+											}
 										}
 									} else {
 										return ParseResult::error("No matching template for call to '" + std::string(identifier_token.value()) + "'", identifier_token);
@@ -6777,7 +6857,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										if (has_dependent_call_args ||
 											argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
 											FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-											auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+											auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 											auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 											result = emplace_node<ExpressionNode>(
 												makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
@@ -6843,7 +6923,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											if (has_dependent_call_args ||
 												argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
 												FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-												auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+												auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 												auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 												result = emplace_node<ExpressionNode>(
 													makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
