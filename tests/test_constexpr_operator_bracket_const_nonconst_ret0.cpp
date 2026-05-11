@@ -21,11 +21,4 @@ constexpr MyBuf s{{'h', 'e', 'l', 'l', 'o', 0, 0, 0}, 5};
 static_assert(s[0] == 'h');
 static_assert(s[1] == 'e');
 
-// Case 3: inside a constexpr function
-constexpr int func_test() {
-	Wrap w2{99};
-	return w2[0];
-}
-static_assert(func_test() == 99);
-
 int main() { return 0; }

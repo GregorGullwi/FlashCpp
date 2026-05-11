@@ -929,7 +929,7 @@ private:
 	// Handles: this injection, argument binding, template context save/restore,
 	// recursion depth guard, struct context setup, evaluate_block_with_bindings.
 	// member_bindings contains the struct object's members (moved in).
-	static EvalResult invoke_constexpr_member_function(
+	static EvalResult invokeConstexprMemberFunction(
 		const FunctionDeclarationNode& func,
 		std::unordered_map<std::string_view, EvalResult> member_bindings,
 		TypeIndex type_index,
@@ -943,10 +943,11 @@ private:
 	// When both const and non-const overloads exist, the const overload is preferred
 	// (constexpr evaluation is read-only so both produce identical results).
 	// Returns ambiguity when multiple viable const overloads exist.
-	static ResolvedMemberFunctionCandidate find_constexpr_operator_overload(
+	static ResolvedMemberFunctionCandidate findConstexprOperatorOverload(
 		const StructTypeInfo* struct_info,
 		StringHandle operator_name,
 		size_t argument_count,
+		bool object_is_const,
 		EvaluationContext& context);
 	static ResolvedMemberFunctionCandidate find_current_struct_member_function_candidate(
 		StringHandle function_name_handle,

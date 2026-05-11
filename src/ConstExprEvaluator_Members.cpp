@@ -1548,13 +1548,37 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		if (struct_info) {
 			StringHandle op_bracket = StringTable::getOrInternStringHandle("operator[]");
+			bool object_is_const = array_result->exact_type.has_value() &&
+				array_result->exact_type->cv_qualifier() == CVQualifier::Const;
+			if (!object_is_const && array_expr.is<ExpressionNode>()) {
+				const ExpressionNode& object_expr = array_expr.as<ExpressionNode>();
+				if (const auto* object_id = std::get_if<IdentifierNode>(&object_expr)) {
+					ResolvedConstexprObject resolved_object;
+					auto resolve_error = resolve_constexpr_object_source(
+						object_id,
+						object_id->name(),
+						context,
+						"operator[] call",
+						resolved_object);
+					if (!resolve_error.has_value() && resolved_object.var_decl) {
+						const TypeSpecifierNode& decl_type = resolved_object.var_decl->declaration().type_specifier_node();
+						object_is_const = resolved_object.var_decl->is_constexpr() ||
+							decl_type.cv_qualifier() == CVQualifier::Const;
+					}
+				}
+			}
+			if (!object_is_const && context.parser && array_expr.is<ExpressionNode>()) {
+				auto expr_type = context.parser->get_expression_type(array_expr);
+				object_is_const = expr_type.has_value() &&
+					expr_type->cv_qualifier() == CVQualifier::Const;
+			}
 			ResolvedMemberFunctionCandidate candidate =
-				find_constexpr_operator_overload(struct_info, op_bracket, 1, context);
+				findConstexprOperatorOverload(struct_info, op_bracket, 1, object_is_const, context);
 			if (candidate.ambiguous) {
 				return EvalResult::error("Ambiguous operator[] overload in constant expression");
 			}
 			if (candidate.function) {
-				return invoke_constexpr_member_function(
+				return invokeConstexprMemberFunction(
 					*candidate.function,
 					array_result->object_member_bindings,
 					array_result->object_type_index,
@@ -2088,25 +2112,104 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 	return result;
 }
 
-Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_constexpr_operator_overload(
+Evaluator::ResolvedMemberFunctionCandidate Evaluator::findConstexprOperatorOverload(
 	const StructTypeInfo* struct_info,
 	StringHandle operator_name,
 	size_t argument_count,
+	bool object_is_const,
 	EvaluationContext& context) {
 	auto candidate = find_member_function_candidate(
 		struct_info, operator_name, argument_count, context,
 		MemberFunctionLookupMode::ConstexprEvaluable, false, true);
+	if (!object_is_const &&
+		candidate.function &&
+		candidate.function->is_const_member_function()) {
+		auto lookup_only_candidate = find_member_function_candidate(
+			struct_info,
+			operator_name,
+			argument_count,
+			context,
+			MemberFunctionLookupMode::LookupOnly,
+			false,
+			true);
+		if (lookup_only_candidate.ambiguous ||
+			(lookup_only_candidate.function && !lookup_only_candidate.function->is_const_member_function())) {
+			return {};
+		}
+	}
 	if (!candidate.ambiguous && candidate.function && candidate.function->get_definition().has_value()) {
 		return candidate;
 	}
 	if (!candidate.ambiguous) {
 		return {};
 	}
-	// Ambiguous: prefer the const overload - constexpr evaluation is read-only
-	// so selecting the const overload is always correct. If the non-const overload
-	// must be called in future (e.g., write-through semantics), this preference
-	// must be revisited.
-	const FunctionDeclarationNode* const_overload = nullptr;
+	auto sameTypeSpecifierShape = [](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+		if (lhs.category() != rhs.category() ||
+			lhs.cv_qualifier() != rhs.cv_qualifier() ||
+			lhs.reference_qualifier() != rhs.reference_qualifier() ||
+			lhs.pointer_levels().size() != rhs.pointer_levels().size() ||
+			lhs.is_array() != rhs.is_array()) {
+			return false;
+		}
+		for (size_t i = 0; i < lhs.pointer_levels().size(); ++i) {
+			if (lhs.pointer_levels()[i].cv_qualifier != rhs.pointer_levels()[i].cv_qualifier) {
+				return false;
+			}
+		}
+		if (lhs.array_dimensions() != rhs.array_dimensions()) {
+			return false;
+		}
+		if (lhs.has_function_signature() != rhs.has_function_signature()) {
+			return false;
+		}
+		if (lhs.has_function_signature()) {
+			const FunctionSignature& lhs_sig = lhs.function_signature();
+			const FunctionSignature& rhs_sig = rhs.function_signature();
+			if (lhs_sig.return_type_index != rhs_sig.return_type_index ||
+				lhs_sig.return_pointer_depth != rhs_sig.return_pointer_depth ||
+				lhs_sig.return_reference_qualifier != rhs_sig.return_reference_qualifier ||
+				lhs_sig.parameter_type_indices != rhs_sig.parameter_type_indices ||
+				lhs_sig.linkage != rhs_sig.linkage ||
+				lhs_sig.class_name != rhs_sig.class_name ||
+				lhs_sig.calling_convention != rhs_sig.calling_convention ||
+				lhs_sig.is_const != rhs_sig.is_const ||
+				lhs_sig.is_volatile != rhs_sig.is_volatile ||
+				lhs_sig.function_reference_qualifier != rhs_sig.function_reference_qualifier ||
+				lhs_sig.is_noexcept != rhs_sig.is_noexcept) {
+				return false;
+			}
+		}
+		TypeIndex lhs_type_index = lhs.type_index();
+		TypeIndex rhs_type_index = rhs.type_index();
+		if (lhs_type_index.needsTypeIndex() != rhs_type_index.needsTypeIndex()) {
+			return false;
+		}
+		if (lhs_type_index.needsTypeIndex() && rhs_type_index.needsTypeIndex() &&
+			lhs_type_index != rhs_type_index &&
+			lhs.token().value() != rhs.token().value()) {
+			return false;
+		}
+		return true;
+	};
+	auto sameParameterTypes = [&](const FunctionDeclarationNode& lhs, const FunctionDeclarationNode& rhs) {
+		const auto& lhs_params = lhs.parameter_nodes();
+		const auto& rhs_params = rhs.parameter_nodes();
+		if (lhs_params.size() != rhs_params.size()) {
+			return false;
+		}
+		for (size_t i = 0; i < lhs_params.size(); ++i) {
+			if (!lhs_params[i].is<DeclarationNode>() || !rhs_params[i].is<DeclarationNode>()) {
+				return false;
+			}
+			const auto& lhs_decl = lhs_params[i].as<DeclarationNode>();
+			const auto& rhs_decl = rhs_params[i].as<DeclarationNode>();
+			if (!sameTypeSpecifierShape(lhs_decl.type_specifier_node(), rhs_decl.type_specifier_node())) {
+				return false;
+			}
+		}
+		return true;
+	};
+	std::vector<const FunctionDeclarationNode*> viable_candidates;
 	for (const auto& member_func : struct_info->member_functions) {
 		if (member_func.is_constructor || member_func.is_destructor ||
 			member_func.getName() != operator_name ||
@@ -2122,12 +2225,28 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_constexpr_operator_ov
 		if (!func_decl.get_definition().has_value()) {
 			continue;
 		}
-		if (func_decl.is_const_member_function()) {
-			if (const_overload) {
-				return {.function = nullptr, .ambiguous = true};
-			}
-			const_overload = &func_decl;
+		viable_candidates.push_back(&func_decl);
+	}
+	if (viable_candidates.empty()) {
+		return {};
+	}
+	if (viable_candidates.size() == 1) {
+		return {.function = viable_candidates.front(), .ambiguous = false};
+	}
+	for (size_t i = 1; i < viable_candidates.size(); ++i) {
+		if (!sameParameterTypes(*viable_candidates[0], *viable_candidates[i])) {
+			return {};
 		}
+	}
+	const FunctionDeclarationNode* const_overload = nullptr;
+	for (const FunctionDeclarationNode* viable_candidate : viable_candidates) {
+		if (!viable_candidate->is_const_member_function()) {
+			continue;
+		}
+		if (const_overload) {
+			return {.function = nullptr, .ambiguous = true};
+		}
+		const_overload = viable_candidate;
 	}
 	if (const_overload) {
 		return {.function = const_overload, .ambiguous = false};
@@ -2135,7 +2254,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_constexpr_operator_ov
 	return {.function = nullptr, .ambiguous = true};
 }
 
-EvalResult Evaluator::invoke_constexpr_member_function(
+EvalResult Evaluator::invokeConstexprMemberFunction(
 	const FunctionDeclarationNode& func,
 	std::unordered_map<std::string_view, EvalResult> member_bindings,
 	TypeIndex type_index,
@@ -7721,13 +7840,37 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		if (struct_info) {
 			StringHandle op_bracket = StringTable::getOrInternStringHandle("operator[]");
+			bool object_is_const = arr_result.exact_type.has_value() &&
+				arr_result.exact_type->cv_qualifier() == CVQualifier::Const;
+			if (!object_is_const && array_expr.is<ExpressionNode>()) {
+				const ExpressionNode& object_expr = array_expr.as<ExpressionNode>();
+				if (const auto* object_id = std::get_if<IdentifierNode>(&object_expr)) {
+					ResolvedConstexprObject resolved_object;
+					auto resolve_error = resolve_constexpr_object_source(
+						object_id,
+						object_id->name(),
+						context,
+						"operator[] call",
+						resolved_object);
+					if (!resolve_error.has_value() && resolved_object.var_decl) {
+						const TypeSpecifierNode& decl_type = resolved_object.var_decl->declaration().type_specifier_node();
+						object_is_const = resolved_object.var_decl->is_constexpr() ||
+							decl_type.cv_qualifier() == CVQualifier::Const;
+					}
+				}
+			}
+			if (!object_is_const && context.parser && array_expr.is<ExpressionNode>()) {
+				auto expr_type = context.parser->get_expression_type(array_expr);
+				object_is_const = expr_type.has_value() &&
+					expr_type->cv_qualifier() == CVQualifier::Const;
+			}
 			ResolvedMemberFunctionCandidate candidate =
-				find_constexpr_operator_overload(struct_info, op_bracket, 1, context);
+				findConstexprOperatorOverload(struct_info, op_bracket, 1, object_is_const, context);
 			if (candidate.ambiguous) {
 				return EvalResult::error("Ambiguous operator[] overload in constant expression");
 			}
 			if (candidate.function) {
-				return invoke_constexpr_member_function(
+				return invokeConstexprMemberFunction(
 					*candidate.function,
 					arr_result.object_member_bindings,
 					arr_result.object_type_index,
