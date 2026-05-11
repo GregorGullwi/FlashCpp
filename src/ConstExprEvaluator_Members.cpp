@@ -51,26 +51,26 @@ bool tryRebindSingleArgumentFallback(
 	TemplateTypeArg& dependent_arg,
 	const EvaluationContext& context,
 	std::string_view debug_context,
-	bool warn_on_ambiguous_nonvalue_context) {
+	bool enable_ambiguity_warnings) {
 	// Alias-template chains can preserve alias-local parameter names after
 	// substitution. For single-argument dependent owners in default template
 	// argument substitution, exactly one non-value context argument is the only
 	// viable rebound candidate when direct name matching fails.
-	size_t non_value_context_args = 0;
+	size_t non_value_context_arg_count = 0;
 	const TemplateTypeArg* only_non_value_context_arg = nullptr;
 	for (const TemplateTypeArg& context_arg : context.template_args) {
 		if (!context_arg.is_value) {
-			++non_value_context_args;
+			++non_value_context_arg_count;
 			only_non_value_context_arg = &context_arg;
 		}
 	}
-	if (non_value_context_args == 1 &&
+	if (non_value_context_arg_count == 1 &&
 		only_non_value_context_arg != nullptr) {
 		dependent_arg = *only_non_value_context_arg;
 		FLASH_LOG(ConstExpr, Debug, "Rebound single-argument dependent owner fallback for ", debug_context);
 		return true;
 	}
-	if (warn_on_ambiguous_nonvalue_context && non_value_context_args > 1) {
+	if (enable_ambiguity_warnings && non_value_context_arg_count > 1) {
 		FLASH_LOG(ConstExpr, Warning, "Single-argument dependent owner fallback skipped due to ambiguous non-value context arguments for ", debug_context);
 	}
 	return false;

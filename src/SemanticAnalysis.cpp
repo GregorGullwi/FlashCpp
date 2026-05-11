@@ -267,10 +267,19 @@ const ConstructorDeclarationNode* resolveUniqueArityConstructor(const StructType
 }
 
 static bool isParserOwnedConstructor(const ConstructorDeclarationNode& ctor) {
-	return ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos ||
-		ctor.has_template_parameters() ||
-		ctor.has_template_body_position() ||
-		ctor.has_template_initializer_list_position();
+	// Parser-owned constructors still carry template-substitution scaffolding:
+	// template pattern names, template parameter lists, deferred body source, or
+	// deferred initializer-list source. They are excluded from sema-owned
+	// post-parse boundary validation until lazy instantiation materializes them.
+	const bool has_template_pattern_name =
+		ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos;
+	const bool has_template_param_list = ctor.has_template_parameters();
+	const bool has_deferred_body_source = ctor.has_template_body_position();
+	const bool has_deferred_initializer_source = ctor.has_template_initializer_list_position();
+	return has_template_pattern_name ||
+		has_template_param_list ||
+		has_deferred_body_source ||
+		has_deferred_initializer_source;
 }
 
 static bool isTopLevelPackExpansionExpr(const ASTNode& arg) {
