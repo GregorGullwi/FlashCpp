@@ -2494,17 +2494,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					// Member is NOT a known template and we're in a context where < is likely comparison
 					FLASH_LOG_FORMAT(Parser, Debug,
 									 "Qualified identifier '{}' member is not a known template - treating '<' as comparison operator (context={}, base_is_param={})",
-									 qualified_name, static_cast<int>(context), base_is_template_param);
+									 qualified_name.view(), static_cast<int>(context), base_is_template_param);
 					should_parse_template_args = false;
 				}
 
 				if (should_parse_template_args) {
-					FLASH_LOG_FORMAT(Parser, Debug, "Qualified identifier '{}' followed by '<', attempting template argument parsing", qualified_name);
+					FLASH_LOG_FORMAT(Parser, Debug, "Qualified identifier '{}' followed by '<', attempting template argument parsing", qualified_name.view());
 					template_args = parse_explicit_template_arguments(&template_arg_nodes);
 				}
 
 				if (template_args.has_value()) {
-					FLASH_LOG_FORMAT(Parser, Debug, "Successfully parsed {} template arguments for '{}'", template_args->size(), qualified_name);
+					FLASH_LOG_FORMAT(Parser, Debug, "Successfully parsed {} template arguments for '{}'", template_args->size(), qualified_name.view());
 
 					// First, check if this is a variable template (most common case for traits like is_reference_v<T>)
 					auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
@@ -2568,14 +2568,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 					// Check if this is a concept application (e.g., std::same_as<T, U>)
 					// Concepts evaluate to boolean values at compile time
-					auto concept_opt = gConceptRegistry.lookupConcept(qualified_name);
+					auto concept_opt = gConceptRegistry.lookupConcept(qualified_name.view());
 					if (!concept_opt.has_value()) {
 						// Try with simple name
 						concept_opt = gConceptRegistry.lookupConcept(qual_id.name());
 					}
 
 					if (concept_opt.has_value()) {
-						FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with template arguments (qualified lookup)", qualified_name);
+						FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with template arguments (qualified lookup)", qualified_name.view());
 
 						// Evaluate the concept constraint with the provided template arguments
 						auto constraint_result = evaluateConstraint(
@@ -2645,18 +2645,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 					Parser::AliasTemplateMaterializationResult materialized_owner =
 						materializePrimaryTemplateOwnerForLookup(
-							qualified_name,
+							qualified_name.view(),
 							qual_id.name(),
 							*template_args);
 					std::string_view instantiated_name = materialized_owner.instantiated_name;
 					if (instantiated_name.empty()) {
 						auto instantiation_result = try_instantiate_template_explicit(qual_id.name(), *template_args);
 						if (instantiation_result.has_value()) {
-							instantiation_result = try_instantiate_template_explicit(qualified_name, *template_args);
+							instantiation_result = try_instantiate_template_explicit(qualified_name.view(), *template_args);
 							if (instantiation_result.has_value()) {
 								// Template instantiation failed - this might not be a template after all
 								// But we successfully parsed template arguments, so continue with the parsed args
-								FLASH_LOG_FORMAT(Parser, Warning, "Parsed template arguments but instantiation failed for '{}'", qualified_name);
+								FLASH_LOG_FORMAT(Parser, Warning, "Parsed template arguments but instantiation failed for '{}'", qualified_name.view());
 							}
 						}
 					}
