@@ -59,42 +59,6 @@ TemplateParameterKind inferTemplateBindingKindForLookup(const TemplateTypeArg& a
 	return TemplateParameterKind::Type;
 }
 
-TemplateEnvironment buildLegacyTemplateLookupEnvironment(const EvaluationContext& context) {
-	TemplateEnvironment legacy_environment;
-	const size_t pair_count =
-		std::min(context.template_param_names.size(), context.template_args.size());
-	legacy_environment.bindings.reserve(pair_count);
-	for (size_t i = 0; i < pair_count; ++i) {
-		TemplateBinding binding;
-		binding.name =
-			StringTable::getOrInternStringHandle(context.template_param_names[i]);
-		binding.kind = inferTemplateBindingKindForLookup(context.template_args[i]);
-		binding.is_pack = false;
-		binding.args.push_back(context.template_args[i]);
-		legacy_environment.bindings.push_back(std::move(binding));
-	}
-	return legacy_environment;
-}
-
-void populateLegacyTemplateBindingsFromEnvironment(
-	const TemplateEnvironment& environment,
-	InlineVector<std::string_view, 4>& out_param_names,
-	InlineVector<TemplateTypeArg, 4>& out_args) {
-	out_param_names.clear();
-	out_args.clear();
-	for (const TemplateEnvironment* current = &environment;
-		 current != nullptr;
-		 current = current->parent) {
-		for (const TemplateBinding& binding : current->bindings) {
-			if (binding.is_pack || binding.args.empty()) {
-				continue;
-			}
-			out_param_names.push_back(StringTable::getStringView(binding.name));
-			out_args.push_back(binding.args.front());
-		}
-	}
-}
-
 InlineVector<TemplateParameterNode, 4> getTemplateParametersForTypeInfo(
 	const TypeInfo& owner_type_info) {
 	const StringHandle qualified_template_name =
@@ -135,18 +99,10 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 	if (recursion_depth > kMaxDependentLookupMaterializationDepth) {
 		return std::nullopt;
 	}
-	TemplateEnvironment legacy_environment;
 	TemplateEnvironment context_environment;
 	bool context_environment_initialized = false;
 	TemplateEnvironment owner_environment;
 	bool owner_environment_initialized = false;
-	const auto ensure_legacy_environment = [&]() -> bool {
-		if (!legacy_environment.bindings.empty()) {
-			return true;
-		}
-		legacy_environment = buildLegacyTemplateLookupEnvironment(context);
-		return !legacy_environment.bindings.empty();
-	};
 	const auto ensure_context_environment = [&]() -> const TemplateEnvironment* {
 		if (context_environment_initialized) {
 			return (!context_environment.bindings.empty() || context_environment.parent != nullptr)
@@ -159,9 +115,6 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 			return nullptr;
 		}
 		context_environment = context.template_environment;
-		if (context_environment.parent == nullptr && ensure_legacy_environment()) {
-			context_environment.parent = &legacy_environment;
-		}
 		return &context_environment;
 	};
 	const auto ensure_owner_environment = [&]() -> const TemplateEnvironment* {
@@ -178,8 +131,6 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 		if (const TemplateEnvironment* context_env = ensure_context_environment();
 			context_env != nullptr) {
 			owner_environment.parent = context_env;
-		} else if (ensure_legacy_environment()) {
-			owner_environment.parent = &legacy_environment;
 		}
 		return &owner_environment;
 	};
@@ -191,9 +142,6 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 		if (const TemplateEnvironment* context_env = ensure_context_environment();
 			context_env != nullptr) {
 			return context_env;
-		}
-		if (ensure_legacy_environment()) {
-			return &legacy_environment;
 		}
 		return nullptr;
 	};
@@ -288,17 +236,9 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 			ExpressionSubstitutor substitutor(*evaluation_environment, *context.parser);
 			ASTNode substituted_expr = substitutor.substitute(*dependent_arg.dependent_expr);
 			auto saved_template_environment = context.template_environment;
-			auto saved_template_param_names = context.template_param_names;
-			auto saved_template_args = context.template_args;
 			context.template_environment = *evaluation_environment;
-			populateLegacyTemplateBindingsFromEnvironment(
-				context.template_environment,
-				context.template_param_names,
-				context.template_args);
 			EvalResult evaluated = Evaluator::evaluate(substituted_expr, context);
 			context.template_environment = std::move(saved_template_environment);
-			context.template_param_names = std::move(saved_template_param_names);
-			context.template_args = std::move(saved_template_args);
 			if (evaluated.success()) {
 				TemplateTypeArg evaluated_arg = templateTypeArgFromEvalResult(evaluated);
 				if (evaluated_arg.category() == TypeCategory::Invalid &&
