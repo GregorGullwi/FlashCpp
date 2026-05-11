@@ -1554,7 +1554,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 					TypeIndex declared_type_index = decl_type_spec.type_index();
 					const TypeInfo* declared_type_info = tryGetTypeInfo(declared_type_index);
 					if (!declared_type_info) {
-						StringHandle type_name_handle = StringTable::getOrInternStringHandle(decl_type_spec.token().value());
+						StringHandle type_name_handle = decl_type_spec.token().handle();
 						auto type_it = getTypesByNameMap().find(type_name_handle);
 						if (type_it != getTypesByNameMap().end()) {
 							declared_type_info = type_it->second;
