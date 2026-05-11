@@ -13,6 +13,17 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);
 
 void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec);
 
+namespace {
+bool explicitTemplateArgsRequireDeferredInstantiation(const InlineVector<TemplateTypeArg, 4>& template_args) {
+	return std::any_of(
+		template_args.begin(),
+		template_args.end(),
+		[](const TemplateTypeArg& arg) {
+			return arg.is_dependent || arg.dependent_name.isValid();
+		});
+}
+}
+
 // Helper function to check if a template name is a template-template parameter
 bool Parser::isTemplateTemplateParameter(StringHandle template_name_handle) const {
 	// During function-template body reparse, parsing_template_depth_ is 0 but
@@ -2946,24 +2957,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (template_args.has_value() && !template_args->empty()) {
 						FLASH_LOG_FORMAT(Parser, Debug, "Using explicit template arguments for function call to '{}'", qualified_name);
 
-						// Check if any template args are dependent
-						for (const auto& targ : *template_args) {
-							if (targ.is_dependent || targ.dependent_name.isValid()) {
-								has_dependent_explicit_template_args = true;
-								break;
+						has_dependent_explicit_template_args =
+							explicitTemplateArgsRequireDeferredInstantiation(*template_args);
+
+						if (!has_dependent_explicit_template_args) {
+							std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
+							if (!template_inst.has_value()) {
+								template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args, arg_types);
 							}
-						}
 
-					// Try to instantiate with explicit template arguments
-						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
-						if (!template_inst.has_value()) {
-						// Try with simple name
-							template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args, arg_types);
-						}
-
-						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
-							identifierType = *template_inst;
-							FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated function template '{}' with explicit arguments", qualified_name);
+							if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+								identifierType = *template_inst;
+								FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated function template '{}' with explicit arguments", qualified_name);
+							}
 						}
 					}
 
@@ -4137,7 +4143,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (has_dependent_call_args ||
 					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 					result = emplace_node<ExpressionNode>(
 						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
@@ -4587,22 +4593,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				auto make_dependent_call_result = [&]() -> ParseResult {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 					result = emplace_node<ExpressionNode>(
 						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args_ref), identifier_token));
 					return ParseResult::success(*result);
 				};
 
+				const bool has_deferred_template_call_args =
+					argsHaveDeferredTemplateDependency(args_ref, currentTemplateParamNames()) ||
+					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
+
 				if (all_overloads.empty()) {
 					std::optional<ASTNode> instantiated_func;
-					if (current_linkage_ != Linkage::C) {
+					if (current_linkage_ != Linkage::C && !has_deferred_template_call_args) {
 						instantiated_func = try_instantiate_template(identifier_token.value(), arg_types);
 					}
 					if (instantiated_func.has_value()) {
 						const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
 						if (func_check && func_check->is_deleted()) {
-							if (argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+							if (has_deferred_template_call_args) {
 								return make_dependent_call_result();
 							}
 							return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "\'", identifier_token);
@@ -4624,7 +4634,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						return ParseResult::success(*result);
 					}
-					if (argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+					if (has_deferred_template_call_args) {
 						return make_dependent_call_result();
 					}
 					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
@@ -4663,13 +4673,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return make_call_result(*synthetic_builtin);
 					}
 					std::optional<ASTNode> instantiated_func;
-					if (current_linkage_ != Linkage::C) {
+					if (current_linkage_ != Linkage::C && !has_deferred_template_call_args) {
 						instantiated_func = try_instantiate_template(identifier_token.value(), arg_types);
 					}
 					if (instantiated_func.has_value()) {
 						const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
 						if (func_check && func_check->is_deleted()) {
-							if (argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+							if (has_deferred_template_call_args) {
 								return make_dependent_call_result();
 							}
 							return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "\'", identifier_token);
@@ -4690,7 +4700,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						return ParseResult::success(*result);
 					}
-					if (argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+					if (has_deferred_template_call_args) {
 						return make_dependent_call_result();
 					}
 					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
@@ -4795,9 +4805,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				auto make_dependent_decltype_call = [&](ChunkedVector<ASTNode>&& call_args) -> ParseResult {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for decltype call to '", identifier_token.value(), "'");
 					auto type_node = emplace_node<TypeSpecifierNode>(
-						TypeCategory::Bool,
+						TypeCategory::Auto,
 						TypeQualifier::None,
-						get_type_size_bits(TypeCategory::Bool),
+						get_type_size_bits(TypeCategory::Auto),
 						identifier_token,
 						CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
@@ -4865,8 +4875,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
 
 					// Try to instantiate the template function (skip in extern "C" contexts - C has no templates)
-					if (current_linkage_ != Linkage::C) {
+					if (current_linkage_ != Linkage::C && !has_dependent_call_args) {
 						template_func_inst = try_instantiate_template(identifier_token.value(), arg_types);
+					}
+
+					if (has_dependent_call_args) {
+						if (context == ExpressionContext::Decltype) {
+							return make_dependent_decltype_call(std::move(args));
+						}
+						create_unresolved_call_decl_if_deferred();
 					}
 
 					if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
@@ -6559,7 +6576,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 								auto make_late_dependent_call_result = [&]() -> ParseResult {
 									FLASH_LOG(Templates, Debug, "Creating dependent call expression for deleted dependent call to '", identifier_token.value(), "'");
-									auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+									auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 									auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 									result = emplace_node<ExpressionNode>(
 										makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
@@ -6717,7 +6734,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										FLASH_LOG(Templates, Debug, "Creating dependent call expression for call to '", identifier_token.value(), "'");
 
 										// Create a placeholder declaration for the dependent function call
-										TypeSpecifierNode placeholder_type(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+										TypeSpecifierNode placeholder_type(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 										if (const std::vector<ASTNode>* template_overloads = gTemplateRegistry.lookupAllTemplates(identifier_token.value())) {
 											for (const ASTNode& template_overload : *template_overloads) {
 												const FunctionDeclarationNode* function_decl = get_function_decl_node(template_overload);
@@ -6831,7 +6848,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										if (has_dependent_call_args ||
 											argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
 											FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-											auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+											auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 											auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 											result = emplace_node<ExpressionNode>(
 												makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
@@ -6897,7 +6914,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											if (has_dependent_call_args ||
 												argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
 												FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-												auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+												auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 												auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 												result = emplace_node<ExpressionNode>(
 													makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));

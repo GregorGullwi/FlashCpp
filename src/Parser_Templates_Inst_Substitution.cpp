@@ -923,6 +923,15 @@ Parser::AliasTemplateMaterializationResult Parser::resolveCanonicalInstantiatedO
 		owner_type_info != nullptr) {
 		result.resolved_type_info = owner_type_info;
 		if (!owner_type_info->isTemplateInstantiation()) {
+			if (!owner_template_args.empty() &&
+				can_materialize_owner_template(owner_name)) {
+				AliasTemplateMaterializationResult materialized_owner =
+					materializeTemplateInstantiationForLookup(owner_name, owner_template_args);
+				if (!materialized_owner.instantiated_name.empty() ||
+					materialized_owner.resolved_type_info != nullptr) {
+					return materialized_owner;
+				}
+			}
 			return result;
 		}
 

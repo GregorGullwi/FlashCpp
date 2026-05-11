@@ -1088,6 +1088,24 @@ ASTNode Parser::substituteTemplateParameters(
 				ASTNode(&cast_node.target_type()),
 				template_params,
 				template_args);
+			if (cast_node.expr().is<ExpressionNode>()) {
+				const ExpressionNode& cast_expr = cast_node.expr().as<ExpressionNode>();
+				if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&cast_expr)) {
+					ChunkedVector<ASTNode> expanded_args;
+					if (expandPackExpansionArgs(*pack_expansion_expr, template_params, template_args, expanded_args)) {
+						if (expanded_args.size() == 1) {
+							return emplace_node<ExpressionNode>(StaticCastNode(
+								substituted_type.as<TypeSpecifierNode>(),
+								expanded_args[0],
+								cast_node.cast_token()));
+						}
+						return emplace_node<ExpressionNode>(ConstructorCallNode(
+							substituted_type.as<TypeSpecifierNode>(),
+							std::move(expanded_args),
+							cast_node.cast_token()));
+					}
+				}
+			}
 			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
 			return emplace_node<ExpressionNode>(StaticCastNode(substituted_type.as<TypeSpecifierNode>(), substituted_expr, cast_node.cast_token()));
 		} else if (const auto* dynamic_cast_node = std::get_if<DynamicCastNode>(&expr)) {

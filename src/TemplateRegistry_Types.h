@@ -234,6 +234,39 @@ struct TemplateTypeArg {
 		for (const auto& level : type_spec.pointer_levels()) {
 			pointer_cv_qualifiers.push_back(level.cv_qualifier);
 		}
+		auto isDependentTypeIndex = [](TypeIndex idx) -> bool {
+			if (idx.category() == TypeCategory::Auto ||
+				idx.category() == TypeCategory::DeclTypeAuto) {
+				return true;
+			}
+			if (!idx.is_valid()) {
+				return false;
+			}
+			const TypeInfo* type_info = tryGetTypeInfo(idx);
+			return type_info != nullptr &&
+				   (type_info->isDependentPlaceholder() || type_info->is_incomplete_instantiation_);
+		};
+		bool has_structural_dependency = isDependentTypeIndex(type_index);
+		if (!has_structural_dependency && function_signature.has_value()) {
+			has_structural_dependency = isDependentTypeIndex(function_signature->return_type_index);
+			if (!has_structural_dependency) {
+				for (TypeIndex parameter_type : function_signature->parameter_type_indices) {
+					if (isDependentTypeIndex(parameter_type)) {
+						has_structural_dependency = true;
+						break;
+					}
+				}
+			}
+		}
+		if (has_structural_dependency) {
+			is_dependent = true;
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_index);
+				type_info != nullptr && type_info->name().isValid()) {
+				dependent_name = type_info->name();
+			} else if (!type_spec.token().value().empty()) {
+				dependent_name = StringTable::getOrInternStringHandle(type_spec.token().value());
+			}
+		}
 	}
 
 	// Constructor for non-type template parameters (default int type)

@@ -509,6 +509,48 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 
 	// If this is a type alias (no struct_info_), resolve the underlying type
 	if (!struct_type_info->struct_info_) {
+		if (struct_type_info->isTemplateInstantiation()) {
+			StringHandle alias_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
+				struct_type_info->sourceNamespace(),
+				struct_type_info->baseTemplateName());
+			auto alias_template_entry = gTemplateRegistry.lookup_alias_template(alias_template_name);
+			if (!alias_template_entry.has_value()) {
+				alias_template_entry = gTemplateRegistry.lookup_alias_template(
+					struct_type_info->baseTemplateName());
+			}
+			if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
+				std::vector<TemplateTypeArg> concrete_args;
+				concrete_args.reserve(struct_type_info->templateArgs().size());
+				for (const auto& arg_info : struct_type_info->templateArgs()) {
+					TemplateTypeArg concrete_arg = toTemplateTypeArg(arg_info);
+					concrete_arg.setCategory(arg_info.category());
+					concrete_args.push_back(concrete_arg);
+				}
+
+				if (std::optional<TemplateTypeArg> rebound_arg =
+						tryRebindAliasTargetTemplateArg(
+							alias_template_entry->as<TemplateAliasNode>(),
+							concrete_args);
+					rebound_arg.has_value() &&
+					!rebound_arg->is_value &&
+					rebound_arg->type_index.is_valid()) {
+					if (const TypeInfo* rebound_type = tryGetTypeInfo(rebound_arg->type_index)) {
+						FLASH_LOG_FORMAT(
+							Templates,
+							Debug,
+							"Alias-template placeholder '{}' resolved '{}' through alias target '{}'",
+							StringTable::getStringView(struct_name),
+							StringTable::getStringView(member_name),
+							StringTable::getStringView(rebound_type->name()));
+						if (member_name == StringTable::getOrInternStringHandle("type")) {
+							return rebound_type;
+						}
+						return lookup_inherited_type_alias(rebound_type->name(), member_name, depth + 1);
+					}
+				}
+			}
+		}
+
 		// This might be a type alias - try to find the actual struct type
 		// Type aliases have a type_index that points to the underlying type
 		// Check if type_index_ is valid and points to a different TypeInfo entry

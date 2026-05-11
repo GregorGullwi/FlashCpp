@@ -296,13 +296,19 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		if (ctor_decl.is_materialized()) {
 			body_to_substitute = ctor_decl.get_definition();
 		} else if (ctor_decl.has_template_body_position()) {
-			FlashCpp::TemplateParameterScope template_scope;
 			InlineVector<StringHandle, 4> param_names;
 			param_names.reserve(lazy_info.template_params.size());
 			for (const auto& tparam_node : lazy_info.template_params) {
 				param_names.push_back(tparam_node.nameHandle());
 			}
-			registerTypeParamsInScope(param_names, lazy_info.template_args, template_scope, true);
+			std::optional<TemplateEnvironment> outer_environment;
+			TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
+				lazy_info.outer_template_environment_snapshot,
+				std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
+				std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
+				outer_environment);
+			FlashCpp::TemplateParameterScope template_scope;
+			registerTypeParamsInScope(substitution_environment, template_scope, true);
 
 			// When re-parsing a deferred template constructor body with concrete types,
 			// we're no longer in a dependent template context.
@@ -312,12 +318,6 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			SaveHandle current_pos = save_token_position();
 			auto parse_ctor_with_current_context = [&]() {
 				FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-				std::optional<TemplateEnvironment> outer_environment;
-				TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
-					lazy_info.outer_template_environment_snapshot,
-					std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
-					std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
-					outer_environment);
 				populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 				DelayedFunctionBody delayed{
 					nullptr,
@@ -598,14 +598,19 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		// This is needed for member struct templates where body parsing is deferred
 
 		// Set up template parameter types in the type system for body parsing
-		FlashCpp::TemplateParameterScope template_scope;
 		InlineVector<StringHandle, 4> param_names;
 		param_names.reserve(lazy_info.template_params.size());
 		for (const auto& tparam_node : lazy_info.template_params) {
 			param_names.push_back(tparam_node.nameHandle());
 		}
-
-		registerTypeParamsInScope(param_names, lazy_info.template_args, template_scope, true);
+		std::optional<TemplateEnvironment> outer_environment;
+		TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
+			lazy_info.outer_template_environment_snapshot,
+			std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
+			std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
+			outer_environment);
+		FlashCpp::TemplateParameterScope template_scope;
+		registerTypeParamsInScope(substitution_environment, template_scope, true);
 
 		// Save current position and parsing context
 		SaveHandle current_pos = save_token_position();
@@ -623,12 +628,6 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			// Set up template parameter substitutions so non-type params (e.g., int N)
 			// are resolved during parse_block() just as in try_instantiate_single_template.
 			FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-			std::optional<TemplateEnvironment> outer_environment;
-			TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
-				lazy_info.outer_template_environment_snapshot,
-				std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
-				std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
-				outer_environment);
 			populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 
 			// Parse the function body
@@ -872,14 +871,19 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			return false;
 		}
 
-		FlashCpp::TemplateParameterScope template_scope;
-		registerTypeParamsInScope(lazy_template_params_inline, lazy_info.template_args, template_scope, true);
-
 		InlineVector<StringHandle, 4> param_names;
 		param_names.reserve(lazy_info.template_params.size());
 		for (const auto& tparam_node : lazy_info.template_params) {
 			param_names.push_back(tparam_node.nameHandle());
 		}
+		std::optional<TemplateEnvironment> outer_environment;
+		TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
+			lazy_info.outer_template_environment_snapshot,
+			std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
+			std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
+			outer_environment);
+		FlashCpp::TemplateParameterScope template_scope;
+		registerTypeParamsInScope(substitution_environment, template_scope, true);
 
 		SaveHandle current_pos = save_token_position();
 		struct LexerRestoreGuard {
@@ -897,12 +901,6 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 		parsing_template_depth_ = 0;
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-		std::optional<TemplateEnvironment> outer_environment;
-		TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
-			lazy_info.outer_template_environment_snapshot,
-			std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
-			std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
-			outer_environment);
 		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 		for (StringHandle param_name : param_names) {
