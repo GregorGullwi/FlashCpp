@@ -3985,6 +3985,70 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							  ", type_index=", type_info->type_index_, ", hasStructInfo=", (type_info->getStructInfo() != nullptr));
 				}
 
+				if (type_info->isTemplateInstantiation() &&
+					type_info->getStructInfo() == nullptr &&
+					context.parser != nullptr) {
+					std::string_view base_template_name =
+						StringTable::getStringView(type_info->baseTemplateName());
+					if (!base_template_name.empty()) {
+						std::vector<TemplateTypeArg> concrete_args;
+						concrete_args.reserve(type_info->templateArgs().size());
+						for (const auto& arg_info : type_info->templateArgs()) {
+							TemplateTypeArg concrete_arg = toTemplateTypeArg(arg_info);
+							if (concrete_arg.dependent_name.isValid()) {
+								bool rebound_arg = false;
+								std::string_view dependent_arg_name =
+									StringTable::getStringView(concrete_arg.dependent_name);
+								for (size_t i = 0;
+									 i < context.template_param_names.size() &&
+									 i < context.template_args.size();
+									 ++i) {
+									if (context.template_param_names[i] == dependent_arg_name) {
+										concrete_arg = context.template_args[i];
+										rebound_arg = true;
+										break;
+									}
+								}
+								if (!rebound_arg && type_info->templateArgs().size() == 1) {
+									size_t non_value_context_args = 0;
+									for (const TemplateTypeArg& context_arg : context.template_args) {
+										if (!context_arg.is_value) {
+											++non_value_context_args;
+										}
+									}
+									if (non_value_context_args == 1) {
+										for (const TemplateTypeArg& context_arg : context.template_args) {
+											if (!context_arg.is_value) {
+												concrete_arg = context_arg;
+												rebound_arg = true;
+												break;
+											}
+										}
+									}
+								}
+							}
+							concrete_args.push_back(std::move(concrete_arg));
+						}
+
+						Parser::AliasTemplateMaterializationResult materialized_type =
+							context.parser->materializeTemplateInstantiationForLookup(
+								base_template_name,
+								concrete_args);
+						if (materialized_type.resolved_type_info != nullptr) {
+							type_info = materialized_type.resolved_type_info;
+							FLASH_LOG(ConstExpr, Debug, "Materialized constexpr qualified-id owner through template args");
+						} else if (!materialized_type.instantiated_name.empty()) {
+							auto materialized_it = getTypesByNameMap().find(
+								StringTable::getOrInternStringHandle(materialized_type.instantiated_name));
+							if (materialized_it != getTypesByNameMap().end() &&
+								materialized_it->second != nullptr) {
+								type_info = materialized_it->second;
+								FLASH_LOG(ConstExpr, Debug, "Resolved constexpr qualified-id owner by materialized name");
+							}
+						}
+					}
+				}
+
 				// Follow the type alias chain until we find a struct with actual StructTypeInfo
 				// Type aliases may have isStruct()=true but getStructInfo()=null
 				// Limit iterations to prevent infinite loops from cycles
