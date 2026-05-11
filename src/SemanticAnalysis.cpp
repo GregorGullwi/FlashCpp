@@ -819,6 +819,9 @@ private:
 				popContext(pushed);
 				return;
 			}
+			// Constructor initializer pack expansions are intentionally left on
+			// parser-owned member-template constructors until the constructor itself
+			// is instantiated.
 			auto isTopLevelPackExpansion = [](const ASTNode& arg) {
 				if (!arg.is<ExpressionNode>()) {
 					return false;

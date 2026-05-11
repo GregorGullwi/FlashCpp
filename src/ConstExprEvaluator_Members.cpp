@@ -3985,6 +3985,11 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							  ", type_index=", type_info->type_index_, ", hasStructInfo=", (type_info->getStructInfo() != nullptr));
 				}
 
+				// A constexpr qualified-id can name a dependent template-instantiation
+				// placeholder whose arguments are now concrete in the current default-NTTP
+				// context, but whose StructTypeInfo has not been materialized yet.
+				// Materialize that owner before looking for static members such as
+				// `__empty_not_final<_Head>::value`.
 				if (type_info->isTemplateInstantiation() &&
 					type_info->getStructInfo() == nullptr &&
 					context.parser != nullptr) {
@@ -4011,19 +4016,17 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 								}
 								if (!rebound_arg && type_info->templateArgs().size() == 1) {
 									size_t non_value_context_args = 0;
+									const TemplateTypeArg* only_non_value_context_arg = nullptr;
 									for (const TemplateTypeArg& context_arg : context.template_args) {
 										if (!context_arg.is_value) {
 											++non_value_context_args;
+											only_non_value_context_arg = &context_arg;
 										}
 									}
-									if (non_value_context_args == 1) {
-										for (const TemplateTypeArg& context_arg : context.template_args) {
-											if (!context_arg.is_value) {
-												concrete_arg = context_arg;
-												rebound_arg = true;
-												break;
-											}
-										}
+									if (non_value_context_args == 1 &&
+										only_non_value_context_arg != nullptr) {
+										concrete_arg = *only_non_value_context_arg;
+										rebound_arg = true;
 									}
 								}
 							}
