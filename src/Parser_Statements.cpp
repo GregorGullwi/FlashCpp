@@ -1697,17 +1697,23 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// For scalar types, braced initializer should have exactly one element or be empty (value initialization)
 	// Note: Template instantiations are stored as TypeCategory::UserDefined, so we need to check if it's a struct-like type
 	bool is_struct_like_type = (type_specifier.category() == TypeCategory::Struct);
-	if (!is_struct_like_type && (type_specifier.category() == TypeCategory::UserDefined || type_specifier.category() == TypeCategory::TypeAlias || type_specifier.category() == TypeCategory::Template)) {
-		// Check if this UserDefined type is actually a struct (e.g., instantiated template)
+	const bool is_user_defined_category = (type_specifier.category() == TypeCategory::UserDefined || type_specifier.category() == TypeCategory::TypeAlias || type_specifier.category() == TypeCategory::Template);
+	if (!is_struct_like_type && is_user_defined_category) {
 		TypeIndex type_index = type_specifier.type_index();
 		if (const TypeInfo* type_info = tryGetTypeInfo(type_index); type_info && type_info->struct_info_) {
 			is_struct_like_type = true;
+		} else {
+			StringHandle type_name_handle = type_specifier.token().handle();
+			auto type_it = getTypesByNameMap().find(type_name_handle);
+			if (type_it != getTypesByNameMap().end() && type_it->second && type_it->second->isStruct()) {
+				is_struct_like_type = true;
+			}
 		}
 	}
 	// In template bodies, dependent UserDefined types (e.g., node_type, value_type) may not have
 	// struct_info_ yet but could resolve to structs at instantiation time. Treat them as struct-like
 	// to allow multi-element brace-init lists like: return { expr1, expr2 };
-	if (!is_struct_like_type && (type_specifier.category() == TypeCategory::UserDefined || type_specifier.category() == TypeCategory::TypeAlias || type_specifier.category() == TypeCategory::Template) &&
+	if (!is_struct_like_type && is_user_defined_category &&
 		((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty())) {
 		is_struct_like_type = true;
 	}

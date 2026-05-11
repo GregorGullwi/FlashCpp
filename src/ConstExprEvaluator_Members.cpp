@@ -1535,6 +1535,65 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 	if (!array_result) {
 		return std::nullopt;
 	}
+	std::optional<EvalResult> recovered_object_value;
+	if (!array_result->is_array &&
+		!array_result->object_type_index.is_valid()) {
+		const IdentifierNode* object_id = tryGetIdentifier(array_expr);
+		if (object_id && context.symbols) {
+			std::optional<ASTNode> symbol_opt = lookup_identifier_symbol(
+				object_id,
+				object_id->name(),
+				*context.symbols);
+			if (!symbol_opt.has_value() && context.global_symbols) {
+				symbol_opt = lookup_identifier_symbol(object_id, object_id->name(), *context.global_symbols);
+			}
+			if (symbol_opt.has_value() && symbol_opt->is<VariableDeclarationNode>()) {
+				const VariableDeclarationNode& var_decl = symbol_opt->as<VariableDeclarationNode>();
+				if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
+					const TypeSpecifierNode& decl_type_spec = var_decl.declaration().type_specifier_node();
+					TypeIndex declared_type_index = decl_type_spec.type_index();
+					const TypeInfo* declared_type_info = tryGetTypeInfo(declared_type_index);
+					if (!declared_type_info) {
+						StringHandle type_name_handle = StringTable::getOrInternStringHandle(decl_type_spec.token().value());
+						auto type_it = getTypesByNameMap().find(type_name_handle);
+						if (type_it != getTypesByNameMap().end()) {
+							declared_type_info = type_it->second;
+							if (!declared_type_index.is_valid()) {
+								declared_type_index = declared_type_info->type_index_;
+							}
+						}
+					}
+					const StructTypeInfo* declared_struct_info =
+						declared_type_info ? declared_type_info->getStructInfo() : nullptr;
+					if (declared_struct_info) {
+						const ASTNode& init_node = var_decl.initializer().value();
+						if (const ConstructorCallNode* ctor_call = extract_constructor_call(init_node)) {
+							recovered_object_value = materialize_constructor_object_value(*ctor_call, context, &bindings);
+						} else if (init_node.is<InitializerListNode>()) {
+							recovered_object_value = materialize_aggregate_object_value(
+								declared_struct_info,
+								declared_type_index,
+								init_node.as<InitializerListNode>(),
+								context,
+								&bindings);
+						} else if (!declared_struct_info->hasUserDeclaredConstructor()) {
+							InitializerListNode singleton_init;
+							singleton_init.add_initializer(init_node);
+							recovered_object_value = materialize_aggregate_object_value(
+								declared_struct_info,
+								declared_type_index,
+								singleton_init,
+								context,
+								&bindings);
+						}
+						if (recovered_object_value.has_value() && recovered_object_value->success()) {
+							array_result = &*recovered_object_value;
+						}
+					}
+				}
+			}
+		}
+	}
 	// Handle pointer subscript: ptr[i] → *(ptr + i)
 	if (array_result->pointer_to_var.isValid()) {
 		EvalResult offset_ptr = *array_result;
@@ -1548,83 +1607,47 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		if (struct_info) {
 			StringHandle op_bracket = StringTable::getOrInternStringHandle("operator[]");
-			auto candidate = find_member_function_candidate(
-				struct_info, op_bracket, 1, context,
-				MemberFunctionLookupMode::ConstexprEvaluable, false, true);
-			if (!candidate.ambiguous && candidate.function && candidate.function->get_definition().has_value()) {
-				const FunctionDeclarationNode* actual_func = candidate.function;
-				std::unordered_map<std::string_view, EvalResult> member_bindings =
-					array_result->object_member_bindings;
-				// Inject 'this' before parameters so object_member_bindings only contains struct members
-				EvalResult this_binding = EvalResult::from_int(0LL);
-				this_binding.object_type_index = array_result->object_type_index;
-				this_binding.object_member_bindings = member_bindings;
-				member_bindings["this"] = std::move(this_binding);
-				EvalResult idx_result_copy = index_result;
-				std::vector<EvalResult> pre_evaluated_args = {idx_result_copy};
-				auto bind_result = bind_pre_evaluated_arguments(
-					actual_func->parameter_nodes(),
-					pre_evaluated_args,
-					member_bindings,
-					context,
-					"Invalid parameter node in constexpr operator[]",
-					false);
-				if (!bind_result.success()) {
-					return bind_result;
-				}
-				auto saved_template_param_names = context.template_param_names;
-				auto saved_template_args = context.template_args;
-				auto saved_template_environment = context.template_environment;
-				if (actual_func->has_outer_template_bindings()) {
-					context.template_param_names.clear();
-					context.template_args.clear();
-					context.template_param_names.reserve(actual_func->outer_template_param_names().size());
-					context.template_args.reserve(actual_func->outer_template_args().size());
-					for (StringHandle param_name : actual_func->outer_template_param_names()) {
-						context.template_param_names.push_back(StringTable::getStringView(param_name));
+			bool object_is_const = array_result->exact_type.has_value() &&
+				array_result->exact_type->cv_qualifier() == CVQualifier::Const;
+			if (!object_is_const) {
+				const IdentifierNode* object_id = tryGetIdentifier(array_expr);
+				if (object_id && context.symbols) {
+					std::optional<ASTNode> symbol_opt = lookup_identifier_symbol(
+						object_id,
+						object_id->name(),
+						*context.symbols);
+					if (!symbol_opt.has_value() && context.global_symbols) {
+						symbol_opt = lookup_identifier_symbol(object_id, object_id->name(), *context.global_symbols);
 					}
-					for (const auto& arg : actual_func->outer_template_args()) {
-						context.template_args.push_back(toTemplateTypeArg(arg));
+					if (symbol_opt.has_value() && symbol_opt->is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var_decl = symbol_opt->as<VariableDeclarationNode>();
+						const TypeSpecifierNode& decl_type = var_decl.declaration().type_specifier_node();
+						object_is_const = var_decl.is_constexpr() ||
+							decl_type.cv_qualifier() == CVQualifier::Const;
 					}
-				} else {
-					load_template_bindings_from_type(type_info, context);
 				}
-				if (context.current_depth >= context.max_recursion_depth) {
-					context.template_param_names = std::move(saved_template_param_names);
-					context.template_args = std::move(saved_template_args);
-					context.template_environment = std::move(saved_template_environment);
-					return EvalResult::error("Constexpr recursion depth limit exceeded in operator[] call");
-				}
-				auto saved_struct_info = context.struct_info;
-				auto saved_struct_type_index = context.struct_type_index;
-				const TypeInfo* saved_return_type_info = context.return_type_info;
-				context.struct_info = struct_info;
-				context.struct_type_index = array_result->object_type_index;
-				context.return_type_info = nullptr;
-				{
-					const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_specifier_node();
-					TypeIndex ret_idx = ret_spec.type_index();
-					if (const TypeInfo* rtype = tryGetTypeInfo(ret_idx))
-						context.return_type_info = rtype;
-				}
-				context.current_depth++;
-				auto* saved_local_bindings = context.local_bindings;
-				context.local_bindings = &member_bindings;
-				auto result = evaluate_block_with_bindings(
-					actual_func->get_definition().value(),
-					member_bindings,
+			}
+			if (!object_is_const && context.parser) {
+				auto expr_type = context.parser->get_expression_type(array_expr);
+				object_is_const = expr_type.has_value() &&
+					expr_type->cv_qualifier() == CVQualifier::Const;
+			}
+			ResolvedMemberFunctionCandidate candidate =
+				findConstexprOperatorOverload(struct_info, op_bracket, 1, context);
+			if (candidate.ambiguous) {
+				return EvalResult::error("Ambiguous operator[] overload in constant expression");
+			}
+			if (candidate.function) {
+				return invokeConstexprMemberFunction(
+					*candidate.function,
+					array_result->object_member_bindings,
+					array_result->object_type_index,
+					type_info,
+					struct_info,
+					{index_result},
 					context,
 					"operator[] body is not a block",
 					"operator[] did not return a value");
-				context.local_bindings = saved_local_bindings;
-				context.current_depth--;
-				context.return_type_info = saved_return_type_info;
-				context.struct_info = saved_struct_info;
-				context.struct_type_index = saved_struct_type_index;
-				context.template_param_names = std::move(saved_template_param_names);
-				context.template_args = std::move(saved_template_args);
-				context.template_environment = std::move(saved_template_environment);
-				return result;
 			}
 		}
 	}
@@ -2146,6 +2169,210 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 		}
 	}
 
+	return result;
+}
+
+Evaluator::ResolvedMemberFunctionCandidate Evaluator::findConstexprOperatorOverload(
+	const StructTypeInfo* struct_info,
+	StringHandle operator_name,
+	size_t argument_count,
+	EvaluationContext& context) {
+	auto candidate = find_member_function_candidate(
+		struct_info, operator_name, argument_count, context,
+		MemberFunctionLookupMode::ConstexprEvaluable, false, true);
+	if (!candidate.ambiguous && candidate.function && candidate.function->get_definition().has_value()) {
+		return candidate;
+	}
+	if (!candidate.ambiguous) {
+		return {};
+	}
+	auto sameTypeSpecifierShape = [](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+		if (lhs.category() != rhs.category() ||
+			lhs.cv_qualifier() != rhs.cv_qualifier() ||
+			lhs.reference_qualifier() != rhs.reference_qualifier() ||
+			lhs.pointer_levels().size() != rhs.pointer_levels().size() ||
+			lhs.is_array() != rhs.is_array()) {
+			return false;
+		}
+		for (size_t i = 0; i < lhs.pointer_levels().size(); ++i) {
+			if (lhs.pointer_levels()[i].cv_qualifier != rhs.pointer_levels()[i].cv_qualifier) {
+				return false;
+			}
+		}
+		if (lhs.array_dimensions() != rhs.array_dimensions()) {
+			return false;
+		}
+		if (lhs.has_function_signature() != rhs.has_function_signature()) {
+			return false;
+		}
+		if (lhs.has_function_signature()) {
+			const FunctionSignature& lhs_sig = lhs.function_signature();
+			const FunctionSignature& rhs_sig = rhs.function_signature();
+			if (lhs_sig.return_type_index != rhs_sig.return_type_index ||
+				lhs_sig.return_pointer_depth != rhs_sig.return_pointer_depth ||
+				lhs_sig.return_reference_qualifier != rhs_sig.return_reference_qualifier ||
+				lhs_sig.parameter_type_indices != rhs_sig.parameter_type_indices ||
+				lhs_sig.linkage != rhs_sig.linkage ||
+				lhs_sig.class_name != rhs_sig.class_name ||
+				lhs_sig.calling_convention != rhs_sig.calling_convention ||
+				lhs_sig.is_const != rhs_sig.is_const ||
+				lhs_sig.is_volatile != rhs_sig.is_volatile ||
+				lhs_sig.function_reference_qualifier != rhs_sig.function_reference_qualifier ||
+				lhs_sig.is_noexcept != rhs_sig.is_noexcept) {
+				return false;
+			}
+		}
+		TypeIndex lhs_type_index = lhs.type_index();
+		TypeIndex rhs_type_index = rhs.type_index();
+		if (lhs_type_index.needsTypeIndex() != rhs_type_index.needsTypeIndex()) {
+			return false;
+		}
+		if (lhs_type_index.needsTypeIndex() && rhs_type_index.needsTypeIndex() &&
+			lhs_type_index != rhs_type_index &&
+			lhs.token().value() != rhs.token().value()) {
+			return false;
+		}
+		return true;
+	};
+	auto sameParameterTypes = [&](const FunctionDeclarationNode& lhs, const FunctionDeclarationNode& rhs) {
+		const auto& lhs_params = lhs.parameter_nodes();
+		const auto& rhs_params = rhs.parameter_nodes();
+		if (lhs_params.size() != rhs_params.size()) {
+			return false;
+		}
+		for (size_t i = 0; i < lhs_params.size(); ++i) {
+			if (!lhs_params[i].is<DeclarationNode>() || !rhs_params[i].is<DeclarationNode>()) {
+				return false;
+			}
+			const auto& lhs_decl = lhs_params[i].as<DeclarationNode>();
+			const auto& rhs_decl = rhs_params[i].as<DeclarationNode>();
+			if (!sameTypeSpecifierShape(lhs_decl.type_specifier_node(), rhs_decl.type_specifier_node())) {
+				return false;
+			}
+		}
+		return true;
+	};
+	std::vector<const FunctionDeclarationNode*> viable_candidates;
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.is_constructor || member_func.is_destructor ||
+			member_func.getName() != operator_name ||
+			!member_func.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+		if (!isConstexprMemberLookupCandidate(
+				func_decl, argument_count, context,
+				MemberFunctionLookupMode::ConstexprEvaluable, false)) {
+			continue;
+		}
+		if (!func_decl.get_definition().has_value()) {
+			continue;
+		}
+		viable_candidates.push_back(&func_decl);
+	}
+	if (viable_candidates.empty()) {
+		return {};
+	}
+	if (viable_candidates.size() == 1) {
+		return {.function = viable_candidates.front(), .ambiguous = false};
+	}
+	for (size_t i = 1; i < viable_candidates.size(); ++i) {
+		if (!sameParameterTypes(*viable_candidates[0], *viable_candidates[i])) {
+			return {};
+		}
+	}
+	const FunctionDeclarationNode* const_overload = nullptr;
+	for (const FunctionDeclarationNode* viable_candidate : viable_candidates) {
+		if (!viable_candidate->is_const_member_function()) {
+			continue;
+		}
+		if (const_overload) {
+			return {.function = nullptr, .ambiguous = true};
+		}
+		const_overload = viable_candidate;
+	}
+	if (const_overload) {
+		return {.function = const_overload, .ambiguous = false};
+	}
+	return {.function = nullptr, .ambiguous = true};
+}
+
+EvalResult Evaluator::invokeConstexprMemberFunction(
+	const FunctionDeclarationNode& func,
+	std::unordered_map<std::string_view, EvalResult> member_bindings,
+	TypeIndex type_index,
+	const TypeInfo* type_info,
+	const StructTypeInfo* struct_info,
+	std::vector<EvalResult> pre_evaluated_args,
+	EvaluationContext& context,
+	std::string_view body_error,
+	std::string_view return_error) {
+	EvalResult this_binding = EvalResult::from_int(0LL);
+	this_binding.object_type_index = type_index;
+	this_binding.object_member_bindings = member_bindings;
+	member_bindings["this"] = std::move(this_binding);
+	auto bind_result = bind_pre_evaluated_arguments(
+		func.parameter_nodes(),
+		pre_evaluated_args,
+		member_bindings,
+		context,
+		"Invalid parameter node in constexpr member function call",
+		false);
+	if (!bind_result.success()) {
+		return bind_result;
+	}
+	auto saved_template_param_names = context.template_param_names;
+	auto saved_template_args = context.template_args;
+	auto saved_template_environment = context.template_environment;
+	if (func.has_outer_template_bindings()) {
+		context.template_param_names.clear();
+		context.template_args.clear();
+		context.template_param_names.reserve(func.outer_template_param_names().size());
+		context.template_args.reserve(func.outer_template_args().size());
+		for (StringHandle param_name : func.outer_template_param_names()) {
+			context.template_param_names.push_back(StringTable::getStringView(param_name));
+		}
+		for (const auto& arg : func.outer_template_args()) {
+			context.template_args.push_back(toTemplateTypeArg(arg));
+		}
+	} else {
+		load_template_bindings_from_type(type_info, context);
+	}
+	if (context.current_depth >= context.max_recursion_depth) {
+		context.template_param_names = std::move(saved_template_param_names);
+		context.template_args = std::move(saved_template_args);
+		context.template_environment = std::move(saved_template_environment);
+		return EvalResult::error("Constexpr recursion depth limit exceeded in member function call");
+	}
+	auto saved_struct_info = context.struct_info;
+	auto saved_struct_type_index = context.struct_type_index;
+	const TypeInfo* saved_return_type_info = context.return_type_info;
+	context.struct_info = struct_info;
+	context.struct_type_index = type_index;
+	context.return_type_info = nullptr;
+	{
+		const TypeSpecifierNode& ret_spec = func.decl_node().type_specifier_node();
+		TypeIndex ret_idx = ret_spec.type_index();
+		if (const TypeInfo* rtype = tryGetTypeInfo(ret_idx))
+			context.return_type_info = rtype;
+	}
+	context.current_depth++;
+	auto* saved_local_bindings = context.local_bindings;
+	context.local_bindings = &member_bindings;
+	auto result = evaluate_block_with_bindings(
+		func.get_definition().value(),
+		member_bindings,
+		context,
+		body_error,
+		return_error);
+	context.local_bindings = saved_local_bindings;
+	context.current_depth--;
+	context.return_type_info = saved_return_type_info;
+	context.struct_info = saved_struct_info;
+	context.struct_type_index = saved_struct_type_index;
+	context.template_param_names = std::move(saved_template_param_names);
+	context.template_args = std::move(saved_template_args);
+	context.template_environment = std::move(saved_template_environment);
 	return result;
 }
 
@@ -7236,22 +7463,19 @@ EvalResult Evaluator::materialize_members_from_constructor(
 		} else if (struct_info && struct_info->own_type_index_.has_value()) {
 			context.struct_type_index = *struct_info->own_type_index_;
 		}
-		const BlockNode& ctor_body = ctor_definition->as<BlockNode>();
-		for (const auto& ctor_stmt : ctor_body.get_statements()) {
-			auto stmt_result = evaluate_statement_with_bindings(ctor_stmt, ctor_body_bindings, context);
-			if (stmt_result.success()) {
-				break;
-			}
-			if (stmt_result.error_message != "Statement executed (not a return)") {
-				context.local_bindings = saved_local_bindings;
-				context.struct_info = saved_struct_info;
-				context.struct_type_index = saved_struct_type_index;
-				return stmt_result;
-			}
-		}
+		auto body_result = evaluate_block_with_bindings(
+			*ctor_definition,
+			ctor_body_bindings,
+			context,
+			"Delegating constructor body is not a block",
+			"");
 		context.local_bindings = saved_local_bindings;
 		context.struct_info = saved_struct_info;
 		context.struct_type_index = saved_struct_type_index;
+		// Constructor body returns void; a "no return value" result (empty error) is normal.
+		if (!body_result.success() && !body_result.error_message.empty()) {
+			return body_result;
+		}
 		for (const auto& member : struct_info->members) {
 			std::string_view member_name = StringTable::getStringView(member.getName());
 			auto it = ctor_body_bindings.find(member_name);
@@ -7659,85 +7883,47 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		if (struct_info) {
 			StringHandle op_bracket = StringTable::getOrInternStringHandle("operator[]");
-			auto candidate = find_member_function_candidate(
-				struct_info, op_bracket, 1, context,
-				MemberFunctionLookupMode::ConstexprEvaluable, false, true);
-			if (!candidate.ambiguous && candidate.function && candidate.function->get_definition().has_value()) {
-				const FunctionDeclarationNode* actual_func = candidate.function;
-				// Set up member_bindings from struct object, bind parameter, add 'this'
-				std::unordered_map<std::string_view, EvalResult> member_bindings = arr_result.object_member_bindings;
-				// Inject 'this' before parameters so object_member_bindings only contains struct members
-				EvalResult this_binding = EvalResult::from_int(0LL);
-				this_binding.object_type_index = arr_result.object_type_index;
-				this_binding.object_member_bindings = member_bindings;
-				member_bindings["this"] = std::move(this_binding);
-				// Bind the index parameter using bind_pre_evaluated_arguments
-				EvalResult idx_result = index_result;
-				std::vector<EvalResult> pre_evaluated_args = {idx_result};
-				auto bind_result = bind_pre_evaluated_arguments(
-					actual_func->parameter_nodes(),
-					pre_evaluated_args,
-					member_bindings,
-					context,
-					"Invalid parameter node in constexpr operator[]",
-					false);
-				if (!bind_result.success()) {
-					return bind_result;
-				}
-				// Save and set context for member function evaluation
-				auto saved_template_param_names = context.template_param_names;
-				auto saved_template_args = context.template_args;
-				auto saved_template_environment = context.template_environment;
-				if (actual_func->has_outer_template_bindings()) {
-					context.template_param_names.clear();
-					context.template_args.clear();
-					context.template_param_names.reserve(actual_func->outer_template_param_names().size());
-					context.template_args.reserve(actual_func->outer_template_args().size());
-					for (StringHandle param_name : actual_func->outer_template_param_names()) {
-						context.template_param_names.push_back(StringTable::getStringView(param_name));
+			bool object_is_const = arr_result.exact_type.has_value() &&
+				arr_result.exact_type->cv_qualifier() == CVQualifier::Const;
+			if (!object_is_const) {
+				const IdentifierNode* object_id = tryGetIdentifier(array_expr);
+				if (object_id && context.symbols) {
+					std::optional<ASTNode> symbol_opt = lookup_identifier_symbol(
+						object_id,
+						object_id->name(),
+						*context.symbols);
+					if (!symbol_opt.has_value() && context.global_symbols) {
+						symbol_opt = lookup_identifier_symbol(object_id, object_id->name(), *context.global_symbols);
 					}
-					for (const auto& arg : actual_func->outer_template_args()) {
-						context.template_args.push_back(toTemplateTypeArg(arg));
+					if (symbol_opt.has_value() && symbol_opt->is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var_decl = symbol_opt->as<VariableDeclarationNode>();
+						const TypeSpecifierNode& decl_type = var_decl.declaration().type_specifier_node();
+						object_is_const = var_decl.is_constexpr() ||
+							decl_type.cv_qualifier() == CVQualifier::Const;
 					}
-				} else {
-					load_template_bindings_from_type(type_info, context);
 				}
-				if (context.current_depth >= context.max_recursion_depth) {
-					context.template_param_names = std::move(saved_template_param_names);
-					context.template_args = std::move(saved_template_args);
-					context.template_environment = std::move(saved_template_environment);
-					return EvalResult::error("Constexpr recursion depth limit exceeded in operator[] call");
-				}
-				auto saved_struct_info = context.struct_info;
-				auto saved_struct_type_index = context.struct_type_index;
-				const TypeInfo* saved_return_type_info = context.return_type_info;
-				context.struct_info = struct_info;
-				context.struct_type_index = arr_result.object_type_index;
-				context.return_type_info = nullptr;
-				{
-					const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_specifier_node();
-					TypeIndex ret_idx = ret_spec.type_index();
-					if (const TypeInfo* rtype = tryGetTypeInfo(ret_idx))
-						context.return_type_info = rtype;
-				}
-				context.current_depth++;
-				auto* saved_local_bindings = context.local_bindings;
-				context.local_bindings = &member_bindings;
-				auto result = evaluate_block_with_bindings(
-					actual_func->get_definition().value(),
-					member_bindings,
+			}
+			if (!object_is_const && context.parser) {
+				auto expr_type = context.parser->get_expression_type(array_expr);
+				object_is_const = expr_type.has_value() &&
+					expr_type->cv_qualifier() == CVQualifier::Const;
+			}
+			ResolvedMemberFunctionCandidate candidate =
+				findConstexprOperatorOverload(struct_info, op_bracket, 1, context);
+			if (candidate.ambiguous) {
+				return EvalResult::error("Ambiguous operator[] overload in constant expression");
+			}
+			if (candidate.function) {
+				return invokeConstexprMemberFunction(
+					*candidate.function,
+					arr_result.object_member_bindings,
+					arr_result.object_type_index,
+					type_info,
+					struct_info,
+					{index_result},
 					context,
 					"operator[] body is not a block",
 					"operator[] did not return a value");
-				context.local_bindings = saved_local_bindings;
-				context.current_depth--;
-				context.return_type_info = saved_return_type_info;
-				context.struct_info = saved_struct_info;
-				context.struct_type_index = saved_struct_type_index;
-				context.template_param_names = std::move(saved_template_param_names);
-				context.template_args = std::move(saved_template_args);
-				context.template_environment = std::move(saved_template_environment);
-				return result;
 			}
 		}
 	}

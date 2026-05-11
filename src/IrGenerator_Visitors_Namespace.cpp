@@ -471,12 +471,13 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							.commit()));
 					}
 					// sema should annotate standard arithmetic return conversions.
-					// Log a warning when sema missed it (inferExpressionType may fail for
-					// some expression contexts). Same-type size mismatches are not type
-					// conversions — no annotation expected.
+					// Same-type size mismatches are not type conversions.
 					if (sema_normalized_current_function_ && expr_type != return_type &&
 						is_standard_arithmetic_type(expr_type) && is_standard_arithmetic_type(return_type)) {
-						throw InternalError(std::string("sema missed return conversion (") + std::string(getTypeName(expr_type)) + " -> " + std::string(getTypeName(return_type)) + ")");
+						throw InternalError(
+							std::string("sema missed return conversion (") +
+							std::string(getTypeName(expr_type)) + " -> " +
+							std::string(getTypeName(return_type)) + ")");
 					}
 					// Fallback for non-arithmetic types (enum, user_defined, etc.)
 					operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());

@@ -2532,12 +2532,13 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		const auto& ret = node.as<ReturnStatementNode>();
 		const auto& expr = ret.expression();
 		if (expr.has_value()) {
-			// Try to annotate the return expression with implicit cast info
-			// before the normal traversal (which just counts).
+			normalizeExpression(*expr, ctx);
+			// Annotate the return conversion after expression normalization so
+			// expression kind-specific semantic state (e.g. resolved operator[]
+			// target for ArraySubscriptNode) is available to inferExpressionType.
 			if (ctx.current_function_return_type_id) {
 				tryAnnotateReturnConversion(*expr, ctx);
 			}
-			normalizeExpression(*expr, ctx);
 		}
 	} else if (node.is<VariableDeclarationNode>()) {
 		const auto& var = node.as<VariableDeclarationNode>();
