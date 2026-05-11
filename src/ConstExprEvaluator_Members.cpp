@@ -131,7 +131,7 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 	EvaluationContext& context,
 	const TypeInfo* owner_type_info = nullptr,
 	int recursion_depth = 0) {
-	constexpr int kMaxDependentLookupMaterializationDepth = 8;
+	constexpr int kMaxDependentLookupMaterializationDepth = 32;
 	if (recursion_depth > kMaxDependentLookupMaterializationDepth) {
 		return std::nullopt;
 	}
