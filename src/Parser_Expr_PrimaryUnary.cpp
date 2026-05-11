@@ -703,7 +703,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 							}
 
 							if (!trust_zero_sized_type_id) {
-								StringHandle tok_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
+								StringHandle tok_handle = type_spec.token().handle();
 								auto struct_it = getTypesByNameMap().find(tok_handle);
 								if (struct_it != getTypesByNameMap().end() && struct_it->second->isStruct()) {
 									is_complete_type = false;

@@ -458,7 +458,7 @@ bool typeRefersToCurrentTemplateParam(
 	if (!type_spec.type_index().is_valid()) {
 		return true;
 	}
-	StringHandle token_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
+	StringHandle token_handle = type_spec.token().handle();
 	if (token_handle.isValid() &&
 		std::find(current_template_param_names.begin(), current_template_param_names.end(), token_handle) != current_template_param_names.end()) {
 		return true;
