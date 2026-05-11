@@ -2127,28 +2127,28 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	}
 
 	// First, check whether this type spelling names a template parameter that needs substitution.
-	std::string_view type_name = type.token().value();
-	if (type_name.empty()) {
+	std::string_view token_type_name = type.token().value();
+	if (token_type_name.empty()) {
 		if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
-			type_name = StringTable::getStringView(type_info->name());
+			token_type_name = StringTable::getStringView(type_info->name());
 		}
 	}
 
-	if (!type_name.empty()) {
-		FLASH_LOG(Templates, Debug, "  Type candidate for template substitution: ", type_name);
+	if (!token_type_name.empty()) {
+		FLASH_LOG(Templates, Debug, "  Type candidate for template substitution: ", token_type_name);
 
 		// Look up this template parameter in our substitution map.
-		auto it = param_map_.find(type_name);
+		auto it = param_map_.find(token_type_name);
 		if (it == param_map_.end()) {
-			if (std::optional<std::string_view> canonical_type_name = tryResolveCanonicalTypeName(type, type_name, param_map_)) {
-				FLASH_LOG(Templates, Debug, "  Resolved type token via canonical type info name: ", type_name, " -> ", *canonical_type_name);
-				type_name = *canonical_type_name;
-				it = param_map_.find(type_name);
+			if (std::optional<std::string_view> canonical_type_name = tryResolveCanonicalTypeName(type, token_type_name, param_map_)) {
+				FLASH_LOG(Templates, Debug, "  Resolved type token via canonical type info name: ", token_type_name, " -> ", *canonical_type_name);
+				token_type_name = *canonical_type_name;
+				it = param_map_.find(token_type_name);
 			}
 		}
 		if (it != param_map_.end()) {
 			const TemplateTypeArg& subst = it->second;
-			FLASH_LOG(Templates, Debug, "  Substituting template parameter: ", type_name,
+			FLASH_LOG(Templates, Debug, "  Substituting template parameter: ", token_type_name,
 					  " -> base_type=", (int)subst.typeEnum(), ", type_index=", subst.type_index);
 			if (subst.is_value) {
 				throw CompileError("Template argument used in a type position did not resolve to a type");
@@ -2157,7 +2157,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			return makeTypeSpecifierFromTemplateTypeArg(subst, type.token());
 		}
 
-		FLASH_LOG(Templates, Warning, "  Template parameter not found in substitution map: ", type_name);
+		FLASH_LOG(Templates, Warning, "  Template parameter not found in substitution map: ", token_type_name);
 	}
 
 	// Check if this is a struct/class type that might have template arguments
@@ -2168,14 +2168,14 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 				owner_type_it->second != nullptr &&
 				owner_type_it->second->isTemplateInstantiation()) {
 				StringHandle owner_base_name = owner_type_it->second->baseTemplateName();
-				StringHandle type_name = type.token().handle();
-				if (!type_name.isValid()) {
+				StringHandle type_name_handle = type.token().handle();
+				if (!type_name_handle.isValid()) {
 					if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
-						type_name = type_info->name();
+						type_name_handle = type_info->name();
 					}
 				}
 
-				if (owner_base_name.isValid() && type_name == owner_base_name) {
+				if (owner_base_name.isValid() && type_name_handle == owner_base_name) {
 					std::vector<TemplateTypeArg> current_inst_args =
 						collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteInType");
 					if (!current_inst_args.empty()) {

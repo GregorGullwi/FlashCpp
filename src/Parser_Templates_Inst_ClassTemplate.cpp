@@ -3114,12 +3114,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											*ts_type_info,
 											template_params,
 											template_args_for_member_copy);
-									std::string_view instantiated_name = instantiateAndResolveBaseName(
+									std::string_view instantiated_base_name = instantiateAndResolveBaseName(
 										StringTable::getStringView(ts_type_info->baseTemplateName()),
 										instantiated_args,
 										true);
 									const TypeInfo* instantiated_type_info =
-										findTypeByName(StringTable::getOrInternStringHandle(instantiated_name));
+										findTypeByName(StringTable::getOrInternStringHandle(instantiated_base_name));
 									if (instantiated_type_info != nullptr) {
 										resolved_args.push_back(resolveTypeInfoToTemplateArg(*instantiated_type_info, ts));
 										resolved = true;
