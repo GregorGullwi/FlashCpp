@@ -813,9 +813,40 @@ private:
 			// Template-pattern constructor AST still belongs to parser/template-substitution
 			// ownership and intentionally retains pre-substitution helper nodes.
 			if (ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos ||
-				ctor.has_template_parameters()) {
+				ctor.has_template_parameters() ||
+				ctor.has_template_body_position() ||
+				ctor.has_template_initializer_list_position()) {
 				popContext(pushed);
 				return;
+			}
+			auto isTopLevelPackExpansion = [](const ASTNode& arg) {
+				if (!arg.is<ExpressionNode>()) {
+					return false;
+				}
+				const ExpressionNode& expr = arg.as<ExpressionNode>();
+				return std::holds_alternative<PackExpansionExprNode>(expr);
+			};
+			for (const auto& mi : ctor.member_initializers()) {
+				if (isTopLevelPackExpansion(mi.initializer_expr)) {
+					popContext(pushed);
+					return;
+				}
+			}
+			for (const auto& bi : ctor.base_initializers()) {
+				for (const auto& arg : bi.arguments) {
+					if (isTopLevelPackExpansion(arg)) {
+						popContext(pushed);
+						return;
+					}
+				}
+			}
+			if (ctor.delegating_initializer().has_value()) {
+				for (const auto& arg : ctor.delegating_initializer()->arguments) {
+					if (isTopLevelPackExpansion(arg)) {
+						popContext(pushed);
+						return;
+					}
+				}
 			}
 			for (const auto& param : ctor.parameter_nodes()) {
 				visit(param);
