@@ -914,8 +914,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			}
 
 			if (std::holds_alternative<SizeofExprNode>(expr) ||
-				std::holds_alternative<AlignofExprNode>(expr)) {
-				return TypeCategory::UnsignedLongLong;
+				std::holds_alternative<AlignofExprNode>(expr) ||
+				std::holds_alternative<OffsetofExprNode>(expr)) {
+				return (g_target_data_model == TargetDataModel::LLP64)
+					? TypeCategory::UnsignedLongLong
+					: TypeCategory::UnsignedLong;
 			}
 
 			if (std::holds_alternative<NoexceptExprNode>(expr) ||
@@ -1187,6 +1190,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				bool is_compile_time_expr = std::holds_alternative<NoexceptExprNode>(expr) ||
 											std::holds_alternative<SizeofExprNode>(expr) ||
 											std::holds_alternative<AlignofExprNode>(expr) ||
+											std::holds_alternative<OffsetofExprNode>(expr) ||
 											std::holds_alternative<TypeTraitExprNode>(expr) ||
 											std::holds_alternative<QualifiedIdentifierNode>(expr) ||
 											std::holds_alternative<BinaryOperatorNode>(expr);
@@ -1235,6 +1239,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							std::holds_alternative<QualifiedIdentifierNode>(expr) ||
 							std::holds_alternative<SizeofExprNode>(expr) ||
 							std::holds_alternative<AlignofExprNode>(expr) ||
+							std::holds_alternative<OffsetofExprNode>(expr) ||
 							std::holds_alternative<NoexceptExprNode>(expr) ||
 							std::holds_alternative<TypeTraitExprNode>(expr) ||
 							std::holds_alternative<BinaryOperatorNode>(expr)) {
@@ -1569,6 +1574,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								std::holds_alternative<NoexceptExprNode>(expr) ||
 								std::holds_alternative<SizeofExprNode>(expr) ||
 								std::holds_alternative<AlignofExprNode>(expr) ||
+								std::holds_alternative<OffsetofExprNode>(expr) ||
 								std::holds_alternative<TypeTraitExprNode>(expr) ||
 								std::holds_alternative<BinaryOperatorNode>(expr) ||
 								simple_identifier_kind == SimpleTemplateArgKind::ValueLike;
@@ -1581,6 +1587,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 									 std::holds_alternative<QualifiedIdentifierNode>(expr) ||
 									 std::holds_alternative<SizeofExprNode>(expr) ||
 									 std::holds_alternative<AlignofExprNode>(expr) ||
+									 std::holds_alternative<OffsetofExprNode>(expr) ||
 									 std::holds_alternative<NoexceptExprNode>(expr) ||
 									 std::holds_alternative<TypeTraitExprNode>(expr) ||
 									 std::holds_alternative<BinaryOperatorNode>(expr)) &&

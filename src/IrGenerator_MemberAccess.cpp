@@ -3,6 +3,21 @@
 #include "SemanticAnalysis.h"
 #include "CallNodeHelpers.h"
 
+// Returns the ExprResult for a sizeof/alignof/offsetof result with the correct size_t
+// type for the current target data model (unsigned long long on LLP64/Windows,
+// unsigned long on LP64/Linux/macOS).
+static ExprResult makeSizeTExprResult(size_t value) {
+	const TypeCategory size_t_cat = (g_target_data_model == TargetDataModel::LLP64)
+		? TypeCategory::UnsignedLongLong
+		: TypeCategory::UnsignedLong;
+	return makeExprResult(
+		nativeTypeIndex(size_t_cat),
+		SizeInBits{get_type_size_bits(size_t_cat)},
+		IrOperand{static_cast<unsigned long long>(value)},
+		PointerDepth{},
+		ValueStorage::ContainsData);
+}
+
 static std::optional<size_t> tryGetTypeSizeForSizeof(const TypeSpecifierNode& type_spec) {
 	if (type_spec.is_array()) {
 		TypeSpecifierNode element_type = type_spec;
@@ -1986,7 +2001,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 					FLASH_LOG(Codegen, Debug, "sizeof(qualified_type): struct=", struct_name, " member=", member_name);
 					size_t member_size = lookupStructMemberSize(struct_name, member_name);
 					if (member_size > 0) {
-						return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeSizeTExprResult(member_size);
 					}
 				}
 			}
@@ -1997,7 +2012,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 				auto array_size = calculateArraySize(*decl);
 				if (array_size.has_value()) {
 					// Return sizeof result for array
-					return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeSizeTExprResult(*array_size);
 				}
 			}
 
@@ -2010,7 +2025,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 				size_t param_size_bytes = resolveTemplateSizeFromStructName(struct_name);
 
 				if (param_size_bytes > 0) {
-					return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(param_size_bytes)}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeSizeTExprResult(param_size_bytes);
 				}
 			}
 		}
@@ -2047,7 +2062,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 				auto array_size = calculateArraySize(*decl);
 				if (array_size.has_value()) {
 					// Return sizeof result for array
-					return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeSizeTExprResult(*array_size);
 				}
 
 				// For regular variables, get the type size from the declaration
@@ -2056,17 +2071,17 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 					if (const TypeInfo* type_info = tryGetTypeInfo(var_type.type_index())) {
 						if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
 							if (struct_info->sizeInBytes().is_set()) {
-								return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(toSizeT(struct_info->sizeInBytes()))}, PointerDepth{}, ValueStorage::ContainsData);
+								return makeSizeTExprResult(toSizeT(struct_info->sizeInBytes()));
 							}
 						}
 						// Fallback: use fallback_size_bits_ from TypeInfo (works for template instantiations at global scope)
 						if (type_info->hasStoredSize()) {
-							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(type_info->sizeInBits().value)}, PointerDepth{}, ValueStorage::ContainsData);
+							return makeSizeTExprResult(static_cast<size_t>(type_info->sizeInBits().value) / 8);
 						}
 					}
 					// Fallback: use size_in_bits from the type specifier node
 					if (var_type.size_in_bits() > 0) {
-						return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(var_type.size_in_bits() / 8)}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeSizeTExprResult(var_type.size_in_bits() / 8);
 					}
 				} else {
 					// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
@@ -2075,7 +2090,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 						size_bits = get_type_size_bits(var_type.category());
 					}
 					size_in_bytes = size_bits / 8;
-					return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeSizeTExprResult(size_in_bytes);
 				}
 			}
 		}
@@ -2122,7 +2137,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 								// Otherwise, search for instantiated types (template vs instantiation mismatch)
 								if (direct_member_size > 1) {
 									FLASH_LOG(Codegen, Debug, "sizeof(member_access): FOUND member size=", direct_member_size);
-									return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, PointerDepth{}, ValueStorage::ContainsData);
+									return makeSizeTExprResult(direct_member_size);
 								}
 
 								// Fallback: If direct lookup failed or found size <= 1 (could be unsubstituted template),
@@ -2153,13 +2168,13 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 								});
 
 								if (direct_member_size > 1) {
-									return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, PointerDepth{}, ValueStorage::ContainsData);
+									return makeSizeTExprResult(direct_member_size);
 								}
 
 								// If no instantiation found but direct lookup had a result, use that
 								if (direct_member_size > 0) {
 									FLASH_LOG(Codegen, Debug, "sizeof(member_access): Using direct lookup member size=", direct_member_size);
-									return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, PointerDepth{}, ValueStorage::ContainsData);
+									return makeSizeTExprResult(direct_member_size);
 								}
 							}
 						}
@@ -2236,7 +2251,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 						}
 
 						// Return the size without generating runtime IR
-						return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeSizeTExprResult(size_in_bytes);
 					}
 
 				fallback_to_ir:
@@ -2256,7 +2271,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 
 			size_t member_size = lookupStructMemberSize(struct_name, member_name);
 			if (member_size > 0) {
-				return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeSizeTExprResult(member_size);
 			}
 		}
 
@@ -2287,7 +2302,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 
 	// Return sizeof result as a constant unsigned long long (size_t equivalent)
 	// Format: [type, size_bits, value]
-	return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeSizeTExprResult(size_in_bytes);
 }
 
 ExprResult AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
@@ -2329,7 +2344,7 @@ ExprResult AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
 					const TypeSpecifierNode& var_type = decl->type_specifier_node();
 					if (var_type.category() == TypeCategory::Struct) {
 						if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(var_type.type_index())) {
-							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->alignment)}, PointerDepth{}, ValueStorage::ContainsData);
+							return makeSizeTExprResult(struct_info->alignment);
 						}
 					} else {
 						// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
@@ -2339,7 +2354,7 @@ ExprResult AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
 						}
 						size_t size_in_bytes = size_bits / 8;
 						alignment = calculate_alignment_from_size(size_in_bytes, var_type.category());
-						return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeSizeTExprResult(alignment);
 					}
 				}
 			}
@@ -2371,7 +2386,7 @@ ExprResult AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
 
 	// Return alignof result as a constant unsigned long long (size_t equivalent)
 	// Format: [type, size_bits, value]
-	return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeSizeTExprResult(alignment);
 }
 
 ExprResult AstToIr::generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
@@ -2395,7 +2410,7 @@ ExprResult AstToIr::generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
 		return ExprResult{};
 	}
 
-	return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(path_result.total_offset)}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeSizeTExprResult(path_result.total_offset);
 }
 
 bool AstToIr::isScalarType(TypeCategory type, bool is_reference, size_t pointer_depth) const {

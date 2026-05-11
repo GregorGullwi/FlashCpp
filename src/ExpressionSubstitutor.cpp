@@ -596,7 +596,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 			}
 		}
 
-		if (!substituted && !arg.is_value && is_struct_type(arg.category())) {
+		if (!substituted && !arg.is_value && arg.type_index.is_valid()) {
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
 				if (const TypeInfo* recursively_resolved_type = resolveDependentMemberType(
 						*arg_type_info,
@@ -617,6 +617,14 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 				if (type_subst_it != param_map_.end()) {
 					materialized_arg = rebindDependentTemplateTypeArg(type_subst_it->second, materialized_arg);
 					result.had_substitution = true;
+					substituted = true;
+				} else if (arg_type_info->isDependentPlaceholder()) {
+					if (auto context_binding = resolveContextBinding(arg_type_info->name(), lookup_environment);
+						context_binding.has_value()) {
+					materialized_arg = rebindDependentTemplateTypeArg(*context_binding, materialized_arg);
+					result.had_substitution = true;
+					substituted = true;
+					}
 				}
 			}
 		}
@@ -1710,10 +1718,36 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	// This is critical: we must use the placeholder's OWN template args (e.g., __static_sign<_Pn>
 	// has 1 arg), not the outer template's full param_map_ (e.g., ratio<_Num, _Den> has 2 params).
 	std::vector<TemplateTypeArg> inst_args;
+	bool source_instantiation_is_dependent = false;
 
 	auto ns_name_handle = StringTable::getOrInternStringHandle(ns_name);
 	auto type_it = getTypesByNameMap().find(ns_name_handle);
-	if (type_it != getTypesByNameMap().end() && type_it->second->isTemplateInstantiation()) {
+	auto template_args_still_dependent = [&](const std::vector<TemplateTypeArg>& args) {
+		for (const TemplateTypeArg& arg : args) {
+			if (arg.is_dependent) {
+				return true;
+			}
+			if (arg.is_value || !arg.type_index.is_valid()) {
+				continue;
+			}
+			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+				std::string_view arg_type_name = StringTable::getStringView(arg_type_info->name());
+				if (param_map_.find(arg_type_name) != param_map_.end()) {
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+	if (type_it != getTypesByNameMap().end() &&
+		type_it->second != nullptr &&
+		(type_it->second->isTemplateInstantiation() || !type_it->second->templateArgs().empty())) {
+		for (const auto& source_arg : type_it->second->templateArgs()) {
+			if (source_arg.dependent_name.isValid()) {
+				source_instantiation_is_dependent = true;
+				break;
+			}
+		}
 		MaterializedStoredTemplateArgs materialized_args =
 			materializeStoredTemplateArgs(*type_it->second, /*evaluate_dependent_member_values=*/true, kInitialDependentMemberTypeResolutionDepth);
 		inst_args = std::move(materialized_args.args);
@@ -1722,8 +1756,33 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	// Fallback: if TypeInfo lookup found no stored args (e.g., the placeholder wasn't registered
 	// in getTypesByNameMap(), or it's a non-template namespace), fall back to using the full param_map_.
 	// This handles cases like pack expansion bases where no TypeInfo exists.
-	if (inst_args.empty()) {
+	if (inst_args.empty() && (type_it == getTypesByNameMap().end() || type_it->second == nullptr)) {
 		inst_args = collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteQualifiedIdentifier");
+	}
+	for (TemplateTypeArg& arg : inst_args) {
+		if (!arg.is_value && !arg.is_template_template_arg && is_builtin_type(arg.category())) {
+			TypeIndex canonical_builtin_index = nativeTypeIndex(arg.category());
+			if (canonical_builtin_index.is_valid()) {
+				arg.type_index = canonical_builtin_index;
+				arg.setCategory(arg.category());
+			}
+		}
+	}
+	if (!inst_args.empty() && template_args_still_dependent(inst_args)) {
+		// Keep unresolved qualified-ids dependent until a later instantiation phase.
+		// This is standard-conforming for dependent names and avoids selecting an
+		// unrelated concrete specialization from global type state.
+		ExpressionNode& deferred_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+		return ASTNode(&deferred_expr);
+	}
+	if (!inst_args.empty() &&
+		type_it != getTypesByNameMap().end() &&
+		type_it->second != nullptr &&
+		!source_instantiation_is_dependent) {
+		// Namespace already names a concrete instantiation; keep it stable instead
+		// of rebuilding from reconstructed args, which can lose canonical type indices.
+		ExpressionNode& concrete_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+		return ASTNode(&concrete_expr);
 	}
 
 	if (!inst_args.empty()) {
