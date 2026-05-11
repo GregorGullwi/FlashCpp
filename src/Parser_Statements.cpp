@@ -1703,6 +1703,13 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		if (const TypeInfo* type_info = tryGetTypeInfo(type_index); type_info && type_info->struct_info_) {
 			is_struct_like_type = true;
 		}
+		if (!is_struct_like_type) {
+			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_specifier.token().value());
+			auto type_it = getTypesByNameMap().find(type_name_handle);
+			if (type_it != getTypesByNameMap().end() && type_it->second && type_it->second->isStruct()) {
+				is_struct_like_type = true;
+			}
+		}
 	}
 	// In template bodies, dependent UserDefined types (e.g., node_type, value_type) may not have
 	// struct_info_ yet but could resolve to structs at instantiation time. Treat them as struct-like
@@ -1710,6 +1717,13 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	if (!is_struct_like_type && (type_specifier.category() == TypeCategory::UserDefined || type_specifier.category() == TypeCategory::TypeAlias || type_specifier.category() == TypeCategory::Template) &&
 		((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty())) {
 		is_struct_like_type = true;
+	}
+	if (!is_struct_like_type) {
+		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_specifier.token().value());
+		auto type_it = getTypesByNameMap().find(type_name_handle);
+		if (type_it != getTypesByNameMap().end() && type_it->second && type_it->second->isStruct()) {
+			is_struct_like_type = true;
+		}
 	}
 	if (!is_struct_like_type) {
 		// Check if this is an empty brace initializer: int x{};

@@ -1535,6 +1535,65 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 	if (!array_result) {
 		return std::nullopt;
 	}
+	std::optional<EvalResult> recovered_object_value;
+	if (!array_result->is_array &&
+		!array_result->object_type_index.is_valid()) {
+		const IdentifierNode* object_id = tryGetIdentifier(array_expr);
+		if (object_id && context.symbols) {
+			std::optional<ASTNode> symbol_opt = lookup_identifier_symbol(
+				object_id,
+				object_id->name(),
+				*context.symbols);
+			if (!symbol_opt.has_value() && context.global_symbols) {
+				symbol_opt = lookup_identifier_symbol(object_id, object_id->name(), *context.global_symbols);
+			}
+			if (symbol_opt.has_value() && symbol_opt->is<VariableDeclarationNode>()) {
+				const VariableDeclarationNode& var_decl = symbol_opt->as<VariableDeclarationNode>();
+				if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
+					const TypeSpecifierNode& decl_type_spec = var_decl.declaration().type_specifier_node();
+					TypeIndex declared_type_index = decl_type_spec.type_index();
+					const TypeInfo* declared_type_info = tryGetTypeInfo(declared_type_index);
+					if (!declared_type_info) {
+						StringHandle type_name_handle = StringTable::getOrInternStringHandle(decl_type_spec.token().value());
+						auto type_it = getTypesByNameMap().find(type_name_handle);
+						if (type_it != getTypesByNameMap().end()) {
+							declared_type_info = type_it->second;
+							if (!declared_type_index.is_valid()) {
+								declared_type_index = declared_type_info->type_index_;
+							}
+						}
+					}
+					const StructTypeInfo* declared_struct_info =
+						declared_type_info ? declared_type_info->getStructInfo() : nullptr;
+					if (declared_struct_info) {
+						const ASTNode& init_node = var_decl.initializer().value();
+						if (const ConstructorCallNode* ctor_call = extract_constructor_call(init_node)) {
+							recovered_object_value = materialize_constructor_object_value(*ctor_call, context, &bindings);
+						} else if (init_node.is<InitializerListNode>()) {
+							recovered_object_value = materialize_aggregate_object_value(
+								declared_struct_info,
+								declared_type_index,
+								init_node.as<InitializerListNode>(),
+								context,
+								&bindings);
+						} else if (!declared_struct_info->hasUserDeclaredConstructor()) {
+							InitializerListNode singleton_init;
+							singleton_init.add_initializer(init_node);
+							recovered_object_value = materialize_aggregate_object_value(
+								declared_struct_info,
+								declared_type_index,
+								singleton_init,
+								context,
+								&bindings);
+						}
+						if (recovered_object_value.has_value() && recovered_object_value->success()) {
+							array_result = &*recovered_object_value;
+						}
+					}
+				}
+			}
+		}
+	}
 	// Handle pointer subscript: ptr[i] → *(ptr + i)
 	if (array_result->pointer_to_var.isValid()) {
 		EvalResult offset_ptr = *array_result;
@@ -1550,30 +1609,31 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 			StringHandle op_bracket = StringTable::getOrInternStringHandle("operator[]");
 			bool object_is_const = array_result->exact_type.has_value() &&
 				array_result->exact_type->cv_qualifier() == CVQualifier::Const;
-			if (!object_is_const && array_expr.is<ExpressionNode>()) {
-				const ExpressionNode& object_expr = array_expr.as<ExpressionNode>();
-				if (const auto* object_id = std::get_if<IdentifierNode>(&object_expr)) {
-					ResolvedConstexprObject resolved_object;
-					auto resolve_error = resolve_constexpr_object_source(
+			if (!object_is_const) {
+				const IdentifierNode* object_id = tryGetIdentifier(array_expr);
+				if (object_id && context.symbols) {
+					std::optional<ASTNode> symbol_opt = lookup_identifier_symbol(
 						object_id,
 						object_id->name(),
-						context,
-						"operator[] call",
-						resolved_object);
-					if (!resolve_error.has_value() && resolved_object.var_decl) {
-						const TypeSpecifierNode& decl_type = resolved_object.var_decl->declaration().type_specifier_node();
-						object_is_const = resolved_object.var_decl->is_constexpr() ||
+						*context.symbols);
+					if (!symbol_opt.has_value() && context.global_symbols) {
+						symbol_opt = lookup_identifier_symbol(object_id, object_id->name(), *context.global_symbols);
+					}
+					if (symbol_opt.has_value() && symbol_opt->is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var_decl = symbol_opt->as<VariableDeclarationNode>();
+						const TypeSpecifierNode& decl_type = var_decl.declaration().type_specifier_node();
+						object_is_const = var_decl.is_constexpr() ||
 							decl_type.cv_qualifier() == CVQualifier::Const;
 					}
 				}
 			}
-			if (!object_is_const && context.parser && array_expr.is<ExpressionNode>()) {
+			if (!object_is_const && context.parser) {
 				auto expr_type = context.parser->get_expression_type(array_expr);
 				object_is_const = expr_type.has_value() &&
 					expr_type->cv_qualifier() == CVQualifier::Const;
 			}
 			ResolvedMemberFunctionCandidate candidate =
-				findConstexprOperatorOverload(struct_info, op_bracket, 1, object_is_const, context);
+				findConstexprOperatorOverload(struct_info, op_bracket, 1, context);
 			if (candidate.ambiguous) {
 				return EvalResult::error("Ambiguous operator[] overload in constant expression");
 			}
@@ -2116,27 +2176,10 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::findConstexprOperatorOverl
 	const StructTypeInfo* struct_info,
 	StringHandle operator_name,
 	size_t argument_count,
-	bool object_is_const,
 	EvaluationContext& context) {
 	auto candidate = find_member_function_candidate(
 		struct_info, operator_name, argument_count, context,
 		MemberFunctionLookupMode::ConstexprEvaluable, false, true);
-	if (!object_is_const &&
-		candidate.function &&
-		candidate.function->is_const_member_function()) {
-		auto lookup_only_candidate = find_member_function_candidate(
-			struct_info,
-			operator_name,
-			argument_count,
-			context,
-			MemberFunctionLookupMode::LookupOnly,
-			false,
-			true);
-		if (lookup_only_candidate.ambiguous ||
-			(lookup_only_candidate.function && !lookup_only_candidate.function->is_const_member_function())) {
-			return {};
-		}
-	}
 	if (!candidate.ambiguous && candidate.function && candidate.function->get_definition().has_value()) {
 		return candidate;
 	}
@@ -7842,30 +7885,31 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 			StringHandle op_bracket = StringTable::getOrInternStringHandle("operator[]");
 			bool object_is_const = arr_result.exact_type.has_value() &&
 				arr_result.exact_type->cv_qualifier() == CVQualifier::Const;
-			if (!object_is_const && array_expr.is<ExpressionNode>()) {
-				const ExpressionNode& object_expr = array_expr.as<ExpressionNode>();
-				if (const auto* object_id = std::get_if<IdentifierNode>(&object_expr)) {
-					ResolvedConstexprObject resolved_object;
-					auto resolve_error = resolve_constexpr_object_source(
+			if (!object_is_const) {
+				const IdentifierNode* object_id = tryGetIdentifier(array_expr);
+				if (object_id && context.symbols) {
+					std::optional<ASTNode> symbol_opt = lookup_identifier_symbol(
 						object_id,
 						object_id->name(),
-						context,
-						"operator[] call",
-						resolved_object);
-					if (!resolve_error.has_value() && resolved_object.var_decl) {
-						const TypeSpecifierNode& decl_type = resolved_object.var_decl->declaration().type_specifier_node();
-						object_is_const = resolved_object.var_decl->is_constexpr() ||
+						*context.symbols);
+					if (!symbol_opt.has_value() && context.global_symbols) {
+						symbol_opt = lookup_identifier_symbol(object_id, object_id->name(), *context.global_symbols);
+					}
+					if (symbol_opt.has_value() && symbol_opt->is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var_decl = symbol_opt->as<VariableDeclarationNode>();
+						const TypeSpecifierNode& decl_type = var_decl.declaration().type_specifier_node();
+						object_is_const = var_decl.is_constexpr() ||
 							decl_type.cv_qualifier() == CVQualifier::Const;
 					}
 				}
 			}
-			if (!object_is_const && context.parser && array_expr.is<ExpressionNode>()) {
+			if (!object_is_const && context.parser) {
 				auto expr_type = context.parser->get_expression_type(array_expr);
 				object_is_const = expr_type.has_value() &&
 					expr_type->cv_qualifier() == CVQualifier::Const;
 			}
 			ResolvedMemberFunctionCandidate candidate =
-				findConstexprOperatorOverload(struct_info, op_bracket, 1, object_is_const, context);
+				findConstexprOperatorOverload(struct_info, op_bracket, 1, context);
 			if (candidate.ambiguous) {
 				return EvalResult::error("Ambiguous operator[] overload in constant expression");
 			}

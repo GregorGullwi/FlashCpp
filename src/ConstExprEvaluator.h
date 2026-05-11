@@ -947,7 +947,6 @@ private:
 		const StructTypeInfo* struct_info,
 		StringHandle operator_name,
 		size_t argument_count,
-		bool object_is_const,
 		EvaluationContext& context);
 	static ResolvedMemberFunctionCandidate find_current_struct_member_function_candidate(
 		StringHandle function_name_handle,
