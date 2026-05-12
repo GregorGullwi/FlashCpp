@@ -2933,10 +2933,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 					StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name);
 					auto type_it = types_by_name.find(qualified_handle);
-					const bool is_constructible_qualified_type =
+					const bool supports_constructor_call =
 						type_it != types_by_name.end() &&
 						(type_it->second->isStruct() || type_it->second->isEnum());
-					if (is_constructible_qualified_type) {
+					if (supports_constructor_call) {
 						const TypeInfo& type_info = *type_it->second;
 						const SizeInBits type_size = type_info.sizeInBits();
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
