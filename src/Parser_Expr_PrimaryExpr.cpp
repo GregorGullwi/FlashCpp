@@ -2782,12 +2782,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
 								auto inst_type_it = getTypesByNameMap().find(class_name_handle);
 								if (!func_decl.is_materialized() && inst_type_it != getTypesByNameMap().end() && inst_type_it->second->isTemplateInstantiation()) {
-									StringHandle member_name_handle = member_token.handle();
-									const bool member_is_const = func_decl.is_const_member_function();
 									LazyMemberKey member_key = LazyMemberKey::exact(
 										class_name_handle,
-										member_name_handle,
-										member_is_const);
+										func_decl);
 									if (isHardUseLikeInstantiationMode() &&
 										LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
 										auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);
@@ -3736,12 +3733,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						StringHandle class_name_handle = StringTable::getOrInternStringHandle(qualified_scope);
 						auto scope_type_it = getTypesByNameMap().find(class_name_handle);
 						if (scope_type_it != getTypesByNameMap().end() && scope_type_it->second->isTemplateInstantiation()) {
-							StringHandle member_name_handle = qual_id.identifier_token().handle();
-							const bool member_is_const = identifierType->as<FunctionDeclarationNode>().is_const_member_function();
 							LazyMemberKey member_key = LazyMemberKey::exact(
 								class_name_handle,
-								member_name_handle,
-								member_is_const);
+								func_decl);
 							if (isHardUseLikeInstantiationMode() &&
 								LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
 								auto instantiated_func = instantiateLazyMemberIfNeeded(member_key);

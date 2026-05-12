@@ -41,6 +41,28 @@ TemplateEnvironment buildLazySubstitutionEnvironment(
 } // namespace
 
 std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey& member_key) {
+	if (!member_key.hasExactConstness()) {
+		std::optional<ASTNode> first_instantiated;
+		if (std::optional<ASTNode> non_const_instantiated =
+				instantiateLazyMemberIfNeeded(
+					LazyMemberKey::exact(
+						member_key.instantiated_class_name,
+						member_key.member_function_name,
+						false))) {
+			first_instantiated = non_const_instantiated;
+		}
+		if (std::optional<ASTNode> const_instantiated =
+				instantiateLazyMemberIfNeeded(
+					LazyMemberKey::exact(
+						member_key.instantiated_class_name,
+						member_key.member_function_name,
+						true));
+			const_instantiated.has_value() && !first_instantiated.has_value()) {
+			first_instantiated = const_instantiated;
+		}
+		return first_instantiated;
+	}
+
 	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
 	auto lazy_info_opt = lazy_registry.getLazyMemberInfo(member_key);
 	if (!lazy_info_opt.has_value()) {
@@ -55,7 +77,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey
 		LazyMemberKey::exact(
 			lazy_info_opt->identity.instantiated_owner_name,
 			effectiveLookupName(lazy_info_opt->identity),
-			lazy_info_opt->identity.is_const_method));
+			lazy_info_opt->identity.is_const_method,
+			lazy_info_opt->registry_key));
 	return instantiated;
 }
 
@@ -89,6 +112,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		}
 		auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 			lazy_info.identity.instantiated_owner_name, ctor_name_handle);
+		new_ctor_ref.set_lazy_member_registry_key(lazy_info.registry_key);
 		if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
 			new_ctor_ref.set_outer_template_bindings(lazy_info.outer_template_environment_snapshot);
 		} else {
@@ -376,15 +400,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 					if (!member_func.is_constructor) {
 						continue;
 					}
-					if (member_func.function_decl.raw_pointer() != lazy_info.identity.original_member_node.raw_pointer()) {
-						if (!member_func.function_decl.is<ConstructorDeclarationNode>()) {
-							continue;
-						}
-						const auto& existing_ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-						if (existing_ctor.name() != ctor_decl.name() ||
-							existing_ctor.parameter_nodes().size() != ctor_decl.parameter_nodes().size()) {
-							continue;
-						}
+					if (getLazyMemberRegistryKey(member_func.function_decl) != lazy_info.registry_key) {
+						continue;
 					}
 					member_func.function_decl = new_ctor_node;
 					break;
@@ -397,15 +414,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				if (!member_func.is_constructor) {
 					continue;
 				}
-				if (member_func.function_declaration.raw_pointer() != lazy_info.identity.original_member_node.raw_pointer()) {
-					if (!member_func.function_declaration.is<ConstructorDeclarationNode>()) {
-						continue;
-					}
-					const auto& root_ctor = member_func.function_declaration.as<ConstructorDeclarationNode>();
-					if (root_ctor.name() != ctor_decl.name() ||
-						root_ctor.parameter_nodes().size() != ctor_decl.parameter_nodes().size()) {
-						continue;
-					}
+				if (getLazyMemberRegistryKey(member_func.function_declaration) != lazy_info.registry_key) {
+					continue;
 				}
 				member_func.function_declaration = new_ctor_node;
 				break;
@@ -442,6 +452,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 		auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
 			lazy_info.identity.instantiated_owner_name, dtor_name_handle);
+		new_dtor_ref.set_lazy_member_registry_key(lazy_info.registry_key);
 		new_dtor_ref.set_has_noexcept_specifier(dtor_decl.has_noexcept_specifier());
 
 		std::vector<TemplateTypeArg> converted_template_args;
@@ -547,6 +558,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		true);		   // Force resolved TypeIndex onto full AST substitutions
 	ASTNode new_func_node = shell.function_node;
 	FunctionDeclarationNode& new_func_ref = *shell.function;
+	new_func_ref.set_lazy_member_registry_key(lazy_info.registry_key);
 	if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
 		InlineVector<StringHandle, 4> outer_param_names;
 		InlineVector<TypeInfo::TemplateArgInfo, 4> outer_args;
@@ -789,8 +801,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		if (struct_info) {
 			// Find and update the member function
 			for (auto& member_func : struct_info->member_functions) {
-				if (member_func.getName() == effectiveLookupName(lazy_info.identity) &&
-					member_func.is_const() == lazy_info.identity.is_const_method) {
+				if (getLazyMemberRegistryKey(member_func.function_decl) == lazy_info.registry_key) {
 					// Replace with the instantiated function
 					member_func.function_decl = new_func_node;
 					FLASH_LOG(Templates, Debug, "Updated StructTypeInfo with instantiated function body");
@@ -1450,9 +1461,16 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	// Process member functions: register for lazy instantiation and add signatures to StructTypeInfo.
 	// Uses the shared helper defined in Parser_Templates_Inst_ClassTemplate.cpp (included first
 	// in the unity build, so it is visible here).
+	TemplateEnvironmentSnapshot nested_outer_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
+		lazy_info->parent_template_params,
+		lazy_info->parent_template_args,
+		nullptr);
 	registerNestedMemberFunctionsForLazy(nested_struct, *nested_struct_info,
 										 lazy_info->parent_class_name, lazy_info->qualified_name,
 										 lazy_info->parent_template_params, lazy_info->parent_template_args,
+										 hasTemplateEnvironmentSnapshotBindings(nested_outer_snapshot)
+											 ? &nested_outer_snapshot
+											 : nullptr,
 										 shouldCommitTemplateInstantiationArtifacts());
 
 	// Set the struct info on the type

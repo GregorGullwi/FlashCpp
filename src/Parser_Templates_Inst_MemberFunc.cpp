@@ -3,6 +3,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
+#include <limits>
 
 namespace {
 std::string_view unqualifiedTypeComponent(std::string_view type_name) {
@@ -167,131 +168,247 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// Push a parser-level instantiation context for provenance tracking and backtraces.
 	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, qualified_name);
 
-	// Look up the template in the registry
-	auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
+	// Look up ALL template overloads in the registry for partial-ordering support.
+	const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(qualified_name);
 
 	// If not found, recover the source owner name for instantiated/nested owners
 	// (e.g. Outer$hash::Inner -> Outer::Inner, math::Adder$hash -> math::Adder).
-	if (!template_opt.has_value()) {
+	if (!all_templates || all_templates->empty()) {
 		if (auto lookup_owner = getTemplateLookupOwnerName(struct_name)) {
 			StringBuilder base_qualified_name_sb;
 			base_qualified_name_sb.append(StringTable::getStringView(*lookup_owner)).append("::").append(member_name);
 			StringHandle base_qualified_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
 			if (base_qualified_name != qualified_name) {
-				template_opt = gTemplateRegistry.lookupTemplate(base_qualified_name);
-				if (template_opt.has_value()) {
+				all_templates = gTemplateRegistry.lookupAllTemplates(base_qualified_name);
+				if (all_templates && !all_templates->empty()) {
 					qualified_name = base_qualified_name;
 				}
 			}
 		}
 	}
 
-	if (!template_opt.has_value()) {
+	if (!all_templates || all_templates->empty()) {
 		return std::nullopt;	 // Not a template
 	}
 
-	const ASTNode& template_node = *template_opt;
-	if (!template_node.is<TemplateFunctionDeclarationNode>()) {
-		return std::nullopt;	 // Not a function template
-	}
-
-	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
-	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
-	const auto& template_params = template_func.template_parameters();
 	if (arg_types.empty()) {
 		return std::nullopt;	 // Can't deduce without arguments
 	}
-	if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
-		return std::nullopt;
-	}
 
-	std::vector<TemplateTypeArg> template_args;
-	auto deduction_info = buildDeductionMapFromCallArgs(
-		template_params,
-		func_decl,
-		arg_types,
-		0);
-	if (!deduction_info.has_value()) {
-		return std::nullopt;
-	}
+	// Attempt template-argument deduction for one overload candidate.
+	// Returns the deduced arg list on success, or nullopt if deduction fails or the
+	// template kind is not supported by this path.
+	struct CandidateResult {
+		const ASTNode* template_node = nullptr;
+		std::vector<TemplateTypeArg> template_args;
+		int specificity = 0;
+		size_t overload_index = 0;  // assigned externally to *all_templates index; used to build
+		                            // discriminated cache keys when multiple overloads exist
+	};
 
-	size_t arg_index = 0;
-	for (const auto& template_param_node : template_params) {
-		const TemplateParameterNode& param = template_param_node;
+	auto tryDeduceCandidate = [&](const ASTNode& template_node_cand) -> std::optional<CandidateResult> {
+		if (!template_node_cand.is<TemplateFunctionDeclarationNode>()) {
+			return std::nullopt;
+		}
+		const TemplateFunctionDeclarationNode& template_func =
+			template_node_cand.as<TemplateFunctionDeclarationNode>();
+		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+		const auto& template_params = template_func.template_parameters();
 
-		if (param.kind() == TemplateParameterKind::Template) {
+		if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
 			return std::nullopt;
 		}
 
-		if (param.kind() != TemplateParameterKind::Type) {
-			return std::nullopt;
+		// Build set of template parameter names for O(1) lookup.
+		std::unordered_set<StringHandle, StringHash> tparam_names;
+		for (const auto& tp : template_params) {
+			tparam_names.insert(tp.nameHandle());
 		}
 
-		// Variadic type parameter: consume the function-parameter-pack call-arg
-		// slice (if this template pack maps to the function-parameter pack) or
-		// produce an empty pack (if it does not, e.g. a separate template-level
-		// pack that has no function-parameter counterpart).  This mirrors the
-		// variadic-Type branch in deduceTemplateArgsFromCall.
-		if (param.is_variadic()) {
-			if (!deduction_info->function_pack_dependent_param_names.count(param.nameHandle())) {
-				continue;  // empty pack
+		// Resolve the base name of a function-parameter type (possibly U, U*, U**, etc.).
+		// Uses TypeInfo name first, then the token handle as a fallback.
+		auto getBaseName = [&](const TypeSpecifierNode& fp_type) -> StringHandle {
+			StringHandle base_name;
+			if (const TypeInfo* ti = tryGetTypeInfo(fp_type.type_index())) {
+				base_name = ti->name();
 			}
-			size_t start = deduction_info->function_pack_call_arg_start;
-			size_t end = deduction_info->function_pack_call_arg_end;
-			if (start == SIZE_MAX || end == SIZE_MAX || start > end) {
-				continue;  // no function-parameter pack slice available
+			if (!base_name.isValid()) {
+				base_name = fp_type.token().handle();
 			}
-			for (size_t i = start; i < end; ++i) {
-				if (deduction_info->pre_deduced_arg_indices.count(i)) {
+			return base_name;
+		};
+
+		// For each function parameter whose base type is a template parameter, record how many
+		// pointer levels the pattern adds on top of U (e.g. pick(U*) → depth["U"]=1).
+		// This is used for two purposes:
+		//   1. Viability: if the call arg has fewer pointer levels than the pattern requires, skip.
+		//   2. Pointer-stripping deduction: deduced U = call_arg stripped of depth["U"] levels.
+		std::unordered_map<StringHandle, size_t, StringHash> tparam_fp_pointer_depth;
+		{
+			const auto& func_params = func_decl.parameter_nodes();
+			size_t call_idx = 0;
+			for (const auto& fp_node : func_params) {
+				if (!fp_node.is<DeclarationNode>()) {
 					continue;
 				}
-				const TypeSpecifierNode& ca_type = arg_types[i];
-				bool pushed = false;
-				if (auto extracted_arg = extractNestedTemplateArgForDependentName(
-						deduction_info->function_pack_element_type_index,
-						ca_type.type_index(),
-						param.nameHandle())) {
-					template_args.push_back(*extracted_arg);
-					pushed = true;
+				if (call_idx >= arg_types.size()) {
+					break;
 				}
-				if (!pushed) {
-					template_args.push_back(TemplateTypeArg::makeType(
-						ca_type.type_index().withCategory(ca_type.type())));
+				const auto& fp_decl = fp_node.as<DeclarationNode>();
+				if (fp_decl.is_parameter_pack()) {
+					break;  // variadic: the remaining args are consumed as a pack
 				}
+				const TypeSpecifierNode& fp_type = fp_decl.type_specifier_node();
+				const TypeSpecifierNode& ca_type = arg_types[call_idx];
+
+				StringHandle base_name = getBaseName(fp_type);
+				if (base_name.isValid() && tparam_names.count(base_name) > 0) {
+					// Viability check: a parameter pattern U*^N (e.g. U*, U**) requires at least
+					// N pointer levels in the call argument.  Without this, pick(U*) would be
+					// treated as viable for a plain-int argument, which is incorrect.
+					if (fp_type.pointer_depth() > ca_type.pointer_depth()) {
+						return std::nullopt;  // not enough pointer levels in the call argument
+					}
+					tparam_fp_pointer_depth[base_name] = fp_type.pointer_depth();
+				}
+				++call_idx;
 			}
-			arg_index = end;
-			continue;
 		}
 
-		auto deduced_it = deduction_info->param_name_to_arg.find(param.nameHandle());
-		if (deduced_it != deduction_info->param_name_to_arg.end()) {
-			template_args.push_back(deduced_it->second);
-			continue;
+		auto deduction_info = buildDeductionMapFromCallArgs(template_params, func_decl, arg_types, 0);
+		if (!deduction_info.has_value()) {
+			return std::nullopt;
 		}
 
-		while (arg_index < arg_types.size() &&
-			   deduction_info->pre_deduced_arg_indices.count(arg_index)) {
-			++arg_index;
-		}
+		std::vector<TemplateTypeArg> template_args;
+		size_t arg_index = 0;
+		for (const auto& template_param_node : template_params) {
+			const TemplateParameterNode& param = template_param_node;
 
-		if (arg_index < arg_types.size()) {
-			template_args.push_back(TemplateTypeArg::makeType(
-				arg_types[arg_index].type_index().withCategory(arg_types[arg_index].type())));
-			++arg_index;
-		} else {
-			InlineVector<TemplateTypeArg, 4> default_args;
-			for (const auto& existing_arg : template_args) {
-				default_args.push_back(existing_arg);
-			}
-			if (!tryAppendMemberDefaultTemplateArg(param, template_params, outer_binding, default_args)) {
+			if (param.kind() == TemplateParameterKind::Template) {
 				return std::nullopt;
 			}
-			template_args.push_back(default_args.back());
+			if (param.kind() != TemplateParameterKind::Type) {
+				return std::nullopt;
+			}
+
+			if (param.is_variadic()) {
+				if (!deduction_info->function_pack_dependent_param_names.count(param.nameHandle())) {
+					continue;  // empty pack
+				}
+				size_t start = deduction_info->function_pack_call_arg_start;
+				size_t end = deduction_info->function_pack_call_arg_end;
+				if (start == SIZE_MAX || end == SIZE_MAX || start > end) {
+					continue;  // no function-parameter pack slice available
+				}
+				for (size_t i = start; i < end; ++i) {
+					if (deduction_info->pre_deduced_arg_indices.count(i)) {
+						continue;
+					}
+					const TypeSpecifierNode& ca_type = arg_types[i];
+					bool pushed = false;
+					if (auto extracted_arg = extractNestedTemplateArgForDependentName(
+							deduction_info->function_pack_element_type_index,
+							ca_type.type_index(),
+							param.nameHandle())) {
+						template_args.push_back(*extracted_arg);
+						pushed = true;
+					}
+					if (!pushed) {
+						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(ca_type));
+					}
+				}
+				arg_index = end;
+				continue;
+			}
+
+			// Use pre-deduced arg if available (from buildDeductionMapFromCallArgs).
+			auto deduced_it = deduction_info->param_name_to_arg.find(param.nameHandle());
+			if (deduced_it != deduction_info->param_name_to_arg.end()) {
+				template_args.push_back(deduced_it->second);
+				continue;
+			}
+
+			while (arg_index < arg_types.size() &&
+				   deduction_info->pre_deduced_arg_indices.count(arg_index)) {
+				++arg_index;
+			}
+
+			if (arg_index < arg_types.size()) {
+				const TypeSpecifierNode& ca_type = arg_types[arg_index];
+				// If the function parameter for this template param is U*^N (e.g. U*, U**),
+				// strip N pointer levels from the call arg to deduce U.
+				// e.g. pick(U*) called with int* → U = int (not int*).
+				auto depth_it = tparam_fp_pointer_depth.find(param.nameHandle());
+				size_t fp_ptr_depth =
+					(depth_it != tparam_fp_pointer_depth.end()) ? depth_it->second : 0;
+				if (fp_ptr_depth > 0 && ca_type.pointer_depth() >= fp_ptr_depth) {
+					TypeSpecifierNode stripped = ca_type;
+					stripped.limit_pointer_depth(ca_type.pointer_depth() - fp_ptr_depth);
+					template_args.push_back(TemplateTypeArg::makeTypeSpecifier(stripped));
+				} else {
+					template_args.push_back(TemplateTypeArg::makeTypeSpecifier(ca_type));
+				}
+				++arg_index;
+			} else {
+				InlineVector<TemplateTypeArg, 4> default_args;
+				for (const auto& existing_arg : template_args) {
+					default_args.push_back(existing_arg);
+				}
+				if (!tryAppendMemberDefaultTemplateArg(
+						param, template_params, outer_binding, default_args)) {
+					return std::nullopt;
+				}
+				template_args.push_back(default_args.back());
+			}
 		}
+
+		return CandidateResult{
+			&template_node_cand,
+			std::move(template_args),
+			computeFunctionTemplateSpecificity(template_func)};
+	};
+
+	// Collect all viable candidates in registry order, then pick the most specific one.
+	// When multiple candidates have the same specificity, the first viable one wins
+	// (preserves the pre-partial-ordering behavior and avoids spurious ambiguity errors).
+	size_t best_idx = std::numeric_limits<size_t>::max();
+	int best_specificity = -1;
+	std::vector<CandidateResult> viable;
+	for (size_t i = 0; i < all_templates->size(); ++i) {
+		auto candidate = tryDeduceCandidate((*all_templates)[i]);
+		if (!candidate.has_value()) {
+			continue;
+		}
+		candidate->overload_index = i;
+		if (candidate->specificity > best_specificity) {
+			best_specificity = candidate->specificity;
+			best_idx = viable.size();
+		}
+		viable.push_back(std::move(*candidate));
 	}
 
-	// Check if we already have this instantiation
-	auto key = FlashCpp::makeInstantiationKey(qualified_name, template_args);
+	if (best_idx == std::numeric_limits<size_t>::max()) {
+		return std::nullopt;
+	}
+
+	const CandidateResult& best = viable[best_idx];
+
+	// Build the instantiation key.
+	// When there are multiple overloads with the same name, two different templates can deduce
+	// to identical template args (e.g. pick(U)[U=int] and pick(U*)[U=int] both produce <int>).
+	// To avoid a cache collision where the wrong function body is returned for the second
+	// caller, we discriminate the key by appending the overload index when there is more
+	// than one overload registered under this name.
+	StringHandle key_qualified_name = qualified_name;
+	if (all_templates->size() > 1) {
+		StringBuilder discriminated_sb;
+		discriminated_sb.append(qualified_name.view())
+			.append("$ol")
+			.append(static_cast<uint64_t>(best.overload_index));
+		key_qualified_name = StringTable::getOrInternStringHandle(discriminated_sb);
+	}
+	auto key = FlashCpp::makeInstantiationKey(key_qualified_name, best.template_args);
 
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
@@ -299,7 +416,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	return instantiate_member_function_template_core(
-		struct_name, member_name, requested_qualified_name, qualified_name, template_node, template_args, key, arg_types);
+		struct_name, member_name, requested_qualified_name, qualified_name,
+		*best.template_node, best.template_args, key, arg_types);
 }
 
 std::optional<ASTNode> Parser::try_instantiate_constructor_template(

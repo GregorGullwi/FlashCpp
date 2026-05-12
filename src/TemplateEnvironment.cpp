@@ -1,5 +1,6 @@
 #include "TemplateEnvironment.h"
 
+#include "ChunkedAnyVector.h"
 #include "TemplateRegistry_Pattern.h"
 #include "TemplateRegistry_Types.h"
 
@@ -164,22 +165,18 @@ void appendContextBindings(
 	appendContextBindings(context->parent, out_bindings);
 }
 
-} // namespace
-
-TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
+// Build only the bindings introduced by the current scope. Parent bindings stay
+// in their own snapshot node so nested snapshots can share the parent chain.
+InlineVector<TemplateBindingSnapshot, 4> buildSnapshotBindingsForCurrentScope(
 	std::span<const StringHandle> param_names,
-	std::span<const TypeInfo::TemplateArgInfo> args,
-	const TemplateEnvironmentSnapshot* parent) {
-	TemplateEnvironmentSnapshot snapshot;
-	if (parent != nullptr) {
-		snapshot.bindings = parent->bindings;
-	}
+	std::span<const TypeInfo::TemplateArgInfo> args) {
+	InlineVector<TemplateBindingSnapshot, 4> bindings;
 	const size_t pair_count = std::min(param_names.size(), args.size());
-	snapshot.bindings.reserve(snapshot.bindings.size() + pair_count);
+	bindings.reserve(pair_count);
 	for (size_t i = 0; i < pair_count; ++i) {
-		if (!snapshot.bindings.empty() &&
-			snapshot.bindings.back().name == param_names[i]) {
-			TemplateBindingSnapshot& prior = snapshot.bindings.back();
+		if (!bindings.empty() &&
+			bindings.back().name == param_names[i]) {
+			TemplateBindingSnapshot& prior = bindings.back();
 			prior.is_pack = true;
 			prior.args.push_back(args[i]);
 			continue;
@@ -188,8 +185,82 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
 		binding.name = param_names[i];
 		binding.kind = inferBindingKind(args[i]);
 		binding.args.push_back(args[i]);
-		snapshot.bindings.push_back(std::move(binding));
+		bindings.push_back(std::move(binding));
 	}
+	return bindings;
+}
+
+template <typename Fn>
+void forEachTemplateEnvironmentSnapshotBinding(
+	const TemplateEnvironmentSnapshotNode* node,
+	Fn&& fn) {
+	// Walk parent-first so legacy replay and environment reconstruction see the
+	// same outer-to-inner binding order that flattened snapshots previously had.
+	InlineVector<const TemplateEnvironmentSnapshotNode*, 4> chain;
+	for (const TemplateEnvironmentSnapshotNode* current = node;
+		current != nullptr;
+		current = current->parent) {
+		chain.push_back(current);
+	}
+	for (size_t i = chain.size(); i > 0; --i) {
+		for (const TemplateBindingSnapshot& binding : chain[i - 1]->bindings) {
+			fn(binding);
+		}
+	}
+}
+
+size_t countTemplateEnvironmentSnapshotBindings(
+	const TemplateEnvironmentSnapshotNode* node) {
+	// Count one entry per stored binding segment across the full parent chain.
+	size_t count = 0;
+	for (const TemplateEnvironmentSnapshotNode* current = node;
+		current != nullptr;
+		current = current->parent) {
+		count += current->bindings.size();
+	}
+	return count;
+}
+
+size_t countTemplateEnvironmentSnapshotLegacyEntries(
+	const TemplateEnvironmentSnapshotNode* node) {
+	// Legacy param/arg views expand packs back into one entry per argument, so
+	// reserve using that expanded count across the full parent chain.
+	size_t count = 0;
+	for (const TemplateEnvironmentSnapshotNode* current = node;
+		current != nullptr;
+		current = current->parent) {
+		for (const TemplateBindingSnapshot& binding : current->bindings) {
+			count += binding.is_pack
+				? binding.args.size()
+				: static_cast<size_t>(!binding.args.empty());
+		}
+	}
+	return count;
+}
+
+} // namespace
+
+TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
+	std::span<const StringHandle> param_names,
+	std::span<const TypeInfo::TemplateArgInfo> args,
+	const TemplateEnvironmentSnapshot* parent) {
+	TemplateEnvironmentSnapshot snapshot;
+	// An empty snapshot is represented by a null node pointer.
+	InlineVector<TemplateBindingSnapshot, 4> bindings =
+		buildSnapshotBindingsForCurrentScope(param_names, args);
+	if (bindings.empty()) {
+		// Keep empty snapshots pointer-free, but preserve an existing parent chain
+		// when this scope introduces no new bindings.
+		if (parent != nullptr) {
+			snapshot = *parent;
+		}
+		return snapshot;
+	}
+	TemplateEnvironmentSnapshotNode& node =
+		gChunkedAnyStorage.emplace_back<TemplateEnvironmentSnapshotNode>();
+	node.parent = parent != nullptr ? parent->node : nullptr;
+	node.bindings = std::move(bindings);
+	snapshot.node = &node;
 	return snapshot;
 }
 
@@ -200,7 +271,7 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
 }
 
 bool hasTemplateEnvironmentSnapshotBindings(const TemplateEnvironmentSnapshot& snapshot) {
-	return !snapshot.bindings.empty();
+	return snapshot.node != nullptr;
 }
 
 void populateTemplateEnvironmentLegacyViews(
@@ -209,23 +280,26 @@ void populateTemplateEnvironmentLegacyViews(
 	InlineVector<TypeInfo::TemplateArgInfo, 4>& out_args) {
 	out_param_names.clear();
 	out_args.clear();
-	out_param_names.reserve(snapshot.bindings.size());
-	out_args.reserve(snapshot.bindings.size());
-	for (const TemplateBindingSnapshot& binding : snapshot.bindings) {
-		if (binding.is_pack) {
-			for (const auto& arg : binding.args) {
-				out_param_names.push_back(binding.name);
-				out_args.push_back(arg);
+	const size_t entry_count = countTemplateEnvironmentSnapshotLegacyEntries(snapshot.node);
+	out_param_names.reserve(entry_count);
+	out_args.reserve(entry_count);
+	forEachTemplateEnvironmentSnapshotBinding(
+		snapshot.node,
+		[&](const TemplateBindingSnapshot& binding) {
+			if (binding.is_pack) {
+				for (const auto& arg : binding.args) {
+					out_param_names.push_back(binding.name);
+					out_args.push_back(arg);
+				}
+				return;
 			}
-			continue;
-		}
 
-		if (binding.args.empty()) {
-			continue;
-		}
-		out_param_names.push_back(binding.name);
-		out_args.push_back(binding.args.front());
-	}
+			if (binding.args.empty()) {
+				return;
+			}
+			out_param_names.push_back(binding.name);
+			out_args.push_back(binding.args.front());
+		});
 }
 
 TemplateEnvironment buildTemplateEnvironment(
@@ -269,18 +343,20 @@ TemplateEnvironment buildTemplateEnvironment(
 
 TemplateEnvironment buildTemplateEnvironment(const TemplateEnvironmentSnapshot& snapshot) {
 	TemplateEnvironment environment;
-	environment.bindings.reserve(snapshot.bindings.size());
-	for (const TemplateBindingSnapshot& snapshot_binding : snapshot.bindings) {
-		TemplateBinding binding;
-		binding.name = snapshot_binding.name;
-		binding.kind = snapshot_binding.kind;
-		binding.is_pack = snapshot_binding.is_pack;
-		binding.args.reserve(snapshot_binding.args.size());
-		for (const TypeInfo::TemplateArgInfo& snapshot_arg : snapshot_binding.args) {
-			binding.args.push_back(toTemplateTypeArg(snapshot_arg));
-		}
-		environment.bindings.push_back(std::move(binding));
-	}
+	environment.bindings.reserve(countTemplateEnvironmentSnapshotBindings(snapshot.node));
+	forEachTemplateEnvironmentSnapshotBinding(
+		snapshot.node,
+		[&](const TemplateBindingSnapshot& snapshot_binding) {
+			TemplateBinding binding;
+			binding.name = snapshot_binding.name;
+			binding.kind = snapshot_binding.kind;
+			binding.is_pack = snapshot_binding.is_pack;
+			binding.args.reserve(snapshot_binding.args.size());
+			for (const TypeInfo::TemplateArgInfo& snapshot_arg : snapshot_binding.args) {
+				binding.args.push_back(toTemplateTypeArg(snapshot_arg));
+			}
+			environment.bindings.push_back(std::move(binding));
+		});
 	return environment;
 }
 

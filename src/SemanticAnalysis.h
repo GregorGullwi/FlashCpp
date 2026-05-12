@@ -219,6 +219,12 @@ public:
 	// drain in `drainLazyMemberRegistry`.
 	std::optional<ASTNode> ensureMemberFunctionMaterialized(
 		StringHandle struct_name,
+		const FunctionDeclarationNode& function_decl);
+	std::optional<ASTNode> ensureMemberFunctionMaterialized(
+		StringHandle struct_name,
+		const ConstructorDeclarationNode& ctor_decl);
+	std::optional<ASTNode> ensureMemberFunctionMaterialized(
+		StringHandle struct_name,
 		StringHandle member_name,
 		std::optional<bool> is_const_member);
 

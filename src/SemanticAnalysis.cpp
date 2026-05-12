@@ -78,16 +78,22 @@ bool placeholderReturnTypesMatch(const TypeSpecifierNode& lhs, const TypeSpecifi
 bool markLazyMemberOdrUsedForMatchingConstness(
 	LazyMemberInstantiationRegistry& lazy_registry,
 	StringHandle owner_name,
-	StringHandle member_handle,
-	bool preferred_constness) {
-	for (bool const_variant : {preferred_constness, !preferred_constness}) {
-		LazyMemberKey member_key = LazyMemberKey::exact(owner_name, member_handle, const_variant);
-		if (!lazy_registry.needsInstantiation(member_key)) {
-			continue;
-		}
+	const FunctionDeclarationNode& resolved_decl) {
+	LazyMemberKey member_key = LazyMemberKey::exact(owner_name, resolved_decl);
+	if (lazy_registry.needsInstantiation(member_key)) {
 		lazy_registry.markOdrUsed(member_key);
 		return true;
 	}
+
+	LazyMemberKey opposite_const_key = LazyMemberKey::exact(
+		owner_name,
+		resolved_decl.decl_node().identifier_token().handle(),
+		!resolved_decl.is_const_member_function());
+	if (lazy_registry.needsInstantiation(opposite_const_key)) {
+		lazy_registry.markOdrUsed(opposite_const_key);
+		return true;
+	}
+
 	return false;
 }
 
@@ -98,8 +104,7 @@ bool markLazyMemberOdrUsedForMatchingConstness(
 bool markLazyReceiverMemberOdrUsed(
 	const TypeInfo* receiver_type_info,
 	std::string_view resolved_parent_name,
-	StringHandle member_handle,
-	bool preferred_constness) {
+	const FunctionDeclarationNode& resolved_decl) {
 	if (!receiver_type_info || !receiver_type_info->isStruct()) {
 		return false;
 	}
@@ -141,8 +146,7 @@ bool markLazyReceiverMemberOdrUsed(
 		return markLazyMemberOdrUsedForMatchingConstness(
 			lazy_registry,
 			candidate_name,
-			member_handle,
-			preferred_constness);
+			resolved_decl);
 	};
 
 	if (try_mark(receiver_type_info)) {
@@ -420,8 +424,7 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 			LazyMemberInstantiationRegistry::getInstance().markOdrUsedAllInClass(
 				struct_info->name);
 			if (function_decl.needs_body_materialization()) {
-				sema->ensureMemberFunctionMaterialized(
-					struct_info->name, mf.getName(), /*is_const_member=*/mf.is_const());
+				sema->ensureMemberFunctionMaterialized(struct_info->name, function_decl);
 			}
 		}
 
@@ -1862,18 +1865,14 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	if (range_type_info->isTemplateInstantiation()) {
 		auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
 		StringHandle owner_name = range_type_info->name();
-		StringHandle begin_handle = begin_func_decl.decl_node().identifier_token().handle();
-		StringHandle end_handle = end_func_decl.decl_node().identifier_token().handle();
 		markLazyMemberOdrUsedForMatchingConstness(
 			lazy_registry,
 			owner_name,
-			begin_handle,
-			begin_func->is_const());
+			begin_func_decl);
 		markLazyMemberOdrUsedForMatchingConstness(
 			lazy_registry,
 			owner_name,
-			end_handle,
-			end_func->is_const());
+			end_func_decl);
 	}
 
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_specifier_node();
@@ -5079,7 +5078,7 @@ static bool structHasConversionOperatorTo(
 				mf.function_decl.as<FunctionDeclarationNode>().needs_body_materialization();
 			if (needs_materialization) {
 				sema->ensureMemberFunctionMaterialized(
-					struct_info->name, mf.getName(), /*is_const_member=*/mf.is_const());
+					struct_info->name, mf.function_decl.as<FunctionDeclarationNode>());
 			}
 		}
 		found = true;
@@ -6041,14 +6040,10 @@ void SemanticAnalysis::tryResolveUnaryDereferenceOperator(const UnaryOperatorNod
 
 	if (const TypeInfo* receiver_type_info = tryGetTypeInfo(object_desc.type_index);
 		receiver_type_info && receiver_type_info->isStruct()) {
-		StringHandle member_handle = best_match->decl_node().identifier_token().handle();
-		// Resolver constness can be lost on pattern-owned operator* declarations;
-		// walk the receiver hierarchy and mark the concrete instantiated owner.
 		markLazyReceiverMemberOdrUsed(
 			receiver_type_info,
 			best_match->parent_struct_name(),
-			member_handle,
-			best_match->is_const_member_function());
+			*best_match);
 	}
 
 	op_unary_deref_table_[&unary_node] = best_match;
@@ -6770,14 +6765,9 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 		const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index);
 		if (current_type_info && current_type_info->getStructInfo() && current_type_info->isTemplateInstantiation()) {
 			StringHandle current_struct_name = current_type_info->name();
-			StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
-			const bool is_const = func_decl->is_const_member_function();
+			LazyMemberKey member_key = LazyMemberKey::exact(current_struct_name, *func_decl);
 			auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
-			if (lazy_registry.needsInstantiation(
-					LazyMemberKey::exact(
-						current_struct_name,
-						member_handle,
-						is_const))) {
+			if (lazy_registry.needsInstantiation(member_key)) {
 				// Mark only; the drain pass in SemanticAnalysis (running
 				// after normalizePendingSemanticRoots) picks up ODR-used
 				// residuals via its fixpoint loop over
@@ -6786,11 +6776,7 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 				// re-entrant cycle: materialization reparses and
 				// normalizes the body, which hits another call that lands
 				// back in this helper, ad infinitum.
-				lazy_registry.markOdrUsed(
-					LazyMemberKey::exact(
-						current_struct_name,
-						member_handle,
-						is_const));
+				lazy_registry.markOdrUsed(member_key);
 			}
 		}
 	}
@@ -6803,8 +6789,6 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 		return func_decl;
 	}
 	StringHandle parent_handle = StringTable::getOrInternStringHandle(parent_sv);
-	StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
-	const bool is_const = func_decl->is_const_member_function();
 	// Phase 5 Slice G: this helper is only reached after the call target has
 	// been resolved by overload resolution in sema, so the member is ODR-used.
 	// Record it before materialization so the signal persists past the
@@ -6812,9 +6796,8 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
 		LazyMemberKey::exact(
 			parent_handle,
-			member_handle,
-			is_const));
-	auto materialized = ensureMemberFunctionMaterialized(parent_handle, member_handle, is_const);
+			*func_decl));
+	auto materialized = ensureMemberFunctionMaterialized(parent_handle, *func_decl);
 	if (materialized.has_value() && materialized->is<FunctionDeclarationNode>()) {
 		return &materialized->as<FunctionDeclarationNode>();
 	}
@@ -6872,15 +6855,12 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 		return result;
 	}
 
-	StringHandle member_handle = func_decl->decl_node().identifier_token().handle();
-	const bool is_const = func_decl->is_const_member_function();
 	// Walk the receiver hierarchy searching for the instantiated owner that
 	// corresponds to the resolved member's declaring pattern/base.
 	markLazyReceiverMemberOdrUsed(
 		receiver_type_info,
 		parent_sv,
-		member_handle,
-		is_const);
+		*func_decl);
 	return result;
 }
 
@@ -7084,11 +7064,10 @@ const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMat
 	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
 		LazyMemberKey::exact(
 			struct_info.getName(),
-			ctor->name(),
-			/*is_const=*/false));
+			*ctor));
 	// Constructors are never const-qualified members; use is_const = false.
 	auto instantiated = ensureMemberFunctionMaterialized(
-		struct_info.getName(), ctor->name(), /*is_const_member=*/false);
+		struct_info.getName(), *ctor);
 	if (!instantiated.has_value() || !instantiated->is<ConstructorDeclarationNode>()) {
 		return ctor;
 	}
@@ -7105,11 +7084,42 @@ void SemanticAnalysis::markResolvedOperatorOverloadOdrUsed(
 	if (parent_sv.empty())
 		return;
 	StringHandle struct_name = StringTable::getOrInternStringHandle(parent_sv);
-	StringHandle member_name = member_overload.getName();
-	if (!struct_name.isValid() || !member_name.isValid())
+	if (!struct_name.isValid())
 		return;
 	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
-		struct_name, member_name, member_overload.is_const());
+		LazyMemberKey::exact(struct_name, fdecl));
+}
+
+std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
+	StringHandle struct_name,
+	const FunctionDeclarationNode& function_decl) {
+	if (!struct_name.isValid()) {
+		return std::nullopt;
+	}
+
+	auto instantiated = parser_.instantiateLazyMemberIfNeeded(
+		LazyMemberKey::exact(struct_name, function_decl));
+	if (!instantiated.has_value()) {
+		return std::nullopt;
+	}
+	parser_.normalizePendingSemanticRootsIfAvailable();
+	return instantiated;
+}
+
+std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
+	StringHandle struct_name,
+	const ConstructorDeclarationNode& ctor_decl) {
+	if (!struct_name.isValid()) {
+		return std::nullopt;
+	}
+
+	auto instantiated = parser_.instantiateLazyMemberIfNeeded(
+		LazyMemberKey::exact(struct_name, ctor_decl));
+	if (!instantiated.has_value()) {
+		return std::nullopt;
+	}
+	parser_.normalizePendingSemanticRootsIfAvailable();
+	return instantiated;
 }
 
 std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
@@ -7120,14 +7130,24 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 		return std::nullopt;
 	}
 
-	// Resolve a matching lazy-member entry. When the caller is indifferent to
-	// const-ness, fall back to the "Any" variant so both const and non-const
-	// candidates are considered. getLazyMemberInfo / getLazyMemberInfoAny already
-	// return nullopt when nothing is registered or the entry was already marked
-	// instantiated, so no separate needsInstantiation pre-check is needed.
-	LazyMemberKey query_key = is_const_member.has_value()
-		? LazyMemberKey::exact(struct_name, member_name, *is_const_member)
-		: LazyMemberKey::anyConst(struct_name, member_name);
+	if (!is_const_member.has_value()) {
+		std::optional<ASTNode> first_materialized;
+		if (std::optional<ASTNode> non_const_instantiated =
+				ensureMemberFunctionMaterialized(struct_name, member_name, false)) {
+			first_materialized = non_const_instantiated;
+		}
+		if (std::optional<ASTNode> const_instantiated =
+				ensureMemberFunctionMaterialized(struct_name, member_name, true);
+			const_instantiated.has_value() && !first_materialized.has_value()) {
+			first_materialized = const_instantiated;
+		}
+		return first_materialized;
+	}
+
+	// Resolve a matching lazy-member entry. getLazyMemberInfo returns nullopt
+	// when nothing is registered or the entry was already marked instantiated,
+	// so no separate needsInstantiation pre-check is needed.
+	LazyMemberKey query_key = LazyMemberKey::exact(struct_name, member_name, *is_const_member);
 	auto instantiated = parser_.instantiateLazyMemberIfNeeded(query_key);
 	if (!instantiated.has_value()) {
 		return std::nullopt;
@@ -7177,14 +7197,19 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 					LazyMemberKey::exact(
 						entry.instantiated_owner_name,
 						entry.member_name,
-						entry.is_const_method))) {
+						entry.is_const_method,
+						entry.registry_key))) {
 				continue;
 			}
-			auto result = ensureMemberFunctionMaterialized(
-				entry.instantiated_owner_name, entry.member_name,
-				std::optional<bool>(entry.is_const_method));
+			auto result = parser_.instantiateLazyMemberIfNeeded(
+				LazyMemberKey::exact(
+					entry.instantiated_owner_name,
+					entry.member_name,
+					entry.is_const_method,
+					entry.registry_key));
 			if (result.has_value()) {
 				++total_materialized;
+				parser_.normalizePendingSemanticRootsIfAvailable();
 				// Same rationale as the AST-walk pass: annotate the freshly-
 				// substituted body so its internal calls route through
 				// `markOdrUsed` and get picked up by the next fixpoint iteration

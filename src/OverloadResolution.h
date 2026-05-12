@@ -9,6 +9,7 @@
 #include <vector>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 
 // Conversion rank for overload resolution
 // Lower rank = better match.
@@ -2225,4 +2226,52 @@ inline OverloadResolutionResult resolve_overload_cached(
 	cache[key] = result;
 
 	return result;
+}
+
+// Compute a "specificity score" for a function template used in partial ordering.
+// Higher score means the template is more constrained / more specialized.
+// Rules (additive):
+//   +pointer_depth  per parameter  (U* > U)
+//   +1 lvalue-ref, +1 rvalue-ref, +1 const  per parameter
+//   +2 for concrete (non-bare-template-param) struct/user-defined parameter type
+//   +2+N for a template specialisation with N args
+// A bare template parameter (e.g. plain 'T') contributes 0 for the type category but
+// still adds to the pointer / qualifier score when wrapped (e.g. 'T*' → +1 ptr).
+inline int computeFunctionTemplateSpecificity(const TemplateFunctionDeclarationNode& template_func) {
+	std::unordered_set<StringHandle, StringHash> param_name_handles;
+	for (const auto& tp : template_func.template_parameters()) {
+		param_name_handles.insert(tp.nameHandle());
+	}
+
+	int score = 0;
+	for (const auto& p : template_func.function_decl_node().parameter_nodes()) {
+		if (!p.is<DeclarationNode>()) {
+			continue;
+		}
+		const TypeSpecifierNode& ts = p.as<DeclarationNode>().type_specifier_node();
+		StringHandle tok_handle = ts.token().handle();
+		bool is_bare_template_param = tok_handle.isValid() && param_name_handles.count(tok_handle) > 0;
+
+		if (is_struct_type(ts.category()) || ts.category() == TypeCategory::UserDefined) {
+			if (!is_bare_template_param) {
+				if (const TypeInfo* ti = tryGetTypeInfo(ts.type_index())) {
+					if (ti->isTemplateInstantiation()) {
+						score += 2 + static_cast<int>(ti->templateArgs().size());
+					} else {
+						score += 2;
+					}
+				} else {
+					score += 2;
+				}
+			}
+		} else if (ts.category() != TypeCategory::Invalid) {
+			score += 1;
+		}
+
+		score += static_cast<int>(ts.pointer_depth());
+		if (ts.is_lvalue_reference()) score += 1;
+		if (ts.is_rvalue_reference()) score += 1;
+		if (ts.is_const()) score += 1;
+	}
+	return score;
 }

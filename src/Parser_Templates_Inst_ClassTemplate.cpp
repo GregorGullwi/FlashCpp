@@ -2836,10 +2836,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::vector<TemplateTypeArg> template_args_for_member_copy_storage;
 			if (!pattern_args_for_member_copy.empty()) {
 				template_args_for_member_copy_storage.reserve(template_params.size());
+				// Use filled_args_for_pattern_match (primary-template-aligned, with defaults filled
+				// in) as the source of concrete values and as the loop upper bound.  Using the raw
+				// template_args span instead caused a deduction failure when the leading pattern
+				// arguments are concrete (e.g. enable_if<true, T>) and the instantiation relies on
+				// default arguments (e.g. enable_if<true> -> T=void): the loop would terminate
+				// before reaching the dependent position, leaving the storage empty and falling
+				// back to the wrong arg vector.
+				const std::vector<TemplateTypeArg>& concrete_args = filled_args_for_pattern_match;
 				for (size_t template_param_slot = 0; template_param_slot < template_params.size(); ++template_param_slot) {
 					std::optional<TemplateTypeArg> deduced_arg;
 					for (size_t pattern_idx = 0;
-						 pattern_idx < pattern_args_for_member_copy.size() && pattern_idx < template_args.size();
+						 pattern_idx < pattern_args_for_member_copy.size() && pattern_idx < concrete_args.size();
 						 ++pattern_idx) {
 						const TemplateTypeArg& pattern_arg = pattern_args_for_member_copy[pattern_idx];
 						if (!pattern_arg.is_dependent) {
@@ -2855,14 +2863,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 						if (dependent_param_index == template_param_slot) {
 							if (template_params[template_param_slot].is_variadic()) {
-								for (size_t pack_idx = pattern_idx; pack_idx < template_args.size(); ++pack_idx) {
+								for (size_t pack_idx = pattern_idx; pack_idx < concrete_args.size(); ++pack_idx) {
 									template_args_for_member_copy_storage.push_back(
-										deduceArgFromPattern(template_args[pack_idx], pattern_arg));
+										deduceArgFromPattern(concrete_args[pack_idx], pattern_arg));
 								}
 								deduced_arg.reset();
 								break;
 							}
-							deduced_arg = deduceArgFromPattern(template_args[pattern_idx], pattern_arg);
+							deduced_arg = deduceArgFromPattern(concrete_args[pattern_idx], pattern_arg);
 							break;
 						}
 					}
@@ -4029,9 +4037,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::vector<TemplateTypeArg> template_args_for_pattern_storage;
 			if (!pattern_args.empty()) {
 				template_args_for_pattern_storage.reserve(template_params.size());
+				// Use filled_args_for_pattern_match (primary-template-aligned, with defaults filled
+				// in) as the concrete-arg source and loop bound.  The raw template_args span only
+				// covers explicitly supplied arguments; when a leading pattern argument is concrete
+				// (e.g. enable_if<true, T>) and the trailing dependent argument maps to a
+				// defaulted primary-template parameter, the old bound cut the loop short before the
+				// dependent position, leaving the storage empty and causing the fallback below to
+				// yield an incorrect specialization-aligned arg vector.
+				const std::vector<TemplateTypeArg>& concrete_args = filled_args_for_pattern_match;
 				for (size_t template_param_slot = 0; template_param_slot < template_params.size(); ++template_param_slot) {
 					std::optional<TemplateTypeArg> deduced_arg;
-					for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < template_args.size(); ++pattern_idx) {
+					for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < concrete_args.size(); ++pattern_idx) {
 						const TemplateTypeArg& pattern_arg = pattern_args[pattern_idx];
 						if (!pattern_arg.is_dependent) {
 							continue;
@@ -4046,14 +4062,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 						if (dependent_param_index == template_param_slot) {
 							if (template_params[template_param_slot].is_variadic()) {
-								for (size_t pack_idx = pattern_idx; pack_idx < template_args.size(); ++pack_idx) {
+								for (size_t pack_idx = pattern_idx; pack_idx < concrete_args.size(); ++pack_idx) {
 									template_args_for_pattern_storage.push_back(
-										deduceArgFromPattern(template_args[pack_idx], pattern_arg));
+										deduceArgFromPattern(concrete_args[pack_idx], pattern_arg));
 								}
 								deduced_arg.reset();
 								break;
 							}
-							deduced_arg = deduceArgFromPattern(template_args[pattern_idx], pattern_arg);
+							deduced_arg = deduceArgFromPattern(concrete_args[pattern_idx], pattern_arg);
 							break;
 						}
 					}
@@ -7121,8 +7137,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// These are the methods inside Inner (e.g., Inner::get()) — they are not
 			// top-level member functions of the parent template and would otherwise
 			// never be registered, causing link errors when called.
+			const TemplateEnvironmentSnapshot* outer_parent_snapshot =
+				instantiated_nested_struct_ref.has_outer_template_bindings()
+					? &instantiated_nested_struct_ref.outer_template_environment_snapshot()
+					: nullptr;
 			registerNestedMemberFunctionsForLazy(nested_struct, *nested_struct_info,
 												 instantiated_name, qualified_name, template_params, template_args_to_use,
+												 outer_parent_snapshot,
 												 shouldCommitTemplateInstantiationArtifacts());
 
 			// Mark nested struct as needing a trivial default constructor when it
@@ -7730,13 +7751,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Slice 2: fill canonical instantiated lookup name (conversion operator renaming)
 				lazy_info.identity.instantiated_lookup_name = shell.effective_name;
 
-				// Save the effective lookup name before moving lazy_info, since
-				// effectiveLookupName accesses lazy_info.identity which will be
-				// in a moved-from state after registerLazyMember.
-				StringHandle effective_name = effectiveLookupName(lazy_info.identity);
+				StringHandle lazy_registry_key{};
 
 				if (shouldCommitTemplateInstantiationArtifacts()) {
-					LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
+					lazy_registry_key =
+						LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
 				}
 
 				FLASH_LOG(Templates, Debug, "Registered lazy member function: ",
@@ -7744,6 +7763,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				ASTNode new_func_node = shell.function_node;
 				FunctionDeclarationNode& new_func_ref = *shell.function;
+				if (lazy_registry_key.isValid()) {
+					new_func_ref.set_lazy_member_registry_key(lazy_registry_key);
+				}
 				size_t saved_pack_info = pack_param_info_.size();
 				substituteAndCopyMemberFunctionParameters(
 					func_decl.parameter_nodes(),
@@ -7778,7 +7800,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
 														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
 				} else {
-					StringHandle func_name_handle = effective_name;
+					StringHandle func_name_handle = shell.effective_name;
 					struct_info_ptr->addMemberFunction(
 						func_name_handle,
 						new_func_node,
@@ -7796,7 +7818,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				StringBuilder qualified_name_builder;
 				qualified_name_builder.append(StringTable::getStringView(instantiated_name))
 					.append("::")
-					.append(effective_name);
+					.append(shell.effective_name);
 				StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 				OuterTemplateBinding outer_binding;
 				collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);

@@ -262,7 +262,8 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	bool is_constructor,
 	bool is_destructor,
 	const TParams& template_params,
-	const TArgs& template_args) {
+	const TArgs& template_args,
+	const TemplateEnvironmentSnapshot* outer_parent_snapshot) {
 	LazyMemberFunctionInfo lazy_mem_info;
 	auto& id = lazy_mem_info.identity;
 	id.original_member_node = mem_func.function_declaration;
@@ -293,7 +294,7 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	lazy_mem_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
 		template_params,
 		template_args,
-		nullptr);
+		outer_parent_snapshot);
 	lazy_mem_info.access = mem_func.access;
 	lazy_mem_info.is_virtual = mem_func.is_virtual;
 	lazy_mem_info.is_pure_virtual = mem_func.is_pure_virtual;
@@ -310,6 +311,7 @@ void registerNestedMemberFunctionsForLazy(
 	StringHandle qualified_name,
 	const TParams& template_params,
 	const TArgs& template_args,
+	const TemplateEnvironmentSnapshot* outer_parent_snapshot,
 	bool should_register_lazy_members) {
 	for (const StructMemberFunctionDecl& mem_func : nested_struct.member_functions()) {
 		if (mem_func.is_constructor || mem_func.is_destructor) {
@@ -333,7 +335,8 @@ void registerNestedMemberFunctionsForLazy(
 				mem_func.is_constructor,
 				mem_func.is_destructor,
 				template_params,
-				template_args);
+				template_args,
+				outer_parent_snapshot);
 			if (should_register_lazy_members) {
 				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
 			}
@@ -348,7 +351,8 @@ void registerNestedMemberFunctionsForLazy(
 				false,
 				false,
 				template_params,
-				template_args);
+				template_args,
+				outer_parent_snapshot);
 
 			if (should_register_lazy_members) {
 				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));

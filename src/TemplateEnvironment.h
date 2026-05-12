@@ -30,8 +30,13 @@ struct TemplateBindingSnapshot {
 	InlineVector<TypeInfo::TemplateArgInfo, 1> args;
 };
 
-struct TemplateEnvironmentSnapshot {
+struct TemplateEnvironmentSnapshotNode {
+	const TemplateEnvironmentSnapshotNode* parent = nullptr;
 	InlineVector<TemplateBindingSnapshot, 4> bindings;
+};
+
+struct TemplateEnvironmentSnapshot {
+	const TemplateEnvironmentSnapshotNode* node = nullptr;
 };
 
 struct TemplateEnvironment {

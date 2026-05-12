@@ -857,16 +857,22 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			namespace_handle = buildNamespaceHandleForStructName(struct_name);
 		}
 		for (const auto& member_func : struct_info->member_functions) {
-			// Phase 5 Slice K: sema's end-of-normalization drain materializes
-			// every reachable struct's lazy members (AST-walk pass) plus every
-			// ODR-used residual. By the time queueDeferredMemberFunctions runs,
-			// `member_func.function_decl` always reflects the materialized body
-			// if one exists. The previous lazy-stub materialize-and-queue branch
-			// here was audited across the full 2201-test corpus with a hard-fail
-			// guard and never hit; it has been removed outright.
+			ASTNode function_node = member_func.function_decl;
+			if (sema_ && function_node.is<FunctionDeclarationNode>()) {
+				const FunctionDeclarationNode& func_decl = function_node.as<FunctionDeclarationNode>();
+				if (!func_decl.is_materialized() && !func_decl.is_implicit() && member_func.getName().isValid()) {
+					if (std::optional<ASTNode> materialized =
+							sema_->ensureMemberFunctionMaterialized(
+								struct_name,
+								member_func.getName(),
+								member_func.is_const())) {
+						function_node = *materialized;
+					}
+				}
+			}
 			DeferredMemberFunctionInfo deferred_info;
 			deferred_info.struct_name = struct_name;
-			deferred_info.function_node = member_func.function_decl;
+			deferred_info.function_node = function_node;
 			deferred_info.namespace_handle = namespace_handle;
 			deferred_member_functions_.push_back(std::move(deferred_info));
 		}

@@ -1385,8 +1385,7 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 							LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
 								LazyMemberKey::exact(
 									current_struct_name_,
-									member_name,
-									fn.is_const_member_function()))) {
+									fn))) {
 							FLASH_INVARIANT_PROBE(
 								Phase5StructDrain,
 								"codegen reached a still-lazy member function",
@@ -1435,9 +1434,9 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 						if (!ctor.is_materialized() &&
 							current_struct_name_.isValid() && member_name.isValid() &&
 							LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
-								LazyMemberKey::anyConst(
+								LazyMemberKey::exact(
 									current_struct_name_,
-									member_name))) {
+									ctor))) {
 							FLASH_INVARIANT_PROBE(
 								Phase5StructDrain,
 								"codegen reached a still-lazy constructor",
