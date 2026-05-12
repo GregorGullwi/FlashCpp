@@ -1896,6 +1896,33 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			}
 		}
 	}
+	for (TemplateTypeArg& arg : inst_args) {
+		if (!arg.is_dependent) {
+			continue;
+		}
+
+		if (arg.dependent_name.isValid()) {
+			std::string_view dependent_name = StringTable::getStringView(arg.dependent_name);
+			auto param_it = param_map_.find(dependent_name);
+			if (param_it != param_map_.end()) {
+				TemplateTypeArg concrete_arg = param_it->second;
+				concrete_arg.is_pack = arg.is_pack;
+				arg = concrete_arg;
+				continue;
+			}
+		}
+
+		if (!arg.dependent_expr.has_value()) {
+			continue;
+		}
+
+		ASTNode substituted_expr = substitute(*arg.dependent_expr);
+		if (auto value = parser_.try_evaluate_constant_expression(substituted_expr)) {
+			TemplateTypeArg concrete_arg(value->value, value->type);
+			concrete_arg.is_pack = arg.is_pack;
+			arg = concrete_arg;
+		}
+	}
 	if (!inst_args.empty() && template_args_still_dependent(inst_args)) {
 		// Keep unresolved qualified-ids dependent until a later instantiation phase.
 		// This is standard-conforming for dependent names and avoids selecting an
