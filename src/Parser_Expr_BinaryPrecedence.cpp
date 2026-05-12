@@ -7,44 +7,6 @@
 
 namespace {
 
-static int computeFunctionTemplateSpecificity(const TemplateFunctionDeclarationNode& template_func) {
-	std::unordered_set<StringHandle, StringHandleHash> param_name_handles;
-	for (const auto& tp : template_func.template_parameters()) {
-		param_name_handles.insert(tp.nameHandle());
-	}
-
-	int score = 0;
-	for (const auto& p : template_func.function_decl_node().parameter_nodes()) {
-		if (!p.is<DeclarationNode>()) {
-			continue;
-		}
-		const TypeSpecifierNode& ts = p.as<DeclarationNode>().type_specifier_node();
-		StringHandle tok_handle = ts.token().handle();
-		bool is_bare_template_param = tok_handle.isValid() && param_name_handles.count(tok_handle) > 0;
-
-		if (is_struct_type(ts.category()) || ts.category() == TypeCategory::UserDefined) {
-			if (!is_bare_template_param) {
-				if (const TypeInfo* ti = tryGetTypeInfo(ts.type_index())) {
-					if (ti->isTemplateInstantiation()) {
-						score += 2 + static_cast<int>(ti->templateArgs().size());
-					} else {
-						score += 2;
-					}
-				} else {
-					score += 2;
-				}
-			}
-		} else if (ts.category() != TypeCategory::Invalid) {
-			score += 1;
-		}
-
-		score += static_cast<int>(ts.pointer_depth());
-		if (ts.is_lvalue_reference()) score += 1;
-		if (ts.is_rvalue_reference()) score += 1;
-		if (ts.is_const()) score += 1;
-	}
-	return score;
-}
 
 static bool isTemplateDerivedFreeFunction(const FunctionDeclarationNode* func_decl) {
 	return func_decl != nullptr &&
