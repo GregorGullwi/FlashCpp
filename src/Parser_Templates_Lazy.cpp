@@ -876,9 +876,12 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 	auto try_reparse_lazy_static_initializer = [&]() -> bool {
 		if (!lazy_info.initializer_position.has_value() || !lazy_info.declaration.has_value()) {
+			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: skipping — ",
+					  !lazy_info.initializer_position.has_value() ? "no initializer_position" : "no declaration");
 			return false;
 		}
 		if (!lazy_info.declaration->is<DeclarationNode>()) {
+			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: skipping — declaration is not a DeclarationNode");
 			return false;
 		}
 
@@ -940,7 +943,10 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 		if (peek() == "="_tok) {
+			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: reparsing from '=' position");
 			substituted_initializer = parse_copy_initialization(decl, type_spec);
+			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: parse_copy_initialization result has_value=",
+					  substituted_initializer.has_value());
 		} else if (peek() == "{"_tok) {
 			ParseResult init_result = parse_brace_initializer(type_spec);
 			if (!init_result.is_error()) {
@@ -1146,6 +1152,10 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				eval_ctx.template_args.push_back(lazy_info.template_args[i]);
 			}
 			auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
+			if (!eval_result.success()) {
+				FLASH_LOG(Templates, Debug, "Inner ConstExpr eval FAILED for substituted lazy member initializer (error: ",
+						  eval_result.error_message, ")");
+			}
 			if (eval_result.success()) {
 				int64_t val = eval_result.as_int();
 				if (val < 0) {

@@ -1900,6 +1900,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		// Keep unresolved qualified-ids dependent until a later instantiation phase.
 		// This is standard-conforming for dependent names and avoids selecting an
 		// unrelated concrete specialization from global type state.
+		FLASH_LOG(Templates, Debug, "  substituteQualifiedIdentifier: inst_args still dependent, returning as-is for ns='", ns_name, "'");
 		ExpressionNode& deferred_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
 		return ASTNode(&deferred_expr);
 	}

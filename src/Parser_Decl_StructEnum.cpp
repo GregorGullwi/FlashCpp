@@ -1499,7 +1499,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 			// Check for initialization (static data member)
 			std::optional<ASTNode> init_expr_opt;
+			std::optional<SaveHandle> initializer_position;
 			if (peek() == "="_tok) {
+				// Save the lexer position at '=' so lazy template instantiation can
+				// re-parse the initializer with concrete template arguments substituted.
+				initializer_position = save_token_position();
 				// Push struct context so static member references can be resolved
 				// This enables expressions like `!is_signed` to find `is_signed` as a static member
 				TypeIndex struct_type_index{};
@@ -1521,6 +1525,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				init_expr_opt = *init_result;
 			} else if (peek() == "{"_tok) {
 				// Brace initialization: static constexpr int x{42};
+				// Save position for lazy re-parse as well.
+				initializer_position = save_token_position();
 
 				TypeIndex struct_type_index{};
 				auto type_it = getTypesByNameMap().find(qualified_struct_name);
@@ -1583,8 +1589,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				ptr_depth,
 				is_array,
 				std::move(array_dimensions),
-				std::nullopt,
-				std::nullopt);
+				type_and_name_result.node(),  // declaration AST for lazy re-parse
+				initializer_position);        // saved lexer position for lazy re-parse
 
 			continue;
 		}
