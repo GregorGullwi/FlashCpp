@@ -69,10 +69,12 @@ TemplateParameterKind inferTemplateBindingKindForLookup(const TemplateTypeArg& a
 TemplateEnvironment buildOuterFunctionTemplateEnvironment(
 	const InlineVector<StringHandle, 4>& param_names,
 	const InlineVector<TypeInfo::TemplateArgInfo, 4>& args) {
+	if (param_names.size() != args.size()) {
+		throw InternalError("buildOuterFunctionTemplateEnvironment: param_names.size() != args.size()");
+	}
 	TemplateEnvironment env;
-	const size_t count = std::min(param_names.size(), args.size());
-	env.bindings.reserve(count);
-	for (size_t i = 0; i < count; ++i) {
+	env.bindings.reserve(param_names.size());
+	for (size_t i = 0; i < param_names.size(); ++i) {
 		TemplateBinding binding;
 		binding.name = param_names[i];
 		TemplateTypeArg arg = toTemplateTypeArg(args[i]);

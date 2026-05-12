@@ -423,8 +423,7 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 			LazyMemberInstantiationRegistry::getInstance().markOdrUsedAllInClass(
 				struct_info->name);
 			if (function_decl.needs_body_materialization()) {
-				sema->ensureMemberFunctionMaterialized(
-					struct_info->name, mf.getName(), /*is_const_member=*/mf.is_const());
+				sema->ensureMemberFunctionMaterialized(struct_info->name, function_decl);
 			}
 		}
 
@@ -4847,7 +4846,7 @@ static bool structHasConversionOperatorTo(
 				mf.function_decl.as<FunctionDeclarationNode>().needs_body_materialization();
 			if (needs_materialization) {
 				sema->ensureMemberFunctionMaterialized(
-					struct_info->name, mf.getName(), /*is_const_member=*/mf.is_const());
+					struct_info->name, mf.function_decl.as<FunctionDeclarationNode>());
 			}
 		}
 		found = true;

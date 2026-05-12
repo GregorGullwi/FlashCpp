@@ -400,15 +400,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 					if (!member_func.is_constructor) {
 						continue;
 					}
-					if (member_func.function_decl.raw_pointer() != lazy_info.identity.original_member_node.raw_pointer()) {
-						if (!member_func.function_decl.is<ConstructorDeclarationNode>()) {
-							continue;
-						}
-						const auto& existing_ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-						if (existing_ctor.name() != ctor_decl.name() ||
-							existing_ctor.parameter_nodes().size() != ctor_decl.parameter_nodes().size()) {
-							continue;
-						}
+					if (getLazyMemberRegistryKey(member_func.function_decl) != lazy_info.registry_key) {
+						continue;
 					}
 					member_func.function_decl = new_ctor_node;
 					break;
@@ -421,15 +414,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				if (!member_func.is_constructor) {
 					continue;
 				}
-				if (member_func.function_declaration.raw_pointer() != lazy_info.identity.original_member_node.raw_pointer()) {
-					if (!member_func.function_declaration.is<ConstructorDeclarationNode>()) {
-						continue;
-					}
-					const auto& root_ctor = member_func.function_declaration.as<ConstructorDeclarationNode>();
-					if (root_ctor.name() != ctor_decl.name() ||
-						root_ctor.parameter_nodes().size() != ctor_decl.parameter_nodes().size()) {
-						continue;
-					}
+				if (getLazyMemberRegistryKey(member_func.function_declaration) != lazy_info.registry_key) {
+					continue;
 				}
 				member_func.function_declaration = new_ctor_node;
 				break;
