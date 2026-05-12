@@ -3292,66 +3292,54 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 	// The protocol requires: std::tuple_size<E>, std::tuple_element<N, E>, and get<N>(e)
 	std::string_view type_name_view = StringTable::getStringView(type_info->name());
 
-	// Build the expected tuple_size specialization name: "tuple_size_TypeName" or "std::tuple_size_TypeName"
-	StringBuilder tuple_size_name_builder;
-	tuple_size_name_builder.append("tuple_size_").append(type_name_view);
-	std::string_view tuple_size_name = tuple_size_name_builder.commit();
-	StringHandle tuple_size_handle = StringTable::getOrInternStringHandle(tuple_size_name);
+	TemplateTypeArg object_type_arg;
+	object_type_arg.type_index = init_type_index;
+	object_type_arg.setType(init_type);
 
-	// Also try with std:: prefix
-	StringBuilder std_tuple_size_name_builder;
-	std_tuple_size_name_builder.append("std::tuple_size_").append(type_name_view);
-	std::string_view std_tuple_size_name = std_tuple_size_name_builder.commit();
-	StringHandle std_tuple_size_handle = StringTable::getOrInternStringHandle(std_tuple_size_name);
+	auto resolve_struct_specialization = [&](std::string_view template_name, std::span<const TemplateTypeArg> template_args) -> const StructDeclarationNode* {
+		auto specialization = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
+		if (!specialization.has_value()) {
+			specialization = gTemplateRegistry.matchSpecializationPattern(template_name, template_args);
+		}
+		if (!specialization.has_value() || !specialization->is<StructDeclarationNode>()) {
+			return nullptr;
+		}
+		return &specialization->as<StructDeclarationNode>();
+	};
 
-	FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Checking for tuple_size<", type_name_view,
-			  "> as '", tuple_size_name, "' or '", std_tuple_size_name, "'");
+	auto resolve_type_info = [&](const StructDeclarationNode* struct_decl) -> const TypeInfo* {
+		if (!struct_decl) {
+			return nullptr;
+		}
+		if (const TypeInfo* type_info_for_struct = findTypeByName(struct_decl->name())) {
+			return type_info_for_struct;
+		}
+		auto type_it = getTypesByNameMap().find(struct_decl->name());
+		return (type_it != getTypesByNameMap().end()) ? type_it->second : nullptr;
+	};
 
-	// Look up the tuple_size specialization
-	auto tuple_size_it = getTypesByNameMap().find(tuple_size_handle);
-	if (tuple_size_it == getTypesByNameMap().end()) {
-		tuple_size_it = getTypesByNameMap().find(std_tuple_size_handle);
+	std::vector<TemplateTypeArg> tuple_size_args = {object_type_arg};
+	const StructDeclarationNode* tuple_size_decl = resolve_struct_specialization("tuple_size", tuple_size_args);
+	if (!tuple_size_decl) {
+		tuple_size_decl = resolve_struct_specialization("std::tuple_size", tuple_size_args);
 	}
+	const TypeInfo* tuple_size_type_info = resolve_type_info(tuple_size_decl);
 
-	const TypeInfo* tuple_size_type_info = nullptr;
-	if (tuple_size_it != getTypesByNameMap().end()) {
-		tuple_size_type_info = tuple_size_it->second;
-	} else {
-		TemplateTypeArg tuple_size_arg;
-		tuple_size_arg.type_index = init_type_index;
-		tuple_size_arg.setType(init_type);
-		std::vector<TemplateTypeArg> tuple_size_args = {tuple_size_arg};
+	FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size protocol probe for '", type_name_view, "'");
 
-		auto tuple_size_spec = gTemplateRegistry.lookupExactSpecialization("tuple_size", tuple_size_args);
-		if (!tuple_size_spec.has_value()) {
-			tuple_size_spec = gTemplateRegistry.matchSpecializationPattern("tuple_size", tuple_size_args);
+	// If tuple_size is specialized for this type, use tuple-like decomposition.
+	// Per C++ structured-binding rules, tuple-like selection should not silently
+	// fall back to aggregate decomposition when tuple protocol pieces are invalid.
+	if (tuple_size_decl != nullptr) {
+		if (tuple_size_type_info == nullptr) {
+			FLASH_LOG(Codegen, Error, "Structured binding tuple-like protocol failed: unable to resolve type info for tuple_size specialization of '",
+					  type_name_view, "'");
+			return;
 		}
 
-		if (!tuple_size_spec.has_value()) {
-			tuple_size_spec = gTemplateRegistry.lookupExactSpecialization("std::tuple_size", tuple_size_args);
-		}
-		if (!tuple_size_spec.has_value()) {
-			tuple_size_spec = gTemplateRegistry.matchSpecializationPattern("std::tuple_size", tuple_size_args);
-		}
-
-		if (tuple_size_spec.has_value() && tuple_size_spec->is<StructDeclarationNode>()) {
-			StringHandle tuple_size_specialization_name = tuple_size_spec->as<StructDeclarationNode>().name();
-			tuple_size_type_info = findTypeByName(tuple_size_specialization_name);
-			if (!tuple_size_type_info) {
-				auto tuple_size_specialization_it = getTypesByNameMap().find(tuple_size_specialization_name);
-				if (tuple_size_specialization_it != getTypesByNameMap().end()) {
-					tuple_size_type_info = tuple_size_specialization_it->second;
-				}
-			}
-		}
-	}
-
-	// If tuple_size is specialized for this type, use tuple-like decomposition
-	if (tuple_size_type_info != nullptr) {
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Found tuple_size specialization, using tuple-like decomposition");
 
 		size_t tuple_size_value = 0;
-		bool found_value = false;
 		NamespaceHandle tuple_size_scope = gNamespaceRegistry.getOrCreateNamespace(
 			NamespaceRegistry::GLOBAL_NAMESPACE,
 			tuple_size_type_info->name());
@@ -3363,231 +3351,222 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 		eval_ctx.parser = parser_;
 		eval_ctx.sema = sema_;
 		auto eval_result = ConstExpr::Evaluator::evaluate(tuple_size_value_expr, eval_ctx);
-		if (eval_result.success()) {
-			long long evaluated_tuple_size = eval_result.as_int();
-			if (evaluated_tuple_size >= 0) {
-				tuple_size_value = static_cast<size_t>(evaluated_tuple_size);
-				found_value = true;
-				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size::value = ", tuple_size_value);
-			} else {
-				FLASH_LOG(Codegen, Warning, "visitStructuredBindingNode: tuple_size::value is negative, falling back to aggregate decomposition");
-			}
-		} else {
-			FLASH_LOG(Codegen, Warning, "visitStructuredBindingNode: tuple_size::value evaluation failed for '",
+		if (!eval_result.success()) {
+			FLASH_LOG(Codegen, Error, "Structured binding tuple-like protocol failed: cannot evaluate tuple_size::value for '",
 					  StringTable::getStringView(tuple_size_type_info->name()), "': ", eval_result.error_message);
+			return;
+		}
+		if (eval_result.is_uint()) {
+			tuple_size_value = static_cast<size_t>(eval_result.as_uint_raw());
+		} else {
+			long long evaluated_tuple_size = eval_result.as_int();
+			if (evaluated_tuple_size < 0) {
+				FLASH_LOG(Codegen, Error, "Structured binding tuple-like protocol failed: tuple_size::value is negative (",
+						  evaluated_tuple_size, ")");
+				return;
+			}
+			tuple_size_value = static_cast<size_t>(evaluated_tuple_size);
 		}
 
-		if (!found_value) {
-			FLASH_LOG(Codegen, Warning, "visitStructuredBindingNode: Could not get tuple_size::value, falling back to aggregate decomposition");
-		} else {
-			// Validate that the number of identifiers matches tuple_size::value
-			if (node.identifiers().size() != tuple_size_value) {
-				FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(),
-						  ") does not match tuple_size::value (", tuple_size_value, ")");
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size::value = ", tuple_size_value);
+
+		// Validate that the number of identifiers matches tuple_size::value
+		if (node.identifiers().size() != tuple_size_value) {
+			FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(),
+					  ") does not match tuple_size::value (", tuple_size_value, ")");
+			return;
+		}
+
+		struct TupleBindingInfo {
+			StringHandle get_mangled_name;
+			TypeCategory element_type;
+			TypeIndex element_type_index;
+			int element_size;
+		};
+		std::vector<TupleBindingInfo> binding_info;
+		binding_info.reserve(tuple_size_value);
+
+		auto make_index_arg = [](size_t index) -> TemplateTypeArg {
+			TemplateTypeArg index_arg;
+			index_arg.setType(TypeCategory::UnsignedLongLong);
+			index_arg.is_value = true;
+			index_arg.value = static_cast<int64_t>(index);
+			return index_arg;
+		};
+
+		StringHandle type_alias_name = StringTable::getOrInternStringHandle("type");
+
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size detected with ", tuple_size_value, " elements");
+
+		for (size_t i = 0; i < tuple_size_value; ++i) {
+			TemplateTypeArg index_arg = make_index_arg(i);
+			std::vector<TemplateTypeArg> tuple_element_args = {index_arg, object_type_arg};
+
+			const StructDeclarationNode* tuple_element_decl = resolve_struct_specialization("tuple_element", tuple_element_args);
+			if (!tuple_element_decl) {
+				tuple_element_decl = resolve_struct_specialization("std::tuple_element", tuple_element_args);
+			}
+			if (!tuple_element_decl) {
+				FLASH_LOG(Codegen, Error, "Structured binding tuple-like protocol failed: missing tuple_element<", i, ", ",
+						  type_name_view, "> specialization");
 				return;
 			}
 
-			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size detected with ", tuple_size_value, " elements");
-
-			// Try to find get<N>() functions for tuple-like decomposition
-			bool all_get_found = true;
-			std::vector<std::pair<StringHandle, TypeCategory>> binding_info;	 // (mangled_name, return_type) for each get<N>
-
-			// First, look up std::tuple_element<N, E>::type and get<N>() for each binding
-			for (size_t i = 0; i < tuple_size_value && all_get_found; ++i) {
-				// Build the tuple_element specialization name
-				StringBuilder tuple_element_name_builder;
-				tuple_element_name_builder.append("tuple_element_").append(static_cast<uint64_t>(i)).append("_").append(type_name_view);
-				std::string_view tuple_element_name = tuple_element_name_builder.commit();
-
-				// Also try with std:: prefix
-				StringBuilder std_tuple_element_name_builder;
-				std_tuple_element_name_builder.append("std::tuple_element_").append(static_cast<uint64_t>(i)).append("_").append(type_name_view);
-				std::string_view std_tuple_element_name = std_tuple_element_name_builder.commit();
-
-				// Look up the type alias
-				StringHandle type_alias_handle = StringTable::getOrInternStringHandle(
-					StringBuilder().append(tuple_element_name).append("::type").commit());
-				StringHandle std_type_alias_handle = StringTable::getOrInternStringHandle(
-					StringBuilder().append(std_tuple_element_name).append("::type").commit());
-
-				auto type_alias_it = getTypesByNameMap().find(type_alias_handle);
-				if (type_alias_it == getTypesByNameMap().end()) {
-					type_alias_it = getTypesByNameMap().find(std_type_alias_handle);
+			const TypeAliasDecl* type_alias = nullptr;
+			for (const auto& alias : tuple_element_decl->type_aliases()) {
+				if (alias.alias_name == type_alias_name) {
+					type_alias = &alias;
+					break;
 				}
+			}
+			if (!type_alias) {
+				FLASH_LOG(Codegen, Error, "Structured binding tuple-like protocol failed: tuple_element<", i, ", ",
+						  type_name_view, "> does not define alias 'type'");
+				return;
+			}
 
-				TypeCategory element_type = TypeCategory::Int;  // Default
-				int element_size = 32;
-				TypeIndex element_type_index{};
+			const TypeSpecifierNode* element_type_spec = nullptr;
+			if (type_alias->type_node.is<TypeSpecifierNode>()) {
+				element_type_spec = &type_alias->type_node.as<TypeSpecifierNode>();
+			} else if (type_alias->type_node.is<DeclarationNode>()) {
+				element_type_spec = &type_alias->type_node.as<DeclarationNode>().type_specifier_node();
+			}
+			if (!element_type_spec) {
+				FLASH_LOG(Codegen, Error, "Structured binding tuple-like protocol failed: tuple_element<", i, ", ",
+						  type_name_view, ">::type is not a resolvable type specifier");
+				return;
+			}
 
-				if (type_alias_it != getTypesByNameMap().end()) {
-					const TypeInfo* type_alias_info = type_alias_it->second;
-					element_type = type_alias_info->category();
-					element_type_index = type_alias_info->type_index_;
-					element_size = type_alias_info->fallback_size_bits_;
-					if (element_size == 0) {
-						element_size = get_type_size_bits(element_type);
-					}
-					FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_element<", i, ">::type = ", (int)element_type, ", size=", element_size);
+			TypeCategory element_type = element_type_spec->type();
+			TypeIndex element_type_index = element_type_spec->type_index().is_valid()
+											   ? element_type_spec->type_index()
+											   : nativeTypeIndex(element_type).withCategory(element_type);
+			int element_size = element_type_spec->size_in_bits();
+			if (element_size == 0) {
+				if (const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index)) {
+					element_size = element_type_info->sizeInBits();
 				}
-
-				// Now look for the get<N>() function
-				// First, try template registry with exact index
-				TemplateTypeArg index_arg;
-				index_arg.setType(TypeCategory::UnsignedLong);
-				index_arg.is_value = true;
-				index_arg.value = static_cast<int64_t>(i);
-				std::vector<TemplateTypeArg> get_template_args = {index_arg};
-
-				auto get_spec = gTemplateRegistry.lookupExactSpecialization("get", get_template_args);
-
-				if (get_spec.has_value() && get_spec->is<FunctionDeclarationNode>()) {
-					const FunctionDeclarationNode& get_func = get_spec->as<FunctionDeclarationNode>();
-
-					// Generate mangled name with template argument
-					const DeclarationNode& decl_node = get_func.decl_node();
-					const TypeSpecifierNode& return_type = decl_node.type_specifier_node();
-
-					std::vector<TypeSpecifierNode> param_types;
-					for (const auto& param : get_func.parameter_nodes()) {
-						param_types.push_back(param.as<DeclarationNode>().type_specifier_node());
-					}
-
-					std::vector<int64_t> template_args = {static_cast<int64_t>(i)};
-					auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
-						"get", return_type, param_types, template_args,
-						get_func.is_variadic(), StringHandle{}, buildNamespaceHandleFromStrings(current_namespace_stack_), false);
-
-					StringHandle mangled_handle = StringTable::getOrInternStringHandle(mangled.view());
-					binding_info.push_back({mangled_handle, element_type});
-
-					FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Found get<", i, "> with mangled name: ", mangled.view());
-				} else {
-					// Try symbol table lookup for explicit specializations
-					extern SymbolTable gSymbolTable;
-					auto get_overloads = gSymbolTable.lookup_all("get");
-
-					bool found_this_get = false;
-					size_t func_index = 0;
-
-					for (const auto& overload : get_overloads) {
-						if (!overload.is<FunctionDeclarationNode>())
-							continue;
-
-						const FunctionDeclarationNode& get_func = overload.as<FunctionDeclarationNode>();
-						const DeclarationNode& decl_node = get_func.decl_node();
-						const TypeSpecifierNode& return_type = decl_node.type_specifier_node();
-
-						// Check if this overload's return type matches our element type
-						// or if it's the i-th function declaration (by order)
-						bool type_matches = (return_type.category() == element_type);
-						if (element_type == TypeCategory::Struct) {
-							type_matches = type_matches && (return_type.type_index() == element_type_index);
-						}
-
-						if (type_matches || func_index == i) {
-							// Generate mangled name with template argument for this specialization
-							std::vector<TypeSpecifierNode> param_types;
-							for (const auto& param : get_func.parameter_nodes()) {
-								param_types.push_back(param.as<DeclarationNode>().type_specifier_node());
-							}
-
-							std::vector<int64_t> template_args = {static_cast<int64_t>(i)};
-							auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
-								"get", return_type, param_types, template_args,
-								get_func.is_variadic(), StringHandle{}, buildNamespaceHandleFromStrings(current_namespace_stack_), false);
-
-							StringHandle mangled_handle = StringTable::getOrInternStringHandle(mangled.view());
-							binding_info.push_back({mangled_handle, element_type});
-
-							FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Found get<", i, "> (symbol table) with mangled name: ", mangled.view());
-							found_this_get = true;
-							break;
-						}
-						func_index++;
-					}
-
-					if (!found_this_get) {
-						FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: get<", i, "> not found, falling back to aggregate");
-						all_get_found = false;
-					}
+				if (element_size == 0) {
+					element_size = get_type_size_bits(element_type);
 				}
 			}
 
-			// If we found all get<N>() functions, generate the tuple-like decomposition
-			if (all_get_found && binding_info.size() == tuple_size_value) {
-				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: All get<> functions found, using tuple-like protocol");
-
-				// Generate calls to get<N>(e) for each binding
-				for (size_t i = 0; i < tuple_size_value; ++i) {
-					StringHandle binding_id = node.identifiers()[i];
-					std::string_view binding_name = StringTable::getStringView(binding_id);
-
-					auto [get_mangled_name, element_type] = binding_info[i];
-
-					// Look up element size from tuple_element type alias
-					int element_size = get_type_size_bits(element_type);
-					TypeIndex element_type_index{};
-
-					// Generate call to get<N>(hidden_var)
-					TempVar result_temp = var_counter.next();
-
-					CallOp call_op = createCallOp(
-						result_temp,
-						get_mangled_name,
-						nativeTypeIndex(element_type).withCategory(element_type),
-						SizeInBits{element_size},
-						false,
-						false);
-
-					// Pass the hidden variable as argument
-					TypedValue arg;
-					arg.setType(init_type);
-					arg.ir_type = toIrType(init_type);
-					arg.size_in_bits = SizeInBits{static_cast<int>(init_size)};
-					arg.value = hidden_var_handle;
-					arg.type_index = TypeIndex{init_type_index};
-					arg.ref_qualifier = ReferenceQualifier::LValueReference;	 // Pass by const reference
-					call_op.args.push_back(arg);
-
-					Token binding_token(Token::Type::Identifier, binding_name, 0, 0, 0);
-					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binding_token));
-
-					// Create the binding variable
-					VariableDeclOp binding_var_decl;
-					binding_var_decl.var_name = binding_id;
-					binding_var_decl.type_index = nativeTypeIndex(element_type);
-					binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(element_size)};
-					TypedValue init_val3;
-					init_val3.setType(element_type);
-					init_val3.size_in_bits = SizeInBits{static_cast<int>(element_size)};
-					init_val3.value = result_temp;
-					init_val3.type_index = element_type_index;
-					binding_var_decl.initializer = init_val3;
-
-					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
-
-					// Create synthetic declaration for symbol table
-					TypeSpecifierNode binding_type(element_type, TypeQualifier::None,
-												   static_cast<unsigned char>(element_size > 255 ? 255 : element_size), Token(), CVQualifier::None);
-					binding_type.set_type_index(element_type_index);
-
-					ASTNode binding_decl_node = ASTNode::emplace_node<DeclarationNode>(
-						ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
-						binding_token);
-					symbol_table.insert(binding_name, binding_decl_node);
-
-					FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Created tuple binding '", binding_name,
-							  "' via get<", i, ">");
-				}
-
-				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", tuple_size_value, " bindings using tuple-like protocol");
-				return;	// Done - don't fall through to aggregate decomposition
+			std::vector<TemplateTypeArg> get_template_args = {index_arg};
+			auto get_spec = gTemplateRegistry.lookupExactSpecialization("get", get_template_args);
+			if (!get_spec.has_value()) {
+				get_spec = gTemplateRegistry.matchSpecializationPattern("get", get_template_args);
+			}
+			if (!get_spec.has_value()) {
+				get_spec = gTemplateRegistry.lookupExactSpecialization("std::get", get_template_args);
+			}
+			if (!get_spec.has_value()) {
+				get_spec = gTemplateRegistry.matchSpecializationPattern("std::get", get_template_args);
+			}
+			if (!get_spec.has_value()) {
+				FLASH_LOG(Codegen, Error, "Structured binding tuple-like protocol failed: missing get<", i,
+						  ">(...) specialization");
+				return;
 			}
 
-			// Fall through to aggregate decomposition
-			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Falling through to aggregate decomposition");
+			const FunctionDeclarationNode* get_func = get_function_decl_node(*get_spec);
+			if (!get_func) {
+				FLASH_LOG(Codegen, Error, "Structured binding tuple-like protocol failed: get<", i,
+						  "> specialization is not a function declaration");
+				return;
+			}
+
+			const DeclarationNode& decl_node = get_func->decl_node();
+			const TypeSpecifierNode& return_type = decl_node.type_specifier_node();
+
+			std::vector<TypeSpecifierNode> param_types;
+			for (const auto& param : get_func->parameter_nodes()) {
+				param_types.push_back(param.as<DeclarationNode>().type_specifier_node());
+			}
+
+			std::vector<int64_t> template_args = {static_cast<int64_t>(i)};
+			StringHandle namespace_handle = get_func->namespace_handle().isGlobal()
+												? StringHandle{}
+												: gNamespaceRegistry.getQualifiedNameHandle(get_func->namespace_handle());
+			auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
+				decl_node.name(), return_type, param_types, template_args,
+				get_func->is_variadic(), namespace_handle, get_func->namespace_handle(), false);
+
+			binding_info.push_back({
+				StringTable::getOrInternStringHandle(mangled.view()),
+				element_type,
+				element_type_index,
+				element_size
+			});
+			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_element<", i, ">::type resolved, get<",
+					  i, "> -> ", mangled.view());
 		}
+
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: All get<> functions found, using tuple-like protocol");
+
+		// Generate calls to get<N>(e) for each binding
+		for (size_t i = 0; i < tuple_size_value; ++i) {
+			StringHandle binding_id = node.identifiers()[i];
+			std::string_view binding_name = StringTable::getStringView(binding_id);
+			const TupleBindingInfo& current_binding = binding_info[i];
+
+			// Generate call to get<N>(hidden_var)
+			TempVar result_temp = var_counter.next();
+
+			CallOp call_op = createCallOp(
+				result_temp,
+				current_binding.get_mangled_name,
+				current_binding.element_type_index,
+				SizeInBits{current_binding.element_size},
+				false,
+				false);
+
+			// Pass the hidden variable as argument
+			TypedValue arg;
+			arg.setType(init_type);
+			arg.ir_type = toIrType(init_type);
+			arg.size_in_bits = SizeInBits{static_cast<int>(init_size)};
+			arg.value = hidden_var_handle;
+			arg.type_index = TypeIndex{init_type_index};
+			arg.ref_qualifier = ReferenceQualifier::LValueReference;	 // Pass by const reference
+			call_op.args.push_back(arg);
+
+			Token binding_token(Token::Type::Identifier, binding_name, 0, 0, 0);
+			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binding_token));
+
+			// Create the binding variable
+			VariableDeclOp binding_var_decl;
+			binding_var_decl.var_name = binding_id;
+			binding_var_decl.type_index = current_binding.element_type_index;
+			binding_var_decl.size_in_bits = SizeInBits{current_binding.element_size};
+			TypedValue init_val3;
+			init_val3.setType(current_binding.element_type);
+			init_val3.size_in_bits = SizeInBits{current_binding.element_size};
+			init_val3.value = result_temp;
+			init_val3.type_index = current_binding.element_type_index;
+			binding_var_decl.initializer = init_val3;
+
+			ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
+
+			// Create synthetic declaration for symbol table
+			TypeSpecifierNode binding_type(
+				current_binding.element_type,
+				TypeQualifier::None,
+				static_cast<unsigned char>(current_binding.element_size > 255 ? 255 : current_binding.element_size),
+				Token(),
+				CVQualifier::None);
+			binding_type.set_type_index(current_binding.element_type_index);
+
+			ASTNode binding_decl_node = ASTNode::emplace_node<DeclarationNode>(
+				ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
+				binding_token);
+			symbol_table.insert(binding_name, binding_decl_node);
+
+			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Created tuple binding '", binding_name,
+					  "' via get<", i, ">");
+		}
+
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", tuple_size_value, " bindings using tuple-like protocol");
+		return;	// Done - don't fall through to aggregate decomposition
 	}
 
 	// Step 6: Aggregate (struct) decomposition
