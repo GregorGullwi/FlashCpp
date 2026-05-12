@@ -14,6 +14,7 @@
 #include "StringLiteralTokenUtils.h"
 #include "Parser_FunctionTypeHelpers.h"
 #include "ParserInternal.h"
+#include "NameMangling.h"
 #include <algorithm>
 
 void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec) {
@@ -2584,7 +2585,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		}
 	} else if (node.is<StructuredBindingNode>()) {
 		const auto& binding = node.as<StructuredBindingNode>();
-		normalizeExpression(binding.initializer(), ctx);
+		normalizeStructuredBinding(binding, ctx);
 	} else if (node.is<ThrowStatementNode>()) {
 		const auto& throw_stmt = node.as<ThrowStatementNode>();
 		if (throw_stmt.expression().has_value()) {
@@ -2720,6 +2721,232 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 	}
 	// BreakStatementNode, ContinueStatementNode, GotoStatementNode,
 	// LabelStatementNode, ThrowStatementNode, etc. - no children to walk in Phase 1
+}
+
+void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& binding, const SemanticContext& ctx) {
+	normalizeExpression(binding.initializer(), ctx);
+	structured_binding_plans_.erase(&binding);
+
+	auto initializer_type_opt = getExpressionType(binding.initializer());
+	if (!initializer_type_opt.has_value()) {
+		return;
+	}
+
+	const TypeSpecifierNode& initializer_type = *initializer_type_opt;
+	if (initializer_type.category() != TypeCategory::Struct || !initializer_type.type_index().is_valid()) {
+		return;
+	}
+
+	const TypeInfo* init_type_info = tryGetTypeInfo(initializer_type.type_index());
+	if (!init_type_info) {
+		return;
+	}
+
+	TemplateTypeArg object_type_arg;
+	object_type_arg.type_index = initializer_type.type_index();
+	object_type_arg.setType(initializer_type.category());
+
+	auto resolve_struct_specialization = [&](std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) -> const StructDeclarationNode* {
+		auto specialization = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
+		if (!specialization.has_value()) {
+			specialization = gTemplateRegistry.matchSpecializationPattern(template_name, template_args);
+		}
+		if (!specialization.has_value() || !specialization->is<StructDeclarationNode>()) {
+			return nullptr;
+		}
+		return &specialization->as<StructDeclarationNode>();
+	};
+
+	auto resolve_type_info = [&](const StructDeclarationNode* struct_decl) -> const TypeInfo* {
+		if (!struct_decl) {
+			return nullptr;
+		}
+		if (const TypeInfo* type_info = findTypeByName(struct_decl->name())) {
+			return type_info;
+		}
+		auto type_it = getTypesByNameMap().find(struct_decl->name());
+		return (type_it != getTypesByNameMap().end()) ? type_it->second : nullptr;
+	};
+
+	std::vector<TemplateTypeArg> tuple_size_args = {object_type_arg};
+	const StructDeclarationNode* tuple_size_decl = resolve_struct_specialization("tuple_size", tuple_size_args);
+	if (!tuple_size_decl) {
+		tuple_size_decl = resolve_struct_specialization("std::tuple_size", tuple_size_args);
+	}
+	if (!tuple_size_decl) {
+		return;	// aggregate decomposition path
+	}
+
+	const TypeInfo* tuple_size_type_info = resolve_type_info(tuple_size_decl);
+	if (!tuple_size_type_info) {
+		throw CompileError("structured binding tuple-like protocol failed: unable to resolve tuple_size specialization type info");
+	}
+
+	size_t tuple_size_value = 0;
+	NamespaceHandle tuple_size_scope = gNamespaceRegistry.getOrCreateNamespace(
+		NamespaceRegistry::GLOBAL_NAMESPACE,
+		tuple_size_type_info->name());
+	Token tuple_size_value_token(Token::Type::Identifier, "value"sv, 0, 0, 0);
+	ASTNode tuple_size_value_expr = ASTNode::emplace_node<ExpressionNode>(
+		QualifiedIdentifierNode(tuple_size_scope, tuple_size_value_token));
+
+	ConstExpr::EvaluationContext eval_ctx(symbols_);
+	eval_ctx.parser = &parser_;
+	eval_ctx.sema = this;
+	auto eval_result = ConstExpr::Evaluator::evaluate(tuple_size_value_expr, eval_ctx);
+	if (!eval_result.success()) {
+		throw CompileError("structured binding tuple-like protocol failed: cannot evaluate tuple_size::value");
+	}
+	if (eval_result.is_uint()) {
+		tuple_size_value = static_cast<size_t>(eval_result.as_uint_raw());
+	} else {
+		long long signed_tuple_size = eval_result.as_int();
+		if (signed_tuple_size < 0) {
+			throw CompileError("structured binding tuple-like protocol failed: tuple_size::value is negative");
+		}
+		tuple_size_value = static_cast<size_t>(signed_tuple_size);
+	}
+
+	if (binding.identifiers().size() != tuple_size_value) {
+		throw CompileError("structured binding tuple-like protocol failed: identifier count does not match tuple_size::value");
+	}
+
+	auto make_index_arg = [](size_t index, TypeCategory index_type) -> TemplateTypeArg {
+		TemplateTypeArg index_arg;
+		index_arg.setType(index_type);
+		index_arg.is_value = true;
+		index_arg.value = static_cast<int64_t>(index);
+		return index_arg;
+	};
+
+	const TypeCategory index_arg_candidates[] = {
+		TypeCategory::UnsignedLong,
+		TypeCategory::UnsignedLongLong,
+		TypeCategory::UnsignedInt,
+		TypeCategory::LongLong,
+		TypeCategory::Int
+	};
+
+	StringHandle type_alias_name = StringTable::getOrInternStringHandle("type");
+
+	StructuredBindingPlan plan;
+	plan.decomposition_kind = StructuredBindingDecompositionKind::TupleLike;
+	plan.tuple_elements.reserve(tuple_size_value);
+
+	for (size_t i = 0; i < tuple_size_value; ++i) {
+		const StructDeclarationNode* tuple_element_decl = nullptr;
+		TemplateTypeArg resolved_index_arg;
+		for (TypeCategory index_type : index_arg_candidates) {
+			TemplateTypeArg index_arg = make_index_arg(i, index_type);
+			std::vector<TemplateTypeArg> tuple_element_args = {index_arg, object_type_arg};
+			tuple_element_decl = resolve_struct_specialization("tuple_element", tuple_element_args);
+			if (!tuple_element_decl) {
+				tuple_element_decl = resolve_struct_specialization("std::tuple_element", tuple_element_args);
+			}
+			if (tuple_element_decl) {
+				resolved_index_arg = index_arg;
+				break;
+			}
+		}
+		if (!tuple_element_decl) {
+			throw CompileError("structured binding tuple-like protocol failed: missing tuple_element specialization");
+		}
+
+		const TypeAliasDecl* type_alias = nullptr;
+		for (const auto& alias : tuple_element_decl->type_aliases()) {
+			if (alias.alias_name == type_alias_name) {
+				type_alias = &alias;
+				break;
+			}
+		}
+		if (!type_alias) {
+			throw CompileError("structured binding tuple-like protocol failed: tuple_element specialization is missing alias 'type'");
+		}
+
+		const TypeSpecifierNode* element_type_spec = nullptr;
+		if (type_alias->type_node.is<TypeSpecifierNode>()) {
+			element_type_spec = &type_alias->type_node.as<TypeSpecifierNode>();
+		} else if (type_alias->type_node.is<DeclarationNode>()) {
+			element_type_spec = &type_alias->type_node.as<DeclarationNode>().type_specifier_node();
+		}
+		if (!element_type_spec) {
+			throw CompileError("structured binding tuple-like protocol failed: tuple_element::type is not a resolvable type");
+		}
+
+		std::optional<ASTNode> get_spec;
+		{
+			std::vector<TemplateTypeArg> get_template_args = {resolved_index_arg};
+			get_spec = gTemplateRegistry.lookupExactSpecialization("get", get_template_args);
+			if (!get_spec.has_value()) {
+				get_spec = gTemplateRegistry.matchSpecializationPattern("get", get_template_args);
+			}
+			if (!get_spec.has_value()) {
+				get_spec = gTemplateRegistry.lookupExactSpecialization("std::get", get_template_args);
+			}
+			if (!get_spec.has_value()) {
+				get_spec = gTemplateRegistry.matchSpecializationPattern("std::get", get_template_args);
+			}
+		}
+		if (!get_spec.has_value()) {
+			throw CompileError("structured binding tuple-like protocol failed: missing get<I>(...) specialization");
+		}
+
+		const FunctionDeclarationNode* get_func = get_function_decl_node(*get_spec);
+		if (!get_func) {
+			throw CompileError("structured binding tuple-like protocol failed: get<I> specialization is not a function declaration");
+		}
+
+		const DeclarationNode& decl_node = get_func->decl_node();
+		const TypeSpecifierNode& return_type = decl_node.type_specifier_node();
+
+		std::vector<TypeSpecifierNode> param_types;
+		for (const auto& param : get_func->parameter_nodes()) {
+			param_types.push_back(param.as<DeclarationNode>().type_specifier_node());
+		}
+
+		std::vector<int64_t> template_args = {static_cast<int64_t>(i)};
+		StringHandle namespace_handle{};
+		if (!get_func->namespace_handle().isGlobal()) {
+			namespace_handle = gNamespaceRegistry.getQualifiedNameHandle(get_func->namespace_handle());
+		}
+		auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
+			decl_node.identifier_token().value(), return_type, param_types, template_args,
+			get_func->is_variadic(), namespace_handle, get_func->namespace_handle(), false);
+
+		TypeCategory element_type = element_type_spec->type();
+		TypeIndex element_type_index = element_type_spec->type_index();
+		if (!element_type_index.is_valid()) {
+			element_type_index = nativeTypeIndex(element_type).withCategory(element_type);
+		}
+		SizeInBits element_size{static_cast<int>(element_type_spec->size_in_bits())};
+		if (!element_size.is_set()) {
+			if (const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index)) {
+				element_size = element_type_info->sizeInBits();
+			}
+		}
+		if (!element_size.is_set()) {
+			element_size = SizeInBits{get_type_size_bits(element_type)};
+		}
+
+		plan.tuple_elements.push_back({
+			StringTable::getOrInternStringHandle(mangled.view()),
+			element_type,
+			element_type_index,
+			element_size
+		});
+
+		TypeSpecifierNode local_binding_type = *element_type_spec;
+		if (!local_binding_type.type_index().is_valid() && element_type_index.is_valid()) {
+			local_binding_type.set_type_index(element_type_index);
+		}
+		CanonicalTypeId binding_type_id = canonicalizeType(local_binding_type);
+		StringHandle binding_name = binding.identifiers()[i];
+		if (binding_name.isValid()) {
+			addLocalType(binding_name, binding_type_id);
+		}
+	}
+
+	structured_binding_plans_[&binding] = std::move(plan);
 }
 
 void SemanticAnalysis::normalizeBlock(const BlockNode& block, const SemanticContext& ctx) {
@@ -3404,6 +3631,11 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const void* key) const {
 	auto it = op_call_table_.find(key);
 	return it != op_call_table_.end() ? it->second : nullptr;
+}
+
+const SemanticAnalysis::StructuredBindingPlan* SemanticAnalysis::getStructuredBindingPlan(const StructuredBindingNode* key) const {
+	auto it = structured_binding_plans_.find(key);
+	return it != structured_binding_plans_.end() ? &it->second : nullptr;
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const CallExprNode* key) const {
