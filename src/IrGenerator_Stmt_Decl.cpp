@@ -3313,57 +3313,68 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 		tuple_size_it = getTypesByNameMap().find(std_tuple_size_handle);
 	}
 
-	// If tuple_size is specialized for this type, use tuple-like decomposition
+	const TypeInfo* tuple_size_type_info = nullptr;
 	if (tuple_size_it != getTypesByNameMap().end()) {
-		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Found tuple_size specialization, using tuple-like decomposition");
+		tuple_size_type_info = tuple_size_it->second;
+	} else {
+		TemplateTypeArg tuple_size_arg;
+		tuple_size_arg.type_index = init_type_index;
+		tuple_size_arg.setType(init_type);
+		std::vector<TemplateTypeArg> tuple_size_args = {tuple_size_arg};
 
-		const TypeInfo* tuple_size_type_info = tuple_size_it->second;
-		const StructTypeInfo* tuple_size_struct = tuple_size_type_info->getStructInfo();
+		auto tuple_size_spec = gTemplateRegistry.lookupExactSpecialization("tuple_size", tuple_size_args);
+		if (!tuple_size_spec.has_value()) {
+			tuple_size_spec = gTemplateRegistry.matchSpecializationPattern("tuple_size", tuple_size_args);
+		}
+
+		if (!tuple_size_spec.has_value()) {
+			tuple_size_spec = gTemplateRegistry.lookupExactSpecialization("std::tuple_size", tuple_size_args);
+		}
+		if (!tuple_size_spec.has_value()) {
+			tuple_size_spec = gTemplateRegistry.matchSpecializationPattern("std::tuple_size", tuple_size_args);
+		}
+
+		if (tuple_size_spec.has_value() && tuple_size_spec->is<StructDeclarationNode>()) {
+			StringHandle tuple_size_specialization_name = tuple_size_spec->as<StructDeclarationNode>().name();
+			tuple_size_type_info = findTypeByName(tuple_size_specialization_name);
+			if (!tuple_size_type_info) {
+				auto tuple_size_specialization_it = getTypesByNameMap().find(tuple_size_specialization_name);
+				if (tuple_size_specialization_it != getTypesByNameMap().end()) {
+					tuple_size_type_info = tuple_size_specialization_it->second;
+				}
+			}
+		}
+	}
+
+	// If tuple_size is specialized for this type, use tuple-like decomposition
+	if (tuple_size_type_info != nullptr) {
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Found tuple_size specialization, using tuple-like decomposition");
 
 		size_t tuple_size_value = 0;
 		bool found_value = false;
+		NamespaceHandle tuple_size_scope = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE,
+			tuple_size_type_info->name());
+		Token tuple_size_value_token(Token::Type::Identifier, "value"sv, 0, 0, 0);
+		ASTNode tuple_size_value_expr = ASTNode::emplace_node<ExpressionNode>(
+			QualifiedIdentifierNode(tuple_size_scope, tuple_size_value_token));
 
-		if (tuple_size_struct) {
-			StringHandle value_handle = StringTable::getOrInternStringHandle("value");
-			auto [tuple_size_member, owner_struct] = tuple_size_struct->findStaticMemberRecursive(value_handle);
-			if (tuple_size_member && owner_struct) {
-				if (tuple_size_member->initializer.has_value()) {
-					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-					eval_ctx.parser = parser_;
-					eval_ctx.sema = sema_;
-					auto eval_result = ConstExpr::Evaluator::evaluate(*tuple_size_member->initializer, eval_ctx);
-					if (eval_result.success()) {
-						long long evaluated_tuple_size = eval_result.as_int();
-						if (evaluated_tuple_size >= 0) {
-							tuple_size_value = static_cast<size_t>(evaluated_tuple_size);
-							found_value = true;
-							FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size::value = ", tuple_size_value);
-						} else {
-							FLASH_LOG(Codegen, Warning, "visitStructuredBindingNode: tuple_size::value is negative, falling back to aggregate decomposition");
-						}
-					}
-				}
-
-				if (!found_value) {
-					auto owner_type_it = getTypesByNameMap().find(owner_struct->getName());
-					if (owner_type_it != getTypesByNameMap().end() && owner_type_it->second) {
-						const TypeInfo* owner_type_info = owner_type_it->second;
-						std::string_view owner_base_template = StringTable::getStringView(owner_type_info->baseTemplateName());
-						if (owner_type_info->isTemplateInstantiation() &&
-							(owner_base_template == "integral_constant" || owner_base_template == "std::integral_constant")) {
-							const auto& owner_template_args = owner_type_info->templateArgs();
-							if (owner_template_args.size() >= 2 && owner_template_args[1].is_value) {
-								long long evaluated_tuple_size = owner_template_args[1].intValue();
-								if (evaluated_tuple_size >= 0) {
-									tuple_size_value = static_cast<size_t>(evaluated_tuple_size);
-									found_value = true;
-									FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size::value (integral_constant base) = ", tuple_size_value);
-								}
-							}
-						}
-					}
-				}
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		eval_ctx.parser = parser_;
+		eval_ctx.sema = sema_;
+		auto eval_result = ConstExpr::Evaluator::evaluate(tuple_size_value_expr, eval_ctx);
+		if (eval_result.success()) {
+			long long evaluated_tuple_size = eval_result.as_int();
+			if (evaluated_tuple_size >= 0) {
+				tuple_size_value = static_cast<size_t>(evaluated_tuple_size);
+				found_value = true;
+				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size::value = ", tuple_size_value);
+			} else {
+				FLASH_LOG(Codegen, Warning, "visitStructuredBindingNode: tuple_size::value is negative, falling back to aggregate decomposition");
 			}
+		} else {
+			FLASH_LOG(Codegen, Warning, "visitStructuredBindingNode: tuple_size::value evaluation failed for '",
+					  StringTable::getStringView(tuple_size_type_info->name()), "': ", eval_result.error_message);
 		}
 
 		if (!found_value) {
