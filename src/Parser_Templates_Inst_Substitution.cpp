@@ -775,6 +775,44 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 
 	result.resolved_type_info =
 		findTypeByName(StringTable::getOrInternStringHandle(result.instantiated_name));
+	if (alias_node != nullptr &&
+		!alias_node->is_deferred()) {
+		const TypeSpecifierNode& alias_target_type = alias_node->target_type_node();
+		if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_type.type_index());
+			alias_target_info != nullptr && alias_target_info->isTemplateInstantiation()) {
+			std::vector<TemplateTypeArg> concrete_target_args =
+				materializeTemplateArgs(
+					*alias_target_info,
+					alias_node->template_parameters(),
+					template_args);
+			StringHandle qualified_target_template_name =
+				gNamespaceRegistry.buildQualifiedIdentifier(
+					alias_target_info->sourceNamespace(),
+					alias_target_info->baseTemplateName());
+			std::string_view target_template_name =
+				StringTable::getStringView(qualified_target_template_name);
+			if (target_template_name.empty()) {
+				target_template_name =
+					StringTable::getStringView(alias_target_info->baseTemplateName());
+			}
+			if (!target_template_name.empty()) {
+				AliasTemplateMaterializationResult materialized_target =
+					materializeTemplateInstantiationForLookup(
+						target_template_name,
+						concrete_target_args);
+				if (materialized_target.resolved_type_info == nullptr &&
+					qualified_target_template_name != alias_target_info->baseTemplateName()) {
+					materialized_target = materializeTemplateInstantiationForLookup(
+						StringTable::getStringView(alias_target_info->baseTemplateName()),
+						concrete_target_args);
+				}
+				if (!materialized_target.instantiated_name.empty() ||
+					materialized_target.resolved_type_info != nullptr) {
+					result = std::move(materialized_target);
+				}
+			}
+		}
+	}
 	const size_t alias_template_member_sep = alias_template_name.rfind("::");
 	const bool is_qualified_alias_template =
 		alias_template_member_sep != std::string_view::npos;
@@ -1375,6 +1413,53 @@ std::string_view Parser::instantiate_and_register_base_template(
 		FLASH_LOG(Parser, Debug, "Base class '", base_class_name, "' is a template alias - resolving");
 
 		const TemplateAliasNode& alias_node = alias_entry->as<TemplateAliasNode>();
+		if (!alias_node.is_deferred()) {
+			if (std::optional<TemplateTypeArg> rebound_alias_arg =
+					tryRebindAliasTargetTemplateArg(alias_node, template_args);
+				rebound_alias_arg.has_value() && !rebound_alias_arg->is_value) {
+				if (const TypeInfo* rebound_type_info = tryGetTypeInfo(rebound_alias_arg->type_index);
+					rebound_type_info != nullptr) {
+					base_class_name = StringTable::getStringView(rebound_type_info->name());
+					return base_class_name;
+				}
+				std::string_view rebound_builtin_name = getTypeName(rebound_alias_arg->category());
+				if (!rebound_builtin_name.empty()) {
+					base_class_name = rebound_builtin_name;
+					return base_class_name;
+				}
+			}
+
+			const TypeSpecifierNode& alias_target_type = alias_node.target_type_node();
+			if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_type.type_index());
+				alias_target_info != nullptr && alias_target_info->isTemplateInstantiation()) {
+				std::vector<TemplateTypeArg> concrete_target_args =
+					materializeTemplateArgs(
+						*alias_target_info,
+						alias_node.template_parameters(),
+						template_args);
+				StringHandle qualified_target_template_handle =
+					gNamespaceRegistry.buildQualifiedIdentifier(
+						alias_target_info->sourceNamespace(),
+						alias_target_info->baseTemplateName());
+				std::string_view target_template_name =
+					StringTable::getStringView(qualified_target_template_handle);
+				if (target_template_name.empty()) {
+					target_template_name =
+						StringTable::getStringView(alias_target_info->baseTemplateName());
+				}
+				if (!target_template_name.empty()) {
+					std::string_view mutable_target_name = target_template_name;
+					std::string_view instantiated_target_name =
+						instantiate_and_register_base_template(
+							mutable_target_name,
+							concrete_target_args);
+					if (!instantiated_target_name.empty()) {
+						base_class_name = instantiated_target_name;
+						return instantiated_target_name;
+					}
+				}
+			}
+		}
 
 		if (alias_node.is_deferred()) {
 			auto substituted_args_opt = materializeDeferredAliasTemplateArgs(alias_node, template_args);

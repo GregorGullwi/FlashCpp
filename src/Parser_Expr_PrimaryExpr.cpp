@@ -1188,6 +1188,16 @@ ParseResult Parser::parseMaterializedTemplateFunctionalCast(
 	const Token& source_token) {
 	std::string_view instantiated_type_name = materialized_owner.instantiated_name;
 	const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
+	if (!instantiated_type_name.empty()) {
+		AliasTemplateMaterializationResult canonical_owner =
+			resolveCanonicalInstantiatedOwnerForLookup(instantiated_type_name);
+		if (!canonical_owner.instantiated_name.empty()) {
+			instantiated_type_name = canonical_owner.instantiated_name;
+		}
+		if (canonical_owner.resolved_type_info != nullptr) {
+			instantiated_type_info = canonical_owner.resolved_type_info;
+		}
+	}
 	if (instantiated_type_name.empty()) {
 		return ParseResult::error(
 			"Failed to materialize class template for functional-style cast",

@@ -1757,6 +1757,17 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 				auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 				FLASH_LOG(Codegen, Debug, "findStaticMemberRecursive result: static_member=", (static_member != nullptr), ", owner_struct=", (owner_struct != nullptr));
 				if (static_member && owner_struct) {
+					if (context != ExpressionContext::LValueAddress &&
+						static_member->is_constexpr &&
+						static_member->initializer.has_value() &&
+						static_member->initializer->is<ExpressionNode>()) {
+						ExprResult constexpr_result =
+							tryEvaluateAsConstExpr(static_member->initializer->as<ExpressionNode>());
+						if (constexpr_result.effectiveIrType() != IrType::Void) {
+							return constexpr_result;
+						}
+					}
+
 						// Check if the owner struct is an incomplete template instantiation
 					auto owner_type_it = getTypesByNameMap().find(owner_struct->getName());
 					if (owner_type_it != getTypesByNameMap().end() && owner_type_it->second->is_incomplete_instantiation_) {

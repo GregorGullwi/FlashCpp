@@ -1661,6 +1661,17 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	// FIRST check if this is a static member (can be accessed via instance in C++)
 	auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(member_name));
 	if (static_member) {
+		if (context != ExpressionContext::LValueAddress &&
+			static_member->is_constexpr &&
+			static_member->initializer.has_value() &&
+			static_member->initializer->is<ExpressionNode>()) {
+			ExprResult constexpr_result =
+				tryEvaluateAsConstExpr(static_member->initializer->as<ExpressionNode>());
+			if (constexpr_result.effectiveIrType() != IrType::Void) {
+				return constexpr_result;
+			}
+		}
+
 		// This is a static member! Access it via GlobalLoad instead of MemberLoad
 		// Static members are accessed using qualified names (OwnerClassName::memberName)
 		// Use the owner_struct name, not the current struct, to get the correct qualified name

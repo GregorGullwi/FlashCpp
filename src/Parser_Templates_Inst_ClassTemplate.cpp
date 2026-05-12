@@ -6892,7 +6892,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							node.as<IdentifierNode>().name() == template_name;
 					});
 			}
-			const bool member_is_constexpr = static_member.is_constexpr;
+			bool member_is_constexpr = static_member.is_constexpr;
+			if (!member_is_constexpr &&
+				static_member.declaration.has_value() &&
+				static_member.declaration->is<VariableDeclarationNode>()) {
+				member_is_constexpr =
+					static_member.declaration->as<VariableDeclarationNode>().is_constexpr();
+			}
 
 			if (is_implicit_instantiation &&
 				member_needs_complex_substitution &&
