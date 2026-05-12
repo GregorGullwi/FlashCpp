@@ -970,7 +970,9 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	};
 
 	if (lazy_info.needs_substitution) {
-		(void)try_reparse_lazy_static_initializer();
+		if (!try_reparse_lazy_static_initializer()) {
+			substituted_initializer = lazy_info.initializer;
+		}
 	}
 
 	if (lazy_info.needs_substitution && lazy_info.initializer.has_value() &&

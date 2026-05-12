@@ -5071,17 +5071,38 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								// the whole expression as a dependent call that will be resolved during instantiation.
 								if (any_dependent) {
 									pending_explicit_template_args_.reset();
-									// Skip ::member<T>(args) segments — template args and call
-									// parens must be consumed inside the loop so multi-level
-									// expressions like A<T>::B<U>::C(args) are fully skipped.
+									std::string_view dependent_owner_name =
+										get_instantiated_class_name(template_name, *explicit_template_args);
+									StringHandle dependent_owner_handle =
+										StringTable::getOrInternStringHandle(dependent_owner_name);
+									if (getTypesByNameMap().find(dependent_owner_handle) == getTypesByNameMap().end()) {
+										TypeInfo& placeholder_type = add_empty_type_entry();
+										placeholder_type.fallback_size_bits_ = 0;
+										placeholder_type.name_ = dependent_owner_handle;
+										placeholder_type.is_incomplete_instantiation_ = true;
+										placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+										placeholder_type.setTemplateInstantiationInfo(
+											QualifiedIdentifier::fromQualifiedName(
+												template_name,
+												gSymbolTable.get_current_namespace_handle()),
+											toTemplateArgInfoList(*explicit_template_args));
+										getTypesByNameMap()[dependent_owner_handle] = &placeholder_type;
+									}
+
+									NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+										NamespaceRegistry::GLOBAL_NAMESPACE,
+										dependent_owner_handle);
+									Token final_identifier{};
 									while (peek() == "::"_tok) {
 										advance(); // consume ::
 										if (peek() == "template"_tok) {
 											advance(); // consume 'template' keyword
 										}
-										if (peek().is_identifier()) {
-											advance(); // consume member name
+										if (!peek().is_identifier()) {
+											return ParseResult::error("Expected identifier after '::'", peek_info());
 										}
+										final_identifier = peek_info();
+										advance(); // consume member name
 										// Skip template arguments on member if present (e.g., ::member<T>)
 										if (peek() == "<"_tok) {
 											skip_template_arguments();
@@ -5090,11 +5111,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										if (peek() == "("_tok) {
 											skip_balanced_parens();
 										}
+										if (peek() == "::"_tok) {
+											ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+												ns_handle,
+												final_identifier.handle());
+										}
 									}
 									FLASH_LOG_FORMAT(Parser, Debug,
 										"Deferred dependent qualified call: {}< dependent args >::...",
 										template_name);
-									result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+									if (final_identifier.type() != Token::Type::Identifier) {
+										return ParseResult::error("Expected dependent qualified member name", identifier_token);
+									}
+									result = emplace_node<ExpressionNode>(
+										QualifiedIdentifierNode(ns_handle, final_identifier));
 									return ParseResult::success(*result);
 								}
 								pending_explicit_template_args_.reset();
@@ -5876,17 +5906,38 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 						}
 						if (any_dependent) {
-							// Skip ::member<T>(args) segments — template args and call
-							// parens must be consumed inside the loop so multi-level
-							// expressions like A<T>::B<U>::C(args) are fully skipped.
+							std::string_view dependent_owner_name =
+								get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
+							StringHandle dependent_owner_handle =
+								StringTable::getOrInternStringHandle(dependent_owner_name);
+							if (getTypesByNameMap().find(dependent_owner_handle) == getTypesByNameMap().end()) {
+								TypeInfo& placeholder_type = add_empty_type_entry();
+								placeholder_type.fallback_size_bits_ = 0;
+								placeholder_type.name_ = dependent_owner_handle;
+								placeholder_type.is_incomplete_instantiation_ = true;
+								placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+								placeholder_type.setTemplateInstantiationInfo(
+									QualifiedIdentifier::fromQualifiedName(
+										identifier_token.value(),
+										gSymbolTable.get_current_namespace_handle()),
+									toTemplateArgInfoList(*explicit_template_args));
+								getTypesByNameMap()[dependent_owner_handle] = &placeholder_type;
+							}
+
+							NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+								NamespaceRegistry::GLOBAL_NAMESPACE,
+								dependent_owner_handle);
+							Token final_identifier{};
 							while (peek() == "::"_tok) {
 								advance(); // consume ::
 								if (peek() == "template"_tok) {
 									advance(); // consume 'template' keyword
 								}
-								if (peek().is_identifier()) {
-									advance(); // consume member name
+								if (!peek().is_identifier()) {
+									return ParseResult::error("Expected identifier after '::'", peek_info());
 								}
+								final_identifier = peek_info();
+								advance(); // consume member name
 								// Skip template arguments on member if present
 								if (peek() == "<"_tok) {
 									skip_template_arguments();
@@ -5895,11 +5946,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								if (peek() == "("_tok) {
 									skip_balanced_parens();
 								}
+								if (peek() == "::"_tok) {
+									ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+										ns_handle,
+										final_identifier.handle());
+								}
 							}
 							FLASH_LOG_FORMAT(Parser, Debug,
 								"Deferred dependent qualified call: {}< dependent args >::...",
 								identifier_token.value());
-							result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+							if (final_identifier.type() != Token::Type::Identifier) {
+								return ParseResult::error("Expected dependent qualified member name", identifier_token);
+							}
+							result = emplace_node<ExpressionNode>(
+								QualifiedIdentifierNode(ns_handle, final_identifier));
 							return ParseResult::success(*result);
 						}
 						return ParseResult::error(
