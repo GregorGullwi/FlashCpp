@@ -10,6 +10,6 @@ struct Nest<0> {
 };
 
 int main() {
-	using DeepType = Nest<30>;
+	using DeepType = Nest<39>;
 	return sizeof(DeepType) > 0 ? 0 : 1;
 }
