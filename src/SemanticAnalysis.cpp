@@ -4904,15 +4904,41 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 				throw InternalError("Unexpected expression value category for overload-resolution argument");
 		}
 	};
+	auto storeArgType = [this, &arg](const TypeSpecifierNode& type) {
+		if (arg.is<ExpressionNode>()) {
+			overload_resolution_arg_types_[getExpressionKey(arg)] = type;
+		}
+	};
+
+	if (arg.is<ExpressionNode>()) {
+		const auto& expr = arg.as<ExpressionNode>();
+		if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
+			const TypeSpecifierNode& ctor_type = ctor_call->type_node();
+			if (ctor_type.type_index().is_valid()) {
+				if (const TypeInfo* ctor_type_info = tryGetTypeInfo(ctor_type.type_index());
+					ctor_type_info && ctor_type_info->isEnum()) {
+					TypeSpecifierNode enum_arg_type(
+						ctor_type_info->type_index_.withCategory(TypeCategory::Enum),
+						ctor_type_info->sizeInBits(),
+						ctor_type.token(),
+						ctor_type.cv_qualifier(),
+						ReferenceQualifier::None);
+					applyExpressionValueCategory(enum_arg_type);
+					storeArgType(enum_arg_type);
+					if (inferred_type_id) {
+						CanonicalTypeDesc desc;
+						desc.type_index = ctor_type_info->type_index_.withCategory(TypeCategory::Enum);
+						*inferred_type_id = type_context_.intern(desc);
+					}
+					return enum_arg_type;
+				}
+			}
+		}
+	}
 	if (const CanonicalTypeId inferred_id = inferExpressionType(arg)) {
 		if (inferred_type_id)
 			*inferred_type_id = inferred_id;
 		TypeSpecifierNode arg_type = materializeTypeSpecifier(type_context_.get(inferred_id));
-		auto storeArgType = [this, &arg](const TypeSpecifierNode& type) {
-			if (arg.is<ExpressionNode>()) {
-				overload_resolution_arg_types_[getExpressionKey(arg)] = type;
-			}
-		};
 		applyExpressionValueCategory(arg_type);
 		storeArgType(arg_type);
 		return arg_type;

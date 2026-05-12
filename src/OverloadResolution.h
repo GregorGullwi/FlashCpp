@@ -834,8 +834,27 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type_index());
 	TypeIndex from_type_index = from_canonical.resolvedTypeIndex();
 	TypeIndex to_type_index = to_canonical.resolvedTypeIndex();
-	const TypeCategory from_type_category = from_type_index.category();
-	const TypeCategory to_type_category = to_type_index.category();
+	TypeCategory from_type_category = from_type_index.category();
+	TypeCategory to_type_category = to_type_index.category();
+
+	// Canonical aliases and parser placeholders can carry a stale category in the
+	// TypeIndex while the TypeInfo table has the concrete category (notably enum
+	// functional casts parsed through constructor-call syntax). Normalize category
+	// from TypeInfo when available so overload resolution compares the real types.
+	auto normalizeResolvedCategory = [](TypeIndex& type_index, TypeCategory& category) {
+		if (!type_index.is_valid()) {
+			return;
+		}
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+			const TypeCategory concrete = type_info->typeEnum();
+			if (concrete != TypeCategory::Invalid && concrete != category) {
+				type_index = type_index.withCategory(concrete);
+				category = concrete;
+			}
+		}
+	};
+	normalizeResolvedCategory(from_type_index, from_type_category);
+	normalizeResolvedCategory(to_type_index, to_type_category);
 
 	// If either type is still UserDefined with type_index=0, assume it's an unresolved type alias
 	// Allow conversion if the other type is an integral type (common for size_t, ptrdiff_t, etc.)

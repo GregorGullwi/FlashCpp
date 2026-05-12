@@ -388,6 +388,20 @@ static int resolveCodegenSizeBits(const TypeSpecifierNode& type_node, std::strin
 		}
 		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(resolved_type_node.type_index());
 		if (alias_info.type_index.is_valid()) {
+			// Alias may resolve to a non-struct concrete type (e.g. remove_reference<T>::type).
+			if (const TypeInfo* alias_type_info = tryGetTypeInfo(alias_info.type_index)) {
+				const int alias_size_bits = static_cast<int>(alias_type_info->sizeInBits().value);
+				if (alias_size_bits > 0) {
+					return alias_size_bits;
+				}
+			}
+			TypeSpecifierNode alias_resolved_type = resolved_type_node;
+			alias_resolved_type.set_type_index(alias_info.type_index);
+			alias_resolved_type.set_category(alias_info.typeEnum());
+			const int alias_spec_size_bits = getTypeSpecSizeBits(alias_resolved_type);
+			if (alias_spec_size_bits > 0) {
+				return alias_spec_size_bits;
+			}
 			if (const StructTypeInfo* alias_struct_info = tryGetStructTypeInfo(alias_info.type_index)) {
 				const int struct_size_bits = static_cast<int>(alias_struct_info->sizeInBits().value);
 				if (struct_size_bits > 0) {
