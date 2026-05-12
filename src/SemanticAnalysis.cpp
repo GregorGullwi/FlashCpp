@@ -79,11 +79,21 @@ bool markLazyMemberOdrUsedForMatchingConstness(
 	StringHandle owner_name,
 	const FunctionDeclarationNode& resolved_decl) {
 	LazyMemberKey member_key = LazyMemberKey::exact(owner_name, resolved_decl);
-	if (!lazy_registry.needsInstantiation(member_key)) {
-		return false;
+	if (lazy_registry.needsInstantiation(member_key)) {
+		lazy_registry.markOdrUsed(member_key);
+		return true;
 	}
-	lazy_registry.markOdrUsed(member_key);
-	return true;
+
+	LazyMemberKey opposite_const_key = LazyMemberKey::exact(
+		owner_name,
+		resolved_decl.decl_node().identifier_token().handle(),
+		!resolved_decl.is_const_member_function());
+	if (lazy_registry.needsInstantiation(opposite_const_key)) {
+		lazy_registry.markOdrUsed(opposite_const_key);
+		return true;
+	}
+
+	return false;
 }
 
 // Walk the receiver type and its bases looking for the instantiated owner that
@@ -6889,14 +6899,24 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 		return std::nullopt;
 	}
 
-	// Resolve a matching lazy-member entry. When the caller is indifferent to
-	// const-ness, fall back to the "Any" variant so both const and non-const
-	// candidates are considered. getLazyMemberInfo / getLazyMemberInfoAny already
-	// return nullopt when nothing is registered or the entry was already marked
-	// instantiated, so no separate needsInstantiation pre-check is needed.
-	LazyMemberKey query_key = is_const_member.has_value()
-		? LazyMemberKey::exact(struct_name, member_name, *is_const_member)
-		: LazyMemberKey::anyConst(struct_name, member_name);
+	if (!is_const_member.has_value()) {
+		std::optional<ASTNode> first_materialized;
+		if (std::optional<ASTNode> non_const_instantiated =
+				ensureMemberFunctionMaterialized(struct_name, member_name, false)) {
+			first_materialized = non_const_instantiated;
+		}
+		if (std::optional<ASTNode> const_instantiated =
+				ensureMemberFunctionMaterialized(struct_name, member_name, true);
+			const_instantiated.has_value() && !first_materialized.has_value()) {
+			first_materialized = const_instantiated;
+		}
+		return first_materialized;
+	}
+
+	// Resolve a matching lazy-member entry. getLazyMemberInfo returns nullopt
+	// when nothing is registered or the entry was already marked instantiated,
+	// so no separate needsInstantiation pre-check is needed.
+	LazyMemberKey query_key = LazyMemberKey::exact(struct_name, member_name, *is_const_member);
 	auto instantiated = parser_.instantiateLazyMemberIfNeeded(query_key);
 	if (!instantiated.has_value()) {
 		return std::nullopt;

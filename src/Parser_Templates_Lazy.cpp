@@ -41,6 +41,28 @@ TemplateEnvironment buildLazySubstitutionEnvironment(
 } // namespace
 
 std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey& member_key) {
+	if (!member_key.hasExactConstness()) {
+		std::optional<ASTNode> first_instantiated;
+		if (std::optional<ASTNode> non_const_instantiated =
+				instantiateLazyMemberIfNeeded(
+					LazyMemberKey::exact(
+						member_key.instantiated_class_name,
+						member_key.member_function_name,
+						false))) {
+			first_instantiated = non_const_instantiated;
+		}
+		if (std::optional<ASTNode> const_instantiated =
+				instantiateLazyMemberIfNeeded(
+					LazyMemberKey::exact(
+						member_key.instantiated_class_name,
+						member_key.member_function_name,
+						true));
+			const_instantiated.has_value() && !first_instantiated.has_value()) {
+			first_instantiated = const_instantiated;
+		}
+		return first_instantiated;
+	}
+
 	auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
 	auto lazy_info_opt = lazy_registry.getLazyMemberInfo(member_key);
 	if (!lazy_info_opt.has_value()) {
