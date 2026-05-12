@@ -515,6 +515,22 @@ struct StructTypeInfo {
 		static_members.back().setArrayInfo(is_array, std::move(array_dimensions));
 	}
 
+	void addStaticMember(StringHandle member_name, TypeIndex type_index, size_t size, size_t member_alignment,
+						 AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
+						 ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::span<const size_t> array_dimensions,
+						 std::optional<ASTNode> declaration,
+						 std::optional<SaveHandle> initializer_position, bool is_constexpr) {
+		static_members.push_back(StructStaticMember(member_name, type_index, size, member_alignment, access, initializer, cv_qual, ref_qual, ptr_depth));
+		if (declaration.has_value()) {
+			static_members.back().setDeclaration(*declaration);
+		}
+		if (initializer_position.has_value()) {
+			static_members.back().setInitializerPosition(*initializer_position);
+		}
+		static_members.back().setArrayInfo(is_array, array_dimensions);
+		static_members.back().is_constexpr = is_constexpr;
+	}
+
 	// Update an existing static member's initializer (used for lazy instantiation)
 	// Returns true if the member was found and updated, false otherwise
 	// Note: Uses linear search through static_members vector. This is acceptable because:

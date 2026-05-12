@@ -3,6 +3,7 @@
 #include <cassert>
 #include <format>
 #include <functional>
+#include <span>
 
 enum class TypeQualifier {
 	None,
@@ -1261,6 +1262,7 @@ struct StructStaticMember {
 	bool is_array = false;
 	std::vector<size_t> array_dimensions;
 	int pointer_depth = 0;  // Pointer indirection level (e.g., int* = 1, int** = 2)
+	bool is_constexpr = false;
 
 	// Pre-materialized initializer (Phase C).
 	// When populated, codegen prefers this over re-evaluating the raw AST initializer.
@@ -1268,6 +1270,7 @@ struct StructStaticMember {
 
 	// Convenience helpers for common checks
 	bool is_const() const { return hasCVQualifier(cv_qualifier, CVQualifier::Const); }
+	bool isStaticConstexpr() const { return is_constexpr; }
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 	TypeCategory memberType() const { return type_index.category(); }
@@ -1281,6 +1284,11 @@ struct StructStaticMember {
 	void setArrayInfo(bool is_arr, std::vector<size_t> dims) {
 		is_array = is_arr;
 		array_dimensions = std::move(dims);
+	}
+
+	void setArrayInfo(bool is_arr, std::span<const size_t> dims) {
+		is_array = is_arr;
+		array_dimensions.assign(dims.begin(), dims.end());
 	}
 
 	void setDeclaration(ASTNode decl) {

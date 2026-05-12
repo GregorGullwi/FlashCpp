@@ -4097,7 +4097,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.is_array,
 						static_member.array_dimensions,
 						static_member.declaration,
-						static_member.initializer_position);
+						static_member.initializer_position,
+						static_member.is_constexpr);
 				}
 			}
 
@@ -6915,6 +6916,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.is_array = static_member.is_array;
 				lazy_info.array_dimensions = static_member.array_dimensions;
 				lazy_info.pointer_depth = static_member.pointer_depth;
+				lazy_info.is_constexpr = static_member.is_constexpr;
 				lazy_info.template_params = template_params_typed;
 				lazy_info.template_args = template_args_to_use;
 				lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
@@ -6944,7 +6946,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					is_array_member,
 					resolved_array_dimensions,
 					static_member.declaration,
-					static_member.initializer_position);
+					static_member.initializer_position,
+					static_member.is_constexpr);
 
 				continue; // Skip the eager processing below
 			}
@@ -6988,7 +6991,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				is_array_member,
 				resolved_array_dimensions,
 				static_member.declaration,
-				static_member.initializer_position);
+				static_member.initializer_position,
+				static_member.is_constexpr);
 			if (normalized_initializer.has_value()) {
 				if (StructStaticMember* instantiated_static_member =
 						struct_info->findStaticMember(static_member.getName())) {
@@ -7027,7 +7031,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				static_member.is_array,
 				static_member.array_dimensions,
 				static_member.declaration,
-				static_member.initializer_position);
+				static_member.initializer_position,
+				static_member.is_constexpr);
 		}
 	}
 	std::vector<ASTNode> instantiated_nested_class_nodes;
@@ -7164,7 +7169,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.is_array,
 						static_member.array_dimensions,
 						static_member.declaration,
-						static_member.initializer_position);
+						static_member.initializer_position,
+						static_member.is_constexpr);
 					instantiated_nested_struct_ref.add_static_member(
 						static_member.getName(),
 						substituted_type_index,
@@ -7177,7 +7183,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.pointer_depth,
 						static_member.is_array,
 						static_member.array_dimensions,
-						static_member.initializer_position);
+						static_member.initializer_position,
+						static_member.is_constexpr);
 				}
 			};
 
@@ -7766,7 +7773,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			static_member.pointer_depth,
 			static_member.is_array,
 			static_member.array_dimensions,
-			static_member.initializer_position);
+			static_member.initializer_position,
+			static_member.is_constexpr);
 	}
 
 	for (auto& nested_class_node : instantiated_nested_class_nodes) {
@@ -9227,7 +9235,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					is_array,
 					std::move(array_dimensions),
 					std::nullopt,
-					std::nullopt);
+					std::nullopt,
+					false);
 
 				FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name,
 						  " to instantiated struct ", instantiated_name);
@@ -9495,7 +9504,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.is_array,
 						static_member.array_dimensions,
 						static_member.declaration,
-						static_member.initializer_position);
+						static_member.initializer_position,
+						static_member.is_constexpr);
 				}
 			}
 		}

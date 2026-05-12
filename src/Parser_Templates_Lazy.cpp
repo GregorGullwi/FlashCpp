@@ -1217,7 +1217,8 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			lazy_info.is_array,
 			lazy_info.array_dimensions,
 			lazy_info.declaration,
-			lazy_info.initializer_position);
+			lazy_info.initializer_position,
+			lazy_info.is_constexpr);
 	}
 
 	// Mark as instantiated (remove from lazy registry)

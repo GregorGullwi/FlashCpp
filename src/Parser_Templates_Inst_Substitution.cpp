@@ -2646,7 +2646,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				static_member.is_array,
 				static_member.array_dimensions,
 				std::nullopt,
-				std::nullopt);
+				std::nullopt,
+				static_member.is_constexpr);
 		}
 	} else {
 		// Fall back to the specialization's StructTypeInfo when the AST does not

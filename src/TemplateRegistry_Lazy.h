@@ -714,6 +714,7 @@ struct LazyStaticMemberInfo {
 	bool is_array = false;
 	std::vector<size_t> array_dimensions;
 	int pointer_depth = 0;					   // Pointer depth (e.g., 1 for int*, 2 for int**)
+	bool is_constexpr = false;
 	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters from class template
 	std::vector<TemplateTypeArg> template_args; // Concrete template arguments
 	TemplateEnvironmentSnapshot outer_template_environment_snapshot;

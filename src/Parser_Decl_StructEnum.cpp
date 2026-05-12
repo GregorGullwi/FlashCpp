@@ -1590,7 +1590,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				is_array,
 				std::move(array_dimensions),
 				type_and_name_result.node(),  // declaration AST for lazy re-parse
-				initializer_position);        // saved lexer position for lazy re-parse
+				initializer_position,         // saved lexer position for lazy re-parse
+				is_static_constexpr);
 
 			continue;
 		}

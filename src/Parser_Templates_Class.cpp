@@ -5251,7 +5251,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 							ptr_depth,
 							is_array,
 							std::move(array_dimensions),
-							initializer_position);
+							initializer_position,
+							is_constexpr);
 					}
 					continue;
 				}
@@ -5575,12 +5576,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 				// Check if it's const or constexpr
 				CVQualifier cv_qual = CVQualifier::None;
+				bool is_static_constexpr = false;
 				while (peek().is_keyword()) {
 					auto kw = peek();
 					if (kw == "const"_tok) {
 						cv_qual |= CVQualifier::Const;
 						advance();
 					} else if (kw == "constexpr"_tok) {
+						is_static_constexpr = true;
 						cv_qual |= CVQualifier::Const;
 						advance();
 					} else if (kw == "inline"_tok) {
@@ -5666,7 +5669,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						static_cast<int>(type_spec.pointer_depth()),
 						is_array,
 						std::move(array_dimensions),
-						initializer_position);
+						initializer_position,
+						is_static_constexpr);
 				}
 				continue;
 			}
