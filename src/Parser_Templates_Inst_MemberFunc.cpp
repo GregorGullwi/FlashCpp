@@ -1124,7 +1124,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// crashing on the guard page.
 	static thread_local size_t s_member_inst_depth = 0;
 	static thread_local bool s_member_inst_depth_warned = false;
-	static constexpr size_t MAX_MEMBER_INST_DEPTH = 24;
+	static constexpr size_t MAX_MEMBER_INST_DEPTH = 40;
 	++s_member_inst_depth;
 	struct DepthGuard {
 		~DepthGuard() {

@@ -1464,7 +1464,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// emit a diagnostic before the kernel kills us.
 	static thread_local size_t s_instantiation_nesting_depth = 0;
 	static thread_local bool s_instantiation_depth_warned = false;
-	static constexpr size_t MAX_INSTANTIATION_NESTING_DEPTH = 24;
+	static constexpr size_t MAX_INSTANTIATION_NESTING_DEPTH = 40;
 	++s_instantiation_nesting_depth;
 	// Iteration counters are file-scope thread_locals reset once per parse() call;
 	// see resetTemplateInstantiationCounters().  The NestingGuard here only manages
