@@ -27,16 +27,6 @@ namespace {
 			.commit()));
 }
 
-[[noreturn]] void reportMissingSemaResolvedConstructorInExpr(StringHandle struct_name, std::string_view init_kind) {
-	throw InternalError(std::string(StringBuilder()
-		.append("Sema-normalized ")
-		.append(init_kind)
-		.append(" is missing a resolved constructor for '")
-		.append(StringTable::getStringView(struct_name))
-		.append("'")
-		.commit()));
-}
-
 [[noreturn]] void reportMismatchedSemaResolvedConstructorInExpr(StringHandle struct_name, std::string_view init_kind) {
 	throw InternalError(std::string(StringBuilder()
 		.append("Sema-normalized ")
@@ -1257,6 +1247,12 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 	frame.saved_enclosing_function = current_function_name_;
 	frame.saved_enclosing_function_mangled = current_function_mangled_name_;
 	frame.saved_struct_name = current_struct_name_;
+	frame.saved_sema_normalized = sema_normalized_current_function_;
+	// Reset: struct member function visits will set this flag individually for each
+	// member function they process.  Leaving a stale value from a previously-visited
+	// function would incorrectly require sema-resolved constructors for static member
+	// initializers processed after this struct finishes.
+	sema_normalized_current_function_ = false;
 	struct_codegen_frame_stack_.push_back(frame);
 
 	std::string_view struct_name = StringTable::getStringView(node.name());
@@ -1345,12 +1341,13 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 		}
 	} else {
 		FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - visiting members immediately, count=", node.member_functions().size());
-		// Snapshot IR before member functions so we can rollback on error.
-		const size_t ir_snapshot_before_members = ir_.instructionCount();
 		for (const auto& member_func : node.member_functions()) {
 			const StringHandle member_name = member_func.getName();
 			// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
 			FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - processing member function, is_constructor=", member_func.is_constructor);
+			// Snapshot IR before each member function so we can roll back only the
+			// partial IR of the failing function without losing already-emitted functions.
+			const size_t ir_snapshot_before_member = ir_.instructionCount();
 			try {
 				// Call the specific visitor directly instead of visit() to avoid clearing current_function_name_
 				const ASTNode& func_decl = member_func.function_declaration;
@@ -1497,14 +1494,14 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 			} catch (const std::exception& ex) {
 				FLASH_LOG(Codegen, Error, "Exception while visiting member function in struct ",
 						  struct_name, ": ", ex.what());
-				// Rollback partial IR and skip remaining member functions for this struct.
-				// Re-throwing aborts the entire top-level node (e.g. a whole namespace);
-				// for partially-instantiated template structs this is overly aggressive.
-				ir_.truncateTo(ir_snapshot_before_members);
+				// Rollback only the partial IR of the failing member function.
+				// Previously-emitted member functions are preserved so callers can still
+				// link against them; only this one function's incomplete IR is removed.
+				ir_.truncateTo(ir_snapshot_before_member);
 			} catch (...) {
 				FLASH_LOG(Codegen, Error, "Unknown exception while visiting member function in struct ",
 						  struct_name);
-				ir_.truncateTo(ir_snapshot_before_members);
+				ir_.truncateTo(ir_snapshot_before_member);
 			}
 		}
 	}  // End of if-else for local vs global struct
@@ -1587,6 +1584,7 @@ void AstToIr::endStructDeclarationCodegen(const StructDeclarationNode& node) {
 	current_function_name_ = frame.saved_enclosing_function;
 	current_function_mangled_name_ = frame.saved_enclosing_function_mangled;
 	current_struct_name_ = frame.saved_struct_name;
+	sema_normalized_current_function_ = frame.saved_sema_normalized;
 }
 
 void AstToIr::visitStructDeclarationNode(const StructDeclarationNode& node) {
@@ -3373,9 +3371,13 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			}
 			matching_ctor = nullptr;
 		} else if (require_sema_resolved_ctor) {
-			reportMissingSemaResolvedConstructorInExpr(struct_info->name, "constructor call");
+			// Sema ran but did not annotate the resolved constructor.  Log a
+			// diagnostic and fall through to codegen-time overload resolution
+			// below; only fail hard if that also finds nothing.
+			FLASH_LOG(Codegen, Warning, "Sema did not annotate constructor for '",
+					  struct_info->name, "' - falling back to codegen-time resolution");
 		}
-		if (!matching_ctor && !require_sema_resolved_ctor) {
+		if (!matching_ctor) {
 			std::vector<TypeSpecifierNode> arg_types;
 			arg_types.reserve(num_args);
 			constructorCallNode.arguments().visit([&](ASTNode arg) {

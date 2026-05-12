@@ -4662,7 +4662,35 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					ctor_member_ctx && ctor_member_ctx->type_index.is_valid()) {
 					resolved_type = resolveTypeSpecifierForSelfReference(resolved_type, ctor_member_ctx->type_index);
 				}
-				return canonicalizeType(resolved_type);
+				if (const CanonicalTypeId id = canonicalizeType(resolved_type))
+					return id;
+				// Fallback: the TypeSpecifierNode may carry an unresolved type name
+				// (e.g. a functional enum cast like `__cmp_cat::_Ord(value)` where the
+				// TypeIndex was not baked in at parse time).  Try looking up the type by
+				// the token name so constructor overload resolution can find the right overload.
+				{
+					StringHandle name_handle = resolved_type.token().handle();
+					FLASH_LOG(Types, Trace, "inferExpressionType ConstructorCallNode fallback: token=",
+							  name_handle.isValid() ? StringTable::getStringView(name_handle) : "(invalid)",
+							  " type_index.valid=", resolved_type.type_index().is_valid(),
+							  " category=", static_cast<int>(resolved_type.type_index().category()));
+					if (name_handle.isValid()) {
+						auto it = getTypesByNameMap().find(name_handle);
+						if (it == getTypesByNameMap().end() && resolved_type.type_index().is_valid()) {
+							// The TypeIndex carries the category/index; derive the registered name
+							// from it as an alternative lookup key.
+							if (const TypeInfo* ti = tryGetTypeInfo(resolved_type.type_index())) {
+								it = getTypesByNameMap().find(ti->name());
+							}
+						}
+						if (it != getTypesByNameMap().end() && it->second) {
+							CanonicalTypeDesc desc;
+							desc.type_index = it->second->type_index_;
+							return type_context_.intern(desc);
+						}
+					}
+				}
+				return {};
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				const ASTNode& target_type_node = e.target_type();
 				if (target_type_node.has_value() && target_type_node.template is<TypeSpecifierNode>())
@@ -6977,6 +7005,10 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		// that sema does not yet mirror locally.
 		CanonicalTypeId inferred_arg_type_id{};
 		auto arg_type_opt = buildOverloadResolutionArgType(arg, &inferred_arg_type_id);
+		FLASH_LOG_FORMAT(Types, Trace, "tryAnnotateCtorArgConversion: ctor='{}' arg_type={} arg_cat={}",
+			StringTable::getStringView(type_info->name()),
+			arg_type_opt.has_value() ? "ok" : "nullopt",
+			arg_type_opt.has_value() ? static_cast<int>(arg_type_opt->category()) : -1);
 		if (!arg_type_opt.has_value()) {
 			arg_types.clear();
 			inferred_arg_type_ids.clear();

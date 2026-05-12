@@ -113,6 +113,7 @@ private:
 		StringHandle saved_enclosing_function;
 		StringHandle saved_enclosing_function_mangled;
 		StringHandle saved_struct_name;
+		bool saved_sema_normalized = false;
 	};
 
 	// Generate aggregate initialization of a struct from an InitializerListNode as a default argument.
