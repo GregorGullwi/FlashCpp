@@ -878,6 +878,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		if (from_type_index == to_type_index) {
 			return ConversionPlan::exact_match();
 		}
+		// Distinct enum types have no implicit enum-to-enum conversion in C++20;
+		// unlike structs, enums cannot provide converting constructors.
 		return ConversionPlan::no_match();
 	}
 	return buildConversionPlan(from_type_category, to_type_category);

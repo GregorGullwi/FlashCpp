@@ -27,6 +27,10 @@ public:
 	friend constexpr PartialOrdering operator<=>(int, PartialOrdering v) noexcept {
 		return PartialOrdering(Ord(-1));
 	}
+
+	friend constexpr PartialOrdering makeUnordered(PartialOrdering) noexcept {
+		return PartialOrdering(Ncmp::unordered);
+	}
 };
 
 inline constexpr PartialOrdering PartialOrdering::less(Ord::less);
@@ -34,5 +38,6 @@ inline constexpr PartialOrdering PartialOrdering::less(Ord::less);
 
 int main() {
 	cmp::PartialOrdering value = 0 <=> cmp::PartialOrdering::less;
+	cmp::PartialOrdering unordered = makeUnordered(value);
 	return 0;
 }

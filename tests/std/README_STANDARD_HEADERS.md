@@ -121,7 +121,7 @@ Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
 
 | Header/Test | Status | Time | First-order stop / note |
 |-------------|--------|------|-------------------------|
-| `test_hidden_friend_ctor_normalization_ret0.cpp` | ✅ Pass | 0.03s | New regression verifies a hidden friend returning `PartialOrdering(Ord(...))` resolves the selected explicit enum constructor. |
+| `test_hidden_friend_ctor_normalization_ret0.cpp` | ✅ Pass | 0.03s | New regression verifies hidden friends returning `PartialOrdering(Ord(...))` and `PartialOrdering(Ncmp::unordered)` resolve the selected explicit enum constructors. |
 | `<compare>` (bare `#include <compare>`) | ❌ Codegen Error | 0.68s | Progresses through more comparison-category hidden friend bodies; current stop is still a later `std::partial_ordering` constructor call with unresolved sema constructor metadata. |
 | `<string>` (`test_std_string.cpp`) | ❌ Compile Error | 3.22s | Current first hard error is lazy member-body replay failure for `basic_string<...>::clear`. |
 | Full regression suite after edits | ✅ Pass | n/a | `bash tests/run_all_tests.sh`: 2283 pass / 0 fail, 172 `_fail` correct. |
