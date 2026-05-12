@@ -2604,14 +2604,61 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					// Check if this is an alias template (like detail::cref<int> -> int)
 					// Alias templates should resolve to their underlying type
 					auto alias_opt = gTemplateRegistry.lookup_alias_template(qualified_name);
+					std::string_view alias_lookup_name = qualified_name.view();
 					if (!alias_opt.has_value()) {
 						// Try with simple name
 						alias_opt = gTemplateRegistry.lookup_alias_template(qual_id.name());
+						alias_lookup_name = qual_id.name();
 					}
 
 					if (alias_opt.has_value()) {
 						FLASH_LOG(Templates, Debug, "Found alias template, resolving: ", qualified_name);
 						const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
+						AliasTemplateMaterializationResult materialized_alias =
+							materializeAliasTemplateInstantiation(alias_lookup_name, *template_args);
+						if (materialized_alias.resolved_type_info != nullptr) {
+							const TypeInfo* resolved_alias_type = materialized_alias.resolved_type_info;
+							ResolvedAliasTypeInfo resolved_terminal_alias = resolveAliasTypeInfo(
+								resolved_alias_type->registeredTypeIndex().withCategory(
+									resolved_alias_type->typeEnum()));
+							if (resolved_terminal_alias.terminal_type_info != nullptr) {
+								resolved_alias_type = resolved_terminal_alias.terminal_type_info;
+							}
+							if (!is_struct_type(resolved_alias_type->typeEnum())) {
+								std::string_view resolved_type_name =
+									StringTable::getStringView(resolved_alias_type->name());
+								Token resolved_token(
+									Token::Type::Identifier,
+									resolved_type_name,
+									final_identifier.line(),
+									final_identifier.column(),
+									final_identifier.file_index());
+								result = emplace_node<ExpressionNode>(IdentifierNode(resolved_token));
+								return ParseResult::success(*result);
+							}
+						}
+						if (std::optional<TemplateTypeArg> rebound_alias_arg =
+								tryRebindAliasTargetTemplateArg(alias_node, *template_args);
+							rebound_alias_arg.has_value() && !rebound_alias_arg->is_value) {
+							std::string_view rebound_type_name;
+							if (const TypeInfo* rebound_type_info =
+									tryGetTypeInfo(rebound_alias_arg->type_index);
+								rebound_type_info != nullptr) {
+								rebound_type_name = StringTable::getStringView(rebound_type_info->name());
+							} else {
+								rebound_type_name = getTypeName(rebound_alias_arg->category());
+							}
+							if (!rebound_type_name.empty()) {
+								Token rebound_token(
+									Token::Type::Identifier,
+									rebound_type_name,
+									final_identifier.line(),
+									final_identifier.column(),
+									final_identifier.file_index());
+								result = emplace_node<ExpressionNode>(IdentifierNode(rebound_token));
+								return ParseResult::success(*result);
+							}
+						}
 
 						// Get the target type of the alias
 						// For a simple alias like `template<typename T> using cref = T;`, the target type is T
@@ -2658,6 +2705,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							qual_id.name(),
 							*template_args);
 					std::string_view instantiated_name = materialized_owner.instantiated_name;
+					if (instantiated_name.empty() && materialized_owner.resolved_type_info != nullptr) {
+						instantiated_name =
+							StringTable::getStringView(materialized_owner.resolved_type_info->name());
+					}
 					if (instantiated_name.empty()) {
 						auto instantiation_result = try_instantiate_template_explicit(qual_id.name(), *template_args);
 						if (!instantiation_result.has_value()) {

@@ -6892,10 +6892,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							node.as<IdentifierNode>().name() == template_name;
 					});
 			}
+			const bool member_is_constexpr = static_member.is_constexpr;
 
 			if (is_implicit_instantiation &&
 				member_needs_complex_substitution &&
-				!member_refs_current_template_identifier) {
+				!member_refs_current_template_identifier &&
+				!member_is_constexpr) {
 				// Register for lazy instantiation instead of processing now
 				FLASH_LOG(Templates, Debug, "Registering static member '", static_member.getName(),
 						  "' for lazy instantiation");

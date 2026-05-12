@@ -691,7 +691,13 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		}
 		const TypeInfo* rebound_type_info = tryGetTypeInfo(rebound_arg->type_index);
 		if (rebound_type_info == nullptr) {
-			return false;
+			std::string_view builtin_type_name = getTypeName(rebound_arg->category());
+			if (builtin_type_name.empty()) {
+				return false;
+			}
+			result.resolved_type_info = nullptr;
+			result.instantiated_name = builtin_type_name;
+			return true;
 		}
 		ResolvedAliasTypeInfo resolved_rebound_alias = resolveAliasTypeInfo(
 			rebound_type_info->registeredTypeIndex().withCategory(
@@ -703,13 +709,67 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		result.instantiated_name = StringTable::getStringView(rebound_type_info->name());
 		return true;
 	};
+	auto tryMaterializeTemplateAliasTarget = [&]() -> bool {
+		if (alias_node == nullptr) {
+			return false;
+		}
+
+		const TypeSpecifierNode& target_type_spec = alias_node->target_type_node();
+		const TypeInfo* target_type_info = tryGetTypeInfo(target_type_spec.type_index());
+		if (target_type_info == nullptr || !target_type_info->isTemplateInstantiation()) {
+			return false;
+		}
+
+		std::vector<TemplateTypeArg> concrete_target_args =
+			materializeTemplateArgs(
+				*target_type_info,
+				alias_node->template_parameters(),
+				template_args);
+		StringHandle qualified_target_template_name =
+			gNamespaceRegistry.buildQualifiedIdentifier(
+				target_type_info->sourceNamespace(),
+				target_type_info->baseTemplateName());
+		std::string_view target_template_name =
+			StringTable::getStringView(qualified_target_template_name);
+		if (target_template_name.empty()) {
+			target_template_name =
+				StringTable::getStringView(target_type_info->baseTemplateName());
+		}
+		if (target_template_name.empty()) {
+			return false;
+		}
+
+		AliasTemplateMaterializationResult materialized_target =
+			materializeTemplateInstantiationForLookup(
+				target_template_name,
+				concrete_target_args);
+		if (materialized_target.resolved_type_info == nullptr &&
+			qualified_target_template_name != target_type_info->baseTemplateName()) {
+			materialized_target = materializeTemplateInstantiationForLookup(
+				StringTable::getStringView(target_type_info->baseTemplateName()),
+				concrete_target_args);
+		}
+		if (materialized_target.resolved_type_info == nullptr &&
+			materialized_target.instantiated_name.empty()) {
+			return false;
+		}
+
+		result.instantiated_name = materialized_target.instantiated_name;
+		result.resolved_type_info = materialized_target.resolved_type_info;
+		if (result.resolved_type_info != nullptr && result.instantiated_name.empty()) {
+			result.instantiated_name = StringTable::getStringView(result.resolved_type_info->name());
+		}
+		return true;
+	};
 	std::string_view resolved_name = alias_template_name;
 	result.instantiated_name = instantiate_and_register_base_template(resolved_name, template_args);
 	if (result.instantiated_name.empty()) {
 		// Direct parameter aliases such as `template<class T> using id = T`
 		// do not produce an instantiated helper type name; resolve them by
 		// rebinding the alias target parameter to the caller's concrete argument.
-		tryResolveDirectAliasTarget();
+		if (!tryResolveDirectAliasTarget()) {
+			(void)tryMaterializeTemplateAliasTarget();
+		}
 		return result;
 	}
 
